@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "probabilistic-pipeline"
+version = "0.1.0"
+description = "A Python package providing tools for probabilistic data processing pipelines."
+readme = "README.md"
+requires-python = ">=3.6"
+license = {text = "MIT"}
+authors = [
+    { name = "Jonathan Huggins", email = "huggins@bu.edu" }, 
+    { name = "Yongho Lim", email = "ylim2@bu.edu" }, 
+    { name = "Can Erozer", email = "caner@bu.edu" }
+]
+dependencies = [
+]
+
+[project.urls]
+"Repository" = "https://github.com/TARPS-group/prob-pipe"
+
