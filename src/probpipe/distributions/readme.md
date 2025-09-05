@@ -3,7 +3,7 @@
 ## abstract_distribution.py 
 
 We implemented the abstract classes in this file:
-Distribution, Distribution_Empirical, Distribution_Density, ... 
+Distribution, Multivariate
 
 ### Distribution:
 Any class that is some kind of distribution inherits from this class.
@@ -20,6 +20,7 @@ input(s):
 n_samples= number of samples desired (must be an integer)
 Returns: ()
 
+...
 
 ## abstract_distribution.py 
 
