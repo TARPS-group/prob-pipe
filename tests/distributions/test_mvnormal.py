@@ -1,4 +1,6 @@
-from distributions.distributions import MvNormal, Normal1D  
+
+from probpipe import distributions
+
 
 import numpy as np
 import pytest

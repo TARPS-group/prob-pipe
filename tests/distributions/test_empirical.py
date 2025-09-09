@@ -1,5 +1,5 @@
-from distributions.distributions import EmpiricalDistribution, Normal1D, MvNormal
-
+# from probpipe.distributions.continuous import EmpiricalDistribution, Normal1D
+# from probpipe.distributions.multivariate import MvNormal
 
 import numpy as np
 import pytest

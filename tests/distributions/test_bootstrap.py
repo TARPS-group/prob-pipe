@@ -1,8 +1,10 @@
-from distributions.distributions import BootstrapDistribution, Normal1D, MvNormal
 
 
 import numpy as np
 import pytest
+
+from probpipe.distributions.continuous import BootstrapDistribution, Normal1D
+from probpipe.distributions.multivariate import Multivariate, MvNormal
 
 
 # ------------------------------ Helpers ------------------------------

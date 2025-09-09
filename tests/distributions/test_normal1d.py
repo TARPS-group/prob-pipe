@@ -1,7 +1,7 @@
 # test_normal1d.py
 # Adjust this import to your project layout:
 # from your_module.distributions import Normal1D
-from distributions.distributions import Normal1D  # <-- change to your actual module path
+
 
 import numpy as np
 import pytest
@@ -9,7 +9,9 @@ import os
 import sys
 import inspect
 
-
+# from probpipe.distributions.continuous import Normal1D
+# from probpipe.distributions.multivariate import MvNormal
+from probpipe import distributions
 # ---------------------- Helpers for from_distribution ----------------------
 
 class _NoSample:
