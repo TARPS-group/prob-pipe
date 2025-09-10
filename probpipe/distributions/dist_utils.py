@@ -4,19 +4,15 @@ from numpy.typing import NDArray
 import numpy as np
 
 
-def _as_2d(x: NDArray) -> NDArray[np.floating]:
-    x = np.asarray(x)
-    if x.ndim == 1:
-        return x.reshape(-1, 1)
-    return x
+    
+def _as_2d(x: NDArray) -> np.ndarray:
+    x = np.asarray(x, dtype=float)
+    return x.reshape(1, -1) if x.ndim == 1 else x
 
-def _symmetrize_spd(cov: NDArray[np.floating], jitter: float = 1e-6) -> NDArray[np.floating]:
-    cov = np.asarray(cov, dtype=float)
-    cov = 0.5 * (cov + cov.T)
-    # minimal jitter for numerical stability
-    eigmin = np.linalg.eigvalsh(cov).min()
-    if eigmin <= 0:
-        cov = cov + (jitter - eigmin + 1e-12) * np.eye(cov.shape[0])
-    else:
-        cov = cov + jitter * np.eye(cov.shape[0])
-    return cov
+def _symmetrize_spd(C: np.ndarray, jitter: float = 1e-9) -> NDArray:
+    C = np.asarray(C, dtype=float)
+    C = 0.5 * (C + C.T)
+    eigmin = np.linalg.eigvalsh(C).min()
+    if eigmin < 1e-12:
+        C = C + (max(jitter, 1e-12 - eigmin) + 1e-12) * np.eye(C.shape[0])
+    return C

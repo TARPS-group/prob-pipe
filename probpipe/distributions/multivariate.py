@@ -1,25 +1,15 @@
 from typing import Generic, TypeVar, Callable, Any, Optional, Union, Tuple
 from numpy.typing import NDArray
 import numpy as np
-import pymc as pm
-from scipy.stats import norm, multivariate_normal
-from scipy.spatial.distance import cdist
-from scipy.stats import gaussian_kde
-from scipy.stats import norm
+import scipy.stats as sp
 
 from abc import ABC, abstractmethod
 
-
 from probpipe.distributions.distributions import Distribution
-from probpipe.distributions.continuous import Normal1D
 from probpipe.distributions.dist_utils import _as_2d, _symmetrize_spd
 
-
-T = TypeVar("T",bound=np.number)
-#T=float, int, complex
+T = TypeVar("T", bound=np.number)
 Float_T = TypeVar("FloatDT", bound=np.floating)
-
-
 
 
 
@@ -85,35 +75,17 @@ class Multivariate(Distribution[Float_T], ABC):
 
 
 
-    
-
-
-
-
-
-    
-
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 class MvNormal(Multivariate[np.floating]):
+    """
+    Multivariate Normal N(mean, cov) using scipy.stats.multivariate_normal.
+
+    Shape policy:
+      - sample(n) -> (n, d)
+      - density(values), log_density(values), cdf(x) -> ALWAYS return (n, 1)
+        (scalar-per-sample outputs come back as column vectors)
+      - inv_cdf(u) -> (n, d)  (event-shaped output)
+    """
+
     def __init__(self, mean: NDArray[np.floating], cov: NDArray[np.floating],
                  *, rng: np.random.Generator | None = None):
         m = np.asarray(mean, dtype=float)
@@ -126,108 +98,107 @@ class MvNormal(Multivariate[np.floating]):
         self._cov = C
         self._rng = rng or np.random.default_rng()
 
-        # Precompute consistent factors
-        self._L = np.linalg.cholesky(self._cov)           # Σ = L L^T
-        # Robust log|Σ|
-        self._log_det = float(np.linalg.slogdet(self._cov)[1])
+        self._mvn_cls = sp.multivariate_normal
+        self._mvn = sp.multivariate_normal(mean=self._mean, cov=self._cov, allow_singular=False)
 
-        # (Optional) you can keep precision if you want it elsewhere, but we won’t
-        # use it for the quadratic to avoid inconsistencies:
-        # self._prec = np.linalg.inv(self._cov)
+    # ------------------------ Distribution core ------------------------
 
-    def sample(self, n_samples: int) -> np.ndarray:
-    # Returns shape (n_samples, d).
-        x = self._rng.multivariate_normal(
-            mean=self._mean,
-            cov=self._cov,
-            size=int(n_samples)        # (n_samples, d)
-        )
-        return x.astype(float)
+    def sample(self, n_samples: int) -> NDArray[np.floating]:
+        """
+        Draw (n, d) samples. Uses Generator via random_state.
+        """
+        x = self._mvn.rvs(size=int(n_samples), random_state=self._rng)
+        x = np.asarray(x, dtype=float)
+        if x.ndim == 1:  # when n_samples == 1 SciPy may return (d,)
+            x = x.reshape(1, -1)
+        return x  # (n, d)
 
-    def log_density(self, data: NDArray) -> NDArray[np.floating] | float:
-        X_in = np.asarray(data, dtype=float)
-        was_1d = (X_in.ndim == 1)
-        X = X_in.reshape(1, -1) if was_1d else X_in # use your _as_2d if you prefer
+    def density(self, values: NDArray) -> NDArray[np.floating]:
+        """
+        Return (n,1) column of pdf values for rows in `values`.
+        Accepts (d,), (n,d).
+        """
+        X = _as_2d(values)                   # (n, d)
+        p = self._mvn.pdf(X)                 # (n,) from SciPy
+        return np.asarray(p, dtype=float).reshape(-1, 1)   # (n,1)
 
-        d = self.dimension
-        diff = X - self._mean             # (n, d)
+    def log_density(self, values: NDArray) -> NDArray[np.floating]:
+        """
+        Return (n,1) column of log-pdf values for rows in `values`.
+        Accepts (d,), (n,d).
+        """
+        X = _as_2d(values)                   # (n, d)
+        lp = self._mvn.logpdf(X)             # (n,)
+        return np.asarray(lp, dtype=float).reshape(-1, 1)  # (n,1)
 
-        # Mahalanobis via Cholesky solve: solve L y = diff^T  ⇒ quad = sum(y^2) per sample
-        # y shape: (d, n)
-        y = np.linalg.solve(self._L, diff.T)
-        quad = (y * y).sum(axis=0)        # (n,)
-
-        out = -0.5 * (d * np.log(2.0 * np.pi) + self._log_det + quad)
-        if was_1d:
-            return float(out[0])
-        return out.astype(float)
-
-    def density(self, data: NDArray) -> NDArray[np.floating] | float:
-        logp = self.log_density(data)
-        p = np.exp(logp)
-        return float(p) if not isinstance(p, np.ndarray) else p.astype(float)
-
-    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray]) -> 'Distribution':
-        # Monte-Carlo CLT for vector/scalar functions of X in R^d
+    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray[np.floating]]) -> 'Multivariate':
+        """
+        Monte-Carlo CLT over f(X):
+          - scalar f -> Normal1D(mean, se)
+          - vector f -> MvNormal(mean, cov_of_mean)
+        The function receives samples as (n_mc, d).
+        """
         n_mc = 2048
-        xs = self.sample(n_mc)            # (n, d)
+        xs = self.sample(n_mc)                         # (n, d)
         ys = np.asarray(func(xs), dtype=float)
+
+        # Treat (n,1) as scalar-valued
+        if ys.ndim == 2 and ys.shape[1] == 1:
+            ys = ys[:, 0]
+
         if ys.ndim == 1:
             m = float(ys.mean())
             s = float(ys.std(ddof=1)) / np.sqrt(n_mc)
-            s = max(s, 1e-12)
-            return Normal1D(m, s, rng=self._rng)
-        else:
-            ys2 = _as_2d(ys)              # (n, k)
-            m = ys2.mean(axis=0)
-            cov = np.cov(ys2, rowvar=False, ddof=1) / n_mc
-            cov = _symmetrize_spd(cov)
+            return Normal1D(m, max(s, 1e-12), rng=self._rng)
+        elif ys.ndim == 2:
+            m = ys.mean(axis=0)
+            cov = np.cov(ys, rowvar=False, ddof=1) / n_mc
+            cov = 0.5 * (cov + cov.T) + 1e-12 * np.eye(cov.shape[0])
             return MvNormal(mean=m, cov=cov, rng=self._rng)
+        else:
+            raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
 
     @classmethod
     def from_distribution(cls, convert_from: 'Distribution', **fit_kwargs: Any) -> 'MvNormal':
+        """
+        Fit mean and covariance from samples drawn from another distribution-like object.
+        """
         n = int(fit_kwargs.get("n", 4000))
-        try:
-            xs = np.asarray(convert_from.sample(n), dtype=float)
-        except NotImplementedError:
-            raise NotImplementedError("from_distribution requires convert_from.sample to be implemented")
-        xs = _as_2d(xs)  # (n, d)
-        mean = xs.mean(axis=0)
-        cov = np.cov(xs, rowvar=False, ddof=1)
+        xs = np.asarray(convert_from.sample(n), dtype=float)
+
+        X = _as_2d(xs)                                   # (n, d)
+        mean = X.mean(axis=0)
+        cov = np.cov(X, rowvar=False, ddof=1)
         cov = _symmetrize_spd(cov)
         return cls(mean=mean, cov=cov)
 
-    # ----- Multivariate requirements -----
 
     def mean(self) -> NDArray[np.floating]:
-        return self._mean
+        return self._mean  # (d,)
 
     def cov(self) -> NDArray[np.floating]:
-        return self._cov
+        return self._cov   # (d,d)
 
-    def cdf(self, x: NDArray[np.floating]) -> NDArray[np.floating]:
+    def cdf(self, x: NDArray) -> NDArray[np.floating]:
         """
-        Exact MVN CDF requires numerical integration.
-        If SciPy is available, we use it; otherwise we raise NotImplementedError.
+        Exact MVN CDF via SciPy. Returns (n,1).
+        Accepts (d,), (n,d).
+        """
+        X = _as_2d(x)                           # (n,d)
+        # SciPy's frozen cdf doesn't vectorize over rows, so evaluate row-wise.
+        # (For large n you may want to batch this.)
+        vals = [float(self._mvn.cdf(row)) for row in X]
+        return np.array(vals, dtype=float).reshape(-1, 1)   # (n,1)
+
+    def inv_cdf(self, u: NDArray) -> NDArray[np.floating]:
+        """
+        Rosenblatt inverse using sequential conditionals and SciPy's univariate Φ^{-1}.
+        Input u: (d,) or (n,d). Output: (d,) for 1 sample, or (n,d) for batch.
         """
     
-        X = np.asarray(x, dtype=float)
-        if X.ndim == 1:
-            return np.array([multivariate_normal(mean=self._mean, cov=self._cov).cdf(X)], dtype=float)
-        else:
-            mvn = multivariate_normal(mean=self._mean, cov=self._cov)
-            return np.array([mvn.cdf(row) for row in X], dtype=float)
-
-    def inv_cdf(self, u):
-        """
-        Rosenblatt inverse using sequential univariate conditionals for MVN.
-        Returns shape (d,) for 1-D input u (d,), and shape (n, d) for batched input (n, d).
-        Requires SciPy for Φ^{-1}.
-        """
-
         U_in = np.asarray(u, dtype=float)
         was_1d = (U_in.ndim == 1)
-        U = U_in[None, :] if was_1d else U_in  # (n, d)
+        U = U_in[None, :] if was_1d else U_in   # (n, d)
 
         n, d = U.shape
         if d != self.dimension:
@@ -252,101 +223,18 @@ class MvNormal(Multivariate[np.floating]):
                 mu_cond = mu[i] + Sigma_iA @ w
                 var_cond = Sigma[i, i] - Sigma_iA @ np.linalg.solve(Sigma_AA, Sigma_Ai)
                 var_cond = float(max(var_cond, 1e-12))  # numeric guard
-
                 x[i] = mu_cond + np.sqrt(var_cond) * norm.ppf(U[b, i])
 
             out[b] = x
 
         return out[0] if was_1d else out
-    
 
-TINY = np.finfo(float).tiny
-TAU = 2.0 * np.pi
+    # ------------------------ helper ------------------------
 
-class GaussianKDE(Multivariate[np.floating]):
-    """
-    Gaussian kernel density estimator with shared bandwidth matrix H.
+    @property
+    def dimension(self) -> int:
+        return int(self._mean.shape[0])
 
-    Parameters
-    ----------
-    samples : array-like, shape (n, d) or (n,)
-        Points x_i where kernels are centered.
-    weights : array-like, shape (n,), optional
-        Nonnegative weights for each center; normalized to sum to 1.
-    bandwidth : float | array(d,) | array(d,d) | None
-        - float: scalar 'h' => H = h^2 * I
-        - array(d,): per-dimension stds 'h_j' => H = diag(h_j^2)
-        - array(d,d): full SPD matrix interpreted as H directly
-        - None: use Scott/Silverman rule on the data covariance (diagonalized)
-    rule : {'scott', 'silverman'}, default 'scott'
-        Automatic rule when bandwidth is None.
-    rng : np.random.Generator, optional
-        RNG for sampling.
-    cdf_mode : {'auto','mixture','mc'}, default 'auto'
-        - 'mixture': sum_i w_i * MVN(μ=x_i, Σ=H).cdf(x) (requires SciPy)
-        - 'mc': Monte-Carlo approximation via samples from KDE
-        - 'auto': try 'mixture', fall back to 'mc' if SciPy missing
-    cdf_mc_samples : int, default 20000
-        MC budget for CDF approximation when using 'mc'.
 
-    Notes
-    -----
-    - pdf/logpdf are exact for the Gaussian mixture with shared Σ=H.
-    - mean = Σ_i w_i x_i ; cov = Cov_w(X) + H.
-    - inv_cdf is not implemented (no simple Rosenblatt inverse for mixtures).
-    """
 
-    def __init__(
-        self,
-        samples: NDArray[np.floating],
-        weights: Optional[NDArray[np.floating]] = None,
-        *,
-        bandwidth: float | NDArray[np.floating] | None = None,
-        rule: str = "scott",
-        rng: Optional[np.random.Generator] = None,
-        cdf_mode: str = "auto",
-        cdf_mc_samples: int = 20_000,
-    ):
-        X = _as_2d(samples)
-        n, d = X.shape
-        if n < 1:
-            raise ValueError("GaussianKDE requires at least one sample.")
-        # weights
-        if weights is None:
-            w = np.full(n, 1.0 / n, dtype=float)
-        else:
-            w = np.asarray(weights, dtype=float).reshape(-1)
-            if w.shape[0] != n:
-                raise ValueError("weights must have shape (n,).")
-            if np.any(w < 0):
-                raise ValueError("weights must be nonnegative.")
-            s = w.sum()
-            if s <= 0:
-                raise ValueError("weights must sum to a positive value.")
-            w = w / s
 
-        self._X = X.astype(float)
-        self._w = w.astype(float)
-        self._n, self._d = n, d
-        self._rng = rng or np.random.default_rng()
-        self._cdf_mode = cdf_mode
-        self._cdf_mc_samples = int(cdf_mc_samples)
-
-        # data mean & (population) covariance under weights
-        self._mean = (self._w[:, None] * self._X).sum(axis=0)
-        diff = self._X - self._mean
-        self._cov_x = diff.T @ (diff * self._w[:, None])  # (d, d)
-
-        # bandwidth matrix H
-        H = self._build_H(bandwidth, rule)
-        self._H = _symmetrize_spd(H)
-        self._L = np.linalg.cholesky(self._H)  # H = L L^T
-        self._log_det_H = float(np.linalg.slogdet(self._H)[1])
-        self._log_norm = -0.5 * (self._d * np.log(TAU) + self._log_det_H)
-        self._inv_by_solve = True  # use solves via L instead of explicit H^{-1}
-
-        # mixture cov = Cov(X) + H
-        self._cov_mix = self._cov_x + self._H
-
-    ...
-    
