@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 import pytensor.tensor as pt
 import numpy as np
 from numpy.typing import NDArray
+from probpipe.distributions.dist_utils import _as_2d, _symmetrize_spd
 
 T = TypeVar("T",bound=np.number)
 #T=float, int, complex
