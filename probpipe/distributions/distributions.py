@@ -1,10 +1,12 @@
 
-from typing import Generic, TypeVar, Callable, Any
+from typing import Generic, TypeVar, Callable, Any, Optional, Union
 from abc import ABC, abstractmethod
 import pytensor.tensor as pt
 import numpy as np
 from numpy.typing import NDArray
 from probpipe.distributions.dist_utils import _as_2d, _symmetrize_spd
+from probpipe.distributions.multivariate import MvNormal, Normal1D
+
 
 T = TypeVar("T",bound=np.number)
 #T=float, int, complex

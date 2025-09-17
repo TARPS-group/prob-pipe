@@ -1,21 +1,22 @@
-from typing import Generic, TypeVar, Callable, Any, Optional, Union, Tuple
+from typing import TypeVar, Callable, Any, Optional
 from numpy.typing import NDArray
 import numpy as np
 import scipy.stats as sp
 from abc import ABC, abstractmethod
 
-from scipy.spatial.distance import cdist
-
+from scipy.stats import norm, multivariate_normal
+from scipy.stats import multinomial as _multinomial
+from scipy.stats import dirichlet as _dirichlet
+from scipy.stats import binom as _sbinom
+from scipy.stats import beta as _sps_beta
 
 from probpipe.distributions.dist_utils import _as_2d, _symmetrize_spd, _clip_unit_interval, _to_1d_vector
 from probpipe.distributions.distributions import Distribution
-from probpipe.distributions.multivariate import MvNormal    
+
 
 
 T = TypeVar("T", bound=np.number)
 Float_T = TypeVar("FloatDT", bound=np.floating)
-
-
 
 
 class Multivariate(Distribution[Float_T], ABC):
