@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from probpipe.distributions.continuous import Normal
+from probpipe.distributions.multivariate import Normal
 
 class TestNormal(unittest.TestCase):
 
