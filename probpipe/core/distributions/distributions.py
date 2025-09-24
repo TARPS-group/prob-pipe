@@ -1,10 +1,9 @@
 
 from typing import Generic, TypeVar, Callable, Any, Optional, Union
 from abc import ABC, abstractmethod
-import pytensor.tensor as pt
 import numpy as np
 from numpy.typing import NDArray
-from probpipe.core.distributions.dist_utils import _as_2d, _symmetrize_spd
+from probpipe.core.distributions.dist_utils import _as_2d
 #from probpipe.core.distributions.multivariate import MvNormal, Normal1D
 
 
