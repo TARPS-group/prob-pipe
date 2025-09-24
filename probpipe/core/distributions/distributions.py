@@ -4,8 +4,8 @@ from abc import ABC, abstractmethod
 import pytensor.tensor as pt
 import numpy as np
 from numpy.typing import NDArray
-from probpipe.distributions.dist_utils import _as_2d, _symmetrize_spd
-from probpipe.distributions.multivariate import MvNormal, Normal1D
+from probpipe.core.distributions.dist_utils import _as_2d, _symmetrize_spd
+#from probpipe.core.distributions.multivariate import MvNormal, Normal1D
 
 
 T = TypeVar("T",bound=np.number)

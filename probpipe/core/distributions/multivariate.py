@@ -10,8 +10,8 @@ from scipy.stats import dirichlet as _dirichlet
 from scipy.stats import binom as _sbinom
 from scipy.stats import beta as _sps_beta
 
-from probpipe.distributions.dist_utils import _as_2d, _symmetrize_spd, _clip_unit_interval, _to_1d_vector
-from probpipe.distributions.distributions import Distribution
+from probpipe.core.distributions.dist_utils import _as_2d, _symmetrize_spd, _clip_unit_interval, _to_1d_vector
+from probpipe.core.distributions.distributions import Distribution
 
 
 
