@@ -1,7 +1,6 @@
 from prefect import flow, task
 import probpipe
-from probpipe.core.Module.module import Module
-
+from probpipe.core.module import Module
 
 
 mod = Module()

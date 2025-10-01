@@ -10,8 +10,8 @@ from scipy.stats import dirichlet as _dirichlet
 from scipy.stats import binom as _sbinom
 from scipy.stats import beta as _sps_beta
 
-from probpipe.core.distributions.dist_utils import _as_2d, _symmetrize_spd, _clip_unit_interval, _to_1d_vector
-from probpipe.core.distributions.distributions import Distribution
+from probpipe.core.dist_utils import _as_2d, _symmetrize_spd, _clip_unit_interval, _to_1d_vector
+from probpipe.core.distributions import Distribution
 
 
 
@@ -170,10 +170,10 @@ class Normal1D(Multivariate[np.floating]):
             raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', **fit_kwargs: Any) -> 'Normal1D':
-        n = int(fit_kwargs.get("n", 2000))
+    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False,  **fit_kwargs: Any) -> 'Normal1D':
+        #n = int(fit_kwargs.get("n", 2000))
         
-        xs = np.asarray(convert_from.sample(n), dtype=float)
+        xs = np.asarray(convert_from.sample(num_samples), dtype=float)
 
         # Flatten (n,1) → (n,), accept (n,)
         if xs.ndim == 2 and xs.shape[1] == 1:
@@ -292,12 +292,12 @@ class MvNormal(Multivariate[np.floating]):
             raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', **fit_kwargs: Any) -> 'MvNormal':
+    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False, **fit_kwargs: Any) -> 'MvNormal':
         """
         Fit mean and covariance from samples drawn from another distribution-like object.
         """
-        n = int(fit_kwargs.get("n", 4000))
-        xs = np.asarray(convert_from.sample(n), dtype=float)
+        #n = int(fit_kwargs.get("n", 4000))
+        xs = np.asarray(convert_from.sample(num_samples), dtype=float)
 
         X = _as_2d(xs)                                   # (n, d)
         mean = X.mean(axis=0)
@@ -565,7 +565,7 @@ class GaussianKDE(Multivariate[np.floating]):
 
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', **fit_kwargs: Any) -> 'GaussianKDE':
+    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False, **fit_kwargs: Any) -> 'GaussianKDE':
         """
         Build KDE from another distribution-like object.
 
@@ -576,7 +576,7 @@ class GaussianKDE(Multivariate[np.floating]):
           - rule: 'scott' or 'silverman' when bandwidth=None (default 'scott')
           - rng: np.random.Generator to store in the resulting KDE
         """
-        n = int(fit_kwargs.get("n", 2000))
+        # = int(fit_kwargs.get("n", 2000))
         bandwidth = fit_kwargs.get("bandwidth", None)
         rule = fit_kwargs.get("rule", "scott")
         rng = fit_kwargs.get("rng", None)
@@ -591,7 +591,7 @@ class GaussianKDE(Multivariate[np.floating]):
             return cls(samples=X, weights=w, bandwidth=bandwidth, rule=rule, rng=rng)
 
         # Otherwise, sample from the source distribution
-        X = np.asarray(convert_from.sample(n), dtype=float)
+        X = np.asarray(convert_from.sample(num_samples), dtype=float)
 
         return cls(samples=X, weights=weights, bandwidth=bandwidth, rule=rule, rng=rng)
 
@@ -712,14 +712,14 @@ class Multinomial(Multivariate[np.floating]):
             raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', **fit_kwargs: Any) -> 'Multinomial':
+    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False, **fit_kwargs: Any) -> 'Multinomial':
         """
         Fit (n_trials, p) from counts sampled from `convert_from`.
         Assumes each row of samples is a vector of counts whose sum is constant (n_trials).
         """
-        n_fit = int(fit_kwargs.get("n", 4000))
+        #n_fit = int(fit_kwargs.get("n", 4000))
         
-        X = np.asarray(convert_from.sample(n_fit), dtype=float)
+        X = np.asarray(convert_from.sample(num_samples), dtype=float)
 
         X = _as_2d(X)  # (n, d)
         # infer n_trials from row sums (must be constant up to rounding)
@@ -900,7 +900,7 @@ class Dirichlet(Multivariate[np.floating]):
             raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', **fit_kwargs: Any) -> 'Dirichlet':
+    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False, **fit_kwargs: Any) -> 'Dirichlet':
         """
         Moment-based fit of α from samples of a simplex-valued distribution.
         Steps:
@@ -911,8 +911,8 @@ class Dirichlet(Multivariate[np.floating]):
           - Rows are renormalized to sum to 1 (within tolerance).
           - Very small/zero variances are skipped in α0 averaging.
         """
-        n = int(fit_kwargs.get("n", 4000))
-        X = np.asarray(convert_from.sample(n), dtype=float)
+        #n = int(fit_kwargs.get("n", 4000))
+        X = np.asarray(convert_from.sample(num_samples), dtype=float)
 
         X = _as_2d(X)  # (n, d)
 
@@ -1104,7 +1104,7 @@ class Binomial(Multivariate[np.floating]):
             raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', **fit_kwargs: Any) -> 'Binomial':
+    def from_distribution(cls, convert_from: 'Distribution', num_samples:int=1024, *, conversion_by_KDE: bool = False, **fit_kwargs: Any) -> 'Binomial':
    
         raise NotImplementedError
 
@@ -1269,7 +1269,7 @@ class Beta(Multivariate[np.floating]):
             raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', **fit_kwargs: Any) -> 'Beta':
+    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False, **fit_kwargs: Any) -> 'Beta':
         raise NotImplementedError
 
 
