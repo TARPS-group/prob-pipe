@@ -2,14 +2,15 @@ from typing import Callable, Optional, Dict, Any, get_type_hints, Type, ClassVar
 import functools
 import inspect
 from prefect import flow, task
-from probpipe.core.distributions import Distribution, EmpiricalDistribution, BootstrapDistribution
-from probpipe.core.multivariate import Normal1D, Multivariate
+from core.distributions import Distribution, EmpiricalDistribution, BootstrapDistribution
+from core.multivariate import Normal1D, Multivariate
 from dataclasses import dataclass, field
 
 _MISSING = object()
 _DISTR_BASE = (Distribution, Multivariate)
 _DISTR_INST = (Distribution, Multivariate, EmpiricalDistribution, BootstrapDistribution)
 
+@dataclass
 class InputSpec:
     type: Optional[Type] = None
     required: bool = False
@@ -73,11 +74,14 @@ class module:
         
         def _ensure_inputs_satisfied(kwargs: Dict[str, Any]) -> Dict[str, Any]:
             merged = dict(kwargs)
+            #print(f"KWARGS {kwargs}")
 
             # Fill defaults
             for k, meta in self.inputs.items():
                 if k not in merged and meta.get('default', _MISSING) is not _MISSING:
                     merged[k] = meta['default']
+
+            #print(f"MERGED {merged}")
 
             # Missing required?
             missing = [k for k, meta in self.inputs.items()
@@ -131,9 +135,12 @@ class module:
 
                 # ---- Distribution-typed parameter ----
                 if _is_distribution_type(expected):
+                    print("It is a distribution")
                     # Specific subclass (not the base)
                     if expected not in _DISTR_BASE and issubclass(expected, _DISTR_BASE):
                         if not isinstance(value, expected):
+                            print("Conversion Happening")
+                            print(f"converting from {value} to {expected}")
                             # === CONVERSION HERE ===
                             converted = expected.from_distribution(
                                 value,
@@ -166,6 +173,8 @@ class module:
                         )
                     continue
 
+            return args, kwargs
+
 
         # --- Wrapper ---
         @functools.wraps(f)
@@ -176,16 +185,18 @@ class module:
             return f(*args, **kwargs)
 
         # Wrap as Prefect flow or task
-        if as_task:
-            pf = task(wrapper)
-            self._prefect_task = pf
-        else:
-            pf = flow(wrapper)
-            self._prefect_flow = pf
+        #if as_task:
+        #    pf = task(wrapper)
+        #    self._prefect_task = pf
+        #else:
+        #    pf = flow(wrapper)
+        #    self._prefect_flow = pf
 
         # Register
-        self._run_funcs[run_name] = pf
-        return pf
+        #self._run_funcs[run_name] = pf
+        #return pf
+        self._run_funcs[run_name]= wrapper
+        return wrapper
 
     def run(self, name: Optional[str] = None, **inputs):
         if not self._run_funcs:

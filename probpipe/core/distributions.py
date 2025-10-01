@@ -3,8 +3,7 @@ from typing import Generic, TypeVar, Callable, Any, Optional, Union
 from abc import ABC, abstractmethod
 import numpy as np
 from numpy.typing import NDArray
-from probpipe.core.dist_utils import _as_2d
-from probpipe.core.multivariate import MvNormal, Normal1D
+from core.dist_utils import _as_2d
 
 
 T = TypeVar("T",bound=np.number)
@@ -77,6 +76,7 @@ class Distribution(Generic[T], ABC):
         """
         raise NotImplementedError("This method should be implemented by subclasses")
 
+from core.multivariate import MvNormal, Normal1D
 
 class EmpiricalDistribution:
     """
