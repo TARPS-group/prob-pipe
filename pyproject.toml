@@ -1,22 +1,31 @@
 [build-system]
-requires = ["setuptools>=42", "wheel"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "probabilistic-pipeline"
+# this is the *distribution* name on PyPI
+name = "probpipe"                # you can still call your importable pkg "probpipe"
 version = "0.1.0"
-description = "A Python package providing tools for probabilistic data processing pipelines."
+description = "Tools for probabilistic data‐processing pipelines"
 readme = "README.md"
 requires-python = ">=3.6"
-license = {text = "MIT"}
+license = { text = "MIT" }
 authors = [
-    { name = "Jonathan Huggins", email = "huggins@bu.edu" }, 
-    { name = "Yongho Lim", email = "ylim2@bu.edu" }, 
-    { name = "Can Erozer", email = "caner@bu.edu" }
+  { name = "Jonathan Huggins", email = "huggins@bu.edu" },
+  { name = "Yongho Lim",    email = "ylim2@bu.edu" },
+  { name = "Can Erozer",    email = "caner@bu.edu" },
 ]
 dependencies = [
+  "numpy>=1.20",
+  "scipy>=1.7"
 ]
 
 [project.urls]
 "Repository" = "https://github.com/TARPS-group/prob-pipe"
 
+[tool.setuptools.packages.find]
+# look in the current directory for any package directories
+where = ["."]
+# only grab your code, not docs/tests etc.
+include = ["probpipe*",]
+exclude = ["tests*", "docs*"]
