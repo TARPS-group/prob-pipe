@@ -8,29 +8,6 @@ from typing import Callable, Any, Dict, Optional
 
 
 
-
-
-
-# class LikelihoodModule(module):
-#     REQUIRED_DEPS = {'distribution'}
-
-#     def __init__(self, **dependencies):
-#         super().__init__(required_deps=self.REQUIRED_DEPS, **dependencies)
-#         self.set_input(
-#             data={'type': (list, np.ndarray), 'required': True},
-#             param={'type': float, 'required': True},
-#         )
-
-#         def log_likelihood(data, param):
-#             dist: Normal1D = self.dependencies['distribution']
-#             xarr = np.asarray(data).reshape(-1,1)
-#             temp_dist = Normal1D(mu=param, sigma=dist.sigma)  # param as mean
-#             logdensities = temp_dist.log_density(xarr)
-#             return float(np.sum(logdensities))
-
-#         self.log_likelihood = self.run_func(log_likelihood)
-
-
 class LikelihoodModule(module):
     REQUIRED_DEPS = frozenset(['distribution'])
 
