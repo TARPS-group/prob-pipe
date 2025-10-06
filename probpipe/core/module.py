@@ -1,28 +1,21 @@
 from typing import Callable, Optional, Dict, Any, get_type_hints, Type, ClassVar, FrozenSet, Iterable
 import functools
-import inspect
 from prefect import flow, task
 from core.distributions import Distribution, EmpiricalDistribution, BootstrapDistribution
 from core.multivariate import Normal1D, Multivariate
-from dataclasses import dataclass, field
+from makefun import with_signature
+import inspect
 
 _MISSING = object()
 _DISTR_BASE = (Distribution, Multivariate)
 _DISTR_INST = (Distribution, Multivariate, EmpiricalDistribution, BootstrapDistribution)
 
-@dataclass
-class InputSpec:
-    type: Optional[Type] = None
-    required: bool = False
-    default: Any = _MISSING #_MISSING means "no default"
-
-
 class module:
     # Contract-level default (subclasses can override this)
     REQUIRED_DEPS: ClassVar[FrozenSet[str]] = frozenset()
 
-    def __init__(self, required_deps: Optional[Iterable[str]] = None,  conversion_by_KDE: bool = False,\
-                 conversion_num_samples: int = 1024, conversion_fit_kwargs: dict | None = None, **dependencies):
+    def __init__(self, required_deps: Optional[Iterable[str]] = None,  conversion_by_KDE: bool = False,
+                 conversion_num_samples: int = 1024, conversion_fit_kwargs: Optional[dict] = None, **dependencies):
         
         self.dependencies: Dict[str, 'module'] = {}
         self.inputs: Dict[str, Dict[str, Any]] = {}
@@ -48,40 +41,35 @@ class module:
 
     def set_input(self, **input_defaults):
         for key, spec in input_defaults.items():
-            if isinstance(spec, InputSpec):
+            if isinstance(spec, dict):
                 self.inputs[key] = {
-                    'type': spec.type,
-                    'required': spec.required,
-                    'default': spec.default,
+                    'type': spec.get('type'),
+                    'required': spec.get('required', False),
+                    'default': spec.get('default', _MISSING),
                 }
             else:
-                # old-style default only
+                # Interpret plain value as default only
                 self.inputs[key] = {
                     'type': None,
                     'required': False,
                     'default': spec,
                 }
 
-
-    def run_func(self, f: Callable, *, name: Optional[str] = None, as_task: bool = False):
-        """
-        Register a function as a run function for this module.
-        Internalized: automatically wraps with type_check and Distribution conversion.
-        """
+    def run_func(self, f: Callable, *, name: Optional[str] = None, as_task: bool = False, return_type: Optional[type] = None):
         run_name = name or f.__name__
+        sig = inspect.signature(f)
+
+
         if run_name in self._run_funcs:
             raise RuntimeError(f"Run function '{run_name}' already registered")
         
         def _ensure_inputs_satisfied(kwargs: Dict[str, Any]) -> Dict[str, Any]:
             merged = dict(kwargs)
-            #print(f"KWARGS {kwargs}")
 
             # Fill defaults
             for k, meta in self.inputs.items():
                 if k not in merged and meta.get('default', _MISSING) is not _MISSING:
                     merged[k] = meta['default']
-
-            #print(f"MERGED {merged}")
 
             # Missing required?
             missing = [k for k, meta in self.inputs.items()
@@ -92,8 +80,7 @@ class module:
             # Unknown keys?
             unknown = [k for k in merged.keys() if k not in self.inputs]
             if unknown:
-                raise TypeError(f"Unknown inputs provided: {unknown}. "
-                                f"Declared inputs are: {list(self.inputs.keys())}")
+                raise TypeError(f"Unknown inputs provided: {unknown}. Declared inputs are: {list(self.inputs.keys())}")
 
             return merged
         
@@ -101,31 +88,18 @@ class module:
             missing = [k for k in self.required_deps if k not in self.dependencies]
             if missing:
                 raise RuntimeError(
-                    f"Missing required dependencies: {missing}. "
-                    f"Have: {list(self.dependencies.keys())}"
+                    f"Missing required dependencies: {missing}. Have: {list(self.dependencies.keys())}"
                 )
                     
         def _is_distribution_instance(v) -> bool:
-            # value is an instance
             return isinstance(v, _DISTR_INST)
 
         def _is_distribution_type(tp) -> bool:
-            # annotation is a type (base or subclass)
             return isinstance(tp, type) and (tp in _DISTR_BASE or issubclass(tp, _DISTR_BASE))
             
         def type_check(args, kwargs, *, f):
-            """
-            - If annotation expects a distribution:
-                * If base type (Distribution/Multivariate): value must be distribution-like.
-                * If a specific subclass: require that subclass; else convert via .from_distribution.
-            - Else if annotation is a plain class: isinstance(value, that class).
-            - Skips Union/Optional/generics by design.
-            """
             hints = get_type_hints(f)
-            bound = inspect.signature(f).bind_partial(*args, **kwargs)
-            bound.apply_defaults()
-
-            for name, value in bound.arguments.items():
+            for name, value in kwargs.items():
                 if name == "self":
                     continue
 
@@ -133,15 +107,10 @@ class module:
                 if expected is None:
                     continue
 
-                # ---- Distribution-typed parameter ----
                 if _is_distribution_type(expected):
-                    print("It is a distribution")
-                    # Specific subclass (not the base)
+                    # Specific subclass (not base)
                     if expected not in _DISTR_BASE and issubclass(expected, _DISTR_BASE):
                         if not isinstance(value, expected):
-                            print("Conversion Happening")
-                            print(f"converting from {value} to {expected}")
-                            # === CONVERSION HERE ===
                             converted = expected.from_distribution(
                                 value,
                                 num_samples=self._conv_num_samples,
@@ -150,66 +119,63 @@ class module:
                             )
                             if not isinstance(converted, expected):
                                 raise TypeError(
-                                    f"Conversion for '{name}' did not produce {expected.__name__}; "
-                                    f"got {type(converted).__name__}"
+                                    f"Conversion for '{name}' did not produce {expected.__name__}; got {type(converted).__name__}"
                                 )
-                            # write back so the wrapped function receives the right type
                             kwargs[name] = converted
- 
                     else:
-                        # Base type expected → accept any distribution-like instance
                         if not _is_distribution_instance(value):
                             raise TypeError(
-                                f"Argument '{name}' must be a distribution-like "
-                                f"(Distribution/Multivariate/Empirical/Bootstrap); got {type(value).__name__}"
+                                f"Argument '{name}' must be distribution-like (Distribution/Multivariate/Empirical/Bootstrap); "
+                                f"got {type(value).__name__}"
                             )
                     continue
 
-                # ---- Plain class annotation (e.g., np.ndarray, int, float, ...) ----
                 if isinstance(expected, type):
                     if not isinstance(value, expected):
                         raise TypeError(
                             f"Argument '{name}' expected {expected.__name__}; got {type(value).__name__}"
                         )
-                    continue
-
             return args, kwargs
 
-
-        # --- Wrapper ---
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
             _ensure_dependencies_available()
-            kwargs = _ensure_inputs_satisfied(kwargs)
-            args, kwargs= type_check(args, kwargs, f=f)
-            return f(*args, **kwargs)
+            bound = sig.bind_partial(*args, **kwargs)
+            bound.apply_defaults()
+            bound_args = bound.arguments
+            bound_args = _ensure_inputs_satisfied(bound_args)
+            _, bound_args = type_check((), bound_args, f=f)
+            result = f(**bound_args)
+
+            if return_type is not None:
+                if not isinstance(result, return_type):
+                    if hasattr(return_type, 'from_distribution'):
+                        result = return_type.from_distribution(
+                            result,
+                            num_samples=self._conv_num_samples,
+                            conversion_by_KDE=self._conv_by_kde,
+                            **self._conv_fit_kwargs,
+                        )
+                    else:
+                        raise TypeError(
+                            f"Return value is not instance of {return_type}, "
+                            "and 'from_distribution' method is not available for conversion."
+                        )
+            return result
+
 
         # Wrap as Prefect flow or task
-        #if as_task:
-        #    pf = task(wrapper)
-        #    self._prefect_task = pf
-        #else:
-        #    pf = flow(wrapper)
-        #    self._prefect_flow = pf
+        if as_task:
+            pf = task(wrapper)
+            self._prefect_task = pf
+        else:
+            pf = flow(wrapper)
+            self._prefect_flow = pf
 
-        # Register
-        #self._run_funcs[run_name] = pf
-        #return pf
-        self._run_funcs[run_name]= wrapper
-        return wrapper
-
-    def run(self, name: Optional[str] = None, **inputs):
-        if not self._run_funcs:
-            raise RuntimeError("No run functions registered")
-        if name is None:
-            if len(self._run_funcs) == 1:
-                name = next(iter(self._run_funcs))
-            else:
-                raise ValueError("Multiple run functions registered; specify which to run")
-        run_func = self._run_funcs.get(name)
-        if run_func is None:
-            raise ValueError(f"Run function '{name}' not found")
-        return run_func(**inputs)
+        # Register and assign as attribute for direct call
+        self._run_funcs[run_name] = pf
+        setattr(self, run_name, pf)
+        return pf
 
     def __repr__(self):
         return f"<module deps={list(self.dependencies.keys())} inputs={list(self.inputs.keys())} run_funcs={list(self._run_funcs.keys())}>"
