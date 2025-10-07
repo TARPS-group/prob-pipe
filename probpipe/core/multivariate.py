@@ -170,7 +170,7 @@ class Normal1D(Multivariate[np.floating]):
             raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False,  **fit_kwargs: Any) -> 'Normal1D':
+    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False,  **fit_kwargs: Any) -> 'Normal1D':   
         #n = int(fit_kwargs.get("n", 2000))
         
         xs = np.asarray(convert_from.sample(num_samples), dtype=float)

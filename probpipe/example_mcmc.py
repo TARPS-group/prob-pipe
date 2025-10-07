@@ -26,4 +26,17 @@ samples = mcmc.calculate_posterior(
     proposal_std=0.5,
 )
 
-print("First 10 posterior samples:", samples[:10])
+print(samples)
+
+
+# Requesting Normal1D via module call with return_type:
+posterior_norm = mcmc.calculate_posterior(
+    num_samples=100,
+    initial_param=0.0,
+    data=observed_data,
+    proposal_std=0.5,
+    return_type = Normal1D, # this will trigger conversion 
+)
+
+print(type(posterior_norm))  # <class 'Normal1D'>
+print(posterior_norm.mean(), posterior_norm.cov())  # mean and std dev of posterior

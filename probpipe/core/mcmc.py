@@ -79,7 +79,6 @@ class MetropolisHastingsModule(module):
         self.sample_posterior = self.run_func(sample_posterior)
 
 
-
 class MCMCModule(module):
     REQUIRED_DEPS = {'likelihood', 'prior', 'sampler'}
 
@@ -90,9 +89,10 @@ class MCMCModule(module):
             initial_param={'type': float, 'required': True},
             data={'type': (list, np.ndarray), 'required': True},
             proposal_std={'type': float, 'default': 1.0},
+            return_type={'type': str, 'default': 'empirical'},  # optional, for user override
         )
 
-        def calculate_posterior(num_samples, initial_param, data, proposal_std=1.0):
+        def calculate_posterior(num_samples, initial_param, data, proposal_std=1.0, return_type='empirical'):
             likelihood = self.dependencies['likelihood']
             prior = self.dependencies['prior']
             sampler = self.dependencies['sampler']
@@ -100,14 +100,19 @@ class MCMCModule(module):
             def log_target(param):
                 return likelihood.log_likelihood(data=data, param=param) + prior.log_prob(param)
 
-            return sampler.sample_posterior(
+            samples = sampler.sample_posterior(
                 log_target=log_target,
                 num_samples=num_samples,
                 initial_state=initial_param,
                 proposal_std=proposal_std,
             )
-        
-        self.calculate_posterior = self.run_func(calculate_posterior, return_type = Normal1D)
+            samples_array = np.asarray(samples).reshape(-1, 1)  # shape (n_samples, 1)
+            return EmpiricalDistribution(samples=samples_array) 
+     
 
-
+        self.run_func(
+            calculate_posterior,
+            name="calculate_posterior",
+            return_type=Normal1D,  # This enables output auto-conversion inside the wrapper
+        )
 

@@ -55,7 +55,7 @@ class module:
                     'default': spec,
                 }
 
-    def run_func(self, f: Callable, *, name: Optional[str] = None, as_task: bool = False, return_type: Optional[type] = None):
+    def run_func(self, f: Callable, *, name: Optional[str] = None, as_task: bool = True, return_type: Optional[type] = None):
         run_name = name or f.__name__
         sig = inspect.signature(f)
 
@@ -98,8 +98,18 @@ class module:
             return isinstance(tp, type) and (tp in _DISTR_BASE or issubclass(tp, _DISTR_BASE))
             
         def type_check(args, kwargs, *, f):
+            """
+            - If annotation expects a distribution:
+                * If base type (Distribution/Multivariate): value must be distribution-like.
+                * If a specific subclass: require that subclass; else convert via .from_distribution.
+            - Else if annotation is a plain class: isinstance(value, that class).
+            - Skips Union/Optional/generics by design.
+            """
             hints = get_type_hints(f)
-            for name, value in kwargs.items():
+            bound = inspect.signature(f).bind_partial(*args, **kwargs)
+            bound.apply_defaults()
+
+            for name, value in bound.arguments.items():
                 if name == "self":
                     continue
 
@@ -107,10 +117,15 @@ class module:
                 if expected is None:
                     continue
 
+                # ---- Distribution-typed parameter ----
                 if _is_distribution_type(expected):
-                    # Specific subclass (not base)
+                    print("It is a distribution")
+                    # Specific subclass (not the base)
                     if expected not in _DISTR_BASE and issubclass(expected, _DISTR_BASE):
                         if not isinstance(value, expected):
+                            print("Conversion Happening")
+                            print(f"converting from {value} to {expected}")
+                            # === CONVERSION HERE ===
                             converted = expected.from_distribution(
                                 value,
                                 num_samples=self._conv_num_samples,
@@ -119,28 +134,37 @@ class module:
                             )
                             if not isinstance(converted, expected):
                                 raise TypeError(
-                                    f"Conversion for '{name}' did not produce {expected.__name__}; got {type(converted).__name__}"
+                                    f"Conversion for '{name}' did not produce {expected.__name__}; "
+                                    f"got {type(converted).__name__}"
                                 )
+                            # write back so the wrapped function receives the right type
                             kwargs[name] = converted
+ 
                     else:
+                        # Base type expected → accept any distribution-like instance
                         if not _is_distribution_instance(value):
                             raise TypeError(
-                                f"Argument '{name}' must be distribution-like (Distribution/Multivariate/Empirical/Bootstrap); "
-                                f"got {type(value).__name__}"
+                                f"Argument '{name}' must be a distribution-like "
+                                f"(Distribution/Multivariate/Empirical/Bootstrap); got {type(value).__name__}"
                             )
                     continue
+    
 
+
+                # ---- Plain class annotation (e.g., np.ndarray, int, float, ...) ----
                 if isinstance(expected, type):
                     if not isinstance(value, expected):
                         raise TypeError(
                             f"Argument '{name}' expected {expected.__name__}; got {type(value).__name__}"
                         )
+                    continue
+
             return args, kwargs
 
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
             _ensure_dependencies_available()
-            bound = sig.bind_partial(*args, **kwargs)
+            bound = sig.bind_partial(*args, **kwargs)  # needed for Prefect
             bound.apply_defaults()
             bound_args = bound.arguments
             bound_args = _ensure_inputs_satisfied(bound_args)
@@ -150,6 +174,7 @@ class module:
             if return_type is not None:
                 if not isinstance(result, return_type):
                     if hasattr(return_type, 'from_distribution'):
+                        # convert result to expected return_type
                         result = return_type.from_distribution(
                             result,
                             num_samples=self._conv_num_samples,

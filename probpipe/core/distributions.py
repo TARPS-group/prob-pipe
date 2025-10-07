@@ -1,9 +1,9 @@
-
 from typing import Generic, TypeVar, Callable, Any, Optional, Union
 from abc import ABC, abstractmethod
 import numpy as np
 from numpy.typing import NDArray
 from core.dist_utils import _as_2d
+
 
 
 T = TypeVar("T",bound=np.number)
@@ -76,9 +76,8 @@ class Distribution(Generic[T], ABC):
         """
         raise NotImplementedError("This method should be implemented by subclasses")
 
-from core.multivariate import MvNormal, Normal1D
 
-class EmpiricalDistribution:
+class EmpiricalDistribution(Distribution):
     """
     Generic container for (weighted) empirical samples in R^d.
     Intended for storing MCMC draws (or any Monte Carlo samples).
@@ -94,16 +93,13 @@ class EmpiricalDistribution:
 
     Notes
     -----
-    - This class does NOT inherit from your `Distribution`/`Multivariate` bases.
-      Parametric classes use `from_distribution(empirical, ...)` to fit/convert.
-    - Methods provided: sample (resample), mean, cov, var/std,
-      expectation (numeric estimate and optionally a Normal1D/MvNormal over the MC mean).
+    Implements Distribution interface.
     """
 
     def __init__(
         self,
-        samples: NDArray[np.floating],
-        weights: Optional[NDArray[np.floating]] = None,
+        samples: np.ndarray,
+        weights: Optional[np.ndarray] = None,
         *,
         rng: Optional[np.random.Generator] = None,
     ):
@@ -139,8 +135,6 @@ class EmpiricalDistribution:
         # cumulative weights for fast inverse-transform resampling
         self._cw = np.cumsum(self._w)
 
-    # ------------------- basic properties -------------------
-
     @property
     def n(self) -> int:
         """Number of stored samples."""
@@ -152,39 +146,34 @@ class EmpiricalDistribution:
         return self._d
 
     @property
-    def samples(self) -> NDArray[np.floating]:
+    def samples(self) -> np.ndarray:
         """A view of the stored samples, shape (n, d)."""
         return self._X
 
     @property
-    def weights(self) -> NDArray[np.floating]:
+    def weights(self) -> np.ndarray:
         """A view of normalized weights, shape (n,)."""
         return self._w
 
-    # ------------------- summaries -------------------
-
-    def mean(self) -> NDArray[np.floating]:
+    def mean(self) -> np.ndarray:
         """Weighted mean, shape (d,)."""
         return self._mean
 
-    def cov(self) -> NDArray[np.floating]:
+    def cov(self) -> np.ndarray:
         """Weighted *population* covariance, shape (d, d)."""
         return self._cov
 
-    def var(self) -> NDArray[np.floating]:
+    def var(self) -> np.ndarray:
         """Weighted population variance per dimension, shape (d,)."""
         return np.diag(self._cov)
 
-    def std(self) -> NDArray[np.floating]:
+    def std(self) -> np.ndarray:
         """Weighted population standard deviation per dimension, shape (d,)."""
         return np.sqrt(np.maximum(self.var(), 0.0))
 
-
-    # ------------------- resampling -------------------
-
-    def sample(self, n_samples: int, *, replace: bool = True) -> NDArray[np.floating]:
+    def sample(self, n_samples: int, *, replace: bool = True) -> np.ndarray:
         """
-        Resample draws from the empirical distribution with (by default) replacement,
+        Resample draws from the empirical distribution with replacement,
         using the stored weights. Returns shape (n_samples, d).
         """
         n_samples = int(n_samples)
@@ -193,49 +182,44 @@ class EmpiricalDistribution:
         idx = self._rng.choice(self._n, size=n_samples, replace=replace, p=self._w)
         return self._X[idx]
 
-    # alias
     rvs = sample
 
-    # ------------------- expectation helpers -------------------
+    def density(self, data: np.ndarray) -> np.ndarray:
+        raise NotImplementedError("Density not implemented for EmpiricalDistribution.")
+
+    def log_density(self, data: np.ndarray) -> np.ndarray:
+        raise NotImplementedError("Log density not implemented for EmpiricalDistribution.")
 
     def expectation(
         self,
-        func: Callable[[NDArray[np.floating]], NDArray],
+        func: Callable[[np.ndarray], np.ndarray],
         *,
         n_mc: int = 2048,
     ) -> Union["Normal1D", "MvNormal"]:
-        """
-        Estimate E[f(X)] under the empirical law.
-
-        scalar f: returns Normal1D(mean, std_error)
-        vector f: returns MvNormal(mean, cov_of_mean)
-
-        Notes:
-          - We evaluate f on ALL stored samples once (vectorized), using the empirical
-            weights to compute mean and (population) covariance of f(X).
-          - The uncertainty reported corresponds to the mean of f over n_mc IID draws
-            from the empirical distribution (CLT).
-        """
         Y = np.asarray(func(self._X), dtype=float)
 
         if Y.ndim == 1:
             m = float((self._w * Y).sum())
             var = float((self._w * (Y - m) ** 2).sum())
             se = np.sqrt(max(var, 0.0)) / np.sqrt(n_mc)
-            
             return Normal1D(m, max(se, 1e-12), rng=self._rng)
-           
         else:
-            Y = _as_2d(Y)  # (n, k)
-            m = (self._w[:, None] * Y).sum(axis=0)  # (k,)
+            Y = _as_2d(Y)
+            m = (self._w[:, None] * Y).sum(axis=0)
             diff = Y - m
-            cov = diff.T @ (diff * self._w[:, None])  # (k, k) population cov of f(X)
+            cov = diff.T @ (diff * self._w[:, None])
             cov_mean = cov / float(n_mc)
-
-            # small symmetrization + jitter for numerical stability
             cov_mean = 0.5 * (cov_mean + cov_mean.T) + 1e-12 * np.eye(cov_mean.shape[0])
-            
             return MvNormal(mean=m, cov=cov_mean, rng=self._rng)
+
+    @classmethod
+    def from_distribution(
+        cls,
+        convert_from: 'Distribution',
+        **fit_kwargs: Any,
+    ) -> 'EmpiricalDistribution':
+        samples = convert_from.sample(fit_kwargs.get("num_samples", 2048))
+        return cls(samples)
         
 
 
