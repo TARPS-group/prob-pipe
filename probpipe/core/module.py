@@ -4,11 +4,19 @@ from prefect import flow, task
 from core.distributions import Distribution, EmpiricalDistribution, BootstrapDistribution
 from core.multivariate import Normal1D, Multivariate
 from makefun import with_signature
+from dataclasses import dataclass
 import inspect
 
 _MISSING = object()
 _DISTR_BASE = (Distribution, Multivariate)
 _DISTR_INST = (Distribution, Multivariate, EmpiricalDistribution, BootstrapDistribution)
+
+@dataclass
+class InputSpec:
+    type: Optional[Type] = None
+    required: bool = False
+    default: Any = _MISSING #_MISSING means "no default"
+
 
 class module:
     # Contract-level default (subclasses can override this)
@@ -23,6 +31,9 @@ class module:
         self._conv_num_samples = conversion_num_samples
         self._conv_by_kde = conversion_by_KDE
         self._conv_fit_kwargs = conversion_fit_kwargs or {}
+
+        # keeping input specs per run function
+        self._inputs_for_run: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
         # Instance-level, editable copy of required deps
         self.required_deps: set[str] = set(required_deps) if required_deps is not None else set(self.REQUIRED_DEPS)
@@ -39,16 +50,17 @@ class module:
         """Optional runtime configuration hook."""
         self.required_deps.update(names)
 
+
     def set_input(self, **input_defaults):
         for key, spec in input_defaults.items():
-            if isinstance(spec, dict):
+            if isinstance(spec, InputSpec):
                 self.inputs[key] = {
-                    'type': spec.get('type'),
-                    'required': spec.get('required', False),
-                    'default': spec.get('default', _MISSING),
+                    'type': spec.type,
+                    'required': spec.required,
+                    'default': spec.default,
                 }
             else:
-                # Interpret plain value as default only
+                # old-style default only
                 self.inputs[key] = {
                     'type': None,
                     'required': False,
@@ -57,30 +69,64 @@ class module:
 
     def run_func(self, f: Callable, *, name: Optional[str] = None, as_task: bool = True, return_type: Optional[type] = None):
         run_name = name or f.__name__
-        sig = inspect.signature(f)
 
+        sig = inspect.signature(f)
 
         if run_name in self._run_funcs:
             raise RuntimeError(f"Run function '{run_name}' already registered")
         
-        def _ensure_inputs_satisfied(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        # infering inputs from signature at registration time 
+        def _autofill_inputs_from_signature(func: Callable, run_name: str) -> None:
+            hints = get_type_hints(func)
+            specs: Dict[str, Dict[str, Any]] = {}
+            for pname, param in sig.parameters.items():
+                if pname == "self":
+                    continue
+
+                # classifying required vs optional by default
+                has_default = (param.default is not inspect._empty)
+                default_val = param.default if has_default else _MISSING
+                required = not has_default
+
+                ann = hints.get(pname)
+                ptype = ann if isinstance(ann, type) else None
+
+                # not treating the dependency params as inputs. they’ll be injected by name
+                if pname in self.dependencies:
+                    continue
+
+                specs[pname] = {'type': ptype, 'required': required, 'default': default_val}
+
+            # merging any staged defaults from set_input() done before run registration
+            if "_default" in self._inputs_for_run:
+                specs = {**specs, **self._inputs_for_run["_default"]}
+                del self._inputs_for_run["_default"]
+
+            self._inputs_for_run[run_name] = specs
+        
+        
+        def _ensure_inputs_satisfied(kwargs: Dict[str, Any], *, run_name: str) -> Dict[str, Any]:
+            # using the per-run input schema
+            input_specs = self._inputs_for_run.get(run_name, {})
             merged = dict(kwargs)
 
-            # Fill defaults
-            for k, meta in self.inputs.items():
+            # Filling defaults
+            for k, meta in input_specs.items():
                 if k not in merged and meta.get('default', _MISSING) is not _MISSING:
                     merged[k] = meta['default']
 
             # Missing required?
-            missing = [k for k, meta in self.inputs.items()
-                    if meta.get('required') and k not in merged and meta.get('default', _MISSING) is _MISSING]
+            missing = [k for k, meta in input_specs.items()
+                       if meta.get('required') and k not in merged and meta.get('default', _MISSING) is _MISSING]
             if missing:
                 raise TypeError(f"Missing required inputs: {missing}")
 
-            # Unknown keys?
-            unknown = [k for k in merged.keys() if k not in self.inputs]
+            # Unknown keys? (ignore names that are parameters of the function but not inputs, e.g., deps)
+            allowed = set(input_specs.keys())
+            fn_params = set(sig.parameters.keys()) - {"self"}
+            unknown = [k for k in merged.keys() if k not in allowed and k not in fn_params]
             if unknown:
-                raise TypeError(f"Unknown inputs provided: {unknown}. Declared inputs are: {list(self.inputs.keys())}")
+                raise TypeError(f"Unknown inputs provided: {unknown}. Declared inputs are: {sorted(allowed)}")
 
             return merged
         
@@ -119,7 +165,10 @@ class module:
 
                 # ---- Distribution-typed parameter ----
                 if _is_distribution_type(expected):
-                    print("It is a distribution")
+                    #print("It is a distribution")
+                    #print(f"value is {value}")
+                    #print(f"expected is {expected}")
+
                     # Specific subclass (not the base)
                     if expected not in _DISTR_BASE and issubclass(expected, _DISTR_BASE):
                         if not isinstance(value, expected):
@@ -149,8 +198,6 @@ class module:
                             )
                     continue
     
-
-
                 # ---- Plain class annotation (e.g., np.ndarray, int, float, ...) ----
                 if isinstance(expected, type):
                     if not isinstance(value, expected):
@@ -160,16 +207,30 @@ class module:
                     continue
 
             return args, kwargs
+        
+        
+        #AUTO FILLING THE INPUTS HERE
+        _autofill_inputs_from_signature(f, run_name)
 
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
             _ensure_dependencies_available()
-            bound = sig.bind_partial(*args, **kwargs)  # needed for Prefect
-            bound.apply_defaults()
-            bound_args = bound.arguments
-            bound_args = _ensure_inputs_satisfied(bound_args)
-            _, bound_args = type_check((), bound_args, f=f)
-            result = f(**bound_args)
+
+            # 1) validating inputs against the per-run schema
+            user_kwargs = _ensure_inputs_satisfied(kwargs, run_name=run_name)
+
+            # 2) type checking + conversions on inputs only
+            _, user_kwargs = type_check((), user_kwargs, f=f)
+
+            # 3) inject dependencies by name (only the ones the function actually accepts)
+            #Injecting dependencies after validation/type_check so they aren’t treated as “unknown inputs”
+            sig_params = set(sig.parameters.keys())
+            dep_kwargs = {k: v for k, v in self.dependencies.items() if k in sig_params and k not in user_kwargs}
+
+            call_kwargs = {**dep_kwargs, **user_kwargs}
+
+            # 4) call and (optionally) post-convert return type
+            result = f(**call_kwargs)
 
             if return_type is not None:
                 if not isinstance(result, return_type):

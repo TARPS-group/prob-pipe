@@ -13,11 +13,11 @@ class GaussianPosteriorModule(module):
     def __init__(self, **deps):
         super().__init__(**deps)
 
-        self.set_input(
-            prior={'type': Distribution, 'required': True},  # accept any distribution subclass
-            y={'type': (list, np.ndarray), 'required': True},
-            sigma={'type': float, 'default': 1.0},
-        )
+        #self.set_input(
+        #   prior={'type': Distribution, 'required': True},  # accept any distribution subclass
+        #    y={'type': (list, np.ndarray), 'required': True},
+        #    sigma={'type': float, 'default': 1.0},
+        #)
 
         self._conv_num_samples = 2048
         self._conv_by_kde = False
@@ -26,7 +26,7 @@ class GaussianPosteriorModule(module):
         # Decorate and register internal calculate_posterior method
         self.run_func(self._calculate_posterior, name="calculate_posterior")
 
-    def _calculate_posterior(self, *, prior: Distribution, y: np.ndarray, sigma: float = 1.0):
+    def _calculate_posterior(self, *, prior: Normal1D, y: np.ndarray, sigma: float = 1.0):
         """
         Compute posterior Normal1D given Normal likelihood with known sigma,
         prior Normal1D (mu0, var0), and data y.
