@@ -299,6 +299,15 @@ class module:
                         )
             return result
 
+
+        # Wrap as Prefect flow or task
+        if as_task:
+            pf = task(wrapper)
+            self._prefect_task = pf
+        else:
+            #pf = flow(validate_parameters=False)(wrapper)
+            pf = flow(wrapper)
+            self._prefect_flow = pf
         pr_annot = task if as_task else flow
         pf = pr_annot(wrapper)
 

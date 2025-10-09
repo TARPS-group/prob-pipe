@@ -24,7 +24,7 @@ class GaussianPosteriorModule(module):
         self._conv_fit_kwargs = {}
 
         # Decorate and register internal calculate_posterior method
-        self.run_func(self._calculate_posterior, name="calculate_posterior")
+        self.run_func(self._calculate_posterior, name="calculate_posterior", as_task=False)
 
     def _calculate_posterior(self, *, prior: Normal1D, y: np.ndarray, sigma: float = 1.0):
         """
@@ -50,9 +50,9 @@ class GaussianPosteriorModule(module):
 
 gp = GaussianPosteriorModule()
 
-prior_norm = Normal1D(0, 5)
-post = gp.calculate_posterior(prior=prior_norm, y=np.array([1.2, 0.7, -0.3, 0.4]), sigma=1.0)
-print(post.mu, post.sigma)
+#prior_norm = Normal1D(0, 5)
+#post = gp.calculate_posterior(prior=prior_norm, y=np.array([1.2, 0.7, -0.3, 0.4]), sigma=1.0)
+#print(post.mu, post.sigma)
 
 emp_prior = EmpiricalDistribution(samples= np.array([1.3, 2.0, 3.3, 4.1, 5.1]).reshape(-1,1) )
 post2 = gp.calculate_posterior(prior=emp_prior, y=np.array([1.2, 0.7, 0.3, 0.4]), sigma=1.0)

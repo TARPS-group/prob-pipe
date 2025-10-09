@@ -136,4 +136,4 @@ __pycache__/
 
 # other OS or editor temporary files
 *.swp
-*.vscode/
+*.vscode/.DS_Store
