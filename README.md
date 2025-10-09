@@ -54,6 +54,7 @@ But, you may run into problems if you set as_task as True, meaning you are treat
 You can either use a virtual or conda environment. We have imported many libraries for this code. So, you will also need to satisfy the proper environment to be able to run the code. So, I am sharing my conda environment details in environment.yml (you can use this file to create a copy of my environment). 
 
 Store the environment.yml in your local computer and then type the following in your terminal:
+
 conda env create -f environment.yml 
 
 
