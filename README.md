@@ -39,23 +39,23 @@ self.run_func() is for registering the run function. It optionally takes the as_
 
 ## Notes for Prefect 
 To start the prefect engine, open up a fresh terminal and type:
-prefect server start
+**prefect server start**
 
 Then, go back to the terminal where you run the code, and type:
-prefect config set PREFECT_API_URL=http://127.0.0.1:4200/api 
+**prefect config set PREFECT_API_URL=http://127.0.0.1:4200/api**
 
 You can paste "http://127.0.0.1:4200" in your browser to see the Prefect interface in the server side. 
 
 Now, when you run a task or flow you can see the details in the Prefect interface. 
 
-But, you may run into problems if you set as_task as True, meaning you are treating your run function as flow. You may run into a problem if type conversion will be happening. Prefect flows automatically validate their inputs before it runs the function. So, you would get an error before our code even attempts for conversion. So, if that's the problem you are facing just set validate_parameters as False. validate_parameters is the parameter of the flow function (see flow(validate_parameters=False)(wrapper) in module.py)
+But, you may run into problems if you set as_task as False, meaning you are treating your run function as flow. You may run into a problem if type conversion will be happening. Prefect flows automatically validate their inputs before it runs the function. So, you would get an error before our code even attempts for an conversion. So, if that's the problem you are facing just set validate_parameters as False. validate_parameters is the parameter of the flow function (see flow(validate_parameters=False)(wrapper) in module.py)
 
 ## How to set the environment to run the code. 
 You can either use a virtual or conda environment. We have imported many libraries for this code. So, you will also need to satisfy the proper environment to be able to run the code. So, I am sharing my conda environment details in environment.yml (you can use this file to create a copy of my environment). 
 
 Store the environment.yml in your local computer and then type the following in your terminal:
 
-conda env create -f environment.yml 
+**conda env create -f environment.yml**
 
 
 
