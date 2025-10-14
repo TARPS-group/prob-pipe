@@ -19,39 +19,68 @@ class InputSpec:
 
 
 class module:
-    # Contract-level default (subclasses can override this)
+    """
+    Base class for modules with dependency injection, input specification,
+    type checking, and Prefect task/flow integration.
+    """
+
+    # Contract-level default required dependencies
     REQUIRED_DEPS: ClassVar[FrozenSet[str]] = frozenset()
 
-    def __init__(self, required_deps: Optional[Iterable[str]] = None,  conversion_by_KDE: bool = False,
-                 conversion_num_samples: int = 1024, conversion_fit_kwargs: Optional[dict] = None, **dependencies):
-        
-        self.dependencies: Dict[str, 'module'] = {}
-        self.inputs: Dict[str, Dict[str, Any]] = {}
-        self._run_funcs: Dict[str, Callable] = {}
+    def __init__(
+        self,
+        required_deps: Optional[Iterable[str]] = None,
+        conversion_by_KDE: bool = False,
+        conversion_num_samples: int = 1024,
+        conversion_fit_kwargs: Optional[dict] = None,
+        **dependencies: 'module',
+    ):
+        """
+        Initialize the module.
+
+        Args:
+            required_deps: Optional iterable of required dependency names.
+            conversion_by_KDE: Use KDE for distribution conversion if True.
+            conversion_num_samples: Number of samples for distribution conversion.
+            conversion_fit_kwargs: Additional kwargs for distribution fit.
+            dependencies: Named module dependencies.
+        """
+
+        self.dependencies: Dict[str, module] = dependencies.copy()  
+
+        self.inputs: Dict[str, Dict[str, Any]] = {}  
+        self._run_funcs: Dict[str, Callable] = {}   # Registered run functions
+
         self._conv_num_samples = conversion_num_samples
         self._conv_by_kde = conversion_by_KDE
         self._conv_fit_kwargs = conversion_fit_kwargs or {}
 
-        # keeping input specs per run function
+        # Per-run-function input specification (built from signature or overridden)
         self._inputs_for_run: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
-        # Instance-level, editable copy of required deps
+        # Instance-level set of required dependency names
         self.required_deps: set[str] = set(required_deps) if required_deps is not None else set(self.REQUIRED_DEPS)
 
-        for name, dep in dependencies.items():
-            if name in self.dependencies:
-                raise ValueError(f"Dependency '{name}' already registered")
-            self.dependencies[name] = dep
-
+        # Prefect decorated flow or task placeholders for last registered run func
         self._prefect_task: Optional[Callable] = None
         self._prefect_flow: Optional[Callable] = None
 
     def require_deps(self, *names: str) -> None:
-        """Optional runtime configuration hook."""
+        """
+        Add required dependencies at runtime.
+
+        Args:
+            names: Names of dependencies to require.
+        """
         self.required_deps.update(names)
 
-
     def set_input(self, **input_defaults):
+        """
+        Set input specifications or defaults.
+
+        Args:
+            input_defaults: Mapping from input name to InputSpec or default value.
+        """
         for key, spec in input_defaults.items():
             if isinstance(spec, InputSpec):
                 self.inputs[key] = {
@@ -67,9 +96,27 @@ class module:
                     'default': spec,
                 }
 
-    def run_func(self, f: Callable, *, name: Optional[str] = None, as_task: bool = True, return_type: Optional[type] = None):
-        run_name = name or f.__name__
+    def run_func(
+            self, 
+            f: Callable, 
+            *, 
+            name: Optional[str] = None, 
+            as_task: bool = True, 
+            return_type: Optional[type] = None,
+            ) -> Callable:
+        """
+        Register a function as a run function decorated with Prefect task or flow.
 
+        Args:
+            f: The user function to register.
+            name: Optional name for the run function; defaults to f.__name__.
+            as_task: If True, decorate as Prefect task; else decorate as flow.
+            return_type: Expected return type; if provided, enforces or attempts conversion.
+
+        Returns:
+            The decorated Prefect callable (task or flow).
+        """
+        run_name = name or f.__name__
         sig = inspect.signature(f)
 
         if run_name in self._run_funcs:
@@ -77,6 +124,9 @@ class module:
         
         # infering inputs from signature at registration time 
         def _autofill_inputs_from_signature(func: Callable, run_name: str) -> None:
+            """
+            Autofill input specs for a run function based on its signature and annotations.
+            """
             hints = get_type_hints(func)
             specs: Dict[str, Dict[str, Any]] = {}
             for pname, param in sig.parameters.items():
@@ -249,14 +299,9 @@ class module:
                         )
             return result
 
+        pr_annot = task if as_task else flow
+        pf = pr_annot(wrapper)
 
-        # Wrap as Prefect flow or task
-        if as_task:
-            pf = task(wrapper)
-            self._prefect_task = pf
-        else:
-            pf = flow(wrapper)
-            self._prefect_flow = pf
 
         # Register and assign as attribute for direct call
         self._run_funcs[run_name] = pf
