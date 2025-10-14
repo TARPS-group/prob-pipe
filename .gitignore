@@ -91,6 +91,9 @@ ENV/
 .venv/
 env.bak/
 venv.bak/
+.venv311
+.venv311.*
+
 
 # VSCode
 .vscode/
@@ -118,3 +121,19 @@ venv.bak/
 # profiling
 *.prof
 .profile
+
+# macOS system files
+.DS_Store
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# other OS or editor temporary files
+*.swp
+*.vscode/
