@@ -1,10 +1,8 @@
 from core.module import module
-from core.distributions import Distribution
 import numpy as np
-from typing import Union
 from core.multivariate import Normal1D
 from core.distributions import EmpiricalDistribution
-from typing import Callable, Any, Dict, Optional
+from typing import Callable
 
 
 

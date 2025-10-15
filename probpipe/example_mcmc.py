@@ -1,10 +1,7 @@
-from core.module import module
-from core.distributions import Distribution
 import numpy as np
 from core.multivariate import Normal1D
-from core.distributions import EmpiricalDistribution
 from core.mcmc import LikelihoodModule, PriorModule, MetropolisHastingsModule, MCMCModule
-from typing import Callable, Any, Dict, Optional
+
 
 
 

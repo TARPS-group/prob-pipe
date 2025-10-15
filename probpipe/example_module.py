@@ -1,6 +1,6 @@
 from core.module import module
 from core.multivariate import Normal1D
-from core.distributions import EmpiricalDistribution, Distribution
+from core.distributions import EmpiricalDistribution
 import numpy as np
 
 
@@ -24,7 +24,7 @@ class GaussianPosteriorModule(module):
         self._conv_fit_kwargs = {}
 
         # Decorate and register internal calculate_posterior method
-        self.run_func(self._calculate_posterior, name="calculate_posterior", as_task=False)
+        self.run_func(self._calculate_posterior, name="calculate_posterior", as_task=True)
 
     def _calculate_posterior(self, *, prior: Normal1D, y: np.ndarray, sigma: float = 1.0):
         """
