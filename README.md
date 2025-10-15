@@ -51,11 +51,18 @@ Now, when you run a task or flow you can see the details in the Prefect interfac
 But, you may run into problems if you set as_task as False, meaning you are treating your run function as flow. You may run into a problem if type conversion will be happening. Prefect flows automatically validate their inputs before it runs the function. So, you would get an error before our code even attempts for an conversion. So, if that's the problem you are facing just set validate_parameters as False. validate_parameters is the parameter of the flow function (see flow(validate_parameters=False)(wrapper) in module.py)
 
 ## How to set the environment to run the code. 
-You can either use a virtual or conda environment. We have imported many libraries for this code. So, you will also need to satisfy the proper environment to be able to run the code. So, I am sharing my conda environment details in environment.yml (you can use this file to create a copy of my environment). 
+You can either use a virtual or conda environment. 
+We have listed the minimum required dependencies for you inside min_reqs.txt. 
+You can run every file inside probpipe directory using these dependencies. 
+Follow these steps to create the environment needed to run the code:
 
-Store the environment.yml in your local computer and then type the following in your terminal:
+**conda create -n probpipe -c conda-forge python=3.12 -y**
+**conda activate probpipe**
+**pip install -e .[dependencies]**
 
-**conda env create -f environment.yml**
+Make sure you have the "pyproject.toml" file in your directory. 
+
+
 
 
 
