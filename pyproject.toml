@@ -8,7 +8,7 @@ name = "probpipe"                # you can still call your importable pkg "probp
 version = "0.1.0"
 description = "Tools for probabilistic data‐processing pipelines"
 readme = "README.md"
-requires-python = ">=3.6"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [
   { name = "Jonathan Huggins", email = "huggins@bu.edu" },
@@ -17,7 +17,8 @@ authors = [
 ]
 dependencies = [
   "numpy>=1.20",
-  "scipy>=1.7"
+  "scipy>=1.7",
+  "prefect>=3"
 ]
 
 [project.urls]

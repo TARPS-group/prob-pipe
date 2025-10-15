@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from probpipe.Module.module import Module
+from probpipe.core.module import Module
 
 
 class TestModule(unittest.TestCase):

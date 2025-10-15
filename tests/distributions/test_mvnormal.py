@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from probpipe.distributions.multivariate import MvNormal
+from probpipe.core.multivariate import MvNormal
 
 class TestMvNormal(unittest.TestCase):
 
