@@ -36,5 +36,5 @@ setup(
         "Operating System :: OS Independent",
     ],
 
-    include_package_data=True,   # if you have a MANIFEST.in or package_data
+    include_package_data=False,   # True, if you have a MANIFEST.in or package_data
 )

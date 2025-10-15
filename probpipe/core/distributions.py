@@ -7,7 +7,6 @@ from core.dist_utils import _as_2d
 
 
 T = TypeVar("T",bound=np.number)
-#T=float, int, complex
 Float_T = TypeVar("FloatDT", bound=np.floating)
 
 
@@ -19,7 +18,6 @@ class Distribution(Generic[T], ABC):
     Abstract base class for any distribution class.
     """
 
-    #@abstractmethod
     def sample(self, n_samples: int) -> NDArray[T]:
         """
         Optional. If a subclass can’t sample, it may leave this unimplemented.
@@ -29,7 +27,6 @@ class Distribution(Generic[T], ABC):
         """
         raise NotImplementedError("This method may be implemented by subclasses (optional)")
     
-    #@abstractmethod
     def density(self, data: NDArray) -> NDArray[np.floating]:
         """
         Optional. If a subclass can’t sample, it may leave this unimplemented.
@@ -40,7 +37,6 @@ class Distribution(Generic[T], ABC):
         """
         raise NotImplementedError("This method may be implemented by subclasses (optional)")
     
-    #@abstractmethod
     def log_density(self, data: NDArray) -> NDArray[np.floating]:
         """
         Optional. If a subclass can’t sample, it may leave this unimplemented.
@@ -51,8 +47,7 @@ class Distribution(Generic[T], ABC):
         """
         raise NotImplementedError("This method may be implemented by subclasses (optional)")
     
-    #func: Callable[[T], NDArray]
-    #@abstractmethod
+
     def expectation(self, func: Callable[[NDArray[T]], NDArray]) -> 'Distribution':
         """
         Optional. If a subclass can’t sample, it may leave this unimplemented.
@@ -67,7 +62,7 @@ class Distribution(Generic[T], ABC):
     @abstractmethod
     def from_distribution(
         cls,
-        convert_from: 'Distribution', #OR 'Distribution[T]'
+        convert_from: 'Distribution', 
         **fit_kwargs: Any,
     ) -> 'Distribution[T]':
         """
@@ -76,6 +71,7 @@ class Distribution(Generic[T], ABC):
         """
         raise NotImplementedError("This method should be implemented by subclasses")
 
+from core.multivariate import MvNormal, Normal1D
 
 class EmpiricalDistribution(Distribution):
     """
@@ -223,162 +219,47 @@ class EmpiricalDistribution(Distribution):
         
 
 
-class BootstrapDistribution:
+class BootstrapDistribution(EmpiricalDistribution):
     """
-    Container for bootstrap replicates in R^k (k = statistic dimension).
+    Empirical distribution over bootstrap replicates of a statistic.
 
-    Parameters
-    ----------
-    replicates : array-like, shape (B, k) or (B,)
-        Bootstrapped statistic values (theta* draws).
-    weights : array-like, shape (B,), optional
-        Nonnegative replicate weights (rare for classic bootstrap). Will be normalized
-        to sum to 1. If None, uniform 1/B.
-    rng : np.random.Generator, optional
-        RNG for resampling replicates via `sample()` / `rvs()`.
+    Semantics:
+      - 'samples' (inherited) are the bootstrap replicates theta* (shape (B, k)).
+      - 'replicates' is an alias to 'samples' for user-facing clarity.
+      - All summaries (mean/cov/var/std), resampling (sample/rvs), and
+        expectation() behavior are inherited from EmpiricalDistribution.
 
     Notes
     -----
-    - This class is NOT a parametric distribution.
-    - Mirrors your EmpiricalDistribution ergonomics: mean/cov/var/std, sample/rvs,
-      and expectation() -> Normal1D / MvNormal over the Monte-Carlo mean of f(theta*).
+    This class intentionally reuses EmpiricalDistribution's implementation to avoid
+    duplication. The only additions are naming (replicates alias) and a convenience
+    constructor 'from_data' to generate bootstrap replicates.
     """
-
-    # ------------------------------ init ------------------------------
 
     def __init__(
         self,
-        replicates: NDArray[np.floating],
-        weights: Optional[NDArray[np.floating]] = None,
+        replicates: np.ndarray,
+        weights: Optional[np.ndarray] = None,
         *,
         rng: Optional[np.random.Generator] = None,
     ):
-        Theta = _as_2d(replicates)  # (B, k)
-        B, k = Theta.shape
-        if B < 1:
-            raise ValueError("BootstrapDistribution requires at least one replicate.")
+        # Just forward to EmpiricalDistribution
+        super().__init__(replicates, weights, rng=rng)
 
-        if weights is None:
-            w = np.full(B, 1.0 / B, dtype=float)
-        else:
-            w = np.asarray(weights, dtype=float).reshape(-1)
-            if w.shape[0] != B:
-                raise ValueError("weights must have shape (B,).")
-            if np.any(w < 0):
-                raise ValueError("weights must be nonnegative.")
-            s = w.sum()
-            if s <= 0:
-                raise ValueError("weights must sum to a positive value.")
-            w = w / s
-
-        self._Theta = Theta.astype(float)   # (B, k)
-        self._w = w.astype(float)           # (B,)
-        self._B = int(B)
-        self._k = int(k)
-        self._rng = rng or np.random.default_rng()
-
-        # Precompute weighted mean & population covariance on replicates
-        self._mean = (self._w[:, None] * self._Theta).sum(axis=0)           # (k,)
-        diff = self._Theta - self._mean
-        self._cov = diff.T @ (diff * self._w[:, None])                      # (k, k)
-
-        self._cw = np.cumsum(self._w)  # for inverse-transform resampling of replicates
-
-    # ------------------------ basic properties ------------------------
+    # --------- Aliases for semantics ---------
 
     @property
-    def n(self) -> int:
-        """Number of bootstrap replicates (B)."""
-        return self._B
+    def replicates(self) -> np.ndarray:
+        """Alias for the stored bootstrap replicates, shape (B, k)."""
+        return self.samples
 
-    @property
-    def d(self) -> int:
-        """Dimensionality of statistic (k)."""
-        return self._k
-
-    @property
-    def replicates(self) -> NDArray[np.floating]:
-        """View of stored replicates, shape (B, k)."""
-        return self._Theta
-
-    @property
-    def weights(self) -> NDArray[np.floating]:
-        """View of normalized replicate weights, shape (B,)."""
-        return self._w
-
-    # --------------------------- summaries ----------------------------
-
-    def mean(self) -> NDArray[np.floating]:
-        """Weighted mean of replicates, shape (k,)."""
-        return self._mean
-
-    def cov(self) -> NDArray[np.floating]:
-        """Weighted population covariance of replicates, shape (k, k)."""
-        return self._cov
-
-    def var(self) -> NDArray[np.floating]:
-        """Weighted population variance of replicates, shape (k,)."""
-        return np.diag(self._cov)
-
-    def std(self) -> NDArray[np.floating]:
-        """Weighted population standard deviation, shape (k,)."""
-        return np.sqrt(np.maximum(self.var(), 0.0))
-
-    # --------------------- resampling of replicates -------------------
-
-    def sample(self, n_samples: int, *, replace: bool = True) -> NDArray[np.floating]:
-        """
-        Resample **replicates** (theta* values) with given weights.
-        Returns shape (n_samples, k).
-        """
-        n_samples = int(n_samples)
-        if not replace and n_samples > self._B:
-            raise ValueError("Cannot sample more than B without replacement.")
-        idx = self._rng.choice(self._B, size=n_samples, replace=replace, p=self._w)
-        return self._Theta[idx]
-
-    # alias
-    rvs = sample
-
-    # ------------------------- expectation ---------------------------
-
-    def expectation(
-        self,
-        func: Callable[[NDArray[np.floating]], NDArray],
-        *,
-        n_mc: int = 2048,
-    ) -> Union["Normal1D", "MvNormal"]:
-        """
-        Return a distribution over E[f(Theta*)] under the bootstrap law (on replicates).
-
-        Scalar f -> Normal1D(mean, std_error)
-        Vector f -> MvNormal(mean, cov_of_mean)
-
-        where mean and (population) covariance are computed with replicate weights,
-        and standard error / covariance-of-mean are scaled by 1/sqrt(n_mc) / 1/n_mc.
-        """
-        Y = np.asarray(func(self._Theta), dtype=float)
-
-        if Y.ndim == 1:
-            m = float((self._w * Y).sum())
-            var = float((self._w * (Y - m) ** 2).sum())
-            se = np.sqrt(max(var, 0.0)) / np.sqrt(n_mc)
-            return Normal1D(m, max(se, 1e-12), rng=self._rng)
-        else:
-            Y = _as_2d(Y)  # (B, k2)
-            m = (self._w[:, None] * Y).sum(axis=0)
-            diff = Y - m
-            cov = diff.T @ (diff * self._w[:, None])      # (k2, k2)
-            cov_mean = 0.5 * (cov + cov.T) / float(n_mc)  # symmetrize & scale
-            cov_mean += 1e-12 * np.eye(cov_mean.shape[0])
-            return MvNormal(mean=m, cov=cov_mean, rng=self._rng)
-
+    # --------- Convenience constructor ---------
 
     @classmethod
     def from_data(
         cls,
-        data: NDArray[np.floating],
-        stat_fn: Callable[[NDArray[np.floating]], NDArray],
+        data: np.ndarray,
+        stat_fn: Callable[[np.ndarray], np.ndarray],
         *,
         B: int = 1000,
         axis: int = 0,
@@ -393,9 +274,8 @@ class BootstrapDistribution:
             Observations (samples along `axis`).
         stat_fn : callable
             Function mapping a resampled dataset (with samples on axis 0) to a
-            statistic vector (shape (k,) or scalar).
-            NOTE: we will pass the resampled array with **samples on axis 0**.
-                  If your original data had samples on another axis, we move it here.
+            statistic vector (shape (k,) or scalar). We will pass the resampled
+            array with **samples on axis 0**.
         B : int
             Number of bootstrap replicates.
         axis : int
@@ -415,12 +295,11 @@ class BootstrapDistribution:
 
         reps = []
         for _ in range(int(B)):
-            idx = rng.integers(0, n, size=n)          # sample n rows with replacement
-            Xb = X[idx]                                # (n, ...)
+            idx = rng.integers(0, n, size=n)  # sample n rows with replacement
+            Xb = X[idx]
             theta = np.asarray(stat_fn(Xb), dtype=float).reshape(-1)
             reps.append(theta)
 
-        Theta = np.vstack(reps)                        # (B, k)
+        Theta = np.vstack(reps)  # (B, k)
         return cls(Theta, rng=rng)
-
     

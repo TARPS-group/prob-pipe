@@ -56,8 +56,8 @@ We have listed the minimum required dependencies for you inside min_reqs.txt.
 You can run every file inside probpipe directory using these dependencies. 
 Follow these steps to create the environment needed to run the code:
 
-**conda create -n probpipe -c conda-forge python=3.12 -y**
-**conda activate probpipe**
+**conda create -n <name_of_the_env> -c conda-forge python=3.12.11 -y**
+**conda activate <name_of_the_env>**
 **pip install -e .[dependencies]**
 
 Make sure you have the "pyproject.toml" file in your directory. 

@@ -185,26 +185,6 @@ class Normal1D(Multivariate[np.floating]):
         sigma = float(xs.std(ddof=1))
         return cls(mu, max(sigma, 1e-12))
 
-    # -------------------- helpers --------------------
-
-    @staticmethod
-    def _to_1d_vector(values: NDArray) -> NDArray[np.floating]:
-        """
-        Normalize input to a 1-D vector (n,):
-          - scalar -> (1,)
-          - (n,)   -> (n,)
-          - (n,1)  -> (n,)
-        """
-        arr = np.asarray(values, dtype=float)
-        if arr.ndim == 0:
-            return arr.reshape(1)
-        if arr.ndim == 1:
-            return arr
-        if arr.ndim == 2 and arr.shape[1] == 1:
-            return arr[:, 0]
-        raise ValueError("values must be scalar, (n,), or (n,1) for Normal1D (event dim = 1).")
-
-
 
 
 
