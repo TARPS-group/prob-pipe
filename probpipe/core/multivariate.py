@@ -1,409 +1,92 @@
-#This module implements Subclasses (not Mixins)
+from typing import TypeVar, Callable, Any, Optional
+from abc import ABC, abstractmethod
 
-from typing import Generic, TypeVar, Callable, Any, Optional, Union, Tuple
-from numpy.typing import NDArray
 import numpy as np
-import pymc as pm
+from numpy.typing import NDArray
+
+import scipy.stats as sp
 from scipy.stats import norm, multivariate_normal
-from scipy.spatial.distance import cdist
-from scipy.stats import gaussian_kde
 from scipy.stats import multinomial as _multinomial
 from scipy.stats import dirichlet as _dirichlet
 from scipy.stats import binom as _sbinom
 from scipy.stats import beta as _sps_beta
 
-from distributions.abstract_distributions import Distribution, Multivariate
+from ._utils import _as_2d, _symmetrize_spd, _clip_unit_interval, _to_1d_vector
+from .distributions import Distribution
 
+__all__ = [
+    "Multivariate",
+    "Normal1D",
+    "MvNormal",
+    "GaussianKDE",
+    "Multinomial",
+    "Dirichlet",
+    "Binomial",
+    "Beta",
+]
 
-T = TypeVar("T",bound=np.number)
+T = TypeVar("T", bound=np.number)
+Float_T = TypeVar("FloatDT", bound=np.floating)
 
-
-# ----------------------------- Utilities -----------------------------
-
-def _as_2d(x: NDArray) -> NDArray[np.floating]:
-    x = np.asarray(x)
-    if x.ndim == 1:
-        return x.reshape(-1, 1)
-    return x
-
-
-def _symmetrize_spd(C: NDArray[np.floating], jitter: float = 1e-9, eps: float = 1e-12) -> NDArray[np.floating]:
-    C = np.asarray(C, dtype=float)
-    C = 0.5 * (C + C.T)
-    eigmin = np.linalg.eigvalsh(C).min()
-    # Add jitter only if needed
-    if eigmin < eps:
-        C = C + (max(jitter, eps - eigmin) + 1e-12) * np.eye(C.shape[0])
-    return C
-
-# ------------------- Empirical Distributions ------------------------
-
-class EmpiricalDistribution:
+class Multivariate(Distribution[Float_T], ABC):
     """
-    Generic container for (weighted) empirical samples in R^d.
-    Intended for storing MCMC draws (or any Monte Carlo samples).
-    
-    Parameters
-    ----------
-    samples : array-like, shape (n, d) or (n,)
-        Stored draws.
-    weights : array-like, shape (n,), optional
-        Nonnegative weights; will be normalized to sum to 1. If None, uniform.
-    rng : np.random.Generator, optional
-        RNG used for resampling.
-
-    Notes
-    -----
-    - This class does NOT inherit from your `Distribution`/`Multivariate` bases.
-      Parametric classes use `from_distribution(empirical, ...)` to fit/convert.
-    - Methods provided: sample (resample), mean, cov, var/std,
-      expectation (numeric estimate and optionally a Normal1D/MvNormal over the MC mean).
+    Abstract base for multivariate, real-valued vector distributions with fixed dimension d.
+    Event shape is assumed to be (d,). Subclasses should ensure consistency of shapes.
     """
 
-    def __init__(
-        self,
-        samples: NDArray[np.floating],
-        weights: Optional[NDArray[np.floating]] = None,
-        *,
-        rng: Optional[np.random.Generator] = None,
-    ):
-        X = _as_2d(samples)
-        n, d = X.shape
-        if n < 1:
-            raise ValueError("Empirical requires at least one sample.")
+    # ---- Core summary statistics ----
+    @abstractmethod
+    def mean(self) -> NDArray[Float_T]:
+        """
+        Return the mean vector μ with shape (d,).
+        If the mean does not exist (e.g., Cauchy), raise NotImplementedError.
+        """
+        raise NotImplementedError
 
-        if weights is None:
-            w = np.full(n, 1.0 / n, dtype=float)
-        else:
-            w = np.asarray(weights, dtype=float).reshape(-1)
-            if w.shape[0] != n:
-                raise ValueError("weights must have shape (n,).")
-            if np.any(w < 0):
-                raise ValueError("weights must be nonnegative.")
-            s = w.sum()
-            if s <= 0:
-                raise ValueError("weights must sum to a positive value.")
-            w = w / s
-
-        self._X = X.astype(float)
-        self._w = w.astype(float)
-        self._n = int(n)
-        self._d = int(d)
-        self._rng = rng or np.random.default_rng()
-
-        # Precompute weighted mean & population covariance (no ddof correction)
-        self._mean = (self._w[:, None] * self._X).sum(axis=0)
-        diff = self._X - self._mean
-        self._cov = diff.T @ (diff * self._w[:, None])
-
-        # cumulative weights for fast inverse-transform resampling
-        self._cw = np.cumsum(self._w)
-
-    # ------------------- basic properties -------------------
-
-    @property
-    def n(self) -> int:
-        """Number of stored samples."""
-        return self._n
-
-    @property
-    def d(self) -> int:
-        """Dimensionality."""
-        return self._d
-
-    @property
-    def samples(self) -> NDArray[np.floating]:
-        """A view of the stored samples, shape (n, d)."""
-        return self._X
-
-    @property
-    def weights(self) -> NDArray[np.floating]:
-        """A view of normalized weights, shape (n,)."""
-        return self._w
-
-    # ------------------- summaries -------------------
-
-    def mean(self) -> NDArray[np.floating]:
-        """Weighted mean, shape (d,)."""
-        return self._mean
-
+    @abstractmethod
     def cov(self) -> NDArray[np.floating]:
-        """Weighted *population* covariance, shape (d, d)."""
-        return self._cov
-
-    def var(self) -> NDArray[np.floating]:
-        """Weighted population variance per dimension, shape (d,)."""
-        return np.diag(self._cov)
-
-    def std(self) -> NDArray[np.floating]:
-        """Weighted population standard deviation per dimension, shape (d,)."""
-        return np.sqrt(np.maximum(self.var(), 0.0))
-
-
-    # ------------------- resampling -------------------
-
-    def sample(self, n_samples: int, *, replace: bool = True) -> NDArray[np.floating]:
         """
-        Resample draws from the empirical distribution with (by default) replacement,
-        using the stored weights. Returns shape (n_samples, d).
+        Return the covariance matrix Σ with shape (d, d).
+        If covariance does not exist, raise NotImplementedError.
         """
-        n_samples = int(n_samples)
-        if not replace and n_samples > self._n:
-            raise ValueError("Cannot sample more than n without replacement.")
-        idx = self._rng.choice(self._n, size=n_samples, replace=replace, p=self._w)
-        return self._X[idx]
+        raise NotImplementedError
 
-    # alias
-    rvs = sample
-
-    # ------------------- expectation helpers -------------------
-
-    def expectation(
-        self,
-        func: Callable[[NDArray[np.floating]], NDArray],
-        *,
-        n_mc: int = 2048,
-    ) -> Union["Normal1D", "MvNormal"]:
+   
+    @abstractmethod
+    def cdf(self, x: NDArray[Float_T]) -> NDArray[np.floating]:
         """
-        Estimate E[f(X)] under the empirical law.
-
-        scalar f: returns Normal1D(mean, std_error)
-        vector f: returns MvNormal(mean, cov_of_mean)
-
-        Notes:
-          - We evaluate f on ALL stored samples once (vectorized), using the empirical
-            weights to compute mean and (population) covariance of f(X).
-          - The uncertainty reported corresponds to the mean of f over n_mc IID draws
-            from the empirical distribution (CLT).
+        Joint CDF F(x) = P[X1 ≤ x1, ..., Xd ≤ xd].
+        Accepts x with shape (..., d) and returns shape (...,).
+        Implementations may use analytical formulas (rare), numerical integration,
+        or library routines when available.
         """
-        Y = np.asarray(func(self._X), dtype=float)
+        raise NotImplementedError
 
-        if Y.ndim == 1:
-            m = float((self._w * Y).sum())
-            var = float((self._w * (Y - m) ** 2).sum())
-            se = np.sqrt(max(var, 0.0)) / np.sqrt(n_mc)
-            
-            return Normal1D(m, max(se, 1e-12), rng=self._rng)
-           
-        else:
-            Y = _as_2d(Y)  # (n, k)
-            m = (self._w[:, None] * Y).sum(axis=0)  # (k,)
-            diff = Y - m
-            cov = diff.T @ (diff * self._w[:, None])  # (k, k) population cov of f(X)
-            cov_mean = cov / float(n_mc)
+    @abstractmethod
+    def inv_cdf(self, u: NDArray[np.floating]) -> NDArray[Float_T]:
+        """
+        Inverse CDF (Rosenblatt inverse) mapping u ∈ (0,1)^d to x ∈ R^d.
+        Accepts u with shape (..., d) and returns x with shape (..., d).
+        For elliptical families (e.g., MVN), a common implementation is:
+          z = Φ^{-1}(u)  (componentwise univariate inverse CDF)
+          x = μ + L z     (L is Cholesky factor of Σ)
+        For general dependent structures, implement via conditional quantiles/copulas.
+        """
+        raise NotImplementedError
 
-            # small symmetrization + jitter for numerical stability
-            cov_mean = 0.5 * (cov_mean + cov_mean.T) + 1e-12 * np.eye(cov_mean.shape[0])
-            
-            return MvNormal(mean=m, cov=cov_mean, rng=self._rng)
-        
-
-
-class BootstrapDistribution:
-    """
-    Container for bootstrap replicates in R^k (k = statistic dimension).
-
-    Parameters
-    ----------
-    replicates : array-like, shape (B, k) or (B,)
-        Bootstrapped statistic values (theta* draws).
-    weights : array-like, shape (B,), optional
-        Nonnegative replicate weights (rare for classic bootstrap). Will be normalized
-        to sum to 1. If None, uniform 1/B.
-    rng : np.random.Generator, optional
-        RNG for resampling replicates via `sample()` / `rvs()`.
-
-    Notes
-    -----
-    - This class is NOT a parametric distribution.
-    - Mirrors your EmpiricalDistribution ergonomics: mean/cov/var/std, sample/rvs,
-      and expectation() -> Normal1D / MvNormal over the Monte-Carlo mean of f(theta*).
-    """
-
-    # ------------------------------ init ------------------------------
-
-    def __init__(
-        self,
-        replicates: NDArray[np.floating],
-        weights: Optional[NDArray[np.floating]] = None,
-        *,
-        rng: Optional[np.random.Generator] = None,
-    ):
-        Theta = _as_2d(replicates)  # (B, k)
-        B, k = Theta.shape
-        if B < 1:
-            raise ValueError("BootstrapDistribution requires at least one replicate.")
-
-        if weights is None:
-            w = np.full(B, 1.0 / B, dtype=float)
-        else:
-            w = np.asarray(weights, dtype=float).reshape(-1)
-            if w.shape[0] != B:
-                raise ValueError("weights must have shape (B,).")
-            if np.any(w < 0):
-                raise ValueError("weights must be nonnegative.")
-            s = w.sum()
-            if s <= 0:
-                raise ValueError("weights must sum to a positive value.")
-            w = w / s
-
-        self._Theta = Theta.astype(float)   # (B, k)
-        self._w = w.astype(float)           # (B,)
-        self._B = int(B)
-        self._k = int(k)
-        self._rng = rng or np.random.default_rng()
-
-        # Precompute weighted mean & population covariance on replicates
-        self._mean = (self._w[:, None] * self._Theta).sum(axis=0)           # (k,)
-        diff = self._Theta - self._mean
-        self._cov = diff.T @ (diff * self._w[:, None])                      # (k, k)
-
-        self._cw = np.cumsum(self._w)  # for inverse-transform resampling of replicates
-
-    # ------------------------ basic properties ------------------------
-
+    # ---- Dimension helper ----
     @property
-    def n(self) -> int:
-        """Number of bootstrap replicates (B)."""
-        return self._B
-
-    @property
-    def d(self) -> int:
-        """Dimensionality of statistic (k)."""
-        return self._k
-
-    @property
-    def replicates(self) -> NDArray[np.floating]:
-        """View of stored replicates, shape (B, k)."""
-        return self._Theta
-
-    @property
-    def weights(self) -> NDArray[np.floating]:
-        """View of normalized replicate weights, shape (B,)."""
-        return self._w
-
-    # --------------------------- summaries ----------------------------
-
-    def mean(self) -> NDArray[np.floating]:
-        """Weighted mean of replicates, shape (k,)."""
-        return self._mean
-
-    def cov(self) -> NDArray[np.floating]:
-        """Weighted population covariance of replicates, shape (k, k)."""
-        return self._cov
-
-    def var(self) -> NDArray[np.floating]:
-        """Weighted population variance of replicates, shape (k,)."""
-        return np.diag(self._cov)
-
-    def std(self) -> NDArray[np.floating]:
-        """Weighted population standard deviation, shape (k,)."""
-        return np.sqrt(np.maximum(self.var(), 0.0))
-
-    # --------------------- resampling of replicates -------------------
-
-    def sample(self, n_samples: int, *, replace: bool = True) -> NDArray[np.floating]:
+    def dimension(self) -> int:
         """
-        Resample **replicates** (theta* values) with given weights.
-        Returns shape (n_samples, k).
+        Number of coordinates d. Default infers from mean(). Subclasses may override.
         """
-        n_samples = int(n_samples)
-        if not replace and n_samples > self._B:
-            raise ValueError("Cannot sample more than B without replacement.")
-        idx = self._rng.choice(self._B, size=n_samples, replace=replace, p=self._w)
-        return self._Theta[idx]
-
-    # alias
-    rvs = sample
-
-    # ------------------------- expectation ---------------------------
-
-    def expectation(
-        self,
-        func: Callable[[NDArray[np.floating]], NDArray],
-        *,
-        n_mc: int = 2048,
-    ) -> Union["Normal1D", "MvNormal"]:
-        """
-        Return a distribution over E[f(Theta*)] under the bootstrap law (on replicates).
-
-        Scalar f -> Normal1D(mean, std_error)
-        Vector f -> MvNormal(mean, cov_of_mean)
-
-        where mean and (population) covariance are computed with replicate weights,
-        and standard error / covariance-of-mean are scaled by 1/sqrt(n_mc) / 1/n_mc.
-        """
-        Y = np.asarray(func(self._Theta), dtype=float)
-
-        if Y.ndim == 1:
-            m = float((self._w * Y).sum())
-            var = float((self._w * (Y - m) ** 2).sum())
-            se = np.sqrt(max(var, 0.0)) / np.sqrt(n_mc)
-            return Normal1D(m, max(se, 1e-12), rng=self._rng)
-        else:
-            Y = _as_2d(Y)  # (B, k2)
-            m = (self._w[:, None] * Y).sum(axis=0)
-            diff = Y - m
-            cov = diff.T @ (diff * self._w[:, None])      # (k2, k2)
-            cov_mean = 0.5 * (cov + cov.T) / float(n_mc)  # symmetrize & scale
-            cov_mean += 1e-12 * np.eye(cov_mean.shape[0])
-            return MvNormal(mean=m, cov=cov_mean, rng=self._rng)
-
-
-    @classmethod
-    def from_data(
-        cls,
-        data: NDArray[np.floating],
-        stat_fn: Callable[[NDArray[np.floating]], NDArray],
-        *,
-        B: int = 1000,
-        axis: int = 0,
-        rng: Optional[np.random.Generator] = None,
-    ) -> "BootstrapDistribution":
-        """
-        Classic i.i.d. bootstrap for a statistic.
-
-        Parameters
-        ----------
-        data : array-like
-            Observations (samples along `axis`).
-        stat_fn : callable
-            Function mapping a resampled dataset (with samples on axis 0) to a
-            statistic vector (shape (k,) or scalar).
-            NOTE: we will pass the resampled array with **samples on axis 0**.
-                  If your original data had samples on another axis, we move it here.
-        B : int
-            Number of bootstrap replicates.
-        axis : int
-            Axis of `data` that indexes samples; moved to 0 before calling `stat_fn`.
-        rng : np.random.Generator, optional
-            RNG for resampling indices.
-
-        Returns
-        -------
-        BootstrapDistribution
-            Container of `B` replicates of the statistic.
-        """
-        rng = rng or np.random.default_rng()
-        X = np.asarray(data, dtype=float)
-        X = np.moveaxis(X, axis, 0)  # samples now on axis 0
-        n = X.shape[0]
-
-        reps = []
-        for _ in range(int(B)):
-            idx = rng.integers(0, n, size=n)          # sample n rows with replacement
-            Xb = X[idx]                                # (n, ...)
-            theta = np.asarray(stat_fn(Xb), dtype=float).reshape(-1)
-            reps.append(theta)
-
-        Theta = np.vstack(reps)                        # (B, k)
-        return cls(Theta, rng=rng)
+        m = self.mean()
+        if m.ndim != 1:
+            raise ValueError("mean() must return a 1D array of shape (d,).")
+        return int(m.shape[0])
 
 
 
-# ------------------- Distributions with Density ------------------------
-
-#should inherit from multivariate
 class Normal1D(Multivariate[np.floating]):
     """
     Univariate Normal N(mu, sigma^2) as a Multivariate with event shape (1,).
@@ -438,7 +121,7 @@ class Normal1D(Multivariate[np.floating]):
         return p                                 # (n, 1)
 
     def log_density(self, values: NDArray) -> NDArray[np.floating]:
-        v = self._to_1d_vector(values)          # (n,)
+        v = _to_1d_vector(values)          # (n,)
         lp = np.asarray(self._norm.logpdf(v), dtype=float).reshape(-1, 1)
         return lp                                # (n, 1)
 
@@ -496,10 +179,10 @@ class Normal1D(Multivariate[np.floating]):
             raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', **fit_kwargs: Any) -> 'Normal1D':
-        n = int(fit_kwargs.get("n", 2000))
+    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False,  **fit_kwargs: Any) -> 'Normal1D':   
+        #n = int(fit_kwargs.get("n", 2000))
         
-        xs = np.asarray(convert_from.sample(n), dtype=float)
+        xs = np.asarray(convert_from.sample(num_samples), dtype=float)
 
         # Flatten (n,1) → (n,), accept (n,)
         if xs.ndim == 2 and xs.shape[1] == 1:
@@ -511,37 +194,7 @@ class Normal1D(Multivariate[np.floating]):
         sigma = float(xs.std(ddof=1))
         return cls(mu, max(sigma, 1e-12))
 
-    # -------------------- helpers --------------------
 
-    @staticmethod
-    def _to_1d_vector(values: NDArray) -> NDArray[np.floating]:
-        """
-        Normalize input to a 1-D vector (n,):
-          - scalar -> (1,)
-          - (n,)   -> (n,)
-          - (n,1)  -> (n,)
-        """
-        arr = np.asarray(values, dtype=float)
-        if arr.ndim == 0:
-            return arr.reshape(1)
-        if arr.ndim == 1:
-            return arr
-        if arr.ndim == 2 and arr.shape[1] == 1:
-            return arr[:, 0]
-        raise ValueError("values must be scalar, (n,), or (n,1) for Normal1D (event dim = 1).")
-
-    
-def _as_2d(x: NDArray) -> np.ndarray:
-    x = np.asarray(x, dtype=float)
-    return x.reshape(1, -1) if x.ndim == 1 else x
-
-def _symmetrize_spd(C: np.ndarray, jitter: float = 1e-9) -> NDArray:
-    C = np.asarray(C, dtype=float)
-    C = 0.5 * (C + C.T)
-    eigmin = np.linalg.eigvalsh(C).min()
-    if eigmin < 1e-12:
-        C = C + (max(jitter, 1e-12 - eigmin) + 1e-12) * np.eye(C.shape[0])
-    return C
 
 
 class MvNormal(Multivariate[np.floating]):
@@ -567,8 +220,8 @@ class MvNormal(Multivariate[np.floating]):
         self._cov = C
         self._rng = rng or np.random.default_rng()
 
-        self._mvn_cls = multivariate_normal
-        self._mvn = multivariate_normal(mean=self._mean, cov=self._cov, allow_singular=False)
+        self._mvn_cls = sp.multivariate_normal
+        self._mvn = sp.multivariate_normal(mean=self._mean, cov=self._cov, allow_singular=False)
 
     # ------------------------ Distribution core ------------------------
 
@@ -628,12 +281,12 @@ class MvNormal(Multivariate[np.floating]):
             raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', **fit_kwargs: Any) -> 'MvNormal':
+    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False, **fit_kwargs: Any) -> 'MvNormal':
         """
         Fit mean and covariance from samples drawn from another distribution-like object.
         """
-        n = int(fit_kwargs.get("n", 4000))
-        xs = np.asarray(convert_from.sample(n), dtype=float)
+        #n = int(fit_kwargs.get("n", 4000))
+        xs = np.asarray(convert_from.sample(num_samples), dtype=float)
 
         X = _as_2d(xs)                                   # (n, d)
         mean = X.mean(axis=0)
@@ -703,7 +356,8 @@ class MvNormal(Multivariate[np.floating]):
     @property
     def dimension(self) -> int:
         return int(self._mean.shape[0])
-    
+
+
 
 class GaussianKDE(Multivariate[np.floating]):
     """
@@ -900,7 +554,7 @@ class GaussianKDE(Multivariate[np.floating]):
 
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', **fit_kwargs: Any) -> 'GaussianKDE':
+    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False, **fit_kwargs: Any) -> 'GaussianKDE':
         """
         Build KDE from another distribution-like object.
 
@@ -911,7 +565,7 @@ class GaussianKDE(Multivariate[np.floating]):
           - rule: 'scott' or 'silverman' when bandwidth=None (default 'scott')
           - rng: np.random.Generator to store in the resulting KDE
         """
-        n = int(fit_kwargs.get("n", 2000))
+        # = int(fit_kwargs.get("n", 2000))
         bandwidth = fit_kwargs.get("bandwidth", None)
         rule = fit_kwargs.get("rule", "scott")
         rng = fit_kwargs.get("rng", None)
@@ -926,10 +580,9 @@ class GaussianKDE(Multivariate[np.floating]):
             return cls(samples=X, weights=w, bandwidth=bandwidth, rule=rule, rng=rng)
 
         # Otherwise, sample from the source distribution
-        X = np.asarray(convert_from.sample(n), dtype=float)
+        X = np.asarray(convert_from.sample(num_samples), dtype=float)
 
         return cls(samples=X, weights=weights, bandwidth=bandwidth, rule=rule, rng=rng)
-    
 
 
 class Multinomial(Multivariate[np.floating]):
@@ -1048,14 +701,14 @@ class Multinomial(Multivariate[np.floating]):
             raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', **fit_kwargs: Any) -> 'Multinomial':
+    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False, **fit_kwargs: Any) -> 'Multinomial':
         """
         Fit (n_trials, p) from counts sampled from `convert_from`.
         Assumes each row of samples is a vector of counts whose sum is constant (n_trials).
         """
-        n_fit = int(fit_kwargs.get("n", 4000))
+        #n_fit = int(fit_kwargs.get("n", 4000))
         
-        X = np.asarray(convert_from.sample(n_fit), dtype=float)
+        X = np.asarray(convert_from.sample(num_samples), dtype=float)
 
         X = _as_2d(X)  # (n, d)
         # infer n_trials from row sums (must be constant up to rounding)
@@ -1130,8 +783,6 @@ class Multinomial(Multivariate[np.floating]):
         rs = Xi.sum(axis=1)
         if not np.all(rs == self._n):
             raise ValueError(f"each row must sum to n_trials={self._n}.")
-
-
 
 
 class Dirichlet(Multivariate[np.floating]):
@@ -1238,7 +889,7 @@ class Dirichlet(Multivariate[np.floating]):
             raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', **fit_kwargs: Any) -> 'Dirichlet':
+    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False, **fit_kwargs: Any) -> 'Dirichlet':
         """
         Moment-based fit of α from samples of a simplex-valued distribution.
         Steps:
@@ -1249,8 +900,8 @@ class Dirichlet(Multivariate[np.floating]):
           - Rows are renormalized to sum to 1 (within tolerance).
           - Very small/zero variances are skipped in α0 averaging.
         """
-        n = int(fit_kwargs.get("n", 4000))
-        X = np.asarray(convert_from.sample(n), dtype=float)
+        #n = int(fit_kwargs.get("n", 4000))
+        X = np.asarray(convert_from.sample(num_samples), dtype=float)
 
         X = _as_2d(X)  # (n, d)
 
@@ -1325,7 +976,6 @@ class Dirichlet(Multivariate[np.floating]):
         s = X.sum(axis=1)
         if not np.allclose(s, 1.0, atol=1e-6):
             raise ValueError("each row must sum to 1 (within tolerance).")
-        
 
 
 class Binomial(Multivariate[np.floating]):
@@ -1443,7 +1093,7 @@ class Binomial(Multivariate[np.floating]):
             raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', **fit_kwargs: Any) -> 'Binomial':
+    def from_distribution(cls, convert_from: 'Distribution', num_samples:int=1024, *, conversion_by_KDE: bool = False, **fit_kwargs: Any) -> 'Binomial':
    
         raise NotImplementedError
 
@@ -1481,33 +1131,7 @@ class Binomial(Multivariate[np.floating]):
         v = np.clip(v, 0, self._n)
         return v
 
-def _to_1d_vector(values: NDArray) -> NDArray[np.floating]:
-    """
-    Normalize input to a 1-D float vector (n,):
-      - scalar -> (1,)
-      - (n,)   -> (n,)
-      - (n,1)  -> (n,)
-    """
-    arr = np.asarray(values, dtype=float)
-    if arr.ndim == 0:
-        return arr.reshape(1)
-    if arr.ndim == 1:
-        return arr
-    if arr.ndim == 2 and arr.shape[1] == 1:
-        return arr[:, 0]
-    raise ValueError("values must be scalar, (n,), or (n,1) for Beta (event dim = 1).")
     
-
-def _clip_unit_interval(x: NDArray[np.floating], eps: float = 0.0) -> NDArray[np.floating]:
-    """
-    Ensure values lie in [0,1] (or (eps, 1-eps) if eps>0).
-    """
-    if eps <= 0.0:
-        return np.clip(x, 0.0, 1.0)
-    lo = np.nextafter(0.0 + eps, 1.0)
-    hi = np.nextafter(1.0 - eps, 0.0)
-    return np.clip(x, lo, hi)
-
 
 class Beta(Multivariate[np.floating]):
     """
@@ -1634,7 +1258,7 @@ class Beta(Multivariate[np.floating]):
             raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', **fit_kwargs: Any) -> 'Beta':
+    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False, **fit_kwargs: Any) -> 'Beta':
         raise NotImplementedError
 
 
@@ -1643,3 +1267,5 @@ class Beta(Multivariate[np.floating]):
 
     def cov(self) -> NDArray[np.floating]:
         return self._cov   # (1,1)
+
+
