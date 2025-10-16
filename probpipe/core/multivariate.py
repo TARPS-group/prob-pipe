@@ -112,7 +112,7 @@ class Normal1D(Multivariate[np.floating]):
         return p                                 # (n, 1)
 
     def log_density(self, values: NDArray) -> NDArray[np.floating]:
-        v = self._to_1d_vector(values)          # (n,)
+        v = _to_1d_vector(values)          # (n,)
         lp = np.asarray(self._norm.logpdf(v), dtype=float).reshape(-1, 1)
         return lp                                # (n, 1)
 

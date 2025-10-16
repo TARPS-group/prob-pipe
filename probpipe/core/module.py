@@ -281,21 +281,6 @@ class module:
             # 4) call and (optionally) post-convert return type
             result = f(**call_kwargs)
 
-            if return_type is not None:
-                if not isinstance(result, return_type):
-                    if hasattr(return_type, 'from_distribution'):
-                        # convert result to expected return_type
-                        result = return_type.from_distribution(
-                            result,
-                            num_samples=self._conv_num_samples,
-                            conversion_by_KDE=self._conv_by_kde,
-                            **self._conv_fit_kwargs,
-                        )
-                    else:
-                        raise TypeError(
-                            f"Return value is not instance of {return_type}, "
-                            "and 'from_distribution' method is not available for conversion."
-                        )
             return result
 
             
