@@ -1,10 +1,17 @@
 from typing import Callable, Optional, Dict, Any, get_type_hints, Type, ClassVar, FrozenSet, Iterable
 import functools
-from prefect import flow, task
-from core.distributions import Distribution, EmpiricalDistribution, BootstrapDistribution
-from core.multivariate import Multivariate
 from dataclasses import dataclass
 import inspect
+
+from prefect import flow, task
+
+from .distributions import Distribution, EmpiricalDistribution, BootstrapDistribution
+from .multivariate import Multivariate
+
+
+__all__ = [
+    "Module",
+]
 
 _MISSING = object()
 _DISTR_BASE = (Distribution, Multivariate)
@@ -17,7 +24,7 @@ class InputSpec:
     default: Any = _MISSING #_MISSING means "no default"
 
 
-class module:
+class Module(object):
     """
     Base class for modules with dependency injection, input specification,
     type checking, and Prefect task/flow integration.
@@ -32,7 +39,7 @@ class module:
         conversion_by_KDE: bool = False,
         conversion_num_samples: int = 1024,
         conversion_fit_kwargs: Optional[dict] = None,
-        **dependencies: 'module',
+        **dependencies: 'Module',
     ):
         """
         Initialize the module.
@@ -45,7 +52,7 @@ class module:
             dependencies: Named module dependencies.
         """
 
-        self.dependencies: Dict[str, module] = dependencies.copy()  
+        self.dependencies: Dict[str, Module] = dependencies.copy()  
 
         self.inputs: Dict[str, Dict[str, Any]] = {}  
         self._run_funcs: Dict[str, Callable] = {}   # Registered run functions

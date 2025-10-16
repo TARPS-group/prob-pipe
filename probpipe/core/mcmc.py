@@ -1,13 +1,18 @@
-from core.module import module, InputSpec
-import numpy as np
-from core.multivariate import Normal1D
-from core.distributions import EmpiricalDistribution
 from typing import Callable
 
+import numpy as np
 
+from .module import Module, InputSpec
+from .multivariate import Normal1D
 
+__all__ = [
+    "Likelihood",
+    "Prior",
+    "MetropolisHastings",
+    "MCMC",
+]
 
-class LikelihoodModule(module):
+class Likelihood(Module):
     REQUIRED_DEPS = frozenset(['distribution'])
 
     def __init__(self, **dependencies):
@@ -40,7 +45,7 @@ class LikelihoodModule(module):
 
 
 
-class PriorModule(module):
+class Prior(Module):
     REQUIRED_DEPS = {'distribution'}
 
     def __init__(self, **dependencies):
@@ -62,7 +67,7 @@ class PriorModule(module):
 
 
 
-class MetropolisHastingsModule(module):
+class MetropolisHastings(Module):
     def __init__(self):
         super().__init__()
         self.set_input(
@@ -94,7 +99,7 @@ class MetropolisHastingsModule(module):
         
 
 
-class MCMCModule(module):
+class MCMC(Module):
     REQUIRED_DEPS = {'likelihood', 'prior', 'sampler'}
 
     def __init__(self, **dependencies):

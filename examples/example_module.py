@@ -1,10 +1,7 @@
-from core.module import module
-from core.multivariate import Normal1D
-from core.distributions import EmpiricalDistribution
 import numpy as np
+from probpipe import Module, EmpiricalDistribution, Normal1D
 
-
-class GaussianPosteriorModule(module):
+class GaussianPosterior(Module):
     """
     Posterior for: y_i ~ Normal(mu, sigma^2), prior mu ~ Normal(mu0, var0)
     Returns posterior Normal1D(mu_n, var_n)
@@ -48,12 +45,12 @@ class GaussianPosteriorModule(module):
 
         return Normal1D(mu_n, np.sqrt(var_n))
 
-gp = GaussianPosteriorModule()
+gp = GaussianPosterior()
 
 #prior_norm = Normal1D(0, 5)
 #post = gp.calculate_posterior(prior=prior_norm, y=np.array([1.2, 0.7, -0.3, 0.4]), sigma=1.0)
 #print(post.mu, post.sigma)
 
-emp_prior = EmpiricalDistribution(samples= np.array([1.3, 2.0, 3.3, 4.1, 5.1]).reshape(-1,1) )
+emp_prior = EmpiricalDistribution(samples=np.array([1.3, 2.0, 3.3, 4.1, 5.1]).reshape(-1,1))
 post2 = gp.calculate_posterior(prior=emp_prior, y=np.array([1.2, 0.7, 0.3, 0.4]), sigma=1.0)
 print(post2.mu, post2.sigma)

@@ -1,23 +1,32 @@
 from typing import TypeVar, Callable, Any, Optional
-from numpy.typing import NDArray
-import numpy as np
-import scipy.stats as sp
 from abc import ABC, abstractmethod
 
+import numpy as np
+from numpy.typing import NDArray
+
+import scipy.stats as sp
 from scipy.stats import norm, multivariate_normal
 from scipy.stats import multinomial as _multinomial
 from scipy.stats import dirichlet as _dirichlet
 from scipy.stats import binom as _sbinom
 from scipy.stats import beta as _sps_beta
 
-from core.dist_utils import _as_2d, _symmetrize_spd, _clip_unit_interval, _to_1d_vector
-from core.distributions import Distribution
+from ._utils import _as_2d, _symmetrize_spd, _clip_unit_interval, _to_1d_vector
+from .distributions import Distribution
 
-
+__all__ = [
+    "Multivariate",
+    "Normal1D",
+    "MvNormal",
+    "GaussianKDE",
+    "Multinomial",
+    "Dirichlet",
+    "Binomial",
+    "Beta",
+]
 
 T = TypeVar("T", bound=np.number)
 Float_T = TypeVar("FloatDT", bound=np.floating)
-
 
 class Multivariate(Distribution[Float_T], ABC):
     """

@@ -1,10 +1,16 @@
 from typing import Generic, TypeVar, Callable, Any, Optional, Union
 from abc import ABC, abstractmethod
+
 import numpy as np
 from numpy.typing import NDArray
-from core.dist_utils import _as_2d
 
+from ._utils import _as_2d
 
+__all__ = [
+    "Distribution",
+    "EmpiricalDistribution",
+    "BootstrapDistribution",
+]
 
 T = TypeVar("T",bound=np.number)
 Float_T = TypeVar("FloatDT", bound=np.floating)
@@ -71,7 +77,7 @@ class Distribution(Generic[T], ABC):
         """
         raise NotImplementedError("This method should be implemented by subclasses")
 
-from core.multivariate import MvNormal, Normal1D
+from .multivariate import Normal1D, MvNormal
 
 class EmpiricalDistribution(Distribution):
     """

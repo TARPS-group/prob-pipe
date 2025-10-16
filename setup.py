@@ -19,6 +19,8 @@ setup(
     install_requires=[
         "numpy>=1.20",
         "scipy>=1.7",
+        "prefect>=3.4",
+        "makefun>=1.16",
     ],
     extras_require={
         "dev": [
