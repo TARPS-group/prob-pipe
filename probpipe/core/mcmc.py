@@ -13,17 +13,20 @@ __all__ = [
 ]
 
 class Likelihood(Module):
-    REQUIRED_DEPS = frozenset(['distribution'])
+    DEPENDENCIES = {'distribution'}
 
     def __init__(self, **dependencies):
-        super().__init__(required_deps=self.REQUIRED_DEPS, **dependencies)
-        self.distribution = self.dependencies['distribution']
+        super().__init__(**dependencies)
 
         self.set_input(
             data=InputSpec(type=np.ndarray, required=True),
             param=InputSpec(type=float, required=True),
         )
         self.run_func(self._log_likelihood_task, name="log_likelihood")
+
+    @property
+    def distribution(self):
+        return self.dependencies['distribution']
 
     def _log_likelihood_func(self, data: np.ndarray, param: float) -> float:
         temp_dist = Normal1D(mu=param, sigma=self.distribution.sigma)
@@ -46,16 +49,17 @@ class Likelihood(Module):
 
 
 class Prior(Module):
-    REQUIRED_DEPS = {'distribution'}
+    DEPENDENCIES = {'distribution'}
 
     def __init__(self, **dependencies):
-        super().__init__(required_deps=self.REQUIRED_DEPS, **dependencies)
-        self.distribution = self.dependencies['distribution']
+        super().__init__(**dependencies)
 
         self.set_input(param=InputSpec(type=float, required=True))
-        
-        # Register task version, calls pure function
         self.run_func(self._log_prob_task, name="log_prob")
+
+    @property
+    def distribution(self):
+        return self.dependencies['distribution']
 
     def _log_prob_func(self, param: float) -> float:
         return self.distribution.log_density(param)
@@ -68,6 +72,8 @@ class Prior(Module):
 
 
 class MetropolisHastings(Module):
+    DEPENDENCIES = set()
+
     def __init__(self):
         super().__init__()
         self.set_input(
@@ -100,10 +106,10 @@ class MetropolisHastings(Module):
 
 
 class MCMC(Module):
-    REQUIRED_DEPS = {'likelihood', 'prior', 'sampler'}
+    DEPENDENCIES = {'likelihood', 'prior', 'sampler'}
 
     def __init__(self, **dependencies):
-        super().__init__(required_deps=self.REQUIRED_DEPS, **dependencies)
+        super().__init__(**dependencies)
 
         self._conv_num_samples = 2048
         self._conv_by_kde = False

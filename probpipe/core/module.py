@@ -1,4 +1,4 @@
-from typing import Callable, Optional, Dict, Any, get_type_hints, Type, ClassVar, FrozenSet, Iterable
+from typing import Callable, Optional, Dict, Any, get_type_hints, Type, ClassVar, FrozenSet, Iterable, Set
 import functools
 from dataclasses import dataclass
 import inspect
@@ -30,8 +30,12 @@ class Module(object):
     type checking, and Prefect task/flow integration.
     """
 
-    # Contract-level default required dependencies
-    REQUIRED_DEPS: ClassVar[FrozenSet[str]] = frozenset()
+    
+    # REQUIRED_DEPS: ClassVar[FrozenSet[str]] = frozenset()
+    # DEPENDENCIES: ClassVar[Dict[str, Type['Module']]] = {}
+    DEPENDENCIES: ClassVar[Set[str]] = set()
+
+
 
     def __init__(
         self,
@@ -52,7 +56,26 @@ class Module(object):
             dependencies: Named module dependencies.
         """
 
-        self.dependencies: Dict[str, Module] = dependencies.copy()  
+        # Enforce that all declared dependencies are provided
+        missing = [name for name in self.DEPENDENCIES if name not in dependencies]
+        if missing:
+            raise RuntimeError(f"Missing required dependencies: {missing}")
+
+        # Enforce no unexpected dependencies
+        unexpected = [name for name in dependencies if name not in self.DEPENDENCIES]
+        if unexpected:
+            raise RuntimeError(f"Unexpected dependencies provided: {unexpected}")
+
+        # Enforce that each dependency is an instance of the declared type and a Module subclass
+        for name, dep_instance in dependencies.items():
+            if not isinstance(dep_instance, Module):
+                raise TypeError(f"Dependency '{name}' must be Module subclass instance; got {type(dep_instance)}")
+                    
+                
+
+        # Store dependencies in an internal dict
+        # self.dependencies: Dict[str, Module] = dependencies.copy()
+        self.dependencies = dict(dependencies)
 
         self.inputs: Dict[str, Dict[str, Any]] = {}  
         self._run_funcs: Dict[str, Callable] = {}   # Registered run functions
@@ -65,20 +88,20 @@ class Module(object):
         self._inputs_for_run: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
         # Instance-level set of required dependency names
-        self.required_deps: set[str] = set(required_deps) if required_deps is not None else set(self.REQUIRED_DEPS)
+        # self.required_deps: set[str] = set(required_deps) if required_deps is not None else set(self.REQUIRED_DEPS)
 
         # Prefect decorated flow or task placeholders for last registered run func
         self._prefect_task: Optional[Callable] = None
         self._prefect_flow: Optional[Callable] = None
 
-    def require_deps(self, *names: str) -> None:
-        """
-        Add required dependencies at runtime.
+    # def require_deps(self, *names: str) -> None:
+    #     """
+    #     Add required dependencies at runtime.
 
-        Args:
-            names: Names of dependencies to require.
-        """
-        self.required_deps.update(names)
+    #     Args:
+    #         names: Names of dependencies to require.
+    #     """
+    #     self.required_deps.update(names)
 
     def set_input(self, **input_defaults):
         """
@@ -186,11 +209,17 @@ class Module(object):
 
             return merged
         
+        # def _ensure_dependencies_available():
+        #     missing = [k for k in self.required_deps if k not in self.dependencies]
+        #     if missing:
+        #         raise RuntimeError(
+        #             f"Missing required dependencies: {missing}. Have: {list(self.dependencies.keys())}"
+        #         )
         def _ensure_dependencies_available():
-            missing = [k for k in self.required_deps if k not in self.dependencies]
+            missing = [k for k in self.DEPENDENCIES if k not in self.dependencies]
             if missing:
                 raise RuntimeError(
-                    f"Missing required dependencies: {missing}. Have: {list(self.dependencies.keys())}"
+                    f"Missing required dependencies at runtime: {missing}. Available: {list(self.dependencies.keys())}"
                 )
                     
         def _is_distribution_instance(v) -> bool:
@@ -270,7 +299,7 @@ class Module(object):
 
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
-            _ensure_dependencies_available()
+            _ensure_dependencies_available()  
 
             # 1) validating inputs against the per-run schema
             user_kwargs = _ensure_inputs_satisfied(kwargs, run_name=run_name)
