@@ -301,8 +301,14 @@ class Module(object):
         def wrapper(*args, **kwargs):
             _ensure_dependencies_available()  
 
+            bound_args = sig.bind(*args, **kwargs)  # bind positional and keyword args
+            bound_args.apply_defaults()
+            all_args = bound_args.arguments  # OrderedDict of all parameters with their values
+
+
             # 1) validating inputs against the per-run schema
-            user_kwargs = _ensure_inputs_satisfied(kwargs, run_name=run_name)
+            # user_kwargs = _ensure_inputs_satisfied(kwargs, run_name=run_name)
+            user_kwargs = _ensure_inputs_satisfied(all_args, run_name=run_name)
 
             # 2) type checking + conversions on inputs only
             _, user_kwargs = type_check((), user_kwargs, f=f)
@@ -321,7 +327,11 @@ class Module(object):
 
             
         pr_annot = task if as_task else flow
-        pf = pr_annot(wrapper)
+        # if as_task:
+        #     pf = task(wrapper)  # no validate_parameters option for task
+        # else:
+        #     pf = flow(validate_parameters=False)(wrapper)
+        pf = pr_annot(wrapper)  # now it works without validate_parameters option
 
 
         # Register and assign as attribute for direct call
