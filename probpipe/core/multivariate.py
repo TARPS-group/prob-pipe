@@ -34,7 +34,6 @@ class Multivariate(Distribution[Float_T], ABC):
     Event shape is assumed to be (d,). Subclasses should ensure consistency of shapes.
     """
 
-    # ---- Core summary statistics ----
     @abstractmethod
     def mean(self) -> NDArray[Float_T]:
         """
@@ -99,6 +98,8 @@ class Normal1D(Multivariate[np.floating]):
     """
 
     def __init__(self, mu: float, sigma: float, *, rng: np.random.Generator | None = None):
+        """Initialize a Normal1D distribution with mean 'mu' and std. dev. 'sigma'."""
+        
         if sigma <= 0:
             raise ValueError("sigma must be > 0")
         self.mu = float(mu)
@@ -107,30 +108,38 @@ class Normal1D(Multivariate[np.floating]):
 
         self._norm = norm(loc=self.mu, scale=self.sigma)
 
-    # -------------------- Sampling --------------------
 
     def sample(self, n_samples: int) -> NDArray[np.floating]:
+        """Draw `n_samples` from N(mu, sigma²); returns array of shape (n, 1)."""
+        
         xs = self._norm.rvs(size=(int(n_samples), 1), random_state=self._rng)
         return np.asarray(xs, dtype=float)  # (n, 1)
 
-    # -------------------- Scalar-per-sample APIs (return (n,1)) --------------------
 
     def density(self, values: NDArray) -> NDArray[np.floating]:
+        """Return PDF values at `values`, as column vector (n, 1)."""
+        
         v = self._to_1d_vector(values)          # (n,)
         p = np.asarray(self._norm.pdf(v), dtype=float).reshape(-1, 1)
         return p                                 # (n, 1)
 
     def log_density(self, values: NDArray) -> NDArray[np.floating]:
+        """Return log-PDF values at `values`, as column vector (n, 1)."""
+        
         v = _to_1d_vector(values)          # (n,)
         lp = np.asarray(self._norm.logpdf(v), dtype=float).reshape(-1, 1)
         return lp                                # (n, 1)
 
     def cdf(self, x: NDArray) -> NDArray[np.floating]:
+        """Return CDF evaluated at `x`, as column vector (n, 1)."""
+        
         v = self._to_1d_vector(x)               # (n,)
         c = np.asarray(self._norm.cdf(v), dtype=float).reshape(-1, 1)
         return c                                 # (n, 1)
 
     def inv_cdf(self, u: NDArray) -> NDArray[np.floating]:
+        """Return quantiles (inverse CDF) for probabilities `u`; output shape (n, 1)."""
+        
         U = np.asarray(u, dtype=float)
         if U.ndim == 0:
             q = float(self._norm.ppf(U))
@@ -145,9 +154,13 @@ class Normal1D(Multivariate[np.floating]):
 
 
     def mean(self) -> NDArray[np.floating]:
+        """Return the mean vector (1,)."""
+        
         return np.array([self.mu], dtype=float)          # (1,)
 
     def cov(self) -> NDArray[np.floating]:
+        """Return the covariance matrix (1×1) = [[sigma²]]."""
+        
         return np.array([[self.sigma ** 2]], dtype=float)  # (1,1)
 
 
@@ -158,6 +171,7 @@ class Normal1D(Multivariate[np.floating]):
           - vector f -> MvNormal(mean, cov_of_mean)
         func receives samples with shape (n_mc, 1).
         """
+        
         n_mc = 2048
         xs = self.sample(n_mc)                   # (n_mc, 1)
         ys = np.asarray(func(xs), dtype=float)
@@ -179,9 +193,10 @@ class Normal1D(Multivariate[np.floating]):
             raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False,  **fit_kwargs: Any) -> 'Normal1D':   
-        #n = int(fit_kwargs.get("n", 2000))
+    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False,  **fit_kwargs: Any) -> 'Normal1D': 
+        """Fit a Normal1D to samples drawn from another Distribution (moment matching)."""
         
+        #n = int(fit_kwargs.get("n", 2000))
         xs = np.asarray(convert_from.sample(num_samples), dtype=float)
 
         # Flatten (n,1) → (n,), accept (n,)
@@ -210,6 +225,8 @@ class MvNormal(Multivariate[np.floating]):
 
     def __init__(self, mean: NDArray[np.floating], cov: NDArray[np.floating],
                  *, rng: np.random.Generator | None = None):
+         """Initialize a multivariate Normal with mean vector and covariance matrix."""
+                     
         m = np.asarray(mean, dtype=float)
         C = _symmetrize_spd(np.asarray(cov, dtype=float))
         if m.ndim != 1:
@@ -223,7 +240,6 @@ class MvNormal(Multivariate[np.floating]):
         self._mvn_cls = sp.multivariate_normal
         self._mvn = sp.multivariate_normal(mean=self._mean, cov=self._cov, allow_singular=False)
 
-    # ------------------------ Distribution core ------------------------
 
     def sample(self, n_samples: int) -> NDArray[np.floating]:
         """
@@ -296,16 +312,18 @@ class MvNormal(Multivariate[np.floating]):
 
 
     def mean(self) -> NDArray[np.floating]:
+        """Return the mean vector (d,)."""
+        
         return self._mean  # (d,)
 
     def cov(self) -> NDArray[np.floating]:
+        """Return the covariance matrix (d, d)."""
+        
         return self._cov   # (d,d)
 
     def cdf(self, x: NDArray) -> NDArray[np.floating]:
-        """
-        Exact MVN CDF via SciPy. Returns (n,1).
-        Accepts (d,), (n,d).
-        """
+        """Evaluate the multivariate CDF at x; returns (n, 1)."""
+
         X = _as_2d(x)                           # (n,d)
         # SciPy's frozen cdf doesn't vectorize over rows, so evaluate row-wise.
         # (For large n you may want to batch this.)
@@ -313,11 +331,8 @@ class MvNormal(Multivariate[np.floating]):
         return np.array(vals, dtype=float).reshape(-1, 1)   # (n,1)
 
     def inv_cdf(self, u: NDArray) -> NDArray[np.floating]:
-        """
-        Rosenblatt inverse using sequential conditionals and SciPy's univariate Φ^{-1}.
-        Input u: (d,) or (n,d). Output: (d,) for 1 sample, or (n,d) for batch.
-        """
-    
+        """Compute Rosenblatt inverse transform for uniform samples u; returns (n, d)."""
+
         U_in = np.asarray(u, dtype=float)
         was_1d = (U_in.ndim == 1)
         U = U_in[None, :] if was_1d else U_in   # (n, d)
@@ -355,23 +370,23 @@ class MvNormal(Multivariate[np.floating]):
 
     @property
     def dimension(self) -> int:
+        """Return the dimensionality (d) of the multivariate Normal."""
         return int(self._mean.shape[0])
 
 
 
 class GaussianKDE(Multivariate[np.floating]):
     """
-    Gaussian KDE with a shared bandwidth matrix H.
+    Gaussian kernel density estimator with shared bandwidth matrix H.
 
-    SciPy usage:
-      - density/log_density/cdf are computed via scipy.stats.multivariate_normal
-        (mixture over centers with weights).
-      - sampling uses scipy.stats.multivariate_normal.rvs for the kernel noise.
+    Each sample x_i defines a kernel N(x_i, H), and the overall density is a
+    weighted mixture over these kernels.
 
-    Shape policy:
-      - sample(n) -> (n, d)
-      - density(values), log_density(values), cdf(values) -> (n, 1)
-      - inv_cdf(u) -> NotImplementedError (no simple Rosenblatt inverse for mixtures)
+    Shape policy
+    -------------
+    sample(n) → (n, d)
+    density / log_density / cdf(x) → (n, 1)
+    inv_cdf(u) → Not implemented
     """
 
     def __init__(
@@ -383,6 +398,7 @@ class GaussianKDE(Multivariate[np.floating]):
         rule: str = "scott",                 # used when bandwidth is None
         rng: Optional[np.random.Generator] = None,
     ):
+        """Initialize KDE with centers, weights, and optional bandwidth or rule."""
 
         X = _as_2d(samples)
         n, d = X.shape
@@ -428,6 +444,8 @@ class GaussianKDE(Multivariate[np.floating]):
     # --------------------------- bandwidth helpers ---------------------------
 
     def _build_H(self, bandwidth: float | NDArray[np.floating] | None, rule: str) -> NDArray[np.floating]:
+        """Construct the bandwidth matrix H from user input or from 'scott'/'silverman' rule."""
+        
         d = self._d
         if bandwidth is not None:
             bw = np.asarray(bandwidth, dtype=float)
@@ -461,10 +479,8 @@ class GaussianKDE(Multivariate[np.floating]):
     # --------------------------- Multivariate API ---------------------------
 
     def sample(self, n_samples: int) -> NDArray[np.floating]:
-        """
-        Draw (n, d) samples from the KDE mixture:
-          pick a center with prob w_i, then add N(0, H) noise.
-        """
+        """Draw samples from the KDE mixture by selecting centers and adding Gaussian noise."""
+
         n = int(n_samples)
         idx = self._rng.choice(self._n, size=n, replace=True, p=self._w)
         noise = multivariate_normal(mean=np.zeros(self._d, dtype=float), cov=self._H).rvs(
@@ -730,9 +746,11 @@ class Multinomial(Multivariate[np.floating]):
 
 
     def mean(self) -> NDArray[np.floating]:
+        """Return the mean vector (d,)."""
         return self._mean  # (d,)
 
     def cov(self) -> NDArray[np.floating]:
+         """Return the covariance matrix (d, d)."""
         return self._cov   # (d,d)
 
     def cdf(self, values: NDArray) -> NDArray[np.floating]:
@@ -839,9 +857,10 @@ class Dirichlet(Multivariate[np.floating]):
         np.fill_diagonal(cov, self._alpha * (a0 - self._alpha) / denom)
         self._cov = 0.5 * (cov + cov.T)  # just in case of round-off
 
-    # ------------------------ Distribution core ------------------------
 
     def sample(self, n_samples: int) -> NDArray[np.floating]:
+        """Draw `n_samples` from Dirichlet(alpha); returns array (n, d)."""
+        
         X = self._dir.rvs(size=int(n_samples), random_state=self._rng)  # (n,d) or (d,) if n=1
         X = np.asarray(X, dtype=float)
         if X.ndim == 1:
@@ -849,6 +868,8 @@ class Dirichlet(Multivariate[np.floating]):
         return X  # (n, d)
 
     def density(self, values: NDArray) -> NDArray[np.floating]:
+        """Return PDF values at `values` as column vector (n, 1)."""
+        
         X = _as_2d(values)                 # (n, d)
         self._validate_simplex_rows(X)
         # Row-wise evaluation (SciPy supports vectorization, but this is explicit & safe)
@@ -856,6 +877,8 @@ class Dirichlet(Multivariate[np.floating]):
         return np.asarray(pmf, dtype=float).reshape(-1, 1)   # (n,1)
 
     def log_density(self, values: NDArray) -> NDArray[np.floating]:
+        """Return log-PDF values at `values` as column vector (n, 1)."""
+        
         X = _as_2d(values)
         self._validate_simplex_rows(X)
         lpmf = [self._dir.logpdf(row) for row in X]
@@ -930,9 +953,11 @@ class Dirichlet(Multivariate[np.floating]):
 
 
     def mean(self) -> NDArray[np.floating]:
+        """Return the mean vector (d,)."""
         return self._mean  # (d,)
 
     def cov(self) -> NDArray[np.floating]:
+         """Return the covariance matrix (d, d)."""
         return self._cov   # (d,d)
 
     def cdf(self, values: NDArray) -> NDArray[np.floating]:
@@ -1021,7 +1046,6 @@ class Binomial(Multivariate[np.floating]):
         self._mean = np.array([mean], dtype=float)          # (1,)
         self._cov = np.array([[var]], dtype=float)          # (1,1)
 
-    # ------------------------ Multivariate core ------------------------
 
     def sample(self, n_samples: int) -> NDArray[np.floating]:
         """Draw (n, 1) samples of success counts (as float for typing consistency)."""
@@ -1063,7 +1087,6 @@ class Binomial(Multivariate[np.floating]):
             return np.asarray(q, dtype=float).reshape(-1, 1)
         raise ValueError("u must be scalar, (n,) or (n,1).")
 
-    # ------------------------ Expectations & converters ------------------------
 
     def expectation(self, func: Callable[[NDArray[np.floating]], NDArray]) -> 'Multivariate':
         """
