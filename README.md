@@ -95,6 +95,97 @@ Then re-run:
 pip install -e .
 ```
 
+## Example Usage
+This minimal module computes the posterior for a Normal likelihood with known σ and a Normal prior on μ. It returns a Normal1D (a distribution out, not a point estimate).
+
+```python
+import numpy as np
+from probpipe import Module, Normal1D, EmpiricalDistribution
+
+class GaussianPosterior(Module):
+    """
+    Posterior for: y_i ~ Normal(mu, sigma^2), prior mu ~ Normal(mu0, var0)
+    Returns posterior Normal1D(mu_n, var_n).
+
+    NOTE: This module expects a Normal1D prior at runtime.
+    If the user passes an EmpiricalDistribution (or other supported types),
+    the Module base class auto-converts it to Normal1D before this method runs.
+    """
+
+    def __init__(self, **deps):
+        super().__init__(**deps)
+
+        # Controls for auto-conversion (see notes below)
+        self._conv_num_samples = 2048      # resample size for conversions
+        self._conv_by_kde = False          # default: moment matching
+        self._conv_fit_kwargs = {}         # kwargs forwarded to KDE fitting (if enabled)
+
+        # Register the internal function as the callable
+        self.run_func(self._calculate_posterior, name="calculate_posterior", as_task=True)
+
+    def _calculate_posterior(self, *, prior: Normal1D, y: np.ndarray, sigma: float = 1.0) -> Normal1D:
+        """
+        Compute posterior Normal1D given Normal likelihood with known sigma,
+        prior Normal1D (mu0, var0), and data y.
+        (By this point, 'prior' has been auto-converted to Normal1D if needed.)
+        """
+        y = np.asarray(y, dtype=float).reshape(-1)
+        n = y.size
+        var = float(sigma) ** 2
+
+        # Prior parameters (Normal1D interface)
+        mu0 = float(prior.mean())
+        var0 = float(prior.cov())  # variance
+
+        # Conjugate update
+        var_n = 1.0 / (n / var + 1.0 / var0)
+        mu_n  = var_n * (y.sum() / var + mu0 / var0)
+
+        return Normal1D(mu_n, np.sqrt(var_n))
+```
+
+
+### Case A — Normal prior (conjugate)
+
+```python
+gp = GaussianPosterior()
+prior_norm = Normal1D(mu=0.0, sigma=5.0)
+
+post = gp.calculate_posterior(
+    prior=prior_norm,
+    y=np.array([1.2, 0.7, -0.3, 0.4]),
+    sigma=1.0
+)
+```
+
+### Case B — Empirical prior (auto-converted to Normal1D)
+
+```python
+emp_prior = EmpiricalDistribution(
+    samples=np.array([1.3, 2.0, 3.3, 4.1, 5.1]).reshape(-1, 1)
+)
+
+post2 = gp.calculate_posterior(
+    prior=emp_prior,     # <-- auto-conversion happens under the hood
+    y=np.array([1.2, 0.7, 0.3, 0.4]),
+    sigma=1.0
+)
+```
+
+**Default path:**
+Moment matching (uses the empirical mean/variance of the provided distribution to form a Normal1D prior).
+
+**KDE path:**
+If you prefer smoothing before matching, enable KDE:
+
+```python
+gp._conv_by_kde = True
+gp._conv_num_samples = 4096                   # (optional) more resamples
+gp._conv_fit_kwargs = {"bandwidth": "scott"}  # (optional) KDE tuning
+```
+
+## Pointer to Further Documentation 
+to be created soon...
 
 
 
