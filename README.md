@@ -1,66 +1,100 @@
-# Probabilistic Pipeline Dev
+# Documentation
 
+## Overview of the Project & Goals
+ProbPipe is a Python framework designed to make probabilistic modeling and uncertainty quantification (UQ) a first-class citizen within workflow management systems. Its core vision is to enable scientists and engineers to construct, compose, and execute probabilistic data-analysis pipelines in a modular and trustworthy way. Treating "distributions in → distributions out" as the central organizing principle.
 
-The core files of this project live under probpipe/core directory. 
+### Motivation
+Modern scientific and engineering workflows increasingly rely on quantifying and propagating uncertainty, especially in domains such as data assimilation, state-space modeling, and Bayesian inference. While existing systems specialize in data assimilation algorithms, they often expose users to implementation complexity or rigid interfaces. ProbPipe aims to provide a cleaner, more flexible, and scalable Python interface that abstracts this complexity while remaining fully extensible for advanced users. In the nearer term, the framework is targeted at state-space modeling and data assimilation tasks, where the goal is to recursively estimate latent states or parameters of dynamical systems from noisy and possibly streaming observations. Ecological applications are a key motivating example, specifically, calibration and data assimilation for models of the terrestrial carbon cycle.
 
-## distributions.py
-consist of some distribution classes. The Distribution class is the abstract base class. You can see other distribution classes inside this file like EmpiricalDistribution and BootstrapDistribution. 
+### Design Goals
+- **Uncertainty Quantification Built-In:** ProbPipe explicitly tracks uncertainty propagation, enabling distribution-aware computation across all modules.
+- **Scalable and Multi-Scale:** The architecture enforces compositionality—complex workflows can be built from simpler, independent components, naturally scaling to multi-scale systems.
+- **Flexible yet User-Friendly:** Users can operate at a high level of abstraction, while advanced functionality remains accessible for expert customization.
+- **Trustworthy Execution:** Compatibility between computational modules is verified at compile time, reducing runtime errors and improving reliability.
 
-## multivariate.py
-consist of other abstract class called Multivariate. Note that Multivariate doesn't imply the high-dimensionality. Instead it is more like a type. You can see the distributions with density inside this file. 
-Please take a look at docs/notebooks/Distributions.ipynb to understand how the distribution classes and their methods work. 
+### Key Features
+- **Composable Architecture:** Every computational unit ("module") is built from smaller probabilistic primitives, allowing infinite composability of models and workflows.
+- **Distributions as First-Class Objects:** Modules consume and emit probability distributions, rather than point estimates—enabling automatic provenance tracking and uncertainty decomposition.
+- **Algorithmic-Level Operation:** Workflows are defined in terms of algorithmic components (sampling, inference, transformation), improving scalability and conceptual clarity.
+- **Automatic Compatibility Checks:** Type and shape compatibility between modules are validated early, promoting both trust and developer productivity.
+- **Seamless Conversion and Data Handling:** The system automatically manages conversions between distributional representations preferred by different algorithms, reducing cognitive load on the user.
 
-## module.py
-is an example of a basic standard module class. The core of this file is the run_func function: You can see what our run decorator deals with. In a high-level overview, it does the following:
-1) Ensures that required dependencies are registered.
-2) Ensures that required inputs are satisfied.
-3) Checks the if run parameters have the correct type. If not, it handles the automatic type conversion.
+### Long-Term Vision
+Ultimately, ProbPipe aims to serve as a general foundation for uncertainty-aware computation pipelines, bridging probabilistic modeling, data assimilation, and scientific machine learning. By emphasizing compositionality, provenance, and clarity, it aspires to provide a robust ecosystem for reproducible Bayesian workflows—from ecological calibration studies to scalable probabilistic data science.
 
-Important things to know: 
-1) The required inputs are inferred from the signature of the run function. In the background each input is stored as an instance of InputSpec class which has three parameters: type, required, and default. If the user specifies the type of the parameter then the type of InputSpec is set accordingly. If the user sets a default value, then we treat that input as not required (required= False). But, if user doesn't set a default value for that parameter we treat it as a required input.
+## Installation Instructions
+### Prerequisites
+Before installing ProbPipe, make sure you have:
+- Conda (Anaconda or Miniconda) installed
+- Python ≥ 3.8 (the recommended version for full compatibility)
 
-2) Almost every distribution class has the from_distribution method. We are using this method to deal with the distribution conversion. Briefly, from_distribution samples from "convert_from" distribution and calculates an estimate of parameters from the sample. At the end it returns the distribution class that the from_distribution part of. There is also another way of doing the type conversion: GaussianKDE deduced from "convert_from" distribution (this not implemented yet). 
+You can verify Conda is available by running:
 
-We have created two examples inside probpipe directory to show how one can create basic modules: example_mcmc.py (core/mcmc.py) and example_module.py
+```bash
+conda --version
+```
 
-Let's take a look at one example:
+If you don’t have Conda yet, download and install [Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/main) or [Anaconda](https://www.anaconda.com/download).
 
-## example_module.py
-In this example, we implemented a single Gaussian Posterior update block. 
-Let's look at the constructor:
+### Create a Conda Environment
+We recommend creating an isolated environment for ProbPipe to avoid dependency conflicts with other Python projects.
 
-The user doesn't have to set inputs manually. But, if they still want to, they can do it by calling the set_inputs method.
+```bash
+conda create -n probpipe python=<python_version>
+conda activate probpipe
+```
+Note: python_version has to be ≥ 3.8
 
-self._conv_num_samples is the attribute to set the number of samples you want to take from "convert_from" distributio in from_distribution method to do the type conversion. 
+### Clone and Install from Source
+Next, clone the repository and install the package inside your Conda environment:
 
-self._conv_by_kde is for selecting the method the user wants to choose to do the type conversion. If self._conv_by_kde=True, then type conversion is made via GaussianKDE.
+```bash
+git clone https://github.com/TARPS-group/prob-pipe.git
+cd prob-pipe
+pip install -e .
+```
 
-self.run_func() is for registering the run function. It optionally takes the as_task parameter which users can use to decide if they want to treat the run function as a task or flow (to understand the difference please look at Prefect task and flow definitions). 
+This installs the core dependencies listed in ```setup.py```:
+- ```numpy ≥ 1.20```
+- ```scipy ≥ 1.7```
+- ```prefect ≥ 3.4```
+- ```makefun ≥ 1.16```
 
-## Notes for Prefect 
-To start the prefect engine, open up a fresh terminal and type:
-**prefect server start**
+### (Optional) Install Developer Tools
 
-Then, go back to the terminal where you run the code, and type:
-**prefect config set PREFECT_API_URL=http://127.0.0.1:4200/api**
+```bash
+pip install -e .[dev]
+```
 
-You can paste "http://127.0.0.1:4200" in your browser to see the Prefect interface in the server side. 
+This will include:
+- **pytest** – for testing
+- **sphinx, nbsphinx** – for documentation
+- **black, flake8** – for linting and formatting
 
-Now, when you run a task or flow you can see the details in the Prefect interface. 
+### Verify Installation
+You can check whether the installation succeeded by running:
 
-But, you may run into problems if you set as_task as False, meaning you are treating your run function as flow. You may run into a problem if type conversion will be happening. Prefect flows automatically validate their inputs before it runs the function. So, you would get an error before our code even attempts for an conversion. So, if that's the problem you are facing just set validate_parameters as False. validate_parameters is the parameter of the flow function (see flow(validate_parameters=False)(wrapper) in module.py)
+```bash
+python -c "import probpipe; print(probpipe.__version__)"
+```
 
-## How to set the environment to run the code. 
-You can either use a virtual or conda environment. 
-We have listed the minimum required dependencies for you inside min_reqs.txt. 
-You can run every file inside probpipe directory using these dependencies. 
-Follow these steps to create the environment needed to run the code:
+Expected output:
+```
+0.1.0
+```
 
-**conda create -n <name_of_the_env> -c conda-forge python=3.12.11 -y**
-**conda activate <name_of_the_env>**
-**pip install -e .[dependencies]**
+### Updating Dependencies
+If your environment is missing system-level libraries (e.g., libffi, libgcc, etc.), Conda can easily fix these:
 
-Make sure you have the "pyproject.toml" file in your directory. 
+```bash
+conda install -c conda-forge numpy scipy prefect makefun
+```
+
+Then re-run:
+```
+pip install -e .
+```
+
 
 
 
