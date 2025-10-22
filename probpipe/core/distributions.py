@@ -187,9 +187,23 @@ class EmpiricalDistribution(Distribution):
     rvs = sample
 
     def density(self, data: np.ndarray) -> np.ndarray:
+        """
+        Return the (unnormalized) sample density estimate at `data`.
+
+        Notes
+        -----
+        Not implemented for empirical distributions without a kernel model.
+        """
         raise NotImplementedError("Density not implemented for EmpiricalDistribution.")
 
     def log_density(self, data: np.ndarray) -> np.ndarray:
+        """
+        Return log-density estimate at `data`.
+
+        Notes
+        -----
+        Not implemented for empirical distributions without a kernel model.
+        """
         raise NotImplementedError("Log density not implemented for EmpiricalDistribution.")
 
     def expectation(
@@ -198,6 +212,24 @@ class EmpiricalDistribution(Distribution):
         *,
         n_mc: int = 2048,
     ) -> Union["Normal1D", "MvNormal"]:
+        """
+        Compute the weighted Monte Carlo expectation of a function under the
+        empirical distribution.
+
+        Parameters
+        ----------
+        func : callable
+            Function mapping samples (array of shape (n, d)) to values.
+        n_mc : int, default=2048
+            Number of Monte Carlo draws used to estimate sampling error.
+
+        Returns
+        -------
+        Normal1D or MvNormal
+            Distribution summarizing the mean and Monte Carlo standard error
+            (1D) or covariance (multivariate) of `func(X)`.
+        """
+        
         Y = np.asarray(func(self._X), dtype=float)
 
         if Y.ndim == 1:
@@ -220,6 +252,25 @@ class EmpiricalDistribution(Distribution):
         convert_from: 'Distribution',
         **fit_kwargs: Any,
     ) -> 'EmpiricalDistribution':
+
+        """
+        Draw samples from another distribution and wrap them as an
+        EmpiricalDistribution.
+
+        Parameters
+        ----------
+        convert_from : Distribution
+            Source distribution to sample from.
+        **fit_kwargs
+            Optional keyword arguments; may include ``num_samples`` (int)
+            specifying the number of draws.
+
+        Returns
+        -------
+        EmpiricalDistribution
+            New empirical distribution constructed from sampled points.
+        """
+
         samples = convert_from.sample(fit_kwargs.get("num_samples", 2048))
         return cls(samples)
         
