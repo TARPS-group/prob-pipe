@@ -187,9 +187,23 @@ class EmpiricalDistribution(Distribution):
     rvs = sample
 
     def density(self, data: np.ndarray) -> np.ndarray:
+        """
+        Return the (unnormalized) sample density estimate at `data`.
+
+        Notes
+        -----
+        Not implemented for empirical distributions without a kernel model.
+        """
         raise NotImplementedError("Density not implemented for EmpiricalDistribution.")
 
     def log_density(self, data: np.ndarray) -> np.ndarray:
+        """
+        Return log-density estimate at `data`.
+
+        Notes
+        -----
+        Not implemented for empirical distributions without a kernel model.
+        """
         raise NotImplementedError("Log density not implemented for EmpiricalDistribution.")
 
     def expectation(
@@ -198,6 +212,24 @@ class EmpiricalDistribution(Distribution):
         *,
         n_mc: int = 2048,
     ) -> Union["Normal1D", "MvNormal"]:
+        """
+        Compute the weighted Monte Carlo expectation of a function under the
+        empirical distribution.
+
+        Parameters
+        ----------
+        func : callable
+            Function mapping samples (array of shape (n, d)) to values.
+        n_mc : int, default=2048
+            Number of Monte Carlo draws used to estimate sampling error.
+
+        Returns
+        -------
+        Normal1D or MvNormal
+            Distribution summarizing the mean and Monte Carlo standard error
+            (1D) or covariance (multivariate) of `func(X)`.
+        """
+        
         Y = np.asarray(func(self._X), dtype=float)
 
         if Y.ndim == 1:
@@ -220,92 +252,26 @@ class EmpiricalDistribution(Distribution):
         convert_from: 'Distribution',
         **fit_kwargs: Any,
     ) -> 'EmpiricalDistribution':
+
+        """
+        Draw samples from another distribution and wrap them as an
+        EmpiricalDistribution.
+
+        Parameters
+        ----------
+        convert_from : Distribution
+            Source distribution to sample from.
+        **fit_kwargs
+            Optional keyword arguments; may include ``num_samples`` (int)
+            specifying the number of draws.
+
+        Returns
+        -------
+        EmpiricalDistribution
+            New empirical distribution constructed from sampled points.
+        """
+
         samples = convert_from.sample(fit_kwargs.get("num_samples", 2048))
         return cls(samples)
         
 
-
-class BootstrapDistribution(EmpiricalDistribution):
-    """
-    Empirical distribution over bootstrap replicates of a statistic.
-
-    Semantics:
-      - 'samples' (inherited) are the bootstrap replicates theta* (shape (B, k)).
-      - 'replicates' is an alias to 'samples' for user-facing clarity.
-      - All summaries (mean/cov/var/std), resampling (sample/rvs), and
-        expectation() behavior are inherited from EmpiricalDistribution.
-
-    Notes
-    -----
-    This class intentionally reuses EmpiricalDistribution's implementation to avoid
-    duplication. The only additions are naming (replicates alias) and a convenience
-    constructor 'from_data' to generate bootstrap replicates.
-    """
-
-    def __init__(
-        self,
-        replicates: np.ndarray,
-        weights: Optional[np.ndarray] = None,
-        *,
-        rng: Optional[np.random.Generator] = None,
-    ):
-        # Just forward to EmpiricalDistribution
-        super().__init__(replicates, weights, rng=rng)
-
-    # --------- Aliases for semantics ---------
-
-    @property
-    def replicates(self) -> np.ndarray:
-        """Alias for the stored bootstrap replicates, shape (B, k)."""
-        return self.samples
-
-    # --------- Convenience constructor ---------
-
-    @classmethod
-    def from_data(
-        cls,
-        data: np.ndarray,
-        stat_fn: Callable[[np.ndarray], np.ndarray],
-        *,
-        B: int = 1000,
-        axis: int = 0,
-        rng: Optional[np.random.Generator] = None,
-    ) -> "BootstrapDistribution":
-        """
-        Classic i.i.d. bootstrap for a statistic.
-
-        Parameters
-        ----------
-        data : array-like
-            Observations (samples along `axis`).
-        stat_fn : callable
-            Function mapping a resampled dataset (with samples on axis 0) to a
-            statistic vector (shape (k,) or scalar). We will pass the resampled
-            array with **samples on axis 0**.
-        B : int
-            Number of bootstrap replicates.
-        axis : int
-            Axis of `data` that indexes samples; moved to 0 before calling `stat_fn`.
-        rng : np.random.Generator, optional
-            RNG for resampling indices.
-
-        Returns
-        -------
-        BootstrapDistribution
-            Container of `B` replicates of the statistic.
-        """
-        rng = rng or np.random.default_rng()
-        X = np.asarray(data, dtype=float)
-        X = np.moveaxis(X, axis, 0)  # samples now on axis 0
-        n = X.shape[0]
-
-        reps = []
-        for _ in range(int(B)):
-            idx = rng.integers(0, n, size=n)  # sample n rows with replacement
-            Xb = X[idx]
-            theta = np.asarray(stat_fn(Xb), dtype=float).reshape(-1)
-            reps.append(theta)
-
-        Theta = np.vstack(reps)  # (B, k)
-        return cls(Theta, rng=rng)
-    
