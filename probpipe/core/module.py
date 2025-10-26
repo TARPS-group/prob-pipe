@@ -19,34 +19,51 @@ _DISTR_INST = (Distribution, Multivariate, EmpiricalDistribution, BootstrapDistr
 
 @dataclass
 class InputSpec:
+    """Specification for a module input.
+
+    Describes the expected type, requirement status, and default value for
+    an input to a :class:`Module`. Used internally by :meth:`Module.set_input`
+    to enforce validation and provide defaults.
+
+    Attributes:
+        type (Optional[Type]): Expected Python type for this input.
+        required (bool): Whether this input must be explicitly provided.
+        default (Any): Default value; `_MISSING` indicates no default provided.
+    """
     type: Optional[Type] = None
     required: bool = False
     default: Any = _MISSING #_MISSING means "no default"
 
 
 class Module(object):
-    """
-    Base class for all ProbPipe modules.
+    """Base class for all ProbPipe modules.
 
     Provides dependency injection, input specification, type validation, and
-    integration with Prefect tasks/flows. Each subclass defines a
-    probabilistic computation that can depend on other modules and be composed
-    into larger pipelines.
+    seamless integration with Prefect tasks and flows. Each subclass defines
+    a probabilistic computation that can depend on other modules and be
+    composed into larger pipelines.
 
     Typical usage:
-    --------------
-    - Subclass `Module` and declare required dependencies via `DEPENDENCIES`.
-    - Define inputs using `set_input()`.
-    - Register one or more computational functions with `run_func()`.
-    - Dependencies and inputs are automatically type-checked and injected
-      at runtime.
+        1. Subclass :class:`Module` and declare required dependencies via
+           the class variable :pyattr:`DEPENDENCIES`.
+        2. Define inputs using :meth:`set_input`.
+        3. Register computational functions using :meth:`run_func`.
+        4. Call registered functions as Prefect tasks or flows.
 
-    Notes
-    -----
-    - Distribution-type inputs are automatically converted if compatible.
-    - Functions registered via 'run_func()' are exposed as Prefect tasks
-      or flows (depending on 'as_task').
-    - Dependencies are verified both at initialization and at runtime.
+    Notes:
+        - Distribution-type inputs are automatically converted when compatible.
+        - Functions registered via :meth:`run_func` are exposed as Prefect tasks
+          or flows depending on the `as_task` flag.
+        - Dependencies are validated at both initialization and runtime.
+
+    Attributes:
+        DEPENDENCIES (set[str]): Names of required dependency modules.
+        dependencies (dict[str, Module]): Injected dependency instances.
+        inputs (dict[str, dict[str, Any]]): Declared input specifications.
+        _run_funcs (dict[str, Callable]): Registered computational functions.
+        _conv_num_samples (int): Default number of samples for distribution conversion.
+        _conv_by_kde (bool): Whether to use KDE-based conversion.
+        _conv_fit_kwargs (dict): Additional keyword arguments for fitting.
     """
 
     
@@ -64,21 +81,22 @@ class Module(object):
         conversion_fit_kwargs: Optional[dict] = None,
         **dependencies: 'Module',
     ):
-         """
-        Initialize the module and validate its dependencies.
+         """Initializes the module and validates dependencies.
 
-        Parameters
-        ----------
-        required_deps : iterable of str, optional
-            Explicitly required dependency names (checked at init).
-        conversion_by_KDE : bool, default=False
-            If True, use KDE when converting distributions automatically.
-        conversion_num_samples : int, default=1024
-            Number of samples for empirical-to-parametric conversion.
-        conversion_fit_kwargs : dict, optional
-            Extra keyword arguments forwarded to distribution fit methods.
-        **dependencies : Module
-            Dependency modules injected into this module.
+        Args:
+            required_deps (Optional[Iterable[str]]): Explicitly required dependency
+                names to check during initialization.
+            conversion_by_KDE (bool): Whether to use kernel density estimation (KDE)
+                for automatic distribution conversion. Defaults to ``False``.
+            conversion_num_samples (int): Number of samples to draw for empirical-to-
+                parametric conversions. Defaults to ``1024``.
+            conversion_fit_kwargs (Optional[dict]): Extra keyword arguments forwarded
+                to distribution fitting methods. Defaults to ``None``.
+            **dependencies (Module): Dependency modules to inject into this module.
+
+        Raises:
+            RuntimeError: If required dependencies are missing or unexpected ones are provided.
+            TypeError: If a dependency is not a subclass of :class:`Module`.
         """
 
         # Enforce that all declared dependencies are provided
@@ -129,15 +147,16 @@ class Module(object):
     #     self.required_deps.update(names)
 
     def set_input(self, **input_defaults):
-        """
-        Define input specifications for the module.
+        """Defines input specifications for the module.
 
-        Each keyword defines either an 'InputSpec' (for type and requirement)
-        or a simple default value.
+        Each keyword argument specifies either an :class:`InputSpec`
+        (for type and requirement) or a simple default value.
 
-        Example
-        -------
-        >>> self.set_input(x=InputSpec(type=np.ndarray, required=True), sigma=1.0)
+        Example:
+            >>> self.set_input(x=InputSpec(type=np.ndarray, required=True), sigma=1.0)
+
+        Args:
+            **input_defaults: Key–value pairs of input names and their specifications.
         """
         
         for key, spec in input_defaults.items():
@@ -163,30 +182,32 @@ class Module(object):
             as_task: bool = True, 
             return_type: Optional[type] = None,
             ) -> Callable:
-        """
-        Register a function as a Prefect-executable run function.
+        """Registers a computational function as a Prefect-executable task or flow.
 
-        This method performs:
-          1. Input schema inference and validation.
-          2. Dependency injection by parameter name.
-          3. Type checking and automatic distribution conversion.
-          4. Prefect wrapping as a task or flow.
+        This decorator performs automatic input validation, dependency injection,
+        and Prefect task wrapping. Registered functions become callable attributes
+        of the module (e.g., ``module.my_function()``).
 
-        Parameters
-        ----------
-        f : callable
-            The user function implementing the computation.
-        name : str, optional
-            Optional name override; defaults to `f.__name__`.
-        as_task : bool, default=True
-            If True, wraps the function as a Prefect task; otherwise as a flow.
-        return_type : type, optional
-            If specified, checks or converts the function's return type.
+        Steps performed:
+            1. Infers input schema and type hints.
+            2. Validates and injects dependencies.
+            3. Applies type checking and optional conversions.
+            4. Wraps as a Prefect task or flow depending on ``as_task``.
 
-        Returns
-        -------
-        callable
-            The decorated Prefect task or flow.
+        Args:
+            f (Callable): User-defined function implementing the computation.
+            name (Optional[str]): Custom function name override.
+                Defaults to the original function name.
+            as_task (bool): Whether to register the function as a Prefect task
+                (``True``) or flow (``False``). Defaults to ``True``.
+            return_type (Optional[type]): Expected return type for validation.
+
+        Returns:
+            Callable: The decorated Prefect task or flow.
+
+        Raises:
+            RuntimeError: If a run function with the same name is already registered.
+            TypeError: If inputs or dependencies fail validation.
         """
         
         run_name = name or f.__name__
@@ -197,7 +218,16 @@ class Module(object):
         
         # infering inputs from signature at registration time 
         def _autofill_inputs_from_signature(func: Callable, run_name: str) -> None:
-            """Infer input specifications from the function signature and type hints."""
+            """Infers input specifications from a function’s signature and type hints.
+
+            Parses parameter annotations and default values to automatically populate
+            input schemas used for validation at runtime. Dependencies are excluded
+            from input registration, as they are injected automatically.
+    
+            Args:
+                func (Callable): Function whose signature is analyzed.
+                run_name (str): Name under which the run function will be registered.
+            """
             hints = get_type_hints(func)
             specs: Dict[str, Dict[str, Any]] = {}
             for pname, param in sig.parameters.items():
@@ -227,7 +257,21 @@ class Module(object):
         
         
         def _ensure_inputs_satisfied(kwargs: Dict[str, Any], *, run_name: str) -> Dict[str, Any]:
-            """Validate provided inputs against the declared schema and fill defaults."""
+            """Validates provided inputs and fills missing defaults.
+
+            Ensures that all required inputs are present, fills in defaults where
+            applicable, and checks for unknown input keys.
+    
+            Args:
+                kwargs (dict[str, Any]): Input keyword arguments provided at runtime.
+                run_name (str): Name of the registered run function being validated.
+    
+            Returns:
+                dict[str, Any]: Validated and completed input mapping.
+    
+            Raises:
+                TypeError: If required inputs are missing or unexpected inputs are given.
+            """
             
             # using the per-run input schema
             input_specs = self._inputs_for_run.get(run_name, {})
@@ -260,7 +304,11 @@ class Module(object):
         #             f"Missing required dependencies: {missing}. Have: {list(self.dependencies.keys())}"
         #         )
         def _ensure_dependencies_available():
-            """Verify that all required dependencies are available at runtime."""
+            """Ensures all declared dependencies are available at runtime.
+
+            Raises:
+                RuntimeError: If any required dependencies are missing.
+            """
             
             missing = [k for k in self.DEPENDENCIES if k not in self.dependencies]
             if missing:
@@ -269,17 +317,47 @@ class Module(object):
                 )
                     
         def _is_distribution_instance(v) -> bool:
-            """Return True if `v` is an instance of a supported Distribution class."""
+            """Checks whether a value is an instance of a supported Distribution class.
+
+            Args:
+                v: Value to inspect.
+    
+            Returns:
+                bool: ``True`` if ``v`` is a distribution instance, ``False`` otherwise.
+            """
             
             return isinstance(v, _DISTR_INST)
 
         def _is_distribution_type(tp) -> bool:
-            """Return True if `tp` is a subclass or base of a recognized Distribution type."""
+            """Checks whether a type hint refers to a known Distribution type.
+
+            Args:
+                tp: Type annotation to inspect.
+    
+            Returns:
+                bool: ``True`` if the type is a subclass or base of a Distribution type.
+            """
             
             return isinstance(tp, type) and (tp in _DISTR_BASE or issubclass(tp, _DISTR_BASE))
             
         def type_check(args, kwargs, *, f):
-            """Validate input types and perform automatic distribution conversions."""
+            """Performs type checking and automatic distribution conversion.
+
+            Validates argument types against type hints and, when necessary,
+            automatically converts compatible distribution instances to the
+            expected subclass using their ``from_distribution`` method.
+    
+            Args:
+                args: Positional arguments passed to the function.
+                kwargs: Keyword arguments passed to the function.
+                f (Callable): Function being type-checked.
+    
+            Returns:
+                tuple: The possibly updated ``(args, kwargs)`` pair.
+    
+            Raises:
+                TypeError: If an argument fails type validation or conversion fails.
+            """
 
             hints = get_type_hints(f)
             bound = inspect.signature(f).bind_partial(*args, **kwargs)
@@ -344,7 +422,19 @@ class Module(object):
 
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
-            """Execute the registered run function with input validation and dependency injection."""
+            """Executes the registered run function with validation and dependency injection.
+
+            This wrapper enforces runtime validation of inputs and dependencies,
+            performs type checking and conversion, injects required dependencies,
+            and finally executes the underlying user function.
+    
+            Args:
+                *args: Positional arguments for the function.
+                **kwargs: Keyword arguments for the function.
+    
+            Returns:
+                Any: Result returned by the wrapped function.
+            """
             _ensure_dependencies_available()  
 
             bound_args = sig.bind(*args, **kwargs)  # bind positional and keyword args
@@ -386,10 +476,11 @@ class Module(object):
         return pf
 
     def __repr__(self):
+        """Return a compact summary representation of the module."""
         return f"<module deps={list(self.dependencies.keys())} inputs={list(self.inputs.keys())} run_funcs={list(self._run_funcs.keys())}>"
 
     def __str__(self):
-        """Readable multi-line summary of the module’s configuration."""
+        """Return a human-readable, multi-line summary of the module configuration."""
         deps = ", ".join(self.dependencies.keys()) or "None"
         inputs = ", ".join(self.inputs.keys()) or "None"
         run_funcs = ", ".join(self._run_funcs.keys()) or "None"
