@@ -94,93 +94,61 @@ pip install -e .
 ```
 
 ## Example Usage
-This minimal module computes the posterior for a Normal likelihood with known σ and a Normal prior on μ. It returns a Normal1D (a distribution out, not a point estimate).
+This example demonstrates how to combine Prior, Likelihood, and MetropolisHastings modules with the MCMC class to estimate a posterior distribution over a scalar parameter θ: the mean of a Normal distribution with known standard deviation.
+
+### Step 1: Generating synthetic data
 
 ```python
 import numpy as np
-from probpipe import Module, Normal1D, EmpiricalDistribution
+from mcmc import Likelihood, Prior, MetropolisHastings, MCMC
+from multivariate import Normal1D
 
-class GaussianPosterior(Module):
-    """
-    Posterior for: y_i ~ Normal(mu, sigma^2), prior mu ~ Normal(mu0, var0)
-    Returns posterior Normal1D(mu_n, var_n).
-
-    NOTE: This module expects a Normal1D prior at runtime.
-    If the user passes an EmpiricalDistribution (or other supported types),
-    the Module base class auto-converts it to Normal1D before this method runs.
-    """
-
-    def __init__(self, **deps):
-        super().__init__(**deps)
-
-        # Controls for auto-conversion (see notes below)
-        self._conv_num_samples = 2048      # resample size for conversions
-        self._conv_by_kde = False          # default: moment matching
-        self._conv_fit_kwargs = {}         # kwargs forwarded to KDE fitting (if enabled)
-
-        # Register the internal function as the callable
-        self.run_func(self._calculate_posterior, name="calculate_posterior", as_task=True)
-
-    def _calculate_posterior(self, *, prior: Normal1D, y: np.ndarray, sigma: float = 1.0) -> Normal1D:
-        """
-        Compute posterior Normal1D given Normal likelihood with known sigma,
-        prior Normal1D (mu0, var0), and data y.
-        (By this point, 'prior' has been auto-converted to Normal1D if needed.)
-        """
-        y = np.asarray(y, dtype=float).reshape(-1)
-        n = y.size
-        var = float(sigma) ** 2
-
-        # Prior parameters (Normal1D interface)
-        mu0 = float(prior.mean())
-        var0 = float(prior.cov())  # variance
-
-        # Conjugate update
-        var_n = 1.0 / (n / var + 1.0 / var0)
-        mu_n  = var_n * (y.sum() / var + mu0 / var0)
-
-        return Normal1D(mu_n, np.sqrt(var_n))
+np.random.seed(42)
+true_mu = 2.5
+sigma = 1.0
+data = np.random.normal(loc=true_mu, scale=sigma, size=50)
 ```
 
-
-### Case A — Normal prior (conjugate)
+### Step 2: Defining prior and likelihood distributions
 
 ```python
-gp = GaussianPosterior()
-prior_norm = Normal1D(mu=0.0, sigma=5.0)
-
-post = gp.calculate_posterior(
-    prior=prior_norm,
-    y=np.array([1.2, 0.7, -0.3, 0.4]),
-    sigma=1.0
-)
+# Prior: Normal(0, 5)
+prior_dist = Normal1D(mu=0.0, sigma=5.0)
+# Likelihood base distribution: Normal(μ, 1.0)
+likelihood_dist = Normal1D(mu=0.0, sigma=sigma)
 ```
 
-### Case B — Empirical prior (auto-converted to Normal1D)
+### Step 3: Creating module instances
+Each component (Prior, Likelihood, Sampler) is instantiated independently, then composed inside the MCMC module.
 
 ```python
-emp_prior = EmpiricalDistribution(
-    samples=np.array([1.3, 2.0, 3.3, 4.1, 5.1]).reshape(-1, 1)
-)
-
-post2 = gp.calculate_posterior(
-    prior=emp_prior,     # <-- auto-conversion happens under the hood
-    y=np.array([1.2, 0.7, 0.3, 0.4]),
-    sigma=1.0
-)
+prior = Prior(distribution=prior_dist)
+likelihood = Likelihood(distribution=likelihood_dist)
+sampler = MetropolisHastings()
 ```
 
-**Default path:**
-Moment matching (uses the empirical mean/variance of the provided distribution to form a Normal1D prior).
-
-**KDE path:**
-If you prefer smoothing before matching, enable KDE:
+### Step 4: Build and run the MCMC workflow
+The MCMC module internally builds a log_target function combining prior and likelihood log-densities.
 
 ```python
-gp._conv_by_kde = True
-gp._conv_num_samples = 4096                   # (optional) more resamples
-gp._conv_fit_kwargs = {"bandwidth": "scott"}  # (optional) KDE tuning
+mcmc = MCMC(prior=prior, likelihood=likelihood, sampler=sampler)
+
+posterior = mcmc.calculate_posterior(
+    num_samples=2000,
+    initial_param=0.0,
+    data=data,
+    proposal_std=0.5,
+)
+
+# Summarizing posterior results
+print(f"Posterior mean (estimate of μ): {posterior.mu:.3f}")
+print(f"Posterior std: {posterior.sigma:.3f}")
 ```
+
+After sampling, it returns a Normal1D summary object representing the posterior mean and uncertainty of the parameter.
+
+**Expected outcome:**
+With synthetic data generated around μ=2.5, you should see a posterior mean close to 2.5 and a standard deviation reflecting posterior uncertainty.
 
 ## Pointer to Further Documentation 
 to be created soon...
