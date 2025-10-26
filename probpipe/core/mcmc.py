@@ -13,20 +13,32 @@ __all__ = [
 ]
 
 class Likelihood(Module):
-    """
-    Basic likelihood module that computes the log-likelihood of observed data
-    under a Normal1D distribution with a variable mean parameter.
+    """Computes the log-likelihood of observed data under a Normal1D model.
 
-    Notes
-    -----
-    - Expects a dependency named 'distribution' (a Normal1D instance).
-    - The 'param' input is used as the mean (mu) for a temporary Normal1D with
-      the same sigma as the dependency.
+    This module evaluates the total log-likelihood of observed data given
+    a Normal1D distribution with a variable mean parameter. The variance
+    (sigma) is taken from the dependency `distribution`, while the input
+    parameter `param` serves as the candidate mean (mu).
+
+    Attributes:
+        DEPENDENCIES (set[str]): Required dependency names. Must include
+            ``'distribution'``, which should be a ``Normal1D`` instance.
+
+    Notes:
+        - This module expects a dependency named ``distribution``.
+        - The input parameter ``param`` is used as the mean (mu) for a
+          temporary Normal1D distribution sharing the same sigma as the dependency.
     """
     
     DEPENDENCIES = {'distribution'}
 
     def __init__(self, **dependencies):
+        """Initializes the Likelihood module.
+
+        Args:
+            **dependencies: Module dependencies. Must include a key
+                ``'distribution'`` that maps to a ``Normal1D`` instance.
+        """
         super().__init__(**dependencies)
 
         self.set_input(
@@ -37,24 +49,22 @@ class Likelihood(Module):
 
     @property
     def distribution(self):
-        """Return the distribution dependency used for evaluating likelihood."""
+        """Normal1D: The distribution dependency used for evaluating likelihood."""
         return self.dependencies['distribution']
 
     def _log_likelihood_func(self, data: np.ndarray, param: float) -> float:
-        """
-        Compute the total log-likelihood of data under a Normal1D model.
+        """Computes the total log-likelihood of observed data.
 
-        Parameters
-        ----------
-        data : np.ndarray
-            Observed data values, shape (n,) or (n, 1).
-        param : float
-            Mean parameter (μ) for the Normal1D likelihood.
+        Creates a temporary Normal1D distribution using ``param`` as the
+        mean (mu) and the dependency’s sigma. Then computes the sum of
+        log-likelihood values for all observed data points.
 
-        Returns
-        -------
-        float
-            Sum of log-likelihood values over all observations.
+        Args:
+            data (np.ndarray): Observed data values, of shape (n,) or (n, 1).
+            param (float): Mean parameter (mu) of the temporary Normal1D.
+
+        Returns:
+            float: Total log-likelihood of the data given the parameter.
         """
         temp_dist = Normal1D(mu=param, sigma=self.distribution.sigma)
         xarr = np.asarray(data, dtype=float).reshape(-1, 1)
@@ -62,20 +72,18 @@ class Likelihood(Module):
         return float(np.sum(log_probs))
 
     def _log_likelihood_task(self, *, data: np.ndarray, param: float):
-        """
-        Prefect-compatible task wrapper for `_log_likelihood_func`.
+        """Prefect-compatible task wrapper for the log-likelihood function.
 
-        Parameters
-        ----------
-        data : np.ndarray
-            Observed data values.
-        param : float
-            Mean parameter (μ) for the Normal1D likelihood.
+        This task wraps the pure computation function
+        :meth:`_log_likelihood_func` to make it compatible with Prefect
+        workflows.
 
-        Returns
-        -------
-        float
-            Log-likelihood of the data under the given parameter.
+        Args:
+            data (np.ndarray): Observed data values.
+            param (float): Mean parameter (mu) for the Normal1D likelihood.
+
+        Returns:
+            float: Log-likelihood of the data under the given parameter.
         """
         
         return self._log_likelihood_func(data, param)
@@ -92,20 +100,29 @@ class Likelihood(Module):
 
 
 class Prior(Module):
-    """
-    Basic prior module that computes the log-probability (log-density)
-    of a parameter under a given distribution.
+    """Computes the log-probability (log-density) of a parameter under a prior distribution.
 
-    Notes
-    -----
-    - Expects a dependency named ``distribution`` (e.g., Normal1D, Beta, etc.).
-    - Serves as a simple wrapper to expose prior log-probabilities as
-      Prefect-compatible tasks within probabilistic workflows.
+    This module serves as a thin wrapper around a probability distribution
+    (e.g., Normal1D, Beta, etc.) to expose prior log-probabilities as
+    Prefect-compatible tasks. It is typically used within probabilistic
+    workflows where prior evaluation is required as part of the posterior
+    computation.
+
+    Attributes:
+        DEPENDENCIES (set[str]): Required dependency names. Must include
+            ``'distribution'`` representing the prior distribution.
     """
     
     DEPENDENCIES = {'distribution'}
 
     def __init__(self, **dependencies):
+        """Initializes the Prior module.
+
+        Args:
+            **dependencies: Module dependencies. Must include a key
+                ``'distribution'`` mapping to a distribution instance
+                (e.g., ``Normal1D`` or ``Beta``).
+        """
         super().__init__(**dependencies)
 
         self.set_input(param=InputSpec(type=float, required=True))
@@ -113,39 +130,32 @@ class Prior(Module):
 
     @property
     def distribution(self):
-        """Return the distribution dependency representing the prior."""
+        """Distribution: The dependency representing the prior distribution."""
         return self.dependencies['distribution']
 
     def _log_prob_func(self, param: float) -> float:
-        """
-        Compute the log-probability of a parameter under the prior.
+        """Computes the log-probability of a parameter under the prior.
 
-        Parameters
-        ----------
-        param : float
-            Parameter value at which to evaluate the log-density.
+        Args:
+            param (float): Parameter value at which to evaluate the log-density.
 
-        Returns
-        -------
-        float
-            Log-probability of the parameter under the prior distribution.
+        Returns:
+            float: Log-probability of the parameter under the prior distribution.
         """
         
         return self.distribution.log_density(param)
 
     def _log_prob_task(self, *, param: float):
-        """
-        Prefect-compatible task wrapper for `_log_prob_func`.
+        """Prefect-compatible task wrapper for the log-probability computation.
 
-        Parameters
-        ----------
-        param : float
-            Parameter value.
+        Wraps :meth:`_log_prob_func` for use in Prefect workflows, enabling
+        asynchronous or task-based execution.
 
-        Returns
-        -------
-        float
-            Log-probability of the parameter under the prior.
+        Args:
+            param (float): Parameter value to evaluate.
+
+        Returns:
+            float: Log-probability of the parameter under the prior.
         """
         
         return self._log_prob_func(param)
@@ -154,22 +164,31 @@ class Prior(Module):
 
 
 class MetropolisHastings(Module):
-    """
-    Simple Metropolis–Hastings (MH) sampler module.
+    """Implements a basic Metropolis–Hastings (MH) sampler.
 
-    Performs random-walk MH sampling using a Normal(θ_t, proposal_std²) proposal.
-    This module wraps a basic algorithm suitable for 1D or low-dimensional targets
-    and can be embedded as a dependency of higher-level MCMC modules.
+    This module performs random-walk Metropolis–Hastings sampling using
+    a Normal(delta_t, proposal_std^2) proposal distribution. It provides a minimal,
+    general-purpose sampler for 1D or low-dimensional targets and can be
+    embedded as a dependency within higher-level MCMC workflows.
 
-    Notes
-    -----
-    - Stateless: does not maintain internal dependencies.
-    - Expects a callable `log_target` returning log-density values.
+    Attributes:
+        DEPENDENCIES (set[str]): The set of required dependencies (empty for this module).
+
+    Notes:
+        - Stateless: does not maintain internal dependencies.
+        - Expects a callable ``log_target`` that returns the log-density of a state.
+        - Suitable for pedagogical or small-scale use; for high-dimensional or
+          correlated targets, more advanced samplers (e.g., HMC) are recommended.
     """
     
     DEPENDENCIES = set()
 
     def __init__(self):
+        """Initializes the Metropolis–Hastings sampler.
+
+        The module defines required input specifications for Prefect workflows:
+        ``log_target``, ``num_samples``, ``initial_state``, and optionally ``proposal_std``.
+        """
         super().__init__()
         self.set_input(
             log_target=InputSpec(type=Callable, required=True),
@@ -181,25 +200,22 @@ class MetropolisHastings(Module):
         
         
     def _sample_posterior(self, *, log_target, num_samples, initial_state, proposal_std = 1.0):
-        """
-        Draw samples from a target distribution using the
-        Metropolis–Hastings algorithm.
+        """Draws samples from a target distribution using the MH algorithm.
 
-        Parameters
-        ----------
-        log_target : Callable[[float], float]
-            Function returning the log-probability of a proposed state.
-        num_samples : int
-            Number of MCMC iterations to perform.
-        initial_state : float
-            Starting value for the Markov chain.
-        proposal_std : float, default=1.0
-            Standard deviation of the Normal proposal kernel.
+        Executes a random-walk Metropolis–Hastings loop over ``num_samples`` iterations.
+        Each proposed sample is drawn from a Normal(θₜ, proposal_std²) proposal, and
+        accepted or rejected according to the standard acceptance ratio.
 
-        Returns
-        -------
-        list of float
-            Sequence of sampled states approximating the target distribution.
+        Args:
+            log_target (Callable[[float], float]): Function that returns the
+                log-probability (log-density) of a given state.
+            num_samples (int): Number of MCMC iterations to perform.
+            initial_state (float): Initial value (θ₀) of the Markov chain.
+            proposal_std (float, optional): Standard deviation of the Normal proposal
+                kernel. Defaults to 1.0.
+
+        Returns:
+            list[float]: Sequence of sampled states approximating the target distribution.
         """
         
         samples = []
@@ -222,23 +238,33 @@ class MetropolisHastings(Module):
 
 
 class MCMC(Module):
-    """
-    Generic MCMC posterior estimation module.
+    """Generic Markov Chain Monte Carlo (MCMC) posterior estimation module.
 
-    Combines user-specified prior, likelihood, and sampler modules
-    (e.g., Metropolis–Hastings) to generate samples from a posterior
-    distribution p(θ | data) and summarize them as a Normal1D.
+    This module combines user-defined prior, likelihood, and sampler modules
+    (e.g., :class:`MetropolisHastings`) to draw samples from a posterior
+    distribution p(delta | data). The resulting samples are summarized as a
+    :class:`Normal1D` distribution representing the posterior mean and
+    standard deviation.
 
-    Notes
-    -----
-    - Dependencies: ``likelihood``, ``prior``, and ``sampler``.
-    - Operates with automatic distribution conversion when applicable.
-    - Returns a Normal1D summarizing the posterior mean and standard deviation.
+    Attributes:
+        DEPENDENCIES (set[str]): Required module dependencies:
+            ``'likelihood'``, ``'prior'``, and ``'sampler'``.
+        _conv_num_samples (int): Default number of samples for distribution conversion.
+        _conv_by_kde (bool): Whether to use kernel density estimation for conversion.
+        _conv_fit_kwargs (dict): Extra fitting keyword arguments.
     """
 
     DEPENDENCIES = {'likelihood', 'prior', 'sampler'}
 
     def __init__(self, **dependencies):
+        """Initializes the MCMC module.
+
+        Args:
+            **dependencies: Module dependencies providing prior, likelihood,
+                and sampler instances. Must include keys:
+                ``'prior'`` (Prior), ``'likelihood'`` (Likelihood),
+                and ``'sampler'`` (MetropolisHastings or compatible sampler).
+        """
         super().__init__(**dependencies)
 
         self._conv_num_samples = 2048
@@ -258,24 +284,23 @@ class MCMC(Module):
             )
 
     def _calculate_posterior(self, *, num_samples, initial_param, data, proposal_std=1.0):
-        """
-        Run MCMC to estimate the posterior distribution over parameters.
+        """Estimates the posterior distribution via MCMC sampling.
 
-        Parameters
-        ----------
-        num_samples : int
-            Number of MCMC samples to draw.
-        initial_param : float
-            Initial parameter value for the Markov chain.
-        data : np.ndarray
-            Observed data used in the likelihood.
-        proposal_std : float, default=1.0
-            Standard deviation for the proposal kernel used by the sampler.
+        Runs an MCMC chain to approximate the posterior p(θ | data)
+        by iteratively combining the prior and likelihood in a
+        user-provided sampler (e.g., Metropolis–Hastings).
+        The resulting samples are summarized by a Normal1D distribution
+        using their empirical mean and standard deviation.
 
-        Returns
-        -------
-        Normal1D
-            Gaussian summary of the posterior with mean and standard deviation
+        Args:
+            num_samples (int): Number of MCMC samples to draw.
+            initial_param (float): Initial parameter value for the Markov chain.
+            data (np.ndarray): Observed data used in the likelihood function.
+            proposal_std (float, optional): Standard deviation for the sampler’s
+                proposal kernel. Defaults to 1.0.
+
+        Returns:
+            Normal1D: Posterior summary distribution with mean and standard deviation
             computed from the sampled chain.
         """
         
@@ -284,7 +309,8 @@ class MCMC(Module):
         sampler = self.dependencies['sampler']
 
         def log_target(param):
-            # Call pure functions, NOT Prefect tasks, to get floats synchronously
+            """Computes unnormalized log posterior for a given parameter."""
+            
             ll = likelihood._log_likelihood_func(data, param)
             lp = prior._log_prob_func(param)
             return ll + lp
