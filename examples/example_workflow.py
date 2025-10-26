@@ -1,3 +1,23 @@
+"""
+Example: Building a Normal–Normal MCMC Posterior with WorkFlow
+--------------------------------------------------------------
+
+This example demonstrates how to construct a complete MCMC pipeline using
+the `WorkFlow` context manager. Each function (log-likelihood, log-prior,
+Metropolis–Hastings sampler, and posterior calculator) is registered as a
+Prefect task inside the workflow block.
+
+After the context exits, the workflow exposes all registered functions as
+callable tasks/flows (e.g. `wf.calculate_posterior()`), fully composable with
+other ProbPipe modules.
+
+Model:
+    y_i ~ Normal(θ, σ²)
+    delta   ~ Normal(μ₀, σ₀²)
+
+Posterior is approximated by MCMC sampling using a Normal proposal kernel.
+"""
+
 from typing import Optional, Callable
 from probpipe import WorkFlow, Module 
 from prefect import flow, task
@@ -9,12 +29,14 @@ with WorkFlow() as wf:
 
     @wf.run_func(as_task=True)
     def log_likelihood(data: np.ndarray, param: float, sigma: float) -> float:
+        """Compute Normal log-likelihood (up to a constant)."""
         residuals = data - param
         # Log likelihood of normal model (ignoring constants)
         return -0.5 * np.sum((residuals / sigma) ** 2)
 
     @wf.run_func(as_task=True)
     def log_prior(param: float, mu_prior: float, sigma_prior: float) -> float:
+        """Compute Normal prior log-probability (up to a constant)."""
         diff = param - mu_prior
         # Log prior (normal)
         return -0.5 * (diff / sigma_prior) ** 2
@@ -26,6 +48,7 @@ with WorkFlow() as wf:
         initial_state: float,
         proposal_std: float = 1.0
     ):
+        """Simple Metropolis–Hastings random-walk sampler."""
         samples = []
         current = initial_state
         current_log_prob = log_target(current)
@@ -52,6 +75,8 @@ with WorkFlow() as wf:
         sigma_likelihood: float,
         proposal_std: float = 1.0,
     ):
+        """Run full MCMC and return posterior summary as Normal1D."""
+        
         def log_target(param: float) -> float:
             ll = wf.log_likelihood(data=data, param=param, sigma=sigma_likelihood)  # Prefect calls task
             lp = wf.log_prior(param=param, mu_prior=mu_prior, sigma_prior=sigma_prior)  # Prefect calls task
