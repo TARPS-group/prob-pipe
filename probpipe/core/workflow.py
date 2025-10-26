@@ -4,50 +4,56 @@ from contextlib import contextmanager
 from typing import Dict, Callable, Optional, Iterable, Set, Tuple
 
 class WorkFlow(Module):
-    """
-    Context-managed module for batch registration of run functions.
+    """Context-managed module for batch registration of Prefect run functions.
 
-    Functions decorated with `@workflow.run_func(...)` inside a 'with WorkFlow():'
-    block are collected first, and registered as Prefect tasks/flows upon exit.
+    The `WorkFlow` class allows deferred registration of multiple functions
+    as Prefect tasks or flows within a context block. Functions decorated with
+    `@workflow.run_func(...)` inside a `with WorkFlow():` block are collected first
+    and registered only upon exiting the context.
 
-    Example
-    -------
-    with WorkFlow() as wf:
-        @wf.run_func(as_task=True)
-        def step1(x: int) -> int:
-            return x + 1
-        @wf.run_func(as_task=False)
-        def step2(y: int) -> int:
-            return y * 2
-       
-    # Both step1 and step2 are now registered as run functions.
+    Example:
+        with WorkFlow() as wf:
+            @wf.run_func(as_task=True)
+            def step1(x: int) -> int:
+                return x + 1
+
+            @wf.run_func(as_task=False)
+            def step2(y: int) -> int:
+                return y * 2
+
+        # Both step1 and step2 are now registered as Prefect run functions.
     """
     
     def __init__(self):
-        """Initialize an empty workflow with deferred run function registry."""
+        """Initializes an empty workflow for deferred function registration."""
         
         super().__init__()
         self._collected_funcs: Dict[str, Tuple[Callable, bool]] = {}
         self._initialized = False
 
     def __enter__(self):
-        """Enter workflow context; returns self for use in 'with' statements."""
+        """Enters the workflow context.
+
+        Returns:
+            WorkFlow: The workflow instance, enabling use in a `with` statement.
+        """
         
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        """
-        On exit, register all collected functions as Prefect tasks/flows.
+        """Registers all collected functions as Prefect tasks or flows on exit.
 
-        Parameters
-        ----------
-        exc_type, exc_value, traceback
-            Standard context manager exception arguments.
+        This method finalizes the workflow by registering all collected functions
+        with Prefect when leaving the context block. Each collected function
+        is converted to a task or flow based on the `as_task` flag.
 
-        Returns
-        -------
-        bool
-            Always returns False to propagate exceptions normally.
+        Args:
+            exc_type: Exception type, if raised within the block.
+            exc_value: Exception value, if raised within the block.
+            traceback: Traceback object for the exception.
+
+        Returns:
+            bool: Always returns False to propagate exceptions normally.
         """
         
         if not self._initialized:
@@ -58,25 +64,38 @@ class WorkFlow(Module):
         return False
 
     def run_func(self, f: Callable = None, *, as_task: bool = True):
-                """
-        Decorator to collect a function for later registration.
+        """Collects a function for later registration as a Prefect task or flow.
 
-        Parameters
-        ----------
-        f : callable, optional
-            Function to decorate. If None, returns a decorator.
-        as_task : bool, default=True
-            If True, register the function as a Prefect task;
-            otherwise as a Prefect flow.
+        Used as a decorator inside a `WorkFlow` context. The function is stored
+        until the context exits, at which point it is automatically registered
+        as a Prefect task or flow.
 
-        Returns
-        -------
-        callable
-            The decorated function or decorator itself.
+        Args:
+            f (Callable, optional): Function to register. If `None`, the method
+                acts as a decorator.
+            as_task (bool, optional): If True, register the function as a Prefect
+                task; otherwise, as a Prefect flow. Defaults to True.
+
+        Returns:
+            Callable: The decorated function or a decorator for later use.
+
+        Raises:
+            RuntimeError: If a function with the same name is already collected.
         """
+                
         
         def decorator(func: Callable):
-            """Record function and registration mode (task or flow)."""
+            """Records a function and its registration mode (task or flow).
+
+            Args:
+                func (Callable): The function to be collected.
+
+            Returns:
+                Callable: The same function, unmodified.
+
+            Raises:
+                RuntimeError: If a function with the same name already exists.
+            """
             
             name = func.__name__
             if name in self._collected_funcs:
