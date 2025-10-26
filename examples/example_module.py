@@ -1,13 +1,41 @@
+"""
+Example: Gaussian Conjugate Posterior Computation
+-------------------------------------------------
+
+This example demonstrates how to define a lightweight `Module`
+(`GaussianPosterior`) that analytically computes the posterior
+for a Normal–Normal model:
+
+    y_i ~ Normal(mu, sigma²)
+    mu  ~ Normal(mu₀, var₀)
+
+The posterior is also Normal with parameters:
+
+    var_n = 1 / (n / sigma^2 + 1 / var_delta)
+    mu_n  = var_n * (Sigma_y / sigma^2 + mu_delta / var_delta)
+
+The module automatically converts empirical distributions to
+parametric Normals if necessary, illustrating ProbPipe’s type-safe
+conversion logic.
+"""
+
 import numpy as np
 from probpipe import Module, EmpiricalDistribution, Normal1D
 
 class GaussianPosterior(Module):
-    """
-    Posterior for: y_i ~ Normal(mu, sigma^2), prior mu ~ Normal(mu0, var0)
-    Returns posterior Normal1D(mu_n, var_n)
+    """Posterior for a Normal–Normal conjugate model.
+
+    Args:
+        **deps: Optional dependencies (unused in this simple module).
+
+    Attributes:
+        _conv_num_samples (int): Number of samples used for conversion when
+            fitting from an empirical prior.
+        _conv_by_kde (bool): Whether to use a KDE for conversion.
     """
 
     def __init__(self, **deps):
+        """Initialize the GaussianPosterior module."""
         super().__init__(**deps)
 
         #self.set_input(
@@ -24,9 +52,23 @@ class GaussianPosterior(Module):
         self.run_func(self._calculate_posterior, name="calculate_posterior", as_task=True)
 
     def _calculate_posterior(self, *, prior: Normal1D, y: np.ndarray, sigma: float = 1.0):
-        """
-        Compute posterior Normal1D given Normal likelihood with known sigma,
-        prior Normal1D (mu0, var0), and data y.
+        """Compute the conjugate Normal posterior.
+
+        Args:
+            prior (Normal1D): Prior distribution over μ.
+            y (np.ndarray): Observed data array.
+            sigma (float): Known standard deviation of the likelihood.
+
+        Returns:
+            Normal1D: Posterior distribution N(μ_n, σ_n ^2).
+
+        Examples:
+            >>> gp = GaussianPosterior()
+            >>> prior = Normal1D(0, 5)
+            >>> y = np.array([1.2, 0.7, -0.3, 0.4])
+            >>> post = gp.calculate_posterior(prior=prior, y=y, sigma=1.0)
+            >>> post.mu, post.sigma
+            (approx. 0.41, 0.47)
         """
 
         # Convert y to numpy array if needed
@@ -47,9 +89,9 @@ class GaussianPosterior(Module):
 
 gp = GaussianPosterior()
 
-#prior_norm = Normal1D(0, 5)
-#post = gp.calculate_posterior(prior=prior_norm, y=np.array([1.2, 0.7, -0.3, 0.4]), sigma=1.0)
-#print(post.mu, post.sigma)
+prior_norm = Normal1D(0, 5)
+post = gp.calculate_posterior(prior=prior_norm, y=np.array([1.2, 0.7, -0.3, 0.4]), sigma=1.0)
+print(post.mu, post.sigma)
 
 emp_prior = EmpiricalDistribution(samples=np.array([1.3, 2.0, 3.3, 4.1, 5.1]).reshape(-1,1))
 post2 = gp.calculate_posterior(prior=emp_prior, y=np.array([1.2, 0.7, 0.3, 0.4]), sigma=1.0)
