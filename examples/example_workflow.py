@@ -12,8 +12,8 @@ callable tasks/flows (e.g. `wf.calculate_posterior()`), fully composable with
 other ProbPipe modules.
 
 Model:
-    y_i ~ Normal(θ, σ²)
-    delta   ~ Normal(μ₀, σ₀²)
+    y_i ~ Normal(theta, sigma^2)
+    delta   ~ Normal(mu_theta, sigma_theta^2)
 
 Posterior is approximated by MCMC sampling using a Normal proposal kernel.
 """
