@@ -18,18 +18,29 @@ class Likelihood(Module):
     """Computes the log-likelihood of observed data under a Normal1D model.
 
     This module evaluates the total log-likelihood of observed data given
-    a Normal1D distribution with a variable mean parameter. The variance
-    (sigma) is taken from the dependency `distribution`, while the input
-    parameter `param` serves as the candidate mean (mu).
+    a specified Normal1D distribution. The distribution is provided directly
+    as an argument rather than as a module dependency, ensuring that this
+    module remains self-contained and flexible for use with different
+    likelihood formulations.
+
+    The variance (sigma) is taken from the provided ``distribution``, while
+    the input parameter ``param`` serves as the candidate mean (mu) of a
+    temporary Normal1D distribution used to compute likelihood values.
 
     Attributes:
-        DEPENDENCIES (set[str]): Required dependency names. Must include
-            ``'distribution'``, which should be a ``Normal1D`` instance.
+        None: This module does not maintain persistent dependencies.
+
+    Args:
+        distribution (Normal1D): The reference Normal1D distribution providing
+            the fixed variance (sigma) used in likelihood evaluation.
+        data (NDArray): Observed data points.
+        param (float): Candidate mean parameter (mu) to evaluate the likelihood.
 
     Notes:
-        - This module expects a dependency named ``distribution``.
-        - The input parameter ``param`` is used as the mean (mu) for a
-          temporary Normal1D distribution sharing the same sigma as the dependency.
+        - The ``distribution`` argument supplies the fixed variance term (σ^2)
+          but is not stored as a dependency.
+        - The input ``param`` value defines the mean for a temporary Normal1D
+          constructed during log-likelihood computation.
     """
     
     DEPENDENCIES = {'distribution'}
