@@ -37,7 +37,7 @@ class Likelihood(Module):
         param (float): Candidate mean parameter (mu) to evaluate the likelihood.
 
     Notes:
-        - The ``distribution`` argument supplies the fixed variance term (σ^2)
+        - The ``distribution`` argument supplies the fixed variance term (sigma^2)
           but is not stored as a dependency.
         - The input ``param`` value defines the mean for a temporary Normal1D
           constructed during log-likelihood computation.
