@@ -35,7 +35,7 @@ class WorkFlow(Module):
         """Enters the workflow context.
 
         Returns:
-            WorkFlow: The workflow instance, enabling use in a `with` statement.
+            The workflow instance, enabling use in a `with` statement.
         """
         
         return self
@@ -53,7 +53,7 @@ class WorkFlow(Module):
             traceback: Traceback object for the exception.
 
         Returns:
-            bool: Always returns False to propagate exceptions normally.
+            Always returns False to propagate exceptions normally.
         """
         
         if not self._initialized:
@@ -71,13 +71,13 @@ class WorkFlow(Module):
         as a Prefect task or flow.
 
         Args:
-            f (Callable, optional): Function to register. If `None`, the method
+            f: Function to register. If `None`, the method
                 acts as a decorator.
-            as_task (bool, optional): If True, register the function as a Prefect
+            as_task: If True, register the function as a Prefect
                 task; otherwise, as a Prefect flow. Defaults to True.
 
         Returns:
-            Callable: The decorated function or a decorator for later use.
+            The decorated function or a decorator for later use.
 
         Raises:
             RuntimeError: If a function with the same name is already collected.
@@ -88,10 +88,10 @@ class WorkFlow(Module):
             """Records a function and its registration mode (task or flow).
 
             Args:
-                func (Callable): The function to be collected.
+                func: The function to be collected.
 
             Returns:
-                Callable: The same function, unmodified.
+                The same function, unmodified.
 
             Raises:
                 RuntimeError: If a function with the same name already exists.
