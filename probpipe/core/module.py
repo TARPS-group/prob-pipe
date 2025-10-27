@@ -7,6 +7,7 @@ from prefect import flow, task
 
 from .distributions import Distribution, EmpiricalDistribution, BootstrapDistribution
 from .multivariate import Multivariate
+from numpy.typing import NDArray
 
 
 __all__ = [
@@ -153,7 +154,7 @@ class Module(object):
         (for type and requirement) or a simple default value.
 
         Example:
-            >>> self.set_input(x=InputSpec(type=np.ndarray, required=True), sigma=1.0)
+            >>> self.set_input(x=InputSpec(type=NDArray, required=True), sigma=1.0)
 
         Args:
             **input_defaults: Key–value pairs of input names and their specifications.
@@ -406,7 +407,7 @@ class Module(object):
                             )
                     continue
     
-                # ---- Plain class annotation (e.g., np.ndarray, int, float, ...) ----
+                # ---- Plain class annotation (e.g., NDArray, int, float, ...) ----
                 if isinstance(expected, type):
                     if not isinstance(value, expected):
                         raise TypeError(
