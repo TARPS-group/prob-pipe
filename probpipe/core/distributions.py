@@ -242,7 +242,7 @@ class EmpiricalDistribution(Distribution):
         """Computes the weighted mean of the samples.
 
         Returns:
-            np.ndarray: Weighted mean vector of shape (d,).
+            NDArray: Weighted mean vector of shape (d,).
         """
         return self._mean
 
@@ -250,7 +250,7 @@ class EmpiricalDistribution(Distribution):
         """Computes the weighted population covariance.
 
         Returns:
-            np.ndarray: Weighted covariance matrix of shape (d, d).
+            NDArray: Weighted covariance matrix of shape (d, d).
         """
         return self._cov
 
@@ -258,7 +258,7 @@ class EmpiricalDistribution(Distribution):
         """Computes the weighted population variance per dimension.
 
         Returns:
-            np.ndarray: Variance vector of shape (d,).
+            NDArray: Variance vector of shape (d,).
         """
         return np.diag(self._cov)
 
@@ -266,7 +266,7 @@ class EmpiricalDistribution(Distribution):
         """Computes the weighted population standard deviation per dimension.
 
         Returns:
-            np.ndarray: Standard deviation vector of shape (d,).
+            NDArray: Standard deviation vector of shape (d,).
         """
         return np.sqrt(np.maximum(self.var(), 0.0))
 
@@ -281,7 +281,7 @@ class EmpiricalDistribution(Distribution):
             replace (bool): Whether to sample with replacement. Defaults to True.
 
         Returns:
-            np.ndarray: Resampled points of shape (n_samples, d).
+            NDArray: Resampled points of shape (n_samples, d).
 
         Raises:
             ValueError: If ``replace=False`` and ``n_samples > n``.
@@ -302,7 +302,7 @@ class EmpiricalDistribution(Distribution):
             (discrete) samples without a kernel model.
 
         Args:
-            data (np.ndarray): Input points at which to estimate density.
+            data (NDArray): Input points at which to estimate density.
 
         Raises:
             NotImplementedError: Always raised, as density is not implemented.
@@ -317,7 +317,7 @@ class EmpiricalDistribution(Distribution):
             (discrete) samples without a kernel model.
 
         Args:
-            data (np.ndarray): Input points at which to estimate log-density.
+            data (NDArray): Input points at which to estimate log-density.
 
         Raises:
             NotImplementedError: Always raised, as log-density is not implemented.
@@ -337,7 +337,7 @@ class EmpiricalDistribution(Distribution):
         summarizing the mean and variance (or covariance) of the estimate.
 
         Args:
-            func (Callable[[np.ndarray], np.ndarray]): Function mapping samples
+            func (Callable[[NDArray], NDArray]): Function mapping samples
                 to numeric outputs.
             n_mc (int): Number of Monte Carlo draws used to estimate sampling
                 error. Defaults to 2048.
