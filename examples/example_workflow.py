@@ -23,12 +23,13 @@ from probpipe import WorkFlow, Module
 from prefect import flow, task
 import numpy as np
 from probpipe.core.multivariate import Normal1D
+from numpy.typing import NDArray
 
 # Example usage of WorkFlow
 with WorkFlow() as wf:
 
     @wf.run_func(as_task=True)
-    def log_likelihood(data: np.ndarray, param: float, sigma: float) -> float:
+    def log_likelihood(data: NDArray, param: float, sigma: float) -> float:
         """Compute Normal log-likelihood (up to a constant)."""
         residuals = data - param
         # Log likelihood of normal model (ignoring constants)
@@ -67,7 +68,7 @@ with WorkFlow() as wf:
 
     @wf.run_func(as_task=True)
     def calculate_posterior(
-        data: np.ndarray,
+        data: NDArray,
         num_samples: int,
         initial_param: float,
         mu_prior: float,
