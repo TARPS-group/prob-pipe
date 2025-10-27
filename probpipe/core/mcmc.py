@@ -15,32 +15,28 @@ __all__ = [
 ]
 
 class Likelihood(Module):
-    """Computes the log-likelihood of observed data under a Normal1D model.
+    """Computes the log-likelihood of observed data under a user-specified distribution.
 
-    This module evaluates the total log-likelihood of observed data given
-    a specified Normal1D distribution. The distribution is provided directly
-    as an argument rather than as a module dependency, ensuring that this
-    module remains self-contained and flexible for use with different
-    likelihood formulations.
-
-    The variance (sigma) is taken from the provided ``distribution``, while
-    the input parameter ``param`` serves as the candidate mean (mu) of a
-    temporary Normal1D distribution used to compute likelihood values.
+    This module provides a general-purpose interface for evaluating the
+    log-likelihood of observed data given a parameterized probabilistic model.
+    The distribution is provided as an argument at runtime, allowing flexible use
+    with any distribution class that implements a ``log_density`` method.
 
     Attributes:
-        None: This module does not maintain persistent dependencies.
+        None: This module does not define persistent dependencies.
+            The ``distribution`` is passed dynamically when calling the method.
 
     Args:
-        distribution: The reference Normal1D distribution providing
-            the fixed variance (sigma) used in likelihood evaluation.
+        distribution: Any object implementing a ``log_density`` method.
+            Defines the probabilistic model used to evaluate data likelihoods.
         data: Observed data points.
-        param: Candidate mean parameter (mu) to evaluate the likelihood.
+        param: Model parameter(s) at which to evaluate the likelihood.
 
     Notes:
-        - The ``distribution`` argument supplies the fixed variance term (sigma^2)
-          but is not stored as a dependency.
-        - The input ``param`` value defines the mean for a temporary Normal1D
-          constructed during log-likelihood computation.
+        - The ``distribution`` object must expose a ``log_density(data)`` method
+          returning log-probabilities for the provided samples.
+        - Suitable for use in probabilistic workflows or MCMC-based pipelines
+          where both model and data vary dynamically.
     """
     
     DEPENDENCIES = {'distribution'}
@@ -49,8 +45,9 @@ class Likelihood(Module):
         """Initializes the Likelihood module.
 
         Args:
-            **dependencies: Module dependencies. Must include a key
-                ``'distribution'`` that maps to a ``Normal1D`` instance.
+            **dependencies: Optional module dependencies. Typically empty.
+                The likelihood distribution is provided directly at runtime
+                rather than registered as a dependency.
         """
         super().__init__(**dependencies)
 
@@ -62,41 +59,57 @@ class Likelihood(Module):
 
     @property
     def distribution(self):
-        """Normal1D: The distribution dependency used for evaluating likelihood."""
+        """Distribution object used for evaluating likelihood.
+
+        Returns:
+            The ``distribution`` instance provided at runtime.
+        """
         return self.dependencies['distribution']
 
     def _log_likelihood_func(self, data: NDArray, param: float) -> float:
         """Computes the total log-likelihood of observed data.
 
-        Creates a temporary Normal1D distribution using ``param`` as the
-        mean (mu) and the dependency’s sigma. Then computes the sum of
-        log-likelihood values for all observed data points.
+        Evaluates the sum of log-probabilities for all data points under
+        the specified distribution, given a particular parameter value.
 
         Args:
-            data: Observed data values, of shape (n,) or (n, 1).
-            param: Mean parameter (mu) of the temporary Normal1D.
+            data: Observed data, shape (n,) or (n, 1).
+            param: Model parameter value(s) used for evaluation.
 
         Returns:
-            Total log-likelihood of the data given the parameter.
+            The total log-likelihood across all observations.
+
+        Example:
+            >>> dist = MyCustomDist(theta=2.0)
+            >>> mod = Likelihood()
+            >>> logL = mod._log_likelihood_func(data=np.array([1.0, 2.0]), param=1.5)
         """
         temp_dist = Normal1D(mu=param, sigma=self.distribution.sigma)
         xarr = np.asarray(data, dtype=float).reshape(-1, 1)
         log_probs = temp_dist.log_density(xarr)
         return float(np.sum(log_probs))
 
-    def _log_likelihood_task(self, *, data: NDArray, param: float):
-        """Prefect-compatible task wrapper for the log-likelihood function.
+    def _log_likelihood_task(self, *, data: NDArray, param: float) -> float:
+        """Prefect-compatible task wrapper for the log-likelihood computation.
 
-        This task wraps the pure computation function
-        :meth:`_log_likelihood_func` to make it compatible with Prefect
-        workflows.
+        Wraps :meth:`_log_likelihood_func` for integration with Prefect
+        task-based workflows.
 
         Args:
-            data: Observed data values.
-            param: Mean parameter (mu) for the Normal1D likelihood.
+            data: Observed data points.
+            param: Model parameter(s) for evaluation.
 
         Returns:
-            Log-likelihood of the data under the given parameter.
+            Total log-likelihood of the observed data.
+
+        Example:
+            >>> wf = Likelihood()
+            >>> result = wf._log_likelihood_task(
+            ...     data=np.random.randn(10),
+            ...     param=0.0,
+            ... )
+            >>> print(result)
+            -12.3
         """
         
         return self._log_likelihood_func(data, param)
