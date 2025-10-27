@@ -6,13 +6,13 @@ This example demonstrates how to define a lightweight `Module`
 (`GaussianPosterior`) that analytically computes the posterior
 for a Normal–Normal model:
 
-    y_i ~ Normal(mu, sigma²)
-    mu  ~ Normal(mu₀, var₀)
+    y_i ~ Normal(mu, sigma^2)
+    mu  ~ Normal(mu_theta, var_theta)
 
 The posterior is also Normal with parameters:
 
-    var_n = 1 / (n / sigma^2 + 1 / var_delta)
-    mu_n  = var_n * (Sigma_y / sigma^2 + mu_delta / var_delta)
+    var_n = 1 / (n / sigma^2 + 1 / var_theta)
+    mu_n  = var_n * (Sigma_y / sigma^2 + mu_theta / var_theta)
 
 The module automatically converts empirical distributions to
 parametric Normals if necessary, illustrating ProbPipe’s type-safe
@@ -21,6 +21,7 @@ conversion logic.
 
 import numpy as np
 from probpipe import Module, EmpiricalDistribution, Normal1D
+from numpy.typing import NDArray
 
 class GaussianPosterior(Module):
     """Posterior for a Normal–Normal conjugate model.
@@ -40,7 +41,7 @@ class GaussianPosterior(Module):
 
         #self.set_input(
         #   prior={'type': Distribution, 'required': True},  # accept any distribution subclass
-        #    y={'type': (list, np.ndarray), 'required': True},
+        #    y={'type': (list, NDArray), 'required': True},
         #    sigma={'type': float, 'default': 1.0},
         #)
 
@@ -51,12 +52,12 @@ class GaussianPosterior(Module):
         # Decorate and register internal calculate_posterior method
         self.run_func(self._calculate_posterior, name="calculate_posterior", as_task=True)
 
-    def _calculate_posterior(self, *, prior: Normal1D, y: np.ndarray, sigma: float = 1.0):
+    def _calculate_posterior(self, *, prior: Normal1D, y: NDArray, sigma: float = 1.0):
         """Compute the conjugate Normal posterior.
 
         Args:
             prior (Normal1D): Prior distribution over μ.
-            y (np.ndarray): Observed data array.
+            y (NDArray): Observed data array.
             sigma (float): Known standard deviation of the likelihood.
 
         Returns:
