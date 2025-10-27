@@ -27,9 +27,9 @@ class InputSpec:
     to enforce validation and provide defaults.
 
     Attributes:
-        type (Optional[Type]): Expected Python type for this input.
-        required (bool): Whether this input must be explicitly provided.
-        default (Any): Default value; `_MISSING` indicates no default provided.
+        type: Expected Python type for this input.
+        required: Whether this input must be explicitly provided.
+        default: Default value; `_MISSING` indicates no default provided.
     """
     type: Optional[Type] = None
     required: bool = False
@@ -58,13 +58,13 @@ class Module(object):
         - Dependencies are validated at both initialization and runtime.
 
     Attributes:
-        DEPENDENCIES (set[str]): Names of required dependency modules.
-        dependencies (dict[str, Module]): Injected dependency instances.
-        inputs (dict[str, dict[str, Any]]): Declared input specifications.
-        _run_funcs (dict[str, Callable]): Registered computational functions.
-        _conv_num_samples (int): Default number of samples for distribution conversion.
-        _conv_by_kde (bool): Whether to use KDE-based conversion.
-        _conv_fit_kwargs (dict): Additional keyword arguments for fitting.
+        DEPENDENCIES: Names of required dependency modules.
+        dependencies: Injected dependency instances.
+        inputs: Declared input specifications.
+        _run_funcs: Registered computational functions.
+        _conv_num_samples: Default number of samples for distribution conversion.
+        _conv_by_kde: Whether to use KDE-based conversion.
+        _conv_fit_kwargs: Additional keyword arguments for fitting.
     """
 
     
@@ -85,15 +85,15 @@ class Module(object):
          """Initializes the module and validates dependencies.
 
         Args:
-            required_deps (Optional[Iterable[str]]): Explicitly required dependency
+            required_deps: Explicitly required dependency
                 names to check during initialization.
-            conversion_by_KDE (bool): Whether to use kernel density estimation (KDE)
+            conversion_by_KDE: Whether to use kernel density estimation (KDE)
                 for automatic distribution conversion. Defaults to ``False``.
-            conversion_num_samples (int): Number of samples to draw for empirical-to-
+            conversion_num_samples: Number of samples to draw for empirical-to-
                 parametric conversions. Defaults to ``1024``.
-            conversion_fit_kwargs (Optional[dict]): Extra keyword arguments forwarded
+            conversion_fit_kwargs: Extra keyword arguments forwarded
                 to distribution fitting methods. Defaults to ``None``.
-            **dependencies (Module): Dependency modules to inject into this module.
+            **dependencies: Dependency modules to inject into this module.
 
         Raises:
             RuntimeError: If required dependencies are missing or unexpected ones are provided.
@@ -196,12 +196,12 @@ class Module(object):
             4. Wraps as a Prefect task or flow depending on ``as_task``.
 
         Args:
-            f (Callable): User-defined function implementing the computation.
-            name (Optional[str]): Custom function name override.
+            f: User-defined function implementing the computation.
+            name: Custom function name override.
                 Defaults to the original function name.
-            as_task (bool): Whether to register the function as a Prefect task
+            as_task: Whether to register the function as a Prefect task
                 (``True``) or flow (``False``). Defaults to ``True``.
-            return_type (Optional[type]): Expected return type for validation.
+            return_type: Expected return type for validation.
 
         Returns:
             Callable: The decorated Prefect task or flow.
@@ -226,8 +226,8 @@ class Module(object):
             from input registration, as they are injected automatically.
     
             Args:
-                func (Callable): Function whose signature is analyzed.
-                run_name (str): Name under which the run function will be registered.
+                func: Function whose signature is analyzed.
+                run_name: Name under which the run function will be registered.
             """
             hints = get_type_hints(func)
             specs: Dict[str, Dict[str, Any]] = {}
@@ -264,11 +264,11 @@ class Module(object):
             applicable, and checks for unknown input keys.
     
             Args:
-                kwargs (dict[str, Any]): Input keyword arguments provided at runtime.
-                run_name (str): Name of the registered run function being validated.
+                kwargs: Input keyword arguments provided at runtime.
+                run_name: Name of the registered run function being validated.
     
             Returns:
-                dict[str, Any]: Validated and completed input mapping.
+                Validated and completed input mapping.
     
             Raises:
                 TypeError: If required inputs are missing or unexpected inputs are given.
@@ -324,7 +324,7 @@ class Module(object):
                 v: Value to inspect.
     
             Returns:
-                bool: ``True`` if ``v`` is a distribution instance, ``False`` otherwise.
+                ``True`` if ``v`` is a distribution instance, ``False`` otherwise.
             """
             
             return isinstance(v, _DISTR_INST)
@@ -336,7 +336,7 @@ class Module(object):
                 tp: Type annotation to inspect.
     
             Returns:
-                bool: ``True`` if the type is a subclass or base of a Distribution type.
+                ``True`` if the type is a subclass or base of a Distribution type.
             """
             
             return isinstance(tp, type) and (tp in _DISTR_BASE or issubclass(tp, _DISTR_BASE))
@@ -351,10 +351,10 @@ class Module(object):
             Args:
                 args: Positional arguments passed to the function.
                 kwargs: Keyword arguments passed to the function.
-                f (Callable): Function being type-checked.
+                f: Function being type-checked.
     
             Returns:
-                tuple: The possibly updated ``(args, kwargs)`` pair.
+                The possibly updated ``(args, kwargs)`` pair.
     
             Raises:
                 TypeError: If an argument fails type validation or conversion fails.
@@ -434,7 +434,7 @@ class Module(object):
                 **kwargs: Keyword arguments for the function.
     
             Returns:
-                Any: Result returned by the wrapped function.
+                Result returned by the wrapped function.
             """
             _ensure_dependencies_available()  
 
