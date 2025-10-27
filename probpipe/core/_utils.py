@@ -10,7 +10,7 @@ def _as_2d(x: NDArray) -> NDArray:
     unchanged except for dtype casting to float.
 
     Args:
-        x (NDArray): Input array of shape (n,), (n, d), or higher.
+        x: Input array of shape (n,), (n, d), or higher.
 
     Returns:
         NDArray: Float array. If input was 1-D, returns shape (1, n).
@@ -26,12 +26,12 @@ def _symmetrize_spd(C: NDArray, jitter: float = 1e-9) -> NDArray:
     numerical stability (useful for Cholesky and covariance operations).
 
     Args:
-        C (NDArray): Square matrix of shape (d, d).
-        jitter (float, optional): Minimum diagonal regularization added when
+        C: Square matrix of shape (d, d).
+        jitter: Minimum diagonal regularization added when
             eigenvalues are too small. Defaults to 1e-9.
 
     Returns:
-        NDArray: Symmetric positive-definite matrix adjusted for stability.
+        Symmetric positive-definite matrix adjusted for stability.
     """
     C = np.asarray(C, dtype=float)
     C = 0.5 * (C + C.T)
@@ -44,13 +44,13 @@ def _clip_unit_interval(x: NDArray[np.floating], eps: float = 0.0) -> NDArray[np
     """Clips values to the [0, 1] interval, optionally padding to an open range.
 
     Args:
-        x (NDArray[np.floating]): Values to clip.
-        eps (float, optional): If 0, clips to [0, 1]. If >0, clips to
+        x: Values to clip.
+        eps: If 0, clips to [0, 1]. If >0, clips to
             (eps, 1 − eps) using `np.nextafter` to avoid exact endpoints.
             Defaults to 0.0.
 
     Returns:
-        NDArray[np.floating]: Array with clipped values.
+        Array with clipped values.
     """
     if eps <= 0.0:
         return np.clip(x, 0.0, 1.0)
@@ -66,10 +66,10 @@ def _to_1d_vector(values: NDArray) -> NDArray[np.floating]:
     to a standardized 1-D float array.
 
     Args:
-        values (NDArray): Input values as scalar, (n,), or (n, 1).
+        values: Input values as scalar, (n,), or (n, 1).
 
     Returns:
-        NDArray[np.floating]: Flattened 1-D array.
+        Flattened 1-D array.
 
     Raises:
         ValueError: If the input is not scalar, (n,), or (n, 1).
