@@ -4,6 +4,8 @@ import numpy as np
 
 from .module import Module, InputSpec
 from .multivariate import Normal1D
+from numpy.typing import NDArray
+
 
 __all__ = [
     "Likelihood",
@@ -42,7 +44,7 @@ class Likelihood(Module):
         super().__init__(**dependencies)
 
         self.set_input(
-            data=InputSpec(type=np.ndarray, required=True),
+            data=InputSpec(type=NDArray, required=True),
             param=InputSpec(type=float, required=True),
         )
         self.run_func(self._log_likelihood_task, name="log_likelihood")
@@ -52,7 +54,7 @@ class Likelihood(Module):
         """Normal1D: The distribution dependency used for evaluating likelihood."""
         return self.dependencies['distribution']
 
-    def _log_likelihood_func(self, data: np.ndarray, param: float) -> float:
+    def _log_likelihood_func(self, data: NDArray, param: float) -> float:
         """Computes the total log-likelihood of observed data.
 
         Creates a temporary Normal1D distribution using ``param`` as the
@@ -60,7 +62,7 @@ class Likelihood(Module):
         log-likelihood values for all observed data points.
 
         Args:
-            data (np.ndarray): Observed data values, of shape (n,) or (n, 1).
+            data (NDArray): Observed data values, of shape (n,) or (n, 1).
             param (float): Mean parameter (mu) of the temporary Normal1D.
 
         Returns:
@@ -71,7 +73,7 @@ class Likelihood(Module):
         log_probs = temp_dist.log_density(xarr)
         return float(np.sum(log_probs))
 
-    def _log_likelihood_task(self, *, data: np.ndarray, param: float):
+    def _log_likelihood_task(self, *, data: NDArray, param: float):
         """Prefect-compatible task wrapper for the log-likelihood function.
 
         This task wraps the pure computation function
@@ -79,7 +81,7 @@ class Likelihood(Module):
         workflows.
 
         Args:
-            data (np.ndarray): Observed data values.
+            data (NDArray): Observed data values.
             param (float): Mean parameter (mu) for the Normal1D likelihood.
 
         Returns:
@@ -274,7 +276,7 @@ class MCMC(Module):
         self.set_input(
             num_samples=InputSpec(type=int, required=True),
             initial_param=InputSpec(type=float, required=True),
-            data=InputSpec(type=np.ndarray, required=True),
+            data=InputSpec(type=NDArray, required=True),
             proposal_std=InputSpec(type=float, required=False, default=1.0),
         )
 
@@ -295,7 +297,7 @@ class MCMC(Module):
         Args:
             num_samples (int): Number of MCMC samples to draw.
             initial_param (float): Initial parameter value for the Markov chain.
-            data (np.ndarray): Observed data used in the likelihood function.
+            data (NDArray): Observed data used in the likelihood function.
             proposal_std (float, optional): Standard deviation for the sampler’s
                 proposal kernel. Defaults to 1.0.
 
