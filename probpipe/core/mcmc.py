@@ -31,10 +31,10 @@ class Likelihood(Module):
         None: This module does not maintain persistent dependencies.
 
     Args:
-        distribution (Normal1D): The reference Normal1D distribution providing
+        distribution: The reference Normal1D distribution providing
             the fixed variance (sigma) used in likelihood evaluation.
-        data (NDArray): Observed data points.
-        param (float): Candidate mean parameter (mu) to evaluate the likelihood.
+        data: Observed data points.
+        param: Candidate mean parameter (mu) to evaluate the likelihood.
 
     Notes:
         - The ``distribution`` argument supplies the fixed variance term (sigma^2)
@@ -73,11 +73,11 @@ class Likelihood(Module):
         log-likelihood values for all observed data points.
 
         Args:
-            data (NDArray): Observed data values, of shape (n,) or (n, 1).
-            param (float): Mean parameter (mu) of the temporary Normal1D.
+            data: Observed data values, of shape (n,) or (n, 1).
+            param: Mean parameter (mu) of the temporary Normal1D.
 
         Returns:
-            float: Total log-likelihood of the data given the parameter.
+            Total log-likelihood of the data given the parameter.
         """
         temp_dist = Normal1D(mu=param, sigma=self.distribution.sigma)
         xarr = np.asarray(data, dtype=float).reshape(-1, 1)
@@ -92,11 +92,11 @@ class Likelihood(Module):
         workflows.
 
         Args:
-            data (NDArray): Observed data values.
-            param (float): Mean parameter (mu) for the Normal1D likelihood.
+            data: Observed data values.
+            param: Mean parameter (mu) for the Normal1D likelihood.
 
         Returns:
-            float: Log-likelihood of the data under the given parameter.
+            Log-likelihood of the data under the given parameter.
         """
         
         return self._log_likelihood_func(data, param)
@@ -122,7 +122,7 @@ class Prior(Module):
     computation.
 
     Attributes:
-        DEPENDENCIES (set[str]): Required dependency names. Must include
+        DEPENDENCIES: Required dependency names. Must include
             ``'distribution'`` representing the prior distribution.
     """
     
@@ -150,10 +150,10 @@ class Prior(Module):
         """Computes the log-probability of a parameter under the prior.
 
         Args:
-            param (float): Parameter value at which to evaluate the log-density.
+            param: Parameter value at which to evaluate the log-density.
 
         Returns:
-            float: Log-probability of the parameter under the prior distribution.
+            Log-probability of the parameter under the prior distribution.
         """
         
         return self.distribution.log_density(param)
@@ -165,10 +165,10 @@ class Prior(Module):
         asynchronous or task-based execution.
 
         Args:
-            param (float): Parameter value to evaluate.
+            param: Parameter value to evaluate.
 
         Returns:
-            float: Log-probability of the parameter under the prior.
+            Log-probability of the parameter under the prior.
         """
         
         return self._log_prob_func(param)
@@ -185,7 +185,7 @@ class MetropolisHastings(Module):
     embedded as a dependency within higher-level MCMC workflows.
 
     Attributes:
-        DEPENDENCIES (set[str]): The set of required dependencies (empty for this module).
+        DEPENDENCIES: The set of required dependencies (empty for this module).
 
     Notes:
         - Stateless: does not maintain internal dependencies.
@@ -220,15 +220,15 @@ class MetropolisHastings(Module):
         accepted or rejected according to the standard acceptance ratio.
 
         Args:
-            log_target (Callable[[float], float]): Function that returns the
+            log_target: Function that returns the
                 log-probability (log-density) of a given state.
-            num_samples (int): Number of MCMC iterations to perform.
-            initial_state (float): Initial value (θ₀) of the Markov chain.
-            proposal_std (float, optional): Standard deviation of the Normal proposal
+            num_samples: Number of MCMC iterations to perform.
+            initial_state: Initial value of the Markov chain.
+            proposal_std: Standard deviation of the Normal proposal
                 kernel. Defaults to 1.0.
 
         Returns:
-            list[float]: Sequence of sampled states approximating the target distribution.
+            Sequence of sampled states approximating the target distribution.
         """
         
         samples = []
@@ -260,11 +260,11 @@ class MCMC(Module):
     standard deviation.
 
     Attributes:
-        DEPENDENCIES (set[str]): Required module dependencies:
+        DEPENDENCIES: Required module dependencies:
             ``'likelihood'``, ``'prior'``, and ``'sampler'``.
-        _conv_num_samples (int): Default number of samples for distribution conversion.
-        _conv_by_kde (bool): Whether to use kernel density estimation for conversion.
-        _conv_fit_kwargs (dict): Extra fitting keyword arguments.
+        _conv_num_samples: Default number of samples for distribution conversion.
+        _conv_by_kde: Whether to use kernel density estimation for conversion.
+        _conv_fit_kwargs: Extra fitting keyword arguments.
     """
 
     DEPENDENCIES = {'likelihood', 'prior', 'sampler'}
@@ -306,14 +306,14 @@ class MCMC(Module):
         using their empirical mean and standard deviation.
 
         Args:
-            num_samples (int): Number of MCMC samples to draw.
-            initial_param (float): Initial parameter value for the Markov chain.
-            data (NDArray): Observed data used in the likelihood function.
-            proposal_std (float, optional): Standard deviation for the sampler’s
+            num_samples: Number of MCMC samples to draw.
+            initial_param: Initial parameter value for the Markov chain.
+            data: Observed data used in the likelihood function.
+            proposal_std: Standard deviation for the sampler’s
                 proposal kernel. Defaults to 1.0.
 
         Returns:
-            Normal1D: Posterior summary distribution with mean and standard deviation
+            Posterior summary distribution with mean and standard deviation
             computed from the sampled chain.
         """
         
