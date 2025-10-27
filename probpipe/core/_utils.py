@@ -13,7 +13,7 @@ def _as_2d(x: NDArray) -> NDArray:
         x: Input array of shape (n,), (n, d), or higher.
 
     Returns:
-        NDArray: Float array. If input was 1-D, returns shape (1, n).
+        Float array. If input was 1-D, returns shape (1, n).
     """
     x = np.asarray(x, dtype=float)
     return x.reshape(1, -1) if x.ndim == 1 else x
