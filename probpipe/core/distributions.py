@@ -47,7 +47,7 @@ class Distribution(Generic[T], ABC):
             n_samples: The number of samples to generate.
 
         Returns:
-            NDArray[T]: An array containing `n_samples` draws from the distribution.
+            An array containing `n_samples` draws from the distribution.
 
         Raises:
             NotImplementedError: If the subclass does not implement this method.
@@ -67,7 +67,7 @@ class Distribution(Generic[T], ABC):
             data: Input array of observations for which to compute densities.
 
         Returns:
-            NDArray[np.floating]: Probability density values for each input point.
+            Probability density values for each input point.
 
         Raises:
             NotImplementedError: If the subclass does not implement this method.
@@ -87,7 +87,7 @@ class Distribution(Generic[T], ABC):
             data: Input array of observations for which to compute log-densities.
 
         Returns:
-            NDArray[np.floating]: Log-probability values for each input point.
+            Log-probability values for each input point.
 
         Raises:
             NotImplementedError: If the subclass does not implement this method.
@@ -108,7 +108,7 @@ class Distribution(Generic[T], ABC):
             func: A callable function f(x) to compute the expectation of.
 
         Returns:
-            Distribution: A distribution representing E[f(X)].
+            A distribution representing E[f(X)].
 
         Raises:
             NotImplementedError: If the subclass does not implement this method.
@@ -137,7 +137,7 @@ class Distribution(Generic[T], ABC):
             **fit_kwargs: Additional fitting parameters specific to the subclass.
 
         Returns:
-            Distribution[T]: A new instance of `cls` fitted to the source distribution.
+            A new instance of `cls` fitted to the source distribution.
 
         Raises:
             NotImplementedError: If the subclass does not implement this method.
@@ -149,7 +149,7 @@ from .multivariate import Normal1D, MvNormal
 
 class EmpiricalDistribution(Distribution):
     """
-    Container for weighted empirical samples in ℝᵈ.
+    Container for weighted empirical samples in R^ᵈ.
 
     Represents a discrete empirical distribution defined by a set of
     weighted samples, typically used to store MCMC draws or Monte Carlo
@@ -157,11 +157,11 @@ class EmpiricalDistribution(Distribution):
     expectation estimation.
 
     Attributes:
-        n (int): Number of stored samples.
-        d (int): Dimensionality of the sample space.
-        samples (NDArray): Stored draws of shape (n, d).
-        weights (NDArray): Normalized nonnegative weights summing to 1.
-        rng (np.random.Generator): Random number generator used for resampling.
+        n: Number of stored samples.
+        d: Dimensionality of the sample space.
+        samples: Stored draws of shape (n, d).
+        weights: Normalized nonnegative weights summing to 1.
+        rng: Random number generator used for resampling.
     """
 
     def __init__(
@@ -174,10 +174,10 @@ class EmpiricalDistribution(Distribution):
         """Initializes an EmpiricalDistribution from weighted samples.
 
         Args:
-            samples (NDArray): Array of stored draws with shape (n, d) or (n,).
-            weights (Optional[NDArray]): Optional array of nonnegative weights
+            samples: Array of stored draws with shape (n, d) or (n,).
+            weights: Optional array of nonnegative weights
                 of shape (n,). If ``None``, uniform weights are assigned.
-            rng (Optional[np.random.Generator]): Optional random number generator
+            rng: Optional random number generator
                 used for resampling. If ``None``, a default generator is created.
 
         Raises:
@@ -220,29 +220,29 @@ class EmpiricalDistribution(Distribution):
 
     @property
     def n(self) -> int:
-        """int: Number of stored samples."""
+        """Number of stored samples."""
         return self._n
 
     @property
     def d(self) -> int:
-        """int: Dimensionality of the stored samples."""
+        """Dimensionality of the stored samples."""
         return self._d
 
     @property
     def samples(self) -> NDArray:
-        """NDArray: View of stored samples with shape (n, d)."""
+        """View of stored samples with shape (n, d)."""
         return self._X
 
     @property
     def weights(self) -> NDArray:
-        """NDArray: Normalized sample weights with shape (n,)."""
+        """Normalized sample weights with shape (n,)."""
         return self._w
 
     def mean(self) -> NDArray:
         """Computes the weighted mean of the samples.
 
         Returns:
-            NDArray: Weighted mean vector of shape (d,).
+            Weighted mean vector of shape (d,).
         """
         return self._mean
 
@@ -250,7 +250,7 @@ class EmpiricalDistribution(Distribution):
         """Computes the weighted population covariance.
 
         Returns:
-            NDArray: Weighted covariance matrix of shape (d, d).
+            Weighted covariance matrix of shape (d, d).
         """
         return self._cov
 
@@ -258,7 +258,7 @@ class EmpiricalDistribution(Distribution):
         """Computes the weighted population variance per dimension.
 
         Returns:
-            NDArray: Variance vector of shape (d,).
+            Variance vector of shape (d,).
         """
         return np.diag(self._cov)
 
@@ -266,7 +266,7 @@ class EmpiricalDistribution(Distribution):
         """Computes the weighted population standard deviation per dimension.
 
         Returns:
-            NDArray: Standard deviation vector of shape (d,).
+            Standard deviation vector of shape (d,).
         """
         return np.sqrt(np.maximum(self.var(), 0.0))
 
@@ -277,11 +277,11 @@ class EmpiricalDistribution(Distribution):
         the stored empirical samples.
 
         Args:
-            n_samples (int): Number of draws to generate.
-            replace (bool): Whether to sample with replacement. Defaults to True.
+            n_samples: Number of draws to generate.
+            replace: Whether to sample with replacement. Defaults to True.
 
         Returns:
-            NDArray: Resampled points of shape (n_samples, d).
+            Resampled points of shape (n_samples, d).
 
         Raises:
             ValueError: If ``replace=False`` and ``n_samples > n``.
@@ -302,7 +302,7 @@ class EmpiricalDistribution(Distribution):
             (discrete) samples without a kernel model.
 
         Args:
-            data (NDArray): Input points at which to estimate density.
+            data: Input points at which to estimate density.
 
         Raises:
             NotImplementedError: Always raised, as density is not implemented.
@@ -317,7 +317,7 @@ class EmpiricalDistribution(Distribution):
             (discrete) samples without a kernel model.
 
         Args:
-            data (NDArray): Input points at which to estimate log-density.
+            data: Input points at which to estimate log-density.
 
         Raises:
             NotImplementedError: Always raised, as log-density is not implemented.
@@ -337,13 +337,13 @@ class EmpiricalDistribution(Distribution):
         summarizing the mean and variance (or covariance) of the estimate.
 
         Args:
-            func (Callable[[NDArray], NDArray]): Function mapping samples
+            func: Function mapping samples
                 to numeric outputs.
-            n_mc (int): Number of Monte Carlo draws used to estimate sampling
+            n_mc: Number of Monte Carlo draws used to estimate sampling
                 error. Defaults to 2048.
 
         Returns:
-            Union[Normal1D, MvNormal]: Distribution summarizing the expectation
+            Distribution summarizing the expectation
             and its uncertainty.
         """
         
@@ -376,9 +376,9 @@ class EmpiricalDistribution(Distribution):
         into an `EmpiricalDistribution` object.
 
         Args:
-            convert_from (Distribution): Source distribution to sample from.
+            convert_from: Source distribution to sample from.
             **fit_kwargs: Optional keyword arguments, such as
-                ``num_samples`` (int), specifying how many draws to take.
+                ``num_samples``, specifying how many draws to take.
 
         Returns:
             EmpiricalDistribution: New instance containing sampled points.
