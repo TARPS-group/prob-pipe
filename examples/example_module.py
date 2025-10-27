@@ -30,9 +30,9 @@ class GaussianPosterior(Module):
         **deps: Optional dependencies (unused in this simple module).
 
     Attributes:
-        _conv_num_samples (int): Number of samples used for conversion when
+        _conv_num_samples: Number of samples used for conversion when
             fitting from an empirical prior.
-        _conv_by_kde (bool): Whether to use a KDE for conversion.
+        _conv_by_kde: Whether to use a KDE for conversion.
     """
 
     def __init__(self, **deps):
@@ -56,12 +56,12 @@ class GaussianPosterior(Module):
         """Compute the conjugate Normal posterior.
 
         Args:
-            prior (Normal1D): Prior distribution over μ.
-            y (NDArray): Observed data array.
-            sigma (float): Known standard deviation of the likelihood.
+            prior: Prior distribution over μ.
+            y: Observed data array.
+            sigma: Known standard deviation of the likelihood.
 
         Returns:
-            Normal1D: Posterior distribution N(μ_n, σ_n ^2).
+            Normal1D: Posterior distribution N(mu_n, sigma_n ^2).
 
         Examples:
             >>> gp = GaussianPosterior()
