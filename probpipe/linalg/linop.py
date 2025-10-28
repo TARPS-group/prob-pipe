@@ -1,7 +1,7 @@
 # linop.py
 from __future__ import annotations
 
-from typing import Tuple, Any, Iterable
+from typing import Tuple, Any, Iterable, FrozenSet
 import numpy as np
 from abc import ABC, abstractmethod
 from scipy.linalg import cholesky, solve_triangular
@@ -9,16 +9,34 @@ import math
 
 from ..custom_types import Array, ArrayLike
 from .utils import (
-    _ensure_scalar,
+    _ensure_real_scalar,
     _ensure_vector,
     _ensure_matrix,
     _ensure_square_matrix
 )
 
 # TODO:
-# - Add **kwargs to methods in ABC
 # - Improve dtype promotion (e.g., in ProductLinOp)
 # - Standardize tags / propagate tags
+# - Seems that tags are sometimes not used when they could be; e.g., unit_diagonal in TriangularLinOp
+
+
+# --- Flags: canonical set and helpers ----------------------------------------
+ALLOWED_FLAGS = frozenset({
+    "symmetric",
+    "positive_definite",
+    "diagonal",
+    "triangular_lower",
+    "triangular_upper",
+    "unit_diagonal",
+    "dense",
+})
+
+def _promote_dtype(*dtypes: Any) -> Any:
+    """Return numpy result_type for given dtypes/arrays."""
+    # Use numpy's result_type semantics (works with numpy scalar dtypes).
+    return np.result_type(*dtypes)
+
 
 # ---- Core abstract class ----
 
@@ -30,6 +48,8 @@ class LinOp(ABC):
     that constructs composed operators without densifying where possible. The
     `matvec`/`rmatvec` and `matmat`/`rmatmat` methods provide the option to implement matrix-vector
     and matrix-matrix products without densifying the operator.
+
+    Flags are restricted to ALLOWED_FLAGS. Use `.flags` (frozenset) to inspect.
 
     Attributes:
         _flags: a set of semantic flags (e.g., "symmetric", "positive_definite").
@@ -62,9 +82,8 @@ class LinOp(ABC):
 
     @property
     def is_dense(self) -> bool:
-        """Default is_dense method only treats DenseLinOp as dense. Composite
-           LinOps should overwrite this."""
-        return isinstance(self, DenseLinOp)
+        """Default is False; DenseLinOp overrides to True"""
+        return False
     
     def _check_square(self) -> None:
         n_out, n_in = self.shape
@@ -117,29 +136,39 @@ class LinOp(ABC):
         return np.diag(A)
 
     def logdet(self) -> float:
-        """Return log determinant; default uses dense fallback."""
+        """Return log determinant; default uses dense fallback. Raises if sign <= 0"""
         self._check_square()
         A = self.to_dense()
         sign, log_det = np.linalg.slogdet(A)
+        if sign <= 0:
+            raise np.linalg.LinAlgError("Log-determinant undefined: matrix has non-positive determinant.")
         return float(log_det)
 
     def trace(self) -> float:
         """Return trace of operator; default uses dense fallback."""
         self._check_square()
-        return np.trace(self.to_dense())
+        return float(np.linalg.trace(self.to_dense()))
 
     # ---- Flags API ----
     def add_flag(self, flag: str) -> None:
-        """Attach a semantic flag (e.g., 'symmetric', 'positive_definite')."""
+        """Attach a semantic flag (must be one of ALLOWED_FLAGS)."""
+        if flag not in ALLOWED_FLAGS:
+            raise ValueError(f"Unknown flag {flag!r}. Allowed: {sorted(ALLOWED_FLAGS)}")
         self._flags.add(flag)
 
     def remove_flag(self, flag: str) -> None:
-        """Remove a previously attached flag (if present)."""
+        """Remove an attached flag (no-op if missing)."""
         self._flags.discard(flag)
 
     def has_flag(self, flag: str) -> bool:
-        """Return True if flag is attached."""
+        """Return True if flag attached."""
         return flag in self._flags
+
+    @property
+    def flags(self) -> FrozenSet[str]:
+        """Return frozenset of current flags (read-only view)."""
+        return frozenset(self._flags)
+
 
     # ---- Basic operator algebra builds (do not densify unless unavoidable) ----
     def __matmul__(self, other: LinOp) -> LinOp:
@@ -187,6 +216,7 @@ class DenseLinOp(LinOp):
         super().__init__()
         self.array = _ensure_matrix(arr, copy=copy)
         self._dtype = self.array.dtype
+        self.add_flag("dense")
 
     @property
     def shape(self) -> Tuple[int, int]:
@@ -195,6 +225,10 @@ class DenseLinOp(LinOp):
     @property
     def dtype(self) -> Any:
         return self._dtype
+    
+    @property
+    def is_dense(self) -> bool:
+        return True
 
     def to_dense(self) -> Array:
         return self.array
@@ -210,6 +244,7 @@ class DiagonalLinOp(LinOp):
         self._n = int(self.diagonal.size)
         self._dtype = self.diagonal.dtype
 
+        self.add_flag("diagonal")
         self.add_flag("symmetric")
         if np.all(self.diagonal > 0):
             self.add_flag("positive_definite")
@@ -231,7 +266,7 @@ class DiagonalLinOp(LinOp):
 
     def matmat(self, X: ArrayLike) -> Array:
         X = _ensure_matrix(X)
-        return X * self.diagonal[:,np.newaxis]
+        return X * self.diagonal[:, np.newaxis]
 
     def rmatmat(self, X: ArrayLike) -> Array:
         return self.matmat(X)
@@ -241,7 +276,7 @@ class DiagonalLinOp(LinOp):
 
     def solve(self, b: ArrayLike) -> Array:
         """
-        For consistency with np.linalg.solve(), b can be (n,) or (n,b).
+        For consistency with np.linalg.solve(), b can be (n,) or (n,k).
         """
         if np.any(self.diagonal == 0):
             raise np.linalg.LinAlgError("Diagonal contains zero entries; not invertible.")
@@ -251,7 +286,7 @@ class DiagonalLinOp(LinOp):
             b = _ensure_vector(b, as_column=True)
         b = _ensure_matrix(b, num_rows=self._n)
 
-        return b / self.diagonal[:,np.newaxis]
+        return b / self.diagonal[:, np.newaxis]
 
     def cholesky(self, lower: bool = True) -> LinOp:
         """Note that `lower` has no effect on Cholesky decomposition of diagonal matrix"""
@@ -284,6 +319,14 @@ class TriangularLinOp(LinOp):
         self._n = self.tri.shape[0]
         self._dtype = self.tri.dtype
 
+        if self.lower:
+            self.add_flag("triangular_lower")
+        else:
+            self.add_flag("triangular_upper")
+        # if strictly triangular with ones on diagonal, mark unit_diagonal
+        if np.allclose(np.diag(self.tri), 1.0):
+            self.add_flag("unit_diagonal")
+
     @property
     def shape(self) -> Tuple[int, int]:
         return (self._n, self._n)
@@ -311,24 +354,46 @@ class TriangularLinOp(LinOp):
     def to_dense(self) -> Array:
         return np.array(self.tri)
 
-    def solve(self, b: Array, *, unit_diagonal: bool = False,
+    def solve(self, b: ArrayLike, *, unit_diagonal: bool = False,
               overwrite_b: bool = False, check_finite: bool = True) -> Array:
         """
         Solve triangular system Lx=b or Ux=b. Optional arguments are forwarded
         to scipy.solve_triangular.
         """
+        b_arr = np.asarray(b)
+        if b_arr.ndim < 2:
+            b_arr = _ensure_vector(b_arr, as_column=True)
+        b_arr = _ensure_matrix(b_arr, num_rows=self._n)
 
-        return solve_triangular(self.tri, b, lower=self.lower,
+        return solve_triangular(self.tri, b_arr, lower=self.lower,
                                 unit_diagonal=unit_diagonal,
                                 overwrite_b=overwrite_b, check_finite=check_finite)
 
 
 class TransposedLinOp(LinOp):
-    """View representing the transpose of an existing operator (no densify)."""
+    """A lazy transpose view of an existing linear operator."""
 
     def __init__(self, op: LinOp) -> None:
         super().__init__()
         self.op = op
+
+        # Flags that are invariant under transpose
+        if "dense" in op.flags:
+            self.add_flag("dense")
+        if "diagonal" in op.flags:
+            self.add_flag("diagonal")
+        if "symmetric" in op.flags:
+            self.add_flag("symmetric")
+        if "positive_definite" in op.flags:
+            self.add_flag("positive_definite")
+        if "unit_diagonal" in op.flags:
+            self.add_flag("unit_diagonal")
+
+        # Triangular flags swap sides
+        if "triangular_lower" in op.flags:
+            self.add_flag("triangular_upper")
+        if "triangular_upper" in op.flags:
+            self.add_flag("triangular_lower")
 
     @property
     def shape(self) -> Tuple[int, int]:
@@ -339,34 +404,43 @@ class TransposedLinOp(LinOp):
     def dtype(self) -> Any:
         return self.op.dtype
 
-    def matvec(self, x: Array) -> Array:
+    def matvec(self, x: ArrayLike) -> Array:
         # matvec of transpose is rmatvec of base
         return self.op.rmatvec(x)
 
-    def rmatvec(self, x: Array) -> Array:
+    def rmatvec(self, x: ArrayLike) -> Array:
         return self.op.matvec(x)
 
-    def matmat(self, X: Array) -> Array:
+    def matmat(self, X: ArrayLike) -> Array:
         return self.op.rmatmat(X)
 
-    def rmatmat(self, X: Array) -> Array:
+    def rmatmat(self, X: ArrayLike) -> Array:
         return self.op.matmat(X)
 
     def to_dense(self) -> Array:
         return self.op.to_dense().T
 
 
-# ---- Composite operator types: product, sum, scaled ----
+# ---- Composite linear operator types ----------------------------------------
 
 class ProductLinOp(LinOp):
     """Operator representing composition A @ B where A and B are LinOp and shapes agree."""
 
     def __init__(self, A: LinOp, B: LinOp) -> None:
         super().__init__()
+        if not isinstance(A, LinOp) or not isinstance(B, LinOp):
+            raise ValueError("ProductLinOp requires LinOp operands.")
         if A.shape[1] != B.shape[0]:
             raise ValueError("Shapes incompatible for product: A.shape[1] != B.shape[0]")
         self.A = A
         self.B = B
+
+        if "dense" in A.flags and "dense" in B.flags:
+            self.add_flag("dense")
+        if "diagonal" in A.flags and "diagonal" in B.flags:
+            # product of two diagonal operators is diagonal
+            self.add_flag("diagonal")
+            self.add_flag("symmetric")
 
     @property
     def shape(self) -> Tuple[int, int]:
@@ -374,18 +448,18 @@ class ProductLinOp(LinOp):
 
     @property
     def dtype(self) -> Any:
-        return self.A.dtype
+        return _promote_dtype(self.A.dtype, self.B.dtype)
 
-    def matvec(self, x: Array) -> Array:
+    def matvec(self, x: ArrayLike) -> Array:
         return self.A.matvec(self.B.matvec(x))
 
-    def rmatvec(self, x: Array) -> Array:
+    def rmatvec(self, x: ArrayLike) -> Array:
         return self.B.rmatvec(self.A.rmatvec(x))
 
-    def matmat(self, X: Array) -> Array:
+    def matmat(self, X: ArrayLike) -> Array:
         return self.A.matmat(self.B.matmat(X))
 
-    def rmatmat(self, X: Array) -> Array:
+    def rmatmat(self, X: ArrayLike) -> Array:
         return self.B.rmatmat(self.A.rmatmat(X))
 
     def to_dense(self) -> Array:
@@ -399,7 +473,9 @@ class SumLinOp(LinOp):
         ops = list(ops)
         if not ops:
             raise ValueError("SumLinOp needs at least one operator.")
-        # shapes must align
+        if not all(isinstance(op, LinOp) for op in ops):
+            raise ValueError("SumLinOp requires all sumands to be LinOps.")
+
         first_shape = ops[0].shape
         for op in ops:
             if op.shape != first_shape:
@@ -407,37 +483,44 @@ class SumLinOp(LinOp):
         super().__init__()
         self.ops = ops
 
+        if all("dense" in op.flags for op in ops):
+            self.add_flag("dense")
+        if all("diagonal" in op.flags for op in ops):
+            self.add_flag("diagonal")
+            self.add_flag("symmetric")
+        if all("symmetric" in op.flags for op in ops):
+            self.add_flag("symmetric")
+        if all("positive_definite" in op.flags for op in ops):
+            # sum of PD matrices is PD
+            self.add_flag("positive_definite")
+
     @property
     def shape(self) -> Tuple[int, int]:
         return self.ops[0].shape
 
     @property
     def dtype(self) -> Any:
-        return self.ops[0].dtype
+        return _promote_dtype(*(op.dtype for op in self.ops))
 
     @property
     def is_dense(self) -> bool:
         return all(op.is_dense for op in self.ops)
 
-    def matvec(self, x: Array) -> Array:
-        out_vec = None
+    def matvec(self, x: ArrayLike) -> Array:
+        x = _ensure_vector(x)
+        arr = np.zeros((self.shape[0],), dtype=self.dtype)
         for op in self.ops:
-            if out_vec is None:
-                out_vec = op.matvec(x)
-            else:
-                out_vec = out_vec + op.matvec(x)
-        return out_vec
+            arr = arr + op.matvec(x)
+        return arr
 
-    def rmatvec(self, x: Array) -> Array:
-        out_vec = None
+    def rmatvec(self, x: ArrayLike) -> Array:
+        x = _ensure_vector(x)
+        arr = np.zeros((self.shape[1],), dtype=self.dtype)
         for op in self.ops:
-            if out_vec is None:
-                out_vec = op.rmatvec(x)
-            else:
-                out_vec = out_vec + op.rmatvec(x)
-        return out_vec
+            arr = arr + op.rmatvec(x)
+        return arr
 
-    def matmat(self, X: Array) -> Array:
+    def matmat(self, X: ArrayLike) -> Array:
         """
         Avoids densifying unless all summands are already dense, in which case
         it will typically be more efficient to density the sum operator and then
@@ -453,14 +536,15 @@ class SumLinOp(LinOp):
             return self.to_dense() @ X
 
         # General path: sum per-op matmat (respects structured/sparse ops)
-        X_is_vector = (X.shape[1] == 1)
-        out = None
+        if X.shape[1] == 1:
+            return self.matvec(X)
+        
+        arr = np.zeros((self.shape[0], X.shape[1]), dtype=self.dtype)
         for op in self.ops:
-            term = op.matvec(X) if X_is_vector else op.matmat(X)
-            out = term if out is None else out + term
-        return out
+            arr = arr + op.matmat(X)
+        return arr
 
-    def rmatmat(self, X: Array) -> Array:
+    def rmatmat(self, X: ArrayLike) -> Array:
         X = _ensure_matrix(X, as_row_matrix=False)
 
         # Fast path: all DenseLinOp and X is matrix -> densify once
@@ -468,24 +552,41 @@ class SumLinOp(LinOp):
             return self.to_dense().T @ X
 
         # General path: sum per-op matmat (respects structured/sparse ops)
-        X_is_vector = (X.shape[1] == 1)
-        out = None
+        if X.shape[1] == 1:
+            return self.rmatvec(X)
+        
+        arr = np.zeros((self.shape[1], X.shape[1]), dtype=self.dtype)
         for op in self.ops:
-            term = op.rmatvec(X) if X_is_vector else op.rmatmat(X)
-            out = term if out is None else out + term
-        return out
+            arr = arr + op.rmatmat(X)
+        return arr
 
     def to_dense(self) -> Array:
-        return sum(op.to_dense() for op in self.ops)
+        arr_sum = np.zeros(self.shape, dtype=self.dtype)
+        for op in self.ops:
+            arr_sum = arr_sum + op.to_dense()
+        return arr_sum
 
 
 class ScaledLinOp(LinOp):
-    """Scalar multiple of an operator."""
+    """Scalar multiple of a linear operator."""
 
     def __init__(self, op: LinOp, scalar: float) -> None:
         super().__init__()
+        if not isinstance(op, LinOp):
+            raise ValueError("ScaledLinOp requires a LinOp object.")
+
         self.op = op
-        self.scalar = float(scalar)
+        self.scalar = float(_ensure_real_scalar(scalar, as_array=False))
+
+        if "dense" in op.flags:
+            self.add_flag("dense")
+        if "diagonal" in op.flags:
+            self.add_flag("diagonal")
+            self.add_flag("symmetric")
+        if "symmetric" in op.flags:
+            self.add_flag("symmetric")
+        if self.scalar > 0 and "positive_definite" in op.flags:
+            self.add_flag("positive_definite")
 
     @property
     def shape(self) -> Tuple[int, int]:
@@ -493,18 +594,19 @@ class ScaledLinOp(LinOp):
 
     @property
     def dtype(self) -> Any:
-        return self.op.dtype
+        # scalar might be Python float; use array dtype promotion
+        return _promote_dtype(self.op.dtype, np.array(self.scalar).dtype)
 
-    def matvec(self, x: Array) -> Array:
+    def matvec(self, x: ArrayLike) -> Array:
         return self.scalar * self.op.matvec(x)
 
-    def rmatvec(self, x: Array) -> Array:
+    def rmatvec(self, x: ArrayLike) -> Array:
         return self.scalar * self.op.rmatvec(x)
 
-    def matmat(self, X: Array) -> Array:
+    def matmat(self, X: ArrayLike) -> Array:
         return self.scalar * self.op.matmat(X)
 
-    def rmatmat(self, X: Array) -> Array:
+    def rmatmat(self, X: ArrayLike) -> Array:
         return self.scalar * self.op.rmatmat(X)
 
     def to_dense(self) -> Array:

@@ -169,7 +169,7 @@ def _ensure_matrix(x: ArrayLike, *, as_row_matrix: bool = False,
         raise ValueError(f"_ensure_matrix: Required {num_rows} rows. Got {out.shape[0]}.")
 
     if num_cols is not None and out.shape[1] != num_cols:
-        raise ValueError(f"_ensure_matrix: Required {num_cols} rows. Got {out.shape[1]}.")
+        raise ValueError(f"_ensure_matrix: Required {num_cols} columns. Got {out.shape[1]}.")
 
     return out.copy() if copy else out
 
