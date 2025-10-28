@@ -4,46 +4,34 @@ import numpy as np
 
     
 def _as_2d(x: NDArray) -> NDArray:
-    """
-    Convert input to a 2-D float array.
+    """Converts input to a 2-D float array.
 
-    A 1-D input is promoted to shape (1, n); higher-dimensional inputs are left
+    A 1-D array is reshaped to (1, n). Higher-dimensional arrays are kept
     unchanged except for dtype casting to float.
 
-    Parameters
-    ----------
-    x : array-like
-        Input data of shape (n,), (n, d), or higher.
+    Args:
+        x: Input array of shape (n,), (n, d), or higher.
 
-    Returns
-    -------
-    NDArray
-        Array with dtype float. If the original was 1-D (n,), returns shape (1, n);
-        otherwise returns the float-cast array as-is.
+    Returns:
+        Float array. If input was 1-D, returns shape (1, n).
     """
     x = np.asarray(x, dtype=float)
     return x.reshape(1, -1) if x.ndim == 1 else x
 
 def _symmetrize_spd(C: NDArray, jitter: float = 1e-9) -> NDArray:
-    """
-    Symmetrize a matrix and nudge it toward positive definiteness.
+    """Symmetrizes a matrix and ensures positive semi-definiteness.
 
-    The matrix is first symmetrized via (C + C.T)/2. If the smallest eigenvalue
-    is near or below zero (numerical PSD violation), a diagonal jitter is added
-    to ensure a safely positive spectrum.
+    The matrix is symmetrized as (C + C.T)/2, and if the smallest eigenvalue
+    is near or below zero, a small diagonal jitter is added to maintain
+    numerical stability (useful for Cholesky and covariance operations).
 
-    Parameters
-    ----------
-    C : array-like, shape (d, d)
-        Input square matrix intended to be SPD/PSD.
-    jitter : float, default 1e-9
-        Baseline diagonal regularization used when eigenvalues are too small.
+    Args:
+        C: Square matrix of shape (d, d).
+        jitter: Minimum diagonal regularization added when
+            eigenvalues are too small. Defaults to 1e-9.
 
-    Returns
-    -------
-    NDArray
-        A symmetric matrix with eigenvalues pushed above ~1e-12 (plus jitter)
-        to avoid numerical issues in Cholesky and similar factorizations.
+    Returns:
+        Symmetric positive-definite matrix adjusted for stability.
     """
     C = np.asarray(C, dtype=float)
     C = 0.5 * (C + C.T)
@@ -53,22 +41,16 @@ def _symmetrize_spd(C: NDArray, jitter: float = 1e-9) -> NDArray:
     return C
 
 def _clip_unit_interval(x: NDArray[np.floating], eps: float = 0.0) -> NDArray[np.floating]:
-    """
-    Clip values to the unit interval, with optional open-interval padding.
+    """Clips values to the [0, 1] interval, optionally padding to an open range.
 
-    Parameters
-    ----------
-    x : array-like of float
-        Values to clip.
-    eps : float, default 0.0
-        If 0, clip to the closed interval [0, 1]. If >0, clip to the open
-        interval (eps, 1 - eps) using `np.nextafter` to avoid returning exact
-        endpoints, which is useful before applying `log`, `logit`, etc.
+    Args:
+        x: Values to clip.
+        eps: If 0, clips to [0, 1]. If >0, clips to
+            (eps, 1 − eps) using `np.nextafter` to avoid exact endpoints.
+            Defaults to 0.0.
 
-    Returns
-    -------
-    NDArray[np.floating]
-        Clipped array.
+    Returns:
+        Array with clipped values.
     """
     if eps <= 0.0:
         return np.clip(x, 0.0, 1.0)
@@ -78,29 +60,19 @@ def _clip_unit_interval(x: NDArray[np.floating], eps: float = 0.0) -> NDArray[np
 
 
 def _to_1d_vector(values: NDArray) -> NDArray[np.floating]:
-    """
-    Normalize input to a 1-D float vector of shape (n,).
+    """Normalizes input to a 1-D float vector of shape (n,).
 
-    Rules
-    -----
-    - scalar -> (1,)
-    - (n,)   -> (n,)
-    - (n,1)  -> (n,)
+    Accepts scalars, 1-D arrays, or 2-D column vectors and converts them
+    to a standardized 1-D float array.
 
-    Parameters
-    ----------
-    values : array-like
-        Scalar, 1-D array, or 2-D column vector.
+    Args:
+        values: Input values as scalar, (n,), or (n, 1).
 
-    Returns
-    -------
-    NDArray[np.floating]
-        1-D float array.
+    Returns:
+        Flattened 1-D array.
 
-    Raises
-    ------
-    ValueError
-        If the input is not a scalar, (n,), or (n,1).
+    Raises:
+        ValueError: If the input is not scalar, (n,), or (n, 1).
     """
     arr = np.asarray(values, dtype=float)
     if arr.ndim == 0:

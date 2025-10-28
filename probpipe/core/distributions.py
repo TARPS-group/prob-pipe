@@ -9,7 +9,6 @@ from ._utils import _as_2d
 __all__ = [
     "Distribution",
     "EmpiricalDistribution",
-    "BootstrapDistribution",
 ]
 
 T = TypeVar("T",bound=np.number)
@@ -21,44 +20,97 @@ Float_T = TypeVar("FloatDT", bound=np.floating)
 
 class Distribution(Generic[T], ABC):
     """
-    Abstract base class for any distribution class.
+    Abstract base class for probability distributions.
+
+    This class defines the general interface for any probabilistic
+    distribution implementation used within probpipe. Subclasses are
+    expected to implement methods for computing density, log-density,
+    sampling, and expectations.
+
+    Subclasses that cannot support a specific operation (e.g., sampling)
+    may leave that method unimplemented.
+
+    Type Variables:
+        T: Numeric data type (e.g., float or np.floating).
     """
 
     def sample(self, n_samples: int) -> NDArray[T]:
         """
-        Optional. If a subclass can’t sample, it may leave this unimplemented.
+        Samples data points from the distribution.
 
-        Sample n_samples items from the distribution.
-        Returns a ndarray of T.
+        This method may be optionally implemented by subclasses that
+        support random sampling. It returns `n_samples` draws from
+        the distribution.
+
+        Args:
+            n_samples: The number of samples to generate.
+
+        Returns:
+            An array containing `n_samples` draws from the distribution.
+
+        Raises:
+            NotImplementedError: If the subclass does not implement this method.
         """
         raise NotImplementedError("This method may be implemented by subclasses (optional)")
     
     def density(self, data: NDArray) -> NDArray[np.floating]:
         """
-        Optional. If a subclass can’t sample, it may leave this unimplemented.
+        Computes the probability density p(data) under this distribution.
 
-        Compute p(data) under this distribution.
-        Returns a ndarray of prob values reduced over event dims
-        (i.e., shape matching batch shape).
+        This method may be optionally implemented by subclasses that
+        can evaluate densities. The returned array corresponds to the
+        pointwise probability density values reduced over event
+        dimensions (i.e., matching the batch shape).
+
+        Args:
+            data: Input array of observations for which to compute densities.
+
+        Returns:
+            Probability density values for each input point.
+
+        Raises:
+            NotImplementedError: If the subclass does not implement this method.
         """
         raise NotImplementedError("This method may be implemented by subclasses (optional)")
     
     def log_density(self, data: NDArray) -> NDArray[np.floating]:
         """
-        Optional. If a subclass can’t sample, it may leave this unimplemented.
+        Computes the log-probability density log p(data).
 
-        Compute log p(data) under this distribution.
-        Returns a ndarray of log-prob values reduced over event dims
-        (i.e., shape matching batch shape).
+        This method may be optionally implemented by subclasses that
+        can evaluate log-densities. The returned array corresponds to
+        the pointwise log-probability values reduced over event
+        dimensions (i.e., matching the batch shape).
+
+        Args:
+            data: Input array of observations for which to compute log-densities.
+
+        Returns:
+            Log-probability values for each input point.
+
+        Raises:
+            NotImplementedError: If the subclass does not implement this method.
         """
         raise NotImplementedError("This method may be implemented by subclasses (optional)")
     
 
     def expectation(self, func: Callable[[NDArray[T]], NDArray]) -> 'Distribution':
         """
-        Optional. If a subclass can’t sample, it may leave this unimplemented.
+        Computes the expectation of a function under this distribution.
 
-        Monte-Carlo sample from self, compute f(x) and return a Distribution over the mean of f.
+        This method may be optionally implemented by subclasses that can
+        perform Monte Carlo estimation. The result is typically a new
+        `Distribution` instance representing the mean of the function
+        applied to random samples drawn from this distribution.
+
+        Args:
+            func: A callable function f(x) to compute the expectation of.
+
+        Returns:
+            A distribution representing E[f(X)].
+
+        Raises:
+            NotImplementedError: If the subclass does not implement this method.
         """
 
         raise NotImplementedError("This method may be implemented by subclasses (optional)")
@@ -72,39 +124,67 @@ class Distribution(Generic[T], ABC):
         **fit_kwargs: Any,
     ) -> 'Distribution[T]':
         """
-        Fit/convert from an empirical distribution to this parametric family.
-        Typical implementations perform Gaussian KDE or Gaussian approx and return an instance of `cls`.
+        Constructs a new distribution by fitting or converting from another.
+
+        This method defines how a subclass converts or fits itself from an
+        existing `Distribution` instance — for example, transforming an empirical
+        distribution into a parametric approximation (e.g., Gaussian KDE or
+        Normal fit).
+
+        Args:
+            convert_from: The source distribution to fit or convert from.
+            **fit_kwargs: Additional fitting parameters specific to the subclass.
+
+        Returns:
+            A new instance of `cls` fitted to the source distribution.
+
+        Raises:
+            NotImplementedError: If the subclass does not implement this method.
         """
         raise NotImplementedError("This method should be implemented by subclasses")
+
 
 from .multivariate import Normal1D, MvNormal
 
 class EmpiricalDistribution(Distribution):
     """
-    Generic container for (weighted) empirical samples in R^d.
-    Intended for storing MCMC draws (or any Monte Carlo samples).
-    
-    Parameters
-    ----------
-    samples : array-like, shape (n, d) or (n,)
-        Stored draws.
-    weights : array-like, shape (n,), optional
-        Nonnegative weights; will be normalized to sum to 1. If None, uniform.
-    rng : np.random.Generator, optional
-        RNG used for resampling.
+    Container for weighted empirical samples in R^ᵈ.
 
-    Notes
-    -----
-    Implements Distribution interface.
+    Represents a discrete empirical distribution defined by a set of
+    weighted samples, typically used to store MCMC draws or Monte Carlo
+    samples. Supports weighted summary statistics, resampling, and
+    expectation estimation.
+
+    Attributes:
+        n: Number of stored samples.
+        d: Dimensionality of the sample space.
+        samples: Stored draws of shape (n, d).
+        weights: Normalized nonnegative weights summing to 1.
+        rng: Random number generator used for resampling.
     """
 
     def __init__(
         self,
-        samples: np.ndarray,
-        weights: Optional[np.ndarray] = None,
+        samples: NDArray,
+        weights: Optional[NDArray] = None,
         *,
         rng: Optional[np.random.Generator] = None,
     ):
+        """Initializes an EmpiricalDistribution from weighted samples.
+
+        Args:
+            samples: Array of stored draws with shape (n, d) or (n,).
+            weights: Optional array of nonnegative weights
+                of shape (n,). If ``None``, uniform weights are assigned.
+            rng: Optional random number generator
+                used for resampling. If ``None``, a default generator is created.
+
+        Raises:
+            ValueError: If the number of samples is less than one.
+            ValueError: If ``weights`` has invalid shape or negative entries.
+            ValueError: If weights sum to a nonpositive value.
+        """
+        
         X = _as_2d(samples)
         n, d = X.shape
         if n < 1:
@@ -144,39 +224,66 @@ class EmpiricalDistribution(Distribution):
 
     @property
     def d(self) -> int:
-        """Dimensionality."""
+        """Dimensionality of the stored samples."""
         return self._d
 
     @property
-    def samples(self) -> np.ndarray:
-        """A view of the stored samples, shape (n, d)."""
+    def samples(self) -> NDArray:
+        """View of stored samples with shape (n, d)."""
         return self._X
 
     @property
-    def weights(self) -> np.ndarray:
-        """A view of normalized weights, shape (n,)."""
+    def weights(self) -> NDArray:
+        """Normalized sample weights with shape (n,)."""
         return self._w
 
-    def mean(self) -> np.ndarray:
-        """Weighted mean, shape (d,)."""
+    def mean(self) -> NDArray:
+        """Computes the weighted mean of the samples.
+
+        Returns:
+            Weighted mean vector of shape (d,).
+        """
         return self._mean
 
-    def cov(self) -> np.ndarray:
-        """Weighted *population* covariance, shape (d, d)."""
+    def cov(self) -> NDArray:
+        """Computes the weighted population covariance.
+
+        Returns:
+            Weighted covariance matrix of shape (d, d).
+        """
         return self._cov
 
-    def var(self) -> np.ndarray:
-        """Weighted population variance per dimension, shape (d,)."""
+    def var(self) -> NDArray:
+        """Computes the weighted population variance per dimension.
+
+        Returns:
+            Variance vector of shape (d,).
+        """
         return np.diag(self._cov)
 
-    def std(self) -> np.ndarray:
-        """Weighted population standard deviation per dimension, shape (d,)."""
+    def std(self) -> NDArray:
+        """Computes the weighted population standard deviation per dimension.
+
+        Returns:
+            Standard deviation vector of shape (d,).
+        """
         return np.sqrt(np.maximum(self.var(), 0.0))
 
-    def sample(self, n_samples: int, *, replace: bool = True) -> np.ndarray:
-        """
-        Resample draws from the empirical distribution with replacement,
-        using the stored weights. Returns shape (n_samples, d).
+    def sample(self, n_samples: int, *, replace: bool = True) -> NDArray:
+        """Resamples draws from the empirical distribution.
+
+        Performs weighted sampling (with or without replacement) from
+        the stored empirical samples.
+
+        Args:
+            n_samples: Number of draws to generate.
+            replace: Whether to sample with replacement. Defaults to True.
+
+        Returns:
+            Resampled points of shape (n_samples, d).
+
+        Raises:
+            ValueError: If ``replace=False`` and ``n_samples > n``.
         """
         n_samples = int(n_samples)
         if not replace and n_samples > self._n:
@@ -186,48 +293,57 @@ class EmpiricalDistribution(Distribution):
 
     rvs = sample
 
-    def density(self, data: np.ndarray) -> np.ndarray:
-        """
-        Return the (unnormalized) sample density estimate at `data`.
+    def density(self, data: NDArray) -> NDArray:
+        """Evaluates the sample-based density estimate at given points.
 
-        Notes
-        -----
-        Not implemented for empirical distributions without a kernel model.
+        Note:
+            Density estimation is not implemented for purely empirical
+            (discrete) samples without a kernel model.
+
+        Args:
+            data: Input points at which to estimate density.
+
+        Raises:
+            NotImplementedError: Always raised, as density is not implemented.
         """
         raise NotImplementedError("Density not implemented for EmpiricalDistribution.")
 
-    def log_density(self, data: np.ndarray) -> np.ndarray:
-        """
-        Return log-density estimate at `data`.
+    def log_density(self, data: NDArray) -> NDArray:
+        """Evaluates the log-density estimate at given points.
 
-        Notes
-        -----
-        Not implemented for empirical distributions without a kernel model.
+        Note:
+            Log-density estimation is not implemented for purely empirical
+            (discrete) samples without a kernel model.
+
+        Args:
+            data: Input points at which to estimate log-density.
+
+        Raises:
+            NotImplementedError: Always raised, as log-density is not implemented.
         """
         raise NotImplementedError("Log density not implemented for EmpiricalDistribution.")
 
     def expectation(
         self,
-        func: Callable[[np.ndarray], np.ndarray],
+        func: Callable[[NDArray], NDArray],
         *,
         n_mc: int = 2048,
     ) -> Union["Normal1D", "MvNormal"]:
-        """
-        Compute the weighted Monte Carlo expectation of a function under the
-        empirical distribution.
+        """Computes the weighted Monte Carlo expectation of a function.
 
-        Parameters
-        ----------
-        func : callable
-            Function mapping samples (array of shape (n, d)) to values.
-        n_mc : int, default=2048
-            Number of Monte Carlo draws used to estimate sampling error.
+        Uses the stored samples and weights to estimate E[f(X)] and the
+        associated Monte Carlo uncertainty. Returns a Normal1D or MvNormal
+        summarizing the mean and variance (or covariance) of the estimate.
 
-        Returns
-        -------
-        Normal1D or MvNormal
-            Distribution summarizing the mean and Monte Carlo standard error
-            (1D) or covariance (multivariate) of `func(X)`.
+        Args:
+            func: Function mapping samples
+                to numeric outputs.
+            n_mc: Number of Monte Carlo draws used to estimate sampling
+                error. Defaults to 2048.
+
+        Returns:
+            Distribution summarizing the expectation
+            and its uncertainty.
         """
         
         Y = np.asarray(func(self._X), dtype=float)
@@ -253,22 +369,18 @@ class EmpiricalDistribution(Distribution):
         **fit_kwargs: Any,
     ) -> 'EmpiricalDistribution':
 
-        """
-        Draw samples from another distribution and wrap them as an
-        EmpiricalDistribution.
+        """Constructs an empirical distribution from another distribution.
 
-        Parameters
-        ----------
-        convert_from : Distribution
-            Source distribution to sample from.
-        **fit_kwargs
-            Optional keyword arguments; may include ``num_samples`` (int)
-            specifying the number of draws.
+        Draws samples from the given source distribution and wraps them
+        into an `EmpiricalDistribution` object.
 
-        Returns
-        -------
-        EmpiricalDistribution
-            New empirical distribution constructed from sampled points.
+        Args:
+            convert_from: Source distribution to sample from.
+            **fit_kwargs: Optional keyword arguments, such as
+                ``num_samples``, specifying how many draws to take.
+
+        Returns:
+            EmpiricalDistribution: New instance containing sampled points.
         """
 
         samples = convert_from.sample(fit_kwargs.get("num_samples", 2048))
