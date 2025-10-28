@@ -373,7 +373,7 @@ class MvNormal(Multivariate[np.floating]):
 
     def __init__(self, mean: NDArray[np.floating], cov: NDArray[np.floating],
                  *, rng: np.random.Generator | None = None):
-         """Initializes a multivariate Normal distribution.
+        """Initializes a multivariate Normal distribution.
 
         Args:
             mean: Mean vector of shape (d,).
@@ -1154,12 +1154,12 @@ class Multinomial(Multivariate[np.floating]):
         return self._mean  # (d,)
 
     def cov(self) -> NDArray[np.floating]:
-         """Returns the covariance matrix.
+        """Returns the covariance matrix.
 
         Returns:
             Covariance matrix of shape (d, d).
         """
-        return self._cov   # (d,d)
+        return self._cov  # (d,d)
 
     def cdf(self, values: NDArray) -> NDArray[np.floating]:
         """Approximates the joint cumulative distribution function (CDF).
@@ -1455,7 +1455,7 @@ class Dirichlet(Multivariate[np.floating]):
         return self._mean  # (d,)
 
     def cov(self) -> NDArray[np.floating]:
-         """Returns the covariance matrix.
+        """Returns the covariance matrix.
 
         Returns:
             Covariance matrix of shape (d, d).

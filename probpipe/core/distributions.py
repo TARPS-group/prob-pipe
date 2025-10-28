@@ -9,7 +9,6 @@ from ._utils import _as_2d
 __all__ = [
     "Distribution",
     "EmpiricalDistribution",
-    "BootstrapDistribution",
 ]
 
 T = TypeVar("T",bound=np.number)

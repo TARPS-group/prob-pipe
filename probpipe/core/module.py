@@ -5,7 +5,7 @@ import inspect
 
 from prefect import flow, task
 
-from .distributions import Distribution, EmpiricalDistribution, BootstrapDistribution
+from .distributions import Distribution, EmpiricalDistribution
 from .multivariate import Multivariate
 from numpy.typing import NDArray
 
@@ -16,7 +16,7 @@ __all__ = [
 
 _MISSING = object()
 _DISTR_BASE = (Distribution, Multivariate)
-_DISTR_INST = (Distribution, Multivariate, EmpiricalDistribution, BootstrapDistribution)
+_DISTR_INST = (Distribution, Multivariate, EmpiricalDistribution)
 
 @dataclass
 class InputSpec:
@@ -82,7 +82,7 @@ class Module(object):
         conversion_fit_kwargs: Optional[dict] = None,
         **dependencies: 'Module',
     ):
-         """Initializes the module and validates dependencies.
+        """Initializes the module and validates dependencies.
 
         Args:
             required_deps: Explicitly required dependency
