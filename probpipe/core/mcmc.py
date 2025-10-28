@@ -47,81 +47,30 @@ class DistributionModule(Module):
 
 
 class Likelihood(Module):
-    """Computes the log-likelihood of observed data for arbitrary models.
+    DEPENDENCIES = MappingProxyType({'distribution': Callable})  # factory returning distribution
 
-    This module provides a general-purpose interface for evaluating the
-    log-likelihood of data given model parameters. It does not assume the
-    existence of a `Distribution` object—likelihoods may be defined analytically,
-    through simulations, or via any callable returning log-probabilities.
-
-    Attributes:
-        None: This module has no persistent dependencies or stored distributions.
-
-    Args:
-        data: Observed data values.
-        param: Model parameter(s) at which to evaluate the likelihood.
-        log_like_func: Optional user-supplied function of the form
-            ``log_like_func(data, param) -> float`` that computes the log-likelihood.
-
-    Notes:
-        - The likelihood need not correspond to a formal probability distribution.
-        - When subclassed, `_log_likelihood_func` can be overridden to implement
-          a specific analytical likelihood.
-    """
-    
-    DEPENDENCIES = MappingProxyType({ 'distribution': DistributionModule})
-
-    def __init__(self, log_likelihood_func: Callable[[NDArray, NDArray], float], **dependencies):
-        """Initializes a generic Likelihood module.
-
-         Args:
-            log_likelihood_func: function with arguments (data: NDArray, param: NDArray)
-                that computes the log-likelihood of the data given the model parameters
-            **dependencies: Optional module dependencies (typically none).
-                The likelihood computation is self-contained and does not rely
-                on an injected distribution.
-        """
+    def __init__(self, **dependencies):
         super().__init__(**dependencies)
-<<<<<<< HEAD
-        self._log_likelihood_func = log_likelihood_func
-=======
-        self.distribution = self.dependencies['distribution']
 
->>>>>>> 2bd709a (Module has dict-like access to its dependencies and immutable DEPENDENCIES, mcmc uses DistributionModule, example_mcmc shows how to use it. Workflow modified to have only run_func method that wraps a function as a Module subclass.)
         self.set_input(
-            data=InputSpec(type=NDArray, required=True),
-            param=InputSpec(type=NDArray, required=True),
+            data=InputSpec(type=np.ndarray, required=True),
+            param=InputSpec(type=float, required=True),  # or NDArray if multi-parameter
         )
+
         self.run_func(self._log_likelihood_task, name="log_likelihood")
 
-    def _log_likelihood_task(self, *, data: NDArray, param: NDArray) -> float:
-        """Prefect-compatible task wrapper for the log-likelihood computation.
+    @property
+    def distribution_factory(self):
+        return self.dependencies['distribution']
 
-        Wraps :meth:`_log_likelihood_func` for integration with Prefect
-        task-based workflows.
+    def _log_likelihood_func(self, data, param):
+        dist = self.distribution_factory(param)
+        xarr = np.asarray(data)
+        return float(np.sum(dist.log_density(xarr)))
 
-        Args:
-            data: Observed data points.
-            param: Model parameter(s) for evaluation.
-
-        Returns:
-            Total log-likelihood of the observed data.
-
-        Example:
-            >>> wf = Likelihood()
-            >>> result = wf._log_likelihood_task(
-            ...     data=np.random.randn(10),
-            ...     param=0.0,
-            ... )
-            >>> print(result)
-            -12.3
-        """
+    def _log_likelihood_task(self, *, data, param):
         return self._log_likelihood_func(data, param)
-
-<<<<<<< HEAD
-=======
-
->>>>>>> 2bd709a (Module has dict-like access to its dependencies and immutable DEPENDENCIES, mcmc uses DistributionModule, example_mcmc shows how to use it. Workflow modified to have only run_func method that wraps a function as a Module subclass.)
+    
 # It bypasses the Prefect tasks entirely when doing MCMC actual sampling (which needs immediate float results).
 # It only calls the pure computation methods returning floats.
 # It preserves the Prefect tasks if you want to call them independently within Prefect workflows.
@@ -129,14 +78,11 @@ class Likelihood(Module):
 
 
 
-<<<<<<< HEAD
-=======
 
 
 
 
 
->>>>>>> 2bd709a (Module has dict-like access to its dependencies and immutable DEPENDENCIES, mcmc uses DistributionModule, example_mcmc shows how to use it. Workflow modified to have only run_func method that wraps a function as a Module subclass.)
 class MetropolisHastings(Module):
     """Implements a basic Metropolis–Hastings (MH) sampler.
 
@@ -228,16 +174,12 @@ class MCMC(Module):
         _conv_fit_kwargs: Extra fitting keyword arguments.
     """
 
-<<<<<<< HEAD
-    DEPENDENCIES = {'likelihood', 'sampler'}
-=======
     DEPENDENCIES: ClassVar[Dict[str, Type[Module]]] = MappingProxyType({
         'likelihood': Likelihood,
         'distribution': DistributionModule,
         'sampler': MetropolisHastings,
     })
 
->>>>>>> 2bd709a (Module has dict-like access to its dependencies and immutable DEPENDENCIES, mcmc uses DistributionModule, example_mcmc shows how to use it. Workflow modified to have only run_func method that wraps a function as a Module subclass.)
 
     def __init__(self, prior: Distribution, likelihood: Likelihood, sampler: MetropolisHastings, **dependencies):
         """Initializes the MCMC module.
@@ -288,21 +230,14 @@ class MCMC(Module):
         """
         
         likelihood = self.dependencies['likelihood']
-<<<<<<< HEAD
-=======
         prior = self.dependencies['distribution']
->>>>>>> 2bd709a (Module has dict-like access to its dependencies and immutable DEPENDENCIES, mcmc uses DistributionModule, example_mcmc shows how to use it. Workflow modified to have only run_func method that wraps a function as a Module subclass.)
         sampler = self.dependencies['sampler']
 
         def log_target(param):
             """Computes unnormalized log posterior for a given parameter."""
             
             ll = likelihood._log_likelihood_func(data, param)
-<<<<<<< HEAD
-            lp = self._prior.log_density(param)
-=======
             lp = prior.log_density(param)
->>>>>>> 2bd709a (Module has dict-like access to its dependencies and immutable DEPENDENCIES, mcmc uses DistributionModule, example_mcmc shows how to use it. Workflow modified to have only run_func method that wraps a function as a Module subclass.)
             return ll + lp
 
         samples = sampler.sample_posterior(
