@@ -1,4 +1,5 @@
 from typing import Callable, Optional, Dict, Any, get_type_hints, Type, ClassVar, FrozenSet, Iterable, Set
+from types import MappingProxyType
 import functools
 from dataclasses import dataclass
 import inspect
@@ -70,7 +71,8 @@ class Module(object):
     
     # REQUIRED_DEPS: ClassVar[FrozenSet[str]] = frozenset()
     # DEPENDENCIES: ClassVar[Dict[str, Type['Module']]] = {}
-    DEPENDENCIES: ClassVar[Set[str]] = set()
+    # DEPENDENCIES: ClassVar[Set[str]] = set()
+    DEPENDENCIES: ClassVar[Dict[str, Type['Module']]] = MappingProxyType({})
 
 
 

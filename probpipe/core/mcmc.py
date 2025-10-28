@@ -1,17 +1,50 @@
-from typing import Callable
+from typing import Callable, ClassVar, Dict, Type, Any
+from types import MappingProxyType
+
 
 import numpy as np
 
 from .module import Module, InputSpec
 from .distributions import Distribution, EmpiricalDistribution
 from numpy.typing import NDArray
+from probpipe import Distribution
 
 
 __all__ = [
     "Likelihood",
     "MetropolisHastings",
     "MCMC",
+    "DistributionModule",
 ]
+
+class DistributionModule(Module):
+    DEPENDENCIES = MappingProxyType({})
+
+    def __init__(self, distribution: Any):
+        """
+        Wraps an existing distribution instance to conform to the Module interface.
+
+        Args:
+            distribution (Any): An instance of a distribution class, such as Normal1D,
+                Beta, or any custom distribution implementing required methods.
+        """
+        super().__init__()
+        self._distribution = distribution
+
+    def log_density(self, x):
+        """Delegate to the wrapped distribution's log_density method."""
+        return self._distribution.log_density(x)
+
+    def sample(self, n_samples: int):
+        """Delegate to the wrapped distribution's sample method."""
+        return self._distribution.sample(n_samples)
+
+    # Optionally expose additional distribution methods as needed
+    def __getattr__(self, name):
+        # Delegate attribute access to underlying distribution
+        return getattr(self._distribution, name)
+        
+
 
 class Likelihood(Module):
     """Computes the log-likelihood of observed data for arbitrary models.
@@ -36,7 +69,7 @@ class Likelihood(Module):
           a specific analytical likelihood.
     """
     
-    DEPENDENCIES = set()
+    DEPENDENCIES = MappingProxyType({ 'distribution': DistributionModule})
 
     def __init__(self, log_likelihood_func: Callable[[NDArray, NDArray], float], **dependencies):
         """Initializes a generic Likelihood module.
@@ -49,7 +82,12 @@ class Likelihood(Module):
                 on an injected distribution.
         """
         super().__init__(**dependencies)
+<<<<<<< HEAD
         self._log_likelihood_func = log_likelihood_func
+=======
+        self.distribution = self.dependencies['distribution']
+
+>>>>>>> 2bd709a (Module has dict-like access to its dependencies and immutable DEPENDENCIES, mcmc uses DistributionModule, example_mcmc shows how to use it. Workflow modified to have only run_func method that wraps a function as a Module subclass.)
         self.set_input(
             data=InputSpec(type=NDArray, required=True),
             param=InputSpec(type=NDArray, required=True),
@@ -80,6 +118,10 @@ class Likelihood(Module):
         """
         return self._log_likelihood_func(data, param)
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> 2bd709a (Module has dict-like access to its dependencies and immutable DEPENDENCIES, mcmc uses DistributionModule, example_mcmc shows how to use it. Workflow modified to have only run_func method that wraps a function as a Module subclass.)
 # It bypasses the Prefect tasks entirely when doing MCMC actual sampling (which needs immediate float results).
 # It only calls the pure computation methods returning floats.
 # It preserves the Prefect tasks if you want to call them independently within Prefect workflows.
@@ -87,6 +129,14 @@ class Likelihood(Module):
 
 
 
+<<<<<<< HEAD
+=======
+
+
+
+
+
+>>>>>>> 2bd709a (Module has dict-like access to its dependencies and immutable DEPENDENCIES, mcmc uses DistributionModule, example_mcmc shows how to use it. Workflow modified to have only run_func method that wraps a function as a Module subclass.)
 class MetropolisHastings(Module):
     """Implements a basic Metropolis–Hastings (MH) sampler.
 
@@ -105,7 +155,7 @@ class MetropolisHastings(Module):
           correlated targets, more advanced samplers (e.g., HMC) are recommended.
     """
     
-    DEPENDENCIES = set()
+    DEPENDENCIES = MappingProxyType({})
 
     def __init__(self):
         """Initializes the Metropolis–Hastings sampler.
@@ -178,7 +228,16 @@ class MCMC(Module):
         _conv_fit_kwargs: Extra fitting keyword arguments.
     """
 
+<<<<<<< HEAD
     DEPENDENCIES = {'likelihood', 'sampler'}
+=======
+    DEPENDENCIES: ClassVar[Dict[str, Type[Module]]] = MappingProxyType({
+        'likelihood': Likelihood,
+        'distribution': DistributionModule,
+        'sampler': MetropolisHastings,
+    })
+
+>>>>>>> 2bd709a (Module has dict-like access to its dependencies and immutable DEPENDENCIES, mcmc uses DistributionModule, example_mcmc shows how to use it. Workflow modified to have only run_func method that wraps a function as a Module subclass.)
 
     def __init__(self, prior: Distribution, likelihood: Likelihood, sampler: MetropolisHastings, **dependencies):
         """Initializes the MCMC module.
@@ -229,13 +288,21 @@ class MCMC(Module):
         """
         
         likelihood = self.dependencies['likelihood']
+<<<<<<< HEAD
+=======
+        prior = self.dependencies['distribution']
+>>>>>>> 2bd709a (Module has dict-like access to its dependencies and immutable DEPENDENCIES, mcmc uses DistributionModule, example_mcmc shows how to use it. Workflow modified to have only run_func method that wraps a function as a Module subclass.)
         sampler = self.dependencies['sampler']
 
         def log_target(param):
             """Computes unnormalized log posterior for a given parameter."""
             
             ll = likelihood._log_likelihood_func(data, param)
+<<<<<<< HEAD
             lp = self._prior.log_density(param)
+=======
+            lp = prior.log_density(param)
+>>>>>>> 2bd709a (Module has dict-like access to its dependencies and immutable DEPENDENCIES, mcmc uses DistributionModule, example_mcmc shows how to use it. Workflow modified to have only run_func method that wraps a function as a Module subclass.)
             return ll + lp
 
         samples = sampler.sample_posterior(
