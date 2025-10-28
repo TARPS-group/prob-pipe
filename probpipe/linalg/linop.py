@@ -4,7 +4,6 @@ from __future__ import annotations
 from typing import Tuple, Any, Iterable
 import numpy as np
 from abc import ABC, abstractmethod
-from functools import singledispatch
 from scipy.linalg import cholesky, solve_triangular
 import math
 
@@ -65,7 +64,12 @@ class LinOp(ABC):
     def is_dense(self) -> bool:
         """Default is_dense method only treats DenseLinOp as dense. Composite
            LinOps should overwrite this."""
-        return isinstance(op, DenseLinOp)
+        return isinstance(self, DenseLinOp)
+    
+    def _check_square(self) -> None:
+        n_out, n_in = self.shape
+        if n_out != n_in:
+            raise np.linalg.LinAlgError(f"Linear operator is not square. Has shape ({n_out}, {n_in})") 
 
     # ---- Optional convenience methods that implementors may override for speed ----
     def matvec(self, x: ArrayLike) -> Array:
@@ -88,12 +92,22 @@ class LinOp(ABC):
         X = _ensure_matrix(X)
         return self.to_dense().T @ X
 
-    def solve(self, b: ArrayLike) -> Array:
+    def solve(self, b: ArrayLike, **kwargs) -> Array:
         """Solve A x = b; default uses dense fallback."""
-        return np.linalg.solve(self.to_dense(), b)
+        self._check_square()
+        n, _ = self.shape
+        dense_op = self.to_dense()
+        
+        b = np.asarray(b)
+        if b.ndim < 2:
+            b = _ensure_vector(b, as_column=True)
+        b = _ensure_matrix(b, num_rows=n)
 
-    def cholesky(self, lower: bool = True) -> LinOp:
+        return np.linalg.solve(dense_op, b)
+
+    def cholesky(self, lower: bool = True, **kwargs) -> LinOp:
         """Return triangular LinOp L (lower) or L.T (upper) such that A = L @ L.T. Default: dense path."""
+        self._check_square()
         L = cholesky(self.to_dense(), lower=lower)
         return TriangularLinOp(L, lower=lower)
 
@@ -104,12 +118,14 @@ class LinOp(ABC):
 
     def logdet(self) -> float:
         """Return log determinant; default uses dense fallback."""
+        self._check_square()
         A = self.to_dense()
         sign, log_det = np.linalg.slogdet(A)
         return float(log_det)
 
     def trace(self) -> float:
         """Return trace of operator; default uses dense fallback."""
+        self._check_square()
         return np.trace(self.to_dense())
 
     # ---- Flags API ----
@@ -169,16 +185,7 @@ class DenseLinOp(LinOp):
 
     def __init__(self, arr: ArrayLike, copy: bool = True) -> None:
         super().__init__()
-
-        matrix = _as_matrix(arr)
-
-        # TODO: copying should probably be handled in _as_matrix().
-        # i.e., matrix = _as_matrix(arr, copy=copy)
-        if copy:
-            self.array = matrix.copy()
-        else:
-            self.array = matrix
-
+        self.array = _ensure_matrix(arr, copy=copy)
         self._dtype = self.array.dtype
 
     @property
@@ -196,10 +203,10 @@ class DenseLinOp(LinOp):
 class DiagonalLinOp(LinOp):
     """Diagonal operator represented by a 1D array of diagonal entries."""
 
-    def __init__(self, diag: ArrayLike) -> None:
+    def __init__(self, diag: ArrayLike, copy: bool = True) -> None:
         """`diag` may be higher-dimensional array, but will be flattened."""
         super().__init__()
-        self.diagonal = np.asarray(diag).ravel()
+        self.diagonal = _ensure_vector(np.asarray(diag).ravel(), copy=copy)
         self._n = int(self.diagonal.size)
         self._dtype = self.diagonal.dtype
 
@@ -215,37 +222,39 @@ class DiagonalLinOp(LinOp):
     def dtype(self) -> Any:
         return self._dtype
 
-    def matvec(self, x: Array) -> Array:
+    def matvec(self, x: ArrayLike) -> Array:
         x = _ensure_vector(x)
         return self.diagonal * x
 
-    def rmatvec(self, x: Array) -> Array:
+    def rmatvec(self, x: ArrayLike) -> Array:
         return self.matvec(x)
 
-    def matmat(self, X: Array) -> Array:
+    def matmat(self, X: ArrayLike) -> Array:
         X = _ensure_matrix(X)
         return X * self.diagonal[:,np.newaxis]
 
-    def rmatmat(self, X: Array) -> Array:
+    def rmatmat(self, X: ArrayLike) -> Array:
         return self.matmat(X)
 
     def to_dense(self) -> Array:
         return np.diag(self.diagonal)
 
-    def solve(self, b: Array) -> Array:
+    def solve(self, b: ArrayLike) -> Array:
         """
         For consistency with np.linalg.solve(), b can be (n,) or (n,b).
         """
         if np.any(self.diagonal == 0):
             raise np.linalg.LinAlgError("Diagonal contains zero entries; not invertible.")
 
+        b = np.asarray(b)
         if b.ndim < 2:
             b = _ensure_vector(b, as_column=True)
         b = _ensure_matrix(b, num_rows=self._n)
 
         return b / self.diagonal[:,np.newaxis]
 
-    def cholesky(self) -> LinOp:
+    def cholesky(self, lower: bool = True) -> LinOp:
+        """Note that `lower` has no effect on Cholesky decomposition of diagonal matrix"""
         if np.any(self.diagonal <= 0):
             raise np.linalg.LinAlgError("Diagonal has non-positive entries; cholesky not defined.")
         return DiagonalLinOp(np.sqrt(self.diagonal))
@@ -267,9 +276,9 @@ class TriangularLinOp(LinOp):
       - if lower==False: stored tri is upper triangular and operator is U @ x
     """
 
-    def __init__(self, tri: Array, lower: bool = True) -> None:
+    def __init__(self, tri: Array, *, lower: bool = True, copy: bool = True) -> None:
         super().__init__()
-        tri = _ensure_square_matrix(tri)
+        tri = _ensure_square_matrix(tri, copy=copy)
         self.tri = tri
         self.lower = bool(lower)
         self._n = self.tri.shape[0]
@@ -283,26 +292,26 @@ class TriangularLinOp(LinOp):
     def dtype(self) -> Any:
         return self._dtype
 
-    def matvec(self, x: Array) -> Array:
-        x = np.asarray(x)
+    def matvec(self, x: ArrayLike) -> Array:
+        x = _ensure_vector(x)
         return self.tri @ x
 
-    def rmatvec(self, x: Array) -> Array:
-        x = np.asarray(x)
+    def rmatvec(self, x: ArrayLike) -> Array:
+        x = _ensure_vector(x)
         return self.tri.T @ x
 
-    def matmat(self, X: Array) -> Array:
-        X = np.asarray(X)
+    def matmat(self, X: ArrayLike) -> Array:
+        X = _ensure_matrix(X)
         return self.tri @ X
 
-    def rmatmat(self, X: Array) -> Array:
-        X = np.asarray(X)
+    def rmatmat(self, X: ArrayLike) -> Array:
+        X = _ensure_matrix(X)
         return self.tri.T @ X
 
     def to_dense(self) -> Array:
         return np.array(self.tri)
 
-    def solve(self, b: Array, unit_diagonal: bool = False,
+    def solve(self, b: Array, *, unit_diagonal: bool = False,
               overwrite_b: bool = False, check_finite: bool = True) -> Array:
         """
         Solve triangular system Lx=b or Ux=b. Optional arguments are forwarded
