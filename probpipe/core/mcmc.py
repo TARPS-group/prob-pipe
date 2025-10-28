@@ -15,39 +15,37 @@ __all__ = [
 ]
 
 class Likelihood(Module):
-    """Computes the log-likelihood of observed data under a user-specified distribution.
+    """Computes the log-likelihood of observed data for arbitrary models.
 
     This module provides a general-purpose interface for evaluating the
-    log-likelihood of observed data given a parameterized probabilistic model.
-    The distribution is provided as an argument at runtime, allowing flexible use
-    with any distribution class that implements a ``log_density`` method.
+    log-likelihood of data given model parameters. It does not assume the
+    existence of a `Distribution` object—likelihoods may be defined analytically,
+    through simulations, or via any callable returning log-probabilities.
 
     Attributes:
-        None: This module does not define persistent dependencies.
-            The ``distribution`` is passed dynamically when calling the method.
+        None: This module has no persistent dependencies or stored distributions.
 
     Args:
-        distribution: Any object implementing a ``log_density`` method.
-            Defines the probabilistic model used to evaluate data likelihoods.
-        data: Observed data points.
+        data: Observed data values.
         param: Model parameter(s) at which to evaluate the likelihood.
+        log_like_func: Optional user-supplied function of the form
+            ``log_like_func(data, param) -> float`` that computes the log-likelihood.
 
     Notes:
-        - The ``distribution`` object must expose a ``log_density(data)`` method
-          returning log-probabilities for the provided samples.
-        - Suitable for use in probabilistic workflows or MCMC-based pipelines
-          where both model and data vary dynamically.
+        - The likelihood need not correspond to a formal probability distribution.
+        - When subclassed, `_log_likelihood_func` can be overridden to implement
+          a specific analytical likelihood.
     """
     
-    DEPENDENCIES = {'distribution'}
+    DEPENDENCIES = set()
 
     def __init__(self, **dependencies):
-        """Initializes the Likelihood module.
+        """Initializes a generic Likelihood module.
 
         Args:
-            **dependencies: Optional module dependencies. Typically empty.
-                The likelihood distribution is provided directly at runtime
-                rather than registered as a dependency.
+            **dependencies: Optional module dependencies (typically none).
+                The likelihood computation is self-contained and does not rely
+                on an injected distribution.
         """
         super().__init__(**dependencies)
 
@@ -57,20 +55,13 @@ class Likelihood(Module):
         )
         self.run_func(self._log_likelihood_task, name="log_likelihood")
 
-    @property
-    def distribution(self):
-        """Distribution object used for evaluating likelihood.
-
-        Returns:
-            The ``distribution`` instance provided at runtime.
-        """
-        return self.dependencies['distribution']
 
     def _log_likelihood_func(self, data: NDArray, param: float) -> float:
         """Computes the total log-likelihood of observed data.
 
-        Evaluates the sum of log-probabilities for all data points under
-        the specified distribution, given a particular parameter value.
+        By default, assumes a simple Normal error model with fixed variance
+        (as an example implementation). Users may override this method or
+        subclass Likelihood to define their own likelihood computation.
 
         Args:
             data: Observed data, shape (n,) or (n, 1).
@@ -80,9 +71,9 @@ class Likelihood(Module):
             The total log-likelihood across all observations.
 
         Example:
-            >>> dist = MyCustomDist(theta=2.0)
             >>> mod = Likelihood()
-            >>> logL = mod._log_likelihood_func(data=np.array([1.0, 2.0]), param=1.5)
+            >>> data = np.array([1.0, 2.0, 3.0])
+            >>> logL = mod._log_likelihood_func(data=data, param=1.5)
         """
         temp_dist = Normal1D(mu=param, sigma=self.distribution.sigma)
         xarr = np.asarray(data, dtype=float).reshape(-1, 1)
