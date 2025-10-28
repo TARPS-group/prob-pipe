@@ -3,9 +3,8 @@
 import math
 import numpy as np
 from scipy.linalg import solve_triangular
-from scipy.linalg.blas import dtrmm
 
-from .types import Array
+from ..custom_types import Array
 from .linalg import robust_cholesky, mahalanobis, log_det_tri, trace_Ainv_B
 
 # Constants.

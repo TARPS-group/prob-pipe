@@ -1,5 +1,6 @@
 # linop.py
 from __future__ import annotations
+
 from typing import Tuple, Any, Iterable
 import numpy as np
 from abc import ABC, abstractmethod
@@ -7,8 +8,8 @@ from functools import singledispatch
 from scipy.linalg import cholesky, solve_triangular
 import math
 
-from .types import Array, ArrayLike
-from .linalg.utils import (
+from ..custom_types import Array, ArrayLike
+from .utils import (
     _ensure_scalar,
     _ensure_vector,
     _ensure_matrix,

@@ -1,19 +1,76 @@
 # linalg/utils.py
+"""
+Utility functions for array canonicalization used by probpipe.
+
+Notes for backend support
+-------------------------
+This module currently imports numpy as `np`. When adding a JAX backend,
+replace `np` with a small backend shim (e.g., `from .backend import xp as np`)
+where `backend.xp` resolves to either `numpy` or `jax.numpy` depending on the
+configured backend. The functions here are written so that the only change
+needed for backend switching is the `np` import.
+
+All functions that return arrays accept `copy: bool = True`. When `copy=True`
+the returned array is guaranteed to be a different object from the input.
+This makes behavior explicit and is compatible with JAX-style functional APIs.
+
+When jax backend support is added, will need to replace
+`return out.copy() if copy else out` statements with something like
+`copy(out)`, a shim for np.array(x, copy=True)/x.copy() [numpy]
+and jnp.array(x) [jax]. See Jumpy for example of package supporting both
+backends.
+"""
+
+from __future__ import annotations
 
 import numpy as np
-from typing import Any
+from typing import Any, Tuple
 
-from .types import Array, ArrayLike
+from ..custom_types import Array, ArrayLike
 
-# This code uses numpy, but is written to be robust to future suport for
-# other backend arrays (e.g., jax). For such support, replace `np` by
-# an import from a small backend shim; e.g.,
-#   from .backend import xp as np
-# where backend.xp is either numpy or jax.numpy.
 
 def _is_numpy_scalar(x: Any) -> bool:
-    # handles np.generic and Python scalars
+    """Return true if object is a numpy generic or Python scalar"""
     return np.isscalar(x) or isinstance(x, np.generic)
+
+
+def _ensure_real_scalar(x: Any, *, as_array: bool = False) -> float|int|Array:
+    """
+    Return a Python scalar or 0d array for inputs that contain a single real value.
+
+    Accepts:
+      - Python scalars (int, float)
+      - numpy scalar types (np.float64(...), np.int32(...))
+      - 0-D numpy arrays (shape == ())
+
+    Returns:
+        If as_array=False (default), returns a Python scalar (float or int).
+        If as_array=True, returns a 0-D array.
+
+    Raises:
+      ValueError if input contains more than one element or is not a float/int.
+    """
+    # fast path for Python/numpy scalar
+    if _is_numpy_scalar(x):
+        # np.iscomplexobj handles python numbers too (returns False for ints/floats)
+        if np.iscomplexobj(x):
+            raise ValueError(f"_ensure_real_scalar: input is complex-valued: {x!r}")
+        if isinstance(x, np.generic) and not as_array:
+            return x.item()
+        if as_array:
+            return np.array(x)
+        # Python scalar
+        return x
+
+    arr = np.asarray(x)
+    if arr.size != 1:
+        raise ValueError(f"_ensure_real_scalar: input must contain exactly one element; got size={arr.size}, shape={arr.shape}")
+    if np.iscomplexobj(arr):
+        raise ValueError(f"_ensure_real_scalar: input is complex-valued (shape={arr.shape}).")
+
+    if as_array:
+        return np.array(arr.reshape(()))  # 0-D array
+    return arr.item()
 
 
 def _ensure_scalar(x: Any) -> Any:
@@ -45,7 +102,7 @@ def _ensure_scalar(x: Any) -> Any:
 
 
 def _ensure_vector(x: ArrayLike, *, as_column: bool = False,
-                   length: int = None) -> Array:
+                   length: int | None = None, copy: bool = True) -> Array:
     """
     Ensure input is returned as a 1-D vector (canonical shape (n,)) by default.
     If as_column=True, return shape (n,1).
@@ -76,15 +133,15 @@ def _ensure_vector(x: ArrayLike, *, as_column: bool = False,
         raise ValueError(f"_ensure_vector: input has too many dimensions (ndim={arr.ndim}).")
 
     # validate vector length
-    if length is not None:
-        if out.size != length:
-            raise ValueError(f"_ensure_vector: required length {length}. Got {out.size}.")
+    if length is not None and out.size != length:
+        raise ValueError(f"_ensure_vector: required length {length}. Got {out.size}.")
 
-    return out
+    return out.copy() if copy else out
 
 
 def _ensure_matrix(x: ArrayLike, *, as_row_matrix: bool = False,
-                   num_rows: int = None, num_cols: int = None) -> Array:
+                   num_rows: int | None = None, num_cols: int | None = None,
+                   copy: bool = True) -> Array:
     """ Ensure input is a 2D matrix
 
     - Scalar inputs (0D) become arrays of shape (1, 1)
@@ -108,27 +165,24 @@ def _ensure_matrix(x: ArrayLike, *, as_row_matrix: bool = False,
     else:
         raise ValueError(f"_ensure_matrix: Input cannot be converted to a 2D matrix. Shape {arr.shape}")
 
-    if num_rows is not None:
-        if out.shape[0] != num_rows:
-            raise ValueError(f"_ensure_matrix: Required {num_rows} rows. Got {out.shape[0]}.")
+    if num_rows is not None and out.shape[0] != num_rows:
+        raise ValueError(f"_ensure_matrix: Required {num_rows} rows. Got {out.shape[0]}.")
 
-    if num_cols is not None:
-        if out.shape[1] != num_cols:
-            raise ValueError(f"_ensure_matrix: Required {num_cols} rows. Got {out.shape[1]}.")
+    if num_cols is not None and out.shape[1] != num_cols:
+        raise ValueError(f"_ensure_matrix: Required {num_cols} rows. Got {out.shape[1]}.")
 
-    return out
+    return out.copy() if copy else out
 
 
-def _ensure_square_matrix(x: ArrayLike, n: int = None) -> Array:
+def _ensure_square_matrix(x: ArrayLike, n: int | None = None, *, copy: bool = True) -> Array:
     """Ensure input is a 2d square matrix"""
-    matrix = _ensure_matrix(x)
+    matrix = _ensure_matrix(x, copy=copy)
     num_rows, num_cols = matrix.shape
     if num_rows != num_cols:
         raise ValueError(f"Array is not square. Shape {matrix.shape}")
 
-    if n is not None:
-        if matrix.shape[0] != n:
-            raise ValueError(f"Required matrix dimension {n}. Got {matrix.shape[0]}.")
+    if n is not None and matrix.shape[0] != n:
+        raise ValueError(f"Required matrix dimension {n}. Got {matrix.shape[0]}.")
 
     return matrix
 
@@ -137,7 +191,8 @@ def _ensure_square_matrix(x: ArrayLike, n: int = None) -> Array:
 # Batch arrays
 # ------------------------------------------------------------------------------
 
-def _ensure_batch_array(x: ArrayLike, value_shape: Optional[Tuple[int, ...]] = None) -> Array:
+def _ensure_batch_array(x: ArrayLike, value_shape: Tuple[int, ...] | None = None,
+                        *, copy: bool = True) -> Array:
     """Ensure `x` has a leading batch axis and optionally enforce value shape.
 
     A batch array is defined as an array with dimension at least two, where the
@@ -178,31 +233,65 @@ def _ensure_batch_array(x: ArrayLike, value_shape: Optional[Tuple[int, ...]] = N
         ValueError: If `value_shape` is provided and the per-value shape doesn't
         match after canonicalization.
     """
-    x = np.asarray(x)
+    arr = np.asarray(x)
 
-    # Convert single values to batch with batch size one
+    # Convert single values to singleton batch
     if value_shape is not None:
         # If input is exactly single-value shaped, expand to batch of size 1
-        if x.ndim == len(value_shape):
-            x = x[np.newaxis, ...]
+        if arr.ndim == len(value_shape):
+            arr = arr[np.newaxis, ...]
     else:
-        if x.ndim == 0:
-            x = x.reshape((1,))  # () -> (1,)
-        elif x.ndim == 1:
-            x = x[np.newaxis, :] # (d,) -> (1,d)
+        if arr.ndim == 0:
+            arr = arr.reshape((1,))  # () -> (1,)
+        elif arr.ndim == 1:
+            arr = arr[np.newaxis, :] # (d,) -> (1,d)
 
     # Optionally validate value shape
     if value_shape is not None:
-        x_value_shape = x.shape[1:]
-        if x_value_shape != tuple(value_shape):
+        arr_value_shape = arr.shape[1:]
+        if arr_value_shape != tuple(value_shape):
             raise ValueError(
-                f"Batch array with value shape {x_value_shape} does not match required value shape {tuple(value_shape)}."
+                f"Batch array with value shape {arr_value_shape} does not match required value shape {tuple(value_shape)}."
             )
 
-    return x
+    return arr.copy() if copy else arr
 
 
-def _ensure_batch_vector(x: ArrayLike, length: int = None):
+def _ensure_batch_real_scalar(x: ArrayLike, *, copy: bool = True) -> Array:
+    """
+    Ensure `x` is a batch of real scalars with shape (B,).
+
+    - scalar -> (1,)
+    - 1D array (B,) -> returned (B,)
+    - higher-dimensional inputs raise an error
+
+    Args:
+        x: scalar or array-like
+        copy: if True, return a copy (new array). If False, may return a view.
+
+    Returns:
+        Array with shape (B,) containing real numbers.
+
+    Raises:
+        ValueError if the input contains complex numbers or has ndim >= 2.
+    """
+    if _is_numpy_scalar(x):
+        out = _ensure_real_scalar(x, as_array=True).reshape((1,))
+        return out.copy() if copy else out
+
+    arr = np.asarray(x)
+    if arr.ndim == 0:
+        out = _ensure_real_scalar(arr, as_array=True).reshape((1,))
+        return out.copy() if copy else out
+    if arr.ndim == 1:
+        if np.iscomplexobj(arr):
+            raise ValueError("_ensure_batch_real_scalar: input contains complex values.")
+        return arr.copy() if copy else arr
+    raise ValueError(f"_ensure_batch_real_scalar: expected scalar or 1D array. Got shape={arr.shape}.")
+
+
+def _ensure_batch_vector(x: ArrayLike, length: int | None = None,
+                         *, copy: bool = True) -> Array:
     """Ensure `x` is a batch of vectors and return shape (B, d).
 
     This function returns an array of shape (B, d) encoding a batch vector,
@@ -215,7 +304,7 @@ def _ensure_batch_vector(x: ArrayLike, length: int = None):
     Examples:
       - Input shape (d,) -> returned shape (1, d)
       - Input shape (B, d) -> returned shape (B, d)
-      - Input shape (B, d, 1) -> raises error
+      - other shapes -> raises error
 
     Returns:
         Array of shape (B, d).
@@ -223,29 +312,28 @@ def _ensure_batch_vector(x: ArrayLike, length: int = None):
     Raises:
         ValueError: If the input cannot be interpreted as a batch of vectors.
     """
-    x = np.asarray(x)
+    arr = np.asarray(x)
 
     # If single vector value, standardize to (1,d)
-    if x.ndim < 2:
-        x = _ensure_vector(x, as_column=False)
-        return _ensure_batch_array(x, value_shape=x.shape)
+    if arr.ndim < 2:
+        v = _ensure_vector(arr, as_column=False, length=length, copy=copy)
+        return _ensure_batch_array(v, value_shape=v.shape, copy=copy)
 
     # Batch vector must be two dimensional
-    if x.ndim != 2:
+    if arr.ndim != 2:
         raise ValueError(
-            f"_ensure_batch_vector: Array of shape {x.shape} is not a batch vector. Require shape (n_batch, d)."
+            f"_ensure_batch_vector: Array of shape {arr.shape} is not a batch vector. Require shape (n_batch, d)."
         )
 
     # Validate vector length
-    if length is not None:
-        if x.shape[1] != length:
-            raise ValueError(f"_ensure_batch_vector: Required vector length {length}. Got {x.shape[1]}.")
+    if length is not None and arr.shape[1] != length:
+        raise ValueError(f"_ensure_batch_vector: Required vector length {length}. Got {arr.shape[1]}.")
 
-    return x
+    return arr.copy() if copy else arr
 
 
-def _ensure_batch_matrix(x: ArrayLike, num_rows: int = None, num_cols: int = None,
-                         as_row_matrix: bool = True):
+def _ensure_batch_matrix(x: ArrayLike, num_rows: int | None = None, num_cols: int | None = None,
+                         as_row_matrix: bool = True, *, copy: bool = True) -> Array:
     """Ensure `x` is a batch of matrices and return shape (B, n, m).
 
     This function returns an array of shape (B, n, m) encoding a batch matrix,
@@ -256,10 +344,10 @@ def _ensure_batch_matrix(x: ArrayLike, num_rows: int = None, num_cols: int = Non
     an error.
 
     Examples:
-      - Input shape (n,) -> returned shape (1, 1, n)
+      - Input shape (n,) -> returned shape (1, 1, n) (as_row_matrix = True) or (1, n, 1) (False)
       - Input shape (n, m) -> returned shape (1, n, m)
       - Input shape (B, n, m) -> returned shape (B, n, m)
-      - Input shape (B, n, m, 1) -> raises error
+      - other Shapes -> raises error
 
     Returns:
         Array of shape (B, n, m).
@@ -267,35 +355,33 @@ def _ensure_batch_matrix(x: ArrayLike, num_rows: int = None, num_cols: int = Non
     Raises:
         ValueError: If the input cannot be interpreted as a batch of matrices.
     """
-    x = np.asarray(x)
+    arr = np.asarray(x)
 
     # If single matrix value, standardize to (1,n,m)
-    if x.ndim < 3:
-        x = _ensure_matrix(x, as_row_matrix=as_row_matrix)
-        x = _ensure_batch_array(x, value_shape=x.shape)
+    if arr.ndim < 3:
+        mat = _ensure_matrix(arr, as_row_matrix=as_row_matrix, copy=copy)
+        return _ensure_batch_array(mat, value_shape=mat.shape, copy=copy)
 
     # Batch matrix must be three dimensional
-    if x.ndim != 3:
+    if arr.ndim != 3:
         raise ValueError(
-            f"Array of shape {x.shape} is not a batch matrix. Require shape (n_batch, n_row, n_col)."
+            f"Array of shape {arr.shape} is not a batch matrix. Require shape (n_batch, n_row, n_col)."
         )
 
-    if num_rows is not None:
-        if x.shape[1] != num_rows:
-            raise ValueError(f"_ensure_batch_matrix: Required {num_rows} rows. Got {x.shape[1]}.")
+    if num_rows is not None and arr.shape[1] != num_rows:
+        raise ValueError(f"_ensure_batch_matrix: Required {num_rows} rows. Got {arr.shape[1]}.")
 
-    if num_cols is not None:
-        if x.shape[2] != num_cols:
-            raise ValueError(f"_ensure_batch_matrix: Required {num_cols} rows. Got {x.shape[2]}.")
+    if num_cols is not None and arr.shape[2] != num_cols:
+        raise ValueError(f"_ensure_batch_matrix: Required {num_cols} rows. Got {arr.shape[2]}.")
 
-    return x
+    return arr.copy() if copy else arr
 
 
 # ------------------------------------------------------------------------------
 # Other utility functions
 # ------------------------------------------------------------------------------
 
-def add_diag_jitter(matrix: ArrayLike, jitter: float|ArrayLike = 1e-6, *, copy: bool = True) -> Array:
+def add_diag_jitter(matrix: ArrayLike, jitter: float | ArrayLike = 1e-6, *, copy: bool = True) -> Array:
     """
     Return a new matrix = matrix + jitter * I.
 
@@ -305,21 +391,35 @@ def add_diag_jitter(matrix: ArrayLike, jitter: float|ArrayLike = 1e-6, *, copy: 
       copy: if True (default) operate on a copy; if False, modify input in-place and return it.
 
     Returns:
-      New Array (or the same array if copy=False) with jitter added to diagonal.
+      New Array with jitter added to diagonal.
+
+    Raises:
+        ValueError on invalid shapes or non-real jitter values.
     """
-    mat = _ensure_square_matrix(matrix)
+    mat = _ensure_square_matrix(matrix, copy=copy)
     n = mat.shape[0]
 
-    # ensure jitter is scalar or 1D length n
+    # Normalize jitter into a 1D real array of length n
     try:
-        jitter = _ensure_scalar(jitter)
-        jitter = np.full((n,), jitter, dtype=mat.dtype)
+        # Prefer treating jitter as a scalar real
+        jitter_scalar = _ensure_real_scalar(jitter)
+        jitter_arr = np.full((n,), jitter_scalar, dtype=mat.dtype)
     except ValueError:
-        jitter = np.asarray(jitter)
-        if jitter.ndim == 0:
-            jitter = np.full((n,), jitter.item(), dtype=mat.dtype)
-        elif jitter.shape != (n,):
-            raise ValueError(f"add_diag_jitter: jitter must be scalar or shape ({n},); got {jarr.shape}")
+        # Not a scalar real: try array-like
+        jitter_arr = np.asarray(jitter)
+        if jitter_arr.ndim == 0:
+            jitter_scalar = _ensure_real_scalar(jitter_arr)
+            jitter_arr = np.full((n,), jitter_scalar, dtype=mat.dtype)
+        elif jitter_arr.ndim == 1:
+            if jitter_arr.shape != (n,):
+                raise ValueError(f"add_diag_jitter: jitter must be scalar or shape ({n},). Got {jitter_arr.shape}.")
+            if np.iscomplexobj(jitter_arr):
+                raise ValueError("add_diag_jitter: jitter contains complex values.")
+            # ensure dtype consistent with matrix dtype
+            if jitter_arr.dtype != mat.dtype:
+                jitter_arr = jitter_arr.astype(mat.dtype, copy=False)
+        else:
+            raise ValueError(f"add_diag_jitter: jitter must be scalar or 1D array. Got ndim={jitter_arr.ndim}.")
 
     if copy:
         out = mat.copy()
@@ -328,5 +428,5 @@ def add_diag_jitter(matrix: ArrayLike, jitter: float|ArrayLike = 1e-6, *, copy: 
 
     # Add jitter to diagonal
     diag_idcs = np.diag_indices(n)
-    out[diag_idcs] = out[diag_idcs] + jitter
+    out[diag_idcs] = out[diag_idcs] + jitter_arr
     return out

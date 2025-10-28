@@ -1,9 +1,7 @@
-# types.py
+# custom_types.py
 
-from numpy import (
-    ndarray as NumpyArray,
-    ArrayLike as NumpyArrayLike
-)
+from numpy import ndarray as NumpyArray
+from numpy.typing import ArrayLike as NumpyArrayLike
 
 Array = NumpyArray
 ArrayLike = NumpyArrayLike

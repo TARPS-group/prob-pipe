@@ -1,9 +1,11 @@
 # linalg.py
 
+from __future__ import annotations
+
 import numpy as np
 from scipy.linalg import cholesky, solve_triangular
 
-from .types import Array
+from ..custom_types import Array
 
 def as_matrix(x: Array) -> Array:
     """Ensure input is a 2D array, potentially via coercing.
