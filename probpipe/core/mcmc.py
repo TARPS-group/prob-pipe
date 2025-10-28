@@ -3,13 +3,12 @@ from typing import Callable
 import numpy as np
 
 from .module import Module, InputSpec
-from .multivariate import Normal1D
+from .distributions import Distribution, EmpiricalDistribution
 from numpy.typing import NDArray
 
 
 __all__ = [
     "Likelihood",
-    "Prior",
     "MetropolisHastings",
     "MCMC",
 ]
@@ -39,48 +38,25 @@ class Likelihood(Module):
     
     DEPENDENCIES = set()
 
-    def __init__(self, **dependencies):
+    def __init__(self, log_likelihood_func: Callable[[NDArray, NDArray], float], **dependencies):
         """Initializes a generic Likelihood module.
 
-        Args:
+         Args:
+            log_likelihood_func: function with arguments (data: NDArray, param: NDArray)
+                that computes the log-likelihood of the data given the model parameters
             **dependencies: Optional module dependencies (typically none).
                 The likelihood computation is self-contained and does not rely
                 on an injected distribution.
         """
         super().__init__(**dependencies)
-
+        self._log_likelihood_func = log_likelihood_func
         self.set_input(
             data=InputSpec(type=NDArray, required=True),
-            param=InputSpec(type=float, required=True),
+            param=InputSpec(type=NDArray, required=True),
         )
         self.run_func(self._log_likelihood_task, name="log_likelihood")
 
-
-    def _log_likelihood_func(self, data: NDArray, param: float) -> float:
-        """Computes the total log-likelihood of observed data.
-
-        By default, assumes a simple Normal error model with fixed variance
-        (as an example implementation). Users may override this method or
-        subclass Likelihood to define their own likelihood computation.
-
-        Args:
-            data: Observed data, shape (n,) or (n, 1).
-            param: Model parameter value(s) used for evaluation.
-
-        Returns:
-            The total log-likelihood across all observations.
-
-        Example:
-            >>> mod = Likelihood()
-            >>> data = np.array([1.0, 2.0, 3.0])
-            >>> logL = mod._log_likelihood_func(data=data, param=1.5)
-        """
-        temp_dist = Normal1D(mu=param, sigma=self.distribution.sigma)
-        xarr = np.asarray(data, dtype=float).reshape(-1, 1)
-        log_probs = temp_dist.log_density(xarr)
-        return float(np.sum(log_probs))
-
-    def _log_likelihood_task(self, *, data: NDArray, param: float) -> float:
+    def _log_likelihood_task(self, *, data: NDArray, param: NDArray) -> float:
         """Prefect-compatible task wrapper for the log-likelihood computation.
 
         Wraps :meth:`_log_likelihood_func` for integration with Prefect
@@ -102,81 +78,12 @@ class Likelihood(Module):
             >>> print(result)
             -12.3
         """
-        
         return self._log_likelihood_func(data, param)
-
-
-
 
 # It bypasses the Prefect tasks entirely when doing MCMC actual sampling (which needs immediate float results).
 # It only calls the pure computation methods returning floats.
 # It preserves the Prefect tasks if you want to call them independently within Prefect workflows.
 # This avoids the input missing errors and runtime confusion Prefect tasks incur when called like normal Python functions.
-
-
-
-
-class Prior(Module):
-    """Computes the log-probability (log-density) of a parameter under a prior distribution.
-
-    This module serves as a thin wrapper around a probability distribution
-    (e.g., Normal1D, Beta, etc.) to expose prior log-probabilities as
-    Prefect-compatible tasks. It is typically used within probabilistic
-    workflows where prior evaluation is required as part of the posterior
-    computation.
-
-    Attributes:
-        DEPENDENCIES: Required dependency names. Must include
-            ``'distribution'`` representing the prior distribution.
-    """
-    
-    DEPENDENCIES = {'distribution'}
-
-    def __init__(self, **dependencies):
-        """Initializes the Prior module.
-
-        Args:
-            **dependencies: Module dependencies. Must include a key
-                ``'distribution'`` mapping to a distribution instance
-                (e.g., ``Normal1D`` or ``Beta``).
-        """
-        super().__init__(**dependencies)
-
-        self.set_input(param=InputSpec(type=float, required=True))
-        self.run_func(self._log_prob_task, name="log_prob")
-
-    @property
-    def distribution(self):
-        """Distribution: The dependency representing the prior distribution."""
-        return self.dependencies['distribution']
-
-    def _log_prob_func(self, param: float) -> float:
-        """Computes the log-probability of a parameter under the prior.
-
-        Args:
-            param: Parameter value at which to evaluate the log-density.
-
-        Returns:
-            Log-probability of the parameter under the prior distribution.
-        """
-        
-        return self.distribution.log_density(param)
-
-    def _log_prob_task(self, *, param: float):
-        """Prefect-compatible task wrapper for the log-probability computation.
-
-        Wraps :meth:`_log_prob_func` for use in Prefect workflows, enabling
-        asynchronous or task-based execution.
-
-        Args:
-            param: Parameter value to evaluate.
-
-        Returns:
-            Log-probability of the parameter under the prior.
-        """
-        
-        return self._log_prob_func(param)
-
 
 
 
@@ -271,26 +178,26 @@ class MCMC(Module):
         _conv_fit_kwargs: Extra fitting keyword arguments.
     """
 
-    DEPENDENCIES = {'likelihood', 'prior', 'sampler'}
+    DEPENDENCIES = {'likelihood', 'sampler'}
 
-    def __init__(self, **dependencies):
+    def __init__(self, prior: Distribution, likelihood: Likelihood, sampler: MetropolisHastings, **dependencies):
         """Initializes the MCMC module.
 
         Args:
-            **dependencies: Module dependencies providing prior, likelihood,
-                and sampler instances. Must include keys:
-                ``'prior'`` (Prior), ``'likelihood'`` (Likelihood),
-                and ``'sampler'`` (MetropolisHastings or compatible sampler).
+            prior: Prior distribution
+            likelihood: Likelihood module
+            sampler: Sampling module 
+            **dependencies: Other module dependencies
         """
-        super().__init__(**dependencies)
-
+        super().__init__(likelihood=likelihood, sampler=sampler, **dependencies)
+        self._prior = prior
         self._conv_num_samples = 2048
         self._conv_by_kde = False
         self._conv_fit_kwargs = {}
 
         self.set_input(
             num_samples=InputSpec(type=int, required=True),
-            initial_param=InputSpec(type=float, required=True),
+            initial_param=InputSpec(type=NDArray, required=True),
             data=InputSpec(type=NDArray, required=True),
             proposal_std=InputSpec(type=float, required=False, default=1.0),
         )
@@ -322,14 +229,13 @@ class MCMC(Module):
         """
         
         likelihood = self.dependencies['likelihood']
-        prior = self.dependencies['prior']
         sampler = self.dependencies['sampler']
 
         def log_target(param):
             """Computes unnormalized log posterior for a given parameter."""
             
             ll = likelihood._log_likelihood_func(data, param)
-            lp = prior._log_prob_func(param)
+            lp = self._prior.log_density(param)
             return ll + lp
 
         samples = sampler.sample_posterior(
@@ -339,7 +245,8 @@ class MCMC(Module):
             proposal_std=proposal_std,
         )
 
-        samples_array = np.asarray(samples).reshape(-1, 1)
+        D = initial_param.shape[0] 
+        samples_array = np.asarray(samples).reshape(-1, D)
          
-        return Normal1D(mu = np.mean(samples_array), sigma = np.std(samples_array))    # or    EmpiricalDistribution(samples=samples_array)
+        return EmpiricalDistribution(samples=samples_array)
     
