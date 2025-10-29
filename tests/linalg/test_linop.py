@@ -1,5 +1,6 @@
 # test_linop.py
 import numpy as np
+from scipy.linalg import cholesky
 import pytest
 
 from probpipe.linalg.linop import (
@@ -10,6 +11,49 @@ from probpipe.linalg.linop import (
 
 def approx(a, b, tol=1e-12):
     return np.allclose(a, b, atol=tol, rtol=0)
+
+class TestDenseLinOp:
+    @classmethod
+    def setup_class(cls):
+        cls.n = 3
+        cls.arr = 2 * np.identity(cls.n, dtype=np.float64)
+        cls.op = DenseLinOp(cls.arr, copy=True)
+
+    def test_array_properties(self):
+        assert self.op.shape == (self.n, self.n)
+        assert self.op.dtype == self.arr.dtype
+        assert self.op.is_dense
+        assert np.array_equal(self.op.to_dense(), self.arr)
+
+    def test_transformation_views(self):
+        assert np.array_equal(self.op.T.to_dense(), self.arr.T)
+        assert np.array_equal((2 * self.op).to_dense(), 2 * self.arr)
+        assert np.array_equal((self.op + self.op).to_dense(), self.arr + self.arr)
+        assert np.array_equal((self.op @ self.op).to_dense(), self.arr @ self.arr)
+
+    def test_linalg_operations(self):
+        assert approx(self.op.cholesky(lower=True).to_dense(), cholesky(self.arr, lower=True))
+        assert np.array_equal(self.op.trace(), np.linalg.trace(self.arr))
+        assert approx(self.op.logdet(), np.linalg.slogdet(self.arr)[1])
+        assert np.array_equal(self.op.diag(), np.diag(self.arr))
+
+        b1 = np.ones((self.n,))
+        b2 = np.ones((self.n, 1))
+        B = np.ones((self.n, 4))
+        assert approx(self.op.solve(b1), np.linalg.solve(self.arr, b1))
+        assert approx(self.op.solve(b2), np.linalg.solve(self.arr, b2))
+        assert approx(self.op.solve(B), np.linalg.solve(self.arr, B))
+
+    def test_matvec_matmat(self):
+        b1 = np.ones((self.n,))
+        b2 = np.ones((self.n, 1))
+        B = np.ones((self.n, 4))
+
+        assert np.array_equal(self.op.matvec(b1), self.arr @ b1)
+        assert np.array_equal(self.op.matvec(b2), (self.arr @ b2).ravel())
+        assert np.array_equal(self.op.matmat(b1), (self.arr @ b1).reshape(-1, 1))
+        assert np.array_equal(self.op.matmat(b2), self.arr @ b2)
+        assert np.array_equal(self.op.matmat(B), self.arr @ B)
 
 
 def test_dense_matvec_matmat_dtype():

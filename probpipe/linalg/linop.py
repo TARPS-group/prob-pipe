@@ -16,6 +16,7 @@ from .utils import (
 )
 
 # TODO:
+# - Update so that matmat/rmatmat always outputs shape (n,k)?
 # - Improve dtype promotion (e.g., in ProductLinOp)
 # - Standardize tags / propagate tags
 # - Seems that tags are sometimes not used when they could be; e.g., unit_diagonal in TriangularLinOp
@@ -207,7 +208,7 @@ class LinOp(ABC):
         return f"{self.__class__.__name__}(shape={self.shape}, dtype={self.dtype})"
 
 
-# ---- Structural composite operator classes ----
+# ---- Concrete linear operator subclasses ----
 
 class DenseLinOp(LinOp):
     """Dense linear operator backed by a numpy array."""

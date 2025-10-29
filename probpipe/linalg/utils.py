@@ -388,10 +388,13 @@ def add_diag_jitter(matrix: ArrayLike, jitter: float | ArrayLike = 1e-6, *, copy
     Args:
       matrix: 2D square array-like
       jitter: scalar or array-like of length n (interpreted elementwise)
-      copy: if True (default) operate on a copy; if False, modify input in-place and return it.
+      copy: if True (default) operate on and return a copy; if False, attempt to
+            operate in-place and return the (possibly mutated) input. If dtype promotion
+            is required and copy=False, a promoted-copy will be returned (since dtype
+            cannot be changed in-place).
 
     Returns:
-      New Array with jitter added to diagonal.
+      Array with jitter added to diagonal.
 
     Raises:
         ValueError on invalid shapes or non-real jitter values.
@@ -399,34 +402,38 @@ def add_diag_jitter(matrix: ArrayLike, jitter: float | ArrayLike = 1e-6, *, copy
     mat = _ensure_square_matrix(matrix, copy=copy)
     n = mat.shape[0]
 
-    # Normalize jitter into a 1D real array of length n
+    # Normalize jitter into a 1D real array of length n (or scalar)
     try:
-        # Prefer treating jitter as a scalar real
         jitter_scalar = _ensure_real_scalar(jitter)
-        jitter_arr = np.full((n,), jitter_scalar, dtype=mat.dtype)
+        jitter_arr = np.full((n,), jitter_scalar, dtype=np.result_type(mat.dtype, np.array(jitter_scalar).dtype))
     except ValueError:
         # Not a scalar real: try array-like
         jitter_arr = np.asarray(jitter)
         if jitter_arr.ndim == 0:
             jitter_scalar = _ensure_real_scalar(jitter_arr)
-            jitter_arr = np.full((n,), jitter_scalar, dtype=mat.dtype)
+            jitter_arr = np.full((n,), jitter_scalar, dtype=np.result_type(mat.dtype, np.array(jitter_scalar).dtype))
         elif jitter_arr.ndim == 1:
             if jitter_arr.shape != (n,):
                 raise ValueError(f"add_diag_jitter: jitter must be scalar or shape ({n},). Got {jitter_arr.shape}.")
             if np.iscomplexobj(jitter_arr):
                 raise ValueError("add_diag_jitter: jitter contains complex values.")
-            # ensure dtype consistent with matrix dtype
-            if jitter_arr.dtype != mat.dtype:
-                jitter_arr = jitter_arr.astype(mat.dtype, copy=False)
         else:
             raise ValueError(f"add_diag_jitter: jitter must be scalar or 1D array. Got ndim={jitter_arr.ndim}.")
 
+    # Determine result dtype (promote matrix dtype and jitter dtype)
+    result_dtype = np.result_type(mat.dtype, jitter_arr.dtype)
+
+    # Decide whether to perform in-place update.
     if copy:
-        out = mat.copy()
+        out = mat.astype(result_dtype, copy=True)
     else:
-        out = mat
+        if result_dtype == mat.dtype:
+            out = mat  # safe to update in-place
+        else:
+            # cannot change dtype in-place => must return a promoted copy
+            out = mat.astype(result_dtype, copy=True)
 
     # Add jitter to diagonal
     diag_idcs = np.diag_indices(n)
-    out[diag_idcs] = out[diag_idcs] + jitter_arr
+    out[diag_idcs] = out[diag_idcs] + jitter_arr.astype(result_dtype, copy=False)
     return out
