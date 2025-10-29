@@ -371,6 +371,107 @@ class TriangularLinOp(LinOp):
                                 overwrite_b=overwrite_b, check_finite=check_finite)
 
 
+class RootLinOp(LinOp):
+    """A linear operator A represented by its square root S such that A = S @ S.T
+       A is guaranteed to be symmetric positive semidefinite, but not necessarily 
+       positive definite."""
+
+    def __init__(self, root: LinOp) -> None:
+        super().__init__()
+
+        if isinstance(root, LinOp):
+            self.root = root
+        else:
+            self.root = DenseLinOp(root)
+
+        self._n = self.root.shape[0]
+        self.add_flag("symmetric")
+
+    @property
+    def shape(self) -> Tuple[int, int]:
+        return (self._n, self._n)
+
+    @property
+    def dtype(self) -> Any:
+        return self.root.dtype
+
+    def matvec(self, x: ArrayLike) -> Array:
+        return self.root.matvec(self.root.rmatvec(x))
+
+    def rmatvec(self, x: ArrayLike) -> Array:
+        # Operator is symmetric
+        return self.matvec(x)
+
+    def matmat(self, X: ArrayLike) -> Array:
+        return self.root.matmat(self.root.rmatmat(X))
+
+    def rmatmat(self, X: ArrayLike) -> Array:
+        return self.matmat(X)
+    
+    def solve(self, b: ArrayLike) -> Array:
+        """Linear solve using forward backward substitution
+        
+        To compute A^{-1}b = (S @ S.T)^{-1}b first compute y = S^{-1}b
+        then S.T^{-1}y.
+        """
+        b = np.asarray(b)
+        if b.ndim < 2:
+            b = _ensure_vector(b, as_column=True)
+        b = _ensure_matrix(b, num_rows=self._n)
+
+        S = self.root.to_dense()
+        y = np.linalg.solve(S, b)
+        return np.linalg.solve(S.T, y)
+    
+    def diag(self) -> Array:
+        S = self.root.to_dense()
+        return np.einsum('ij,ij->i', S, S)
+    
+    def trace(self) -> float:
+        S = self.root.to_dense()
+        return np.sum(S**2)
+
+    def to_dense(self) -> Array:
+        S = self.root.to_dense()
+        return S @ S.T
+    
+
+class CholeskyLinOp(RootLinOp):
+    """A positive definite linear operator A represented by its lower 
+       L or upper L.T Cholesky factor such that A = L @ L.T"""
+
+    def __init__(self, root: TriangularLinOp) -> None:
+        if not isinstance(root, TriangularLinOp):
+            raise ValueError("CholeskyLinOp requires initialization via a TriangularLinOp object.")
+
+        super().__init__(root)
+        self.add_flag("positive_definite")
+
+
+    def solve(self, b: ArrayLike) -> Array:
+        """Linear solve using forward backward triangular substitution
+        
+        To compute A^{-1}b = (L @ L.T)^{-1}b first compute y = L^{-1}b
+        then L.T^{-1}y.
+        """
+        b = np.asarray(b)
+        if b.ndim < 2:
+            b = _ensure_vector(b, as_column=True)
+        b = _ensure_matrix(b, num_rows=self._n)
+
+        S = self.root.to_dense()
+        y = solve_triangular(S, b, lower=self.root.lower)
+        return solve_triangular(S, y, trans=1, lower=self.root.lower)
+    
+
+    def cholesky(self, lower: bool = True) -> Array:
+        dense_root = self.root.to_dense()
+        if lower == self.root.lower:
+            return dense_root
+        else:
+            return dense_root.T
+
+
 class TransposedLinOp(LinOp):
     """A lazy transpose view of an existing linear operator."""
 
