@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import numpy as np
+from typing import Any
 
 from ..custom_types import Array, ArrayLike
 from ..core.distributions import Distribution
@@ -13,20 +14,27 @@ from ..linalg.utils import (
     _ensure_real_scalar,
     _ensure_vector,
     _ensure_matrix,
-    _ensure_square_matrix
+    _ensure_square_matrix,
+    _ensure_batch_array
 )
 
 
 # Notes/Questions/TODOs:
 # - Currently Multivariate.cov defined to return type Array; this implementation 
 #   returns LinOp.
+# - Rename Multivariate to RealVector, or something like this.
+# - Create distributions sub-folder; should it be probpipe/distributions or probpipe/core/distributions?
 # - We probably want `n_samples` to default to 1.
 # - Shorten `dimension` property to `dim`?
 # - Should we have log_density, etc. return (n,)?
+# - Define alias for float type (to replace np.floating) / move other type definitions to custom_types.py?
+# - Consistency in variable name: "n_samples", "num_samples"
+# - Add `dtype` argument to `_ensure` functions?
+# - Naming convention: GaussianDistribution vs. Gaussian vs. GaussianDist
+# - GaussianDistribution.from_distribution assumes from_dist.sample() returns (n,d) (i.e., flat samples)
 
 
-
-def GaussianDistribution(Multivariate[np.floating]):
+class GaussianDistribution(Multivariate[np.floating]):
 
     def __init__(self, mean: Array[np.floating], cov: LinOp | Array[np.floating],
                  *, rng: np.random.Generator | None = None):
@@ -54,7 +62,14 @@ def GaussianDistribution(Multivariate[np.floating]):
             raise ValueError("mean() must return a 1D array of shape (d,).")
         return int(m.shape[0])
     
+    @property
+    def mean(self) -> Array[np.floating]:
+        return self._mean # (d,)
 
+    @property
+    def cov(self) -> LinOp:
+        return self._cov # (d,d)
+    
     def sample(self, n_samples: int) -> Array[np.floating]:
         """
         Draw (n, d) samples.
@@ -79,3 +94,39 @@ def GaussianDistribution(Multivariate[np.floating]):
         log_dens = -0.5 * (logdet_term + quadratic_term)
         
         return log_dens.reshape(-1, 1) # (n,1)
+
+    def density(self, values: Array) -> Array[np.floating]:
+        return np.exp(self.log_density(values))
+    
+    def cdf(self, x: Array) -> Array[np.floating]:
+        """
+        Joint CDF F(x) = P[X1 ≤ x1, ..., Xd ≤ xd].
+        Accepts x with shape (..., d) and returns shape (...,).
+        """
+        raise NotImplementedError
+
+
+    def inv_cdf(self, u: Array) -> Array[np.floating]:
+        """
+        Inverse CDF (Rosenblatt inverse) mapping u ∈ (0,1)^d to x ∈ R^d.
+        Accepts u with shape (..., d) and returns x with shape (..., d).
+        """
+        raise NotImplementedError
+    
+
+    @classmethod
+    def from_distribution(cls, convert_from: Distribution, num_samples: int = 1024, *, 
+                          conversion_by_KDE: bool = False, **fit_kwargs: Any) -> GaussianDistribution:
+        """
+        Fit mean and covariance from samples drawn from another distribution-like object.
+        """
+        if not isinstance(convert_from, Distribution):
+            raise ValueError("`convert_from` must be a Distribution object.")
+
+        samp = convert_from.sample(num_samples)
+        samp = _ensure_matrix(samp, num_rows=num_samples)
+
+        mean = samp.mean(axis=0)
+        cov = np.cov(samp, rowvar=False, ddof=1)
+ 
+        return cls(mean=mean, cov=cov)
