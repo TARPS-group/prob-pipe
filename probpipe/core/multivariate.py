@@ -199,7 +199,7 @@ class Normal1D(Multivariate[np.floating]):
             PDF values of shape (n, 1).
         """
         
-        v = self._to_1d_vector(values)          # (n,)
+        v = _to_1d_vector(values)          # (n,)
         p = np.asarray(self._norm.pdf(v), dtype=float).reshape(-1, 1)
         return p                                 # (n, 1)
 
