@@ -195,8 +195,6 @@ class Normal1D(Multivariate[np.floating]):
         return cls(mu, max(sigma, 1e-12))
 
 
-
-
 class MvNormal(Multivariate[np.floating]):
     """
     Multivariate Normal N(mean, cov) using scipy.stats.multivariate_normal.
@@ -1267,5 +1265,3 @@ class Beta(Multivariate[np.floating]):
 
     def cov(self) -> NDArray[np.floating]:
         return self._cov   # (1,1)
-
-

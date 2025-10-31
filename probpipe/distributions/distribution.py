@@ -308,4 +308,3 @@ class BootstrapDistribution(EmpiricalDistribution):
 
         Theta = np.vstack(reps)  # (B, k)
         return cls(Theta, rng=rng)
-    
