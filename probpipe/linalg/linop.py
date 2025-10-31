@@ -8,7 +8,7 @@ from scipy.linalg import cholesky, solve_triangular
 import math
 
 from ..custom_types import Array, ArrayLike
-from .utils import (
+from ..array_backend.utils import (
     _ensure_real_scalar,
     _ensure_vector,
     _ensure_matrix,

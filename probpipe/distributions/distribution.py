@@ -1,20 +1,20 @@
+# distributions/distribution.py
+from __future__ import annotations
+
 from typing import Generic, TypeVar, Callable, Any, Optional, Union
 from abc import ABC, abstractmethod
 
 import numpy as np
-from numpy.typing import NDArray
 
-from ._utils import _as_2d
+from ..custom_types import Array, ArrayLike, PRNG, T, Float
+from ..array_backend.utils import _ensure_matrix
+from .multivariate import Normal1D, MvNormal
 
 __all__ = [
     "Distribution",
     "EmpiricalDistribution",
     "BootstrapDistribution",
 ]
-
-T = TypeVar("T",bound=np.number)
-Float_T = TypeVar("FloatDT", bound=np.floating)
-
 
 # -------------------------- Abstract Classes ----------------------------
 
@@ -24,7 +24,7 @@ class Distribution(Generic[T], ABC):
     Abstract base class for any distribution class.
     """
 
-    def sample(self, n_samples: int) -> NDArray[T]:
+    def sample(self, n_samples: int) -> Array[T]:
         """
         Optional. If a subclass can’t sample, it may leave this unimplemented.
 
@@ -33,7 +33,7 @@ class Distribution(Generic[T], ABC):
         """
         raise NotImplementedError("This method may be implemented by subclasses (optional)")
     
-    def density(self, data: NDArray) -> NDArray[np.floating]:
+    def density(self, data: Array[T]) -> Array[Float]:
         """
         Optional. If a subclass can’t sample, it may leave this unimplemented.
 
@@ -43,7 +43,7 @@ class Distribution(Generic[T], ABC):
         """
         raise NotImplementedError("This method may be implemented by subclasses (optional)")
     
-    def log_density(self, data: NDArray) -> NDArray[np.floating]:
+    def log_density(self, data: Array[T]) -> Array[Float]:
         """
         Optional. If a subclass can’t sample, it may leave this unimplemented.
 
@@ -54,7 +54,7 @@ class Distribution(Generic[T], ABC):
         raise NotImplementedError("This method may be implemented by subclasses (optional)")
     
 
-    def expectation(self, func: Callable[[NDArray[T]], NDArray]) -> 'Distribution':
+    def expectation(self, func: Callable[[Array[T]], Array]) -> Distribution:
         """
         Optional. If a subclass can’t sample, it may leave this unimplemented.
 
@@ -68,16 +68,15 @@ class Distribution(Generic[T], ABC):
     @abstractmethod
     def from_distribution(
         cls,
-        convert_from: 'Distribution', 
+        convert_from: Distribution, 
         **fit_kwargs: Any,
-    ) -> 'Distribution[T]':
+    ) -> Distribution[T]:
         """
         Fit/convert from an empirical distribution to this parametric family.
         Typical implementations perform Gaussian KDE or Gaussian approx and return an instance of `cls`.
         """
         raise NotImplementedError("This method should be implemented by subclasses")
 
-from .multivariate import Normal1D, MvNormal
 
 class EmpiricalDistribution(Distribution):
     """
@@ -100,12 +99,12 @@ class EmpiricalDistribution(Distribution):
 
     def __init__(
         self,
-        samples: np.ndarray,
-        weights: Optional[np.ndarray] = None,
+        samples: Array,
+        weights: Array | None = None,
         *,
-        rng: Optional[np.random.Generator] = None,
+        rng: PRNG | None = None,
     ):
-        X = _as_2d(samples)
+        X = _ensure_matrix(samples, as_row_matrix=True)
         n, d = X.shape
         if n < 1:
             raise ValueError("Empirical requires at least one sample.")
@@ -148,32 +147,32 @@ class EmpiricalDistribution(Distribution):
         return self._d
 
     @property
-    def samples(self) -> np.ndarray:
+    def samples(self) -> Array:
         """A view of the stored samples, shape (n, d)."""
         return self._X
 
     @property
-    def weights(self) -> np.ndarray:
+    def weights(self) -> Array:
         """A view of normalized weights, shape (n,)."""
         return self._w
 
-    def mean(self) -> np.ndarray:
+    def mean(self) -> Array:
         """Weighted mean, shape (d,)."""
         return self._mean
 
-    def cov(self) -> np.ndarray:
+    def cov(self) -> Array:
         """Weighted *population* covariance, shape (d, d)."""
         return self._cov
 
-    def var(self) -> np.ndarray:
+    def var(self) -> Array:
         """Weighted population variance per dimension, shape (d,)."""
         return np.diag(self._cov)
 
-    def std(self) -> np.ndarray:
+    def std(self) -> Array:
         """Weighted population standard deviation per dimension, shape (d,)."""
         return np.sqrt(np.maximum(self.var(), 0.0))
 
-    def sample(self, n_samples: int, *, replace: bool = True) -> np.ndarray:
+    def sample(self, n_samples: int, *, replace: bool = True) -> Array:
         """
         Resample draws from the empirical distribution with replacement,
         using the stored weights. Returns shape (n_samples, d).
@@ -186,18 +185,18 @@ class EmpiricalDistribution(Distribution):
 
     rvs = sample
 
-    def density(self, data: np.ndarray) -> np.ndarray:
+    def density(self, data: Array) -> Array:
         raise NotImplementedError("Density not implemented for EmpiricalDistribution.")
 
-    def log_density(self, data: np.ndarray) -> np.ndarray:
+    def log_density(self, data: Array) -> Array:
         raise NotImplementedError("Log density not implemented for EmpiricalDistribution.")
 
     def expectation(
         self,
-        func: Callable[[np.ndarray], np.ndarray],
+        func: Callable[[Array], Array],
         *,
         n_mc: int = 2048,
-    ) -> Union["Normal1D", "MvNormal"]:
+    ) -> Union[Normal1D, MvNormal]:
         Y = np.asarray(func(self._X), dtype=float)
 
         if Y.ndim == 1:
@@ -206,7 +205,7 @@ class EmpiricalDistribution(Distribution):
             se = np.sqrt(max(var, 0.0)) / np.sqrt(n_mc)
             return Normal1D(m, max(se, 1e-12), rng=self._rng)
         else:
-            Y = _as_2d(Y)
+            Y = _ensure_matrix(Y, as_row_matrix=True)
             m = (self._w[:, None] * Y).sum(axis=0)
             diff = Y - m
             cov = diff.T @ (diff * self._w[:, None])
@@ -217,9 +216,9 @@ class EmpiricalDistribution(Distribution):
     @classmethod
     def from_distribution(
         cls,
-        convert_from: 'Distribution',
+        convert_from: Distribution,
         **fit_kwargs: Any,
-    ) -> 'EmpiricalDistribution':
+    ) -> EmpiricalDistribution:
         samples = convert_from.sample(fit_kwargs.get("num_samples", 2048))
         return cls(samples)
         
@@ -244,10 +243,10 @@ class BootstrapDistribution(EmpiricalDistribution):
 
     def __init__(
         self,
-        replicates: np.ndarray,
-        weights: Optional[np.ndarray] = None,
+        replicates: Array,
+        weights: Array | None = None,
         *,
-        rng: Optional[np.random.Generator] = None,
+        rng: PRNG | None = None,
     ):
         # Just forward to EmpiricalDistribution
         super().__init__(replicates, weights, rng=rng)
@@ -255,7 +254,7 @@ class BootstrapDistribution(EmpiricalDistribution):
     # --------- Aliases for semantics ---------
 
     @property
-    def replicates(self) -> np.ndarray:
+    def replicates(self) -> Array:
         """Alias for the stored bootstrap replicates, shape (B, k)."""
         return self.samples
 
@@ -264,13 +263,13 @@ class BootstrapDistribution(EmpiricalDistribution):
     @classmethod
     def from_data(
         cls,
-        data: np.ndarray,
-        stat_fn: Callable[[np.ndarray], np.ndarray],
+        data: Array,
+        stat_fn: Callable[[Array], Array],
         *,
         B: int = 1000,
         axis: int = 0,
-        rng: Optional[np.random.Generator] = None,
-    ) -> "BootstrapDistribution":
+        rng: PRNG | None = None,
+    ) -> BootstrapDistribution:
         """
         Classic i.i.d. bootstrap for a statistic.
 
