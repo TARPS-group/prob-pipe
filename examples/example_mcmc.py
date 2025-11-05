@@ -3,8 +3,8 @@ Example: MCMC Posterior Inference with Normal Prior and Likelihood
 ------------------------------------------------------------------
 
 This example demonstrates how to use ProbPipe's built-in modules
-(`Likelihood`, `Prior`, `MetropolisHastings`, and `MCMC`) to perform
-posterior estimation for a simple Normal–Normal model.
+(`Likelihood`, `Prior`, `MetropolisHastings`, and `MCMC`) along with a
+general distribution wrapped by `DistributionModule`.
 
 Model:
     y_i ~ Normal(θ, 1)
@@ -16,18 +16,17 @@ over delta using the Metropolis–Hastings sampler.
 
 import numpy as np
 import scipy as sp
-from probpipe import Likelihood, MetropolisHastings, MCMC, Normal1D
-from probpipe import Module
+from probpipe import Likelihood, MetropolisHastings, MCMC, Normal1D, Module, DistributionModule
 
-
-# Define modules for prior, likelihood, sampler, and MCMC inference 
-likelihood = Likelihood(lambda param, data: sp.stats.norm.logpdf(data, loc=param, scale=1).sum())
-prior_dist=Normal1D(mu=0, sigma=5)
-sampler = MetropolisHastings()
-mcmc = MCMC(likelihood=likelihood, prior=prior_dist, sampler=sampler)
 
 # Generate synthetic data
 observed_data = np.random.normal(1.5, 1.0, size=100)
+
+prior_dist = DistributionModule(Normal1D(mu=0.0, sigma=1.0))
+likelihood = Likelihood(distribution = prior_dist)
+sampler = MetropolisHastings()
+
+mcmc = MCMC(likelihood=likelihood, distribution=prior_dist, sampler=sampler)
 
 # Run MCMC to obtain posterior summary
 posterior = mcmc.calculate_posterior(
