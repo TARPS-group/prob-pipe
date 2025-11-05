@@ -20,7 +20,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .
-          pip install pytest
+          pip install pytest pylint
+
+      - name: Run pylint
+        run: |
+          pylint probpipe/core examples --fail-under=0.0
 
       - name: Run tests
         run: pytest -v
