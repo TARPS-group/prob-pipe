@@ -68,3 +68,38 @@ def add_diag_jitter(matrix: ArrayLike, jitter: float | ArrayLike = 1e-6, *, copy
     diag_idcs = np.diag_indices(n)
     out[diag_idcs] = out[diag_idcs] + jitter_arr.astype(result_dtype, copy=False)
     return out
+
+
+def symmetrize_pd(matrix: ArrayLike, 
+                  *,
+                  symmetrize: bool = True,
+                  add_jitter: bool = True,
+                  jitter: float = 1e-6,
+                  copy: bool = True) -> Array:
+    """
+    Modify a square matrix to promote (but not guarantee) numerical positive
+    definiteness.
+
+    Optionally symmetrize the matrix by taking the average of the matrix with 
+    its transpose. In addition, optionally add a constant to the diagonal 
+    of the matrix. If both true (default), performs these two steps in this 
+    order.
+
+    Args:
+    matrix : array-like, shape (d, d)
+        Input square matrix intended to be positive definite.
+    jitter : float, default 1e-6
+        Constant to add to matrix diagonal.
+
+    Returns:
+        Array, the modified matrix. A copy of the original matrix if `copy` is True.
+    """
+
+    C = _ensure_square_matrix(matrix, copy=copy)
+
+    if symmetrize:
+        C = 0.5 * (C + C.T)
+    if add_jitter:
+        C = add_diag_jitter(C, jitter=jitter)
+
+    return C
