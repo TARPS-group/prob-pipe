@@ -7,7 +7,8 @@ from abc import ABC, abstractmethod
 import numpy as np
 
 from ..custom_types import Array, ArrayLike, PRNG, T, Float
-from ..array_backend.utils import _ensure_matrix
+from ..array_backend.utils import _ensure_matrix, _ensure_vector
+from ..linalg.linop import LinOp, RootLinOp
 from .multivariate import Normal1D, MvNormal
 
 __all__ = [
@@ -66,60 +67,52 @@ class Distribution(Generic[T], ABC):
 
     @classmethod
     @abstractmethod
-    def from_distribution(
-        cls,
-        convert_from: Distribution, 
-        **fit_kwargs: Any,
-    ) -> Distribution[T]:
+    def from_distribution(cls, other: Distribution, **fit_kwargs: Any) -> Distribution[T]:
         """
-        Fit/convert from an empirical distribution to this parametric family.
-        Typical implementations perform Gaussian KDE or Gaussian approx and return an instance of `cls`.
+        Convert the distribution `other` into a distribution of type `cls`. This will 
+        typically be an approximation. Examples including moment matching and 
+        kernel density estimation (KDE).
         """
         raise NotImplementedError("This method should be implemented by subclasses")
 
 
 class EmpiricalDistribution(Distribution):
-    """
-    Generic container for (weighted) empirical samples in R^d.
-    Intended for storing MCMC draws (or any Monte Carlo samples).
-    
-    Parameters
-    ----------
-    samples : array-like, shape (n, d) or (n,)
-        Stored draws.
-    weights : array-like, shape (n,), optional
-        Nonnegative weights; will be normalized to sum to 1. If None, uniform.
-    rng : np.random.Generator, optional
-        RNG used for resampling.
+    """ Container for (weighted) empirical samples in R^d.
 
-    Notes
-    -----
-    Implements Distribution interface.
+    The discrete distribution defined by a set of `n`, potentially weighed,
+    samples. 
+    
+    Args:
+        x: array-like, shape (n, d) or (n,)
+            The samples defining the empirical distribution.
+        weights: array-like, shape (n,), optional
+            Nonnegative weights; will be normalized to sum to 1. If None, 
+            uniform weights are assigned.
+        rng: np.random.Generator, optional
+            Random number generator for sampling.
     """
 
     def __init__(
         self,
-        samples: Array,
+        x: Array,
         weights: Array | None = None,
         *,
         rng: PRNG | None = None,
     ):
-        X = _ensure_matrix(samples, as_row_matrix=True)
+        X = _ensure_matrix(x, as_row_matrix=True)
         n, d = X.shape
         if n < 1:
-            raise ValueError("Empirical requires at least one sample.")
+            raise ValueError("EmpiricalDistribution requires at least one sample.")
 
         if weights is None:
-            w = np.full(n, 1.0 / n, dtype=float)
+            w = np.full(n, 1.0 / n, dtype=X.dtype)
         else:
-            w = np.asarray(weights, dtype=float).reshape(-1)
-            if w.shape[0] != n:
-                raise ValueError("weights must have shape (n,).")
+            w = _ensure_vector(weights, as_column=False, length=n)
             if np.any(w < 0):
                 raise ValueError("weights must be nonnegative.")
             s = w.sum()
             if s <= 0:
-                raise ValueError("weights must sum to a positive value.")
+                raise ValueError("weights cannot all be zero.")
             w = w / s
 
         self._X = X.astype(float)
@@ -128,10 +121,10 @@ class EmpiricalDistribution(Distribution):
         self._d = int(d)
         self._rng = rng or np.random.default_rng()
 
-        # Precompute weighted mean & population covariance (no ddof correction)
-        self._mean = (self._w[:, None] * self._X).sum(axis=0)
-        diff = self._X - self._mean
-        self._cov = diff.T @ (diff * self._w[:, None])
+        # Compute empirical mean and covariance.
+        self._mean = (self._w[:, np.newaxis] * self._X).sum(axis=0)
+        cov_root = (self._X - self._mean).T * np.sqrt(self._w)[:,np.newaxis] # (d,n)
+        self._cov = RootLinOp(cov_root)
 
         # cumulative weights for fast inverse-transform resampling
         self._cw = np.cumsum(self._w)
@@ -142,7 +135,7 @@ class EmpiricalDistribution(Distribution):
         return self._n
 
     @property
-    def d(self) -> int:
+    def dim(self) -> int:
         """Dimensionality."""
         return self._d
 
@@ -160,7 +153,7 @@ class EmpiricalDistribution(Distribution):
         """Weighted mean, shape (d,)."""
         return self._mean
 
-    def cov(self) -> Array:
+    def cov(self) -> LinOp:
         """Weighted *population* covariance, shape (d, d)."""
         return self._cov
 
@@ -216,10 +209,10 @@ class EmpiricalDistribution(Distribution):
     @classmethod
     def from_distribution(
         cls,
-        convert_from: Distribution,
+        other: Distribution,
         **fit_kwargs: Any,
     ) -> EmpiricalDistribution:
-        samples = convert_from.sample(fit_kwargs.get("num_samples", 2048))
+        samples = other.sample(fit_kwargs.get("num_samples", 2048))
         return cls(samples)
         
 

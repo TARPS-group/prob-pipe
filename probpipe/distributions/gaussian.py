@@ -6,11 +6,11 @@ import numpy as np
 from typing import Any
 
 from ..custom_types import Array, ArrayLike
-from ..core.distributions import Distribution
-from ..core.multivariate import Multivariate
+from .distribution import Distribution
+from .multivariate import Multivariate
 from ..linalg.linop import LinOp, DenseLinOp
 
-from ..linalg.utils import (
+from ..array_backend.utils import (
     _ensure_real_scalar,
     _ensure_vector,
     _ensure_matrix,
