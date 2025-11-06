@@ -5,12 +5,12 @@ import math
 import numpy as np
 from typing import Any
 
-from ..custom_types import Array, ArrayLike, Float, PRNG
+from ...custom_types import Array, ArrayLike, Float, PRNG
 from .real_vector import RealVectorDistribution
-from ..linalg.linop import LinOp, DenseLinOp
-from ..linalg.operations import _as_linear_operator, LinOpLike, cholesky, logdet
+from ...linalg.linop import LinOp, DenseLinOp
+from ...linalg.operations import _as_linear_operator, LinOpLike, cholesky, logdet
 
-from ..array_backend.utils import (
+from ...array_backend.utils import (
     _ensure_real_scalar,
     _ensure_vector,
     _ensure_matrix,

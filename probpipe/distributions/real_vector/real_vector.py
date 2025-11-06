@@ -13,10 +13,10 @@ from scipy.stats import(
     beta as _sps_beta
 )
 
-from ..custom_types import Array, ArrayLike, Float, PRNG
-from ..array_backend.utils import _ensure_matrix
-from ..linalg.utils import symmetrize_pd
-from .distribution import Distribution
+from ...custom_types import Array, ArrayLike, Float, PRNG
+from ...array_backend.utils import _ensure_matrix
+from ...linalg.utils import symmetrize_pd
+from ..distribution import Distribution
 
 
 # from ._utils import _as_2d, _symmetrize_spd, _clip_unit_interval, _to_1d_vector
