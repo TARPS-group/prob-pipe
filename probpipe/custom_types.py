@@ -18,12 +18,11 @@ from numpy.typing import (
 
 from numpy import (
     floating as NumpyFloating,
-    number as NumpyNumber
 )
 
 T = TypeVar("T")
 
-Float: TypeAlias = NumpyFloating
 Array = NumpyArray
 ArrayLike: TypeAlias = NumpyArrayLike
+Float: TypeAlias = NumpyFloating
 PRNG: TypeAlias = NumpyRNG

@@ -3,3 +3,5 @@ from probpipe import (
     distributions,
     linalg
 )
+
+__description__ = "Constructing complex probabilistic pipelines in Python"

@@ -29,6 +29,20 @@ from typing import Any, Tuple
 from ..custom_types import Array, ArrayLike
 
 
+def _is_array(x: Any) -> bool:
+    return isinstance(x, np.ndarray)
+
+def _as_array(x: Any) -> Array:
+    try:
+        return np.asarray(x)
+    except Exception as e:
+        raise TypeError(
+            f"Could not convert input to array.\n"
+            f"Input type: {type(x).__name__}\n"
+            f"Input value: {repr(x)}\n"
+            f"Original error: {e}"
+        ) from e  
+
 def _is_numpy_scalar(x: Any) -> bool:
     """Return true if object is a numpy generic or Python scalar"""
     return np.isscalar(x) or isinstance(x, np.generic)
@@ -62,7 +76,7 @@ def _ensure_real_scalar(x: Any, *, as_array: bool = False) -> float|int|Array:
         # Python scalar
         return x
 
-    arr = np.asarray(x)
+    arr = _as_array(x)
     if arr.size != 1:
         raise ValueError(f"_ensure_real_scalar: input must contain exactly one element; got size={arr.size}, shape={arr.shape}")
     if np.iscomplexobj(arr):
@@ -93,7 +107,7 @@ def _ensure_scalar(x: Any) -> Any:
             return x.item()
         return x  # Python scalar
 
-    arr = np.asarray(x)
+    arr = _as_array(x)
 
     if arr.size == 1:
         return arr.item()
@@ -115,7 +129,7 @@ def _ensure_vector(x: ArrayLike, *, as_column: bool = False,
     Raises:
       ValueError for incompatible shapes (ndim > 2 or 2D with both dims >1)
     """
-    arr = np.asarray(x)
+    arr = _as_array(x)
 
     if arr.ndim == 0:
         v = arr.reshape((1,))
@@ -151,7 +165,7 @@ def _ensure_matrix(x: ArrayLike, *, as_row_matrix: bool = False,
     - 2D inputs are passed through as is
     - Other shapes raise an error
     """
-    arr = np.asarray(x)
+    arr = _as_array(x)
 
     if arr.ndim == 2:
         out = arr
@@ -233,7 +247,7 @@ def _ensure_batch_array(x: ArrayLike, value_shape: Tuple[int, ...] | None = None
         ValueError: If `value_shape` is provided and the per-value shape doesn't
         match after canonicalization.
     """
-    arr = np.asarray(x)
+    arr = _as_array(x)
 
     # Convert single values to singleton batch
     if value_shape is not None:
@@ -279,7 +293,7 @@ def _ensure_batch_real_scalar(x: ArrayLike, *, copy: bool = True) -> Array:
         out = _ensure_real_scalar(x, as_array=True).reshape((1,))
         return out.copy() if copy else out
 
-    arr = np.asarray(x)
+    arr = _as_array(x)
     if arr.ndim == 0:
         out = _ensure_real_scalar(arr, as_array=True).reshape((1,))
         return out.copy() if copy else out
@@ -312,7 +326,7 @@ def _ensure_batch_vector(x: ArrayLike, length: int | None = None,
     Raises:
         ValueError: If the input cannot be interpreted as a batch of vectors.
     """
-    arr = np.asarray(x)
+    arr = _as_array(x)
 
     # If single vector value, standardize to (1,d)
     if arr.ndim < 2:
@@ -355,7 +369,7 @@ def _ensure_batch_matrix(x: ArrayLike, num_rows: int | None = None, num_cols: in
     Raises:
         ValueError: If the input cannot be interpreted as a batch of matrices.
     """
-    arr = np.asarray(x)
+    arr = _as_array(x)
 
     # If single matrix value, standardize to (1,n,m)
     if arr.ndim < 3:

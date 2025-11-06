@@ -131,7 +131,7 @@ class LinOp(ABC):
 
         return np.linalg.solve(dense_op, b)
 
-    def cholesky(self, lower: bool = True, **kwargs) -> LinOp:
+    def cholesky(self, lower: bool = True, **kwargs) -> TriangularLinOp | DiagonalLinOp:
         """Return triangular LinOp L (lower) or L.T (upper) such that A = L @ L.T. Default: dense path."""
         self._check_square()
         L = cholesky(self.to_dense(), lower=lower)
@@ -295,7 +295,7 @@ class DiagonalLinOp(LinOp):
 
         return b / self.diagonal[:, np.newaxis]
 
-    def cholesky(self, lower: bool = True) -> LinOp:
+    def cholesky(self, lower: bool = True) -> DiagonalLinOp:
         """Note that `lower` has no effect on Cholesky decomposition of diagonal matrix"""
         if np.any(self.diagonal <= 0):
             raise np.linalg.LinAlgError("Diagonal has non-positive entries; cholesky not defined.")
@@ -470,12 +470,12 @@ class CholeskyLinOp(RootLinOp):
         return solve_triangular(S, y, trans=1, lower=self.root.lower)
     
 
-    def cholesky(self, lower: bool = True) -> Array:
-        dense_root = self.root.to_dense()
-        if lower == self.root.lower:
-            return dense_root
+    def cholesky(self, lower: bool = True) -> TriangularLinOp:
+        cholesky_factor = self.root
+        if lower == cholesky_factor.lower:
+            return cholesky_factor
         else:
-            return dense_root.T
+            return cholesky_factor.T
 
 
 class TransposedLinOp(LinOp):

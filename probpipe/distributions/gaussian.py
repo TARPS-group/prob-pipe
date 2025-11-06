@@ -8,6 +8,7 @@ from typing import Any
 from ..custom_types import Array, ArrayLike, Float, PRNG
 from .real_vector import RealVectorDistribution
 from ..linalg.linop import LinOp, DenseLinOp
+from ..linalg.operations import _as_linear_operator, LinOpLike, cholesky, logdet
 
 from ..array_backend.utils import (
     _ensure_real_scalar,
@@ -34,13 +35,11 @@ from ..array_backend.utils import (
 
 class Gaussian(RealVectorDistribution[Float]):
 
-    def __init__(self, mean: Array[Float], cov: LinOp | Array[Float],
+    def __init__(self, mean: ArrayLike, cov: LinOpLike,
                  *, rng: PRNG | None = None):
         mean = _ensure_vector(mean)
         self._dim = len(mean)
-
-        if not isinstance(cov, LinOp):
-            cov = DenseLinOp(cov)
+        cov = _as_linear_operator(cov)
         cov._check_square()
         if cov.shape[0] != self._dim:
             raise ValueError(f"Dimension mismatch between mean {mean.shape} and covariance {cov.shape}.")
@@ -61,12 +60,12 @@ class Gaussian(RealVectorDistribution[Float]):
     def cov(self) -> LinOp:
         return self._cov
     
-    
+
     def sample(self, n_samples: int = 1) -> Array[Float]:
         """
         Draw (n, d) samples.
         """
-        L = self.cov.cholesky(lower=True)
+        L = cholesky(self.cov, lower=True)
         Z = self._rng.normal(size=(self.dim, n_samples))
 
         samp = self.mean + L.matmat(Z).T
@@ -77,7 +76,7 @@ class Gaussian(RealVectorDistribution[Float]):
         x = _ensure_matrix(values, as_row_matrix=True, num_cols=self.dim)
 
         x_centered = x - self.mean # (n,d)
-        logdet_term = (2 * math.pi * self.cov).logdet() # TODO: update
+        logdet_term = logdet(2 * math.pi * self.cov) # TODO: update
         L_inv_x_centered = self.cov.cholesky(lower=True).solve(x_centered.T)
         quadratic_term = np.sum(L_inv_x_centered ** 2, axis=0)
         log_dens = -0.5 * (logdet_term + quadratic_term)
