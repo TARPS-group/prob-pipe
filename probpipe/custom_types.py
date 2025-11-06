@@ -7,7 +7,7 @@ We generally following the conventions:
 - Annotate function input with `ArrayLike`  
 - Annotate function output with `Array`
 """
-
+from __future__ import annotations
 from typing import TypeAlias, TypeVar
 from numpy.random import Generator as NumpyRNG
 
@@ -24,6 +24,6 @@ from numpy import (
 T = TypeVar("T")
 
 Float: TypeAlias = NumpyFloating
-Array: TypeAlias = NumpyArray
+Array = NumpyArray
 ArrayLike: TypeAlias = NumpyArrayLike
 PRNG: TypeAlias = NumpyRNG
