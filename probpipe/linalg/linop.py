@@ -1,7 +1,7 @@
 # linop.py
 from __future__ import annotations
 
-from typing import Tuple, Any, Iterable, FrozenSet
+from typing import Any, Iterable, FrozenSet
 import numpy as np
 from abc import ABC, abstractmethod
 from scipy.linalg import cholesky, solve_triangular
@@ -68,7 +68,7 @@ class LinOp(ABC):
 
     @property
     @abstractmethod
-    def shape(self) -> Tuple[int, int]:
+    def shape(self) -> tuple[int, int]:
         """Return (n_out, n_in)."""
         ...
 
@@ -226,7 +226,7 @@ class DenseLinOp(LinOp):
         self.add_flag("dense")
 
     @property
-    def shape(self) -> Tuple[int, int]:
+    def shape(self) -> tuple[int, int]:
         return self.array.shape
 
     @property
@@ -257,7 +257,7 @@ class DiagonalLinOp(LinOp):
             self.add_flag("positive_definite")
 
     @property
-    def shape(self) -> Tuple[int, int]:
+    def shape(self) -> tuple[int, int]:
         return (self._n, self._n)
 
     @property
@@ -335,7 +335,7 @@ class TriangularLinOp(LinOp):
             self.add_flag("unit_diagonal")
 
     @property
-    def shape(self) -> Tuple[int, int]:
+    def shape(self) -> tuple[int, int]:
         return (self._n, self._n)
 
     @property
@@ -394,7 +394,7 @@ class RootLinOp(LinOp):
         self.add_flag("symmetric")
 
     @property
-    def shape(self) -> Tuple[int, int]:
+    def shape(self) -> tuple[int, int]:
         return (self._n, self._n)
 
     @property
@@ -504,7 +504,7 @@ class TransposedLinOp(LinOp):
             self.add_flag("triangular_lower")
 
     @property
-    def shape(self) -> Tuple[int, int]:
+    def shape(self) -> tuple[int, int]:
         n_out, n_in = self.op.shape
         return (n_in, n_out)
 
@@ -551,7 +551,7 @@ class ProductLinOp(LinOp):
             self.add_flag("symmetric")
 
     @property
-    def shape(self) -> Tuple[int, int]:
+    def shape(self) -> tuple[int, int]:
         return (self.A.shape[0], self.B.shape[1])
 
     @property
@@ -603,7 +603,7 @@ class SumLinOp(LinOp):
             self.add_flag("positive_definite")
 
     @property
-    def shape(self) -> Tuple[int, int]:
+    def shape(self) -> tuple[int, int]:
         return self.ops[0].shape
 
     @property
@@ -697,7 +697,7 @@ class ScaledLinOp(LinOp):
             self.add_flag("positive_definite")
 
     @property
-    def shape(self) -> Tuple[int, int]:
+    def shape(self) -> tuple[int, int]:
         return self.op.shape
 
     @property

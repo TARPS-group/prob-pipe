@@ -8,33 +8,21 @@ Also included are more specialized operations like `mah_dist_squared()`
 that are not in one-to-one correspondence with `LinOp` methods.
 """
 
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 from ..custom_types import Array, ArrayLike
 from ..array_backend.utils import _is_array
 from .linop import LinOp, DenseLinOp, TriangularLinOp, DiagonalLinOp
+from .utils import _as_linear_operator, LinOpLike
+        
+# -----------------------------------------------------------------------------
+# Expose LinOp methods as functions
+# -----------------------------------------------------------------------------
 
-LinOpLike: TypeAlias = LinOp | ArrayLike
-
-def _as_linear_operator(A: LinOpLike) -> LinOp:
-    """
-    Wraps arrays as a DenseLinOp, and returns existing LinOp objects untouched.
-    """
-    if isinstance(A, LinOp):
-        return A
-    else:
-        try:
-            return DenseLinOp(A)
-        except Exception as e:
-            raise TypeError(
-                f"Could not convert A to linear operator\n"
-                f"DenseLinOp error: {e}"
-            )
-
-def shape(A: LinOpLike):
+def shape(A: LinOpLike) -> tuple[int, int]:
     return A.shape
 
-def dtype(A: LinOpLike):
+def dtype(A: LinOpLike) -> Any:
     return A.dtype
 
 def diag(A: LinOpLike) -> Array:
@@ -54,4 +42,8 @@ def logdet(A: LinOpLike) -> float:
 
 def trace(A: LinOpLike) -> float:
     return _as_linear_operator(A).trace()
+
+# -----------------------------------------------------------------------------
+# Other specialized operations, not core LinOp methods
+# -----------------------------------------------------------------------------
 

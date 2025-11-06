@@ -3,13 +3,31 @@
 from __future__ import annotations
 
 import numpy as np
-from typing import Any, Tuple
+from typing import Any, Tuple, TypeAlias
 
+from .linop import LinOp, DenseLinOp
 from ..custom_types import Array, ArrayLike
 from ..array_backend.utils import (
     _ensure_real_scalar,
     _ensure_square_matrix
 )
+
+LinOpLike: TypeAlias = LinOp | ArrayLike
+
+def _as_linear_operator(A: LinOpLike) -> LinOp:
+    """
+    Wraps arrays as a DenseLinOp, and returns existing LinOp objects untouched.
+    """
+    if isinstance(A, LinOp):
+        return A
+    else:
+        try:
+            return DenseLinOp(A)
+        except Exception as e:
+            raise TypeError(
+                f"Could not convert A to linear operator\n"
+                f"DenseLinOp error: {e}"
+            )
 
 
 def add_diag_jitter(matrix: ArrayLike, jitter: float | ArrayLike = 1e-6, *, copy: bool = True) -> Array:
