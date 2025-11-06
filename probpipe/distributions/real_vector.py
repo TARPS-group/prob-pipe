@@ -23,7 +23,7 @@ from .distribution import Distribution
 
 
 __all__ = [
-    "RealVector",
+    "RealVectorDistribution",
     "Normal1D",
     "MvNormal",
     "GaussianKDE",
@@ -37,9 +37,9 @@ T = TypeVar("T", bound=np.number)
 FloatT = TypeVar("FloatT", bound=Float)
 
 
-class RealVector(Distribution[FloatT], ABC):
+class RealVectorDistribution(Distribution[FloatT], ABC):
     """
-    Abstract base for RealVector, real-valued vector distributions with fixed dimension d.
+    Abstract base for RealVectorDistribution, real-valued vector distributions with fixed dimension d.
     Event shape is assumed to be (d,). Subclasses should ensure consistency of shapes.
     """
 
@@ -92,7 +92,7 @@ class RealVector(Distribution[FloatT], ABC):
         return int(m.shape[0])
 
 
-class GaussianKDE(RealVector[Float]):
+class GaussianKDE(RealVectorDistribution[Float]):
     """
     Gaussian KDE with a shared bandwidth matrix H.
 
@@ -259,7 +259,7 @@ class GaussianKDE(RealVector[Float]):
         """
         raise NotImplementedError("GaussianKDE.inv_cdf is not available for kernel mixtures.")
 
-    def expectation(self, func: Callable[[Array[Float]], Array]) -> RealVector:
+    def expectation(self, func: Callable[[Array[Float]], Array]) -> RealVectorDistribution:
         """
         Monte-Carlo expectation under the KDE. Scalar f -> Normal1D over the mean,
         vector f -> MvNormal over the mean. `func` receives samples as (n_mc, d).
@@ -318,7 +318,7 @@ class GaussianKDE(RealVector[Float]):
         return cls(samples=X, weights=weights, bandwidth=bandwidth, rule=rule, rng=rng)
 
 
-class Multinomial(RealVector[np.floating]):
+class Multinomial(RealVectorDistribution[np.floating]):
     """
     Multinomial(n_trials, p) with event dim d = len(p).
     Backed by scipy.stats.multinomial.
@@ -331,7 +331,7 @@ class Multinomial(RealVector[np.floating]):
 
     Notes
     -----
-    * Counts are integers but returned as float arrays to satisfy RealVector[Float] typing.
+    * Counts are integers but returned as float arrays to satisfy RealVectorDistribution[Float] typing.
       Cast to int if you need integer dtype.
     * `cdf` is estimated by Monte-Carlo (parameter `cdf_mc_samples`); exact CDF is combinatorial.
     """
@@ -374,7 +374,7 @@ class Multinomial(RealVector[np.floating]):
         self._cov = self._n * (np.diag(self._p) - np.outer(self._p, self._p))
         self._cov = _symmetrize_spd(self._cov)
 
-    # ------------------------ RealVector core ------------------------
+    # ------------------------ RealVectorDistribution core ------------------------
 
     def sample(self, n_samples: int) -> NDArray[np.floating]:
         """
@@ -406,7 +406,7 @@ class Multinomial(RealVector[np.floating]):
         logpmfs = [self._mn.logpmf(row.astype(int, copy=False)) for row in X]
         return np.asarray(logpmfs, dtype=float).reshape(-1, 1)
 
-    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray]) -> 'RealVector':
+    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray]) -> 'RealVectorDistribution':
         """
         Monte-Carlo CLT over f(X) with X ~ Multinomial.
           - scalar f -> Normal1D(mean, se)
@@ -518,7 +518,7 @@ class Multinomial(RealVector[np.floating]):
             raise ValueError(f"each row must sum to n_trials={self._n}.")
 
 
-class Dirichlet(RealVector[np.floating]):
+class Dirichlet(RealVectorDistribution[np.floating]):
     """
     Dirichlet(α) on the probability simplex.
 
@@ -594,7 +594,7 @@ class Dirichlet(RealVector[np.floating]):
         lpmf = [self._dir.logpdf(row) for row in X]
         return np.asarray(lpmf, dtype=float).reshape(-1, 1)  # (n,1)
 
-    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray]) -> 'RealVector':
+    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray]) -> 'RealVectorDistribution':
         """
         Monte-Carlo CLT over f(X):
           - scalar f -> Normal1D(mean, se)
@@ -711,7 +711,7 @@ class Dirichlet(RealVector[np.floating]):
             raise ValueError("each row must sum to 1 (within tolerance).")
 
 
-class Binomial(RealVector[np.floating]):
+class Binomial(RealVectorDistribution[np.floating]):
     """
     Binomial(n_trials, p) with event dim = 1 (counts of successes).
 
@@ -754,7 +754,7 @@ class Binomial(RealVector[np.floating]):
         self._mean = np.array([mean], dtype=float)          # (1,)
         self._cov = np.array([[var]], dtype=float)          # (1,1)
 
-    # ------------------------ RealVector core ------------------------
+    # ------------------------ RealVectorDistribution core ------------------------
 
     def sample(self, n_samples: int) -> NDArray[np.floating]:
         """Draw (n, 1) samples of success counts (as float for typing consistency)."""
@@ -798,7 +798,7 @@ class Binomial(RealVector[np.floating]):
 
     # ------------------------ Expectations & converters ------------------------
 
-    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray]) -> 'RealVector':
+    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray]) -> 'RealVectorDistribution':
         """
         Monte-Carlo CLT over f(X):
           - scalar f -> Normal1D(mean, se)
@@ -866,7 +866,7 @@ class Binomial(RealVector[np.floating]):
 
     
 
-class Beta(RealVector[np.floating]):
+class Beta(RealVectorDistribution[np.floating]):
     """
     Beta(alpha, β) distribution on [0, 1].
 
@@ -907,7 +907,7 @@ class Beta(RealVector[np.floating]):
         self._mean = np.array([mean], dtype=float)     # (1,)
         self._cov = np.array([[var]], dtype=float)     # (1,1)
 
-    # ------------------------ RealVector core ------------------------
+    # ------------------------ RealVectorDistribution core ------------------------
 
     def sample(self, n_samples: int) -> NDArray[np.floating]:
         """
@@ -961,7 +961,7 @@ class Beta(RealVector[np.floating]):
 
     # ------------------------ Expectations & converters ------------------------
 
-    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray]) -> 'RealVector':
+    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray]) -> 'RealVectorDistribution':
         """
         Monte-Carlo CLT over f(X):
           - scalar f -> Normal1D(mean, se)

@@ -5,9 +5,8 @@ import math
 import numpy as np
 from typing import Any
 
-from ..custom_types import Array, ArrayLike
-from .distribution import Distribution
-from .multivariate import Multivariate
+from ..custom_types import Array, ArrayLike, Float, PRNG
+from .real_vector import RealVectorDistribution
 from ..linalg.linop import LinOp, DenseLinOp
 
 from ..array_backend.utils import (
@@ -18,7 +17,6 @@ from ..array_backend.utils import (
     _ensure_batch_array
 )
 
-
 # Notes/Questions/TODOs:
 # - Currently Multivariate.cov defined to return type Array; this implementation 
 #   returns LinOp.
@@ -27,17 +25,17 @@ from ..array_backend.utils import (
 # - We probably want `n_samples` to default to 1.
 # - Shorten `dimension` property to `dim`?
 # - Should we have log_density, etc. return (n,)?
-# - Define alias for float type (to replace np.floating) / move other type definitions to custom_types.py?
+# - Define alias for float type (to replace Float) / move other type definitions to custom_types.py?
 # - Consistency in variable name: "n_samples", "num_samples"
 # - Add `dtype` argument to `_ensure` functions?
-# - Naming convention: GaussianDistribution vs. Gaussian vs. GaussianDist
-# - GaussianDistribution.from_distribution assumes from_dist.sample() returns (n,d) (i.e., flat samples)
+# - Naming convention: Gaussian vs. Gaussian vs. GaussianDist
+# - Gaussian.from_distribution assumes from_dist.sample() returns (n,d) (i.e., flat samples)
 
 
-class GaussianDistribution(Multivariate[np.floating]):
+class Gaussian(RealVectorDistribution[Float]):
 
-    def __init__(self, mean: Array[np.floating], cov: LinOp | Array[np.floating],
-                 *, rng: np.random.Generator | None = None):
+    def __init__(self, mean: Array[Float], cov: LinOp | Array[Float],
+                 *, rng: PRNG | None = None):
         mean = _ensure_vector(mean)
         self._dim = len(mean)
 
@@ -51,41 +49,32 @@ class GaussianDistribution(Multivariate[np.floating]):
         self._cov = cov
         self._rng = rng or np.random.default_rng()
 
-
     @property
-    def dimension(self) -> int:
-        """
-        Number of coordinates d. Default infers from mean(). Subclasses may override.
-        """
-        m = self.mean()
-        if m.ndim != 1:
-            raise ValueError("mean() must return a 1D array of shape (d,).")
-        return int(m.shape[0])
+    def dim(self) -> int:
+        return self._dim
     
     @property
-    def mean(self) -> Array[np.floating]:
-        return self._mean # (d,)
+    def mean(self) -> Array[Float]:
+        return self._mean
 
     @property
     def cov(self) -> LinOp:
-        return self._cov # (d,d)
+        return self._cov
     
-    def sample(self, n_samples: int) -> Array[np.floating]:
+    
+    def sample(self, n_samples: int = 1) -> Array[Float]:
         """
         Draw (n, d) samples.
         """
         L = self.cov.cholesky(lower=True)
-        Z = self._rng.normal(size=(self.dimension, n_samples))
+        Z = self._rng.normal(size=(self.dim, n_samples))
 
         samp = self.mean + L.matmat(Z).T
         return samp
     
-    def log_density(self, values: Array) -> Array[np.floating]:
-        """
-        Return (n,1) column of log-pdf values for rows in `values`.
-        Accepts (d,), (n,d).
-        """
-        x = _ensure_matrix(values, as_row_matrix=True, num_cols=self.dimension)
+
+    def log_density(self, values: ArrayLike) -> Array[Float]:
+        x = _ensure_matrix(values, as_row_matrix=True, num_cols=self.dim)
 
         x_centered = x - self.mean # (n,d)
         logdet_term = (2 * math.pi * self.cov).logdet() # TODO: update
@@ -93,12 +82,14 @@ class GaussianDistribution(Multivariate[np.floating]):
         quadratic_term = np.sum(L_inv_x_centered ** 2, axis=0)
         log_dens = -0.5 * (logdet_term + quadratic_term)
         
-        return log_dens.reshape(-1, 1) # (n,1)
+        return log_dens
 
-    def density(self, values: Array) -> Array[np.floating]:
+
+    def density(self, values: ArrayLike) -> Array[Float]:
         return np.exp(self.log_density(values))
     
-    def cdf(self, x: Array) -> Array[np.floating]:
+    
+    def cdf(self, x: ArrayLike) -> Array[Float]:
         """
         Joint CDF F(x) = P[X1 ≤ x1, ..., Xd ≤ xd].
         Accepts x with shape (..., d) and returns shape (...,).
@@ -106,7 +97,7 @@ class GaussianDistribution(Multivariate[np.floating]):
         raise NotImplementedError
 
 
-    def inv_cdf(self, u: Array) -> Array[np.floating]:
+    def inv_cdf(self, u: Array) -> Array[Float]:
         """
         Inverse CDF (Rosenblatt inverse) mapping u ∈ (0,1)^d to x ∈ R^d.
         Accepts u with shape (..., d) and returns x with shape (..., d).
@@ -116,7 +107,7 @@ class GaussianDistribution(Multivariate[np.floating]):
 
     @classmethod
     def from_distribution(cls, convert_from: Distribution, num_samples: int = 1024, *, 
-                          conversion_by_KDE: bool = False, **fit_kwargs: Any) -> GaussianDistribution:
+                          conversion_by_KDE: bool = False, **fit_kwargs: Any) -> Gaussian:
         """
         Fit mean and covariance from samples drawn from another distribution-like object.
         """

@@ -15,10 +15,16 @@ from ..array_backend.utils import (
     _ensure_square_matrix
 )
 
+__all__ = [
+    "LinOp",
+    "DenseLinOp",
+    "DiagonalLinOp",
+    "RootLinOp",
+    "CholeskyLinOp"
+]
+
 # TODO:
 # - Update so that matmat/rmatmat always outputs shape (n,k)?
-# - Improve dtype promotion (e.g., in ProductLinOp)
-# - Standardize tags / propagate tags
 # - Seems that tags are sometimes not used when they could be; e.g., unit_diagonal in TriangularLinOp
 
 
@@ -376,7 +382,7 @@ class RootLinOp(LinOp):
        A is guaranteed to be symmetric positive semidefinite, but not necessarily 
        positive definite."""
 
-    def __init__(self, root: LinOp) -> None:
+    def __init__(self, root: LinOp | ArrayLike) -> None:
         super().__init__()
 
         if isinstance(root, LinOp):

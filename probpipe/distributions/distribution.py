@@ -9,7 +9,6 @@ import numpy as np
 from ..custom_types import Array, ArrayLike, PRNG, T, Float
 from ..array_backend.utils import _ensure_matrix, _ensure_vector
 from ..linalg.linop import LinOp, RootLinOp
-from .multivariate import Normal1D, MvNormal
 
 __all__ = [
     "Distribution",
@@ -25,7 +24,7 @@ class Distribution(Generic[T], ABC):
     Abstract base class for any distribution class.
     """
 
-    def sample(self, n_samples: int) -> Array[T]:
+    def sample(self, n_samples: int = 1) -> Array[T]:
         """
         Optional. If a subclass can’t sample, it may leave this unimplemented.
 
@@ -159,7 +158,7 @@ class EmpiricalDistribution(Distribution):
 
     def var(self) -> Array:
         """Weighted population variance per dimension, shape (d,)."""
-        return np.diag(self._cov)
+        return self._cov.diag()
 
     def std(self) -> Array:
         """Weighted population standard deviation per dimension, shape (d,)."""
@@ -184,19 +183,23 @@ class EmpiricalDistribution(Distribution):
     def log_density(self, data: Array) -> Array:
         raise NotImplementedError("Log density not implemented for EmpiricalDistribution.")
 
+    # TODO: come back to this:
     def expectation(
         self,
         func: Callable[[Array], Array],
         *,
         n_mc: int = 2048,
-    ) -> Union[Normal1D, MvNormal]:
+    ):
+        raise NotImplemented
+
+        """
         Y = np.asarray(func(self._X), dtype=float)
 
         if Y.ndim == 1:
             m = float((self._w * Y).sum())
             var = float((self._w * (Y - m) ** 2).sum())
             se = np.sqrt(max(var, 0.0)) / np.sqrt(n_mc)
-            return Normal1D(m, max(se, 1e-12), rng=self._rng)
+            return Gaussian(m, max(se, 1e-12), rng=self._rng)
         else:
             Y = _ensure_matrix(Y, as_row_matrix=True)
             m = (self._w[:, None] * Y).sum(axis=0)
@@ -204,7 +207,8 @@ class EmpiricalDistribution(Distribution):
             cov = diff.T @ (diff * self._w[:, None])
             cov_mean = cov / float(n_mc)
             cov_mean = 0.5 * (cov_mean + cov_mean.T) + 1e-12 * np.eye(cov_mean.shape[0])
-            return MvNormal(mean=m, cov=cov_mean, rng=self._rng)
+            return Gaussian(mean=m, cov=cov_mean, rng=self._rng)
+        """
 
     @classmethod
     def from_distribution(
