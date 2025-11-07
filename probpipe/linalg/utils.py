@@ -30,6 +30,13 @@ def _as_linear_operator(A: LinOpLike) -> LinOp:
             )
 
 
+def _check_square(A: LinOpLike) -> None:
+    n_out, n_in = _as_linear_operator(A).shape
+    if n_out != n_in:
+        raise np.linalg.LinAlgError(f"Linear operator is not square. Has shape ({n_out}, {n_in})") 
+
+
+
 def add_diag_jitter(matrix: ArrayLike, jitter: float | ArrayLike = 1e-6, *, copy: bool = True) -> Array:
     """
     Return a new matrix = matrix + jitter * I.

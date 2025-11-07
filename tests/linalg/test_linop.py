@@ -1,4 +1,4 @@
-# test_linop.py
+# tests/linalg/test_linop.py
 import numpy as np
 from scipy.linalg import cholesky
 import pytest

@@ -92,11 +92,14 @@ class LinOp(ABC):
         """Default is False; DenseLinOp overrides to True"""
         return False
     
+    # ---- Utility methods for validation ----
+
     def _check_square(self) -> None:
+        """ Throw error if operator is not square """
         n_out, n_in = self.shape
         if n_out != n_in:
-            raise np.linalg.LinAlgError(f"Linear operator is not square. Has shape ({n_out}, {n_in})") 
-
+            raise np.linalg.LinAlgError(f"Linear operator is not square. Has shape ({n_out}, {n_in})")
+    
     # ---- Optional convenience methods that implementors may override for speed ----
     def matvec(self, x: ArrayLike) -> Array:
         """Return A @ x for x shape (n_in,) -> (n_out,)."""
