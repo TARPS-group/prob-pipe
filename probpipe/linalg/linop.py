@@ -1,12 +1,13 @@
 # linop.py
 from __future__ import annotations
 
-from typing import Any, Iterable, FrozenSet
+from typing import Any, Iterable, FrozenSet, TypeAlias
 import numpy as np
 from abc import ABC, abstractmethod
 from scipy.linalg import cholesky, solve_triangular
 import math
 
+from .operations import _as_linear_operator
 from ..custom_types import Array, ArrayLike
 from ..array_backend.utils import (
     _ensure_real_scalar,
@@ -134,11 +135,27 @@ class LinOp(ABC):
 
         return np.linalg.solve(dense_op, b)
 
-    def cholesky(self, lower: bool = True, **kwargs) -> TriangularLinOp | DiagonalLinOp:
-        """Return triangular LinOp L (lower) or L.T (upper) such that A = L @ L.T. Default: dense path."""
+    def cholesky(self, lower: bool = True, **kwargs) -> CholeskyFactor:
+        """Return triangular LinOp L (lower) or L.T (upper) such that A = L @ L.T.
+
+        Defaults to densifying the operator and then computing the Cholesky decomposition.
+        Subclasses may return other valid LinOp types that are more structured than 
+        TriangularLinOp; for example, DiagonalLinOp.
+        """
         self._check_square()
         L = cholesky(self.to_dense(), lower=lower)
         return TriangularLinOp(L, lower=lower)
+    
+    def to_cholesky_representation(self, lower: bool = True, **kwargs) -> CholeskyRepresentation:
+        """ Return representation of `self` in terms of its Cholesky factor.
+
+        In general, this represents an alternative represetation of the 
+        operator. Defaults to computing the Cholesky factor and wrapping
+        the result in CholeskyLinOp. Subclasses may return other valid 
+        LinOp types when more structure is present; for example, 
+        DiagonalRootLinOp.
+        """
+        return CholeskyLinOp(self.cholesky(lower=lower, **kwargs))
 
     def diag(self) -> Array:
         """Return diagonal of operator; default uses dense fallback."""
@@ -304,6 +321,9 @@ class DiagonalLinOp(LinOp):
             raise np.linalg.LinAlgError("Diagonal has non-positive entries; cholesky not defined.")
         return DiagonalLinOp(np.sqrt(self.diagonal))
 
+    def to_cholesky_representation(self, lower: bool = True) -> DiagonalRootLinOp:
+        return DiagonalRootLinOp(self.cholesky(lower=lower))
+
     def diag(self) -> Array:
         return self.diagonal.copy()
 
@@ -387,12 +407,7 @@ class RootLinOp(LinOp):
 
     def __init__(self, root: LinOp | ArrayLike) -> None:
         super().__init__()
-
-        if isinstance(root, LinOp):
-            self.root = root
-        else:
-            self.root = DenseLinOp(root)
-
+        self.root = _as_linear_operator(root)
         self._n = self.root.shape[0]
         self.add_flag("symmetric")
 
@@ -433,17 +448,23 @@ class RootLinOp(LinOp):
         return np.linalg.solve(S.T, y)
     
     def diag(self) -> Array:
+        if isinstance(self.root, DiagonalLinOp):
+            return self.root.diagonal
+
         S = self.root.to_dense()
         return np.einsum('ij,ij->i', S, S)
     
     def trace(self) -> float:
+        if isinstance(self.root, DiagonalLinOp):
+            return np.sum(self.root.diagonal ** 2)
+
         S = self.root.to_dense()
         return np.sum(S**2)
 
     def to_dense(self) -> Array:
-        S = self.root.to_dense()
-        return S @ S.T
-    
+        S = self.root
+        return (S @ S.T).to_dense()
+
 
 class CholeskyLinOp(RootLinOp):
     """A positive definite linear operator A represented by its lower 
@@ -451,7 +472,10 @@ class CholeskyLinOp(RootLinOp):
 
     def __init__(self, root: TriangularLinOp) -> None:
         if not isinstance(root, TriangularLinOp):
-            raise ValueError("CholeskyLinOp requires initialization via a TriangularLinOp object.")
+            raise ValueError(
+                f"CholeskyLinOp requires `root` to be a TriangularLinOp object."
+                f"Got {type(root)}."
+            )
 
         super().__init__(root)
         self.add_flag("positive_definite")
@@ -479,6 +503,34 @@ class CholeskyLinOp(RootLinOp):
             return cholesky_factor
         else:
             return cholesky_factor.T
+        
+    def to_cholesky_representation(self, lower: bool = True) -> CholeskyLinOp:
+        """ Returns a copy of `self` """
+        return CholeskyLinOp(self.cholesky(lower=lower))
+
+
+class DiagonalRootLinOp(DiagonalLinOp, RootLinOp):
+    """A linear operator A represented by its diagonal square root 
+       S = diag(s1, ..., sd) such that A = S @ S.T = diag(s1^2, ..., sd^2).
+       A is guaranteed to be symmetric positive semidefinite, and is strictly
+       positive definite if all entries of all of the si are non-zero."""
+    
+    def __init__(self, root: DiagonalLinOp) -> None:
+        if not isinstance(root, DiagonalLinOp):
+            raise ValueError(
+                f"DiagonalRootLinOp requires `root` to be a DiagonalLinOp object."
+                f"Got {type(root)}."
+            )
+
+        # Call DiagonalLinOp constructor
+        super().__init__(diag=root.diagonal ** 2)
+        self.root = root
+
+    def cholesky(self, lower: bool = True) -> DiagonalLinOp:
+        """Note that `lower` has no effect on Cholesky decomposition of diagonal matrix"""
+        if np.any(self.diagonal <= 0):
+            raise np.linalg.LinAlgError("Diagonal has non-positive entries; cholesky not defined.")
+        return DiagonalLinOp(self.root.diagonal)
 
 
 class TransposedLinOp(LinOp):
@@ -722,3 +774,11 @@ class ScaledLinOp(LinOp):
 
     def to_dense(self) -> Array:
         return self.scalar * self.op.to_dense()
+
+
+# -----------------------------------------------------------------------------
+# Type Alises
+# ----------------------------------------------------------------------------- 
+
+CholeskyFactor = TriangularLinOp | DiagonalLinOp
+CholeskyRepresentation = CholeskyLinOp | DiagonalRootLinOp

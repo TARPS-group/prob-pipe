@@ -6,8 +6,9 @@ import numpy as np
 from typing import Any
 
 from ...custom_types import Array, ArrayLike, Float, PRNG
+from ..distribution import Distribution
 from .real_vector import RealVectorDistribution
-from ...linalg.linop import LinOp, DenseLinOp
+from ...linalg.linop import LinOp, DenseLinOp, CholeskyLinOp, CholeskyFactor
 from ...linalg.operations import _as_linear_operator, LinOpLike, cholesky, logdet
 
 from ...array_backend.utils import (
@@ -17,20 +18,6 @@ from ...array_backend.utils import (
     _ensure_square_matrix,
     _ensure_batch_array
 )
-
-# Notes/Questions/TODOs:
-# - Currently Multivariate.cov defined to return type Array; this implementation 
-#   returns LinOp.
-# - Rename Multivariate to RealVector, or something like this.
-# - Create distributions sub-folder; should it be probpipe/distributions or probpipe/core/distributions?
-# - We probably want `n_samples` to default to 1.
-# - Shorten `dimension` property to `dim`?
-# - Should we have log_density, etc. return (n,)?
-# - Define alias for float type (to replace Float) / move other type definitions to custom_types.py?
-# - Consistency in variable name: "n_samples", "num_samples"
-# - Add `dtype` argument to `_ensure` functions?
-# - Naming convention: Gaussian vs. Gaussian vs. GaussianDist
-# - Gaussian.from_distribution assumes from_dist.sample() returns (n,d) (i.e., flat samples)
 
 
 class Gaussian(RealVectorDistribution[Float]):
@@ -43,6 +30,9 @@ class Gaussian(RealVectorDistribution[Float]):
         cov._check_square()
         if cov.shape[0] != self._dim:
             raise ValueError(f"Dimension mismatch between mean {mean.shape} and covariance {cov.shape}.")
+
+        # Covariance is represented via the lower root L such that C = L @ L.T.
+        self._cov_from_chol = cov.to_cholesky_representation(lower=True)
 
         self._mean = mean
         self._cov = cov
@@ -60,12 +50,15 @@ class Gaussian(RealVectorDistribution[Float]):
     def cov(self) -> LinOp:
         return self._cov
     
-
+    @property 
+    def lower_chol(self) -> CholeskyFactor:
+        return self._cov_from_chol.root
+    
     def sample(self, n_samples: int = 1) -> Array[Float]:
         """
         Draw (n, d) samples.
         """
-        L = cholesky(self.cov, lower=True)
+        L = self.lower_chol
         Z = self._rng.normal(size=(self.dim, n_samples))
 
         samp = self.mean + L.matmat(Z).T
@@ -74,10 +67,11 @@ class Gaussian(RealVectorDistribution[Float]):
 
     def log_density(self, values: ArrayLike) -> Array[Float]:
         x = _ensure_matrix(values, as_row_matrix=True, num_cols=self.dim)
+        L = self.lower_chol
 
         x_centered = x - self.mean # (n,d)
-        logdet_term = logdet(2 * math.pi * self.cov) # TODO: update
-        L_inv_x_centered = self.cov.cholesky(lower=True).solve(x_centered.T)
+        logdet_term = self.dim * np.log(2 * math.pi) + logdet(self._cov_from_chol)
+        L_inv_x_centered = L.solve(x_centered.T)
         quadratic_term = np.sum(L_inv_x_centered ** 2, axis=0)
         log_dens = -0.5 * (logdet_term + quadratic_term)
         
