@@ -1,7 +1,8 @@
 from .module import Module, InputSpec
 from types import SimpleNamespace, MappingProxyType
 from contextlib import contextmanager
-from typing import Dict, Callable, Optional, Type, Any
+import inspect
+from typing import Callable, get_type_hints
 
 # Workflow class for users to create workflows using module classes
 
@@ -12,63 +13,68 @@ from typing import Dict, Callable, Optional, Type, Any
 # - Logging and error handling 
 # - Support for prefect tasks within the workflow
 
-class WorkflowBuilder:
-    def __init__(self, name = "UserDefinedWorkflow"):
-        self._class_name = name
-        self._dependencies: Dict[str, Module] = {}
-        self._run_func: Callable = None
-        self._workflow_instance = None
 
-    def register_module(self, name: str, module: Module) -> None:
-        if name in self._dependencies:
-            raise RuntimeError(f"Dependency '{name}' already registered")
-        if not isinstance(module, Module):
-            raise TypeError(f"Dependency '{name}' must be a Module instance")
-        self._dependencies[name] = module
+from probpipe import Module, Distribution  # Adjust imports to your structure
 
-    def register_modules(self, modules: Dict[str, Module]) -> None:
-        for name, module in modules.items():
-            self.register_module(name, module)
-
-    def register_run(self, f: Callable[..., Any]) -> Callable[..., Any]:
-        if self._run_func is not None:
-            raise RuntimeError("Run function already registered")
-        self._run_func = f
-        return f
-    
-
-    def build(self) -> Module:
-        if self._run_func is None:
-            raise RuntimeError("No run function registered")
-        
-        dep_types = {name: type(mod) for name, mod in self._dependencies.items()}
-        cls_dict = {
-            "DEPENDENCIES": MappingProxyType(dep_types)
-        }
-
-        workflow_cls = type(self._class_name, (Module,), cls_dict)
-
-        def __init__(self, **deps):
-            super(workflow_cls, self).__init__(**deps)
-            self.run_func(self._run_func, name="run", as_task=True)
-
-        workflow_cls.__init__ = __init__
-
-        self._workflow_instance = workflow_cls(**self._dependencies)
-        return self._workflow_instance
-
-    def run_workflow(self, *args, **kwargs):
-        if self._workflow_instance is None:
-            raise RuntimeError("Workflow not built yet")
-        return self._workflow_instance.run(*args, **kwargs)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is not None:
-            return False
-        
-        self.build()
+def is_dependency_type(tp):
+    """
+    Returns True if tp should be treated as a dependency module.
+    By default, returns False for Distribution or basic types.
+    """
+    try:
+        return isinstance(tp, type) and not issubclass(tp, Distribution)
+    except Exception:
         return False
+
+def wrap_as_module(obj, name, expected_type):
+    """
+    Wraps any dependency object as a Module, unless already a Module.
+    All attribute accesses are delegated to the underlying object.
+    """
+    if isinstance(obj, Module):
+        return obj
+    # Simple wrapper
+    class _AutoWrappedModule(Module):
+        DEPENDENCIES = MappingProxyType({})
+        def __init__(self, dep):
+            super().__init__()
+            self._dep = dep
+        def __getattr__(self, attr):
+            # Delegate to the underlying dependency
+            return getattr(self._dep, attr)
+        def __repr__(self):
+            return f"<WrappedModule {type(self._dep).__name__}>"
+    _AutoWrappedModule.__name__ = f"Wrapped{name.capitalize()}Module"
+    return _AutoWrappedModule(obj)
+
+class Workflow:
+    """
+    Workflow class helps user to automatically builds a pipleline module class
+    """
+    @staticmethod
+    def create(workflow_func: Callable, as_task: bool = True):
+        sig = inspect.signature(workflow_func)
+        type_hints = get_type_hints(workflow_func)
+        param_names = [name for name in sig.parameters if name != "self"]
+
+        # Only treat parameters as dependencies if is_dependency_type returns True
+        dependencies = {
+            name: type_hints[name] for name in param_names
+            if name in type_hints and is_dependency_type(type_hints[name])
+        }
+        DEPENDENCIES = MappingProxyType(dependencies)
+
+        class _WorkflowModule(Module):
+            def __init__(self, **deps):
+                # Use helpers to wrap dependencies as needed
+                wrapped_deps = {
+                    name: wrap_as_module(dep, name, DEPENDENCIES[name])
+                    for name, dep in deps.items()
+                }
+                super().__init__(**wrapped_deps)
+                self.run_func(workflow_func, name="run", as_task=True)
+        
+        _WorkflowModule.DEPENDENCIES = DEPENDENCIES   # <--- Assign here, outside the class body
+        _WorkflowModule.__name__ = f"{workflow_func.__name__}Module"
+        return _WorkflowModule
 

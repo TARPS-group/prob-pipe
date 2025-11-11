@@ -1,54 +1,33 @@
 from typing import Optional, Callable
-from probpipe import WorkflowBuilder, Module 
+from probpipe import Module, Workflow
 from prefect import flow, task
 import numpy as np
 from numpy.typing import NDArray
-
-# Simple Example for WorkflowBuilder usage
-
-# Example subclasses representing components/dependencies
-class DataModule(Module):
-    def __init__(self):
-        super().__init__()
-        # Add any data-specific initialization here
-
-class LikelihoodModule(Module):
-    def __init__(self):
-        super().__init__()
-        # Add likelihood-specific initialization here
-
-class PriorModule(Module):
-    def __init__(self):
-        super().__init__()
-        # Add prior-specific initialization here
+from probpipe import Normal1D, Distribution, DistributionModule
+from types import MappingProxyType
+import inspect
 
 
-with WorkflowBuilder(name="MyBayesWorkflow") as builder:
-    # Register modules (dependencies)
-    builder.register_modules({
-        "data": DataModule(),
-        "likelihood": LikelihoodModule(),
-        "prior": PriorModule(),
-    })
+class TransportMap:
+    def map(self, dist: Distribution) -> Distribution:
+        raise NotImplementedError
 
-    # Register run function to perform the workflow
-    @builder.register_run
-    def run(self, x):
-        print(f"Running workflow with input: {x}")
-        print(f"Dependencies available: {list(self.dependencies.keys())}")
-
-        # Access dependency modules here:
-        data_mod = self.dependencies["data"]
-        lik_mod = self.dependencies["likelihood"]
-        prior_mod = self.dependencies["prior"]
+class AffineTransform(TransportMap):
+    def map(self, dist: Distribution) -> Distribution:
+        print(f"Transforming: {dist}")
+        return dist  # Example: identity
 
 
-        result = x * 10  
-        print(f"Computed result: {result}")
-        return result
+def my_workflow(prior: Distribution, tmap: TransportMap) -> Distribution:
+    return tmap.map(prior)
 
-# Outside the with block, the workflow is built automatically
 
-output = builder.run_workflow(5)  # Run the workflow with input argument
-print(f"Workflow output: {output}")
+MyModule = Workflow.create(my_workflow)  # Prefect task
+
+aff_map = AffineTransform()
+mod = MyModule(tmap=aff_map)
+
+prior_dist = Normal1D(mu=0, sigma=1)
+out = mod.run(prior=prior_dist, tmap=aff_map)  
+
 
