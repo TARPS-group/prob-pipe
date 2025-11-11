@@ -29,5 +29,8 @@ mod = MyModule(tmap=aff_map)
 
 prior_dist = Normal1D(mu=0, sigma=1)
 out = mod.run(prior=prior_dist, tmap=aff_map)  
+print(out)
 
-
+# method 2 : without run
+out = mod(prior=prior_dist, tmap=aff_map)  
+print(out)

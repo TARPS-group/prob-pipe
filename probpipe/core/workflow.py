@@ -57,7 +57,6 @@ class Workflow:
         type_hints = get_type_hints(workflow_func)
         param_names = [name for name in sig.parameters if name != "self"]
 
-        # Only treat parameters as dependencies if is_dependency_type returns True
         dependencies = {
             name: type_hints[name] for name in param_names
             if name in type_hints and is_dependency_type(type_hints[name])
@@ -66,15 +65,21 @@ class Workflow:
 
         class _WorkflowModule(Module):
             def __init__(self, **deps):
-                # Use helpers to wrap dependencies as needed
                 wrapped_deps = {
                     name: wrap_as_module(dep, name, DEPENDENCIES[name])
                     for name, dep in deps.items()
                 }
                 super().__init__(**wrapped_deps)
                 self.run_func(workflow_func, name="run", as_task=True)
-        
-        _WorkflowModule.DEPENDENCIES = DEPENDENCIES   # <--- Assign here, outside the class body
+                self._sig = inspect.signature(workflow_func)
+
+            def __call__(self, *args, **kwargs):
+                bound = self._sig.bind_partial(*args, **kwargs)
+                bound.apply_defaults()
+                return self.run(**bound.arguments)
+
+        _WorkflowModule.DEPENDENCIES = DEPENDENCIES
         _WorkflowModule.__name__ = f"{workflow_func.__name__}Module"
         return _WorkflowModule
+
 
