@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from ..custom_types import Array, ArrayLike, PRNG, Float
+from ..custom_types import Array, ArrayLike, PRNG, Float, Number
 from ..array_backend.utils import _ensure_matrix, _ensure_vector
 from ..linalg.linear_operator import LinOp, RootLinOp
 
@@ -17,17 +17,17 @@ __all__ = [
     "BootstrapDistribution",
 ]
 
-FloatT = TypeVar("FloatT", bound=Float)
+NumberT = TypeVar("NumberT", bound=Number)
 
 # -------------------------- Abstract Classes ----------------------------
 
 
-class Distribution(Generic[FloatT], ABC):
+class Distribution(Generic[NumberT], ABC):
     """
     Abstract base class for any distribution class.
     """
 
-    def sample(self, n_samples: int = 1) -> Array[FloatT]:
+    def sample(self, n_samples: int = 1) -> Array[NumberT]:
         """
         Optional. If a subclass can’t sample, it may leave this unimplemented.
 
@@ -36,7 +36,7 @@ class Distribution(Generic[FloatT], ABC):
         """
         raise NotImplementedError("This method may be implemented by subclasses (optional)")
     
-    def density(self, data: Array[FloatT]) -> Array[Float]:
+    def density(self, x: Array[NumberT]) -> Array[Float]:
         """
         Optional. If a subclass can’t sample, it may leave this unimplemented.
 
@@ -46,7 +46,7 @@ class Distribution(Generic[FloatT], ABC):
         """
         raise NotImplementedError("This method may be implemented by subclasses (optional)")
     
-    def log_density(self, data: Array[FloatT]) -> Array[Float]:
+    def log_density(self, x: Array[NumberT]) -> Array[Float]:
         """
         Optional. If a subclass can’t sample, it may leave this unimplemented.
 
@@ -57,7 +57,7 @@ class Distribution(Generic[FloatT], ABC):
         raise NotImplementedError("This method may be implemented by subclasses (optional)")
     
 
-    def expectation(self, func: Callable[[Array[FloatT]], Array]) -> Distribution:
+    def expectation(self, func: Callable[[Array[NumberT]], Array]) -> Distribution:
         """
         Optional. If a subclass can’t sample, it may leave this unimplemented.
 
@@ -69,7 +69,7 @@ class Distribution(Generic[FloatT], ABC):
 
     @classmethod
     @abstractmethod
-    def from_distribution(cls, other: Distribution, **fit_kwargs: Any) -> Distribution[FloatT]:
+    def from_distribution(cls, other: Distribution, **fit_kwargs: Any) -> Distribution[NumberT]:
         """
         Convert the distribution `other` into a distribution of type `cls`. This will 
         typically be an approximation. Examples including moment matching and 
@@ -180,10 +180,10 @@ class EmpiricalDistribution(Distribution):
 
     rvs = sample
 
-    def density(self, data: Array) -> Array:
+    def density(self, x: Array) -> Array:
         raise NotImplementedError("Density not implemented for EmpiricalDistribution.")
 
-    def log_density(self, data: Array) -> Array:
+    def log_density(self, x: Array) -> Array:
         raise NotImplementedError("Log density not implemented for EmpiricalDistribution.")
 
     # TODO: come back to this:

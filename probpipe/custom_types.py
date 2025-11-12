@@ -18,9 +18,11 @@ from numpy.typing import (
 
 from numpy import (
     floating as NumpyFloating,
+    number as NumpyNumber
 )
 
 Array = NumpyArray
 ArrayLike: TypeAlias = NumpyArrayLike
 Float: TypeAlias = NumpyFloating
+Number: TypeAlias = NumpyNumber
 PRNG: TypeAlias = NumpyRNG

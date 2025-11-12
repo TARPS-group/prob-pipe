@@ -24,8 +24,6 @@ from ..distribution import Distribution
 
 __all__ = [
     "RealVectorDistribution",
-    "Normal1D",
-    "MvNormal",
     "GaussianKDE",
     "Multinomial",
     "Dirichlet",
@@ -192,7 +190,7 @@ class GaussianKDE(RealVectorDistribution[Float]):
         return (factor ** 2) * self._cov_x
 
 
-    def sample(self, n_samples: int) -> Array[Float]:
+    def sample(self, n_samples: int = 1) -> Array[Float]:
         """
         Draw (n, d) samples from the KDE mixture:
           pick a center with prob w_i, then add N(0, H) noise.
@@ -207,24 +205,24 @@ class GaussianKDE(RealVectorDistribution[Float]):
             noise = noise.reshape(1, -1)
         return self._X[idx] + noise  # (n, d)
 
-    def density(self, values: ArrayLike) -> Array[Float]:
+    def density(self, x: ArrayLike) -> Array[Float]:
         """
         Mixture pdf: sum_i w_i * N(values | mean=x_i, cov=H).
         Returns (n, 1).
         """
-        Xq = _ensure_matrix(values, as_row_matrix=True, num_cols=self.dim)  # (n, d)
+        Xq = _ensure_matrix(x, as_row_matrix=True, num_cols=self.dim)  # (n, d)
         out = np.empty(Xq.shape[0], dtype=float)
         for j, q in enumerate(Xq):
             # Weighted sum of kernel PDFs at q
             out[j] = float(np.dot(self._w, [k.pdf(q) for k in self._kernels]))
         return out.reshape(-1, 1)  # (n,1)
 
-    def log_density(self, values: ArrayLike) -> Array[Float]:
+    def log_density(self, x: ArrayLike) -> Array[Float]:
         """
         Stable log pdf via log-sum-exp over kernels: log ∑ w_i exp(log N_i(q)).
         Returns (n, 1).
         """
-        Xq = _ensure_matrix(values, as_row_matrix=True, num_cols=self.dim)  # (n, d)
+        Xq = _ensure_matrix(x, as_row_matrix=True, num_cols=self.dim)  # (n, d)
         out = np.empty(Xq.shape[0], dtype=float)
         for j, q in enumerate(Xq):
             logs = np.array([np.log(self._w[i] + 1e-300) + k.logpdf(q) for i, k in enumerate(self._kernels)],
@@ -241,13 +239,13 @@ class GaussianKDE(RealVectorDistribution[Float]):
         """Mixture covariance = Cov_w(centers) + H."""
         return self._cov_mix  # (d,d)
 
-    def cdf(self, values: Array) -> Array[Float]:
+    def cdf(self, x: Array) -> Array[Float]:
         """
         Mixture CDF via SciPy MVN CDF per-kernel:
           F(q) = ∑_i w_i * Φ_d(q; mean=x_i, cov=H).
         Returns (n, 1).
         """
-        Xq = _ensure_matrix(values, as_row_matrix=True, num_cols=self.dim) # (n, d)
+        Xq = _ensure_matrix(x, as_row_matrix=True, num_cols=self.dim) # (n, d)
         out = np.empty(Xq.shape[0], dtype=float)
         for j, q in enumerate(Xq):
             out[j] = float(np.dot(self._w, [k.cdf(q) for k in self._kernels]))
@@ -318,7 +316,7 @@ class GaussianKDE(RealVectorDistribution[Float]):
         return cls(samples=X, weights=weights, bandwidth=bandwidth, rule=rule, rng=rng)
 
 
-class Multinomial(RealVectorDistribution[np.floating]):
+class Multinomial(RealVectorDistribution[Float]):
     """
     Multinomial(n_trials, p) with event dim d = len(p).
     Backed by scipy.stats.multinomial.
@@ -339,9 +337,9 @@ class Multinomial(RealVectorDistribution[np.floating]):
     def __init__(
         self,
         n_trials: int,
-        probs: NDArray[np.floating],
+        probs: Array[Float],
         *,
-        rng: Optional[np.random.Generator] = None,
+        rng: PRNG | None = None,
         cdf_mode: str = "mc",
         cdf_mc_samples: int = 20000,
     ):
@@ -376,7 +374,7 @@ class Multinomial(RealVectorDistribution[np.floating]):
 
     # ------------------------ RealVectorDistribution core ------------------------
 
-    def sample(self, n_samples: int) -> NDArray[np.floating]:
+    def sample(self, n_samples: int = 1) -> Array[Float]:
         """
         Draw (n, d) samples of counts; cast to float for typing consistency.
         """
@@ -386,27 +384,27 @@ class Multinomial(RealVectorDistribution[np.floating]):
             X = X.reshape(1, -1)
         return X  # (n, d) float
 
-    def density(self, values: NDArray) -> NDArray[np.floating]:
+    def density(self, x: Array) -> Array[Float]:
         """
         Return (n,1) column of pmf at each row in `values`.
         Inputs may be float; they must represent integer counts that sum to n_trials.
         """
-        X = _as_2d(values)  # (n,d)
+        X = _ensure_matrix(x)  # (n,d)
         self._validate_counts_rows(X)
         # SciPy's logpmf/pmf can handle arrays row-wise via list comprehension
         pmfs = [self._mn.pmf(row.astype(int, copy=False)) for row in X]
         return np.asarray(pmfs, dtype=float).reshape(-1, 1)
 
-    def log_density(self, values: NDArray) -> NDArray[np.floating]:
+    def log_density(self, x: Array) -> Array[Float]:
         """
         Return (n,1) column of log-pmf at each row in `values`.
         """
-        X = _as_2d(values)  # (n,d)
+        X = _ensure_matrix(x)  # (n,d)
         self._validate_counts_rows(X)
         logpmfs = [self._mn.logpmf(row.astype(int, copy=False)) for row in X]
         return np.asarray(logpmfs, dtype=float).reshape(-1, 1)
 
-    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray]) -> 'RealVectorDistribution':
+    def expectation(self, func: Callable[[Array[Float]], Array]) -> RealVectorDistribution:
         """
         Monte-Carlo CLT over f(X) with X ~ Multinomial.
           - scalar f -> Normal1D(mean, se)
@@ -462,20 +460,20 @@ class Multinomial(RealVectorDistribution[np.floating]):
         return cls(n_trials=n_trials, probs=p_hat, rng=fit_kwargs.get("rng", None))
 
 
-    def mean(self) -> NDArray[np.floating]:
+    def mean(self) -> Array[Float]:
         return self._mean  # (d,)
 
-    def cov(self) -> NDArray[np.floating]:
+    def cov(self) -> Array[Float]:
         return self._cov   # (d,d)
 
-    def cdf(self, values: NDArray) -> NDArray[np.floating]:
+    def cdf(self, x: Array) -> Array[Float]:
         """
         Monte-Carlo approximation of P[X1<=x1, ..., Xd<=xd].
         Returns (n,1). For exact CDF (small n,d), implement a specialized enumerator.
         """
         if self._cdf_mode != "mc":
             raise NotImplementedError("Only Monte-Carlo CDF ('mc') is supported for Multinomial.")
-        Xq = _as_2d(values)  # (n, d)
+        Xq = _ensure_matrix(x)  # (n, d)
         # floor thresholds to nearest integer counts
         T = np.floor(Xq + 1e-12).astype(int)
         # MC draws
@@ -489,7 +487,7 @@ class Multinomial(RealVectorDistribution[np.floating]):
             out[j] = np.mean((draws <= t).all(axis=1))
         return out.reshape(-1, 1)
 
-    def inv_cdf(self, u: NDArray[np.floating]) -> NDArray[np.floating]:
+    def inv_cdf(self, u: Array[Float]) -> Array[Float]:
         """
         No practical Rosenblatt inverse for a general Multinomial.
         """
@@ -497,7 +495,7 @@ class Multinomial(RealVectorDistribution[np.floating]):
 
     # ------------------------ helper ------------------------
 
-    def _validate_counts_rows(self, X: NDArray[np.floating]) -> None:
+    def _validate_counts_rows(self, X: Array[Float]) -> None:
         """
         Ensure rows of X represent valid count vectors for this multinomial:
           - integer-valued (within tiny tolerance)
@@ -518,7 +516,7 @@ class Multinomial(RealVectorDistribution[np.floating]):
             raise ValueError(f"each row must sum to n_trials={self._n}.")
 
 
-class Dirichlet(RealVectorDistribution[np.floating]):
+class Dirichlet(RealVectorDistribution[Float]):
     """
     Dirichlet(α) on the probability simplex.
 

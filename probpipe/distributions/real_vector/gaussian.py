@@ -5,19 +5,34 @@ import math
 import numpy as np
 from typing import Any
 
-from ...custom_types import Array, ArrayLike, Float, PRNG
-from ..distribution import Distribution
-from .real_vector import RealVectorDistribution
-from ...linalg.linop import LinOp, DenseLinOp, CholeskyLinOp, CholeskyFactor
-from ...linalg.operations import _as_linear_operator, LinOpLike, cholesky, logdet
+from probpipe.custom_types import Array, ArrayLike, Float, PRNG
+from probpipe.distributions import Distribution
+from probpipe.distributions.real_vector import RealVectorDistribution
 
-from ...array_backend.utils import (
+from probpipe.array_backend.utils import (
     _ensure_real_scalar,
     _ensure_vector,
     _ensure_matrix,
     _ensure_square_matrix,
     _ensure_batch_array
 )
+
+from probpipe.linalg.linear_operator import(
+    LinOp, 
+    DenseLinOp, 
+    CholeskyLinOp, 
+    CholeskyFactor,
+    _as_linear_operator,
+    LinOpLike,
+)
+
+from probpipe.linalg.operations import(
+    _as_linear_operator, 
+    LinOpLike, 
+    cholesky, 
+    logdet,
+)
+
 
 
 class Gaussian(RealVectorDistribution[Float]):
@@ -65,8 +80,8 @@ class Gaussian(RealVectorDistribution[Float]):
         return samp
     
 
-    def log_density(self, values: ArrayLike) -> Array[Float]:
-        x = _ensure_matrix(values, as_row_matrix=True, num_cols=self.dim)
+    def log_density(self, x: ArrayLike) -> Array[Float]:
+        x = _ensure_matrix(x, as_row_matrix=True, num_cols=self.dim)
         L = self.lower_chol
 
         x_centered = x - self.mean # (n,d)
@@ -78,8 +93,8 @@ class Gaussian(RealVectorDistribution[Float]):
         return log_dens
 
 
-    def density(self, values: ArrayLike) -> Array[Float]:
-        return np.exp(self.log_density(values))
+    def density(self, x: ArrayLike) -> Array[Float]:
+        return np.exp(self.log_density(x))
     
     
     def cdf(self, x: ArrayLike) -> Array[Float]:

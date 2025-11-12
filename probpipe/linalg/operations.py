@@ -19,16 +19,16 @@ from .linear_operator import (
     CholeskyFactor
 )
 
-        
+
 # -----------------------------------------------------------------------------
 # Expose LinOp methods as functions
 # -----------------------------------------------------------------------------
 
 def shape(A: LinOpLike) -> tuple[int, int]:
-    return A.shape
+    return _as_linear_operator(A).shape
 
 def dtype(A: LinOpLike) -> Any:
-    return A.dtype
+    return _as_linear_operator(A).dtype
 
 def diag(A: LinOpLike) -> Array:
     return _as_linear_operator(A).diag()

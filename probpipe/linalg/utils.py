@@ -1,23 +1,12 @@
 # linalg/utils.py
-
 from __future__ import annotations
 
 import numpy as np
-from typing import Any, Tuple, TypeAlias
-
-from .linop import LinOp, DenseLinOp
 from ..custom_types import Array, ArrayLike
 from ..array_backend.utils import (
     _ensure_real_scalar,
     _ensure_square_matrix
 )
-
-
-def _check_square(A: LinOpLike) -> None:
-    n_out, n_in = _as_linear_operator(A).shape
-    if n_out != n_in:
-        raise np.linalg.LinAlgError(f"Linear operator is not square. Has shape ({n_out}, {n_in})") 
-
 
 
 def add_diag_jitter(matrix: ArrayLike, jitter: float | ArrayLike = 1e-6, *, copy: bool = True) -> Array:

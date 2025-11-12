@@ -28,6 +28,8 @@ __all__ = [
     "DiagonalLinOp",
     "RootLinOp",
     "TriangularLinOp",
+    "CholeskyLinOp",
+    "DiagonalRootLinOp",
 ]
 
 
@@ -784,7 +786,7 @@ class CholeskyLinOp(RootLinOp):
         return CholeskyLinOp(self.cholesky(lower=lower))
 
 
-class DiagonalRootLinOp(DiagonalLinOp, RootLinOp):
+class DiagonalRootLinOp(DiagonalLinOp):
     """A linear operator A represented by its diagonal square root 
        S = diag(s1, ..., sd) such that A = S @ S.T = diag(s1^2, ..., sd^2).
        A is guaranteed to be symmetric positive semidefinite, and is strictly
@@ -798,7 +800,7 @@ class DiagonalRootLinOp(DiagonalLinOp, RootLinOp):
             )
 
         # Call DiagonalLinOp constructor
-        super().__init__(diag=root.diagonal ** 2)
+        super().__init__(root.diagonal ** 2)
         self.root = root
 
     def cholesky(self, lower: bool = True, **kwargs) -> DiagonalLinOp:
