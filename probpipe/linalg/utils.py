@@ -12,23 +12,6 @@ from ..array_backend.utils import (
     _ensure_square_matrix
 )
 
-LinOpLike: TypeAlias = LinOp | ArrayLike
-
-def _as_linear_operator(A: LinOpLike) -> LinOp:
-    """
-    Wraps arrays as a DenseLinOp, and returns existing LinOp objects untouched.
-    """
-    if isinstance(A, LinOp):
-        return A
-    else:
-        try:
-            return DenseLinOp(A)
-        except Exception as e:
-            raise TypeError(
-                f"Could not convert A to linear operator\n"
-                f"DenseLinOp error: {e}"
-            )
-
 
 def _check_square(A: LinOpLike) -> None:
     n_out, n_in = _as_linear_operator(A).shape

@@ -1,4 +1,11 @@
-# linop.py
+# linear_operator.py
+"""
+This file contains:
+    1. the base abstract LinOp class  
+    2. subclasses that represent views of linear operations resulting from 
+       various operations (sum, product, etc.).
+    3. concrete linear operator subclasses representing structured matrices
+"""
 from __future__ import annotations
 
 from typing import Any, Iterable, FrozenSet, TypeAlias
@@ -7,13 +14,12 @@ from abc import ABC, abstractmethod
 from scipy.linalg import cholesky, solve_triangular
 import math
 
-from .operations import _as_linear_operator
 from ..custom_types import Array, ArrayLike
 from ..array_backend.utils import (
     _ensure_real_scalar,
     _ensure_vector,
     _ensure_matrix,
-    _ensure_square_matrix
+    _ensure_square_matrix,
 )
 
 __all__ = [
@@ -21,15 +27,15 @@ __all__ = [
     "DenseLinOp",
     "DiagonalLinOp",
     "RootLinOp",
-    "CholeskyLinOp"
+    "TriangularLinOp",
 ]
 
-# TODO:
-# - Update so that matmat/rmatmat always outputs shape (n,k)?
-# - Seems that tags are sometimes not used when they could be; e.g., unit_diagonal in TriangularLinOp
 
+# -----------------------------------------------------------------------------
+# Helpers
+# -----------------------------------------------------------------------------
 
-# --- Flags: canonical set and helpers ----------------------------------------
+# Set of allowed flags to mark properties possessed by particular linear operators
 ALLOWED_FLAGS = frozenset({
     "symmetric",
     "positive_definite",
@@ -45,8 +51,25 @@ def _promote_dtype(*dtypes: Any) -> Any:
     # Use numpy's result_type semantics (works with numpy scalar dtypes).
     return np.result_type(*dtypes)
 
+def _as_linear_operator(A: LinOpLike) -> LinOp:
+    """
+    Wraps arrays as a DenseLinOp, and returns existing LinOp objects untouched.
+    """
+    if isinstance(A, LinOp):
+        return A
+    else:
+        try:
+            return DenseLinOp(A)
+        except Exception as e:
+            raise TypeError(
+                f"Could not convert A to linear operator\n"
+                f"DenseLinOp error: {e}"
+            )
 
-# ---- Core abstract class ----
+
+# -----------------------------------------------------------------------------
+# Core abstract linear operator class
+# -----------------------------------------------------------------------------
 
 class LinOp(ABC):
     """Abstract base class for a linear operator.
@@ -234,357 +257,10 @@ class LinOp(ABC):
         return f"{self.__class__.__name__}(shape={self.shape}, dtype={self.dtype})"
 
 
-# ---- Concrete linear operator subclasses ----
 
-class DenseLinOp(LinOp):
-    """Dense linear operator backed by a numpy array."""
-
-    def __init__(self, arr: ArrayLike, copy: bool = True) -> None:
-        super().__init__()
-        self.array = _ensure_matrix(arr, copy=copy)
-        self._dtype = self.array.dtype
-        self.add_flag("dense")
-
-    @property
-    def shape(self) -> tuple[int, int]:
-        return self.array.shape
-
-    @property
-    def dtype(self) -> Any:
-        return self._dtype
-    
-    @property
-    def is_dense(self) -> bool:
-        return True
-
-    def to_dense(self) -> Array:
-        return self.array
-
-
-class DiagonalLinOp(LinOp):
-    """Diagonal operator represented by a 1D array of diagonal entries."""
-
-    def __init__(self, diag: ArrayLike, copy: bool = True) -> None:
-        """`diag` may be higher-dimensional array, but will be flattened."""
-        super().__init__()
-        self.diagonal = _ensure_vector(np.asarray(diag).ravel(), copy=copy)
-        self._n = int(self.diagonal.size)
-        self._dtype = self.diagonal.dtype
-
-        self.add_flag("diagonal")
-        self.add_flag("symmetric")
-        if np.all(self.diagonal > 0):
-            self.add_flag("positive_definite")
-
-    @property
-    def shape(self) -> tuple[int, int]:
-        return (self._n, self._n)
-
-    @property
-    def dtype(self) -> Any:
-        return self._dtype
-
-    def matvec(self, x: ArrayLike) -> Array:
-        x = _ensure_vector(x)
-        return self.diagonal * x
-
-    def rmatvec(self, x: ArrayLike) -> Array:
-        return self.matvec(x)
-
-    def matmat(self, X: ArrayLike) -> Array:
-        X = _ensure_matrix(X)
-        return X * self.diagonal[:, np.newaxis]
-
-    def rmatmat(self, X: ArrayLike) -> Array:
-        return self.matmat(X)
-
-    def to_dense(self) -> Array:
-        return np.diag(self.diagonal)
-
-    def solve(self, b: ArrayLike) -> Array:
-        """
-        For consistency with np.linalg.solve(), b can be (n,) or (n,k).
-        """
-        if np.any(self.diagonal == 0):
-            raise np.linalg.LinAlgError("Diagonal contains zero entries; not invertible.")
-
-        b = np.asarray(b)
-        if b.ndim < 2:
-            b = _ensure_vector(b, as_column=True)
-        b = _ensure_matrix(b, num_rows=self._n)
-
-        return b / self.diagonal[:, np.newaxis]
-
-    def cholesky(self, lower: bool = True) -> DiagonalLinOp:
-        """Note that `lower` has no effect on Cholesky decomposition of diagonal matrix"""
-        if np.any(self.diagonal <= 0):
-            raise np.linalg.LinAlgError("Diagonal has non-positive entries; cholesky not defined.")
-        return DiagonalLinOp(np.sqrt(self.diagonal))
-
-    def to_cholesky_representation(self, lower: bool = True) -> DiagonalRootLinOp:
-        return DiagonalRootLinOp(self.cholesky(lower=lower))
-
-    def diag(self) -> Array:
-        return self.diagonal.copy()
-
-    def logdet(self) -> float:
-        if np.any(self.diagonal <= 0):
-            raise np.linalg.LinAlgError("Non-positive diagonal entries; logdet undefined.")
-        return float(np.sum(np.log(self.diagonal)))
-
-
-class TriangularLinOp(LinOp):
-    """Triangular operator represented by lower or upper triangular matrix L (2D array).
-
-    The operator interprets stored matrix `tri` so that:
-      - if lower==True: stored tri is lower triangular and operator is L @ x
-      - if lower==False: stored tri is upper triangular and operator is U @ x
-    """
-
-    def __init__(self, tri: Array, *, lower: bool = True, copy: bool = True) -> None:
-        super().__init__()
-        tri = _ensure_square_matrix(tri, copy=copy)
-        self.tri = tri
-        self.lower = bool(lower)
-        self._n = self.tri.shape[0]
-        self._dtype = self.tri.dtype
-
-        if self.lower:
-            self.add_flag("triangular_lower")
-        else:
-            self.add_flag("triangular_upper")
-        # if strictly triangular with ones on diagonal, mark unit_diagonal
-        if np.allclose(np.diag(self.tri), 1.0):
-            self.add_flag("unit_diagonal")
-
-    @property
-    def shape(self) -> tuple[int, int]:
-        return (self._n, self._n)
-
-    @property
-    def dtype(self) -> Any:
-        return self._dtype
-
-    def matvec(self, x: ArrayLike) -> Array:
-        x = _ensure_vector(x)
-        return self.tri @ x
-
-    def rmatvec(self, x: ArrayLike) -> Array:
-        x = _ensure_vector(x)
-        return self.tri.T @ x
-
-    def matmat(self, X: ArrayLike) -> Array:
-        X = _ensure_matrix(X)
-        return self.tri @ X
-
-    def rmatmat(self, X: ArrayLike) -> Array:
-        X = _ensure_matrix(X)
-        return self.tri.T @ X
-
-    def to_dense(self) -> Array:
-        return np.array(self.tri)
-
-    def solve(self, b: ArrayLike, *, unit_diagonal: bool = False,
-              overwrite_b: bool = False, check_finite: bool = True) -> Array:
-        """
-        Solve triangular system Lx=b or Ux=b. Optional arguments are forwarded
-        to scipy.solve_triangular.
-        """
-        b_arr = np.asarray(b)
-        if b_arr.ndim < 2:
-            b_arr = _ensure_vector(b_arr, as_column=True)
-        b_arr = _ensure_matrix(b_arr, num_rows=self._n)
-
-        return solve_triangular(self.tri, b_arr, lower=self.lower,
-                                unit_diagonal=unit_diagonal,
-                                overwrite_b=overwrite_b, check_finite=check_finite)
-
-
-class RootLinOp(LinOp):
-    """A linear operator A represented by its square root S such that A = S @ S.T
-       A is guaranteed to be symmetric positive semidefinite, but not necessarily 
-       positive definite."""
-
-    def __init__(self, root: LinOp | ArrayLike) -> None:
-        super().__init__()
-        self.root = _as_linear_operator(root)
-        self._n = self.root.shape[0]
-        self.add_flag("symmetric")
-
-    @property
-    def shape(self) -> tuple[int, int]:
-        return (self._n, self._n)
-
-    @property
-    def dtype(self) -> Any:
-        return self.root.dtype
-
-    def matvec(self, x: ArrayLike) -> Array:
-        return self.root.matvec(self.root.rmatvec(x))
-
-    def rmatvec(self, x: ArrayLike) -> Array:
-        # Operator is symmetric
-        return self.matvec(x)
-
-    def matmat(self, X: ArrayLike) -> Array:
-        return self.root.matmat(self.root.rmatmat(X))
-
-    def rmatmat(self, X: ArrayLike) -> Array:
-        return self.matmat(X)
-    
-    def solve(self, b: ArrayLike) -> Array:
-        """Linear solve using forward backward substitution
-        
-        To compute A^{-1}b = (S @ S.T)^{-1}b first compute y = S^{-1}b
-        then S.T^{-1}y.
-        """
-        b = np.asarray(b)
-        if b.ndim < 2:
-            b = _ensure_vector(b, as_column=True)
-        b = _ensure_matrix(b, num_rows=self._n)
-
-        S = self.root.to_dense()
-        y = np.linalg.solve(S, b)
-        return np.linalg.solve(S.T, y)
-    
-    def diag(self) -> Array:
-        if isinstance(self.root, DiagonalLinOp):
-            return self.root.diagonal
-
-        S = self.root.to_dense()
-        return np.einsum('ij,ij->i', S, S)
-    
-    def trace(self) -> float:
-        if isinstance(self.root, DiagonalLinOp):
-            return np.sum(self.root.diagonal ** 2)
-
-        S = self.root.to_dense()
-        return np.sum(S**2)
-
-    def to_dense(self) -> Array:
-        S = self.root
-        return (S @ S.T).to_dense()
-
-
-class CholeskyLinOp(RootLinOp):
-    """A positive definite linear operator A represented by its lower 
-       L or upper L.T Cholesky factor such that A = L @ L.T"""
-
-    def __init__(self, root: TriangularLinOp) -> None:
-        if not isinstance(root, TriangularLinOp):
-            raise ValueError(
-                f"CholeskyLinOp requires `root` to be a TriangularLinOp object."
-                f"Got {type(root)}."
-            )
-
-        super().__init__(root)
-        self.add_flag("positive_definite")
-
-
-    def solve(self, b: ArrayLike) -> Array:
-        """Linear solve using forward backward triangular substitution
-        
-        To compute A^{-1}b = (L @ L.T)^{-1}b first compute y = L^{-1}b
-        then L.T^{-1}y.
-        """
-        b = np.asarray(b)
-        if b.ndim < 2:
-            b = _ensure_vector(b, as_column=True)
-        b = _ensure_matrix(b, num_rows=self._n)
-
-        S = self.root.to_dense()
-        y = solve_triangular(S, b, lower=self.root.lower)
-        return solve_triangular(S, y, trans=1, lower=self.root.lower)
-    
-
-    def cholesky(self, lower: bool = True) -> TriangularLinOp:
-        cholesky_factor = self.root
-        if lower == cholesky_factor.lower:
-            return cholesky_factor
-        else:
-            return cholesky_factor.T
-        
-    def to_cholesky_representation(self, lower: bool = True) -> CholeskyLinOp:
-        """ Returns a copy of `self` """
-        return CholeskyLinOp(self.cholesky(lower=lower))
-
-
-class DiagonalRootLinOp(DiagonalLinOp, RootLinOp):
-    """A linear operator A represented by its diagonal square root 
-       S = diag(s1, ..., sd) such that A = S @ S.T = diag(s1^2, ..., sd^2).
-       A is guaranteed to be symmetric positive semidefinite, and is strictly
-       positive definite if all entries of all of the si are non-zero."""
-    
-    def __init__(self, root: DiagonalLinOp) -> None:
-        if not isinstance(root, DiagonalLinOp):
-            raise ValueError(
-                f"DiagonalRootLinOp requires `root` to be a DiagonalLinOp object."
-                f"Got {type(root)}."
-            )
-
-        # Call DiagonalLinOp constructor
-        super().__init__(diag=root.diagonal ** 2)
-        self.root = root
-
-    def cholesky(self, lower: bool = True) -> DiagonalLinOp:
-        """Note that `lower` has no effect on Cholesky decomposition of diagonal matrix"""
-        if np.any(self.diagonal <= 0):
-            raise np.linalg.LinAlgError("Diagonal has non-positive entries; cholesky not defined.")
-        return DiagonalLinOp(self.root.diagonal)
-
-
-class TransposedLinOp(LinOp):
-    """A lazy transpose view of an existing linear operator."""
-
-    def __init__(self, op: LinOp) -> None:
-        super().__init__()
-        self.op = op
-
-        # Flags that are invariant under transpose
-        if "dense" in op.flags:
-            self.add_flag("dense")
-        if "diagonal" in op.flags:
-            self.add_flag("diagonal")
-        if "symmetric" in op.flags:
-            self.add_flag("symmetric")
-        if "positive_definite" in op.flags:
-            self.add_flag("positive_definite")
-        if "unit_diagonal" in op.flags:
-            self.add_flag("unit_diagonal")
-
-        # Triangular flags swap sides
-        if "triangular_lower" in op.flags:
-            self.add_flag("triangular_upper")
-        if "triangular_upper" in op.flags:
-            self.add_flag("triangular_lower")
-
-    @property
-    def shape(self) -> tuple[int, int]:
-        n_out, n_in = self.op.shape
-        return (n_in, n_out)
-
-    @property
-    def dtype(self) -> Any:
-        return self.op.dtype
-
-    def matvec(self, x: ArrayLike) -> Array:
-        # matvec of transpose is rmatvec of base
-        return self.op.rmatvec(x)
-
-    def rmatvec(self, x: ArrayLike) -> Array:
-        return self.op.matvec(x)
-
-    def matmat(self, X: ArrayLike) -> Array:
-        return self.op.rmatmat(X)
-
-    def rmatmat(self, X: ArrayLike) -> Array:
-        return self.op.matmat(X)
-
-    def to_dense(self) -> Array:
-        return self.op.to_dense().T
-
-
-# ---- Composite linear operator types ----------------------------------------
+# -----------------------------------------------------------------------------
+# Composite linear operator views
+# ----------------------------------------------------------------------------- 
 
 class ProductLinOp(LinOp):
     """Operator representing composition A @ B where A and B are LinOp and shapes agree."""
@@ -776,9 +452,366 @@ class ScaledLinOp(LinOp):
         return self.scalar * self.op.to_dense()
 
 
+class TransposedLinOp(LinOp):
+    """A lazy transpose view of an existing linear operator."""
+
+    def __init__(self, op: LinOp) -> None:
+        super().__init__()
+        self.op = op
+
+        # Flags that are invariant under transpose
+        if "dense" in op.flags:
+            self.add_flag("dense")
+        if "diagonal" in op.flags:
+            self.add_flag("diagonal")
+        if "symmetric" in op.flags:
+            self.add_flag("symmetric")
+        if "positive_definite" in op.flags:
+            self.add_flag("positive_definite")
+        if "unit_diagonal" in op.flags:
+            self.add_flag("unit_diagonal")
+
+        # Triangular flags swap sides
+        if "triangular_lower" in op.flags:
+            self.add_flag("triangular_upper")
+        if "triangular_upper" in op.flags:
+            self.add_flag("triangular_lower")
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        n_out, n_in = self.op.shape
+        return (n_in, n_out)
+
+    @property
+    def dtype(self) -> Any:
+        return self.op.dtype
+
+    def matvec(self, x: ArrayLike) -> Array:
+        # matvec of transpose is rmatvec of base
+        return self.op.rmatvec(x)
+
+    def rmatvec(self, x: ArrayLike) -> Array:
+        return self.op.matvec(x)
+
+    def matmat(self, X: ArrayLike) -> Array:
+        return self.op.rmatmat(X)
+
+    def rmatmat(self, X: ArrayLike) -> Array:
+        return self.op.matmat(X)
+
+    def to_dense(self) -> Array:
+        return self.op.to_dense().T
+
+
 # -----------------------------------------------------------------------------
-# Type Alises
+# Concrete linear operator subclasses
 # ----------------------------------------------------------------------------- 
 
-CholeskyFactor = TriangularLinOp | DiagonalLinOp
-CholeskyRepresentation = CholeskyLinOp | DiagonalRootLinOp
+class DenseLinOp(LinOp):
+    """A light wrapper around a two dimensional array.
+    
+    A LinearOperator that is represented by storing the complete dense array
+    representation of the operator. 
+    """
+
+    def __init__(self, arr: ArrayLike, copy: bool = True) -> None:
+        super().__init__()
+        self.array = _ensure_matrix(arr, copy=copy)
+        self._dtype = self.array.dtype
+        self.add_flag("dense")
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        return self.array.shape
+
+    @property
+    def dtype(self) -> Any:
+        return self._dtype
+    
+    @property
+    def is_dense(self) -> bool:
+        return True
+
+    def to_dense(self) -> Array:
+        return self.array
+
+
+class DiagonalLinOp(LinOp):
+    """Diagonal operator represented by a 1D array of diagonal entries."""
+
+    def __init__(self, diag: ArrayLike, copy: bool = True) -> None:
+        """`diag` may be higher-dimensional array, but will be flattened."""
+        super().__init__()
+        self.diagonal = _ensure_vector(np.asarray(diag).ravel(), copy=copy)
+        self._n = int(self.diagonal.size)
+        self._dtype = self.diagonal.dtype
+
+        self.add_flag("diagonal")
+        self.add_flag("symmetric")
+        if np.all(self.diagonal > 0):
+            self.add_flag("positive_definite")
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        return (self._n, self._n)
+
+    @property
+    def dtype(self) -> Any:
+        return self._dtype
+
+    def matvec(self, x: ArrayLike) -> Array:
+        x = _ensure_vector(x)
+        return self.diagonal * x
+
+    def rmatvec(self, x: ArrayLike) -> Array:
+        return self.matvec(x)
+
+    def matmat(self, X: ArrayLike) -> Array:
+        X = _ensure_matrix(X)
+        return X * self.diagonal[:, np.newaxis]
+
+    def rmatmat(self, X: ArrayLike) -> Array:
+        return self.matmat(X)
+
+    def to_dense(self) -> Array:
+        return np.diag(self.diagonal)
+
+    def solve(self, b: ArrayLike, **kwargs) -> Array:
+        """
+        For consistency with np.linalg.solve(), b can be (n,) or (n,k).
+        """
+        if np.any(self.diagonal == 0):
+            raise np.linalg.LinAlgError("Diagonal contains zero entries; not invertible.")
+
+        b = np.asarray(b)
+        if b.ndim < 2:
+            b = _ensure_vector(b, as_column=True)
+        b = _ensure_matrix(b, num_rows=self._n)
+
+        return b / self.diagonal[:, np.newaxis]
+
+    def cholesky(self, lower: bool = True, **kwargs) -> DiagonalLinOp:
+        """Note that `lower` has no effect on Cholesky decomposition of diagonal matrix"""
+        if np.any(self.diagonal <= 0):
+            raise np.linalg.LinAlgError("Diagonal has non-positive entries; cholesky not defined.")
+        return DiagonalLinOp(np.sqrt(self.diagonal))
+
+    def to_cholesky_representation(self, lower: bool = True, **kwargs) -> DiagonalRootLinOp:
+        return DiagonalRootLinOp(self.cholesky(lower=lower))
+
+    def diag(self) -> Array:
+        return self.diagonal.copy()
+
+    def logdet(self) -> float:
+        if np.any(self.diagonal <= 0):
+            raise np.linalg.LinAlgError("Non-positive diagonal entries; logdet undefined.")
+        return float(np.sum(np.log(self.diagonal)))
+
+
+class TriangularLinOp(LinOp):
+    """Triangular operator represented by lower or upper triangular matrix L (2D array).
+
+    The operator interprets stored matrix `tri` so that:
+      - if lower==True: stored tri is lower triangular and operator is L @ x
+      - if lower==False: stored tri is upper triangular and operator is U @ x
+    """
+
+    def __init__(self, tri: Array, *, lower: bool = True, copy: bool = True) -> None:
+        super().__init__()
+        tri = _ensure_square_matrix(tri, copy=copy)
+        self.tri = tri
+        self.lower = bool(lower)
+        self._n = self.tri.shape[0]
+        self._dtype = self.tri.dtype
+
+        if self.lower:
+            self.add_flag("triangular_lower")
+        else:
+            self.add_flag("triangular_upper")
+        # if strictly triangular with ones on diagonal, mark unit_diagonal
+        if np.allclose(np.diag(self.tri), 1.0):
+            self.add_flag("unit_diagonal")
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        return (self._n, self._n)
+
+    @property
+    def dtype(self) -> Any:
+        return self._dtype
+
+    def matvec(self, x: ArrayLike) -> Array:
+        x = _ensure_vector(x)
+        return self.tri @ x
+
+    def rmatvec(self, x: ArrayLike) -> Array:
+        x = _ensure_vector(x)
+        return self.tri.T @ x
+
+    def matmat(self, X: ArrayLike) -> Array:
+        X = _ensure_matrix(X)
+        return self.tri @ X
+
+    def rmatmat(self, X: ArrayLike) -> Array:
+        X = _ensure_matrix(X)
+        return self.tri.T @ X
+
+    def to_dense(self) -> Array:
+        return np.array(self.tri)
+
+    def solve(self, b: ArrayLike, *, unit_diagonal: bool = False,
+              overwrite_b: bool = False, check_finite: bool = True, **kwargs) -> Array:
+        """
+        Solve triangular system Lx=b or Ux=b. Optional arguments are forwarded
+        to scipy.solve_triangular.
+        """
+        b_arr = np.asarray(b)
+        if b_arr.ndim < 2:
+            b_arr = _ensure_vector(b_arr, as_column=True)
+        b_arr = _ensure_matrix(b_arr, num_rows=self._n)
+
+        return solve_triangular(self.tri, b_arr, lower=self.lower,
+                                unit_diagonal=unit_diagonal,
+                                overwrite_b=overwrite_b, check_finite=check_finite)
+
+
+class RootLinOp(LinOp):
+    """A linear operator A represented by its square root S such that A = S @ S.T
+       A is guaranteed to be symmetric positive semidefinite, but not necessarily 
+       positive definite."""
+
+    def __init__(self, root: LinOp | ArrayLike) -> None:
+        super().__init__()
+        self.root = _as_linear_operator(root)
+        self._n = self.root.shape[0]
+        self.add_flag("symmetric")
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        return (self._n, self._n)
+
+    @property
+    def dtype(self) -> Any:
+        return self.root.dtype
+
+    def matvec(self, x: ArrayLike) -> Array:
+        return self.root.matvec(self.root.rmatvec(x))
+
+    def rmatvec(self, x: ArrayLike) -> Array:
+        # Operator is symmetric
+        return self.matvec(x)
+
+    def matmat(self, X: ArrayLike) -> Array:
+        return self.root.matmat(self.root.rmatmat(X))
+
+    def rmatmat(self, X: ArrayLike) -> Array:
+        return self.matmat(X)
+    
+    def solve(self, b: ArrayLike, **kwargs) -> Array:
+        """Linear solve using forward backward substitution
+        
+        To compute A^{-1}b = (S @ S.T)^{-1}b first compute y = S^{-1}b
+        then S.T^{-1}y.
+        """
+        b = np.asarray(b)
+        if b.ndim < 2:
+            b = _ensure_vector(b, as_column=True)
+        b = _ensure_matrix(b, num_rows=self._n)
+
+        S = self.root.to_dense()
+        y = np.linalg.solve(S, b)
+        return np.linalg.solve(S.T, y)
+    
+    def diag(self) -> Array:
+        if isinstance(self.root, DiagonalLinOp):
+            return self.root.diagonal
+
+        S = self.root.to_dense()
+        return np.einsum('ij,ij->i', S, S)
+    
+    def trace(self) -> float:
+        if isinstance(self.root, DiagonalLinOp):
+            return np.sum(self.root.diagonal ** 2)
+
+        S = self.root.to_dense()
+        return np.sum(S**2)
+
+    def to_dense(self) -> Array:
+        S = self.root
+        return (S @ S.T).to_dense()
+
+
+class CholeskyLinOp(RootLinOp):
+    """A positive definite linear operator A represented by its lower 
+       L or upper L.T Cholesky factor such that A = L @ L.T"""
+
+    def __init__(self, root: TriangularLinOp) -> None:
+        if not isinstance(root, TriangularLinOp):
+            raise ValueError(
+                f"CholeskyLinOp requires `root` to be a TriangularLinOp object."
+                f"Got {type(root)}."
+            )
+
+        super().__init__(root)
+        self.add_flag("positive_definite")
+
+
+    def solve(self, b: ArrayLike, **kwargs) -> Array:
+        """Linear solve using forward backward triangular substitution
+        
+        To compute A^{-1}b = (L @ L.T)^{-1}b first compute y = L^{-1}b
+        then L.T^{-1}y.
+        """
+        b = np.asarray(b)
+        if b.ndim < 2:
+            b = _ensure_vector(b, as_column=True)
+        b = _ensure_matrix(b, num_rows=self._n)
+
+        S = self.root.to_dense()
+        y = solve_triangular(S, b, lower=self.root.lower)
+        return solve_triangular(S, y, trans=1, lower=self.root.lower)
+    
+
+    def cholesky(self, lower: bool = True, **kwargs) -> TriangularLinOp:
+        cholesky_factor = self.root
+        if lower == cholesky_factor.lower:
+            return cholesky_factor
+        else:
+            return cholesky_factor.T
+        
+    def to_cholesky_representation(self, lower: bool = True, **kwargs) -> CholeskyLinOp:
+        """ Returns a copy of `self` """
+        return CholeskyLinOp(self.cholesky(lower=lower))
+
+
+class DiagonalRootLinOp(DiagonalLinOp, RootLinOp):
+    """A linear operator A represented by its diagonal square root 
+       S = diag(s1, ..., sd) such that A = S @ S.T = diag(s1^2, ..., sd^2).
+       A is guaranteed to be symmetric positive semidefinite, and is strictly
+       positive definite if all entries of all of the si are non-zero."""
+    
+    def __init__(self, root: DiagonalLinOp) -> None:
+        if not isinstance(root, DiagonalLinOp):
+            raise ValueError(
+                f"DiagonalRootLinOp requires `root` to be a DiagonalLinOp object."
+                f"Got {type(root)}."
+            )
+
+        # Call DiagonalLinOp constructor
+        super().__init__(diag=root.diagonal ** 2)
+        self.root = root
+
+    def cholesky(self, lower: bool = True, **kwargs) -> DiagonalLinOp:
+        """Note that `lower` has no effect on Cholesky decomposition of diagonal matrix"""
+        if np.any(self.diagonal <= 0):
+            raise np.linalg.LinAlgError("Diagonal has non-positive entries; cholesky not defined.")
+        return DiagonalLinOp(self.root.diagonal)
+
+
+# -----------------------------------------------------------------------------
+# Type Aliases
+# ----------------------------------------------------------------------------- 
+
+LinOpLike: TypeAlias = LinOp | ArrayLike
+CholeskyFactor: TypeAlias = TriangularLinOp | DiagonalLinOp
+CholeskyRepresentation: TypeAlias = CholeskyLinOp | DiagonalRootLinOp

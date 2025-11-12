@@ -13,8 +13,12 @@ from typing import Any, TypeAlias
 
 from ..custom_types import Array, ArrayLike
 from ..array_backend.utils import _is_array, _ensure_matrix
-from .linop import LinOp, DenseLinOp, TriangularLinOp, DiagonalLinOp
-from .utils import _as_linear_operator, LinOpLike
+from .linear_operator import (
+    _as_linear_operator, 
+    LinOpLike,
+    CholeskyFactor
+)
+
         
 # -----------------------------------------------------------------------------
 # Expose LinOp methods as functions
@@ -35,7 +39,7 @@ def to_dense(A: LinOpLike) -> Array:
 def solve(A: LinOpLike, b: ArrayLike, **kwargs) -> Array:
     return _as_linear_operator(A).solve(b, **kwargs)
 
-def cholesky(A: LinOpLike, lower: bool = True, **kwargs) -> TriangularLinOp | DiagonalLinOp:
+def cholesky(A: LinOpLike, lower: bool = True, **kwargs) -> CholeskyFactor:
     return _as_linear_operator(A).cholesky(lower=lower, **kwargs)
 
 def logdet(A: LinOpLike) -> float:
