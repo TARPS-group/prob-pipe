@@ -20,8 +20,6 @@ from numpy import (
     floating as NumpyFloating,
 )
 
-T = TypeVar("T")
-
 Array = NumpyArray
 ArrayLike: TypeAlias = NumpyArrayLike
 Float: TypeAlias = NumpyFloating
