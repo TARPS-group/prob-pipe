@@ -3,14 +3,17 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-from probpipe.linalg.linop import (
-    DenseLinOp, DiagonalLinOp, TriangularLinOp,
-    RootLinOp, CholeskyLinOp
+from probpipe.linalg.linear_operator import (
+    DenseLinOp, 
+    DiagonalLinOp, 
+    TriangularLinOp,
+    RootLinOp, 
+    CholeskyLinOp,
 )
 
 from probpipe.linalg.operations import (
     logdet,
-    mah_dist_squared
+    mah_dist_squared,
 )
 
 # The full set of operations being tested
