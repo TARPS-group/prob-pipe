@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [ ci-test, main ]
+  pull_request:
+    branches: [ ci-test, main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest pytest-cov pylint
+
+      - name: Run pylint
+        run: |
+          pylint probpipe/core examples --fail-under=0.0
+
+      - name: Run tests with coverage
+        run: |
+          pytest -v --cov=probpipe/core --cov-report=term-missing --cov-report=xml --cov-report=html --cov-fail-under=0
+
+      - name: Upload coverage HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: htmlcov/
+

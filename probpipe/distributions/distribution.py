@@ -14,7 +14,6 @@ from ..linalg.linear_operator import LinOp, RootLinOp
 __all__ = [
     "Distribution",
     "EmpiricalDistribution",
-    "BootstrapDistribution",
 ]
 
 NumberT = TypeVar("NumberT", bound=Number)
@@ -24,44 +23,97 @@ NumberT = TypeVar("NumberT", bound=Number)
 
 class Distribution(Generic[NumberT], ABC):
     """
-    Abstract base class for any distribution class.
+    Abstract base class for probability distributions.
+
+    This class defines the general interface for any probabilistic
+    distribution implementation used within probpipe. Subclasses are
+    expected to implement methods for computing density, log-density,
+    sampling, and expectations.
+
+    Subclasses that cannot support a specific operation (e.g., sampling)
+    may leave that method unimplemented.
+
+    Type Variables:
+        T: Numeric data type (e.g., float or np.floating).
     """
 
     def sample(self, n_samples: int = 1) -> Array[NumberT]:
         """
-        Optional. If a subclass can’t sample, it may leave this unimplemented.
+        Samples data points from the distribution.
 
-        Sample n_samples items from the distribution.
-        Returns a ndarray of T.
+        This method may be optionally implemented by subclasses that
+        support random sampling. It returns `n_samples` draws from
+        the distribution.
+
+        Args:
+            n_samples: The number of samples to generate.
+
+        Returns:
+            An array containing `n_samples` draws from the distribution.
+
+        Raises:
+            NotImplementedError: If the subclass does not implement this method.
         """
         raise NotImplementedError("This method may be implemented by subclasses (optional)")
     
     def density(self, x: Array[NumberT]) -> Array[Float]:
         """
-        Optional. If a subclass can’t sample, it may leave this unimplemented.
+        Computes the probability density p(data) under this distribution.
 
-        Compute p(data) under this distribution.
-        Returns a ndarray of prob values reduced over event dims
-        (i.e., shape matching batch shape).
+        This method may be optionally implemented by subclasses that
+        can evaluate densities. The returned array corresponds to the
+        pointwise probability density values reduced over event
+        dimensions (i.e., matching the batch shape).
+
+        Args:
+            data: Input array of observations for which to compute densities.
+
+        Returns:
+            Probability density values for each input point.
+
+        Raises:
+            NotImplementedError: If the subclass does not implement this method.
         """
         raise NotImplementedError("This method may be implemented by subclasses (optional)")
     
     def log_density(self, x: Array[NumberT]) -> Array[Float]:
         """
-        Optional. If a subclass can’t sample, it may leave this unimplemented.
+        Computes the log-probability density log p(data).
 
-        Compute log p(data) under this distribution.
-        Returns a ndarray of log-prob values reduced over event dims
-        (i.e., shape matching batch shape).
+        This method may be optionally implemented by subclasses that
+        can evaluate log-densities. The returned array corresponds to
+        the pointwise log-probability values reduced over event
+        dimensions (i.e., matching the batch shape).
+
+        Args:
+            data: Input array of observations for which to compute log-densities.
+
+        Returns:
+            Log-probability values for each input point.
+
+        Raises:
+            NotImplementedError: If the subclass does not implement this method.
         """
         raise NotImplementedError("This method may be implemented by subclasses (optional)")
     
 
     def expectation(self, func: Callable[[Array[NumberT]], Array]) -> Distribution:
         """
-        Optional. If a subclass can’t sample, it may leave this unimplemented.
+        Computes the expectation of a function under this distribution.
 
-        Monte-Carlo sample from self, compute f(x) and return a Distribution over the mean of f.
+        This method may be optionally implemented by subclasses that can
+        perform Monte Carlo estimation. The result is typically a new
+        `Distribution` instance representing the mean of the function
+        applied to random samples drawn from this distribution.
+
+        Args:
+            func: A callable function f(x) to compute the expectation of.
+
+        Returns:
+            A distribution representing E[f(X)].
+
+        Raises:
+            NotImplementedError: If the subclass does not implement this method.
         """
 
         raise NotImplementedError("This method may be implemented by subclasses (optional)")

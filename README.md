@@ -1,66 +1,157 @@
-# Probabilistic Pipeline Dev
+# Documentation
 
+## Overview of the Project & Goals
+ProbPipe is a Python-based workflow management system for probabilistic modeling and uncertainty quantification (UQ). Its core vision is to enable scientists and engineers to construct, compose, and execute probabilistic data-analysis pipelines in a modular and trustworthy way. Treating "distributions in → distributions out" as the central organizing principle.
 
-The core files of this project live under probpipe/core directory. 
+### Motivation
+Modern scientific and engineering workflows increasingly rely on quantifying and propagating uncertainty, especially in domains such as data assimilation, state-space modeling, and Bayesian inference. Moreover, these workflows are growing increasingly complex. There are many tools for specific aspects of the workflow, but putting them all together is challenging. While there are many ML/AI workflow management tools available (Apache Airflow, Orchestra, Prefect, Flyte, etc.), they are low-level frameworks designed for SWEs, not scientists. ProbPipe aims to provide a workflow management system specifically for probabilistic modeling, learning, and prediction, where users can take advantage of existing tools for statistical inference, validation, and learning.  It provides a simple, module-based interface for creating workflows abstracts away complexity while remaining fully extensible for advanced users. 
+Ultimately, ProbPipe aims to serve as a general foundation for uncertainty-aware computation pipelines, bridging probabilistic modeling, data assimilation, and scientific machine learning.
 
-## distributions.py
-consist of some distribution classes. The Distribution class is the abstract base class. You can see other distribution classes inside this file like EmpiricalDistribution and BootstrapDistribution. 
+### Design Goals
+- **Uncertainty Quantification Built-In:** ProbPipe explicitly tracks uncertainty propagation, enabling distribution-aware computation across all modules.
+- **Scalable and Multi-Scale:** The architecture enforces compositionality, where complex workflows can be built from simpler, independent components while providing automatic parallelization where possible. 
+- **Easy to Deploy:** ProbPipe can seemlessly deploy across platforms, whether it's a laptop for initial development, a HPC cluster for academic projects, or a cloud service provide for scalability and redundency. 
+- **Flexible yet User-Friendly:** Users can operate at a high level of abstraction, while advanced functionality remains accessible for expert customization.
+- **Trustworthy Execution:** Validity of the workflow is checked at the start, reducing runtime errors and improving reliability.
 
-## multivariate.py
-consist of other abstract class called Multivariate. Note that Multivariate doesn't imply the high-dimensionality. Instead it is more like a type. You can see the distributions with density inside this file. 
-Please take a look at docs/notebooks/Distributions.ipynb to understand how the distribution classes and their methods work. 
+### Key Features
+- **Composable Architecture:** Every computational unit ("module") is built from smaller probabilistic primitives, allowing infinite composability of models and workflows.
+- **Distributions as First-Class Objects:** Modules can consume and emit probability distributions, even if they were implemented using scalar inputs or outputs, makign it easy to propogate and account for uncertainty across complete workflows. 
+- **Algorithmic-Level Operation:** Workflows are defined in terms of algorithmic components (sampling, inference, transformation), improving scalability and conceptual clarity.
+- **Seamless Conversion and Data Handling:** The system automatically manages conversions between distributional representations preferred by different algorithms, streamlining code and improving clarity.
 
-## module.py
-is an example of a basic standard module class. The core of this file is the run_func function: You can see what our run decorator deals with. In a high-level overview, it does the following:
-1) Ensures that required dependencies are registered.
-2) Ensures that required inputs are satisfied.
-3) Checks the if run parameters have the correct type. If not, it handles the automatic type conversion.
+## Installation Instructions
+### Prerequisites
+Before installing ProbPipe, make sure you have:
+- Conda (Anaconda or Miniconda) installed
+- Python ≥ 3.8 (the recommended version for full compatibility)
 
-Important things to know: 
-1) The required inputs are inferred from the signature of the run function. In the background each input is stored as an instance of InputSpec class which has three parameters: type, required, and default. If the user specifies the type of the parameter then the type of InputSpec is set accordingly. If the user sets a default value, then we treat that input as not required (required= False). But, if user doesn't set a default value for that parameter we treat it as a required input.
+You can verify Conda is available by running:
 
-2) Almost every distribution class has the from_distribution method. We are using this method to deal with the distribution conversion. Briefly, from_distribution samples from "convert_from" distribution and calculates an estimate of parameters from the sample. At the end it returns the distribution class that the from_distribution part of. There is also another way of doing the type conversion: GaussianKDE deduced from "convert_from" distribution (this not implemented yet). 
+```bash
+conda --version
+```
 
-We have created two examples inside probpipe directory to show how one can create basic modules: example_mcmc.py (core/mcmc.py) and example_module.py
+If you don’t have Conda yet, download and install [Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/main) or [Anaconda](https://www.anaconda.com/download).
 
-Let's take a look at one example:
+### Create a Conda Environment
+We recommend creating an isolated environment for ProbPipe to avoid dependency conflicts with other Python projects.
 
-## example_module.py
-In this example, we implemented a single Gaussian Posterior update block. 
-Let's look at the constructor:
+```bash
+conda create -n probpipe python=<python_version>
+conda activate probpipe
+```
+Note: python_version has to be ≥ 3.8
 
-The user doesn't have to set inputs manually. But, if they still want to, they can do it by calling the set_inputs method.
+### Clone and Install from Source
+Next, clone the repository and install the package inside your Conda environment:
 
-self._conv_num_samples is the attribute to set the number of samples you want to take from "convert_from" distributio in from_distribution method to do the type conversion. 
+```bash
+git clone https://github.com/TARPS-group/prob-pipe.git
+cd prob-pipe
+pip install -e .
+```
 
-self._conv_by_kde is for selecting the method the user wants to choose to do the type conversion. If self._conv_by_kde=True, then type conversion is made via GaussianKDE.
+This installs the core dependencies listed in ```setup.py```:
+- ```numpy ≥ 1.20```
+- ```scipy ≥ 1.7```
+- ```prefect ≥ 3.4```
+- ```makefun ≥ 1.16```
 
-self.run_func() is for registering the run function. It optionally takes the as_task parameter which users can use to decide if they want to treat the run function as a task or flow (to understand the difference please look at Prefect task and flow definitions). 
+### (Optional) Install Developer Tools
 
-## Notes for Prefect 
-To start the prefect engine, open up a fresh terminal and type:
-**prefect server start**
+```bash
+pip install -e .[dev]
+```
 
-Then, go back to the terminal where you run the code, and type:
-**prefect config set PREFECT_API_URL=http://127.0.0.1:4200/api**
+This will include:
+- **pytest** – for testing
+- **sphinx, nbsphinx** – for documentation
+- **black, flake8** – for linting and formatting
 
-You can paste "http://127.0.0.1:4200" in your browser to see the Prefect interface in the server side. 
+### Verify Installation
+You can check whether the installation succeeded by running:
 
-Now, when you run a task or flow you can see the details in the Prefect interface. 
+```bash
+python -c "import probpipe; print(probpipe.__version__)"
+```
 
-But, you may run into problems if you set as_task as False, meaning you are treating your run function as flow. You may run into a problem if type conversion will be happening. Prefect flows automatically validate their inputs before it runs the function. So, you would get an error before our code even attempts for an conversion. So, if that's the problem you are facing just set validate_parameters as False. validate_parameters is the parameter of the flow function (see flow(validate_parameters=False)(wrapper) in module.py)
+Expected output:
+```
+0.1.0
+```
 
-## How to set the environment to run the code. 
-You can either use a virtual or conda environment. 
-We have listed the minimum required dependencies for you inside min_reqs.txt. 
-You can run every file inside probpipe directory using these dependencies. 
-Follow these steps to create the environment needed to run the code:
+### Updating Dependencies
+If your environment is missing system-level libraries (e.g., libffi, libgcc, etc.), Conda can easily fix these:
 
-**conda create -n <name_of_the_env> -c conda-forge python=3.12.11 -y**
-**conda activate <name_of_the_env>**
-**pip install -e .[dependencies]**
+```bash
+conda install -c conda-forge numpy scipy prefect makefun
+```
 
-Make sure you have the "pyproject.toml" file in your directory. 
+Then re-run:
+```
+pip install -e .
+```
+
+## Example Usage
+This example demonstrates how to combine Prior, Likelihood, and MetropolisHastings modules with the MCMC class to estimate a posterior distribution over a scalar parameter θ: the mean of a Normal distribution with known standard deviation.
+
+### Step 1: Generating synthetic data
+
+```python
+import numpy as np
+from mcmc import Likelihood, Prior, MetropolisHastings, MCMC
+from multivariate import Normal1D
+
+np.random.seed(42)
+true_mu = 2.5
+sigma = 1.0
+data = np.random.normal(loc=true_mu, scale=sigma, size=50)
+```
+
+### Step 2: Defining prior and likelihood distributions
+
+```python
+# Prior: Normal(0, 5)
+prior_dist = Normal1D(mu=0.0, sigma=5.0)
+# Likelihood base distribution: Normal(μ, 1.0)
+likelihood_dist = Normal1D(mu=0.0, sigma=sigma)
+```
+
+### Step 3: Creating module instances
+Each component (Prior, Likelihood, Sampler) is instantiated independently, then composed inside the MCMC module.
+
+```python
+prior = Prior(distribution=prior_dist)
+likelihood = Likelihood(distribution=likelihood_dist)
+sampler = MetropolisHastings()
+```
+
+### Step 4: Build and run the MCMC workflow
+The MCMC module internally builds a log_target function combining prior and likelihood log-densities.
+
+```python
+mcmc = MCMC(prior=prior, likelihood=likelihood, sampler=sampler)
+
+posterior = mcmc.calculate_posterior(
+    num_samples=2000,
+    initial_param=0.0,
+    data=data,
+    proposal_std=0.5,
+)
+
+# Summarizing posterior results
+print(f"Posterior mean (estimate of μ): {posterior.mu:.3f}")
+print(f"Posterior std: {posterior.sigma:.3f}")
+```
+
+After sampling, it returns a Normal1D summary object representing the posterior mean and uncertainty of the parameter.
+
+**Expected outcome:**
+With synthetic data generated around μ=2.5, you should see a posterior mean close to 2.5 and a standard deviation reflecting posterior uncertainty.
+
+## Pointer to Further Documentation 
+to be created soon...
 
 
 
