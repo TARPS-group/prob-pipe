@@ -3,7 +3,7 @@ import numpy as np
 from scipy.linalg import cholesky
 import pytest
 
-from probpipe.linalg.linop import (
+from probpipe.linalg.linear_operator import (
     DenseLinOp, DiagonalLinOp, TriangularLinOp, TransposedLinOp,
     ProductLinOp, SumLinOp, ScaledLinOp, ALLOWED_FLAGS
 )
