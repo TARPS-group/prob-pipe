@@ -7,7 +7,6 @@ import numpy as np
 from .module import Module, InputSpec
 from .distributions import Distribution, EmpiricalDistribution
 from numpy.typing import NDArray
-from probpipe import Distribution
 
 
 __all__ = [

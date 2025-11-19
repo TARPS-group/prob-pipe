@@ -1,7 +1,7 @@
 from .module import Module, InputSpec
 from types import SimpleNamespace
 from contextlib import contextmanager
-from typing import Dict, Callable, Optional, Type
+from typing import Dict, Callable, Optional, Type, Union
 
 class WorkFlow:
     """Factory for creating dynamically-generated Module classes with a single run function.
@@ -27,7 +27,7 @@ class WorkFlow:
         *,
         name: Optional[str] = None,
         as_task: bool = True,
-    ) -> Type[Module] or Callable:
+    ) -> Union[Type[Module], Callable]:
         def decorator(func: Callable) -> Type[Module]:
             run_name = name or func.__name__
 

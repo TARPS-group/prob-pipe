@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from probpipe import EmpiricalDistribution
+from probpipe.core.distributions import EmpiricalDistribution
 
 @pytest.fixture
 def rng():
