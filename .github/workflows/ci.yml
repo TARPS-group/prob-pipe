@@ -27,11 +27,11 @@ jobs:
 
       - name: Run pylint
         run: |
-          pylint probpipe/core examples --fail-under=0.0
+          pylint probpipe --fail-under=0.0
 
       - name: Run tests with coverage
         run: |
-          pytest -v --cov=probpipe/core --cov-report=term-missing --cov-report=xml --cov-report=html --cov-fail-under=0
+          pytest -v --cov=probpipe --cov-report=term-missing --cov-report=xml --cov-report=html --cov-fail-under=0
 
       - name: Upload coverage HTML report
         if: always()
