@@ -1,4 +1,4 @@
-# tests/linalg/test_utils.py
+# tests/linalg/test_linalg_utils.py
 import numpy as np
 import pytest
 

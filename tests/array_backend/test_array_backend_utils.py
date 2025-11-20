@@ -1,4 +1,4 @@
-# tests/array_backend/test_utils.py
+# tests/array_backend/test_array_backend_utils.py
 import numpy as np
 import pytest
 
