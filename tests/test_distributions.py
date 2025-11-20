@@ -2,6 +2,7 @@
 import numpy as np
 import pytest
 
+from probpipe.distributions import Distribution
 from probpipe import EmpiricalDistribution
 
 # Conditional imports
@@ -34,20 +35,25 @@ requires_gaussian = pytest.mark.skipif(
     Gaussian is None, reason="Gaussian not available."
 )
 
+requires_empirical = pytest.mark.skipif(
+    EmpiricalDistribution is None, reason="EmpiricalDistribution not available."
+)
 
 # Initialization tests: EmpiricalDistribution
 # --------------------------------------------------------------------
 
+@requires_empirical
 def test_init_with_uniform_weights(simple_samples):
     ed = EmpiricalDistribution(simple_samples)
     n, d = simple_samples.shape
 
     assert ed.n == n
-    assert ed.d == d
+    assert ed.dim == d
     np.testing.assert_allclose(ed.weights, np.ones(n) / n)
     assert np.allclose(ed.mean(), np.mean(simple_samples, axis=0))
 
 
+@requires_empirical
 def test_init_with_custom_weights(simple_samples, simple_weights):
     ed = EmpiricalDistribution(simple_samples, simple_weights)
     assert np.isclose(ed.weights.sum(), 1.0)
@@ -55,6 +61,7 @@ def test_init_with_custom_weights(simple_samples, simple_weights):
     np.testing.assert_allclose(ed.mean(), (simple_samples.T @ ed.weights).ravel())
 
 
+@requires_empirical
 @pytest.mark.parametrize("bad_weights", [
     np.array([-0.1, 0.5, 0.6]),   # negative
     np.array([0.0, 0.0, 0.0]),    # zero sum
@@ -69,6 +76,7 @@ def test_init_raises_with_invalid_weights(simple_samples, bad_weights):
 # Sampling behavior: EmpiricalDistribution
 # --------------------------------------------------------------------
 
+@requires_empirical
 def test_sample_with_replacement(simple_samples):
     ed = EmpiricalDistribution(simple_samples)
     n, d = simple_samples.shape
@@ -78,10 +86,11 @@ def test_sample_with_replacement(simple_samples):
     assert np.all(np.isin(draws, simple_samples))
 
 
+@requires_empirical
 def test_sample_without_replacement(simple_samples):
     ed = EmpiricalDistribution(simple_samples)
     draws = ed.sample(ed.n, replace=False)
-    assert draws.shape == (ed.n, ed.d)
+    assert draws.shape == (ed.n, ed.dim)
     assert np.unique(draws, axis=0).shape[0] == ed.n
 
     # Sampling more than n points should raise
@@ -90,18 +99,20 @@ def test_sample_without_replacement(simple_samples):
 
     # Sampling with replacement can exceed n
     draws_replace = ed.sample(ed.n * 2, replace=True)
-    assert draws_replace.shape == (ed.n * 2, ed.d)
+    assert draws_replace.shape == (ed.n * 2, ed.dim)
 
 
 
 # Density / log-density not implemented: EmpiricalDistribution
 # --------------------------------------------------------------------
 
+@requires_empirical
 def test_density_not_implemented(simple_samples):
     ed = EmpiricalDistribution(simple_samples)
     with pytest.raises(NotImplementedError):
         ed.density(np.array([[1.0]]))
 
+@requires_empirical
 def test_log_density_not_implemented(simple_samples):
     ed = EmpiricalDistribution(simple_samples)
     with pytest.raises(NotImplementedError):
@@ -112,6 +123,8 @@ def test_log_density_not_implemented(simple_samples):
 # Expectation estimation: EmpiricalDistribution
 # --------------------------------------------------------------------
 
+@requires_normal1d
+@requires_empirical
 def test_expectation_returns_normal1d(simple_samples):
     ed = EmpiricalDistribution(simple_samples)
     f = lambda x: x.ravel() ** 2
@@ -120,6 +133,8 @@ def test_expectation_returns_normal1d(simple_samples):
     assert out.mu > 0
     assert out.sigma > 0
 
+@requires_mvnormal
+@requires_empirical
 def test_expectation_returns_mvnormal():
     # Create an arbitrary 2D dataset
     X = np.stack([np.arange(5.0), np.arange(5.0, 10.0)], axis=1)  # (5, 2)
@@ -143,6 +158,7 @@ def test_expectation_returns_mvnormal():
 # from_distribution: EmpiricalDistribution
 # --------------------------------------------------------------------
 
+@requires_empirical
 def test_from_distribution_uses_sample():
     # Defining a dummy distribution returning constant samples
     class DummyDist:
@@ -151,6 +167,10 @@ def test_from_distribution_uses_sample():
 
         def sample(self, n):
             return np.full((n, 1), self.constant, dtype=float)
+        
+        @classmethod
+        def from_distribution(cls, other, **fit_kwargs):
+            raise NotImplementedError
 
     num_samples = 8
     constant_val = 4.2
@@ -395,7 +415,7 @@ def test_gaussian_log_density_matches_density(mean, cov_matrix, rng):
     np.testing.assert_allclose(logd, np.log(d), rtol=1e-10, atol=1e-10)
 
 
-class DummyDist:
+class DummyDist(Distribution):
     def __init__(self, mean, cov, rng=None):
         self.mean = np.asarray(mean)
         self.cov = np.asarray(cov)
@@ -405,6 +425,10 @@ class DummyDist:
     def sample(self, n):
         L = np.linalg.cholesky(self.cov)
         return self.mean + self.rng.normal(size=(n, self.dim)) @ L.T
+    
+    @classmethod
+    def from_distribution(cls, other, **fit_kwargs):
+        raise NotImplementedError
 
 
 @pytest.fixture
