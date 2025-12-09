@@ -1,0 +1,66 @@
++----------------------- +
+|        Module          |
+|----------------------- |
+| - groups multiple Node |
+| - tracks workflow      |
+| - manages DAG deps     |
+| - aggregates deps      |
+|                        |
+|  +-----------------+   |
+|  |     Node 1      |   |
+|  |-----------------|   |
+|  | - has dependencies| |
+|  | - frozen deps    |  |
+|  | - workflow funcs |  |
+|  +-----------------+   |
+|                        |
+|  +-----------------+   |
+|  |     Node 2      |   |
+|  |-----------------|   |
+|  | - has dependencies| |
+|  | - frozen deps    |  |
+|  | - workflow funcs |  |
+|  +-----------------+   |
++----------------------- +
+
+Each Node:
++-----------------------+
+|         Node          |
+|-----------------------|
+| - dependencies (frozen)|
+| - checks dependencies  |
+| - exposes workflow funcs|
+|                       |
+|   +-----------------+ |
+|   |WorkflowFunction | |
+|   |-----------------| |
+|   | - wraps func    | |
+|   | - converts data | |
+|   | - validates     | |
+|   +-----------------+ |
++-----------------------+
+
+WorkflowFunction can belong to both Node or Module:
+    +--------------------+
+    | WorkflowFunction    |
+    +--------------------+
+    | - wraps a function  |
+    | - data conversion   |
+    | - type validation   |
+    +--------------------+
+
+Execution Flow:
+Module (manages group)
+    ↓
+     ──► Node (unit of work with dependencies)
+            ↓
+             ──► WorkflowFunction (actual executable function)
+
+Dependency Flow:
+External Dependencies
+    ↓
+Module (passes / aggregates dependencies)
+    ↓
+Node (consumes dependencies)
+    ↓
+WorkflowFunction (uses dependencies internally)
