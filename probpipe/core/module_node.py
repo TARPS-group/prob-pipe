@@ -1,113 +1,77 @@
-from __future__ import annotations
-from typing import Callable, Dict, Any, Optional
+from typing import Dict, Set
+from prefect import flow
+from probpipe.core.workflow_node import WorkflowNode, Node
+import inspect
+from typing import get_type_hints
+from probpipe.viz.dag import visualize_module_dag
 
-from node import Node
-from workflow_node import WorkflowFunctionNode
+
+__all__ = ["ModuleNode"]
 
 
 class ModuleNode(Node):
     """
-    A ModuleNode is a stateful node that:
-      - contains multiple WorkflowFunctionNodes
-      - exposes shared state to all functions
-      - determines its dependencies as the union of all child workflow funcs
-      - passes itself as the first argument to every workflow function
-
-    Conceptually: this is the Module in the new architecture.
+    Container for workflow nodes with shared inputs and child nodes.
     """
 
     def __init__(
         self,
-        *, 
-        # Node dependencies (other modules or workflow nodes)
-        dependencies: Optional[Dict[str, Node]] = None,
-        # Shared module state (very flexible for now)
-        state: Optional[Dict[str, Any]] = None
+        *,
+        child_nodes: Dict[str, Node],
+        inputs: Dict[str, object],
+        prefect_kind: str | None = None,
     ):
-        super().__init__(dependencies=dependencies)
+        self._prefect_kind = prefect_kind
 
-        # Shared mutable state
-        self.state: Dict[str, Any] = state or {}
-
-        # Registered workflow functions belonging to this module
-        self._workflow_funcs: Dict[str, WorkflowFunctionNode] = {}
-
-        # recomputing module dependencies as union of children workflow-func dependencies
-        self._recompute_dependencies()
-
-
-    # Workflow Function Registration
-
-    def add_workflow_function(
-        self,
-        name: str,
-        func: Callable,
-        local_conversion_rules: Optional[Dict] = None,
-        global_conversion_rules: Optional[Dict] = None,
-    ) -> None:
-        """
-        Registers a workflow function as a WorkflowFunctionNode.
-
-        The function signature must follow:
-            def f(module, ...)  # module = this ModuleNode (self)
-        """
-
-        if not callable(func):
-            raise TypeError("Workflow function must be callable")
-
-        if name in self._workflow_funcs:
-            raise RuntimeError(f"Workflow function '{name}' already exists in this module")
-
-        wf = WorkflowFunctionNode(
-            func=func,
-            parent_module=self,
-            local_conversion_rules=local_conversion_rules,
-            global_conversion_rules=global_conversion_rules,
+        super().__init__(
+            child_nodes=child_nodes,
+            inputs=inputs,
         )
 
-        self._workflow_funcs[name] = wf
+        self._build_workflows()
 
-        # Updating module dependencies based on all workflow functions
-        self._recompute_dependencies()
-
-
-    # Running Workflow Functions
-
-    def run(self, name: str, **kwargs):
+    def _build_workflows(self):
         """
-        Execute a registered workflow function by name.
-        self is automatically passed as the first argument (f(module, ...)).
-
-        Returns whatever the workflow function returns (eg, Distribution).
+        Replace @wf methods with WorkflowNode instances.
         """
-        if name not in self._workflow_funcs:
-            raise RuntimeError(f"No workflow function '{name}' registered")
+        for attr_name in dir(self):
+            attr = getattr(self, attr_name)
+            if not callable(attr) or not getattr(attr, "_is_workflow", False):
+                continue
 
-        wf = self._workflow_funcs[name]
+            func = attr
 
-        # Calling WorkflowFunctionNode.evaluate()
-        return wf.evaluate(self, **kwargs)
+            sig = inspect.signature(func)
+            hints = get_type_hints(func)
 
+            child_nodes = {}
+            inputs = {}
 
-    # Internal Logic
+            for name, param in sig.parameters.items():
+                if name == "self":
+                    continue
 
-    def _recompute_dependencies(self):
-        """
-        Combine dependencies from all workflow functions + module-level deps.
-        """
-        combined = {}
+                ann = hints.get(name)
 
-        # Including dependencies passed at module construction
-        for k, v in self.dependencies.items():
-            combined[k] = v
+                if isinstance(ann, type) and issubclass(ann, Node):
+                    if name not in self.child_nodes:
+                        raise TypeError(
+                            f"Workflow '{func.__name__}' expects child node '{name}', "
+                            f"but it was not provided to ModuleNode")
+                    child_nodes[name] = self.child_nodes[name]
+                else:
+                    if name in self.inputs:
+                        inputs[name] = self.inputs[name]
 
-        # Including union of dependencies of all workflow functions
-        for wf in self._workflow_funcs.values():
-            for k, v in wf.dependencies.items():
-                combined[k] = v
+            wf_node = WorkflowNode(
+                func=func,
+                child_nodes=child_nodes,
+                inputs=inputs,
+                prefect_kind=self._prefect_kind,
+                name=f"{self.__class__.__name__}.{func.__name__}",)
 
-        self.dependencies = combined
+            setattr(self, attr_name, wf_node)
 
-
-    def __repr__(self):
-        return f"<ModuleNode funcs={list(self._workflow_funcs.keys())} deps={list(self.dependencies.keys())}>"
+    def dag(self):
+        """Return a Graphviz DAG visualization of this module."""
+        return visualize_module_dag(self)

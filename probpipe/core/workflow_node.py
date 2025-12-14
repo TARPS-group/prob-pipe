@@ -1,132 +1,209 @@
-from __future__ import annotations
-from typing import Callable, Dict, Any, Optional, get_type_hints
+from abc import ABC
+from functools import wraps
+from typing import Any, Callable, Dict, Mapping, Union, get_type_hints
 import inspect
+from types import MappingProxyType
 
 from prefect import task, flow
 
-from node import Node
-from distributions import Distribution, EmpiricalDistribution
-from multivariate import Multivariate
+# THIS WILL BE CHANGED; just for implementing the template of conversion logic
+from probpipe import Distribution, EmpiricalDistribution, Multivariate
+DISTRIBUTION_TYPES = (Distribution, EmpiricalDistribution, Multivariate)
 
-# Reuse the same notions as in Module
-_DISTR_BASE = (Distribution, Multivariate)
-_DISTR_INST = (Distribution, Multivariate, EmpiricalDistribution)
+__all__ = ["InputFrozenError", "wf", "FreezableDict", "Node", "WorkflowNode", ]
 
-class WorkflowFunctionNode(Node):
+class InputFrozenError(Exception):
+    pass
+
+
+def wf(func: Callable):
+    func._is_workflow = True
+    return func
+
+
+class FreezableDict(dict):
+    """Dict that raises if updated after freezing."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._frozen = False
+
+    def freeze(self):
+        self._frozen = True
+
+    def __setitem__(self, key, value):
+        if self._frozen:
+            raise InputFrozenError("Cannot modify inputs after frozen.")
+        super().__setitem__(key, value)
+
+    def __delitem__(self, key):
+        if self._frozen:
+            raise InputFrozenError("Cannot delete inputs after frozen.")
+        super().__delitem__(key)
+
+
+class Node(ABC):
     """
-    Node that wraps a single 'workflow function' (dist-in, dist-out, etc.)
-    and provides automatic distribution conversion based on type hints.
+    Base DAG unit.
 
-    - Stateless by design: no internal state, just function + conversion rules.
-    - Dependencies are other Nodes in the DAG (their outputs can be used as inputs).
+    A Node:
+    - has child nodes (other Nodes it is allowed to call)
+    - has inputs (non-Node values)
+    - knows nothing about execution, prefect, or workflow functions
     """
 
     def __init__(
         self,
-        name: str,
-        func: Callable,
-        dependencies: Dict[str, Node],
-        as_task: bool = True,
-        conversion_num_samples: int = 1024,
-        conversion_by_KDE: bool = False,
-        conversion_fit_kwargs: Optional[dict] = None,
+        *,
+        child_nodes: Dict[str, "Node"] | None = None,
+        inputs: Dict[str, Any] | None = None,
     ):
-        super().__init__(name=name or func.__name__, dependencies=dependencies)
+        child_nodes = child_nodes or {}
+        inputs = inputs or {}
 
-        self.func = func
+        # validates child nodes 
+        for name, node in child_nodes.items():
+            if not isinstance(node, Node):
+                raise TypeError(
+                    f"Child node '{name}' must be a Node, got {type(node)}"
+                )
+
+        # validates inputs 
+        for name, value in inputs.items():
+            if isinstance(value, Node):
+                raise TypeError(
+                    f"Input '{name}' is a Node; Nodes must be declared as child_nodes"
+                )
+
+        # freezing internal state
+        self._child_nodes = MappingProxyType(dict(child_nodes))
+        self._inputs = MappingProxyType(dict(inputs))
+
+    # public read-only views
+
+    @property
+    def child_nodes(self) -> Mapping[str, "Node"]:
+        return self._child_nodes
+
+    @property
+    def inputs(self) -> Mapping[str, Any]:
+        return self._inputs
+    
+
+
+class WorkflowNode(Node):
+    """
+    A single executable DAG node wrapping exactly one function.
+    """
+
+    def __init__(
+        self,
+        *,
+        func: Callable,
+        child_nodes: Dict[str, Node],
+        inputs: Dict[str, Any],
+        prefect_kind: str | None = None,   # "task" or "flow" or None
+        name: str | None = None,
+    ):
+        self._func = func
         self._sig = inspect.signature(func)
         self._hints = get_type_hints(func)
-        self.as_task = as_task
+        self._prefect_kind = prefect_kind
+        self._name = name or func.__name__
 
-        # Conversion parameters (same semantics as Module)
-        self._conv_num_samples = conversion_num_samples
-        self._conv_by_kde = conversion_by_KDE
-        self._conv_fit_kwargs = conversion_fit_kwargs or {}
-
-        self._prefect_object = (
-            task(func=self._execute)
-            if as_task
-            else flow(validate_parameters=False)(self._execute)
+        super().__init__(
+            child_nodes=child_nodes,
+            inputs=inputs,
         )
 
-    def _execute(self, **kwargs):
-        """Actual Python execution: dependency injection + type conversion + call."""
-        bound = self.sig.bind_partial(**kwargs)
-        bound.apply_defaults()
-        arguments = bound.arguments
+        self._validate_declared_inputs()
 
-        # inject dependencies as node results 
-        # dependencies have already produced their outputs via DAG execution layer
-        for dep_name, dep_node in self.dependencies.items():
-            if dep_name in self.sig.parameters:
-                arguments[dep_name] = dep_node.last_result  # DAG runner will set this
+    # validation
 
-        # Automatic distribution conversion 
-        for pname, val in arguments.items():
-            expected = self.hints.get(pname)
+    def _validate_declared_inputs(self):
+        """
+        Ensure all declared child_nodes + inputs correspond
+        to parameters of the function.
+        """
+        param_names = {p for p in self._sig.parameters if p != "self"}
 
+        declared = set(self.child_nodes).union(set(self.inputs))
+        unknown = declared - param_names
+
+        if unknown:
+            raise TypeError(f"Workflow '{self._name}' received unknown inputs {unknown}")
+
+    # execution
+
+    def __call__(self, **call_inputs):
+        bound = self._bind_inputs(call_inputs)
+        bound = self._convert_distributions(bound)
+
+        if self._prefect_kind == "task":
+            return self._run_as_task(bound)
+        if self._prefect_kind == "flow":
+            return self._run_as_flow(bound)
+
+        return self._call_python(bound)
+
+    def _bind_inputs(self, call_inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Merge construction-time inputs with call-time inputs.
+        """
+        values = {}
+
+        # child nodes (always present)
+        values.update(self.child_nodes)
+
+        # construction-time inputs
+        values.update(self.inputs)
+
+        # call-time inputs
+        for k, v in call_inputs.items():
+            if k in self.child_nodes:
+                raise TypeError(f"Child node '{k}' cannot be passed at call time")
+            values[k] = v
+
+        # validate missing required params
+        for name, param in self._sig.parameters.items():
+            if name == "self":
+                continue
+            if param.default is param.empty and name not in values:
+                raise TypeError(f"Missing required input '{name}' for workflow '{self._name}'")
+
+        return values
+
+    def _convert_distributions(self, values: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert distributions based on type hints.
+        """
+        out = dict(values)
+
+        for name, value in values.items():
+            expected = self._hints.get(name)
             if expected is None:
                 continue
 
-            if self._is_distribution_type(expected):
-                arguments[pname] = self._convert_distribution(pname, val, expected)
+            if (isinstance(expected, type) and issubclass(expected, Distribution) 
+                and isinstance(value, DISTRIBUTION_TYPES) 
+                and not isinstance(value, expected)
+            ):
+                out[name] = expected.from_distribution(value)
 
-            else:
-                # plain type check (int, float, NDArray…)
-                if isinstance(expected, type) and not isinstance(val, expected):
-                    raise TypeError(
-                        f"Argument '{pname}' must be {expected.__name__}, got {type(val).__name__}"
-                    )
+        return out
 
-        # Call the user function
-        result = self.func(**arguments)
+    def _call_python(self, values: Dict[str, Any]):
+        return self._func(**values)
 
-        # Optionally convert output here as well (future extension)
-        return result
+    def _run_as_task(self, values):
+        @task(name=self._name)
+        def wrapped():
+            return self._call_python(values)
 
-    def _is_distribution_type(self, tp):
-        return (
-            isinstance(tp, type)
-            and (tp in _DISTR_BASE or issubclass(tp, _DISTR_BASE))
-        )
+        return wrapped()
 
-    def _convert_distribution(self, name, value, expected):
-        """Convert between distribution types using .from_distribution()"""
-        if isinstance(value, expected):
-            return value
+    def _run_as_flow(self, values):
+        @flow(name=self._name)
+        def wrapped():
+            return self._call_python(values)
 
-        # expected is a parametric distribution subclass => convert
-        if expected not in _DISTR_BASE and issubclass(expected, _DISTR_BASE):
-            if not isinstance(value, _DISTR_INST):
-                raise TypeError(
-                    f"Argument '{name}' expected a distribution, got {type(value).__name__}"
-                )
-
-            return expected.from_distribution(
-                value,
-                num_samples=self.num_samples,
-                conversion_by_KDE=self.use_kde,
-                **self.fit_kwargs,
-            )
-
-        # base class distribution => accept raw
-        if not isinstance(value, _DISTR_INST):
-            raise TypeError(
-                f"Argument '{name}' expected distribution-like; got {type(value).__name__}"
-            )
-
-        return value
-
-
-    def compute(self, **kwargs):
-        """
-        Delegates to Prefect layer.
-        The DAG executor will call node.compute() and store node.last_result.
-        """
-        result = self._prefect_object(**kwargs)
-        self.last_result = result
-        return result
-    
-
-    
-
+        return wrapped()
