@@ -1,23 +1,27 @@
-from typing import TypeVar, Callable, Any, Optional
-from abc import ABC, abstractmethod
+# distributions/real_vector.py
+from __future__ import annotations
 
 import numpy as np
-from numpy.typing import NDArray
-
 import scipy.stats as sp
-from scipy.stats import norm, multivariate_normal
-from scipy.stats import multinomial as _multinomial
-from scipy.stats import dirichlet as _dirichlet
-from scipy.stats import binom as _sbinom
-from scipy.stats import beta as _sps_beta
+from typing import TypeVar, Any
+from collections.abc import Callable
+from abc import ABC, abstractmethod
+from scipy.stats import(
+    multivariate_normal,
+    multinomial as _multinomial,
+    dirichlet as _dirichlet,
+    binom as _sbinom,
+    beta as _sps_beta
+)
 
-from ._utils import _as_2d, _symmetrize_spd, _clip_unit_interval, _to_1d_vector
-from .distributions import Distribution
+from ...custom_types import Array, ArrayLike, Float, PRNG
+from ...array_backend.utils import _ensure_matrix
+from ...linalg.utils import symmetrize_pd
+from ..distribution import Distribution
+
 
 __all__ = [
-    "Multivariate",
-    "Normal1D",
-    "MvNormal",
+    "RealVectorDistribution",
     "GaussianKDE",
     "Multinomial",
     "Dirichlet",
@@ -26,53 +30,36 @@ __all__ = [
 ]
 
 T = TypeVar("T", bound=np.number)
-Float_T = TypeVar("FloatDT", bound=np.floating)
+FloatT = TypeVar("FloatT", bound=Float)
 
-class Multivariate(Distribution[Float_T], ABC):
-    """Abstract base class for multivariate, real-valued vector distributions.
 
-    Represents probability distributions in ℝᵈ with a fixed dimension `d`.
-    Subclasses define how to compute means, covariances, and cumulative
-    distribution functions (CDFs). The event shape is assumed to be `(d,)`.
-
-    Notes:
-        - All subclasses should ensure shape consistency across methods.
-        - Default dimension inference is based on the output of :meth:`mean`.
-
-    Raises:
-        NotImplementedError: If abstract methods are not implemented by a subclass.
+class RealVectorDistribution(Distribution[FloatT], ABC):
+    """
+    Abstract base for RealVectorDistribution, real-valued vector distributions with fixed dimension d.
+    Event shape is assumed to be (d,). Subclasses should ensure consistency of shapes.
     """
 
     @abstractmethod
-    def mean(self) -> NDArray[Float_T]:
-        """Computes the mean vector of the distribution.
-
-        Returns:
-            Mean vector μ with shape `(d,)`.
-
-        Raises:
-            NotImplementedError: If the mean does not exist (e.g., for Cauchy).
+    def mean(self) -> Array[FloatT]:
+        """
+        Return the mean vector μ with shape (d,).
+        If the mean does not exist (e.g., Cauchy), raise NotImplementedError.
         """
         raise NotImplementedError
 
     @abstractmethod
-    def cov(self) -> NDArray[np.floating]:
-        """Computes the covariance matrix of the distribution.
-
-        Returns:
-            Covariance matrix Sigma with shape `(d, d)`.
-
-        Raises:
-            NotImplementedError: If the covariance does not exist.
+    def cov(self) -> Array[FloatT]:
+        """
+        Return the covariance matrix Σ with shape (d, d).
+        If covariance does not exist, raise NotImplementedError.
         """
         raise NotImplementedError
 
-   
     @abstractmethod
-    def cdf(self, x: NDArray[Float_T]) -> NDArray[np.floating]:
-        """Evaluates the joint cumulative distribution function (CDF).
-
-        Computes ``F(x) = P[X_1 ≤ x_1, …, X_d ≤ x_d]`` for input vectors `x`.
+    def cdf(self, x: Array[FloatT]) -> Array[FloatT]:
+        """
+        Joint CDF F(x) = P[X1 ≤ x1, ..., Xd ≤ xd].
+        Accepts x with shape (..., d) and returns shape (...,).
         Implementations may use analytical formulas (rare), numerical integration,
         or library routines when available.
 
@@ -88,44 +75,21 @@ class Multivariate(Distribution[Float_T], ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def inv_cdf(self, u: NDArray[np.floating]) -> NDArray[Float_T]:
-        """Computes the inverse CDF (Rosenblatt inverse) mapping.
-
-        Maps `u ∈ (0, 1)^d` to `x ∈ R^d` using the inverse of the joint CDF.
-        For elliptical distributions (e.g., multivariate normal), a common
-        implementation is:
-
-        ```
-        z = Phi^{-1}(u)      # Componentwise inverse of the univariate normal CDF
-        x = mu + Lz      # L is the Cholesky factor of Sigma
-        ```
-
-        Args:
-            u: Input array in the open unit hypercube `(0, 1)^d`
-                with shape `(..., d)`.
-
-        Returns:
-            Output samples `x` in R^d with shape `(..., d)`.
-
-        Raises:
-            NotImplementedError: If not implemented by the subclass.
+    def inv_cdf(self, u: Array[FloatT]) -> Array[FloatT]:
+        """
+        Inverse CDF (Rosenblatt inverse) mapping u ∈ (0,1)^d to x ∈ R^d.
+        Accepts u with shape (..., d) and returns x with shape (..., d).
+        For elliptical families (e.g., MVN), a common implementation is:
+          z = Φ^{-1}(u)  (componentwise univariate inverse CDF)
+          x = μ + L z     (L is Cholesky factor of Σ)
+        For general dependent structures, implement via conditional quantiles/copulas.
         """
         raise NotImplementedError
 
-    # ---- Dimension helper ----
     @property
-    def dimension(self) -> int:
-        """Infers the dimensionality of the distribution.
-
-        The default implementation infers `d` from the shape of :meth:`mean`.
-        Subclasses may override this method for fixed or analytically known
-        dimensions.
-
-        Returns:
-            Number of coordinates `d`.
-
-        Raises:
-            ValueError: If :meth:`mean` does not return a 1D array.
+    def dim(self) -> int:
+        """
+        Number of coordinates d. Default infers from mean(). Subclasses may override.
         """
         m = self.mean()
         if m.ndim != 1:
@@ -133,487 +97,9 @@ class Multivariate(Distribution[Float_T], ABC):
         return int(m.shape[0])
 
 
-
-class Normal1D(Multivariate[np.floating]):
-    """Univariate Normal distribution N(μ, σ²) implemented as a 1D Multivariate.
-
-    Represents a univariate Gaussian distribution with event shape (1,).
-    Provides sampling, PDF/log-PDF evaluation, CDF/inverse-CDF methods,
-    and Monte Carlo expectation computation.
-
-    Shape policy:
-        - ``sample(n)`` -> (n, 1)
-        - ``density`` / ``log_density`` / ``cdf(values)`` always return (n, 1)
-          even though they are scalar per sample.
-        - ``inv_cdf(u)`` -> (n, 1)
-
-    Attributes:
-        mu: Mean of the distribution.
-        sigma: Standard deviation (must be > 0).
-        _rng: Random number generator used for sampling.
+class GaussianKDE(RealVectorDistribution[Float]):
     """
-
-    def __init__(self, mu: float, sigma: float, *, rng: np.random.Generator | None = None):
-        """Initializes a Normal1D distribution.
-
-        Args:
-            mu: Mean of the distribution.
-            sigma: Standard deviation (must be > 0).
-            rng: Random number generator.
-                If ``None``, a default generator is created.
-
-        Raises:
-            ValueError: If ``sigma`` is not positive.
-        """
-        
-        if sigma <= 0:
-            raise ValueError("sigma must be > 0")
-        self.mu = float(mu)
-        self.sigma = float(sigma)
-        self._rng = rng or np.random.default_rng()
-
-        self._norm = norm(loc=self.mu, scale=self.sigma)
-
-
-    def sample(self, n_samples: int) -> NDArray[np.floating]:
-        """Draws random samples from the distribution.
-
-        Args:
-            n_samples: Number of samples to generate.
-
-        Returns:
-            Samples of shape (n_samples, 1).
-        """
-        
-        xs = self._norm.rvs(size=(int(n_samples), 1), random_state=self._rng)
-        return np.asarray(xs, dtype=float)  # (n, 1)
-
-
-    def density(self, values: NDArray) -> NDArray[np.floating]:
-        """Evaluates the probability density function (PDF) at given values.
-
-        Args:
-            values: Points at which to evaluate the PDF.
-
-        Returns:
-            PDF values of shape (n, 1).
-        """
-        
-        v = _to_1d_vector(values)          # (n,)
-        p = np.asarray(self._norm.pdf(v), dtype=float).reshape(-1, 1)
-        return p                                 # (n, 1)
-
-    def log_density(self, values: NDArray) -> NDArray[np.floating]:
-        """Evaluates the log of the probability density function.
-
-        Args:
-            values: Points at which to evaluate the log-PDF.
-
-        Returns:
-            Log-PDF values of shape (n, 1).
-        """
-        
-        v = _to_1d_vector(values)          # (n,)
-        lp = np.asarray(self._norm.logpdf(v), dtype=float).reshape(-1, 1)
-        return lp                                # (n, 1)
-
-    def cdf(self, x: NDArray) -> NDArray[np.floating]:
-        """Evaluates the cumulative distribution function (CDF).
-
-        Args:
-            x: Points at which to evaluate the CDF.
-
-        Returns:
-            CDF values of shape (n, 1).
-        """
-        
-        v = self._to_1d_vector(x)               # (n,)
-        c = np.asarray(self._norm.cdf(v), dtype=float).reshape(-1, 1)
-        return c                                 # (n, 1)
-
-    def inv_cdf(self, u: NDArray) -> NDArray[np.floating]:
-        """Computes quantiles (inverse CDF) for given probabilities.
-
-        Args:
-            u: Probabilities in (0, 1) to transform.
-
-        Returns:
-            Quantiles of shape (n, 1).
-
-        Raises:
-            ValueError: If the input ``u`` has invalid shape.
-        """
-        
-        U = np.asarray(u, dtype=float)
-        if U.ndim == 0:
-            q = float(self._norm.ppf(U))
-            return np.array([[q]], dtype=float)
-        if U.ndim == 1:
-            q = self._norm.ppf(U)
-            return np.asarray(q, dtype=float).reshape(-1, 1)
-        if U.ndim == 2 and U.shape[1] == 1:
-            q = self._norm.ppf(U[:, 0])
-            return np.asarray(q, dtype=float).reshape(-1, 1)
-        raise ValueError("u must be scalar, (n,) or (n,1).")
-
-
-    def mean(self) -> NDArray[np.floating]:
-        """Returns the mean vector.
-
-        Returns:
-            Mean of shape (1,).
-        """
-        
-        return np.array([self.mu], dtype=float)          # (1,)
-
-    def cov(self) -> NDArray[np.floating]:
-        """Returns the covariance matrix.
-
-        Returns:
-            Covariance matrix of shape (1, 1) = [[sigma^2]].
-        """
-        
-        return np.array([[self.sigma ** 2]], dtype=float)  # (1,1)
-
-
-    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray[np.floating]]) -> 'Multivariate':
-        """Estimates the expectation of a function via Monte Carlo sampling.
-
-        Draws samples from the distribution and computes the Central Limit
-        Theorem approximation of E[f(X)].
-
-        Behavior:
-            - If ``f`` returns a scalar -> returns a :class:`Normal1D`
-              summarizing the mean and standard error.
-            - If ``f`` returns a vector -> returns a :class:`MvNormal`
-              summarizing the mean vector and covariance of the mean.
-
-        Args:
-            func: Function mapping samples
-                of shape (n, 1) to outputs.
-        
-        Returns:
-            Normal1D or MvNormal summarizing the estimated expectation.
-
-        Raises:
-            ValueError: If ``func`` returns data of unsupported shape.
-        """
-        
-        n_mc = 2048
-        xs = self.sample(n_mc)                   # (n_mc, 1)
-        ys = np.asarray(func(xs), dtype=float)
-
-        # Treat (n,1) as scalar-valued
-        if ys.ndim == 2 and ys.shape[1] == 1:
-            ys = ys[:, 0]
-
-        if ys.ndim == 1:
-            m = float(ys.mean())
-            s = float(ys.std(ddof=1)) / np.sqrt(n_mc)
-            return Normal1D(m, max(s, 1e-12), rng=self._rng)
-        elif ys.ndim == 2:
-            m = ys.mean(axis=0)
-            cov = np.cov(ys, rowvar=False, ddof=1) / n_mc
-            cov = 0.5 * (cov + cov.T) + 1e-12 * np.eye(cov.shape[0])
-            return MvNormal(mean=m, cov=cov, rng=self._rng)
-        else:
-            raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
-
-    @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False,  **fit_kwargs: Any) -> 'Normal1D': 
-        """Fits a Normal1D to samples drawn from another distribution (moment matching).
-
-        Draws samples from the given distribution and estimates mean and
-        standard deviation to create a Normal1D approximation.
-
-        Args:
-            convert_from: Source distribution to sample from.
-            num_samples: Number of samples to draw. Defaults to 1024.
-            conversion_by_KDE: Placeholder for API compatibility; unused.
-            **fit_kwargs: Optional keyword arguments (ignored).
-
-        Returns:
-            Fitted distribution instance.
-        """
-        
-        #n = int(fit_kwargs.get("n", 2000))
-        xs = np.asarray(convert_from.sample(num_samples), dtype=float)
-
-        # Flatten (n,1) -> (n,), accept (n,)
-        if xs.ndim == 2 and xs.shape[1] == 1:
-            xs = xs[:, 0]
-        elif xs.ndim != 1:
-            xs = xs.reshape(-1)
-
-        mu = float(xs.mean())
-        sigma = float(xs.std(ddof=1))
-        return cls(mu, max(sigma, 1e-12))
-
-
-
-
-class MvNormal(Multivariate[np.floating]):
-    """Multivariate Normal distribution N(mu, Sigma) using SciPy.
-
-    Represents a d-dimensional Gaussian distribution implemented via
-    ``scipy.stats.multivariate_normal``. Provides sampling, density/log-density,
-    CDF, inverse-CDF, and Monte Carlo expectation functionalities.
-
-    Shape policy:
-        - ``sample(n)`` -> (n, d)
-        - ``density`` / ``log_density`` / ``cdf(x)`` *-> (n, 1)
-          (scalar-per-sample outputs returned as column vectors)
-        - ``inv_cdf(u)`` -> (n, d)
-
-    Attributes:
-        _mean: Mean vector of shape (d,).
-        _cov: Covariance matrix of shape (d, d).
-        _rng: Random number generator for sampling.
-    """
-
-    def __init__(self, mean: NDArray[np.floating], cov: NDArray[np.floating],
-                 *, rng: np.random.Generator | None = None):
-        """Initializes a multivariate Normal distribution.
-
-        Args:
-            mean: Mean vector of shape (d,).
-            cov: Covariance matrix of shape (d, d).
-            rng: Random number generator.
-                If ``None``, a default generator is created.
-
-        Raises:
-            ValueError: If ``mean`` or ``cov`` have incompatible shapes.
-        """
-                     
-        m = np.asarray(mean, dtype=float)
-        C = _symmetrize_spd(np.asarray(cov, dtype=float))
-        if m.ndim != 1:
-            raise ValueError("mean must be shape (d,)")
-        if C.ndim != 2 or C.shape[0] != C.shape[1] or C.shape[0] != m.shape[0]:
-            raise ValueError("cov must be (d,d) and match mean dimension")
-        self._mean = m
-        self._cov = C
-        self._rng = rng or np.random.default_rng()
-
-        self._mvn_cls = sp.multivariate_normal
-        self._mvn = sp.multivariate_normal(mean=self._mean, cov=self._cov, allow_singular=False)
-
-
-    def sample(self, n_samples: int) -> NDArray[np.floating]:
-        """Generates random samples from the distribution.
-
-        Args:
-            n_samples: Number of samples to draw.
-
-        Returns:
-            Samples of shape (n_samples, d).
-        """
-        x = self._mvn.rvs(size=int(n_samples), random_state=self._rng)
-        x = np.asarray(x, dtype=float)
-        if x.ndim == 1:  # when n_samples == 1 SciPy may return (d,)
-            x = x.reshape(1, -1)
-        return x  # (n, d)
-
-    def density(self, values: NDArray) -> NDArray[np.floating]:
-        """Evaluates the probability density function (PDF) at given points.
-
-        Args:
-            values: Points at which to evaluate the PDF,
-                of shape (d,) or (n, d).
-
-        Returns:
-            Column vector of PDF values, shape (n, 1).
-        """
-        X = _as_2d(values)                   # (n, d)
-        p = self._mvn.pdf(X)                 # (n,) from SciPy
-        return np.asarray(p, dtype=float).reshape(-1, 1)   # (n,1)
-
-    def log_density(self, values: NDArray) -> NDArray[np.floating]:
-        """Evaluates the log of the probability density function.
-
-        Args:
-            values: Points at which to evaluate the log-PDF,
-                of shape (d,) or (n, d).
-
-        Returns:
-            Column vector of log-PDF values, shape (n, 1).
-        """
-        X = _as_2d(values)                   # (n, d)
-        lp = self._mvn.logpdf(X)             # (n,)
-        return np.asarray(lp, dtype=float).reshape(-1, 1)  # (n,1)
-
-    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray[np.floating]]) -> 'Multivariate':
-        """Estimates the expectation of a function via Monte Carlo sampling.
-
-        Draws samples from the distribution and applies ``func`` to each.
-        Uses the Central Limit Theorem to estimate E[f(X)] and return a
-        Normal1D or MvNormal summarizing the uncertainty.
-
-        Behavior:
-            - If ``func`` returns a scalar -> returns a :class:`Normal1D`
-              summarizing the mean and standard error.
-            - If ``func`` returns a vector -> returns a :class:`MvNormal`
-              summarizing the mean vector and covariance of the mean.
-
-        Args:
-            func: Function mapping samples
-                of shape (n, d) to numeric outputs.
-
-        Returns:
-            A :class:`Normal1D` or :class:`MvNormal` summarizing
-            the Monte Carlo expectation.
-
-        Raises:
-            ValueError: If ``func`` returns an unsupported shape.
-        """
-        n_mc = 2048
-        xs = self.sample(n_mc)                         # (n, d)
-        ys = np.asarray(func(xs), dtype=float)
-
-        # Treat (n,1) as scalar-valued
-        if ys.ndim == 2 and ys.shape[1] == 1:
-            ys = ys[:, 0]
-
-        if ys.ndim == 1:
-            m = float(ys.mean())
-            s = float(ys.std(ddof=1)) / np.sqrt(n_mc)
-            return Normal1D(m, max(s, 1e-12), rng=self._rng)
-        elif ys.ndim == 2:
-            m = ys.mean(axis=0)
-            cov = np.cov(ys, rowvar=False, ddof=1) / n_mc
-            cov = 0.5 * (cov + cov.T) + 1e-12 * np.eye(cov.shape[0])
-            return MvNormal(mean=m, cov=cov, rng=self._rng)
-        else:
-            raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
-
-    @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False, **fit_kwargs: Any) -> 'MvNormal':
-        """Fits a multivariate Normal to samples drawn from another distribution.
-
-        Computes the sample mean and covariance matrix from draws of the
-        provided distribution to fit a :class:`MvNormal`.
-
-        Args:
-            convert_from: Source distribution to sample from.
-            num_samples: Number of samples to draw. Defaults to 1024.
-            conversion_by_KDE: Placeholder for compatibility; unused.
-            **fit_kwargs: Optional keyword arguments (ignored).
-
-        Returns:
-            Fitted multivariate Normal distribution.
-        """
-        #n = int(fit_kwargs.get("n", 4000))
-        xs = np.asarray(convert_from.sample(num_samples), dtype=float)
-
-        X = _as_2d(xs)                                   # (n, d)
-        mean = X.mean(axis=0)
-        cov = np.cov(X, rowvar=False, ddof=1)
-        cov = _symmetrize_spd(cov)
-        return cls(mean=mean, cov=cov)
-
-
-    def mean(self) -> NDArray[np.floating]:
-        """Returns the mean vector.
-
-        Returns:
-            Mean vector of shape (d,).
-        """
-        
-        return self._mean  # (d,)
-
-    def cov(self) -> NDArray[np.floating]:
-        """Returns the covariance matrix.
-
-        Returns:
-            Covariance matrix of shape (d, d).
-        """
-        
-        return self._cov   # (d,d)
-
-    def cdf(self, x: NDArray) -> NDArray[np.floating]:
-        """Evaluates the cumulative distribution function (CDF) at given points.
-
-        SciPy’s frozen ``cdf`` does not vectorize over rows, so this method
-        evaluates each sample row-wise.
-
-        Args:
-            x: Points of shape (d,) or (n, d).
-
-        Returns:
-            CDF values of shape (n, 1).
-        """
-
-        X = _as_2d(x)                           # (n,d)
-        # SciPy's frozen cdf doesn't vectorize over rows, so evaluate row-wise.
-        # (For large n you may want to batch this.)
-        vals = [float(self._mvn.cdf(row)) for row in X]
-        return np.array(vals, dtype=float).reshape(-1, 1)   # (n,1)
-
-    def inv_cdf(self, u: NDArray) -> NDArray[np.floating]:
-        """Computes the Rosenblatt inverse transform for uniform samples.
-
-        Generates corresponding points ``x`` in R^d for each uniform sample ``u``
-        in (0, 1)^d using sequential conditional Gaussian transforms.
-
-        Args:
-            u: Array of shape (d,), (n, d), or (..., d) with
-                entries in (0, 1).
-
-        Returns:
-            Quantiles (inverse CDF) of shape (n, d) or (d,).
-
-        Raises:
-            ValueError: If the input shape does not match the distribution’s dimension.
-        """
-
-        U_in = np.asarray(u, dtype=float)
-        was_1d = (U_in.ndim == 1)
-        U = U_in[None, :] if was_1d else U_in   # (n, d)
-
-        n, d = U.shape
-        if d != self.dimension:
-            raise ValueError(f"u must have shape (..., {self.dimension})")
-
-        out = np.empty((n, d), dtype=float)
-        mu = self._mean
-        Sigma = self._cov
-
-        for b in range(n):
-            x = np.empty(d, dtype=float)
-            # 1) marginal of X1
-            x[0] = mu[0] + np.sqrt(Sigma[0, 0]) * norm.ppf(U[b, 0])
-            # 2..d) sequential conditionals
-            for i in range(1, d):
-                Sigma_AA = Sigma[:i, :i]
-                Sigma_iA = Sigma[i, :i]
-                Sigma_Ai = Sigma[:i, i]
-
-                # Solve Σ_AA * w = (x_A - μ_A)
-                w = np.linalg.solve(Sigma_AA, (x[:i] - mu[:i]))
-                mu_cond = mu[i] + Sigma_iA @ w
-                var_cond = Sigma[i, i] - Sigma_iA @ np.linalg.solve(Sigma_AA, Sigma_Ai)
-                var_cond = float(max(var_cond, 1e-12))  # numeric guard
-                x[i] = mu_cond + np.sqrt(var_cond) * norm.ppf(U[b, i])
-
-            out[b] = x
-
-        return out[0] if was_1d else out
-
-    # ------------------------ helper ------------------------
-
-    @property
-    def dimension(self) -> int:
-        """Returns the dimensionality of the distribution.
-
-        Returns:
-           Number of coordinates ``d``.
-        """
-        return int(self._mean.shape[0])
-
-
-
-class GaussianKDE(Multivariate[np.floating]):
-    """Gaussian kernel density estimator (KDE) with shared bandwidth matrix H.
+    Gaussian KDE with a shared bandwidth matrix H.
 
     Represents a weighted Gaussian mixture where each sample `x_i` defines
     a kernel N(x_i, H). The overall density is the mixture sum
@@ -637,12 +123,12 @@ class GaussianKDE(Multivariate[np.floating]):
 
     def __init__(
         self,
-        samples: NDArray[np.floating],
-        weights: Optional[NDArray[np.floating]] = None,
+        samples: Array[Float],
+        weights: Array[Float] | None = None,
         *,
-        bandwidth: float | NDArray[np.floating] | None = None,
-        rule: str = "scott",                 # used when bandwidth is None
-        rng: Optional[np.random.Generator] = None,
+        bandwidth: Float | Array[Float] | None = None,
+        rule: str = "scott",
+        rng: PRNG | None = None,
     ):
         """Initializes the Gaussian KDE.
 
@@ -650,7 +136,7 @@ class GaussianKDE(Multivariate[np.floating]):
             samples: Input samples of shape (n, d).
             weights: Optional nonnegative weights, shape (n,).
                 Will be normalized to sum to 1. Defaults to uniform weights.
-            bandwidth (float | NDArray | None): Bandwidth specification.
+            bandwidth (float | Array | None): Bandwidth specification.
                 Can be a scalar, vector of shape (d,), or matrix of shape (d, d).
                 If ``None``, uses ``rule`` to compute bandwidth automatically.
             rule: Bandwidth selection rule ('scott' or 'silverman').
@@ -663,7 +149,7 @@ class GaussianKDE(Multivariate[np.floating]):
                 or mismatched dimensions).
         """
 
-        X = _as_2d(samples)
+        X = _ensure_matrix(samples, as_row_matrix=True)
         n, d = X.shape
         if n < 1:
             raise ValueError("GaussianKDE requires at least one sample.")
@@ -694,7 +180,7 @@ class GaussianKDE(Multivariate[np.floating]):
 
         # Build bandwidth matrix H
         self._H = self._build_H(bandwidth, rule)
-        self._H = _symmetrize_spd(self._H)
+        self._H = symmetrize_pd(self._H)
 
         # Pre-create SciPy kernels for each center (mean = x_i, cov = H)
         self._kernel_cls = multivariate_normal
@@ -706,24 +192,7 @@ class GaussianKDE(Multivariate[np.floating]):
 
     # --------------------------- bandwidth helpers ---------------------------
 
-    def _build_H(self, bandwidth: float | NDArray[np.floating] | None, rule: str) -> NDArray[np.floating]:
-        """Constructs the bandwidth matrix H.
-
-        Args:
-            bandwidth (float | NDArray | None): Bandwidth definition.
-                - Scalar: uses isotropic H = (h^2)I.
-                - Vector: uses diagonal H = diag(h₁², …, h_d^2).
-                - Matrix: directly uses user-provided H.
-                - None: computes automatically via ``rule``.
-            rule: 'scott' or 'silverman' rule for automatic bandwidth.
-
-        Returns:
-            Bandwidth matrix H, shape (d, d).
-
-        Raises:
-            ValueError: If the provided bandwidth or rule is invalid.
-        """
-        
+    def _build_H(self, bandwidth: Float | Array[Float] | None, rule: str) -> Array[Float]:
         d = self._d
         if bandwidth is not None:
             bw = np.asarray(bandwidth, dtype=float)
@@ -754,21 +223,12 @@ class GaussianKDE(Multivariate[np.floating]):
             raise ValueError("rule must be 'scott' or 'silverman'.")
         return (factor ** 2) * self._cov_x
 
-    # --------------------------- Multivariate API ---------------------------
 
-    def sample(self, n_samples: int) -> NDArray[np.floating]:
-        """Draws random samples from the KDE mixture.
-
-        Each sample is drawn by selecting a center x_i (according to weights)
-        and adding Gaussian noise from N(0, H).
-
-        Args:
-            n_samples: Number of samples to draw.
-
-        Returns:
-            Random samples of shape (n_samples, d).
+    def sample(self, n_samples: int = 1) -> Array[Float]:
         """
-
+        Draw (n, d) samples from the KDE mixture:
+          pick a center with prob w_i, then add N(0, H) noise.
+        """
         n = int(n_samples)
         idx = self._rng.choice(self._n, size=n, replace=True, p=self._w)
         noise = multivariate_normal(mean=np.zeros(self._d, dtype=float), cov=self._H).rvs(
@@ -779,38 +239,24 @@ class GaussianKDE(Multivariate[np.floating]):
             noise = noise.reshape(1, -1)
         return self._X[idx] + noise  # (n, d)
 
-    def density(self, values: NDArray) -> NDArray[np.floating]:
-        """Evaluates the mixture probability density function (PDF).
-
-        Computes:
-            ``p(x) = Sum_i w_i N(x | x_i, H)``
-
-        Args:
-            values: Points of shape (n, d) or (d,).
-
-        Returns:
-            Column vector of PDF values, shape (n, 1).
+    def density(self, x: ArrayLike) -> Array[Float]:
         """
-        Xq = _as_2d(values)  # (n, d)
+        Mixture pdf: sum_i w_i * N(values | mean=x_i, cov=H).
+        Returns (n, 1).
+        """
+        Xq = _ensure_matrix(x, as_row_matrix=True, num_cols=self.dim)  # (n, d)
         out = np.empty(Xq.shape[0], dtype=float)
         for j, q in enumerate(Xq):
             # Weighted sum of kernel PDFs at q
             out[j] = float(np.dot(self._w, [k.pdf(q) for k in self._kernels]))
         return out.reshape(-1, 1)  # (n,1)
 
-    def log_density(self, values: NDArray) -> NDArray[np.floating]:
-        """Evaluates the log of the mixture density via a stable log-sum-exp.
-
-        Computes:
-            ``log p(x) = log Sum_i w_i exp(log N_i(x))``
-
-        Args:
-            values: Points of shape (n, d) or (d,).
-
-        Returns:
-            Column vector of log-PDF values, shape (n, 1).
+    def log_density(self, x: ArrayLike) -> Array[Float]:
         """
-        Xq = _as_2d(values)  # (n, d)
+        Stable log pdf via log-sum-exp over kernels: log ∑ w_i exp(log N_i(q)).
+        Returns (n, 1).
+        """
+        Xq = _ensure_matrix(x, as_row_matrix=True, num_cols=self.dim)  # (n, d)
         out = np.empty(Xq.shape[0], dtype=float)
         for j, q in enumerate(Xq):
             logs = np.array([np.log(self._w[i] + 1e-300) + k.logpdf(q) for i, k in enumerate(self._kernels)],
@@ -819,69 +265,36 @@ class GaussianKDE(Multivariate[np.floating]):
             out[j] = m + np.log(np.exp(logs - m).sum())
         return out.reshape(-1, 1)
 
-    def mean(self) -> NDArray[np.floating]:
-        """Returns the mixture mean.
-
-        Returns:
-            Weighted mean of sample centers, shape (d,).
-        """
+    def mean(self) -> Array[Float]:
+        """Mixture mean = weighted mean of centers."""
         return self._mean  # (d,)
 
-    def cov(self) -> NDArray[np.floating]:
-        """Returns the mixture covariance.
-
-        Returns:
-            Covariance matrix of shape (d, d).
-        """
+    def cov(self) -> Array[Float]:
+        """Mixture covariance = Cov_w(centers) + H."""
         return self._cov_mix  # (d,d)
 
-    def cdf(self, values: NDArray) -> NDArray[np.floating]:
-        """Evaluates the mixture cumulative distribution function (CDF).
-
-        Approximates:
-            ``F(x) = Sum_i w_i Phi_d(x; x_i, H)``
-
-        Args:
-            values: Evaluation points of shape (n, d) or (d,).
-
-        Returns:
-            CDF values, shape (n, 1).
+    def cdf(self, x: Array) -> Array[Float]:
         """
-        Xq = _as_2d(values)  # (n, d)
+        Mixture CDF via SciPy MVN CDF per-kernel:
+          F(q) = ∑_i w_i * Φ_d(q; mean=x_i, cov=H).
+        Returns (n, 1).
+        """
+        Xq = _ensure_matrix(x, as_row_matrix=True, num_cols=self.dim) # (n, d)
         out = np.empty(Xq.shape[0], dtype=float)
         for j, q in enumerate(Xq):
             out[j] = float(np.dot(self._w, [k.cdf(q) for k in self._kernels]))
         return out.reshape(-1, 1)
 
-    def inv_cdf(self, u: NDArray[np.floating]) -> NDArray[np.floating]:
-        """Inverse CDF is not defined for Gaussian mixture models.
-
-        Raises:
-            NotImplementedError: Always.
+    def inv_cdf(self, u: Array[Float]) -> Array[Float]:
+        """
+        No simple Rosenblatt inverse for Gaussian mixtures.
         """
         raise NotImplementedError("GaussianKDE.inv_cdf is not available for kernel mixtures.")
 
-    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray]) -> 'Multivariate':
-        """Estimates the expectation of a function under the KDE via Monte Carlo.
-
-        Draws samples from the KDE and applies ``func`` to estimate E[f(X)].
-
-        Behavior:
-            - If ``f`` returns a scalar -> returns a :class:`Normal1D`
-              summarizing the mean and standard error.
-            - If ``f`` returns a vector -> returns a :class:`MvNormal`
-              summarizing the mean and covariance.
-
-        Args:
-            func: Function mapping samples
-                of shape (n, d) to outputs.
-
-        Returns:
-            :class:`Normal1D` or :class:`MvNormal` summarizing
-            the estimated expectation.
-
-        Raises:
-            ValueError: If the function output shape is unsupported.
+    def expectation(self, func: Callable[[Array[Float]], Array]) -> RealVectorDistribution:
+        """
+        Monte-Carlo expectation under the KDE. Scalar f -> Normal1D over the mean,
+        vector f -> MvNormal over the mean. `func` receives samples as (n_mc, d).
         """
         n_mc = 2048
         xs = self.sample(n_mc)                  # (n, d)
@@ -905,8 +318,10 @@ class GaussianKDE(Multivariate[np.floating]):
 
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False, **fit_kwargs: Any) -> 'GaussianKDE':
-        """Builds a Gaussian KDE from another distribution-like object.
+    def from_distribution(cls, convert_from: Distribution, num_samples: int=1024, *, 
+                          conversion_by_KDE: bool = False, **fit_kwargs: Any) -> GaussianKDE:
+        """
+        Build KDE from another distribution-like object.
 
         Args:
             convert_from: Source distribution to sample from.
@@ -941,11 +356,10 @@ class GaussianKDE(Multivariate[np.floating]):
         return cls(samples=X, weights=weights, bandwidth=bandwidth, rule=rule, rng=rng)
 
 
-class Multinomial(Multivariate[np.floating]):
-    """Multinomial distribution over discrete outcomes.
-
-    Represents a multinomial distribution with a fixed number of trials ``n_trials``
-    and category probabilities ``p``. Backed by ``scipy.stats.multinomial``.
+class Multinomial(RealVectorDistribution[Float]):
+    """
+    Multinomial(n_trials, p) with event dim d = len(p).
+    Backed by scipy.stats.multinomial.
 
     Shape policy:
         - ``sample(n)`` -> (n, d)  (counts per category)
@@ -953,18 +367,19 @@ class Multinomial(Multivariate[np.floating]):
           (scalar-per-sample outputs returned as column vectors)
         - ``inv_cdf(u)`` -> not implemented (no closed-form inverse)
 
-    Notes:
-        * Counts are represented as float arrays to satisfy ``Multivariate[float]`` typing.
-          Cast to ``int`` if integer counts are needed.
-        * The ``cdf`` is approximated via Monte Carlo simulation unless otherwise noted.
+    Notes
+    -----
+    * Counts are integers but returned as float arrays to satisfy RealVectorDistribution[Float] typing.
+      Cast to int if you need integer dtype.
+    * `cdf` is estimated by Monte-Carlo (parameter `cdf_mc_samples`); exact CDF is combinatorial.
     """
 
     def __init__(
         self,
         n_trials: int,
-        probs: NDArray[np.floating],
+        probs: Array[Float],
         *,
-        rng: Optional[np.random.Generator] = None,
+        rng: PRNG | None = None,
         cdf_mode: str = "mc",
         cdf_mc_samples: int = 20000,
     ):
@@ -1013,17 +428,11 @@ class Multinomial(Multivariate[np.floating]):
         self._cov = self._n * (np.diag(self._p) - np.outer(self._p, self._p))
         self._cov = _symmetrize_spd(self._cov)
 
-    # ------------------------ Multivariate core ------------------------
+    # ------------------------ RealVectorDistribution core ------------------------
 
-    def sample(self, n_samples: int) -> NDArray[np.floating]:
-        """Draws samples of counts from the multinomial.
-
-        Args:
-            n_samples: Number of draws.
-
-        Returns:
-            Samples of shape (n_samples, d), representing category counts
-            per trial batch, returned as float values.
+    def sample(self, n_samples: int = 1) -> Array[Float]:
+        """
+        Draw (n, d) samples of counts; cast to float for typing consistency.
         """
         X = self._mn.rvs(size=int(n_samples), random_state=self._rng)  # (n,d) or (d,) if n=1
         X = np.asarray(X, dtype=float)
@@ -1031,60 +440,32 @@ class Multinomial(Multivariate[np.floating]):
             X = X.reshape(1, -1)
         return X  # (n, d) float
 
-    def density(self, values: NDArray) -> NDArray[np.floating]:
-        """Evaluates the probability mass function (PMF) for given count vectors.
-
-        Args:
-            values: Array of shape (n, d) or (d,), where each row
-                represents integer-valued counts that sum to ``n_trials``.
-
-        Returns:
-            Column vector of PMF values, shape (n, 1).
-
-        Raises:
-            ValueError: If the input rows are invalid count vectors.
+    def density(self, x: Array) -> Array[Float]:
         """
-        X = _as_2d(values)  # (n,d)
+        Return (n,1) column of pmf at each row in `values`.
+        Inputs may be float; they must represent integer counts that sum to n_trials.
+        """
+        X = _ensure_matrix(x)  # (n,d)
         self._validate_counts_rows(X)
         # SciPy's logpmf/pmf can handle arrays row-wise via list comprehension
         pmfs = [self._mn.pmf(row.astype(int, copy=False)) for row in X]
         return np.asarray(pmfs, dtype=float).reshape(-1, 1)
 
-    def log_density(self, values: NDArray) -> NDArray[np.floating]:
-        """Evaluates the log of the probability mass function (log-PMF).
-
-        Args:
-            values: Array of shape (n, d) or (d,).
-
-        Returns:
-            Column vector of log-PMF values, shape (n, 1).
+    def log_density(self, x: Array) -> Array[Float]:
         """
-        X = _as_2d(values)  # (n,d)
+        Return (n,1) column of log-pmf at each row in `values`.
+        """
+        X = _ensure_matrix(x)  # (n,d)
         self._validate_counts_rows(X)
         logpmfs = [self._mn.logpmf(row.astype(int, copy=False)) for row in X]
         return np.asarray(logpmfs, dtype=float).reshape(-1, 1)
 
-    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray]) -> 'Multivariate':
-        """Estimates the expectation of a function via Monte Carlo sampling.
-
-        Draws multinomial samples and applies ``func`` to estimate E[f(X)].
-
-        Behavior:
-            - If ``f`` returns a scalar -> returns a :class:`Normal1D`
-              summarizing the mean and standard error.
-            - If ``f`` returns a vector -> returns a :class:`MvNormal`
-              summarizing the mean vector and covariance.
-
-        Args:
-            func: Function mapping
-                samples of shape (n, d) to outputs.
-
-        Returns:
-            :class:`Normal1D` or :class:`MvNormal` summarizing
-            the estimated expectation.
-
-        Raises:
-            ValueError: If the function output shape is unsupported.
+    def expectation(self, func: Callable[[Array[Float]], Array]) -> RealVectorDistribution:
+        """
+        Monte-Carlo CLT over f(X) with X ~ Multinomial.
+          - scalar f -> Normal1D(mean, se)
+          - vector f -> MvNormal(mean, cov_of_mean)
+        The function receives samples with shape (n_mc, d).
         """
         n_mc = 2048
         xs = self.sample(n_mc)                    # (n, d)
@@ -1107,7 +488,8 @@ class Multinomial(Multivariate[np.floating]):
             raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False, **fit_kwargs: Any) -> 'Multinomial':
+    def from_distribution(cls, convert_from: Distribution, num_samples: int=1024, *, 
+                          conversion_by_KDE: bool = False, **fit_kwargs: Any) -> Multinomial:
         """Fits a multinomial (n_trials, p) from sampled count vectors.
 
         Each row of the sampled data is assumed to be a valid count vector
@@ -1126,7 +508,7 @@ class Multinomial(Multivariate[np.floating]):
         
         X = np.asarray(convert_from.sample(num_samples), dtype=float)
 
-        X = _as_2d(X)  # (n, d)
+        X = _ensure_matrix(X, as_row_matrix=True)  # (n, d)
         # infer n_trials from row sums (must be constant up to rounding)
         row_sums = X.sum(axis=1)
         n_trials = int(np.round(np.median(row_sums)))
@@ -1145,41 +527,20 @@ class Multinomial(Multivariate[np.floating]):
         return cls(n_trials=n_trials, probs=p_hat, rng=fit_kwargs.get("rng", None))
 
 
-    def mean(self) -> NDArray[np.floating]:
-        """Returns the mean vector.
-
-        Returns:
-            Mean vector of shape (d,).
-        """
+    def mean(self) -> Array[Float]:
         return self._mean  # (d,)
 
-    def cov(self) -> NDArray[np.floating]:
-        """Returns the covariance matrix.
+    def cov(self) -> Array[Float]:
+        return self._cov   # (d,d)
 
-        Returns:
-            Covariance matrix of shape (d, d).
+    def cdf(self, x: Array) -> Array[Float]:
         """
-        return self._cov  # (d,d)
-
-    def cdf(self, values: NDArray) -> NDArray[np.floating]:
-        """Approximates the joint cumulative distribution function (CDF).
-
-        Computes a Monte Carlo estimate of
-        ``P[X_1 ≤ x_1, ..., X_d ≤ x_d]`` using random draws.
-
-        Args:
-            values: Array of shape (n, d) or (d,)
-                representing upper thresholds for counts.
-
-        Returns:
-            Column vector of CDF values, shape (n, 1).
-
-        Raises:
-            NotImplementedError: If a non-Monte-Carlo mode is requested.
+        Monte-Carlo approximation of P[X1<=x1, ..., Xd<=xd].
+        Returns (n,1). For exact CDF (small n,d), implement a specialized enumerator.
         """
         if self._cdf_mode != "mc":
             raise NotImplementedError("Only Monte-Carlo CDF ('mc') is supported for Multinomial.")
-        Xq = _as_2d(values)  # (n, d)
+        Xq = _ensure_matrix(x)  # (n, d)
         # floor thresholds to nearest integer counts
         T = np.floor(Xq + 1e-12).astype(int)
         # MC draws
@@ -1193,23 +554,21 @@ class Multinomial(Multivariate[np.floating]):
             out[j] = np.mean((draws <= t).all(axis=1))
         return out.reshape(-1, 1)
 
-    def inv_cdf(self, u: NDArray[np.floating]) -> NDArray[np.floating]:
-        """Inverse CDF (Rosenblatt transform) is not implemented."""
+    def inv_cdf(self, u: Array[Float]) -> Array[Float]:
+        """
+        No practical Rosenblatt inverse for a general Multinomial.
+        """
         raise NotImplementedError("Multinomial.inv_cdf is not available.")
 
     # ------------------------ helper ------------------------
 
-    def _validate_counts_rows(self, X: NDArray[np.floating]) -> None:
-        """Validates that rows in ``X`` represent valid count vectors.
-
-        Args:
-            X: Array of shape (n, d) or (d,).
-
-        Raises:
-            ValueError: If any row violates multinomial constraints:
-                - Non-integer counts
-                - Negative counts
-                - Row sum != n_trials
+    def _validate_counts_rows(self, X: Array[Float]) -> None:
+        """
+        Ensure rows of X represent valid count vectors for this multinomial:
+          - integer-valued (within tiny tolerance)
+          - nonnegative
+          - sum equals n_trials
+        Raises ValueError on violation.
         """
         if X.shape[1] != self._d:
             raise ValueError(f"values must have shape (n, {self._d}) or ({self._d},).")
@@ -1224,8 +583,9 @@ class Multinomial(Multivariate[np.floating]):
             raise ValueError(f"each row must sum to n_trials={self._n}.")
 
 
-class Dirichlet(Multivariate[np.floating]):
-    """Dirichlet(alpha) distribution over the probability simplex.
+class Dirichlet(RealVectorDistribution[Float]):
+    """
+    Dirichlet(α) on the probability simplex.
 
     Represents a continuous distribution supported on the simplex
     ``{x ∈ R^d : x_i >= 0, Sum x_i = 1}``, parameterized by positive concentration
@@ -1253,9 +613,9 @@ class Dirichlet(Multivariate[np.floating]):
 
     def __init__(
         self,
-        alpha: NDArray[np.floating] | NDArray[np.floating],
+        alpha: Array[Float] | Array[Float],
         *,
-        rng: Optional[np.random.Generator] = None,
+        rng: PRNG | None = None,
         cdf_mode: str = "mc",
         cdf_mc_samples: int = 20000,
     ):
@@ -1296,7 +656,7 @@ class Dirichlet(Multivariate[np.floating]):
         self._cov = 0.5 * (cov + cov.T)  # just in case of round-off
 
 
-    def sample(self, n_samples: int) -> NDArray[np.floating]:
+    def sample(self, n_samples: int = 1) -> Array[Float]:
         """Generates random samples from the Dirichlet distribution.
 
         Args:
@@ -1312,7 +672,7 @@ class Dirichlet(Multivariate[np.floating]):
             X = X.reshape(1, -1)
         return X  # (n, d)
 
-    def density(self, values: NDArray) -> NDArray[np.floating]:
+    def density(self, values: Array) -> Array[Float]:
         """Evaluates the probability density function (PDF).
 
         Args:
@@ -1325,13 +685,13 @@ class Dirichlet(Multivariate[np.floating]):
             ValueError: If inputs do not lie on the simplex.
         """
         
-        X = _as_2d(values)                 # (n, d)
+        X = _ensure_matrix(values, as_row_matrix=True)                 # (n, d)
         self._validate_simplex_rows(X)
         # Row-wise evaluation (SciPy supports vectorization, but this is explicit & safe)
         pmf = [self._dir.pdf(row) for row in X]
         return np.asarray(pmf, dtype=float).reshape(-1, 1)   # (n,1)
 
-    def log_density(self, values: NDArray) -> NDArray[np.floating]:
+    def log_density(self, values: Array) -> Array[Float]:
         """Evaluates the log-probability density function (log-PDF).
 
         Args:
@@ -1344,31 +704,17 @@ class Dirichlet(Multivariate[np.floating]):
             ValueError: If inputs do not lie on the simplex.
         """
         
-        X = _as_2d(values)
+        X = _ensure_matrix(values, as_row_matrix=True)
         self._validate_simplex_rows(X)
         lpmf = [self._dir.logpdf(row) for row in X]
         return np.asarray(lpmf, dtype=float).reshape(-1, 1)  # (n,1)
 
-    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray]) -> 'Multivariate':
-        """Estimates E[f(X)] via Monte Carlo sampling.
-
-        Draws samples and applies ``func`` to approximate the expectation under
-        the Dirichlet law.
-
-        Behavior:
-            - Scalar-valued ``f`` -> returns :class:`Normal1D`
-            - Vector-valued ``f`` -> returns :class:`MvNormal`
-
-        Args:
-            func: Function mapping samples
-                of shape (n, d) to numerical outputs.
-
-        Returns:
-            :class:`Normal1D` or :class:`MvNormal` summarizing
-            the estimated mean and uncertainty.
-
-        Raises:
-            ValueError: If the output shape of ``func`` is unsupported.
+    def expectation(self, func: Callable[[Array[Float]], Array]) -> RealVectorDistribution:
+        """
+        Monte-Carlo CLT over f(X):
+          - scalar f -> Normal1D(mean, se)
+          - vector f -> MvNormal(mean, cov_of_mean)
+        The function receives samples with shape (n_mc, d).
         """
         n_mc = 2048
         xs = self.sample(n_mc)                           # (n, d)
@@ -1420,7 +766,7 @@ class Dirichlet(Multivariate[np.floating]):
         #n = int(fit_kwargs.get("n", 4000))
         X = np.asarray(convert_from.sample(num_samples), dtype=float)
 
-        X = _as_2d(X)  # (n, d)
+        X = _ensure_matrix(X, as_row_matrix=True)  # (n, d)
 
         # Coerce to simplex (guard for tiny numerical errors)
         X = np.clip(X, 0.0, None)
@@ -1446,7 +792,7 @@ class Dirichlet(Multivariate[np.floating]):
         return cls(alpha=alpha, rng=fit_kwargs.get("rng", None))
 
 
-    def mean(self) -> NDArray[np.floating]:
+    def mean(self) -> Array[Float]:
         """Returns the mean vector.
 
         Returns:
@@ -1454,7 +800,7 @@ class Dirichlet(Multivariate[np.floating]):
         """
         return self._mean  # (d,)
 
-    def cov(self) -> NDArray[np.floating]:
+    def cov(self) -> Array[Float]:
         """Returns the covariance matrix.
 
         Returns:
@@ -1462,7 +808,7 @@ class Dirichlet(Multivariate[np.floating]):
         """
         return self._cov   # (d,d)
 
-    def cdf(self, values: NDArray) -> NDArray[np.floating]:
+    def cdf(self, values: Array) -> Array[Float]:
         """Approximates the CDF using Monte Carlo sampling.
 
         Computes:
@@ -1480,7 +826,7 @@ class Dirichlet(Multivariate[np.floating]):
         """
         if self._cdf_mode != "mc":
             raise NotImplementedError("Only Monte-Carlo CDF ('mc') is supported for Dirichlet.")
-        Xq = _as_2d(values)     # (n, d)
+        Xq = _ensure_matrix(values, as_row_matrix=True)     # (n, d)
         self._validate_simplex_rows(Xq)
         m = self._cdf_mc_samples
         draws = self._dir.rvs(size=m, random_state=self._rng)  # (m,d) or (d,)
@@ -1492,13 +838,13 @@ class Dirichlet(Multivariate[np.floating]):
             out[j] = np.mean((draws <= t + 1e-12).all(axis=1))  # small tolerance
         return out.reshape(-1, 1)
 
-    def inv_cdf(self, u: NDArray[np.floating]) -> NDArray[np.floating]:
+    def inv_cdf(self, u: Array[Float]) -> Array[Float]:
         """Inverse CDF is not available for Dirichlet distributions."""
         raise NotImplementedError("Dirichlet.inv_cdf is not available.")
 
     # ------------------------ helpers ------------------------
 
-    def _validate_simplex_rows(self, X: NDArray[np.floating]) -> None:
+    def _validate_simplex_rows(self, X: Array[Float]) -> None:
         """Ensures each row lies on the probability simplex.
 
         Checks:
@@ -1520,8 +866,9 @@ class Dirichlet(Multivariate[np.floating]):
             raise ValueError("each row must sum to 1 (within tolerance).")
 
 
-class Binomial(Multivariate[np.floating]):
-    """Binomial(n_trials, p) distribution with event dimension 1 (counts of successes).
+class Binomial(RealVectorDistribution[Float]):
+    """
+    Binomial(n_trials, p) with event dim = 1 (counts of successes).
 
     Represents the discrete Binomial distribution parameterized by
     the number of trials ``n_trials`` and success probability ``p``.
@@ -1551,7 +898,7 @@ class Binomial(Multivariate[np.floating]):
         n_trials: int,
         prob: float,
         *,
-        rng: Optional[np.random.Generator] = None,
+        rng: PRNG | None = None,
     ):
         """Initializes a Binomial distribution.
 
@@ -1585,8 +932,9 @@ class Binomial(Multivariate[np.floating]):
         self._mean = np.array([mean], dtype=float)          # (1,)
         self._cov = np.array([[var]], dtype=float)          # (1,1)
 
+    # ------------------------ RealVectorDistribution core ------------------------
 
-    def sample(self, n_samples: int) -> NDArray[np.floating]:
+    def sample(self, n_samples: int) -> Array[Float]:
         """Draws samples of Binomial counts.
 
         Args:
@@ -1599,7 +947,7 @@ class Binomial(Multivariate[np.floating]):
         x = np.asarray(x, dtype=float).reshape(-1, 1)
         return x  # (n,1)
 
-    def density(self, values: NDArray) -> NDArray[np.floating]:
+    def density(self, values: Array) -> Array[Float]:
         """Evaluates the probability mass function (PMF).
 
         Args:
@@ -1615,7 +963,7 @@ class Binomial(Multivariate[np.floating]):
         pmf = self._binom.pmf(v.astype(int, copy=False))    # (n,)
         return np.asarray(pmf, dtype=float).reshape(-1, 1)
 
-    def log_density(self, values: NDArray) -> NDArray[np.floating]:
+    def log_density(self, values: Array) -> Array[Float]:
         """Evaluates the log-probability mass function (log-PMF).
 
         Args:
@@ -1631,7 +979,7 @@ class Binomial(Multivariate[np.floating]):
         logpmf = self._binom.logpmf(v.astype(int, copy=False))  # (n,)
         return np.asarray(logpmf, dtype=float).reshape(-1, 1)
 
-    def cdf(self, values: NDArray) -> NDArray[np.floating]:
+    def cdf(self, values: Array) -> Array[Float]:
         """Evaluates the cumulative distribution function (CDF).
 
         Args:
@@ -1647,7 +995,7 @@ class Binomial(Multivariate[np.floating]):
         c = self._binom.cdf(v.astype(int, copy=False))       # (n,)
         return np.asarray(c, dtype=float).reshape(-1, 1)
 
-    def inv_cdf(self, u: NDArray[np.floating]) -> NDArray[np.floating]:
+    def inv_cdf(self, u: Array[Float]) -> Array[Float]:
         """Evaluates the quantile (inverse CDF) function.
 
         Args:
@@ -1672,25 +1020,12 @@ class Binomial(Multivariate[np.floating]):
         raise ValueError("u must be scalar, (n,) or (n,1).")
 
 
-    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray]) -> 'Multivariate':
-        """Estimates the expectation of a function under the Binomial distribution.
-
-        Uses Monte Carlo sampling to compute E[f(X)] and summarize the
-        uncertainty via the Central Limit Theorem.
-
-        Behavior:
-            - Scalar-valued ``f`` -> returns :class:`Normal1D`
-            - Vector-valued ``f`` -> returns :class:`MvNormal`
-
-        Args:
-            func: Function mapping samples (n, 1) -> values.
-
-        Returns:
-            Normal1D or MvNormal summarizing the estimated mean
-            and uncertainty.
-
-        Raises:
-            ValueError: If ``func`` returns outputs of unsupported shape.
+    def expectation(self, func: Callable[[Array[Float]], Array]) -> 'RealVectorDistribution':
+        """
+        Monte-Carlo CLT over f(X):
+          - scalar f -> Normal1D(mean, se)
+          - vector f -> MvNormal(mean, cov_of_mean)
+        func receives samples as (n_mc, 1).
         """
         n_mc = 2048
         xs = self.sample(n_mc)                    # (n_mc, 1)
@@ -1719,17 +1054,17 @@ class Binomial(Multivariate[np.floating]):
         raise NotImplementedError
 
 
-    def mean(self) -> NDArray[np.floating]:
+    def mean(self) -> Array[Float]:
         """Returns the mean vector (1,)."""
         return self._mean  # (1,)
 
-    def cov(self) -> NDArray[np.floating]:
+    def cov(self) -> Array[Float]:
         """Returns the covariance matrix (1×1)."""
         return self._cov   # (1,1)
 
     # ------------------------ helpers ------------------------
 
-    def _to_1d_counts(self, values: NDArray) -> NDArray[np.floating]:
+    def _to_1d_counts(self, values: Array) -> Array[Float]:
         """Normalizes input to a 1D array of integer counts in [0, n_trials].
 
         Acceptable shapes:
@@ -1765,9 +1100,28 @@ class Binomial(Multivariate[np.floating]):
         return v
 
     
+def _clip_unit_interval(x: Array[Float], eps: float = 0.0) -> Array[Float]:
+    """Clips values to the [0, 1] interval, optionally padding to an open range.
 
-class Beta(Multivariate[np.floating]):
-    """Beta(alpha, beta) distribution on the unit interval [0, 1].
+    Args:
+        x: Values to clip.
+        eps: If 0, clips to [0, 1]. If >0, clips to
+            (eps, 1 − eps) using `np.nextafter` to avoid exact endpoints.
+            Defaults to 0.0.
+
+    Returns:
+        Array with clipped values.
+    """
+    if eps <= 0.0:
+        return np.clip(x, 0.0, 1.0)
+    lo = np.nextafter(0.0 + eps, 1.0)
+    hi = np.nextafter(1.0 - eps, 0.0)
+    return np.clip(x, lo, hi)
+
+
+class Beta(RealVectorDistribution[Float]):
+    """
+    Beta(alpha, β) distribution on [0, 1].
 
     Provides standard Beta distribution functionality backed by
     :mod:`scipy.stats.beta`. Supports sampling, density evaluation,
@@ -1798,7 +1152,7 @@ class Beta(Multivariate[np.floating]):
         alpha: float,
         beta: float,
         *,
-        rng: Optional[np.random.Generator] = None,
+        rng: PRNG | None = None,
     ):
         """Initializes a Beta distribution.
 
@@ -1830,9 +1184,9 @@ class Beta(Multivariate[np.floating]):
         self._mean = np.array([mean], dtype=float)     # (1,)
         self._cov = np.array([[var]], dtype=float)     # (1,1)
 
-    # ------------------------ Multivariate core ------------------------
+    # ------------------------ RealVectorDistribution core ------------------------
 
-    def sample(self, n_samples: int) -> NDArray[np.floating]:
+    def sample(self, n_samples: int) -> Array[Float]:
         """Draws random samples from the Beta distribution.
 
         Args:
@@ -1844,7 +1198,7 @@ class Beta(Multivariate[np.floating]):
         x = self._beta.rvs(size=int(n_samples), random_state=self._rng)  # (n,) or scalar
         return np.asarray(x, dtype=float).reshape(-1, 1)
 
-    def density(self, values: NDArray) -> NDArray[np.floating]:
+    def density(self, values: Array) -> Array[Float]:
         """Evaluates the probability density function (PDF).
 
         Args:
@@ -1853,12 +1207,12 @@ class Beta(Multivariate[np.floating]):
         Returns:
             Column vector of PDF values, shape (n, 1).
         """
-        v = _to_1d_vector(values)
+        v = _ensure_vector(values)
         v = _clip_unit_interval(v)  # keep within [0,1]
         p = self._beta.pdf(v)       # (n,)
         return np.asarray(p, dtype=float).reshape(-1, 1)
 
-    def log_density(self, values: NDArray) -> NDArray[np.floating]:
+    def log_density(self, values: Array) -> Array[Float]:
         """Evaluates the log-PDF of the Beta distribution.
 
         Args:
@@ -1867,12 +1221,12 @@ class Beta(Multivariate[np.floating]):
         Returns:
             Column vector of log-PDF values, shape (n, 1).
         """
-        v = _to_1d_vector(values)
+        v = _ensure_vector(values)
         v = _clip_unit_interval(v)  # keep within [0,1]
         lp = self._beta.logpdf(v)   # (n,)
         return np.asarray(lp, dtype=float).reshape(-1, 1)
 
-    def cdf(self, values: NDArray) -> NDArray[np.floating]:
+    def cdf(self, values: Array) -> Array[Float]:
         """Evaluates the cumulative distribution function (CDF).
 
         Args:
@@ -1881,12 +1235,12 @@ class Beta(Multivariate[np.floating]):
         Returns:
             Column vector of CDF values, shape (n, 1).
         """
-        v = _to_1d_vector(values)
+        v = _ensure_vector(values)
         v = _clip_unit_interval(v)
         c = self._beta.cdf(v)
         return np.asarray(c, dtype=float).reshape(-1, 1)
 
-    def inv_cdf(self, u: NDArray[np.floating]) -> NDArray[np.floating]:
+    def inv_cdf(self, u: Array[Float]) -> Array[Float]:
         """Computes the inverse CDF (quantile function).
 
         Args:
@@ -1912,24 +1266,12 @@ class Beta(Multivariate[np.floating]):
 
     # ------------------------ Expectations & converters ------------------------
 
-    def expectation(self, func: Callable[[NDArray[np.floating]], NDArray]) -> 'Multivariate':
-        """Estimates the expectation of a function under the Beta distribution.
-
-        Uses Monte-Carlo sampling with Central-Limit approximation to
-        summarize E[f(X)] as a Normal1D or MvNormal distribution.
-
-        Behavior:
-            - Scalar-valued ``f`` -> returns :class:`Normal1D`
-            - Vector-valued ``f`` -> returns :class:`MvNormal`
-
-        Args:
-            func: Function mapping samples (n_mc, 1) -> outputs.
-
-        Returns:
-            Normal1D or MvNormal summarizing the mean and uncertainty.
-
-        Raises:
-            ValueError: If ``func`` output shape is unsupported.
+    def expectation(self, func: Callable[[Array[Float]], Array]) -> RealVectorDistribution:
+        """
+        Monte-Carlo CLT over f(X):
+          - scalar f -> Normal1D(mean, se)
+          - vector f -> MvNormal(mean, cov_of_mean)
+        func receives samples as (n_mc, 1).
         """
         n_mc = 2048
         xs = self.sample(n_mc)                    # (n_mc, 1)
@@ -1954,17 +1296,15 @@ class Beta(Multivariate[np.floating]):
             raise ValueError(f"func must return (n,), (n,1) or (n,k). Got {ys.shape!r}")
 
     @classmethod
-    def from_distribution(cls, convert_from: 'Distribution', num_samples: int=1024, *, conversion_by_KDE: bool = False, **fit_kwargs: Any) -> 'Beta':
+    def from_distribution(cls, convert_from: Distribution, num_samples: int=1024, *, 
+                          conversion_by_KDE: bool = False, **fit_kwargs: Any) -> Beta:
         """Placeholder for fitting a Beta distribution from samples."""
         raise NotImplementedError
 
 
-    def mean(self) -> NDArray[np.floating]:
+    def mean(self) -> Array[Float]:
         """Returns the mean vector (1,)."""
         return self._mean  # (1,)
 
-    def cov(self) -> NDArray[np.floating]:
-        """Returns the covariance matrix (1 × 1)."""
+    def cov(self) -> Array[Float]:
         return self._cov   # (1,1)
-
-
