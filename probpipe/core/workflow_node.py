@@ -3,7 +3,7 @@ from functools import wraps
 from typing import Any, Callable, Dict, Mapping, Union, get_type_hints
 import inspect
 from types import MappingProxyType
-from probpipe import Node
+from probpipe.core.node import Node
 
 from prefect import task, flow
 
