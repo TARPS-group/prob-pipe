@@ -10,7 +10,7 @@ from prefect import task, flow
 from probpipe import Distribution, EmpiricalDistribution, Multivariate
 DISTRIBUTION_TYPES = (Distribution, EmpiricalDistribution, Multivariate)
 
-__all__ = ["InputFrozenError", "wf", "FreezableDict", "Node", "WorkflowNode", ]
+__all__ = ["InputFrozenError", "wf", "FreezableDict", "Node", ]
 
 class InputFrozenError(Exception):
     pass
