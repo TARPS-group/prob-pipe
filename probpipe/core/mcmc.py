@@ -86,6 +86,7 @@ class PosteriorDistribution(Distribution[T]):
         likelihood: Likelihood,
         data: NDArray,
     ):
+        self.__class__.__name__=posterior.__class__.__name__
         self._posterior = posterior
         self.prior = prior
         self.likelihood = likelihood

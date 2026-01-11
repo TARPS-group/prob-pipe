@@ -11,7 +11,8 @@ from prefect import task, flow
 from probpipe import Distribution, EmpiricalDistribution, Multivariate
 DISTRIBUTION_TYPES = (Distribution, EmpiricalDistribution, Multivariate)
 
-__all__ = ["WorkflowNode", ]
+__all__ = ["WorkflowNode"]
+
 
 
 
@@ -24,10 +25,11 @@ class WorkflowNode(Node):
         self,
         *,
         func: Callable,
-        child_nodes: Dict[str, Node],
-        inputs: Dict[str, Any],
         prefect_kind: str | None = None,   # "task" or "flow" or None
         name: str | None = None,
+        child_nodes: Dict[str, Node] | None = None,  
+        inputs: Dict[str, Any] | None = None,        
+        **kwargs: Any,                               
     ):
         self._func = func
         self._sig = inspect.signature(func)
@@ -35,10 +37,19 @@ class WorkflowNode(Node):
         self._prefect_kind = prefect_kind
         self._name = name or func.__name__
 
-        super().__init__(
-            child_nodes=child_nodes,
-            inputs=inputs,
-        )
+        child_nodes = dict(child_nodes or {})
+        inputs = dict(inputs or {})
+
+        # Auto-split kwargs into child_nodes vs inputs
+        for k, v in kwargs.items():
+            if isinstance(v, Node):
+                child_nodes[k] = v
+                inputs.pop(k, None)
+            else:
+                inputs[k] = v
+                child_nodes.pop(k, None)
+
+        super().__init__(child_nodes=child_nodes, inputs=inputs)
 
         self._validate_declared_inputs()
 

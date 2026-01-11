@@ -49,6 +49,12 @@ class Node(ABC):
     - has child nodes (other Nodes it is allowed to call)
     - has inputs (non-Node values)
     - knows nothing about execution, prefect, or workflow functions
+
+    New convenience:
+      Node(foo=SomeNode(), bar=123)  # auto-splits
+
+    Backward compatible:
+      Node(child_nodes={...}, inputs={...})
     """
 
     def __init__(
@@ -56,29 +62,43 @@ class Node(ABC):
         *,
         child_nodes: Dict[str, "Node"] | None = None,
         inputs: Dict[str, Any] | None = None,
+        **kwargs: Any,
     ):
-        child_nodes = child_nodes or {}
-        inputs = inputs or {}
+        # Start from explicitly provided dicts
+        child_nodes = dict(child_nodes or {})
+        inputs = dict(inputs or {})
 
-        # validates child nodes 
+        # Auto-split kwargs into child_nodes vs inputs
+        # (kwargs override nothing by default; if you want kwargs to override, swap the order)
+        for k, v in kwargs.items():
+            if isinstance(v, Node):
+                # If user mistakenly passed a Node both in inputs and kwargs, this will correct it
+                child_nodes[k] = v
+                # In case it was also present in inputs, remove it (avoid inconsistent state)
+                if k in inputs:
+                    del inputs[k]
+            else:
+                # If user mistakenly passed a non-Node both in child_nodes and kwargs, correct it
+                inputs[k] = v
+                if k in child_nodes:
+                    del child_nodes[k]
+
+        # Validate child nodes
         for name, node in child_nodes.items():
             if not isinstance(node, Node):
-                raise TypeError(
-                    f"Child node '{name}' must be a Node, got {type(node)}"
-                )
+                raise TypeError(f"Child node '{name}' must be a Node, got {type(node)}")
 
-        # validates inputs 
+        # Validate inputs
         for name, value in inputs.items():
             if isinstance(value, Node):
                 raise TypeError(
-                    f"Input '{name}' is a Node; Nodes must be declared as child_nodes"
+                    f"Input '{name}' is a Node; Nodes must be declared as child_nodes "
+                    f"(or passed as a normal kwarg so it is auto-detected)"
                 )
 
-        # freezing internal state
+        # Freeze internal state (read-only)
         self._child_nodes = MappingProxyType(dict(child_nodes))
         self._inputs = MappingProxyType(dict(inputs))
-
-    # public read-only views
 
     @property
     def child_nodes(self) -> Mapping[str, "Node"]:
