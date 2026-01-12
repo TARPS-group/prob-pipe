@@ -1,4 +1,4 @@
-from abc import ABC
+from abc import ABC, abstractmethod
 from functools import wraps
 from typing import Any, Callable, Dict, Mapping, Union, get_type_hints
 import inspect
@@ -15,6 +15,20 @@ __all__ = ["InputFrozenError", "wf", "FreezableDict", "Node", ]
 class InputFrozenError(Exception):
     pass
 
+
+def abstractwf(func: Callable):
+    """
+    Marks a method as:
+      - a workflow interface (visible to ModuleNode)
+      - abstract (enforced by ABCMeta)
+
+    This allows abstract modules to declare workflow-shaped interfaces
+    without providing implementations.
+    """
+    func._is_workflow = True
+
+    # abstractmethod sets __isabstractmethod__ = True
+    return abstractmethod(func)
 
 def wf(func: Callable):
     func._is_workflow = True
