@@ -1,8 +1,8 @@
 from typing import Dict, Set, Any, Type, TypeVar, Callable
 from probpipe.core.workflow_node import WorkflowNode
-from probpipe.core.node import Node, wf
+from probpipe.core.node import Node, wf, abstractwf
 from probpipe.core.workflow_node import WorkflowNode
-from probpipe.core.module_node import ModuleNode
+from probpipe.core.module_node import ModuleNode, AbstractModule
 import inspect
 from typing import get_type_hints
 from numpy.typing import NDArray
@@ -26,30 +26,29 @@ __all__ = [
 
 TDistribution = TypeVar("TDistribution", bound=Distribution)
 
-class Likelihood(ABC):
+class Likelihood(AbstractModule):
     """Abstract module node for (1) computing the likelihood of a model given data and parameters
     and (2) generating synthetic data given parameters.
     """
-    # XXX: do abstactmethod and wf play nicely together?
-    @abstractmethod
+
+    @abstractwf
     def log_likelihood(self,  params: NDArray, data: NDArray) -> float:
         pass
 
 
-class GenerativeLikelihood(ABC):
-    @abstractmethod
+class GenerativeLikelihood(AbstractModule):
+    @abstractwf
     def generate_data(self, params: NDArray, n_samples: int) -> NDArray:
         pass
 
 
-class SimpleLikelihood(ModuleNode, Likelihood, GenerativeLikelihood):
+class SimpleLikelihood(Likelihood, GenerativeLikelihood):
     """A simple likelihood module that wraps a Distribution class."""
     def __init__(self, dist_cls: Type[TDistribution], params_name: str, **other_params):
-        super().__init__()
+        super().__init__(workflow_kind=None, **other_params)
         self.dist_cls = dist_cls
         # XXX: need to validate params_name and other_params match with dist_cls requirements
         self.params_name = params_name
-        self.other_params = other_params
 
     def _get_distribution_for_params(self, params: NDArray) -> Distribution:
         dist_params = dict(self.other_params)
@@ -139,7 +138,7 @@ class PosteriorDistribution(Distribution[T]):
 
 
 
-class ApproximatePosterior(WorkflowNode, ABC):
+class ApproximatePosterior(ModuleNode, ABC):
     def __init__(self):
         super().__init__(
             func=self.compute,  
@@ -147,7 +146,7 @@ class ApproximatePosterior(WorkflowNode, ABC):
             name=type(self).__name__,
         )
 
-    @abstractmethod
+    @abstractwf
     def compute(
         self,
         prior: Distribution,
@@ -160,9 +159,9 @@ class ApproximatePosterior(WorkflowNode, ABC):
 class RWMH(ApproximatePosterior):
     """Computes the posterior distribution using a Random Walk Metropolis-Hastings algorithm with a multivariate Gaussian proposal."""
     def __init__(self, step_size: float = 1):
-        super().__init__()
-        self.step_size = step_size
+        super().__init__(step_size=step_size)
 
+    @wf
     def _compute_posterior(self, prior: Distribution, likelihood: Likelihood, data: NDArray) -> PosteriorDistribution:
         # XXX: implement RWMH algorithm here
         post_approx = EmpiricalDistribution(samples=np.array([]))  # XXX: placeholder
@@ -183,33 +182,32 @@ class IterativeForecaster(ModuleNode):
     def update(
         self,
         approx_post: ApproximatePosterior,
+        prior: Distribution,
         likelihood: Likelihood,
         data: NDArray,
-    ) -> Distribution:
-        post_dist = approx_post(prior=self.curr_posterior, likelihood=likelihood, data=data)
-        self._curr_posterior = post_dist
-        return post_dist
+    ) -> PosteriorDistribution:
+        return approx_post.compute(prior=prior, likelihood=likelihood, data=data)
 
     @wf
     def forecast(
-        self, 
+        self,
+        posterior: PosteriorDistribution, 
         n_samples: int) -> NDArray:
-        return self.curr_posterior.sample_predictive(n_samples=n_samples)
+        return posterior.sample_predictive(n_samples=n_samples)
 
 
 #########################
 ### Predictive checks ###
 #########################
 
-class PredictiveChecker(ModuleNode):
-    def __init__(self, statistic: Callable[[NDArray], float]):
-        super().__init__(child_nodes={}, inputs={})
-        self.statistic = statistic
+class PredictiveChecker(AbstractModule):
 
-    @abstractmethod
-    @wf
+    def __init__(self, statistic: Callable[[NDArray], float]):
+        super().__init__(statistic=statistic)
+
+    @abstractwf
     def predictive_p_value(
-        self, 
+        self,
         posterior: PosteriorDistribution,
     ) -> float:
         pass
