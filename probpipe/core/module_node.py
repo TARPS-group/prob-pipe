@@ -21,8 +21,8 @@ class ModuleNode(Node):
         - everything else becomes inputs
     """
 
-    def __init__(self, *, prefect_kind: str | None = None, **kwargs: Any):
-        self._prefect_kind = prefect_kind
+    def __init__(self, *, workflow_kind: str | None = None, **kwargs: Any):
+        self._workflow_kind = workflow_kind
         super().__init__(**kwargs)
         # validate abstract workflow implementations before wrapping
         self._validate_abstract_workflow_implementations()
@@ -79,7 +79,7 @@ class ModuleNode(Node):
                 func=func,
                 child_nodes=wf_child_nodes,
                 inputs=wf_inputs,
-                prefect_kind=self._prefect_kind,
+                workflow_kind=self._workflow_kind,
                 name=f"{self.__class__.__name__}.{func.__name__}",
             )
 

@@ -25,7 +25,7 @@ class WorkflowNode(Node):
         self,
         *,
         func: Callable,
-        prefect_kind: str | None = None,   # "task" or "flow" or None
+        workflow_kind: str | None = None,   # "task" or "flow" or None
         name: str | None = None,
         child_nodes: Dict[str, Node] | None = None,  
         inputs: Dict[str, Any] | None = None,        
@@ -34,7 +34,7 @@ class WorkflowNode(Node):
         self._func = func
         self._sig = inspect.signature(func)
         self._hints = get_type_hints(func)
-        self._prefect_kind = prefect_kind
+        self._workflow_kind = workflow_kind
         self._name = name or func.__name__
 
         child_nodes = dict(child_nodes or {})
@@ -74,9 +74,9 @@ class WorkflowNode(Node):
         bound = self._bind_inputs(call_inputs)
         bound = self._convert_distributions(bound)
 
-        if self._prefect_kind == "task":
+        if self._workflow_kind == "task":
             return self._run_as_task(bound)
-        if self._prefect_kind == "flow":
+        if self._workflow_kind == "flow":
             return self._run_as_flow(bound)
 
         return self._call_python(bound)
