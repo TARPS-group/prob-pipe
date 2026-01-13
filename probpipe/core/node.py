@@ -10,7 +10,7 @@ from prefect import task, flow
 from probpipe import Distribution, EmpiricalDistribution, Multivariate
 DISTRIBUTION_TYPES = (Distribution, EmpiricalDistribution, Multivariate)
 
-__all__ = ["InputFrozenError", "wf", "FreezableDict", "Node", ]
+__all__ = ["InputFrozenError", "wf", "Node", ]
 
 class InputFrozenError(Exception):
     pass
@@ -33,26 +33,6 @@ def abstractwf(func: Callable):
 def wf(func: Callable):
     func._is_workflow = True
     return func
-
-
-class FreezableDict(dict):
-    """Dict that raises if updated after freezing."""
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._frozen = False
-
-    def freeze(self):
-        self._frozen = True
-
-    def __setitem__(self, key, value):
-        if self._frozen:
-            raise InputFrozenError("Cannot modify inputs after frozen.")
-        super().__setitem__(key, value)
-
-    def __delitem__(self, key):
-        if self._frozen:
-            raise InputFrozenError("Cannot delete inputs after frozen.")
-        super().__delitem__(key)
 
 
 class Node(ABC):
