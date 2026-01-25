@@ -1,5 +1,5 @@
 from graphviz import Digraph
-from probpipe.core.workflow_node import WorkflowNode
+from probpipe import WorkflowNode
 
 
 def visualize_module_dag(module):
