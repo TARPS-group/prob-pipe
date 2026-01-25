@@ -1,5 +1,6 @@
-from probpipe import wf, abstractwf, WorkflowNode, ModuleNode, AbstractModule
-from probpipe import Distribution, MvNormal
+from .node import wf, abstractwf, WorkflowNode, ModuleNode, AbstractModule
+from .distributions import Distribution
+from .multivariate import MvNormal
 
 from typing import Any, Type, TypeVar, Callable
 from numpy.typing import NDArray
@@ -36,7 +37,7 @@ class GenerativeLikelihood(AbstractModule):
         pass
 
 
-class SimpleLikelihood(ModuleNode, Likelihood, GenerativeLikelihood):
+class SimpleLikelihood(Likelihood, GenerativeLikelihood):
     """A simple likelihood module that wraps a Distribution class."""
     def __init__(self, dist_cls: Type[TDistribution], params_name: str, **other_params):
         super().__init__()  # no shared deps required anymore!
@@ -186,7 +187,7 @@ class PredictiveChecker(AbstractModule):
         ...
 
 
-class PosteriorPredictiveChecker(ModuleNode, PredictiveChecker):
+class PosteriorPredictiveChecker(PredictiveChecker):
     def __init__(self, statistic: Callable[[NDArray], float]):
         super().__init__(statistic=statistic)
 

@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, Mapping, get_type_hints
 import inspect
 from types import MappingProxyType
-from probpipe.viz.dag import visualize_module_dag
 
 from prefect import task, flow
 
@@ -283,6 +282,7 @@ class WorkflowNode(Node):
 
         return wrapped()
 
+from probpipe.viz.dag import visualize_module_dag
     
 class ModuleNode(Node):
     """
@@ -425,4 +425,11 @@ class ModuleNode(Node):
                     f"Got (impl):          {impl_sig}"
                 )
             
+class AbstractModule(ModuleNode, ABC):
+    """
+    Base class for modules that declare workflow interfaces via @abstractwf.
 
+    ABCMeta will prevent instantiation until all abstract workflows are implemented
+    by a concrete subclass.
+    """
+    pass
