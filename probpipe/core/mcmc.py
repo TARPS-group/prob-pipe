@@ -1,14 +1,10 @@
-from typing import Dict, Set, Any, Type, TypeVar, Callable
-from probpipe.core.workflow_node import WorkflowNode
-from probpipe.core.node import Node, wf, abstractwf
-from probpipe.core.workflow_node import WorkflowNode
-from probpipe.core.module_node import ModuleNode, AbstractModule
-import inspect
-from typing import get_type_hints
+from probpipe import wf, abstractwf, WorkflowNode, ModuleNode, AbstractModule
+from probpipe import Distribution, MvNormal
+
+from typing import Any, Type, TypeVar, Callable
 from numpy.typing import NDArray
 import numpy as np
-from abc import ABC, abstractmethod
-from probpipe.core.distributions import Distribution, EmpiricalDistribution
+from abc import ABC
 
 
 
@@ -27,39 +23,41 @@ __all__ = [
 TDistribution = TypeVar("TDistribution", bound=Distribution)
 
 class Likelihood(AbstractModule):
-    """Abstract module node for (1) computing the likelihood of a model given data and parameters
-    and (2) generating synthetic data given parameters.
-    """
-
+    """Abstract module node for computing the likelihood of a model given data and parameters"""
     @abstractwf
     def log_likelihood(self,  params: NDArray, data: NDArray) -> float:
         pass
 
 
 class GenerativeLikelihood(AbstractModule):
+    """Abstract module node for generating synthetic data given parameters."""
     @abstractwf
     def generate_data(self, params: NDArray, n_samples: int) -> NDArray:
         pass
 
 
-class SimpleLikelihood(Likelihood, GenerativeLikelihood):
+class SimpleLikelihood(ModuleNode, Likelihood, GenerativeLikelihood):
     """A simple likelihood module that wraps a Distribution class."""
     def __init__(self, dist_cls: Type[TDistribution], params_name: str, **other_params):
-        super().__init__(workflow_kind=None, **other_params)
+        super().__init__()  # no shared deps required anymore!
         self.dist_cls = dist_cls
         # XXX: need to validate params_name and other_params match with dist_cls requirements
         self.params_name = params_name
+        self.other_params = other_params
 
     def _get_distribution_for_params(self, params: NDArray) -> Distribution:
         dist_params = dict(self.other_params)
         dist_params[self.params_name] = params
+        mean = dist_params["mean"]
+        cov = dist_params["cov"]
+        #print("mean.shape:", np.asarray(mean).shape, "cov.shape:", np.asarray(cov).shape)
         return self.dist_cls(**dist_params)
 
     @wf
     def log_likelihood(self, params: NDArray, data: NDArray) -> float:
         dist = self._get_distribution_for_params(params)
-        return dist.log_density(data).sum()
-    
+        return float(dist.log_density(data).sum())
+
     @wf
     def generate_data(self, params: NDArray, n_samples: int) -> NDArray:
         dist = self._get_distribution_for_params(params)
@@ -70,60 +68,47 @@ class SimpleLikelihood(Likelihood, GenerativeLikelihood):
 #################################################################
 
 # XXX: it's awkward to have to specify T here; is there any alternative way to do this?
+# XXX: no
 T = TypeVar("T", bound=np.number)
-### Wrapper around Distribution object that tracks data, prior, and likelihood
-class PosteriorDistribution(Distribution[T]):
-    """
-    Wrapper around a posterior Distribution that augments it with
-    prior, likelihood, and observed data.
-    """
 
-    def __init__(
-        self,
-        posterior: Distribution[T],
-        prior: Distribution[T],
-        likelihood: Likelihood,
-        data: NDArray,
-    ):
-        self.__class__.__name__=posterior.__class__.__name__
-        self._posterior = posterior
+class PosteriorDistribution(Distribution[T]):
+    def __init__(self, posterior: Distribution[T], prior: Distribution[T], likelihood: Likelihood, data: NDArray):
+        self.__class__.__name__ = posterior.__class__.__name__  # not sure if this is the best way!
+        self.posterior = posterior
         self.prior = prior
         self.likelihood = likelihood
         self.data = data
 
-    # -------------------------
-    # Core Distribution methods
-    # -------------------------
+    def log_density(self, x: NDArray) -> NDArray[np.floating]:
+        # NOTE: likelihood.log_likelihood is a WorkflowNode once wrapped, so calling it works
+        return self.prior.log_density(x) + self.likelihood.log_likelihood(params=x, data=self.data)
 
-    def log_density(self, params: NDArray) -> NDArray[np.floating]:
-        return (
-            self.prior.log_density(params)
-            + self.likelihood.log_likelihood(params=params, data=self.data)
-        )
-
-    def density(self, params: NDArray) -> NDArray[np.floating]:
-        return np.exp(self.log_density(params))
+    def density(self, x: NDArray) -> NDArray[np.floating]:
+        return np.exp(self.log_density(x))
 
     def sample(self, n_samples: int) -> NDArray:
-        return self._posterior.sample(n_samples=n_samples)
+        return self.posterior.sample(n_samples=n_samples)
 
-    # -------------------------
-    # Predictive methods
-    # -------------------------
+    def predictive_log_density(self, x: NDArray) -> NDArray[np.floating]:
+        return self.likelihood.log_likelihood(params=x, data=self.data)
+
+    def sample_predictive(self, n_samples: int) -> NDArray:
+        params = self.posterior.sample(n_samples=1)
+        
+        params = np.asarray(self.posterior.sample(n_samples=1))
+        if params.ndim == 2 and params.shape[0] == 1:
+            params = params[0]
+        if params.ndim != 1:
+            raise ValueError(f"Expected posterior sample to be shape (d,) or (1,d), got {params.shape}")
+
+        return self.likelihood.generate_data(params=params, n_samples=n_samples)
 
     def expectation(self, func: Callable[[NDArray[T]], NDArray]) -> Distribution[T]:
         return self.posterior.expectation(func)
-    
-    def sample_predictive(self, n_samples: int) -> NDArray:
-        # XXX: actually should generate n_samples from posterior, then generate one sample from likelihood for each posterior sample
-        return self.likelihood.generate_data(params=self.posterior.sample(n_samples=1), n_samples=n_samples)
 
-    def sample_predictive(self, n_samples: int) -> NDArray:
-        # Correct Bayesian posterior predictive:
-        # θᵢ ~ p(θ | data)
-        # yᵢ ~ p(y | θᵢ)
-        theta = self._posterior.sample(n_samples=n_samples)
-        return self.likelihood.generate_data(params=theta, n_samples=1)
+    @classmethod
+    def from_distribution(cls, convert_from: Distribution, **fit_kwargs: Any) -> Distribution[T]:
+        raise NotImplementedError
 
     # -------------------------
     # Delegation
@@ -138,84 +123,76 @@ class PosteriorDistribution(Distribution[T]):
 
 
 
-class ApproximatePosterior(ModuleNode, ABC):
-    def __init__(self):
-        super().__init__(
-            func=self.compute,  
-            workflow_kind="task",
-            name=type(self).__name__,
-        )
+class ApproximatePosterior(WorkflowNode, ABC):
+    def __init__(self, *, workflow_kind: str | None = None, name: str = "compute_posterior", **bind):
+        super().__init__(func=self._compute_posterior, workflow_kind=workflow_kind, name=name, bind=bind)
 
-    @abstractwf
-    def compute(
-        self,
-        prior: Distribution,
-        likelihood: Likelihood,
-        data: NDArray,
-    ) -> PosteriorDistribution:
-        pass
+    @abstractwf  
+    def _compute_posterior(self, prior: Distribution, likelihood: Likelihood, data: NDArray) -> PosteriorDistribution:
+        ...
 
 
 class RWMH(ApproximatePosterior):
-    """Computes the posterior distribution using a Random Walk Metropolis-Hastings algorithm with a multivariate Gaussian proposal."""
-    def __init__(self, step_size: float = 1):
+    def __init__(self, step_size: float = 1.0):
+        # bind step_size into the workflow node (available as parameter if you include it in signature)
         super().__init__(step_size=step_size)
+        self.step_size = step_size
 
     @wf
     def _compute_posterior(self, prior: Distribution, likelihood: Likelihood, data: NDArray) -> PosteriorDistribution:
-        # XXX: implement RWMH algorithm here
-        post_approx = EmpiricalDistribution(samples=np.array([]))  # XXX: placeholder
-        return PosteriorDistribution(posterior=post_approx, prior=prior, likelihood=likelihood, data=data) 
+        # crude: posterior approx centered at sample mean
+        mu_hat = np.mean(data, axis=0)            # shape (d,)
+        post_approx = MvNormal(mean=mu_hat, cov=np.eye(len(mu_hat)))  # shape (d,d)
+        return PosteriorDistribution(posterior=post_approx, prior=prior, likelihood=likelihood, data=data)
 
 
 class IterativeForecaster(ModuleNode):
     """Can iteratively update posterior given new data and generate predictions from posterior."""
-    def __init__(self, prior: Distribution, likelihood: Likelihood, **kwargs):
-        # XXX: not quite right but this is the general idea 
-        super().__init__(child_nodes=dict(likelihood=likelihood), inputs={}, **kwargs)
-        self._curr_posterior = PosteriorDistribution(posterior=prior, prior=prior, likelihood=likelihood, data=np.array([]))
+    def __init__(self, *, prior: Distribution, likelihood: Likelihood, approx_post: ApproximatePosterior):
 
-    def current_posterior(self) -> PosteriorDistribution:
+        # state
+        self._curr_posterior = PosteriorDistribution(
+            posterior=prior,
+            prior=prior,
+            likelihood=likelihood,
+            data=np.array([]),
+        )
+
+        # auto-split: Nodes become child_nodes; non-Nodes become inputs
+        super().__init__(likelihood=likelihood, approx_post=approx_post, prior=prior)
+
+    @property
+    def curr_posterior(self) -> PosteriorDistribution:
         return self._curr_posterior
 
     @wf
-    def update(
-        self,
-        approx_post: ApproximatePosterior,
-        prior: Distribution,
-        likelihood: Likelihood,
-        data: NDArray,
-    ) -> PosteriorDistribution:
-        return approx_post.compute(prior=prior, likelihood=likelihood, data=data)
+    def update(self, approx_post: ApproximatePosterior, likelihood: SimpleLikelihood, prior: Distribution, data: NDArray) -> PosteriorDistribution:
+        # approx_post and likelihood and prior are resolved from module (deps/inputs) automatically
+        post_dist = approx_post(prior=prior, likelihood=likelihood, data=data)
+        self._curr_posterior = post_dist
+        return post_dist
 
     @wf
-    def forecast(
-        self,
-        posterior: PosteriorDistribution, 
-        n_samples: int) -> NDArray:
-        return posterior.sample_predictive(n_samples=n_samples)
-
+    def forecast(self, n_samples: int) -> NDArray:
+        return self.curr_posterior.sample_predictive(n_samples=n_samples)
 
 #########################
 ### Predictive checks ###
 #########################
 
 class PredictiveChecker(AbstractModule):
+    @abstractwf
+    def predictive_p_value(self, posterior: PosteriorDistribution) -> float:
+        ...
 
+
+class PosteriorPredictiveChecker(ModuleNode, PredictiveChecker):
     def __init__(self, statistic: Callable[[NDArray], float]):
         super().__init__(statistic=statistic)
 
-    @abstractwf
-    def predictive_p_value(
-        self,
-        posterior: PosteriorDistribution,
-    ) -> float:
-        pass
-
-class PosteriorPredictiveChecker(PredictiveChecker):
     @wf
-    def predictive_p_value(self, posterior: PosteriorDistribution) -> float:
+    def predictive_p_value(self, posterior: PosteriorDistribution, statistic: Callable[[NDArray], float]) -> float:
         obs_data = posterior.data
-        obs_stat = self.statistic(obs_data)
-        sim_stats = np.array([self.statistic(posterior.sample_predictive(n_samples=1)) for _ in range(1000)])
-        return (sim_stats >= obs_stat).mean()
+        obs_stat = statistic(obs_data)
+        sim_stats = np.array([statistic(posterior.sample_predictive(n_samples=1)) for _ in range(200)])
+        return float((sim_stats >= obs_stat).mean())
