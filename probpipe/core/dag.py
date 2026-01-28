@@ -1,5 +1,5 @@
 from graphviz import Digraph
-from ..core.node import WorkflowNode
+from .node import WorkflowNode
 
 
 def visualize_module_dag(module):

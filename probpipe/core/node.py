@@ -9,7 +9,7 @@ from prefect import task, flow
 from probpipe import Distribution, EmpiricalDistribution, Multivariate
 DISTRIBUTION_TYPES = (Distribution, EmpiricalDistribution, Multivariate)
 
-__all__ = ["InputFrozenError", "wf", "Node", "abstractwf", "WorkflowNode", "ModuleNode", "AbstractModule"]
+__all__ = ["InputFrozenError", "wf", "Node", "abstractwf", "WorkflowNode", "Module", "AbstractModule"]
 
 class InputFrozenError(Exception):
     pass
@@ -17,16 +17,13 @@ class InputFrozenError(Exception):
 def abstractwf(func: Callable):
     """
     Marks a method as:
-      - a workflow interface (visible to ModuleNode)
+      - a workflow interface (via wf)
       - abstract (enforced by ABCMeta)
 
     This allows abstract modules to declare workflow-shaped interfaces
     without providing implementations.
     """
-    func._is_workflow = True
-
-    # abstractmethod sets __isabstractmethod__ = True
-    return abstractmethod(func)
+    return abstractmethod(wf(func))
 
 def wf(func: Callable):
     func._is_workflow = True
@@ -103,13 +100,13 @@ class Node(ABC):
 
 class WorkflowNode(Node):
     """
-    A single executable DAG node wrapping exactly one function.
+    A single executable DAG node that wraps exactly one function.
 
-    Key change:
-      - No longer takes child_nodes/inputs explicitly.
-      - Infers dependency-vs-input from the function signature/type hints.
-      - Optionally resolves missing values from an attached ModuleNode.
+    The node infers its dependencies and inputs from the wrapped function’s
+    signature and type hints, and can optionally resolve missing values
+    from an associated ModuleNode.
     """
+
 
     def __init__(
         self,
@@ -282,9 +279,9 @@ class WorkflowNode(Node):
 
         return wrapped()
 
-from probpipe.viz.dag import visualize_module_dag
+from probpipe.core.dag import visualize_module_dag
     
-class ModuleNode(Node):
+class Module(Node):
     """
     Container for workflow nodes with shared inputs and child nodes.
 
