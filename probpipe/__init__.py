@@ -1,11 +1,4 @@
 
-#from probpipe.core.distributions import *
-#from probpipe.core.multivariate import *
-#from probpipe.core.module import *
-#from probpipe.core.mcmc import *
-#from probpipe.core.workflow import *
-
-
 # EmpiricalDistribution 
 try:
     from probpipe.core.distributions import EmpiricalDistribution
@@ -26,15 +19,14 @@ except Exception:
         Normal1D = None
 
 
-
 # MvNormal
 try:
     from probpipe.core.multivariate import MvNormal
 except Exception:
     try:
-        from probpipe.distributions.multivariate import MvNormal
+        from probpipe.distributions.real_vector.gaussian import Gaussian
     except Exception:
-        MvNormal = None
+        Gaussian = None
 
 # Gaussian 
 try:

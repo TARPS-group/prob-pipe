@@ -1,254 +1,199 @@
-from typing import Callable, ClassVar, Dict, Type, Any
-from types import MappingProxyType
+from .node import wf, abstractwf, Workflow, Module, AbstractModule
+from ..distributions.distribution import Distribution
+from ..distributions.real_vector.gaussian import Gaussian
 
-
-import numpy as np
-
-from .module import Module, InputSpec
-from .distributions import Distribution, EmpiricalDistribution
+from typing import Any, Type, TypeVar, Callable
 from numpy.typing import NDArray
-from probpipe import Distribution
+import numpy as np
+from abc import ABC
 
 
 __all__ = [
     "Likelihood",
-    "MetropolisHastings",
-    "MCMC",
-    "DistributionModule",
+    "GenerativeLikelihood",
+    "SimpleLikelihood",
+    "PosteriorDistribution",
+    "ApproximatePosterior",
+    "RWMH",
+    "IterativeForecaster",
+    "PredictiveChecker",
+    "PosteriorPredictiveChecker",
 ]
 
-class DistributionModule(Module):
-    DEPENDENCIES = MappingProxyType({})
+TDistribution = TypeVar("TDistribution", bound=Distribution)
 
-    def __init__(self, distribution: Any):
-        """
-        Wraps an existing distribution instance to conform to the Module interface.
+class Likelihood(AbstractModule):
+    """Abstract module node for computing the likelihood of a model given data and parameters"""
+    @abstractwf
+    def log_likelihood(self,  params: NDArray, data: NDArray) -> float:
+        pass
 
-        Args:
-            distribution (Any): An instance of a distribution class, such as Normal1D,
-                Beta, or any custom distribution implementing required methods.
-        """
-        super().__init__()
-        self._distribution = distribution
 
-    def log_density(self, x):
-        """Delegate to the wrapped distribution's log_density method."""
-        return self._distribution.log_density(x)
+class GenerativeLikelihood(AbstractModule):
+    """Abstract module node for generating synthetic data given parameters."""
+    @abstractwf
+    def generate_data(self, params: NDArray, n_samples: int) -> NDArray:
+        pass
 
-    def sample(self, n_samples: int):
-        """Delegate to the wrapped distribution's sample method."""
-        return self._distribution.sample(n_samples)
+class SimpleLikelihood(Likelihood, GenerativeLikelihood):
+    """A simple likelihood module that wraps a Distribution class."""
+    def __init__(self, dist_cls: Type[TDistribution], params_name: str, **other_params):
+        super().__init__()  # no shared deps required anymore!
+        self.dist_cls = dist_cls
+        # XXX: need to validate params_name and other_params match with dist_cls requirements
+        self.params_name = params_name
+        self.other_params = other_params
 
-    # Optionally expose additional distribution methods as needed
-    def __getattr__(self, name):
-        # Delegate attribute access to underlying distribution
-        return getattr(self._distribution, name)
+    def _get_distribution_for_params(self, params: NDArray) -> Distribution:
+        dist_params = dict(self.other_params)
+        dist_params[self.params_name] = params
+        mean = dist_params["mean"]
+        cov = dist_params["cov"]
+        #print("mean.shape:", np.asarray(mean).shape, "cov.shape:", np.asarray(cov).shape)
+        return self.dist_cls(**dist_params)
+
+    @wf
+    def log_likelihood(self, params: NDArray, data: NDArray) -> float:
+        dist = self._get_distribution_for_params(params)
+        return float(dist.log_density(data).sum())
+
+    @wf
+    def generate_data(self, params: NDArray, n_samples: int) -> NDArray:
+        dist = self._get_distribution_for_params(params)
+        return dist.sample(n_samples=n_samples)
+
+#################################################################
+### Creating and updating approximate posterior distributions ###
+#################################################################
+
+# XXX: it's awkward to have to specify T here; is there any alternative way to do this?
+# XXX: no
+T = TypeVar("T", bound=np.number)
+
+class PosteriorDistribution(Distribution[T]):
+    def __init__(self, posterior: Distribution[T], prior: Distribution[T], likelihood: Likelihood, data: NDArray):
+        self.__class__.__name__ = posterior.__class__.__name__  # not sure if this is the best way!
+        self.posterior = posterior
+        self.prior = prior
+        self.likelihood = likelihood
+        self.data = data
+
+    def log_density(self, x: NDArray) -> NDArray[np.floating]:
+        # NOTE: likelihood.log_likelihood is a Workflow once wrapped, so calling it works
+        return self.prior.log_density(x) + self.likelihood.log_likelihood(params=x, data=self.data)
+
+    def density(self, x: NDArray) -> NDArray[np.floating]:
+        return np.exp(self.log_density(x))
+
+    def sample(self, n_samples: int) -> NDArray:
+        return self.posterior.sample(n_samples=n_samples)
+
+    def predictive_log_density(self, x: NDArray) -> NDArray[np.floating]:
+        return self.likelihood.log_likelihood(params=x, data=self.data)
+
+    def sample_predictive(self, n_samples: int) -> NDArray:
+        params = self.posterior.sample(n_samples=1)
         
+        params = np.asarray(self.posterior.sample(n_samples=1))
+        if params.ndim == 2 and params.shape[0] == 1:
+            params = params[0]
+        if params.ndim != 1:
+            raise ValueError(f"Expected posterior sample to be shape (d,) or (1,d), got {params.shape}")
+
+        return self.likelihood.generate_data(params=params, n_samples=n_samples)
+
+    def expectation(self, func: Callable[[NDArray[T]], NDArray]) -> Distribution[T]:
+        return self.posterior.expectation(func)
+
+    @classmethod
+    def from_distribution(cls, convert_from: Distribution, **fit_kwargs: Any) -> Distribution[T]:
+        raise NotImplementedError
+
+    # -------------------------
+    # Delegation
+    # -------------------------
+
+    def __getattr__(self, name: str):
+        """
+        Delegate all unknown attributes to the wrapped posterior.
+        This preserves behavior like expectation(), variance(), etc.
+        """
+        return getattr(self._posterior, name)
 
 
-class Likelihood(Module):
-    DEPENDENCIES = MappingProxyType({'distribution': Callable})  # factory returning distribution
 
-    def __init__(self, **dependencies):
-        super().__init__(**dependencies)
+class ApproximatePosterior(Workflow, ABC):
+    def __init__(self, *, workflow_kind: str | None = None, name: str = "compute_posterior", **bind):
+        super().__init__(func=self._compute_posterior, workflow_kind=workflow_kind, name=name, bind=bind)
 
-        self.set_input(
-            data=InputSpec(type=np.ndarray, required=True),
-            param=InputSpec(type=float, required=True),  # or NDArray if multi-parameter
+    @abstractwf  
+    def _compute_posterior(self, prior: Distribution, likelihood: Likelihood, data: NDArray) -> PosteriorDistribution:
+        ...
+
+
+class RWMH(ApproximatePosterior):
+    def __init__(self, step_size: float = 1.0):
+        # bind step_size into the workflow node (available as parameter if you include it in signature)
+        super().__init__(step_size=step_size)
+        self.step_size = step_size
+
+    @wf
+    def _compute_posterior(self, prior: Distribution, likelihood: Likelihood, data: NDArray) -> PosteriorDistribution:
+        # crude: posterior approx centered at sample mean
+        mu_hat = np.mean(data, axis=0)            # shape (d,)
+        post_approx = Gaussian(mean=mu_hat, cov=np.eye(len(mu_hat)))  # shape (d,d)
+        return PosteriorDistribution(posterior=post_approx, prior=prior, likelihood=likelihood, data=data)
+
+
+class IterativeForecaster(Module):
+    """Can iteratively update posterior given new data and generate predictions from posterior."""
+    def __init__(self, *, prior: Distribution, likelihood: Likelihood, approx_post: ApproximatePosterior):
+
+        # state
+        self._curr_posterior = PosteriorDistribution(
+            posterior=prior,
+            prior=prior,
+            likelihood=likelihood,
+            data=np.array([]),
         )
 
-        self.run_func(self._log_likelihood_task, name="log_likelihood")
+        # auto-split: Nodes become child_nodes; non-Nodes become inputs
+        super().__init__(likelihood=likelihood, approx_post=approx_post, prior=prior)
 
     @property
-    def distribution_factory(self):
-        return self.dependencies['distribution']
+    def curr_posterior(self) -> PosteriorDistribution:
+        return self._curr_posterior
 
-    def _log_likelihood_func(self, data, param):
-        dist = self.distribution_factory(param)
-        xarr = np.asarray(data)
-        return float(np.sum(dist.log_density(xarr)))
+    @wf
+    def update(self, approx_post: ApproximatePosterior, likelihood: SimpleLikelihood, prior: Distribution, data: NDArray) -> PosteriorDistribution:
+        # approx_post and likelihood and prior are resolved from module (deps/inputs) automatically
+        post_dist = approx_post(prior=prior, likelihood=likelihood, data=data)
+        self._curr_posterior = post_dist
+        return post_dist
 
-    def _log_likelihood_task(self, *, data, param):
-        return self._log_likelihood_func(data, param)
-    
-# It bypasses the Prefect tasks entirely when doing MCMC actual sampling (which needs immediate float results).
-# It only calls the pure computation methods returning floats.
-# It preserves the Prefect tasks if you want to call them independently within Prefect workflows.
-# This avoids the input missing errors and runtime confusion Prefect tasks incur when called like normal Python functions.
+    @wf
+    def forecast(self, n_samples: int) -> NDArray:
+        return self.curr_posterior.sample_predictive(n_samples=n_samples)
 
+#########################
+### Predictive checks ###
+#########################
 
-
-
-
-
-
-
-class MetropolisHastings(Module):
-    """Implements a basic Metropolis–Hastings (MH) sampler.
-
-    This module performs random-walk Metropolis–Hastings sampling using
-    a Normal(delta_t, proposal_std^2) proposal distribution. It provides a minimal,
-    general-purpose sampler for 1D or low-dimensional targets and can be
-    embedded as a dependency within higher-level MCMC workflows.
-
-    Attributes:
-        DEPENDENCIES: The set of required dependencies (empty for this module).
-
-    Notes:
-        - Stateless: does not maintain internal dependencies.
-        - Expects a callable ``log_target`` that returns the log-density of a state.
-        - Suitable for pedagogical or small-scale use; for high-dimensional or
-          correlated targets, more advanced samplers (e.g., HMC) are recommended.
-    """
-    
-    DEPENDENCIES = MappingProxyType({})
-
-    def __init__(self):
-        """Initializes the Metropolis–Hastings sampler.
-
-        The module defines required input specifications for Prefect workflows:
-        ``log_target``, ``num_samples``, ``initial_state``, and optionally ``proposal_std``.
-        """
-        super().__init__()
-        self.set_input(
-            log_target=InputSpec(type=Callable, required=True),
-            num_samples=InputSpec(type=int, required=True),
-            initial_state=InputSpec(type=float, required=True),
-            proposal_std=InputSpec(type=float, required=False, default=1.0),
-        )
-        self.run_func(self._sample_posterior, name="sample_posterior")
-        
-        
-    def _sample_posterior(self, *, log_target, num_samples, initial_state, proposal_std = 1.0):
-        """Draws samples from a target distribution using the MH algorithm.
-
-        Executes a random-walk Metropolis–Hastings loop over ``num_samples`` iterations.
-        Each proposed sample is drawn from a Normal(θₜ, proposal_std²) proposal, and
-        accepted or rejected according to the standard acceptance ratio.
-
-        Args:
-            log_target: Function that returns the
-                log-probability (log-density) of a given state.
-            num_samples: Number of MCMC iterations to perform.
-            initial_state: Initial value of the Markov chain.
-            proposal_std: Standard deviation of the Normal proposal
-                kernel. Defaults to 1.0.
-
-        Returns:
-            Sequence of sampled states approximating the target distribution.
-        """
-        
-        samples = []
-        current = initial_state
-        current_log_prob = log_target(current)
-
-        for _ in range(num_samples):
-            proposal = np.random.normal(current, proposal_std)
-            prop_log_prob = log_target(proposal)
-            log_accept_ratio = prop_log_prob - current_log_prob
-
-            if np.log(np.random.uniform()) < log_accept_ratio:
-                current = proposal
-                current_log_prob = prop_log_prob
-
-            samples.append(current)
-        return samples
-
-        
+class PredictiveChecker(AbstractModule):
+    @abstractwf
+    def predictive_p_value(self, posterior: PosteriorDistribution) -> float:
+        ...
 
 
-class MCMC(Module):
-    """Generic Markov Chain Monte Carlo (MCMC) posterior estimation module.
+class PosteriorPredictiveChecker(PredictiveChecker):
+    def __init__(self, statistic: Callable[[NDArray], float]):
+        super().__init__(statistic=statistic)
 
-    This module combines user-defined prior, likelihood, and sampler modules
-    (e.g., :class:`MetropolisHastings`) to draw samples from a posterior
-    distribution p(delta | data). The resulting samples are summarized as a
-    :class:`Normal1D` distribution representing the posterior mean and
-    standard deviation.
+    @wf
+    def predictive_p_value(self, posterior: PosteriorDistribution, statistic: Callable[[NDArray], float]) -> float:
+        obs_data = posterior.data
+        obs_stat = statistic(obs_data)
+        sim_stats = np.array([statistic(posterior.sample_predictive(n_samples=1)) for _ in range(200)])
+        return float((sim_stats >= obs_stat).mean())
 
-    Attributes:
-        DEPENDENCIES: Required module dependencies:
-            ``'likelihood'``, ``'prior'``, and ``'sampler'``.
-        _conv_num_samples: Default number of samples for distribution conversion.
-        _conv_by_kde: Whether to use kernel density estimation for conversion.
-        _conv_fit_kwargs: Extra fitting keyword arguments.
-    """
-
-    DEPENDENCIES: ClassVar[Dict[str, Type[Module]]] = MappingProxyType({
-        'likelihood': Likelihood,
-        'distribution': DistributionModule,
-        'sampler': MetropolisHastings,
-    })
-
-
-    def __init__(self, prior: Distribution, likelihood: Likelihood, sampler: MetropolisHastings, **dependencies):
-        """Initializes the MCMC module.
-
-        Args:
-            prior: Prior distribution
-            likelihood: Likelihood module
-            sampler: Sampling module 
-            **dependencies: Other module dependencies
-        """
-        super().__init__(likelihood=likelihood, sampler=sampler, **dependencies)
-        self._prior = prior
-        self._conv_num_samples = 2048
-        self._conv_by_kde = False
-        self._conv_fit_kwargs = {}
-
-        self.set_input(
-            num_samples=InputSpec(type=int, required=True),
-            initial_param=InputSpec(type=NDArray, required=True),
-            data=InputSpec(type=NDArray, required=True),
-            proposal_std=InputSpec(type=float, required=False, default=1.0),
-        )
-
-        self.run_func(
-            self._calculate_posterior, 
-            name="calculate_posterior",
-            )
-
-    def _calculate_posterior(self, *, num_samples, initial_param, data, proposal_std=1.0):
-        """Estimates the posterior distribution via MCMC sampling.
-
-        Runs an MCMC chain to approximate the posterior p(θ | data)
-        by iteratively combining the prior and likelihood in a
-        user-provided sampler (e.g., Metropolis–Hastings).
-        The resulting samples are summarized by a Normal1D distribution
-        using their empirical mean and standard deviation.
-
-        Args:
-            num_samples: Number of MCMC samples to draw.
-            initial_param: Initial parameter value for the Markov chain.
-            data: Observed data used in the likelihood function.
-            proposal_std: Standard deviation for the sampler’s
-                proposal kernel. Defaults to 1.0.
-
-        Returns:
-            Posterior summary distribution with mean and standard deviation
-            computed from the sampled chain.
-        """
-        
-        likelihood = self.dependencies['likelihood']
-        prior = self.dependencies['distribution']
-        sampler = self.dependencies['sampler']
-
-        def log_target(param):
-            """Computes unnormalized log posterior for a given parameter."""
-            
-            ll = likelihood._log_likelihood_func(data, param)
-            lp = prior.log_density(param)
-            return ll + lp
-
-        samples = sampler.sample_posterior(
-            log_target=log_target,
-            num_samples=num_samples,
-            initial_state=initial_param,
-            proposal_std=proposal_std,
-        )
-
-        D = initial_param.shape[0] 
-        samples_array = np.asarray(samples).reshape(-1, D)
-         
-        return EmpiricalDistribution(samples=samples_array)
     
