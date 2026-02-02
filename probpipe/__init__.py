@@ -1,4 +1,4 @@
-EmpiricalDistribution 
+# EmpiricalDistribution 
 try:
     from probpipe.core.distributions import EmpiricalDistribution
 except Exception:
