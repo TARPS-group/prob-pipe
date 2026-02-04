@@ -15,10 +15,12 @@ Ultimately, ProbPipe aims to serve as a general foundation for uncertainty-aware
 - **Trustworthy Execution:** Validity of the workflow is checked at the start, reducing runtime errors and improving reliability.
 
 ### Key Features
+- **Standalone Workflow Nodes:** Any Python callable can be turned into a workflow node, with explicit inputs and outputs.
+- **Abstract Modules:** Modules define high-level algorithms (e.g., inference, forecasting, simulation) and internally manage their required workflow nodes.
 - **Composable Architecture:** Every computational unit ("module") is built from smaller probabilistic primitives, allowing infinite composability of models and workflows.
-- **Distributions as First-Class Objects:** Modules can consume and emit probability distributions, even if they were implemented using scalar inputs or outputs, makign it easy to propogate and account for uncertainty across complete workflows. 
-- **Algorithmic-Level Operation:** Workflows are defined in terms of algorithmic components (sampling, inference, transformation), improving scalability and conceptual clarity.
-- **Seamless Conversion and Data Handling:** The system automatically manages conversions between distributional representations preferred by different algorithms, streamlining code and improving clarity.
+- **Distributions as First-Class Objects:** Nodes can consume and emit probability distributions, enabling principled uncertainty propagation across the entire pipeline.
+- **Automatic Type & Representation Handling:** The system manages conversions between different distribution representations used by different algorithms.
+- **DAG-Based Execution:** Workflows are represented as explicit computational graphs, enabling inspection, reuse, and orchestration.
 
 ## Installation Instructions
 ### Prerequisites
@@ -53,7 +55,7 @@ pip install -e .
 ```
 
 This installs the core dependencies listed in ```setup.py```:
-- ```numpy ≥ 1.20```
+- ```numpy ≥ 2.0```
 - ```scipy ≥ 1.7```
 - ```prefect ≥ 3.4```
 - ```makefun ≥ 1.16```
@@ -94,61 +96,53 @@ pip install -e .
 ```
 
 ## Example Usage
-This example demonstrates how to combine Prior, Likelihood, and MetropolisHastings modules with the MCMC class to estimate a posterior distribution over a scalar parameter θ: the mean of a Normal distribution with known standard deviation.
+This example demonstrates a simple Bayesian-style pipeline where uncertainty is propagated through workflow nodes.
 
-### Step 1: Generating synthetic data
+### Step 1: Define workflow nodes
 
 ```python
 import numpy as np
-from mcmc import Likelihood, Prior, MetropolisHastings, MCMC
-from multivariate import Normal1D
-
-np.random.seed(42)
-true_mu = 2.5
-sigma = 1.0
-data = np.random.normal(loc=true_mu, scale=sigma, size=50)
+from probpipe.core.node import wf
+from probpipe.distributions.real_vector.gaussian import Gaussian
 ```
-
-### Step 2: Defining prior and likelihood distributions
 
 ```python
-# Prior: Normal(0, 5)
-prior_dist = Normal1D(mu=0.0, sigma=5.0)
-# Likelihood base distribution: Normal(μ, 1.0)
-likelihood_dist = Normal1D(mu=0.0, sigma=sigma)
+@wf
+def load_data() -> np.ndarray:
+    np.random.seed(42)
+    return np.random.normal(loc=2.5, scale=1.0, size=50)
 ```
-
-### Step 3: Creating module instances
-Each component (Prior, Likelihood, Sampler) is instantiated independently, then composed inside the MCMC module.
 
 ```python
-prior = Prior(distribution=prior_dist)
-likelihood = Likelihood(distribution=likelihood_dist)
-sampler = MetropolisHastings()
+@wf
+def fit_mean(data: np.ndarray) -> Gaussian:
+    mu_hat = float(np.mean(data))
+    sigma_hat = float(np.std(data) / np.sqrt(len(data)))
+    return Gaussian(mu=mu_hat, cov=sigma_hat)
 ```
 
-### Step 4: Build and run the MCMC workflow
-The MCMC module internally builds a log_target function combining prior and likelihood log-densities.
+### Step 2: Compose a workflow
 
 ```python
-mcmc = MCMC(prior=prior, likelihood=likelihood, sampler=sampler)
+data_node = load_data()
+posterior_node = fit_mean(data=data_node)
 
-posterior = mcmc.calculate_posterior(
-    num_samples=2000,
-    initial_param=0.0,
-    data=data,
-    proposal_std=0.5,
-)
-
-# Summarizing posterior results
-print(f"Posterior mean (estimate of μ): {posterior.mu:.3f}")
-print(f"Posterior std: {posterior.sigma:.3f}")
+posterior = posterior_node()
+print(posterior)
 ```
+- ```load_data``` and ```fit_mean``` are standalone workflow nodes.
+- The output of ```fit_mean``` is a distribution, not a scalar.
+- Uncertainty is explicitly represented and preserved.
 
-After sampling, it returns a Normal1D summary object representing the posterior mean and uncertainty of the parameter.
+### Step 3: Using abstract modules (conceptually)
+More complex algorithms (e.g., Bayesian regression, forecasting, filtering) are implemented as modules, which internally assemble multiple workflow nodes.
 
-**Expected outcome:**
-With synthetic data generated around μ=2.5, you should see a posterior mean close to 2.5 and a standard deviation reflecting posterior uncertainty.
+```python
+from probpipe.modules import BayesianLinearRegression
+
+blr = BayesianLinearRegression()
+posterior = blr(data=X, targets=y)
+```
 
 ## Pointer to Further Documentation 
 to be created soon...
