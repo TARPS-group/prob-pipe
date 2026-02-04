@@ -7,7 +7,8 @@ from prefect import task, flow
 from graphviz import Digraph
 
 # THIS WILL BE CHANGED; just for implementing the template of conversion logic
-from probpipe import Distribution, EmpiricalDistribution, Gaussian
+from ..distributions.distribution import Distribution, EmpiricalDistribution
+from ..distributions.real_vector.gaussian import Gaussian
 DISTRIBUTION_TYPES = (Distribution, EmpiricalDistribution, Gaussian)
 
 __all__ = ["InputFrozenError", "wf", "Node", "abstractwf", "Workflow", "Module", "AbstractModule"]

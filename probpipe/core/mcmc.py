@@ -119,6 +119,9 @@ class PosteriorDistribution(Distribution[T]):
         This preserves behavior like expectation(), variance(), etc.
         """
         return getattr(self._posterior, name)
+    
+    def __str__(self):
+        return f"{self.posterior}"
 
 
 

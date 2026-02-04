@@ -32,3 +32,10 @@ try:
     from probpipe.distributions.real_vector.gaussian import Gaussian
 except Exception:
     Gaussian = None
+
+
+#mcmc
+try:
+    from probpipe.core.mcmc import *
+except Exception:
+    raise ModuleNotFoundError

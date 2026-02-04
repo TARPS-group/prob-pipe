@@ -129,3 +129,6 @@ class Gaussian(RealVectorDistribution[Float]):
         cov = np.cov(samp, rowvar=False, ddof=1)
  
         return cls(mean=mean, cov=cov)
+    
+    def __str__(self):
+        return f"{self.__class__.__name__}({self._mean},{self._cov.to_dense()})"
