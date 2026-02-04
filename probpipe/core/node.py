@@ -4,6 +4,7 @@ import inspect
 from types import MappingProxyType
 
 from prefect import task, flow
+from graphviz import Digraph
 
 # THIS WILL BE CHANGED; just for implementing the template of conversion logic
 from probpipe import Distribution, EmpiricalDistribution, Gaussian
@@ -279,9 +280,7 @@ class Workflow(Node):
             return self._call_python(values)
 
         return wrapped()
-
-from .dag import visualize_module_dag
-    
+ 
 class Module(Node):
     """
     Container for workflow nodes with shared inputs and child nodes.
@@ -331,8 +330,80 @@ class Module(Node):
             setattr(self, attr_name, wf)
 
     def dag(self):
-        """Return a Graphviz DAG visualization of this module."""
-        return visualize_module_dag(self)
+        """Return a Graphviz DAG visualization of this module."""        
+        dot = Digraph(
+            name=self.__class__.__name__,
+            graph_attr={
+                "rankdir": "LR",
+                "fontsize": "12",
+                "fontname": "Helvetica",
+            },
+            node_attr={
+                "fontname": "Helvetica",
+                "fontsize": "11",
+            },
+        )
+
+        # -------------------------
+        # Child nodes (outside)
+        # -------------------------
+        for name in self._child_nodes:
+            dot.node(
+                name,
+                label=name,
+                shape="ellipse",
+                style="filled",
+                fillcolor="#E8E8E8",
+            )
+
+        # -------------------------
+        # Module cluster
+        # -------------------------
+        with dot.subgraph(name=f"cluster_{self.__class__.__name__}") as cluster:
+            cluster.attr(
+                label=self.__class__.__name__,
+                style="rounded",
+                color="#4F81BD",
+                fontname="Helvetica-Bold",
+                fontsize="12",
+            )
+
+            # Workflow nodes inside the module
+            for attr_name in dir(self):
+                attr = getattr(self, attr_name)
+                if not isinstance(attr, Workflow):
+                    continue
+
+                wf_name = attr._name  # e.g. PM25ForecastingModule.fit
+                wf_label = wf_name.split(".")[-1]
+
+                cluster.node(
+                    wf_name,
+                    label=wf_label,
+                    shape="box",
+                    style="filled",
+                    fillcolor="#C6DBEF",
+                )
+
+        # -------------------------
+        # Dependency edges
+        # -------------------------
+        for attr_name in dir(self):
+            attr = getattr(self, attr_name)
+            if not isinstance(attr, Workflow):
+                continue
+
+            wf_name = attr._name
+
+            for child_name in attr._child_nodes:
+                if child_name not in self._child_nodes:
+                    raise ValueError(
+                        f"Workflow '{wf_name}' references unknown child node '{child_name}'"
+                    )
+
+                dot.edge(child_name, wf_name)
+
+        return dot
     
     def _validate_abstract_workflow_implementations(self) -> None:
         """
