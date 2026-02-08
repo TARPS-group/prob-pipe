@@ -36,6 +36,6 @@ except Exception:
 
 #mcmc
 try:
-    from probpipe.core.mcmc import *
+    from probpipe.core.modeling import *
 except Exception:
     raise ModuleNotFoundError
