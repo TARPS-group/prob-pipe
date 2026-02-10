@@ -1,5 +1,5 @@
 from .node import wf, abstractwf, Workflow, Module, AbstractModule
-from ..distributions.distribution import Distribution
+from ..distributions.distribution import Distribution, EmpiricalDistribution
 from ..distributions.real_vector.gaussian import Gaussian
 
 from typing import Any, Type, TypeVar, Callable
@@ -62,12 +62,10 @@ class SimpleLikelihood(Likelihood, GenerativeLikelihood):
         dist = self._get_distribution_for_params(params)
         return dist.sample(n_samples=n_samples)
 
-#################################################################
-### Creating and updating approximate posterior distributions ###
-#################################################################
 
-# XXX: it's awkward to have to specify T here; is there any alternative way to do this?
-# XXX: no
+# Creating and updating approximate posterior distributions ###
+
+# It is necessary to specify T this way.
 T = TypeVar("T", bound=np.number)
 
 class PosteriorDistribution(Distribution[T]):
@@ -92,7 +90,6 @@ class PosteriorDistribution(Distribution[T]):
         return self.likelihood.log_likelihood(params=x, data=self.data)
 
     def sample_predictive(self, n_samples: int) -> NDArray:
-        params = self.posterior.sample(n_samples=1)
         
         params = np.asarray(self.posterior.sample(n_samples=1))
         if params.ndim == 2 and params.shape[0] == 1:
@@ -109,10 +106,7 @@ class PosteriorDistribution(Distribution[T]):
     def from_distribution(cls, convert_from: Distribution, **fit_kwargs: Any) -> Distribution[T]:
         raise NotImplementedError
 
-    # -------------------------
     # Delegation
-    # -------------------------
-
     def __getattr__(self, name: str):
         """
         Delegate all unknown attributes to the wrapped posterior.
@@ -135,17 +129,119 @@ class ApproximatePosterior(Workflow, ABC):
 
 
 class RWMH(ApproximatePosterior):
-    def __init__(self, step_size: float = 1.0):
-        # bind step_size into the workflow node (available as parameter if you include it in signature)
-        super().__init__(step_size=step_size)
-        self.step_size = step_size
+    def __init__(
+        self,
+        step_size: float = 1.0,
+        n_steps: int = 10_000,
+        burn_in: int = 2_000,
+        thin: int = 5,
+        init: NDArray | None = None,
+        rng: np.random.Generator | None = None,
+    ):
+        # Binding parameters into workflow node state
+        super().__init__(
+            step_size=step_size,
+            n_steps=n_steps,
+            burn_in=burn_in,
+            thin=thin,
+            init=init,
+            rng=rng,
+        )
+        self.step_size = float(step_size)
+        self.n_steps = int(n_steps)
+        self.burn_in = int(burn_in)
+        self.thin = int(thin)
+        self.init = None if init is None else np.asarray(init, dtype=float)
+        self.rng = rng or np.random.default_rng()
+
+        if self.n_steps <= 0:
+            raise ValueError("n_steps must be > 0")
+        if self.burn_in < 0:
+            raise ValueError("burn_in must be >= 0")
+        if self.thin <= 0:
+            raise ValueError("thin must be > 0")
 
     @wf
-    def _compute_posterior(self, prior: Distribution, likelihood: Likelihood, data: NDArray) -> PosteriorDistribution:
-        # crude: posterior approx centered at sample mean
-        mu_hat = np.mean(data, axis=0)            # shape (d,)
-        post_approx = Gaussian(mean=mu_hat, cov=np.eye(len(mu_hat)))  # shape (d,d)
-        return PosteriorDistribution(posterior=post_approx, prior=prior, likelihood=likelihood, data=data)
+    def _compute_posterior(
+        self,
+        prior: Distribution,
+        likelihood: Likelihood,
+        data: NDArray,
+    ) -> PosteriorDistribution:
+        data = np.asarray(data, dtype=float)
+        if data.ndim != 2:
+            raise ValueError(f"Expected data shape (n, d), got {data.shape}")
+        d = data.shape[1]
+
+        # target: unnormalized log posterior 
+        def log_post(mu: NDArray) -> float:
+            mu = np.asarray(mu, dtype=float)
+            if mu.shape != (d,):
+                raise ValueError(f"Expected params shape {(d,)}, got {mu.shape}")
+
+            lp = prior.log_density(mu)
+            lp_val = float(np.asarray(lp).sum())  # more robust if prior returns vector
+
+            ll_val = float(likelihood.log_likelihood(params=mu, data=data))
+            return lp_val + ll_val
+
+        # initialize 
+        if self.init is not None:
+            mu_curr = self.init.copy()
+            if mu_curr.shape != (d,):
+                raise ValueError(f"init must have shape {(d,)}, got {mu_curr.shape}")
+        else:
+            # trying prior.mean if it exists, else taking data mean
+            mu_curr = None
+            if hasattr(prior, "mean"):
+                try:
+                    m = getattr(prior, "_mean")
+                    m = np.asarray(m, dtype=float)
+                    if m.shape == (d,):
+                        mu_curr = m.copy()
+                except Exception:
+                    mu_curr = None
+            if mu_curr is None:
+                mu_curr = np.mean(data, axis=0).astype(float)
+
+        logp_curr = log_post(mu_curr)
+
+        # RWMH loop: mu' = mu + step_size * N(0, I)
+        kept = []
+        accepts = 0
+
+        burn_in = min(self.burn_in, self.n_steps)
+
+        for t in range(self.n_steps):
+            mu_prop = mu_curr + self.step_size * self.rng.normal(size=d)
+            logp_prop = log_post(mu_prop)
+
+            log_alpha = logp_prop - logp_curr
+            if np.log(self.rng.random()) < min(0.0, log_alpha):
+                mu_curr = mu_prop
+                logp_curr = logp_prop
+                accepts += 1
+
+            if t >= burn_in and ((t - burn_in) % self.thin == 0):
+                kept.append(mu_curr.copy())
+
+        if len(kept) == 0:
+            raise ValueError("No samples retained; increase n_steps or reduce burn_in/thin.")
+
+        samples = np.vstack(kept)  # (n_kept, d)
+
+        # empirical posterior approximation 
+        post_approx = EmpiricalDistribution(x=samples, rng=self.rng)
+
+        # This is optional: store diagnostics on the instance (not required, but handy)
+        self.accept_rate = accepts / float(self.n_steps)
+
+        return PosteriorDistribution(
+            posterior=post_approx,
+            prior=prior,
+            likelihood=likelihood,
+            data=data,
+        )
 
 
 class IterativeForecaster(Module):
@@ -168,9 +264,9 @@ class IterativeForecaster(Module):
         return self._curr_posterior
 
     @wf
-    def update(self, approx_post: ApproximatePosterior, likelihood: SimpleLikelihood, prior: Distribution, data: NDArray) -> PosteriorDistribution:
+    def update(self, approx_post: ApproximatePosterior, likelihood: Likelihood, data: NDArray) -> PosteriorDistribution:
         # approx_post and likelihood and prior are resolved from module (deps/inputs) automatically
-        post_dist = approx_post(prior=prior, likelihood=likelihood, data=data)
+        post_dist = approx_post(prior=self.curr_posterior, likelihood=likelihood, data=data)
         self._curr_posterior = post_dist
         return post_dist
 
@@ -178,9 +274,7 @@ class IterativeForecaster(Module):
     def forecast(self, n_samples: int) -> NDArray:
         return self.curr_posterior.sample_predictive(n_samples=n_samples)
 
-#########################
-### Predictive checks ###
-#########################
+# Predictive checks 
 
 class PredictiveChecker(AbstractModule):
     @abstractwf
@@ -189,14 +283,34 @@ class PredictiveChecker(AbstractModule):
 
 
 class PosteriorPredictiveChecker(PredictiveChecker):
-    def __init__(self, statistic: Callable[[NDArray], float]):
-        super().__init__(statistic=statistic)
+    def __init__(
+        self,
+        statistic: Callable[[NDArray], float],
+        n_rep: int = 200,
+        reducer: Callable[[NDArray], float] = lambda v: float(np.mean(v)),
+    ):
+        super().__init__(statistic=statistic, n_rep=n_rep, reducer=reducer)
 
     @wf
-    def predictive_p_value(self, posterior: PosteriorDistribution, statistic: Callable[[NDArray], float]) -> float:
+    def predictive_p_value(
+        self,
+        posterior: PosteriorDistribution,
+        statistic: Callable[[NDArray], float],
+        n_samples: int,
+        n_rep: int,
+        reducer: Callable[[NDArray], float],
+    ) -> float:
         obs_data = posterior.data
-        obs_stat = statistic(obs_data)
-        sim_stats = np.array([statistic(posterior.sample_predictive(n_samples=1)) for _ in range(200)])
-        return float((sim_stats >= obs_stat).mean())
 
-    
+        # per-dimension observed stats, then reduce to scalar
+        obs_vec = np.apply_along_axis(statistic, 0, obs_data)   # shape (d,)
+        obs_stat = float(reducer(obs_vec))
+
+        sim_stats = np.empty(int(n_rep), dtype=float)
+        for r in range(int(n_rep)):
+            samples = posterior.sample_predictive(n_samples=int(n_samples))  # (n_samples, d)
+            # this assumes the user calls .update before running ppc; otherwise apply_along_axis would break
+            sim_vec = np.apply_along_axis(statistic, 0, samples)             # (d,)
+            sim_stats[r] = float(reducer(sim_vec))
+
+        return float((sim_stats >= obs_stat).mean())
