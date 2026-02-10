@@ -98,51 +98,95 @@ pip install -e .
 ## Example Usage
 This example demonstrates a simple Bayesian-style pipeline where uncertainty is propagated through workflow nodes.
 
-### Step 1: Define workflow nodes
+### Step 1: Define the probabilistic model
 
 ```python
-import numpy as np
-from probpipe.core.node import wf
 from probpipe.distributions.real_vector.gaussian import Gaussian
+from probpipe.core.modeling import (
+    IterativeForecaster,
+    RWMH,
+    SimpleLikelihood,
+    PosteriorPredictiveChecker,
+)
+
+rng = np.random.default_rng(0)
+
+# Prior over parameter μ ∈ R²
+prior = Gaussian(mean=np.array([0.0, 0.0]), cov=np.eye(2))
+
+# Likelihood: x | μ ~ N(μ, I)
+likelihood = SimpleLikelihood(
+    dist_cls=Gaussian,
+    params_name="mean",
+    cov=np.eye(2),
+)
 ```
+
+- Defines a Bayesian model where the unknown parameter is the Gaussian mean vector.
+- Keeps uncertainty represented as a Distribution object.
+
+### Step 2: Configure inference + workflow
 
 ```python
-@wf
-def load_data() -> np.ndarray:
-    np.random.seed(42)
-    return np.random.normal(loc=2.5, scale=1.0, size=50)
+# Approximate posterior via Random-Walk Metropolis–Hastings
+approx_post = RWMH(
+    step_size=0.4,
+    n_steps=8000,
+    burn_in=2000,
+    thin=10,
+)
+
+# Workflow wrapper: handles posterior updating and predictive generation
+forecaster = IterativeForecaster(
+    prior=prior,
+    likelihood=likelihood,
+    approx_post=approx_post,
+)
+
+# Posterior predictive checker
+ppc = PosteriorPredictiveChecker(
+    statistic=np.mean
+)
 ```
+
+- Configures how posterior inference is performed
+- Connects model + inference into a reusable workflow module
+- Defines how model fit will be evaluated (via PPC)
+
+### Step 3: Run inference and generate predictions
 
 ```python
-@wf
-def fit_mean(data: np.ndarray) -> Gaussian:
-    mu_hat = float(np.mean(data))
-    sigma_hat = float(np.std(data) / np.sqrt(len(data)))
-    return Gaussian(mu=mu_hat, cov=sigma_hat)
+# Simulated observations (n=100, d=2)
+obs_data = rng.multivariate_normal(
+    mean=np.array([5.0, -3.0]),
+    cov=4.0 * np.eye(2),
+    size=100,
+)
+
+# Update posterior using observed data
+posterior = forecaster.update(data=obs_data)
+
+# Generate posterior predictive samples
+forecast = forecaster.forecast(n_samples=10)
+
+# Posterior predictive check
+p_value = ppc.predictive_p_value(
+    posterior=posterior,
+    n_samples=len(obs_data),
+)
+
+print("Posterior sampler:", posterior)
+print("Forecast shape:", forecast.shape)
+print("PPC p-value:", p_value)
+print("RWMH acceptance rate:", getattr(approx_post, "accept_rate", None))
 ```
+### Overall
 
-### Step 2: Compose a workflow
+- ```prior``` and ```likelihood``` define a probabilistic model.
+- ```RWMH``` approximates the posterior using MCMC samples.
+- ```IterativeForecaster.update()``` propagates uncertainty through the workflow.
+- ```PosteriorPredictiveChecker``` evaluates model fit using predictive simulation.
 
-```python
-data_node = load_data()
-posterior_node = fit_mean(data=data_node)
-
-posterior = posterior_node()
-print(posterior)
-```
-- ```load_data``` and ```fit_mean``` are standalone workflow nodes.
-- The output of ```fit_mean``` is a distribution, not a scalar.
-- Uncertainty is explicitly represented and preserved.
-
-### Step 3: Using abstract modules (conceptually)
-More complex algorithms (e.g., Bayesian regression, forecasting, filtering) are implemented as modules, which internally assemble multiple workflow nodes.
-
-```python
-from probpipe.modules import BayesianLinearRegression
-
-blr = BayesianLinearRegression()
-posterior = blr(data=X, targets=y)
-```
 
 ## Pointer to Further Documentation 
 to be created soon...
