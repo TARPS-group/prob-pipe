@@ -177,7 +177,7 @@ class EmpiricalDistribution(Distribution):
 
         # Compute empirical mean and covariance.
         self._mean = (self._w[:, np.newaxis] * self._X).sum(axis=0)
-        cov_root = (self._X - self._mean).T * np.sqrt(self._w)[:,np.newaxis] # (d,n)
+        cov_root = ((self._X - self._mean) * np.sqrt(self._w)[:, np.newaxis]).T  # (d,n)
         self._cov = RootLinOp(cov_root)
 
         # cumulative weights for fast inverse-transform resampling

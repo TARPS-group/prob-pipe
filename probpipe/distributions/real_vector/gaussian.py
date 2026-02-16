@@ -131,4 +131,4 @@ class Gaussian(RealVectorDistribution[Float]):
         return cls(mean=mean, cov=cov)
     
     def __str__(self):
-        return f"{self.__class__.__name__}({self._mean},{self._cov.to_dense()})"
+        return f"{self.__class__.__name__}(mu = {self._mean}, cov = {self._cov.to_dense()})"

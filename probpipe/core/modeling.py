@@ -112,7 +112,7 @@ class PosteriorDistribution(Distribution[T]):
         Delegate all unknown attributes to the wrapped posterior.
         This preserves behavior like expectation(), variance(), etc.
         """
-        return getattr(self._posterior, name)
+        return getattr(self.posterior, name)
     
     def __str__(self):
         return f"{self.posterior}"
@@ -230,8 +230,12 @@ class RWMH(ApproximatePosterior):
 
         samples = np.vstack(kept)  # (n_kept, d)
 
-        # empirical posterior approximation 
-        post_approx = EmpiricalDistribution(x=samples, rng=self.rng)
+        # Fit Gaussian approximation to MCMC samples
+        # This allows the posterior to be used as a prior in subsequent iterations
+        # since Gaussian has a computable log_density() method
+        post_mean = samples.mean(axis=0)
+        post_cov = np.cov(samples, rowvar=False, ddof=1)
+        post_approx = Gaussian(mean=post_mean, cov=post_cov, rng=self.rng)
 
         # This is optional: store diagnostics on the instance (not required, but handy)
         self.accept_rate = accepts / float(self.n_steps)
@@ -248,12 +252,26 @@ class IterativeForecaster(Module):
     """Can iteratively update posterior given new data and generate predictions from posterior."""
     def __init__(self, *, prior: Distribution, likelihood: Likelihood, approx_post: ApproximatePosterior):
 
+        # Infer dimensionality from prior by sampling once
+        try:
+            sample = prior.sample(n_samples=1)
+            sample = np.asarray(sample)
+            if sample.ndim == 2:
+                d = sample.shape[1]
+            elif sample.ndim == 1:
+                d = sample.shape[0]
+            else:
+                d = 1
+            init_data = np.empty((0, d))
+        except Exception:
+            init_data = np.array([])  # fallback
+
         # state
         self._curr_posterior = PosteriorDistribution(
             posterior=prior,
             prior=prior,
             likelihood=likelihood,
-            data=np.array([]),
+            data=init_data,
         )
 
         # auto-split: Nodes become child_nodes; non-Nodes become inputs
@@ -265,8 +283,10 @@ class IterativeForecaster(Module):
 
     @wf
     def update(self, approx_post: ApproximatePosterior, likelihood: Likelihood, data: NDArray) -> PosteriorDistribution:
-        # approx_post and likelihood and prior are resolved from module (deps/inputs) automatically
-        post_dist = approx_post(prior=self.curr_posterior, likelihood=likelihood, data=data)
+        # Use only the posterior approximation as prior, not the full PosteriorDistribution
+        # This ensures proper Bayesian updating without double-counting likelihoods
+        prior_dist = self.curr_posterior.posterior
+        post_dist = approx_post(prior=prior_dist, likelihood=likelihood, data=data)
         self._curr_posterior = post_dist
         return post_dist
 
@@ -287,9 +307,10 @@ class PosteriorPredictiveChecker(PredictiveChecker):
         self,
         statistic: Callable[[NDArray], float],
         n_rep: int = 200,
+        n_samples: int = 1,
         reducer: Callable[[NDArray], float] = lambda v: float(np.mean(v)),
     ):
-        super().__init__(statistic=statistic, n_rep=n_rep, reducer=reducer)
+        super().__init__(statistic=statistic, n_rep=n_rep, n_samples=n_samples, reducer=reducer)
 
     @wf
     def predictive_p_value(
@@ -300,17 +321,31 @@ class PosteriorPredictiveChecker(PredictiveChecker):
         n_rep: int,
         reducer: Callable[[NDArray], float],
     ) -> float:
+        if n_samples <= 0:
+            raise ValueError(f"n_samples must be positive, got {n_samples}")
+        if n_rep <= 0:
+            raise ValueError(f"n_rep must be positive, got {n_rep}")
+
         obs_data = posterior.data
+        if obs_data.size == 0:
+            raise ValueError("Cannot compute PPC with empty observed data")
 
         # per-dimension observed stats, then reduce to scalar
-        obs_vec = np.apply_along_axis(statistic, 0, obs_data)   # shape (d,)
-        obs_stat = float(reducer(obs_vec))
+        obs_vec = np.apply_along_axis(statistic, 0, obs_data)   # shape (d,) or scalar
+        # Handle both scalar and vector outputs
+        if np.ndim(obs_vec) == 0:
+            obs_stat = float(obs_vec)
+        else:
+            obs_stat = float(reducer(obs_vec))
 
         sim_stats = np.empty(int(n_rep), dtype=float)
         for r in range(int(n_rep)):
             samples = posterior.sample_predictive(n_samples=int(n_samples))  # (n_samples, d)
-            # this assumes the user calls .update before running ppc; otherwise apply_along_axis would break
-            sim_vec = np.apply_along_axis(statistic, 0, samples)             # (d,)
-            sim_stats[r] = float(reducer(sim_vec))
+            sim_vec = np.apply_along_axis(statistic, 0, samples)             # (d,) or scalar
+            # Handle both scalar and vector outputs
+            if np.ndim(sim_vec) == 0:
+                sim_stats[r] = float(sim_vec)
+            else:
+                sim_stats[r] = float(reducer(sim_vec))
 
         return float((sim_stats >= obs_stat).mean())
