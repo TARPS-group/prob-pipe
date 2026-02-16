@@ -396,13 +396,11 @@ class Module(Node):
 
             wf_name = attr._name
 
-            for child_name in attr._child_nodes:
-                if child_name not in self._child_nodes:
-                    raise ValueError(
-                        f"Workflow '{wf_name}' references unknown child node '{child_name}'"
-                    )
-
-                dot.edge(child_name, wf_name)
+            # Infer dependencies from workflow signature
+            # (Workflows don't store child_nodes; they resolve dependencies at runtime)
+            for param_name in attr._param_names:
+                if attr._is_dependency_param(param_name) and param_name in self._child_nodes:
+                    dot.edge(param_name, wf_name)
 
         return dot
     
