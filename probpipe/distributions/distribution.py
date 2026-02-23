@@ -233,7 +233,8 @@ class EmpiricalDistribution(Distribution):
     rvs = sample
 
     def density(self, x: Array) -> Array:
-        raise NotImplementedError("Density not implemented for EmpiricalDistribution.")
+        """Approximate density using a Gaussian fit to the empirical samples. See log_density."""
+        return np.exp(self.log_density(x))
 
     def log_density(self, x: Array) -> Array:
         """

@@ -103,20 +103,20 @@ def test_sample_without_replacement(simple_samples):
 
 
 
-# Density / log-density not implemented: EmpiricalDistribution
+# Density / log-density : EmpiricalDistribution
 # --------------------------------------------------------------------
 
 @requires_empirical
 def test_density_not_implemented(simple_samples):
     ed = EmpiricalDistribution(simple_samples)
-    with pytest.raises(NotImplementedError):
-        ed.density(np.array([[1.0]]))
+    result = ed.density(np.array([[1.0]]))
+    assert result >= 0, "density should return a non-negative value"
 
 @requires_empirical
 def test_log_density_not_implemented(simple_samples):
     ed = EmpiricalDistribution(simple_samples)
-    with pytest.raises(NotImplementedError):
-        ed.log_density(np.array([[1.0]]))
+    result = ed.log_density(np.array([[1.0]]))
+    assert np.isfinite(result), "log_density should return a finite value"
 
 
 
