@@ -236,7 +236,11 @@ class EmpiricalDistribution(Distribution):
         raise NotImplementedError("Density not implemented for EmpiricalDistribution.")
 
     def log_density(self, x: Array) -> Array:
-        raise NotImplementedError("Log density not implemented for EmpiricalDistribution.")
+        """
+        Approximate log density using a Gaussian fit to the empirical samples.
+        """
+        from .real_vector.gaussian import Gaussian
+        return Gaussian(mean=self._mean, cov=self._cov.to_dense()).log_density(x)
 
     # TODO: come back to this:
     def expectation(

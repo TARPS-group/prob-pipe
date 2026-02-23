@@ -137,9 +137,11 @@ class RWMH(ApproximatePosterior):
         thin: int = 5,
         init: NDArray | None = None,
         rng: np.random.Generator | None = None,
+        workflow_kind: str | None = None,
     ):
         # Binding parameters into workflow node state
         super().__init__(
+            workflow_kind=workflow_kind,
             step_size=step_size,
             n_steps=n_steps,
             burn_in=burn_in,
@@ -230,12 +232,8 @@ class RWMH(ApproximatePosterior):
 
         samples = np.vstack(kept)  # (n_kept, d)
 
-        # Fit Gaussian approximation to MCMC samples
-        # This allows the posterior to be used as a prior in subsequent iterations
-        # since Gaussian has a computable log_density() method
-        post_mean = samples.mean(axis=0)
-        post_cov = np.cov(samples, rowvar=False, ddof=1)
-        post_approx = Gaussian(mean=post_mean, cov=post_cov, rng=self.rng)
+        # Represent the posterior as an EmpiricalDistribution
+        post_approx = EmpiricalDistribution(x=samples, rng=self.rng)
 
         # This is optional: store diagnostics on the instance (not required, but handy)
         self.accept_rate = accepts / float(self.n_steps)
@@ -250,7 +248,7 @@ class RWMH(ApproximatePosterior):
 
 class IterativeForecaster(Module):
     """Can iteratively update posterior given new data and generate predictions from posterior."""
-    def __init__(self, *, prior: Distribution, likelihood: Likelihood, approx_post: ApproximatePosterior):
+    def __init__(self, *, prior: Distribution, likelihood: Likelihood, approx_post: ApproximatePosterior, workflow_kind: str | None = None):
 
         # Infer dimensionality from prior by sampling once
         try:
@@ -275,7 +273,7 @@ class IterativeForecaster(Module):
         )
 
         # auto-split: Nodes become child_nodes; non-Nodes become inputs
-        super().__init__(likelihood=likelihood, approx_post=approx_post, prior=prior)
+        super().__init__(likelihood=likelihood, approx_post=approx_post, prior=prior, workflow_kind=workflow_kind)
 
     @property
     def curr_posterior(self) -> PosteriorDistribution:
@@ -291,7 +289,7 @@ class IterativeForecaster(Module):
         return post_dist
 
     @wf
-    def forecast(self, n_samples: int) -> NDArray:
+    def forecast(self, n_samples: int = 0) -> NDArray:
         return self.curr_posterior.sample_predictive(n_samples=n_samples)
 
 # Predictive checks 
@@ -303,14 +301,75 @@ class PredictiveChecker(AbstractModule):
 
 
 class PosteriorPredictiveChecker(PredictiveChecker):
+    """
+    Perform a posterior predictive check (PPC) and compute a posterior
+    predictive p-value for a scalar test statistic.
+
+    This class compares a statistic computed on the observed data to the
+    same statistic computed on datasets simulated from the posterior
+    predictive distribution.
+
+    For multivariate data (d > 1), ``statistic`` is applied independently
+    to each dimension (column-wise), producing a vector of shape ``(d,)``.
+    The ``reducer`` then collapses that vector into a single scalar so that
+    observed and simulated statistics are compared on the same scale.
+
+    For univariate data (d = 1), the statistic is already scalar and the
+    reducer has no practical effect.
+
+    The returned value estimates:
+
+        p_ppc = P(T(y_rep) >= T(y_obs) | y_obs)
+
+    where y_rep is drawn from the posterior predictive distribution.
+
+    Args:
+        statistic:
+            A function ``T(x: NDArray) -> float`` applied column-wise to the data.
+            Examples: ``np.mean``, ``np.std``, ``np.max``.
+
+        n_rep:
+            Number of posterior predictive replicate datasets.
+            Larger values reduce Monte Carlo variability in the estimate.
+            Default: 200.
+
+        n_samples:
+            Number of predictive draws used to construct each synthetic
+            replicate dataset.
+
+            If set to 0 (default), the observed dataset size is used,
+            ensuring each replicated dataset matches the original sample
+            size for a well-calibrated PPC.
+
+            If positive, exactly that many predictive draws are used.
+
+        reducer:
+            A function ``r(v: NDArray[shape=(d,)]) -> float`` that collapses
+            the per-dimension statistic vector to a scalar.
+            Default: ``np.mean`` (average across dimensions).
+            Example alternative: ``np.max`` to emphasize worst-case misfit.
+
+    Returns:
+        float:
+            The posterior predictive p-value. Values near 0 or 1 suggest
+            potential model misfit; values near 0.5 indicate consistency
+            between the model and observed data.
+    """
     def __init__(
         self,
         statistic: Callable[[NDArray], float],
         n_rep: int = 200,
-        n_samples: int = 1,
+        n_samples: int = 0,
         reducer: Callable[[NDArray], float] = lambda v: float(np.mean(v)),
+        workflow_kind: str | None = None,
     ):
-        super().__init__(statistic=statistic, n_rep=n_rep, n_samples=n_samples, reducer=reducer)
+        super().__init__(
+            statistic=statistic, 
+            n_rep=n_rep, 
+            n_samples=n_samples, 
+            reducer=reducer, 
+            workflow_kind=workflow_kind
+        )
 
     @wf
     def predictive_p_value(
@@ -321,7 +380,7 @@ class PosteriorPredictiveChecker(PredictiveChecker):
         n_rep: int,
         reducer: Callable[[NDArray], float],
     ) -> float:
-        if n_samples <= 0:
+        if n_samples < 0:
             raise ValueError(f"n_samples must be positive, got {n_samples}")
         if n_rep <= 0:
             raise ValueError(f"n_rep must be positive, got {n_rep}")
@@ -329,6 +388,10 @@ class PosteriorPredictiveChecker(PredictiveChecker):
         obs_data = posterior.data
         if obs_data.size == 0:
             raise ValueError("Cannot compute PPC with empty observed data")
+        
+        # Match observed dataset size if n_samples == 0
+        if n_samples == 0:
+            n_samples = obs_data.shape[0]
 
         # per-dimension observed stats, then reduce to scalar
         obs_vec = np.apply_along_axis(statistic, 0, obs_data)   # shape (d,) or scalar
