@@ -15,10 +15,12 @@ Ultimately, ProbPipe aims to serve as a general foundation for uncertainty-aware
 - **Trustworthy Execution:** Validity of the workflow is checked at the start, reducing runtime errors and improving reliability.
 
 ### Key Features
+- **Standalone Workflow Nodes:** Any Python callable can be turned into a workflow node, with explicit inputs and outputs.
+- **Abstract Modules:** Modules define high-level algorithms (e.g., inference, forecasting, simulation) and internally manage their required workflow nodes.
 - **Composable Architecture:** Every computational unit ("module") is built from smaller probabilistic primitives, allowing infinite composability of models and workflows.
-- **Distributions as First-Class Objects:** Modules can consume and emit probability distributions, even if they were implemented using scalar inputs or outputs, makign it easy to propogate and account for uncertainty across complete workflows. 
-- **Algorithmic-Level Operation:** Workflows are defined in terms of algorithmic components (sampling, inference, transformation), improving scalability and conceptual clarity.
-- **Seamless Conversion and Data Handling:** The system automatically manages conversions between distributional representations preferred by different algorithms, streamlining code and improving clarity.
+- **Distributions as First-Class Objects:** Nodes can consume and emit probability distributions, enabling principled uncertainty propagation across the entire pipeline.
+- **Automatic Type & Representation Handling:** The system manages conversions between different distribution representations used by different algorithms.
+- **DAG-Based Execution:** Workflows are represented as explicit computational graphs, enabling inspection, reuse, and orchestration.
 
 ## Installation Instructions
 ### Prerequisites
@@ -53,7 +55,7 @@ pip install -e .
 ```
 
 This installs the core dependencies listed in ```setup.py```:
-- ```numpy ≥ 1.20```
+- ```numpy ≥ 2.0```
 - ```scipy ≥ 1.7```
 - ```prefect ≥ 3.4```
 - ```makefun ≥ 1.16```
@@ -94,61 +96,97 @@ pip install -e .
 ```
 
 ## Example Usage
-This example demonstrates how to combine Prior, Likelihood, and MetropolisHastings modules with the MCMC class to estimate a posterior distribution over a scalar parameter θ: the mean of a Normal distribution with known standard deviation.
+This example demonstrates a simple Bayesian-style pipeline where uncertainty is propagated through workflow nodes.
 
-### Step 1: Generating synthetic data
-
-```python
-import numpy as np
-from mcmc import Likelihood, Prior, MetropolisHastings, MCMC
-from multivariate import Normal1D
-
-np.random.seed(42)
-true_mu = 2.5
-sigma = 1.0
-data = np.random.normal(loc=true_mu, scale=sigma, size=50)
-```
-
-### Step 2: Defining prior and likelihood distributions
+### Step 1: Define the probabilistic model
 
 ```python
-# Prior: Normal(0, 5)
-prior_dist = Normal1D(mu=0.0, sigma=5.0)
-# Likelihood base distribution: Normal(μ, 1.0)
-likelihood_dist = Normal1D(mu=0.0, sigma=sigma)
-```
-
-### Step 3: Creating module instances
-Each component (Prior, Likelihood, Sampler) is instantiated independently, then composed inside the MCMC module.
-
-```python
-prior = Prior(distribution=prior_dist)
-likelihood = Likelihood(distribution=likelihood_dist)
-sampler = MetropolisHastings()
-```
-
-### Step 4: Build and run the MCMC workflow
-The MCMC module internally builds a log_target function combining prior and likelihood log-densities.
-
-```python
-mcmc = MCMC(prior=prior, likelihood=likelihood, sampler=sampler)
-
-posterior = mcmc.calculate_posterior(
-    num_samples=2000,
-    initial_param=0.0,
-    data=data,
-    proposal_std=0.5,
+from probpipe.distributions.real_vector.gaussian import Gaussian
+from probpipe.core.modeling import (
+    IterativeForecaster,
+    RWMH,
+    SimpleLikelihood,
+    PosteriorPredictiveChecker,
 )
 
-# Summarizing posterior results
-print(f"Posterior mean (estimate of μ): {posterior.mu:.3f}")
-print(f"Posterior std: {posterior.sigma:.3f}")
+rng = np.random.default_rng(0)
+
+# Prior over parameter μ ∈ R²
+prior = Gaussian(mean=np.array([0.0, 0.0]), cov=np.eye(2))
+
+# Likelihood: x | μ ~ N(μ, I)
+likelihood = SimpleLikelihood(
+    dist_cls=Gaussian,
+    params_name="mean",
+    cov=np.eye(2),
+)
 ```
 
-After sampling, it returns a Normal1D summary object representing the posterior mean and uncertainty of the parameter.
+- Defines a Bayesian model where the unknown parameter is the Gaussian mean vector.
+- Keeps uncertainty represented as a Distribution object.
 
-**Expected outcome:**
-With synthetic data generated around μ=2.5, you should see a posterior mean close to 2.5 and a standard deviation reflecting posterior uncertainty.
+### Step 2: Configure inference + workflow
+
+```python
+# Approximate posterior via Random-Walk Metropolis–Hastings
+approx_post = RWMH(
+    step_size=0.4,
+    n_steps=8000,
+    burn_in=2000,
+    thin=10,
+)
+
+# Workflow wrapper: handles posterior updating and predictive generation
+forecaster = IterativeForecaster(
+    prior=prior,
+    likelihood=likelihood,
+    approx_post=approx_post,
+)
+
+# Posterior predictive checker
+ppc = PosteriorPredictiveChecker(
+    statistic=np.mean
+)
+```
+
+- Configures how posterior inference is performed
+- Connects model + inference into a reusable workflow module
+- Defines how model fit will be evaluated (via PPC)
+
+### Step 3: Run inference and generate predictions
+
+```python
+# Simulated observations (n=100, d=2)
+obs_data = rng.multivariate_normal(
+    mean=np.array([5.0, -3.0]),
+    cov=4.0 * np.eye(2),
+    size=100,
+)
+
+# Update posterior using observed data
+posterior = forecaster.update(data=obs_data)
+
+# Generate posterior predictive samples
+forecast = forecaster.forecast(n_samples=10)
+
+# Posterior predictive check
+p_value = ppc.predictive_p_value(
+    posterior=posterior,
+    n_samples=len(obs_data),
+)
+
+print("Posterior sampler:", posterior)
+print("Forecast shape:", forecast.shape)
+print("PPC p-value:", p_value)
+print("RWMH acceptance rate:", getattr(approx_post, "accept_rate", None))
+```
+### Overall
+
+- ```prior``` and ```likelihood``` define a probabilistic model.
+- ```RWMH``` approximates the posterior using MCMC samples.
+- ```IterativeForecaster.update()``` propagates uncertainty through the workflow.
+- ```PosteriorPredictiveChecker``` evaluates model fit using predictive simulation.
+
 
 ## Pointer to Further Documentation 
 to be created soon...

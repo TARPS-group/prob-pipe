@@ -17,7 +17,7 @@ setup(
 
     python_requires=">=3.8",
     install_requires=[
-        "numpy>=1.20",
+        "numpy>=2.0",
         "scipy>=1.7",
         "prefect>=3.4",
         "makefun>=1.16",

@@ -177,7 +177,7 @@ class EmpiricalDistribution(Distribution):
 
         # Compute empirical mean and covariance.
         self._mean = (self._w[:, np.newaxis] * self._X).sum(axis=0)
-        cov_root = (self._X - self._mean).T * np.sqrt(self._w)[:,np.newaxis] # (d,n)
+        cov_root = ((self._X - self._mean) * np.sqrt(self._w)[:, np.newaxis]).T  # (d,n)
         self._cov = RootLinOp(cov_root)
 
         # cumulative weights for fast inverse-transform resampling
@@ -219,6 +219,28 @@ class EmpiricalDistribution(Distribution):
         """Weighted population standard deviation per dimension, shape (d,)."""
         return np.sqrt(np.maximum(self.var(), 0.0))
 
+    def __str__(self) -> str:
+        """String representation of the empirical distribution."""
+        # Check if weights are uniform
+        uniform_weights = np.allclose(self._w, 1.0 / self._n)
+        weight_info = "uniform" if uniform_weights else "weighted"
+
+        # Format mean and std for display
+        if self._d == 1:
+            mean_str = f"{self._mean[0]:.4g}"
+            std_str = f"{self.std()[0]:.4g}"
+        elif self._d <= 3:
+            mean_str = "[" + ", ".join(f"{m:.4g}" for m in self._mean) + "]"
+            std_str = "[" + ", ".join(f"{s:.4g}" for s in self.std()) + "]"
+        else:
+            mean_str = f"[{self._mean[0]:.4g}, ..., {self._mean[-1]:.4g}]"
+            std_str = f"[{self.std()[0]:.4g}, ..., {self.std()[-1]:.4g}]"
+
+        return (
+            f"EmpiricalDistribution(n={self._n}, dim={self._d}, {weight_info}, "
+            f"mean={mean_str}, std={std_str})"
+        )
+
     def sample(self, n_samples: int = 1, *, replace: bool = True) -> Array:
         """
         Resample draws from the empirical distribution with replacement,
@@ -233,10 +255,15 @@ class EmpiricalDistribution(Distribution):
     rvs = sample
 
     def density(self, x: Array) -> Array:
-        raise NotImplementedError("Density not implemented for EmpiricalDistribution.")
+        """Approximate density using a Gaussian fit to the empirical samples. See log_density."""
+        return np.exp(self.log_density(x))
 
     def log_density(self, x: Array) -> Array:
-        raise NotImplementedError("Log density not implemented for EmpiricalDistribution.")
+        """
+        Approximate log density using a Gaussian fit to the empirical samples.
+        """
+        from .real_vector.gaussian import Gaussian
+        return Gaussian(mean=self._mean, cov=self._cov.to_dense()).log_density(x)
 
     # TODO: come back to this:
     def expectation(
