@@ -7,6 +7,7 @@ from typing import Any
 
 from probpipe.custom_types import Array, ArrayLike, Float, PRNG
 from probpipe.distributions import Distribution
+from probpipe.distributions.distribution import Provenance
 from probpipe.distributions.real_vector import RealVectorDistribution
 
 from probpipe.array_backend.utils import (
@@ -38,7 +39,8 @@ from probpipe.linalg.operations import(
 class Gaussian(RealVectorDistribution[Float]):
 
     def __init__(self, mean: ArrayLike, cov: LinOpLike,
-                 *, rng: PRNG | None = None):
+                 *, rng: PRNG | None = None, source: Provenance | None = None):
+        super().__init__(source=source)
         mean = _ensure_vector(mean)
         self._dim = len(mean)
         cov = _as_linear_operator(cov)
@@ -114,10 +116,24 @@ class Gaussian(RealVectorDistribution[Float]):
     
 
     @classmethod
-    def from_distribution(cls, convert_from: Distribution, num_samples: int = 1024, *, 
+    def from_distribution(cls, convert_from: Distribution, num_samples: int = 1024, *,
+                          method: str = "moment_match",
                           conversion_by_KDE: bool = False, **fit_kwargs: Any) -> Gaussian:
         """
         Fit mean and covariance from samples drawn from another distribution-like object.
+
+        This performs a conversion operation, approximating the input distribution
+        with a Gaussian using moment matching (mean and covariance estimation).
+
+        Args:
+            convert_from: The distribution to convert from
+            num_samples: Number of samples to use for moment matching
+            method: Conversion method (default: "moment_match")
+            conversion_by_KDE: Whether to use KDE for conversion (not yet implemented)
+            **fit_kwargs: Additional fitting arguments
+
+        Returns:
+            Gaussian distribution with provenance tracking the conversion
         """
         if not isinstance(convert_from, Distribution):
             raise ValueError("`convert_from` must be a Distribution object.")
@@ -127,8 +143,20 @@ class Gaussian(RealVectorDistribution[Float]):
 
         mean = samp.mean(axis=0)
         cov = np.cov(samp, rowvar=False, ddof=1)
- 
-        return cls(mean=mean, cov=cov)
+
+        # Create provenance metadata
+        src = Provenance(
+            op="convert",
+            parents=tuple([convert_from.source] if convert_from.source is not None else []),
+            details={
+                "method": method,
+                "num_samples": num_samples,
+                "source_class": convert_from.__class__.__name__,
+                "target_class": cls.__name__,
+            },
+        )
+
+        return cls(mean=mean, cov=cov, source=src)
     
     def __str__(self):
         return f"{self.__class__.__name__}(mu = {self._mean}, cov = {self._cov.to_dense()})"

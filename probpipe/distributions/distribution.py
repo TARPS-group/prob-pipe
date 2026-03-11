@@ -1,9 +1,11 @@
 # distributions/distribution.py
 from __future__ import annotations
 
-from typing import Generic, TypeVar, Any
+from typing import Generic, TypeVar, Any, Sequence, Mapping
 from collections.abc import Callable
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+import uuid
 
 import numpy as np
 
@@ -14,9 +16,106 @@ from ..linalg.linear_operator import LinOp, RootLinOp
 __all__ = [
     "Distribution",
     "EmpiricalDistribution",
+    "Provenance",
 ]
 
 NumberT = TypeVar("NumberT", bound=Number)
+
+# -------------------------- Provenance Tracking ----------------------------
+
+
+@dataclass(frozen=True)
+class Provenance:
+    """
+    Lightweight provenance tracking for probability distributions.
+
+    Each distribution can carry structured metadata describing:
+    - The operation that produced it (e.g., "prior", "transform", "approximate", "convert")
+    - Parent distribution(s) it was derived from
+    - Additional operation-specific details
+
+    This transforms distributions from anonymous outputs into traceable probabilistic objects,
+    forming a directed acyclic graph (DAG) of probabilistic operations.
+
+    Attributes:
+        op: The operation that created this distribution.
+            Common values: "prior", "transform", "approximate", "convert", "condition", "marginalize"
+        parents: Tuple of parent Provenance objects from which this was derived
+        details: Additional operation-specific metadata (e.g., method, num_samples, parameters)
+        uid: Unique identifier for this provenance node
+
+    Example:
+        >>> # Create a prior with provenance
+        >>> prior = Gaussian(mean=0, cov=1)._with_source(op="prior", name="theta")
+        >>> # Approximate it
+        >>> emp = EmpiricalDistribution.from_distribution(prior, num_samples=1000)
+        >>> # Check provenance
+        >>> print(emp.source.op)  # "approximate"
+        >>> print(emp.source.parents[0].op)  # "prior"
+    """
+    op: str
+    parents: tuple[Provenance, ...] = ()
+    details: Mapping[str, Any] = field(default_factory=dict)
+    uid: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+    def chain(self) -> Sequence[Provenance]:
+        """
+        Return a linearized view of the provenance graph for quick debugging.
+
+        This performs a depth-first traversal of the provenance DAG, returning
+        all ancestors in the order they are encountered. If the graph has multiple
+        paths, the result may not be unique.
+
+        Returns:
+            List of Provenance objects from this node back to the roots
+        """
+        out = []
+        stack = [self]
+        seen = set()
+        while stack:
+            node = stack.pop()
+            if node.uid in seen:
+                continue
+            seen.add(node.uid)
+            out.append(node)
+            stack.extend(node.parents)
+        return out
+
+    def tree_repr(self, indent: int = 0) -> str:
+        """
+        Return a tree representation of the provenance graph.
+
+        Args:
+            indent: Current indentation level (used for recursion)
+
+        Returns:
+            String representation of the provenance tree
+        """
+        prefix = "  " * indent
+        details_str = ""
+        if self.details:
+            details_items = [f"{k}={v}" for k, v in self.details.items()]
+            details_str = f" ({', '.join(details_items)})"
+
+        result = f"{prefix}└─ {self.op}{details_str} [{self.uid[:8]}]\n"
+
+        for parent in self.parents:
+            result += parent.tree_repr(indent + 1)
+
+        return result
+
+    def __str__(self) -> str:
+        """Concise string representation."""
+        details_str = ""
+        if self.details:
+            details_items = [f"{k}={v}" for k, v in list(self.details.items())[:3]]
+            details_str = f" ({', '.join(details_items)})"
+        return f"Provenance(op='{self.op}'{details_str}, {len(self.parents)} parents)"
+
+    def __repr__(self) -> str:
+        """Detailed representation."""
+        return f"Provenance(op='{self.op}', parents={len(self.parents)}, details={dict(self.details)}, uid='{self.uid[:8]}...')"
+
 
 # -------------------------- Abstract Classes ----------------------------
 
@@ -35,7 +134,64 @@ class Distribution(Generic[NumberT], ABC):
 
     Type Variables:
         T: Numeric data type (e.g., float or np.floating).
+
+    Attributes:
+        _source: Optional Provenance object tracking the origin of this distribution
     """
+
+    def __init__(self, *, source: Provenance | None = None):
+        """
+        Initialize a distribution with optional provenance tracking.
+
+        Args:
+            source: Optional Provenance object describing how this distribution was created
+        """
+        self._source = source
+
+    @property
+    def source(self) -> Provenance | None:
+        """
+        Get the provenance metadata for this distribution.
+
+        Returns:
+            Provenance object if tracking is enabled, None otherwise
+        """
+        return self._source
+
+    def _with_source(
+        self,
+        op: str,
+        *,
+        parents: list[Distribution] | None = None,
+        **details
+    ) -> Distribution:
+        """
+        Attach provenance metadata to this distribution.
+
+        This method allows fluent chaining to add provenance information
+        after construction. It modifies the distribution in-place and returns self.
+
+        Args:
+            op: Operation name (e.g., "prior", "transform", "approximate", "convert")
+            parents: List of parent distributions (their provenance will be extracted)
+            **details: Additional operation-specific metadata
+
+        Returns:
+            Self (for method chaining)
+
+        Example:
+            >>> dist = Gaussian(mean=0, cov=1)._with_source(
+            ...     op="prior",
+            ...     name="theta",
+            ...     distribution_type="normal"
+            ... )
+        """
+        parent_list = parents or []
+        parent_provenances = tuple(
+            d.source for d in parent_list if d.source is not None
+        )
+        self._source = Provenance(op=op, parents=parent_provenances, details=details)
+        return self
 
     def sample(self, n_samples: int = 1) -> Array[NumberT]:
         """
@@ -134,16 +290,18 @@ class EmpiricalDistribution(Distribution):
     """ Container for (weighted) empirical samples in R^d.
 
     The discrete distribution defined by a set of `n`, potentially weighed,
-    samples. 
-    
+    samples.
+
     Args:
         x: array-like, shape (n, d) or (n,)
             The samples defining the empirical distribution.
         weights: array-like, shape (n,), optional
-            Nonnegative weights; will be normalized to sum to 1. If None, 
+            Nonnegative weights; will be normalized to sum to 1. If None,
             uniform weights are assigned.
         rng: np.random.Generator, optional
             Random number generator for sampling.
+        source: Provenance, optional
+            Provenance metadata tracking the origin of this distribution.
     """
 
     def __init__(
@@ -152,7 +310,9 @@ class EmpiricalDistribution(Distribution):
         weights: Array | None = None,
         *,
         rng: PRNG | None = None,
+        source: Provenance | None = None,
     ):
+        super().__init__(source=source)
         X = _ensure_matrix(x, as_row_matrix=True)
         n, d = X.shape
         if n < 1:
@@ -298,8 +458,35 @@ class EmpiricalDistribution(Distribution):
         other: Distribution,
         **fit_kwargs: Any,
     ) -> EmpiricalDistribution:
-        samples = other.sample(fit_kwargs.get("num_samples", 2048))
-        return cls(samples)
+        """
+        Create an empirical distribution by sampling from another distribution.
+
+        This is an approximation operation that converts any distribution into
+        a sample-based representation.
+
+        Args:
+            other: The distribution to approximate
+            **fit_kwargs: Additional keyword arguments
+                - num_samples: Number of samples to draw (default: 2048)
+
+        Returns:
+            EmpiricalDistribution with provenance tracking the approximation
+        """
+        num_samples = fit_kwargs.get("num_samples", 2048)
+        samples = other.sample(num_samples)
+
+        # Create provenance metadata
+        src = Provenance(
+            op="approximate",
+            parents=tuple([other.source] if other.source is not None else []),
+            details={
+                "method": "empirical",
+                "num_samples": num_samples,
+                "target_class": cls.__name__,
+            },
+        )
+
+        return cls(samples, source=src)
         
 
 
@@ -326,9 +513,10 @@ class BootstrapDistribution(EmpiricalDistribution):
         weights: Array | None = None,
         *,
         rng: PRNG | None = None,
+        source: Provenance | None = None,
     ):
         # Just forward to EmpiricalDistribution
-        super().__init__(replicates, weights, rng=rng)
+        super().__init__(replicates, weights, rng=rng, source=source)
 
     # --------- Aliases for semantics ---------
 
