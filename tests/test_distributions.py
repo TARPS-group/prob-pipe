@@ -161,13 +161,14 @@ def test_expectation_returns_mvnormal():
 @requires_empirical
 def test_from_distribution_uses_sample():
     # Defining a dummy distribution returning constant samples
-    class DummyDist:
+    class DummyDist(Distribution):
         def __init__(self, constant=7.0):
+            super().__init__()
             self.constant = constant
 
         def sample(self, n):
             return np.full((n, 1), self.constant, dtype=float)
-        
+
         @classmethod
         def from_distribution(cls, other, **fit_kwargs):
             raise NotImplementedError
@@ -417,6 +418,7 @@ def test_gaussian_log_density_matches_density(mean, cov_matrix, rng):
 
 class DummyDist(Distribution):
     def __init__(self, mean, cov, rng=None):
+        super().__init__()
         self.mean = np.asarray(mean)
         self.cov = np.asarray(cov)
         self.rng = rng or np.random.default_rng()
@@ -425,7 +427,7 @@ class DummyDist(Distribution):
     def sample(self, n):
         L = np.linalg.cholesky(self.cov)
         return self.mean + self.rng.normal(size=(n, self.dim)) @ L.T
-    
+
     @classmethod
     def from_distribution(cls, other, **fit_kwargs):
         raise NotImplementedError
