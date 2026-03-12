@@ -185,7 +185,12 @@ class Workflow(Node):
         This matches your current architecture (deps are Nodes).
         """
         ann = self._hints.get(name)
-        return isinstance(ann, type) and issubclass(ann, Node)
+        try:
+            return isinstance(ann, type) and issubclass(ann, Node)
+        except TypeError:
+            # Generic aliases (e.g. NDArray on Python 3.10) can pass
+            # isinstance(ann, type) but fail in issubclass().
+            return False
 
     def __call__(self, **call_inputs):
         # Extract n_broadcast_samples if it's not a parameter of the wrapped function
@@ -286,9 +291,15 @@ class Workflow(Node):
             if expected is None:
                 continue
 
+            try:
+                is_dist_subclass = isinstance(expected, type) and issubclass(
+                    expected, Distribution
+                )
+            except TypeError:
+                is_dist_subclass = False
+
             if (
-                isinstance(expected, type)
-                and issubclass(expected, Distribution)
+                is_dist_subclass
                 and isinstance(value, DISTRIBUTION_TYPES)
                 and not isinstance(value, expected)
             ):
@@ -307,7 +318,11 @@ class Workflow(Node):
                 continue
             expected = self._hints.get(name)
             # If hint IS a Distribution subclass, _convert_distributions handled it
-            if expected is not None and isinstance(expected, type) and issubclass(expected, Distribution):
+            try:
+                is_dist_hint = expected is not None and isinstance(expected, type) and issubclass(expected, Distribution)
+            except TypeError:
+                is_dist_hint = False
+            if is_dist_hint:
                 continue
             broadcast.append(name)
         return broadcast
