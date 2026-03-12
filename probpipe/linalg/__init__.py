@@ -1,0 +1,25 @@
+from .linear_operator import (
+    LinOp,
+    DenseLinOp,
+    DiagonalLinOp,
+    RootLinOp,
+    TriangularLinOp,
+    CholeskyLinOp,
+    DiagonalRootLinOp,
+    LinOpLike,
+    CholeskyFactor,
+    CholeskyRepresentation,
+    _as_linear_operator,
+)
+from .operations import (
+    shape,
+    dtype,
+    diag,
+    to_dense,
+    solve,
+    cholesky,
+    logdet,
+    trace,
+    trace_Ainv_B,
+    mah_dist_squared,
+)

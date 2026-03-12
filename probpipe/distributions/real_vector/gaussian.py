@@ -5,31 +5,29 @@ import math
 import numpy as np
 from typing import Any
 
-from probpipe.custom_types import Array, ArrayLike, Float, PRNG
-from probpipe.distributions import Distribution
-from probpipe.distributions.real_vector import RealVectorDistribution
+from ...custom_types import Array, ArrayLike, Float, PRNG
+from ..distribution import Distribution
+from . import RealVectorDistribution
 
-from probpipe.array_backend.utils import (
+from ...array_backend.utils import (
     _ensure_real_scalar,
     _ensure_vector,
     _ensure_matrix,
     _ensure_square_matrix,
-    _ensure_batch_array
+    _ensure_batch_array,
 )
 
-from probpipe.linalg.linear_operator import(
-    LinOp, 
-    DenseLinOp, 
-    CholeskyLinOp, 
+from ...linalg.linear_operator import (
+    LinOp,
+    DenseLinOp,
+    CholeskyLinOp,
     CholeskyFactor,
     _as_linear_operator,
     LinOpLike,
 )
 
-from probpipe.linalg.operations import(
-    _as_linear_operator, 
-    LinOpLike, 
-    cholesky, 
+from ...linalg.operations import (
+    cholesky,
     logdet,
 )
 
