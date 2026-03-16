@@ -117,8 +117,7 @@ class Gaussian(RealVectorDistribution[Float]):
 
     @classmethod
     def from_distribution(cls, convert_from: Distribution, num_samples: int = 1024, *,
-                          method: str = "moment_match",
-                          conversion_by_KDE: bool = False, **fit_kwargs: Any) -> Gaussian:
+                          method: str = "moment_match",  **fit_kwargs: Any) -> Gaussian:
         """
         Fit mean and covariance from samples drawn from another distribution-like object.
 
@@ -137,6 +136,10 @@ class Gaussian(RealVectorDistribution[Float]):
         """
         if not isinstance(convert_from, Distribution):
             raise ValueError("`convert_from` must be a Distribution object.")
+
+        supported_methods = {"moment_match"}
+        if method not in supported_methods:
+            raise ValueError(f"Unsupported method '{method}'. Must be one of: {supported_methods}.")
 
         samp = convert_from.sample(num_samples)
         samp = _ensure_matrix(samp, num_rows=num_samples)

@@ -37,16 +37,33 @@ class Provenance:
     This transforms distributions from anonymous outputs into traceable probabilistic objects,
     forming a directed acyclic graph (DAG) of probabilistic operations.
 
+    Standard ops
+    ------------
+    The following op strings are the supported vocabulary. Use these consistently
+    across all ``from_distribution`` implementations and ``with_source`` calls:
+
+    - ``"prior"``       — initial distribution created from parameters, not derived
+                          from another distribution (e.g. a hand-specified Gaussian prior).
+    - ``"approximate"`` — distribution approximated from another by drawing samples
+                          (empirical → sample-based); information may be lost.
+                          Used by: ``EmpiricalDistribution.from_distribution``.
+    - ``"convert"``     — representation change from a sample-based distribution to a
+                          parametric one via fitting (e.g. moment matching).
+                          Used by: ``Gaussian.from_distribution``.
+    - ``"transform"``   — deterministic transformation applied to an existing distribution
+                          (e.g. an affine map or a change of variables).
+    - ``"condition"``   — distribution obtained by conditioning on observed data.
+    - ``"marginalize"`` — distribution obtained by marginalizing out variables.
+
     Attributes:
-        op: The operation that created this distribution.
-            Common values: "prior", "transform", "approximate", "convert", "condition", "marginalize"
+        op: The operation that created this distribution (see standard ops above).
         parents: Tuple of parent Provenance objects from which this was derived
         details: Additional operation-specific metadata (e.g., method, num_samples, parameters)
         uid: Unique identifier for this provenance node
 
     Example:
         >>> # Create a prior with provenance
-        >>> prior = Gaussian(mean=0, cov=1)._with_source(op="prior", name="theta")
+        >>> prior = Gaussian(mean=0, cov=1).with_source(op="prior", description="noise model")
         >>> # Approximate it
         >>> emp = EmpiricalDistribution.from_distribution(prior, num_samples=1000)
         >>> # Check provenance
@@ -158,7 +175,7 @@ class Distribution(Generic[NumberT], ABC):
         """
         return self._source
 
-    def _with_source(
+    def with_source(
         self,
         op: str,
         *,
@@ -166,10 +183,7 @@ class Distribution(Generic[NumberT], ABC):
         **details
     ) -> Distribution:
         """
-        Attach provenance metadata to this distribution.
-
-        This method allows fluent chaining to add provenance information
-        after construction. It modifies the distribution in-place and returns self.
+        Return a copy of this distribution with provenance metadata attached.
 
         Args:
             op: Operation name (e.g., "prior", "transform", "approximate", "convert")
@@ -177,21 +191,21 @@ class Distribution(Generic[NumberT], ABC):
             **details: Additional operation-specific metadata
 
         Returns:
-            Self (for method chaining)
+            A new distribution instance with the provenance set
 
         Example:
-            >>> dist = Gaussian(mean=0, cov=1)._with_source(
+            >>> dist = Gaussian(mean=0, cov=1).with_source(
             ...     op="prior",
-            ...     name="theta",
-            ...     distribution_type="normal"
+            ...     description="isotropic noise prior",
             ... )
         """
-        parent_list = parents or []
+        import copy
+        new = copy.copy(self)
         parent_provenances = tuple(
-            d.source for d in parent_list if d.source is not None
+            d.source for d in (parents or []) if d.source is not None
         )
-        self._source = Provenance(op=op, parents=parent_provenances, details=details)
-        return self
+        new._source = Provenance(op=op, parents=parent_provenances, details=details)
+        return new
 
     def sample(self, n_samples: int = 1) -> Array[NumberT]:
         """
