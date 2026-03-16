@@ -4,6 +4,7 @@ import inspect
 from concurrent.futures import ThreadPoolExecutor
 from itertools import product as cartesian_product
 from types import MappingProxyType
+import warnings
 
 import numpy as np
 from prefect import task, flow
@@ -341,6 +342,17 @@ class Workflow(Node):
         When EmpiricalDistribution arguments have small enough support, enumerates their
         samples (cartesian product) and propagates weights instead of resampling.
         """
+        MIN_BROADCAST_SAMPLES = 5  # Recommended minimum samples
+
+        # Validate n_broadcast_samples value and warn if too small
+        if not isinstance(n_broadcast_samples, int) or n_broadcast_samples < MIN_BROADCAST_SAMPLES:
+            warnings.warn(
+                f"n_broadcast_samples={n_broadcast_samples} is too low; "
+                f"results may be unreliable. "
+                f"Recommended minimum is {MIN_BROADCAST_SAMPLES}.",
+                stacklevel=2
+            )
+
         # Collect candidate empirical dists (small enough individually), sorted smallest first
         candidates = []
         sample_args: Dict[str, Distribution] = {}
