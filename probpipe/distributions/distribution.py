@@ -1,388 +1,319 @@
-# distributions/distribution.py
+"""
+Core distribution abstractions for prob-pipe.
+
+Provides:
+  - ``Distribution``          – Abstract base class following TFP shape semantics.
+  - ``TFPDistribution``       – Mixin that delegates to an internal ``tfd.*`` instance.
+  - ``EmpiricalDistribution`` – Weighted set of samples.
+  - ``Provenance``            – Lightweight lineage tracker.
+"""
+
 from __future__ import annotations
 
-from typing import Generic, TypeVar, Any
-from collections.abc import Callable
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any
 
+import jax
+import jax.numpy as jnp
 import numpy as np
+import tensorflow_probability.substrates.jax.distributions as tfd
 
-from ..custom_types import Array, ArrayLike, PRNG, Float, Number
-from ..array_backend.utils import _ensure_matrix, _ensure_vector
-from ..linalg.linear_operator import LinOp, RootLinOp
-
-__all__ = [
-    "Distribution",
-    "EmpiricalDistribution",
-]
-
-NumberT = TypeVar("NumberT", bound=Number)
-
-# -------------------------- Abstract Classes ----------------------------
+from ..custom_types import Array, ArrayLike, PRNGKey
 
 
-class Distribution(Generic[NumberT], ABC):
+# ---------------------------------------------------------------------------
+# Provenance
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Provenance:
+    """Tracks how a distribution was created."""
+
+    operation: str
+    parents: tuple[Distribution, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __repr__(self) -> str:
+        parent_names = ", ".join(
+            p.name or type(p).__name__ for p in self.parents
+        )
+        return f"Provenance({self.operation!r}, parents=[{parent_names}])"
+
+
+# ---------------------------------------------------------------------------
+# Distribution ABC
+# ---------------------------------------------------------------------------
+
+class Distribution(ABC):
     """
-    Abstract base class for probability distributions.
+    Abstract base for all prob-pipe distributions.
 
-    This class defines the general interface for any probabilistic
-    distribution implementation used within probpipe. Subclasses are
-    expected to implement methods for computing density, log-density,
-    sampling, and expectations.
+    Shape semantics follow TFP conventions:
 
-    Subclasses that cannot support a specific operation (e.g., sampling)
-    may leave that method unimplemented.
-
-    Type Variables:
-        T: Numeric data type (e.g., float or np.floating).
+    * ``event_shape``  – shape of a single draw (e.g. ``(d,)`` for a
+      *d*-dimensional vector distribution).
+    * ``batch_shape``  – shape of independent-but-not-identically-distributed
+      parameter batches.
+    * ``sample(key, sample_shape)`` returns an array of shape
+      ``sample_shape + batch_shape + event_shape``.
     """
 
-    def sample(self, n_samples: int = 1) -> Array[NumberT]:
-        """
-        Samples data points from the distribution.
+    # -- core abstract interface ---------------------------------------------
 
-        This method may be optionally implemented by subclasses that
-        support random sampling. It returns `n_samples` draws from
-        the distribution.
-
-        Args:
-            n_samples: The number of samples to generate.
-
-        Returns:
-            An array containing `n_samples` draws from the distribution.
-
-        Raises:
-            NotImplementedError: If the subclass does not implement this method.
-        """
-        raise NotImplementedError("This method may be implemented by subclasses (optional)")
-    
-    def density(self, x: Array[NumberT]) -> Array[Float]:
-        """
-        Computes the probability density p(data) under this distribution.
-
-        This method may be optionally implemented by subclasses that
-        can evaluate densities. The returned array corresponds to the
-        pointwise probability density values reduced over event
-        dimensions (i.e., matching the batch shape).
-
-        Args:
-            data: Input array of observations for which to compute densities.
-
-        Returns:
-            Probability density values for each input point.
-
-        Raises:
-            NotImplementedError: If the subclass does not implement this method.
-        """
-        raise NotImplementedError("This method may be implemented by subclasses (optional)")
-    
-    def log_density(self, x: Array[NumberT]) -> Array[Float]:
-        """
-        Computes the log-probability density log p(data).
-
-        This method may be optionally implemented by subclasses that
-        can evaluate log-densities. The returned array corresponds to
-        the pointwise log-probability values reduced over event
-        dimensions (i.e., matching the batch shape).
-
-        Args:
-            data: Input array of observations for which to compute log-densities.
-
-        Returns:
-            Log-probability values for each input point.
-
-        Raises:
-            NotImplementedError: If the subclass does not implement this method.
-        """
-        raise NotImplementedError("This method may be implemented by subclasses (optional)")
-    
-
-    def expectation(self, func: Callable[[Array[NumberT]], Array]) -> Distribution:
-        """
-        Computes the expectation of a function under this distribution.
-
-        This method may be optionally implemented by subclasses that can
-        perform Monte Carlo estimation. The result is typically a new
-        `Distribution` instance representing the mean of the function
-        applied to random samples drawn from this distribution.
-
-        Args:
-            func: A callable function f(x) to compute the expectation of.
-
-        Returns:
-            A distribution representing E[f(X)].
-
-        Raises:
-            NotImplementedError: If the subclass does not implement this method.
-        """
-
-        raise NotImplementedError("This method may be implemented by subclasses (optional)")
-    
-
-    @classmethod
+    @property
     @abstractmethod
-    def from_distribution(cls, other: Distribution, **fit_kwargs: Any) -> Distribution[NumberT]:
-        """
-        Convert the distribution `other` into a distribution of type `cls`. This will 
-        typically be an approximation. Examples including moment matching and 
-        kernel density estimation (KDE).
-        """
-        raise NotImplementedError("This method should be implemented by subclasses")
-
-
-class EmpiricalDistribution(Distribution):
-    """ Container for (weighted) empirical samples in R^d.
-
-    The discrete distribution defined by a set of `n`, potentially weighed,
-    samples. 
-    
-    Args:
-        x: array-like, shape (n, d) or (n,)
-            The samples defining the empirical distribution.
-        weights: array-like, shape (n,), optional
-            Nonnegative weights; will be normalized to sum to 1. If None, 
-            uniform weights are assigned.
-        rng: np.random.Generator, optional
-            Random number generator for sampling.
-    """
-
-    def __init__(
-        self,
-        x: Array,
-        weights: Array | None = None,
-        *,
-        rng: PRNG | None = None,
-    ):
-        X = _ensure_matrix(x, as_row_matrix=True)
-        n, d = X.shape
-        if n < 1:
-            raise ValueError("EmpiricalDistribution requires at least one sample.")
-
-        if weights is None:
-            w = np.full(n, 1.0 / n, dtype=X.dtype)
-        else:
-            w = _ensure_vector(weights, as_column=False, length=n)
-            if np.any(w < 0):
-                raise ValueError("weights must be nonnegative.")
-            s = w.sum()
-            if s <= 0:
-                raise ValueError("weights cannot all be zero.")
-            w = w / s
-
-        self._X = X.astype(float)
-        self._w = w.astype(float)
-        self._n = int(n)
-        self._d = int(d)
-        self._rng = rng or np.random.default_rng()
-
-        # Compute empirical mean and covariance.
-        self._mean = (self._w[:, np.newaxis] * self._X).sum(axis=0)
-        cov_root = ((self._X - self._mean) * np.sqrt(self._w)[:, np.newaxis]).T  # (d,n)
-        self._cov = RootLinOp(cov_root)
-
-        # cumulative weights for fast inverse-transform resampling
-        self._cw = np.cumsum(self._w)
+    def event_shape(self) -> tuple[int, ...]:
+        ...
 
     @property
-    def n(self) -> int:
-        """Number of stored samples."""
-        return self._n
+    def batch_shape(self) -> tuple[int, ...]:
+        return ()
 
     @property
-    def dim(self) -> int:
-        """Dimensionality."""
-        return self._d
+    def dtype(self) -> jnp.dtype:
+        return jnp.float32
 
-    @property
-    def samples(self) -> Array:
-        """A view of the stored samples, shape (n, d)."""
-        return self._X
+    @abstractmethod
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+        ...
 
-    @property
-    def weights(self) -> Array:
-        """A view of normalized weights, shape (n,)."""
-        return self._w
+    @abstractmethod
+    def log_prob(self, x: ArrayLike) -> Array:
+        ...
+
+    # -- optional concrete methods ------------------------------------------
+
+    def prob(self, x: ArrayLike) -> Array:
+        return jnp.exp(self.log_prob(x))
 
     def mean(self) -> Array:
-        """Weighted mean, shape (d,)."""
-        return self._mean
+        raise NotImplementedError(f"{type(self).__name__}.mean()")
 
-    def cov(self) -> LinOp:
-        """Weighted *population* covariance, shape (d, d)."""
-        return self._cov
+    def variance(self) -> Array:
+        raise NotImplementedError(f"{type(self).__name__}.variance()")
 
-    def var(self) -> Array:
-        """Weighted population variance per dimension, shape (d,)."""
-        return self._cov.diag()
+    # -- naming & provenance ------------------------------------------------
 
-    def std(self) -> Array:
-        """Weighted population standard deviation per dimension, shape (d,)."""
-        return np.sqrt(np.maximum(self.var(), 0.0))
+    @property
+    def name(self) -> str | None:
+        return getattr(self, "_name", None)
 
-    def __str__(self) -> str:
-        """String representation of the empirical distribution."""
-        # Check if weights are uniform
-        uniform_weights = np.allclose(self._w, 1.0 / self._n)
-        weight_info = "uniform" if uniform_weights else "weighted"
+    @property
+    def source(self) -> Provenance | None:
+        return getattr(self, "_source", None)
 
-        # Format mean and std for display
-        if self._d == 1:
-            mean_str = f"{self._mean[0]:.4g}"
-            std_str = f"{self.std()[0]:.4g}"
-        elif self._d <= 3:
-            mean_str = "[" + ", ".join(f"{m:.4g}" for m in self._mean) + "]"
-            std_str = "[" + ", ".join(f"{s:.4g}" for s in self.std()) + "]"
-        else:
-            mean_str = f"[{self._mean[0]:.4g}, ..., {self._mean[-1]:.4g}]"
-            std_str = f"[{self.std()[0]:.4g}, ..., {self.std()[-1]:.4g}]"
+    def _with_source(self, source: Provenance) -> Distribution:
+        self._source = source
+        return self
 
-        return (
-            f"EmpiricalDistribution(n={self._n}, dim={self._d}, {weight_info}, "
-            f"mean={mean_str}, std={std_str})"
-        )
-
-    def sample(self, n_samples: int = 1, *, replace: bool = True) -> Array:
-        """
-        Resample draws from the empirical distribution with replacement,
-        using the stored weights. Returns shape (n_samples, d).
-        """
-        n_samples = int(n_samples)
-        if not replace and n_samples > self._n:
-            raise ValueError("Cannot sample more than n without replacement.")
-        idx = self._rng.choice(self._n, size=n_samples, replace=replace, p=self._w)
-        return self._X[idx]
-
-    rvs = sample
-
-    def density(self, x: Array) -> Array:
-        """Approximate density using a Gaussian fit to the empirical samples. See log_density."""
-        return np.exp(self.log_density(x))
-
-    def log_density(self, x: Array) -> Array:
-        """
-        Approximate log density using a Gaussian fit to the empirical samples.
-        """
-        from .real_vector.gaussian import Gaussian
-        return Gaussian(mean=self._mean, cov=self._cov.to_dense()).log_density(x)
-
-    # TODO: come back to this:
-    def expectation(
-        self,
-        func: Callable[[Array], Array],
-        *,
-        n_mc: int = 2048,
-    ):
-        raise NotImplemented
-
-        """
-        Y = np.asarray(func(self._X), dtype=float)
-
-        if Y.ndim == 1:
-            m = float((self._w * Y).sum())
-            var = float((self._w * (Y - m) ** 2).sum())
-            se = np.sqrt(max(var, 0.0)) / np.sqrt(n_mc)
-            return Gaussian(m, max(se, 1e-12), rng=self._rng)
-        else:
-            Y = _ensure_matrix(Y, as_row_matrix=True)
-            m = (self._w[:, None] * Y).sum(axis=0)
-            diff = Y - m
-            cov = diff.T @ (diff * self._w[:, None])
-            cov_mean = cov / float(n_mc)
-            cov_mean = 0.5 * (cov_mean + cov_mean.T) + 1e-12 * np.eye(cov_mean.shape[0])
-            return Gaussian(mean=m, cov=cov_mean, rng=self._rng)
-        """
+    # -- conversion ---------------------------------------------------------
 
     @classmethod
     def from_distribution(
         cls,
         other: Distribution,
-        **fit_kwargs: Any,
-    ) -> EmpiricalDistribution:
-        samples = other.sample(fit_kwargs.get("num_samples", 2048))
-        return cls(samples)
-        
+        *,
+        key: PRNGKey | None = None,
+        num_samples: int = 1024,
+        **kwargs: Any,
+    ) -> Distribution:
+        """Convert *other* into an instance of *cls* by sampling."""
+        raise NotImplementedError(
+            f"{cls.__name__}.from_distribution() is not implemented."
+        )
+
+    # -- repr ---------------------------------------------------------------
+
+    def __repr__(self) -> str:
+        parts = [type(self).__name__]
+        if self.name:
+            parts.append(f"name={self.name!r}")
+        parts.append(f"event_shape={self.event_shape}")
+        if self.batch_shape:
+            parts.append(f"batch_shape={self.batch_shape}")
+        return f"{parts[0]}({', '.join(parts[1:])})"
 
 
-class BootstrapDistribution(EmpiricalDistribution):
+# ---------------------------------------------------------------------------
+# TFPDistribution mixin
+# ---------------------------------------------------------------------------
+
+class TFPDistribution(Distribution):
     """
-    Empirical distribution over bootstrap replicates of a statistic.
+    Base class for distributions backed by a ``tfd.Distribution`` instance.
 
-    Semantics:
-      - 'samples' (inherited) are the bootstrap replicates theta* (shape (B, k)).
-      - 'replicates' is an alias to 'samples' for user-facing clarity.
-      - All summaries (mean/cov/var/std), resampling (sample/rvs), and
-        expectation() behavior are inherited from EmpiricalDistribution.
+    Subclasses set ``self._tfp_dist`` in ``__init__``.  Sampling,
+    ``log_prob``, ``mean``, and ``variance`` delegate to TFP.
+    """
 
-    Notes
-    -----
-    This class intentionally reuses EmpiricalDistribution's implementation to avoid
-    duplication. The only additions are naming (replicates alias) and a convenience
-    constructor 'from_data' to generate bootstrap replicates.
+    _tfp_dist: tfd.Distribution
+
+    # -- shape delegation ---------------------------------------------------
+
+    @property
+    def event_shape(self) -> tuple[int, ...]:
+        return tuple(self._tfp_dist.event_shape)
+
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return tuple(self._tfp_dist.batch_shape)
+
+    @property
+    def dtype(self) -> jnp.dtype:
+        return self._tfp_dist.dtype
+
+    # -- sampling & density -------------------------------------------------
+
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+        return self._tfp_dist.sample(seed=key, sample_shape=sample_shape)
+
+    def log_prob(self, x: ArrayLike) -> Array:
+        return self._tfp_dist.log_prob(jnp.asarray(x))
+
+    def prob(self, x: ArrayLike) -> Array:
+        return self._tfp_dist.prob(jnp.asarray(x))
+
+    def mean(self) -> Array:
+        return self._tfp_dist.mean()
+
+    def variance(self) -> Array:
+        return self._tfp_dist.variance()
+
+
+# ---------------------------------------------------------------------------
+# EmpiricalDistribution
+# ---------------------------------------------------------------------------
+
+class EmpiricalDistribution(Distribution):
+    """
+    Weighted empirical distribution over a finite set of samples.
+
+    Parameters
+    ----------
+    samples : array-like, shape ``(n, *event_shape)``
+        The support points.  The leading axis is the sample axis.
+    weights : array-like, shape ``(n,)``, optional
+        Non-negative weights (normalised internally).  Defaults to uniform.
+    name : str, optional
+        An optional name for provenance / JointDistribution integration.
     """
 
     def __init__(
         self,
-        replicates: Array,
-        weights: Array | None = None,
+        samples: ArrayLike,
+        weights: ArrayLike | None = None,
         *,
-        rng: PRNG | None = None,
+        name: str | None = None,
     ):
-        # Just forward to EmpiricalDistribution
-        super().__init__(replicates, weights, rng=rng)
+        samples = jnp.asarray(samples, dtype=jnp.float32)
+        if samples.ndim < 2:
+            samples = samples.reshape(-1, 1)
 
-    # --------- Aliases for semantics ---------
+        n = samples.shape[0]
+
+        if weights is None:
+            weights = jnp.ones(n) / n
+        else:
+            weights = jnp.asarray(weights, dtype=jnp.float32)
+            if weights.shape != (n,):
+                raise ValueError(
+                    f"weights shape {weights.shape} does not match "
+                    f"number of samples {n}."
+                )
+            if jnp.any(weights < 0):
+                raise ValueError("weights must be non-negative.")
+            total = jnp.sum(weights)
+            if total <= 0:
+                raise ValueError("weights must sum to a positive value.")
+            weights = weights / total
+
+        self._samples = samples
+        self._weights = weights
+        self._name = name
+
+    # -- properties ---------------------------------------------------------
 
     @property
-    def replicates(self) -> Array:
-        """Alias for the stored bootstrap replicates, shape (B, k)."""
-        return self.samples
+    def n(self) -> int:
+        return self._samples.shape[0]
 
-    # --------- Convenience constructor ---------
+    @property
+    def dim(self) -> int:
+        return int(np.prod(self._samples.shape[1:]))
+
+    @property
+    def samples(self) -> Array:
+        return self._samples
+
+    @property
+    def weights(self) -> Array:
+        return self._weights
+
+    @property
+    def event_shape(self) -> tuple[int, ...]:
+        return self._samples.shape[1:]
+
+    @property
+    def dtype(self) -> jnp.dtype:
+        return self._samples.dtype
+
+    # -- sampling -----------------------------------------------------------
+
+    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+        n_draws = int(np.prod(sample_shape)) if sample_shape else 1
+        indices = jax.random.choice(
+            key, self.n, shape=(n_draws,), p=self._weights, replace=True,
+        )
+        draws = self._samples[indices]
+        if sample_shape:
+            return draws.reshape(sample_shape + self.event_shape)
+        return draws.squeeze(axis=0)
+
+    # -- density (Gaussian approximation) -----------------------------------
+
+    def log_prob(self, x: ArrayLike) -> Array:
+        """Gaussian-approximation log-density."""
+        x = jnp.asarray(x)
+        mu = self.mean()
+        var = self.variance()
+        # Diagonal Gaussian approx; clamp variance to avoid log(0)
+        var = jnp.maximum(var, 1e-12)
+        log_norm = -0.5 * jnp.sum(jnp.log(2 * jnp.pi * var))
+        diff = x - mu
+        return log_norm - 0.5 * jnp.sum(diff**2 / var, axis=-1)
+
+    # -- moments ------------------------------------------------------------
+
+    def mean(self) -> Array:
+        return jnp.einsum("n,n...->...", self._weights, self._samples)
+
+    def variance(self) -> Array:
+        mu = self.mean()
+        diff = self._samples - mu
+        return jnp.einsum("n,n...->...", self._weights, diff**2)
+
+    def cov(self) -> Array:
+        """Weighted sample covariance matrix, shape ``(d, d)``."""
+        mu = self.mean()
+        diff = self._samples.reshape(self.n, -1) - mu.ravel()
+        return jnp.einsum("ni,nj,n->ij", diff, diff, self._weights)
+
+    # -- conversion ---------------------------------------------------------
 
     @classmethod
-    def from_data(
+    def from_distribution(
         cls,
-        data: Array,
-        stat_fn: Callable[[Array], Array],
+        other: Distribution,
         *,
-        B: int = 1000,
-        axis: int = 0,
-        rng: PRNG | None = None,
-    ) -> BootstrapDistribution:
-        """
-        Classic i.i.d. bootstrap for a statistic.
-
-        Parameters
-        ----------
-        data : array-like
-            Observations (samples along `axis`).
-        stat_fn : callable
-            Function mapping a resampled dataset (with samples on axis 0) to a
-            statistic vector (shape (k,) or scalar). We will pass the resampled
-            array with **samples on axis 0**.
-        B : int
-            Number of bootstrap replicates.
-        axis : int
-            Axis of `data` that indexes samples; moved to 0 before calling `stat_fn`.
-        rng : np.random.Generator, optional
-            RNG for resampling indices.
-
-        Returns
-        -------
-        BootstrapDistribution
-            Container of `B` replicates of the statistic.
-        """
-        rng = rng or np.random.default_rng()
-        X = np.asarray(data, dtype=float)
-        X = np.moveaxis(X, axis, 0)  # samples now on axis 0
-        n = X.shape[0]
-
-        reps = []
-        for _ in range(int(B)):
-            idx = rng.integers(0, n, size=n)  # sample n rows with replacement
-            Xb = X[idx]
-            theta = np.asarray(stat_fn(Xb), dtype=float).reshape(-1)
-            reps.append(theta)
-
-        Theta = np.vstack(reps)  # (B, k)
-        return cls(Theta, rng=rng)
+        key: PRNGKey | None = None,
+        num_samples: int = 1024,
+        name: str | None = None,
+        **kwargs: Any,
+    ) -> EmpiricalDistribution:
+        if key is None:
+            key = jax.random.PRNGKey(0)
+        samples = other.sample(key, sample_shape=(num_samples,))
+        ed = cls(samples, name=name or other.name)
+        ed._source = Provenance("from_distribution", parents=(other,))
+        return ed

@@ -1,28 +1,30 @@
-# custom_types.py
 """
-These type definitions and aliases are intended to eventually be generalized
-to support both numpy and jax array backends. 
+Type aliases for the array backend.
 
-We generally following the conventions:  
-- Annotate function input with `ArrayLike`  
-- Annotate function output with `Array`
+prob-pipe uses JAX as its primary array backend. These aliases provide a
+single place to change if the backend ever needs to swap.
 """
+
 from __future__ import annotations
-from typing import TypeAlias, TypeVar
-from numpy.random import Generator as NumpyRNG
+from typing import TypeAlias
 
-from numpy.typing import (
-    NDArray as NumpyArray, 
-    ArrayLike as NumpyArrayLike
-)
+import jax
+import jax.numpy as jnp
+import numpy as np
 
-from numpy import (
-    floating as NumpyFloating,
-    number as NumpyNumber
-)
+# ---------------------------------------------------------------------------
+# Array types
+# ---------------------------------------------------------------------------
+Array: TypeAlias = jnp.ndarray
+ArrayLike: TypeAlias = jnp.ndarray | np.ndarray | list | tuple | float | int
 
-Array = NumpyArray
-ArrayLike: TypeAlias = NumpyArrayLike
-Float: TypeAlias = NumpyFloating
-Number: TypeAlias = NumpyNumber
-PRNG: TypeAlias = NumpyRNG
+# ---------------------------------------------------------------------------
+# Scalar numeric types
+# ---------------------------------------------------------------------------
+Float: TypeAlias = jnp.floating
+Number: TypeAlias = jnp.floating | jnp.integer
+
+# ---------------------------------------------------------------------------
+# Random state
+# ---------------------------------------------------------------------------
+PRNGKey: TypeAlias = jax.Array  # JAX PRNG key

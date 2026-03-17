@@ -16,9 +16,12 @@ authors = [
   { name = "Can Erozer",    email = "caner@bu.edu" },
 ]
 dependencies = [
-  "numpy>=1.20",
+  "numpy>=2.0",
   "scipy>=1.7",
-  "prefect>=3"
+  "prefect>=3",
+  "jax>=0.5",
+  "jaxlib>=0.5",
+  "tensorflow-probability>=0.25",
 ]
 
 [project.urls]
