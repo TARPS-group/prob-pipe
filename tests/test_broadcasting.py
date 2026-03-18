@@ -1,271 +1,298 @@
-"""Broadcasting tests — temporarily skipped pending Phase 4 rewrite for JAX API."""
+"""Broadcasting tests for JAX-based distribution API."""
+import jax
+import jax.numpy as jnp
+import numpy as np
 import pytest
 
-pytest.skip(
-    "Broadcasting tests use old numpy-based Distribution API; "
-    "will be rewritten in Phase 4 for JAX-based distributions",
-    allow_module_level=True,
-)
+from probpipe import EmpiricalDistribution, MultivariateNormal, Normal, Distribution
+from probpipe.core.node import Workflow
 
 
 @pytest.fixture
-def rng():
-    return np.random.default_rng(42)
+def key():
+    return jax.random.PRNGKey(42)
 
 
-class TestBroadcastingSingleArg:
-    """Broadcasting a single Distribution argument."""
+# ---------------------------------------------------------------------------
+# Basic broadcasting (loop backend)
+# ---------------------------------------------------------------------------
 
-    def test_returns_empirical_distribution(self, rng):
-        def double_it(x: NDArray) -> NDArray:
+class TestBroadcastingBasic:
+    def test_returns_empirical_distribution(self):
+        def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = Workflow(func=double_it, n_broadcast_samples=50)
-        g = Gaussian(mean=np.array([1.0, 2.0]), cov=np.eye(2), rng=rng)
+        w = Workflow(func=double_it, n_broadcast_samples=50, broadcast_backend="loop", seed=0)
+        g = Normal(loc=1.0, scale=0.5)
         result = w(x=g)
-
         assert isinstance(result, EmpiricalDistribution)
         assert result.n == 50
-        assert result.dim == 2
 
-    def test_output_values_are_correct(self, rng):
-        def add_one(x: NDArray) -> NDArray:
+    def test_output_values_correct(self):
+        def add_one(x: jnp.ndarray) -> jnp.ndarray:
             return x + 1.0
 
-        w = Workflow(func=add_one, n_broadcast_samples=500)
-        g = Gaussian(mean=np.array([0.0]), cov=np.eye(1), rng=rng)
+        w = Workflow(func=add_one, n_broadcast_samples=200, broadcast_backend="loop", seed=1)
+        g = Normal(loc=0.0, scale=0.1)
         result = w(x=g)
+        # Mean should be ~1.0 (0 + 1)
+        assert abs(float(jnp.mean(result.samples)) - 1.0) < 0.1
 
-        assert result.n == 500
-        assert result.dim == 1
-        # add_one shifts the mean by 1: Gaussian(0,1) + 1 → mean ≈ 1.0
-        assert abs(float(result.mean()) - 1.0) < 0.3, (
-            f"Expected mean ≈ 1.0, got {float(result.mean()):.3f}"
-        )
+    def test_scalar_return(self):
+        def compute_norm(x: jnp.ndarray) -> float:
+            return float(jnp.linalg.norm(x))
 
-    def test_scalar_return(self, rng):
-        def norm(x: NDArray) -> float:
-            return float(np.linalg.norm(x))
-
-        w = Workflow(func=norm, n_broadcast_samples=25)
-        g = Gaussian(mean=np.zeros(3), cov=np.eye(3), rng=rng)
-        result = w(x=g)
-
-        assert isinstance(result, EmpiricalDistribution)
-        assert result.n == 25
-        assert result.dim == 1
-
-
-class TestBroadcastingMultipleArgs:
-    """Broadcasting multiple independent Distribution arguments."""
-
-    def test_two_distributions(self, rng):
-        def add_them(a: NDArray, b: NDArray) -> NDArray:
-            return a + b
-
-        w = Workflow(func=add_them, n_broadcast_samples=30)
-        g1 = Gaussian(mean=np.array([1.0]), cov=np.eye(1), rng=rng)
-        g2 = Gaussian(mean=np.array([2.0]), cov=np.eye(1), rng=rng)
-        result = w(a=g1, b=g2)
-
-        assert isinstance(result, EmpiricalDistribution)
-        assert result.n == 30
-        assert result.dim == 1
-
-
-class TestBroadcastingMixedArgs:
-    """Mix of Distribution and concrete arguments."""
-
-    def test_one_dist_one_concrete(self, rng):
-        def scale(x: NDArray, factor: float) -> NDArray:
-            return x * factor
-
-        w = Workflow(func=scale, n_broadcast_samples=20)
-        g = Gaussian(mean=np.array([5.0]), cov=np.eye(1), rng=rng)
-        result = w(x=g, factor=3.0)
-
+        w = Workflow(func=compute_norm, n_broadcast_samples=20, broadcast_backend="loop", seed=2)
+        mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
+        result = w(x=mvn)
         assert isinstance(result, EmpiricalDistribution)
         assert result.n == 20
         assert result.dim == 1
 
 
-class TestBroadcastingNSamples:
-    """n_broadcast_samples configuration."""
+class TestBroadcastingMultipleArgs:
+    def test_two_distributions(self):
+        def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
+            return a + b
 
-    def test_default_n_broadcast_samples(self, rng):
-        """Default n_broadcast_samples should match the class constant."""
-        def identity(x: NDArray) -> NDArray:
+        w = Workflow(func=add_them, n_broadcast_samples=100, broadcast_backend="loop", seed=3)
+        g1 = Normal(loc=1.0, scale=0.1)
+        g2 = Normal(loc=2.0, scale=0.1)
+        result = w(a=g1, b=g2)
+        assert result.n == 100
+        assert abs(float(jnp.mean(result.samples)) - 3.0) < 0.2
+
+
+class TestBroadcastingMixedArgs:
+    def test_one_dist_one_concrete(self):
+        def scale(x: jnp.ndarray, factor: float) -> jnp.ndarray:
+            return x * factor
+
+        w = Workflow(func=scale, n_broadcast_samples=50, broadcast_backend="loop", seed=4)
+        g = Normal(loc=5.0, scale=0.1)
+        result = w(x=g, factor=3.0)
+        assert result.n == 50
+        assert abs(float(jnp.mean(result.samples)) - 15.0) < 1.0
+
+
+class TestBroadcastingNSamples:
+    def test_default(self):
+        def identity(x: jnp.ndarray) -> jnp.ndarray:
             return x
 
-        w = Workflow(func=identity)
-        g = Gaussian(mean=np.array([0.0]), cov=np.eye(1), rng=rng)
+        w = Workflow(func=identity, broadcast_backend="loop", seed=5)
+        g = Normal(loc=0.0, scale=1.0)
         result = w(x=g)
-
         assert result.n == Workflow.DEFAULT_N_BROADCAST_SAMPLES
 
-    def test_call_time_override(self, rng):
-        def identity(x: NDArray) -> NDArray:
+    def test_call_time_override(self):
+        def identity(x: jnp.ndarray) -> jnp.ndarray:
             return x
 
-        w = Workflow(func=identity, n_broadcast_samples=100)
-        g = Gaussian(mean=np.array([0.0]), cov=np.eye(1), rng=rng)
+        w = Workflow(func=identity, n_broadcast_samples=100, broadcast_backend="loop", seed=6)
+        g = Normal(loc=0.0, scale=1.0)
         result = w(x=g, n_broadcast_samples=10)
-
         assert result.n == 10
-
-    def test_n_broadcast_samples_not_stolen_from_function(self, rng):
-        """If the function itself has an n_samples parameter, don't intercept it."""
-
-        def sample_wrapper(x: NDArray, n_samples: int) -> NDArray:
-            return np.tile(x, (n_samples, 1))
-
-        w = Workflow(func=sample_wrapper, n_broadcast_samples=5)
-        g = Gaussian(mean=np.array([1.0]), cov=np.eye(1), rng=rng)
-        # n_samples=3 should go to the function, not be intercepted
-        result = w(x=g, n_samples=3)
-
-        assert isinstance(result, EmpiricalDistribution)
-        # Broadcasting uses the construction default (5), n_samples=3 goes to function
-        assert result.n == 5
 
 
 class TestNoBroadcasting:
     """Cases where broadcasting should NOT happen."""
 
-    def test_distribution_hint_uses_conversion(self, rng):
-        """When type hint IS a Distribution subclass, convert instead of broadcast."""
-
-        def takes_dist(x: Distribution) -> NDArray:
-            return x.sample(1)
-
-        w = Workflow(func=takes_dist)
-        g = Gaussian(mean=np.array([0.0]), cov=np.eye(1), rng=rng)
-        result = w(x=g)
-
-        # Should call function directly (no broadcasting), passing the Distribution
-        assert isinstance(result, np.ndarray)
-
     def test_concrete_args_pass_through(self):
-        """No Distribution arguments means no broadcasting."""
-
         def add(a: float, b: float) -> float:
             return a + b
 
-        w = Workflow(func=add)
+        w = Workflow(func=add, broadcast_backend="loop")
         result = w(a=1.0, b=2.0)
-
         assert result == 3.0
 
 
+# ---------------------------------------------------------------------------
+# Empirical enumeration
+# ---------------------------------------------------------------------------
+
 class TestBroadcastingEnumeration:
-    """EmpiricalDistribution args should enumerate samples and propagate weights."""
-
-    def test_single_empirical_uses_all_samples(self, rng):
-        def identity(x: NDArray) -> NDArray:
+    def test_single_empirical(self):
+        def identity(x: jnp.ndarray) -> jnp.ndarray:
             return x
 
-        samples = np.array([[1.0], [2.0], [3.0]])
-        weights = np.array([0.2, 0.3, 0.5])
-        ed = EmpiricalDistribution(samples, weights, rng=rng)
+        samples = jnp.array([[1.0], [2.0], [3.0]])
+        weights = jnp.array([0.2, 0.3, 0.5])
+        ed = EmpiricalDistribution(samples, weights)
 
-        w = Workflow(func=identity, n_broadcast_samples=100)
+        w = Workflow(func=identity, n_broadcast_samples=100, broadcast_backend="loop", seed=7)
         result = w(x=ed)
-
-        assert isinstance(result, EmpiricalDistribution)
-        # Should enumerate all 3 samples, not resample 100
         assert result.n == 3
-        np.testing.assert_allclose(result.weights, weights / weights.sum())
-        np.testing.assert_allclose(result.samples, samples)
+        np.testing.assert_allclose(result.weights, weights, atol=1e-5)
 
-    def test_two_empiricals_cartesian_product(self, rng):
-        def add_them(a: NDArray, b: NDArray) -> NDArray:
+    def test_two_empiricals_cartesian(self):
+        def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
-        ed1 = EmpiricalDistribution(np.array([[1.0], [2.0]]), rng=rng)
-        ed2 = EmpiricalDistribution(np.array([[10.0], [20.0], [30.0]]), rng=rng)
+        ed1 = EmpiricalDistribution(jnp.array([[1.0], [2.0]]))
+        ed2 = EmpiricalDistribution(jnp.array([[10.0], [20.0], [30.0]]))
 
-        w = Workflow(func=add_them, n_broadcast_samples=100)
+        w = Workflow(func=add_them, n_broadcast_samples=100, broadcast_backend="loop", seed=8)
         result = w(a=ed1, b=ed2)
+        assert result.n == 6  # 2 x 3
 
-        assert isinstance(result, EmpiricalDistribution)
-        # Cartesian product: 2 * 3 = 6 evaluations
-        assert result.n == 6
-        # Uniform weights on both -> uniform product weights
-        np.testing.assert_allclose(result.weights, np.ones(6) / 6)
+    def test_greedy_cutoff(self):
+        """When product exceeds budget, largest empiricals are sampled instead."""
+        def sum_three(a: jnp.ndarray, b: jnp.ndarray, c: jnp.ndarray) -> jnp.ndarray:
+            return a + b + c
 
-    def test_large_empirical_falls_back_to_sampling(self, rng):
-        def identity(x: NDArray) -> NDArray:
-            return x
+        ed_small = EmpiricalDistribution(jnp.array([[1.0], [2.0]]))          # n=2
+        ed_medium = EmpiricalDistribution(jnp.arange(5).reshape(-1, 1).astype(jnp.float32))  # n=5
+        ed_large = EmpiricalDistribution(jnp.arange(20).reshape(-1, 1).astype(jnp.float32))  # n=20
 
-        # 200 samples > n_broadcast_samples=50, so should sample
-        big_ed = EmpiricalDistribution(np.random.default_rng(0).standard_normal((200, 2)), rng=rng)
-
-        w = Workflow(func=identity, n_broadcast_samples=50)
-        result = w(x=big_ed)
-
-        assert isinstance(result, EmpiricalDistribution)
+        w = Workflow(func=sum_three, n_broadcast_samples=50, broadcast_backend="loop", seed=9)
+        result = w(a=ed_small, b=ed_medium, c=ed_large)
+        # 2*5=10 enumerated, 50//10=5 reps from ed_large per combo → 50 total
         assert result.n == 50
 
-    def test_product_exceeds_n_broadcast_samples_falls_back(self, rng):
-        def add_them(a: NDArray, b: NDArray) -> NDArray:
+    def test_mixed_empirical_and_other(self):
+        def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
-        ed1 = EmpiricalDistribution(np.arange(10).reshape(-1, 1).astype(float), rng=rng)
-        ed2 = EmpiricalDistribution(np.arange(10).reshape(-1, 1).astype(float), rng=rng)
+        ed = EmpiricalDistribution(jnp.array([[1.0], [2.0], [3.0]]))
+        g = Normal(loc=0.0, scale=1.0)
 
-        # Product would be 100, but n_broadcast_samples=50 -> falls back to sampling
-        w = Workflow(func=add_them, n_broadcast_samples=50)
-        result = w(a=ed1, b=ed2)
-
-        assert isinstance(result, EmpiricalDistribution)
-        assert result.n == 50
-
-    def test_mixed_empirical_and_other(self, rng):
-        """One EmpiricalDistribution + one Gaussian: enumerate empirical, sample Gaussian."""
-        call_count = 0
-
-        def add_them(a: NDArray, b: NDArray) -> NDArray:
-            nonlocal call_count
-            call_count += 1
-            return a + b
-
-        ed = EmpiricalDistribution(np.array([[1.0], [2.0], [3.0]]), rng=rng)
-        g = Gaussian(mean=np.array([0.0]), cov=np.eye(1), rng=rng)
-
-        w = Workflow(func=add_them, n_broadcast_samples=100)
+        w = Workflow(func=add_them, n_broadcast_samples=30, broadcast_backend="loop", seed=10)
         result = w(a=ed, b=g)
-
-        assert isinstance(result, EmpiricalDistribution)
-        # Enumerates 3 empirical combos × 33 reps each (floor(100/3)=33) = 99
-        reps_per_combo = 100 // 3  # 33
-        expected_n = 3 * reps_per_combo  # 99
-        assert result.n == expected_n
-        assert call_count == expected_n
+        # 3 empirical combos, 30//3=10 reps each → 30 total
+        assert result.n == 30
 
 
-class TestBroadcastingNonNumericResults:
-    """When results can't be stacked into a numpy array, return a list."""
+# ---------------------------------------------------------------------------
+# Non-numeric results
+# ---------------------------------------------------------------------------
 
-    def test_string_results(self, rng):
-        def describe(x: NDArray) -> str:
-            return f"mean={x.mean():.2f}"
+class TestBroadcastingNonNumeric:
+    def test_string_results(self):
+        def describe(x: jnp.ndarray) -> str:
+            return f"val={float(x):.2f}"
 
-        w = Workflow(func=describe, n_broadcast_samples=5)
-        g = Gaussian(mean=np.array([1.0]), cov=np.eye(1), rng=rng)
+        w = Workflow(func=describe, n_broadcast_samples=5, broadcast_backend="loop", seed=11)
+        g = Normal(loc=0.0, scale=1.0)
         result = w(x=g)
-
         assert isinstance(result, list)
         assert len(result) == 5
         assert all(isinstance(r, str) for r in result)
 
-    def test_dict_results(self, rng):
-        def summarize(x: NDArray) -> dict:
-            return {"sum": float(x.sum()), "len": len(x)}
 
-        w = Workflow(func=summarize, n_broadcast_samples=3)
-        g = Gaussian(mean=np.zeros(2), cov=np.eye(2), rng=rng)
+# ---------------------------------------------------------------------------
+# JAX vmap backend
+# ---------------------------------------------------------------------------
+
+class TestBroadcastingJAX:
+    def test_basic_vmap(self):
+        def double_it(x: jnp.ndarray) -> jnp.ndarray:
+            return x * 2
+
+        w = Workflow(func=double_it, n_broadcast_samples=50, broadcast_backend="jax", seed=20)
+        g = Normal(loc=1.0, scale=0.5)
         result = w(x=g)
+        assert isinstance(result, EmpiricalDistribution)
+        assert result.n == 50
 
-        assert isinstance(result, list)
-        assert len(result) == 3
-        assert all(isinstance(r, dict) for r in result)
+    def test_vmap_values_correct(self):
+        def add_one(x: jnp.ndarray) -> jnp.ndarray:
+            return x + 1.0
+
+        w = Workflow(func=add_one, n_broadcast_samples=200, broadcast_backend="jax", seed=21)
+        g = Normal(loc=0.0, scale=0.1)
+        result = w(x=g)
+        assert abs(float(jnp.mean(result.samples)) - 1.0) < 0.1
+
+    def test_vmap_multiple_args(self):
+        def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
+            return a + b
+
+        w = Workflow(func=add_them, n_broadcast_samples=100, broadcast_backend="jax", seed=22)
+        g1 = Normal(loc=1.0, scale=0.1)
+        g2 = Normal(loc=2.0, scale=0.1)
+        result = w(a=g1, b=g2)
+        assert result.n == 100
+        assert abs(float(jnp.mean(result.samples)) - 3.0) < 0.2
+
+    def test_vmap_mixed_dist_and_concrete(self):
+        def scale(x: jnp.ndarray, factor: float) -> jnp.ndarray:
+            return x * factor
+
+        w = Workflow(func=scale, n_broadcast_samples=50, broadcast_backend="jax", seed=23)
+        g = Normal(loc=5.0, scale=0.1)
+        result = w(x=g, factor=3.0)
+        assert result.n == 50
+        assert abs(float(jnp.mean(result.samples)) - 15.0) < 1.0
+
+    def test_vmap_multivariate(self):
+        def halve(x: jnp.ndarray) -> jnp.ndarray:
+            return x / 2.0
+
+        w = Workflow(func=halve, n_broadcast_samples=30, broadcast_backend="jax", seed=24)
+        mvn = MultivariateNormal(loc=jnp.array([4.0, 6.0]), cov=0.01 * jnp.eye(2))
+        result = w(x=mvn)
+        assert result.n == 30
+        assert result.dim == 2
+        mean = jnp.mean(result.samples, axis=0)
+        np.testing.assert_allclose(mean, jnp.array([2.0, 3.0]), atol=0.2)
+
+
+# ---------------------------------------------------------------------------
+# Auto backend detection
+# ---------------------------------------------------------------------------
+
+class TestAutoBackend:
+    def test_auto_selects_jax_for_traceable(self):
+        def pure_jax(x: jnp.ndarray) -> jnp.ndarray:
+            return jnp.sin(x)
+
+        w = Workflow(func=pure_jax, n_broadcast_samples=20, broadcast_backend="auto", seed=30)
+        g = Normal(loc=0.0, scale=1.0)
+        result = w(x=g)
+        assert isinstance(result, EmpiricalDistribution)
+        assert w._resolved_backend == "jax"
+
+    def test_auto_falls_back_to_loop_for_non_traceable(self):
+        import scipy.special
+
+        def scipy_fn(x: jnp.ndarray) -> jnp.ndarray:
+            return jnp.asarray(scipy.special.gamma(np.asarray(x)))
+
+        w = Workflow(func=scipy_fn, n_broadcast_samples=20, broadcast_backend="auto", seed=31)
+        g = Normal(loc=2.0, scale=0.1)
+        result = w(x=g)
+        assert isinstance(result, EmpiricalDistribution)
+        assert w._resolved_backend == "loop"
+
+
+# ---------------------------------------------------------------------------
+# Seed / key management
+# ---------------------------------------------------------------------------
+
+class TestSeedManagement:
+    def test_different_seeds_give_different_results(self):
+        def identity(x: jnp.ndarray) -> jnp.ndarray:
+            return x
+
+        g = Normal(loc=0.0, scale=1.0)
+
+        w1 = Workflow(func=identity, n_broadcast_samples=20, broadcast_backend="loop", seed=0)
+        r1 = w1(x=g)
+
+        w2 = Workflow(func=identity, n_broadcast_samples=20, broadcast_backend="loop", seed=99)
+        r2 = w2(x=g)
+
+        assert not jnp.allclose(r1.samples, r2.samples)
+
+    def test_seed_override_at_call_time(self):
+        def identity(x: jnp.ndarray) -> jnp.ndarray:
+            return x
+
+        g = Normal(loc=0.0, scale=1.0)
+        w = Workflow(func=identity, n_broadcast_samples=20, broadcast_backend="loop", seed=0)
+
+        r1 = w(x=g, seed=42)
+        # Reset and call with same seed
+        r2 = w(x=g, seed=42)
+        np.testing.assert_allclose(r1.samples, r2.samples, atol=1e-5)

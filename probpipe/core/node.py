@@ -1,11 +1,14 @@
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, Mapping, get_type_hints
 import inspect
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from itertools import product as cartesian_product
 from types import MappingProxyType
 import warnings
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 from prefect import task, flow
 from graphviz import Digraph
@@ -13,6 +16,8 @@ from graphviz import Digraph
 from ..distributions.distribution import Distribution, EmpiricalDistribution
 from ..distributions.multivariate import MultivariateNormal
 DISTRIBUTION_TYPES = (Distribution, EmpiricalDistribution, MultivariateNormal)
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["InputFrozenError", "wf", "Node", "abstractwf", "Workflow", "Module", "AbstractModule"]
 
@@ -134,11 +139,22 @@ class Workflow(Node):
         Default number of samples drawn when broadcasting.  Can be overridden
         at call time by passing ``n_broadcast_samples=…`` (provided the
         wrapped function does not itself declare a parameter with that name).
+    broadcast_backend : str
+        Broadcasting execution strategy:
+
+        - ``"auto"`` (default): if *workflow_kind* is set use ``"prefect"``,
+          otherwise probe with ``jax.make_jaxpr``; on success use ``"jax"``,
+          on failure fall back to ``"loop"``.
+        - ``"jax"``: vectorise via ``jax.vmap``.  Requires the wrapped
+          function to be JAX-traceable.
+        - ``"loop"``: Python loop (optionally threaded via *parallel*).
+        - ``"prefect"``: Prefect ``task.map()``.
     parallel : bool or int
-        Controls parallel execution during broadcasting.
-        ``False`` → sequential, ``True`` → ``ThreadPoolExecutor`` with
-        default workers, ``int`` → explicit ``max_workers``.  When
-        *workflow_kind* is set, Prefect ``task.map()`` is used instead.
+        Controls parallel execution during broadcasting (``"loop"`` backend
+        only).  ``False`` → sequential, ``True`` → ``ThreadPoolExecutor``
+        with default workers, ``int`` → explicit ``max_workers``.
+    seed : int
+        Random seed for JAX PRNG key management during broadcasting.
     """
 
     DEFAULT_N_BROADCAST_SAMPLES: int = 128
@@ -152,7 +168,9 @@ class Workflow(Node):
         bind: Dict[str, Any] | None = None,         # construction-time bindings (defaults/config)
         module: Any | None = None,                  # typically a Module; kept as Any to avoid import cycles
         n_broadcast_samples: int | None = None,      # default number of samples for broadcasting
+        broadcast_backend: str = "auto",             # "auto" | "jax" | "loop" | "prefect"
         parallel: bool | int = False,               # True/int for ThreadPoolExecutor, or Prefect .map()
+        seed: int = 0,                              # JAX PRNG seed for broadcasting
         **kwargs: Any,                              # convenience bindings (merged into bind)
     ):
         self._func = func
@@ -162,7 +180,10 @@ class Workflow(Node):
         self._name = name or getattr(func, "__name__", self.__class__.__name__)
         self._module = module
         self._n_broadcast_samples = n_broadcast_samples if n_broadcast_samples is not None else self.DEFAULT_N_BROADCAST_SAMPLES
+        self._broadcast_backend = broadcast_backend
         self._parallel = parallel
+        self._key = jax.random.PRNGKey(seed)
+        self._resolved_backend: str | None = None  # cached auto-detection result
 
         # bind = "construction-time inputs" (defaults/config). kwargs are also treated as bind.
         b = dict(bind or {})
@@ -200,6 +221,10 @@ class Workflow(Node):
             n_broadcast_samples = call_inputs.pop("n_broadcast_samples")
         else:
             n_broadcast_samples = self._n_broadcast_samples
+
+        # Extract seed override
+        if "seed" in call_inputs and "seed" not in self._param_names:
+            self._key = jax.random.PRNGKey(call_inputs.pop("seed"))
 
         values = self._resolve_inputs(call_inputs)
         values = self._convert_distributions(values)
@@ -329,6 +354,54 @@ class Workflow(Node):
             broadcast.append(name)
         return broadcast
 
+    def _get_key(self):
+        """Split and advance the internal PRNG key."""
+        self._key, subkey = jax.random.split(self._key)
+        return subkey
+
+    def _resolve_backend(self, values: Dict[str, Any], broadcast_args: list[str]) -> str:
+        """Resolve the broadcast backend, caching the auto-detection result."""
+        backend = self._broadcast_backend
+
+        if backend != "auto":
+            return backend
+
+        # Auto-detection
+        if self._workflow_kind is not None:
+            return "prefect"
+
+        if self._resolved_backend is not None:
+            return self._resolved_backend
+
+        # Probe JAX traceability with dummy inputs
+        try:
+            dummy_kw = {}
+            for name, param in self._sig.parameters.items():
+                if name == "self":
+                    continue
+                if name in broadcast_args:
+                    dist = values[name]
+                    es = dist.event_shape
+                    dummy_kw[name] = jnp.zeros(es) if es else jnp.zeros(())
+                elif name in values:
+                    v = values[name]
+                    if isinstance(v, jnp.ndarray):
+                        dummy_kw[name] = v
+                    elif isinstance(v, np.ndarray):
+                        dummy_kw[name] = jnp.asarray(v)
+                    else:
+                        dummy_kw[name] = v
+            jax.make_jaxpr(lambda kw: self._func(**kw))(dummy_kw)
+            self._resolved_backend = "jax"
+        except Exception:
+            logger.info(
+                "Function '%s' is not JAX-traceable; using loop backend.",
+                self._name,
+            )
+            self._resolved_backend = "loop"
+
+        return self._resolved_backend
+
     def _broadcast(
         self,
         values: Dict[str, Any],
@@ -342,6 +415,9 @@ class Workflow(Node):
 
         When EmpiricalDistribution arguments have small enough support, enumerates their
         samples (cartesian product) and propagates weights instead of resampling.
+
+        Dispatches to the appropriate backend (jax/loop/prefect) based on
+        ``broadcast_backend``.
         """
         MIN_BROADCAST_SAMPLES = 5  # Recommended minimum samples
 
@@ -354,6 +430,13 @@ class Workflow(Node):
                 stacklevel=2
             )
 
+        backend = self._resolve_backend(values, broadcast_args)
+
+        # JAX backend: vectorize via vmap (no enumeration path — sample everything)
+        if backend == "jax":
+            return self._broadcast_jax(values, broadcast_args, n_broadcast_samples)
+
+        # Loop and Prefect backends: support empirical enumeration
         # Collect candidate empirical dists (small enough individually), sorted smallest first
         candidates = []
         sample_args: Dict[str, Distribution] = {}
@@ -384,6 +467,42 @@ class Workflow(Node):
         else:
             return self._broadcast_sample(values, broadcast_args, n_broadcast_samples)
 
+    def _broadcast_jax(
+        self,
+        values: Dict[str, Any],
+        broadcast_args: list[str],
+        n_broadcast_samples: int,
+    ) -> EmpiricalDistribution | list:
+        """
+        Vectorised broadcasting via ``jax.vmap``.
+
+        Samples all broadcast distributions at once, then calls the wrapped
+        function over the batch dimension using ``jax.vmap``.  Requires the
+        wrapped function to be JAX-traceable.
+        """
+        key = self._get_key()
+
+        # Sample all broadcast distributions: each produces (n, *event_shape)
+        sampled = {}
+        for name in broadcast_args:
+            key, subkey = jax.random.split(key)
+            sampled[name] = values[name].sample(subkey, (n_broadcast_samples,))
+
+        static = {k: v for k, v in values.items() if k not in broadcast_args}
+
+        func = self._func
+
+        def single_call(broadcast_slice):
+            kw = dict(static)
+            kw.update(broadcast_slice)
+            return func(**kw)
+
+        # vmap over the dict of batched arrays (axis 0 for each)
+        batch = {name: sampled[name] for name in broadcast_args}
+        results = jax.vmap(single_call)(batch)
+
+        return self._collect_results_jax(results, n_broadcast_samples)
+
     def _broadcast_enumerate(
         self,
         values: Dict[str, Any],
@@ -399,6 +518,7 @@ class Workflow(Node):
         (n_broadcast_samples // product_size), each receiving equal weight scaled by
         the empirical product weight.
         """
+        key = self._get_key()
         emp_names = list(empirical_args.keys())
         emp_dists = [empirical_args[name] for name in emp_names]
 
@@ -407,10 +527,10 @@ class Workflow(Node):
         total = product_size * reps_per_combo
 
         # Pre-sample non-empirical distributions
-        sampled = {
-            name: dist.sample(total)
-            for name, dist in sample_args.items()
-        }
+        sampled = {}
+        for name, dist in sample_args.items():
+            key, subkey = jax.random.split(key)
+            sampled[name] = dist.sample(subkey, (total,))
 
         call_value_list = []
         weights = []
@@ -420,7 +540,7 @@ class Workflow(Node):
             # Compute empirical product weight
             emp_weight = 1.0
             for name, dist, i in zip(emp_names, emp_dists, combo):
-                emp_weight *= dist.weights[i]
+                emp_weight *= float(dist.weights[i])
 
             for _ in range(reps_per_combo):
                 call_values = dict(values)
@@ -439,7 +559,7 @@ class Workflow(Node):
                 sample_idx += 1
 
         results = self._execute_many(call_value_list)
-        return self._collect_results(results, total, np.array(weights))
+        return self._collect_results(results, total, jnp.array(weights))
 
     def _broadcast_sample(
         self,
@@ -451,10 +571,12 @@ class Workflow(Node):
         Sample n_broadcast_samples from each Distribution argument and call the function
         once per sample (uniform weights).
         """
-        samples_per_arg = {
-            name: values[name].sample(n_broadcast_samples)
-            for name in broadcast_args
-        }
+        key = self._get_key()
+
+        samples_per_arg = {}
+        for name in broadcast_args:
+            key, subkey = jax.random.split(key)
+            samples_per_arg[name] = values[name].sample(subkey, (n_broadcast_samples,))
 
         call_value_list = []
         for i in range(n_broadcast_samples):
@@ -470,14 +592,14 @@ class Workflow(Node):
     def _collect_results(
         results: list,
         n: int,
-        weights: np.ndarray | None = None,
+        weights: jnp.ndarray | None = None,
     ) -> EmpiricalDistribution | list:
         """
         Stack results into an EmpiricalDistribution if possible,
-        otherwise return a plain list.
+        otherwise return a plain list.  Works with both JAX and numpy arrays.
         """
         try:
-            stacked = np.stack([np.asarray(r, dtype=float) for r in results], axis=0)
+            stacked = jnp.stack([jnp.asarray(r, dtype=jnp.float32) for r in results], axis=0)
         except (ValueError, TypeError):
             return results
 
@@ -487,6 +609,32 @@ class Workflow(Node):
             stacked = stacked.reshape(n, -1)
 
         return EmpiricalDistribution(stacked, weights=weights)
+
+    @staticmethod
+    def _collect_results_jax(
+        results,
+        n: int,
+        weights: jnp.ndarray | None = None,
+    ) -> EmpiricalDistribution | list:
+        """
+        Collect results from ``jax.vmap`` — *results* is a JAX array (or
+        pytree) with leading dimension *n*.
+        """
+        if isinstance(results, jnp.ndarray):
+            stacked = results
+            if stacked.ndim == 1:
+                stacked = stacked.reshape(-1, 1)
+            elif stacked.ndim > 2:
+                stacked = stacked.reshape(n, -1)
+            return EmpiricalDistribution(stacked, weights=weights)
+        # If results is a pytree or non-array, return as list
+        try:
+            stacked = jnp.stack(jax.tree.leaves(results), axis=-1)
+            if stacked.ndim == 1:
+                stacked = stacked.reshape(-1, 1)
+            return EmpiricalDistribution(stacked, weights=weights)
+        except Exception:
+            return results
 
     def _execute_many(self, call_value_list: list[Dict[str, Any]]) -> list:
         """
