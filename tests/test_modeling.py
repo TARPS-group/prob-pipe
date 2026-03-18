@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from probpipe import Gaussian, EmpiricalDistribution, Provenance
+from probpipe import MultivariateNormal, EmpiricalDistribution, Provenance
 from probpipe.core.modeling import (
     ApproximatePosterior,
     GenerativeLikelihood,
@@ -23,8 +23,8 @@ from probpipe.core.node import AbstractModule, wf
 # ---------------------------------------------------------------------------
 
 
-class GaussianLikelihood(Likelihood):
-    """Isotropic Gaussian likelihood — JAX-traceable."""
+class MultivariateNormalLikelihood(Likelihood):
+    """Isotropic MultivariateNormal likelihood — JAX-traceable."""
 
     @wf
     def log_likelihood(self, params, data):
@@ -34,7 +34,7 @@ class GaussianLikelihood(Likelihood):
 
 
 class NumpyLikelihood(Likelihood):
-    """Gaussian likelihood using numpy — NOT JAX-traceable."""
+    """MultivariateNormal likelihood using numpy — NOT JAX-traceable."""
 
     @wf
     def log_likelihood(self, params, data):
@@ -107,7 +107,7 @@ class TestMCMCDiagnostics:
 
 
 class TestMCMCSampler:
-    """Test MCMCSampler with a simple 2D Gaussian posterior."""
+    """Test MCMCSampler with a simple 2D MultivariateNormal posterior."""
 
     @pytest.fixture
     def dim(self):
@@ -119,7 +119,7 @@ class TestMCMCSampler:
 
     @pytest.fixture
     def prior(self, dim):
-        return Gaussian(loc=jnp.zeros(dim), cov=jnp.eye(dim) * 100.0)
+        return MultivariateNormal(loc=jnp.zeros(dim), cov=jnp.eye(dim) * 100.0)
 
     @pytest.fixture
     def data(self, true_mean):
@@ -129,7 +129,7 @@ class TestMCMCSampler:
 
     @pytest.fixture
     def jax_likelihood(self):
-        return GaussianLikelihood()
+        return MultivariateNormalLikelihood()
 
     @pytest.fixture
     def numpy_likelihood(self):
@@ -251,7 +251,7 @@ class TestRWMH:
 
     @pytest.fixture
     def prior(self, dim):
-        return Gaussian(loc=jnp.zeros(dim), cov=jnp.eye(dim) * 100.0)
+        return MultivariateNormal(loc=jnp.zeros(dim), cov=jnp.eye(dim) * 100.0)
 
     @pytest.fixture
     def data(self, dim):
@@ -314,11 +314,11 @@ class TestIterativeForecaster:
 
     @pytest.fixture
     def prior(self, dim):
-        return Gaussian(loc=jnp.zeros(dim), cov=jnp.eye(dim) * 10.0)
+        return MultivariateNormal(loc=jnp.zeros(dim), cov=jnp.eye(dim) * 10.0)
 
     @pytest.fixture
     def likelihood(self):
-        return GaussianLikelihood()
+        return MultivariateNormalLikelihood()
 
     @pytest.fixture
     def gen_likelihood(self):
@@ -356,17 +356,17 @@ class TestDistributionCoverageGaps:
 
     def test_batch_shape_default(self, key):
         """Line 71: batch_shape default returns ()."""
-        g = Gaussian(loc=jnp.zeros(2), cov=jnp.eye(2))
+        g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
         assert g.batch_shape == ()
 
     def test_dtype_default(self, key):
         """Line 75: dtype default returns float32."""
-        g = Gaussian(loc=jnp.zeros(2), cov=jnp.eye(2))
+        g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
         assert g.dtype == jnp.float32
 
     def test_prob_method(self, key):
         """Line 88: prob() = exp(log_prob())."""
-        g = Gaussian(loc=jnp.zeros(2), cov=jnp.eye(2))
+        g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
         x = jnp.ones(2)
         expected = jnp.exp(g.log_prob(x))
         actual = g.prob(x)
@@ -376,7 +376,7 @@ class TestDistributionCoverageGaps:
         """Line 134: repr includes batch_shape when non-empty."""
         # EmpiricalDistribution has empty batch_shape, so this is for
         # future classes. Test repr without batch_shape for now.
-        g = Gaussian(loc=jnp.zeros(2), cov=jnp.eye(2), name="test")
+        g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="test")
         r = repr(g)
         assert "test" in r
         assert "event_shape" in r

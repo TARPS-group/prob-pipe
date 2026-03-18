@@ -11,8 +11,8 @@ from prefect import task, flow
 from graphviz import Digraph
 
 from ..distributions.distribution import Distribution, EmpiricalDistribution
-from ..distributions.gaussian import Gaussian
-DISTRIBUTION_TYPES = (Distribution, EmpiricalDistribution, Gaussian)
+from ..distributions.multivariate import MultivariateNormal
+DISTRIBUTION_TYPES = (Distribution, EmpiricalDistribution, MultivariateNormal)
 
 __all__ = ["InputFrozenError", "wf", "Node", "abstractwf", "Workflow", "Module", "AbstractModule"]
 

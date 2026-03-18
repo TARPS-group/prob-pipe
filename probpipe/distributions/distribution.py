@@ -23,6 +23,207 @@ from ..custom_types import Array, ArrayLike, PRNGKey
 
 
 # ---------------------------------------------------------------------------
+# Constraints
+# ---------------------------------------------------------------------------
+
+class Constraint:
+    """Describes the support of a distribution (the set of valid values)."""
+
+    def check(self, value: ArrayLike) -> Array:
+        """Return a boolean array indicating which elements satisfy the constraint."""
+        raise NotImplementedError
+
+    def __repr__(self) -> str:
+        return self.__class__.__name__
+
+    def __eq__(self, other: object) -> bool:
+        return type(self) is type(other) and self.__dict__ == other.__dict__
+
+    def __hash__(self) -> int:
+        return hash((type(self), tuple(sorted(self.__dict__.items()))))
+
+
+class _Real(Constraint):
+    """All real numbers."""
+    def check(self, value: ArrayLike) -> Array:
+        return jnp.isfinite(jnp.asarray(value))
+    def __repr__(self) -> str:
+        return "real"
+
+class _Positive(Constraint):
+    """Strictly positive reals (0, inf)."""
+    def check(self, value: ArrayLike) -> Array:
+        return jnp.asarray(value) > 0
+    def __repr__(self) -> str:
+        return "positive"
+
+class _NonNegative(Constraint):
+    """Non-negative reals [0, inf)."""
+    def check(self, value: ArrayLike) -> Array:
+        return jnp.asarray(value) >= 0
+    def __repr__(self) -> str:
+        return "non_negative"
+
+class _NonNegativeInteger(Constraint):
+    """Non-negative integers {0, 1, 2, ...}."""
+    def check(self, value: ArrayLike) -> Array:
+        v = jnp.asarray(value)
+        return (v >= 0) & (v == jnp.floor(v))
+    def __repr__(self) -> str:
+        return "non_negative_integer"
+
+class _Boolean(Constraint):
+    """Binary values {0, 1}."""
+    def check(self, value: ArrayLike) -> Array:
+        v = jnp.asarray(value)
+        return (v == 0) | (v == 1)
+    def __repr__(self) -> str:
+        return "boolean"
+
+class _UnitInterval(Constraint):
+    """Closed unit interval [0, 1]."""
+    def check(self, value: ArrayLike) -> Array:
+        v = jnp.asarray(value)
+        return (v >= 0) & (v <= 1)
+    def __repr__(self) -> str:
+        return "unit_interval"
+
+class _Simplex(Constraint):
+    """Probability simplex (non-negative, sums to 1 along last axis)."""
+    def check(self, value: ArrayLike) -> Array:
+        v = jnp.asarray(value)
+        return (jnp.all(v >= 0, axis=-1)) & (jnp.abs(jnp.sum(v, axis=-1) - 1.0) < 1e-5)
+    def __repr__(self) -> str:
+        return "simplex"
+
+class _PositiveDefinite(Constraint):
+    """Positive-definite matrices."""
+    def check(self, value: ArrayLike) -> Array:
+        v = jnp.asarray(value)
+        eigvals = jnp.linalg.eigvalsh(v)
+        return jnp.all(eigvals > 0, axis=-1)
+    def __repr__(self) -> str:
+        return "positive_definite"
+
+class _Sphere(Constraint):
+    """Unit sphere (vectors with unit L2 norm)."""
+    def check(self, value: ArrayLike) -> Array:
+        v = jnp.asarray(value)
+        return jnp.abs(jnp.linalg.norm(v, axis=-1) - 1.0) < 1e-5
+    def __repr__(self) -> str:
+        return "sphere"
+
+class _Interval(Constraint):
+    """Half-open or closed interval [low, high]."""
+    def __init__(self, low: float, high: float):
+        self.low = low
+        self.high = high
+    def check(self, value: ArrayLike) -> Array:
+        v = jnp.asarray(value)
+        return (v >= self.low) & (v <= self.high)
+    def __repr__(self) -> str:
+        return f"interval({self.low}, {self.high})"
+
+class _GreaterThan(Constraint):
+    """Values strictly greater than a lower bound."""
+    def __init__(self, lower_bound: float):
+        self.lower_bound = lower_bound
+    def check(self, value: ArrayLike) -> Array:
+        return jnp.asarray(value) > self.lower_bound
+    def __repr__(self) -> str:
+        return f"greater_than({self.lower_bound})"
+
+class _IntegerInterval(Constraint):
+    """Integer values in [low, high]."""
+    def __init__(self, low: int, high: int):
+        self.low = low
+        self.high = high
+    def check(self, value: ArrayLike) -> Array:
+        v = jnp.asarray(value)
+        return (v >= self.low) & (v <= self.high) & (v == jnp.floor(v))
+    def __repr__(self) -> str:
+        return f"integer_interval({self.low}, {self.high})"
+
+
+# Singleton instances for common constraints
+real = _Real()
+positive = _Positive()
+non_negative = _NonNegative()
+non_negative_integer = _NonNegativeInteger()
+boolean = _Boolean()
+unit_interval = _UnitInterval()
+simplex = _Simplex()
+positive_definite = _PositiveDefinite()
+sphere = _Sphere()
+
+# Factory functions for parameterized constraints
+def interval(low: float, high: float) -> _Interval:
+    return _Interval(low, high)
+
+def greater_than(lower_bound: float) -> _GreaterThan:
+    return _GreaterThan(lower_bound)
+
+def integer_interval(low: int, high: int) -> _IntegerInterval:
+    return _IntegerInterval(low, high)
+
+
+def _supports_compatible(source: Constraint, target: Constraint) -> bool:
+    """Check whether *source* support is a subset of *target* support.
+
+    Conservative: returns ``True`` when in doubt (e.g. for parameterized
+    constraints that can't be compared structurally).
+    """
+    # Identical constraints are always compatible
+    if source == target:
+        return True
+
+    # Build a partial ordering of common constraints
+    # A source is compatible with a target if every value in source's
+    # domain is also in target's domain (i.e., source ⊆ target).
+    _SUBSETS: dict[type, set[type]] = {
+        _Boolean: {_NonNegativeInteger, _NonNegative, _Real, _UnitInterval},
+        _UnitInterval: {_NonNegative, _Real},
+        _Positive: {_NonNegative, _Real},
+        _NonNegative: {_Real},
+        _NonNegativeInteger: {_NonNegative, _Real},
+        _Simplex: {_Real},  # simplex ⊂ [0,1]^k ⊂ R^k
+        _Sphere: {_Real},
+        _PositiveDefinite: {_Real},
+    }
+
+    source_type = type(source)
+    target_type = type(target)
+
+    # Direct subset check
+    if target_type in _SUBSETS.get(source_type, set()):
+        return True
+
+    # source ⊆ target means target is a "wider" constraint
+    # Check the reverse: if target is in source's subset list, that's wrong
+    if source_type in _SUBSETS.get(target_type, set()):
+        return False
+
+    # Parameterized constraints: interval/greater_than
+    if isinstance(source, _Interval) and isinstance(target, _Interval):
+        return source.low >= target.low and source.high <= target.high
+    if isinstance(source, _Interval) and isinstance(target, _Real):
+        return True
+    if isinstance(source, _GreaterThan) and isinstance(target, _GreaterThan):
+        return source.lower_bound >= target.lower_bound
+    if isinstance(source, _GreaterThan) and isinstance(target, _Real):
+        return True
+    if isinstance(source, (_Positive, _NonNegative)) and isinstance(target, _GreaterThan):
+        return True  # (0, inf) or [0, inf) ⊂ (lb, inf) when lb <= 0
+    if isinstance(source, _IntegerInterval) and isinstance(target, _IntegerInterval):
+        return source.low >= target.low and source.high <= target.high
+    if isinstance(source, _IntegerInterval) and isinstance(target, (_NonNegativeInteger, _Real)):
+        return True
+
+    # Conservative: allow when we can't determine
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Provenance
 # ---------------------------------------------------------------------------
 
@@ -93,6 +294,13 @@ class Distribution(ABC):
     def variance(self) -> Array:
         raise NotImplementedError(f"{type(self).__name__}.variance()")
 
+    # -- support ------------------------------------------------------------
+
+    @property
+    def support(self) -> Constraint:
+        """The support of this distribution (set of values with non-zero density)."""
+        raise NotImplementedError(f"{type(self).__name__}.support")
+
     # -- naming & provenance ------------------------------------------------
 
     @property
@@ -103,7 +311,13 @@ class Distribution(ABC):
     def source(self) -> Provenance | None:
         return getattr(self, "_source", None)
 
-    def _with_source(self, source: Provenance) -> Distribution:
+    def with_source(self, source: Provenance) -> Distribution:
+        """Attach provenance to this distribution (write-once)."""
+        if getattr(self, "_source", None) is not None:
+            raise RuntimeError(
+                f"Source already set on {self!r}. "
+                "Provenance is write-once; create a new distribution instead."
+            )
         self._source = source
         return self
 
@@ -115,13 +329,64 @@ class Distribution(ABC):
         other: Distribution,
         *,
         key: PRNGKey | None = None,
-        num_samples: int = 1024,
+        check_support: bool = True,
         **kwargs: Any,
     ) -> Distribution:
-        """Convert *other* into an instance of *cls* by sampling."""
+        """Convert *other* into an instance of *cls*.
+
+        Parameters
+        ----------
+        other : Distribution
+            Source distribution to convert.
+        key : PRNGKey, optional
+            JAX PRNG key for sampling-based conversion.
+        check_support : bool
+            If ``True`` (default), verify the supports are compatible
+            before converting. Raises ``ValueError`` on mismatch.
+        **kwargs
+            Subclass-specific keyword arguments. Common options:
+
+            * ``num_samples`` (int, default 1024) — number of samples
+              drawn from *other* for moment-matching or empirical
+              estimation. Ignored when *other* is the same class
+              (parameters are copied directly).
+            * ``total_count`` (int) — required by ``Binomial``,
+              ``NegativeBinomial``, and ``Multinomial`` when *other*
+              is not the same class.
+            * ``name`` (str | None) — name for the resulting
+              distribution; defaults to ``other.name``.
+        """
         raise NotImplementedError(
             f"{cls.__name__}.from_distribution() is not implemented."
         )
+
+    @classmethod
+    def _check_support_compatible(cls, other: Distribution) -> None:
+        """Raise ValueError if *other*'s support is incompatible with *cls*."""
+        try:
+            target_support = cls._default_support()
+        except NotImplementedError:
+            return  # can't check if target doesn't declare support
+        try:
+            source_support = other.support
+        except NotImplementedError:
+            return  # can't check if source doesn't declare support
+
+        if not _supports_compatible(source_support, target_support):
+            raise ValueError(
+                f"Cannot convert {type(other).__name__} (support={source_support}) "
+                f"to {cls.__name__} (support={target_support}). "
+                f"Pass check_support=False to override."
+            )
+
+    @classmethod
+    def _default_support(cls) -> Constraint:
+        """Return the default support for this distribution class.
+
+        Override in subclasses. Used by ``_check_support_compatible``
+        when no instance is available yet.
+        """
+        raise NotImplementedError
 
     # -- repr ---------------------------------------------------------------
 
@@ -258,6 +523,10 @@ class EmpiricalDistribution(Distribution):
     def dtype(self) -> jnp.dtype:
         return self._samples.dtype
 
+    @property
+    def support(self) -> Constraint:
+        return real  # empirical samples can be any real values
+
     # -- sampling -----------------------------------------------------------
 
     def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
@@ -307,13 +576,22 @@ class EmpiricalDistribution(Distribution):
         other: Distribution,
         *,
         key: PRNGKey | None = None,
-        num_samples: int = 1024,
         name: str | None = None,
         **kwargs: Any,
     ) -> EmpiricalDistribution:
+        """Create an empirical approximation by sampling from *other*.
+
+        Keyword Args
+        -------------
+        num_samples : int
+            Number of samples to draw (default 1024).
+        name : str | None
+            Name for the result; defaults to ``other.name``.
+        """
+        num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
             key = jax.random.PRNGKey(0)
         samples = other.sample(key, sample_shape=(num_samples,))
         ed = cls(samples, name=name or other.name)
-        ed._source = Provenance("from_distribution", parents=(other,))
+        ed.with_source(Provenance("from_distribution", parents=(other,)))
         return ed

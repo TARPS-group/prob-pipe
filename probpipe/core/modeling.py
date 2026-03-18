@@ -21,7 +21,7 @@ from numpy.typing import NDArray
 
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions.distribution import Distribution, EmpiricalDistribution, Provenance
-from ..distributions.gaussian import Gaussian
+from ..distributions.multivariate import MultivariateNormal
 from .node import AbstractModule, Module, Workflow, abstractwf, wf
 
 logger = logging.getLogger(__name__)
@@ -370,7 +370,7 @@ class MCMCSampler(ApproximatePosterior):
 
         # Build and return EmpiricalDistribution with provenance
         posterior = EmpiricalDistribution(samples, name="posterior")
-        posterior._with_source(Provenance(
+        posterior.with_source(Provenance(
             used_algorithm,
             parents=(prior,),
             metadata={
@@ -547,7 +547,7 @@ class RWMH(ApproximatePosterior):
         self.accept_rate = accepts / float(self.n_steps)
 
         posterior = EmpiricalDistribution(samples, name="posterior")
-        posterior._with_source(Provenance(
+        posterior.with_source(Provenance(
             "rwmh",
             parents=(prior,),
             metadata={

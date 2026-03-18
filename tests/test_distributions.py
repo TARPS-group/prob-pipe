@@ -10,7 +10,7 @@ from probpipe import (
     TFPDistribution,
     EmpiricalDistribution,
     Provenance,
-    Gaussian,
+    MultivariateNormal,
 )
 
 
@@ -43,7 +43,7 @@ def cov_matrix(dim):
 
 @pytest.fixture
 def gaussian(loc, cov_matrix):
-    return Gaussian(loc=loc, cov=cov_matrix, name="test_gaussian")
+    return MultivariateNormal(loc=loc, cov=cov_matrix, name="test_gaussian")
 
 
 @pytest.fixture
@@ -57,13 +57,13 @@ def simple_weights():
 
 
 # ---------------------------------------------------------------------------
-# Gaussian
+# MultivariateNormal
 # ---------------------------------------------------------------------------
 
 
-class TestGaussian:
+class TestMultivariateNormal:
     def test_construction_with_cov(self, loc, cov_matrix):
-        g = Gaussian(loc=loc, cov=cov_matrix)
+        g = MultivariateNormal(loc=loc, cov=cov_matrix)
         assert g.event_shape == (3,)
         assert g.batch_shape == ()
         assert g.dim == 3
@@ -71,26 +71,26 @@ class TestGaussian:
 
     def test_construction_with_scale_tril(self, loc, cov_matrix):
         L = jnp.linalg.cholesky(cov_matrix)
-        g = Gaussian(loc=loc, scale_tril=L)
+        g = MultivariateNormal(loc=loc, scale_tril=L)
         np.testing.assert_allclose(g.cov, cov_matrix, atol=1e-5)
 
     def test_scalar_loc_promoted(self):
-        g = Gaussian(loc=1.0, scale_tril=jnp.eye(1))
+        g = MultivariateNormal(loc=1.0, scale_tril=jnp.eye(1))
         assert g.event_shape == (1,)
         assert g.dim == 1
 
     def test_rejects_both_cov_and_scale_tril(self, loc, cov_matrix):
         L = jnp.linalg.cholesky(cov_matrix)
         with pytest.raises(ValueError, match="exactly one"):
-            Gaussian(loc=loc, scale_tril=L, cov=cov_matrix)
+            MultivariateNormal(loc=loc, scale_tril=L, cov=cov_matrix)
 
     def test_rejects_neither_cov_nor_scale_tril(self, loc):
         with pytest.raises(ValueError, match="One of"):
-            Gaussian(loc=loc)
+            MultivariateNormal(loc=loc)
 
     def test_rejects_dim_mismatch(self):
         with pytest.raises(ValueError, match="does not match"):
-            Gaussian(loc=jnp.zeros(2), cov=jnp.eye(3))
+            MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(3))
 
     def test_sample_shape(self, gaussian, key):
         s = gaussian.sample(key, sample_shape=(5,))
@@ -135,12 +135,12 @@ class TestGaussian:
         assert gaussian.name == "test_gaussian"
 
     def test_no_name(self, loc, cov_matrix):
-        g = Gaussian(loc=loc, cov=cov_matrix)
+        g = MultivariateNormal(loc=loc, cov=cov_matrix)
         assert g.name is None
 
     def test_repr(self, gaussian):
         r = repr(gaussian)
-        assert "Gaussian" in r
+        assert "MultivariateNormal" in r
         assert "test_gaussian" in r
         assert "event_shape=(3,)" in r
 
@@ -151,15 +151,15 @@ class TestGaussian:
         ed = EmpiricalDistribution.from_distribution(
             gaussian, key=key, num_samples=2000
         )
-        g2 = Gaussian.from_distribution(ed, name="fitted")
+        g2 = MultivariateNormal.from_distribution(ed, name="fitted")
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.2)
         assert g2.name == "fitted"
         assert g2.source is not None
         assert g2.source.operation == "from_distribution"
 
     def test_from_distribution_gaussian(self, gaussian, key):
-        """Moment-match from another Gaussian via sampling."""
-        g2 = Gaussian.from_distribution(gaussian, key=key, num_samples=5000)
+        """Moment-match from another MultivariateNormal via sampling."""
+        g2 = MultivariateNormal.from_distribution(gaussian, key=key, num_samples=5000)
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.15)
 
 
@@ -319,10 +319,10 @@ class TestProvenance:
         assert "test_gaussian" in r
 
     def test_repr_unnamed_parent(self, loc, cov_matrix):
-        g = Gaussian(loc=loc, cov=cov_matrix)  # no name
+        g = MultivariateNormal(loc=loc, cov=cov_matrix)  # no name
         p = Provenance("op", parents=(g,))
         r = repr(p)
-        assert "Gaussian" in r
+        assert "MultivariateNormal" in r
 
     def test_frozen(self, gaussian):
         p = Provenance("test_op")
@@ -390,16 +390,23 @@ class TestDistributionABC:
             Distribution.from_distribution(None)
 
     def test_source_default_none(self, gaussian):
-        g = Gaussian(loc=jnp.zeros(2), cov=jnp.eye(2))
+        g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
         assert g.source is None
 
     def test_with_source(self, gaussian):
         p = Provenance("test")
-        gaussian._with_source(p)
+        gaussian.with_source(p)
         assert gaussian.source is p
 
+    def test_with_source_write_once(self, gaussian):
+        p1 = Provenance("first")
+        gaussian.with_source(p1)
+        p2 = Provenance("second")
+        with pytest.raises(RuntimeError, match="Source already set"):
+            gaussian.with_source(p2)
+
     def test_name_default_none(self, loc, cov_matrix):
-        g = Gaussian(loc=loc, cov=cov_matrix)
+        g = MultivariateNormal(loc=loc, cov=cov_matrix)
         assert g.name is None
 
 
