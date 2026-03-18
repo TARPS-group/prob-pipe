@@ -518,7 +518,13 @@ class EmpiricalDistribution(Distribution):
     samples : array-like, shape ``(n, *event_shape)``
         The support points.  The leading axis is the sample axis.
     weights : array-like, shape ``(n,)``, optional
-        Non-negative weights (normalised internally).  Defaults to uniform.
+        Non-negative weights (normalised internally).  Mutually exclusive
+        with *log_weights*.  When neither is given the distribution is
+        uniform.
+    log_weights : array-like, shape ``(n,)``, optional
+        Log-unnormalised weights.  Preferred when weights span many orders
+        of magnitude (e.g. importance sampling).  Normalised internally via
+        ``jax.nn.softmax``.  Mutually exclusive with *weights*.
     name : str, optional
         An optional name for provenance / JointDistribution integration.
     """
@@ -528,6 +534,7 @@ class EmpiricalDistribution(Distribution):
         samples: ArrayLike,
         weights: ArrayLike | None = None,
         *,
+        log_weights: ArrayLike | None = None,
         name: str | None = None,
     ):
         samples = jnp.asarray(samples, dtype=jnp.float32)
@@ -536,9 +543,12 @@ class EmpiricalDistribution(Distribution):
 
         n = samples.shape[0]
 
-        if weights is None:
-            weights = jnp.ones(n) / n
-        else:
+        if weights is not None and log_weights is not None:
+            raise ValueError(
+                "Provide either weights or log_weights, not both."
+            )
+
+        if weights is not None:
             weights = jnp.asarray(weights, dtype=jnp.float32)
             if weights.shape != (n,):
                 raise ValueError(
@@ -550,10 +560,23 @@ class EmpiricalDistribution(Distribution):
             total = jnp.sum(weights)
             if total <= 0:
                 raise ValueError("weights must sum to a positive value.")
-            weights = weights / total
+            self._log_weights = jnp.log(weights)
+            self._is_uniform = False
+        elif log_weights is not None:
+            log_weights = jnp.asarray(log_weights, dtype=jnp.float32)
+            if log_weights.shape != (n,):
+                raise ValueError(
+                    f"log_weights shape {log_weights.shape} does not match "
+                    f"number of samples {n}."
+                )
+            self._log_weights = log_weights
+            self._is_uniform = False
+        else:
+            self._log_weights = None
+            self._is_uniform = True
 
         self._samples = samples
-        self._weights = weights
+        self._weights_cache: Array | None = None
         self._name = name
 
     # -- properties ---------------------------------------------------------
@@ -571,8 +594,25 @@ class EmpiricalDistribution(Distribution):
         return self._samples
 
     @property
+    def is_uniform(self) -> bool:
+        """True when all samples have equal weight."""
+        return self._is_uniform
+
+    @property
     def weights(self) -> Array:
-        return self._weights
+        """Normalised weights, shape ``(n,)``."""
+        if self._is_uniform:
+            return jnp.ones(self.n, dtype=jnp.float32) / self.n
+        if self._weights_cache is None:
+            self._weights_cache = jax.nn.softmax(self._log_weights)
+        return self._weights_cache
+
+    @property
+    def log_weights(self) -> Array | None:
+        """Normalised log-weights, shape ``(n,)``.  ``None`` when uniform."""
+        if self._is_uniform:
+            return None
+        return self._log_weights - jax.scipy.special.logsumexp(self._log_weights)
 
     @property
     def event_shape(self) -> tuple[int, ...]:
@@ -590,9 +630,12 @@ class EmpiricalDistribution(Distribution):
 
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         n_draws = int(np.prod(sample_shape)) if sample_shape else 1
-        indices = jax.random.choice(
-            key, self.n, shape=(n_draws,), p=self._weights, replace=True,
-        )
+        if self._is_uniform:
+            indices = jax.random.randint(key, shape=(n_draws,), minval=0, maxval=self.n)
+        else:
+            indices = jax.random.choice(
+                key, self.n, shape=(n_draws,), p=self.weights, replace=True,
+            )
         draws = self._samples[indices]
         if sample_shape:
             return draws.reshape(sample_shape + self.event_shape)
@@ -614,18 +657,24 @@ class EmpiricalDistribution(Distribution):
     # -- moments ------------------------------------------------------------
 
     def mean(self) -> Array:
-        return jnp.einsum("n,n...->...", self._weights, self._samples)
+        if self._is_uniform:
+            return jnp.mean(self._samples, axis=0)
+        return jnp.einsum("n,n...->...", self.weights, self._samples)
 
     def variance(self) -> Array:
         mu = self.mean()
         diff = self._samples - mu
-        return jnp.einsum("n,n...->...", self._weights, diff**2)
+        if self._is_uniform:
+            return jnp.mean(diff**2, axis=0)
+        return jnp.einsum("n,n...->...", self.weights, diff**2)
 
     def cov(self) -> Array:
         """Weighted sample covariance matrix, shape ``(d, d)``."""
         mu = self.mean()
         diff = self._samples.reshape(self.n, -1) - mu.ravel()
-        return jnp.einsum("ni,nj,n->ij", diff, diff, self._weights)
+        if self._is_uniform:
+            return jnp.einsum("ni,nj->ij", diff, diff) / self.n
+        return jnp.einsum("ni,nj,n->ij", diff, diff, self.weights)
 
     # -- conversion ---------------------------------------------------------
 

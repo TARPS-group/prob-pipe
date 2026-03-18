@@ -295,6 +295,108 @@ class TestEmpiricalDistribution:
         assert ed.n == 10
 
 
+class TestEmpiricalLogWeights:
+    """Tests for log_weights parameterisation and uniform optimisation."""
+
+    def test_log_weights_construction(self):
+        samples = jnp.array([[1.0], [2.0], [3.0]])
+        lw = jnp.log(jnp.array([0.2, 0.3, 0.5]))
+        ed = EmpiricalDistribution(samples, log_weights=lw)
+        assert not ed.is_uniform
+        np.testing.assert_allclose(ed.weights, jnp.array([0.2, 0.3, 0.5]), atol=1e-5)
+
+    def test_log_weights_unnormalized(self):
+        """Unnormalised log-weights should produce correct normalised weights."""
+        samples = jnp.array([[1.0], [2.0]])
+        # log(2) and log(8) → weights 0.2 and 0.8
+        lw = jnp.array([jnp.log(2.0), jnp.log(8.0)])
+        ed = EmpiricalDistribution(samples, log_weights=lw)
+        np.testing.assert_allclose(ed.weights, jnp.array([0.2, 0.8]), atol=1e-5)
+
+    def test_log_weights_property_normalized(self):
+        samples = jnp.array([[1.0], [2.0], [3.0]])
+        lw = jnp.array([1.0, 2.0, 3.0])  # unnormalized
+        ed = EmpiricalDistribution(samples, log_weights=lw)
+        # Normalised log-weights should sum to 0 in exp-space
+        np.testing.assert_allclose(jnp.exp(ed.log_weights).sum(), 1.0, atol=1e-5)
+
+    def test_both_weights_and_log_weights_raises(self):
+        samples = jnp.array([[1.0], [2.0]])
+        with pytest.raises(ValueError, match="not both"):
+            EmpiricalDistribution(
+                samples,
+                weights=jnp.array([0.5, 0.5]),
+                log_weights=jnp.array([0.0, 0.0]),
+            )
+
+    def test_log_weights_wrong_length_raises(self):
+        samples = jnp.array([[1.0], [2.0], [3.0]])
+        with pytest.raises(ValueError, match="does not match"):
+            EmpiricalDistribution(samples, log_weights=jnp.array([0.0, 0.0]))
+
+    def test_uniform_flag(self, simple_samples):
+        ed = EmpiricalDistribution(simple_samples)
+        assert ed.is_uniform
+        np.testing.assert_allclose(ed.weights, jnp.ones(3) / 3)
+        assert ed.log_weights is None
+
+    def test_weighted_not_uniform(self, simple_samples, simple_weights):
+        ed = EmpiricalDistribution(simple_samples, simple_weights)
+        assert not ed.is_uniform
+        assert ed.log_weights is not None
+
+    def test_uniform_mean_matches_numpy(self):
+        samples = jnp.array([[1.0], [3.0], [5.0]])
+        ed = EmpiricalDistribution(samples)
+        np.testing.assert_allclose(ed.mean(), jnp.array([3.0]), atol=1e-6)
+
+    def test_uniform_variance_matches_numpy(self):
+        samples = jnp.array([[1.0], [3.0], [5.0]])
+        ed = EmpiricalDistribution(samples)
+        expected_var = jnp.mean((samples - jnp.array([[3.0]])) ** 2, axis=0)
+        np.testing.assert_allclose(ed.variance(), expected_var, atol=1e-6)
+
+    def test_uniform_sampling(self, key):
+        samples = jnp.array([[10.0], [20.0], [30.0]])
+        ed = EmpiricalDistribution(samples)
+        draws = ed.sample(key, (1000,))
+        # All draws should be from the support
+        for val in [10.0, 20.0, 30.0]:
+            assert jnp.any(jnp.isclose(draws, val))
+
+    def test_log_weights_numerical_stability(self):
+        """Very large log-weights should not overflow."""
+        samples = jnp.array([[1.0], [2.0], [3.0]])
+        lw = jnp.array([1000.0, 1001.0, 1000.5])
+        ed = EmpiricalDistribution(samples, log_weights=lw)
+        # Should produce valid weights that sum to 1
+        assert jnp.all(jnp.isfinite(ed.weights))
+        np.testing.assert_allclose(ed.weights.sum(), 1.0, atol=1e-5)
+
+    def test_weights_backward_compatible(self, simple_samples, simple_weights):
+        """Existing weights= API should work unchanged."""
+        ed = EmpiricalDistribution(simple_samples, simple_weights)
+        expected = simple_weights / simple_weights.sum()
+        np.testing.assert_allclose(ed.weights, expected, atol=1e-5)
+
+    def test_log_weights_mean(self):
+        """Mean with log_weights should match weights-based mean."""
+        samples = jnp.array([[1.0], [2.0], [3.0]])
+        weights = jnp.array([0.2, 0.3, 0.5])
+        ed_w = EmpiricalDistribution(samples, weights)
+        ed_lw = EmpiricalDistribution(samples, log_weights=jnp.log(weights))
+        np.testing.assert_allclose(ed_w.mean(), ed_lw.mean(), atol=1e-5)
+
+    def test_uniform_cov(self):
+        """Uniform cov should match standard formula."""
+        samples = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+        ed = EmpiricalDistribution(samples)
+        mu = jnp.mean(samples, axis=0)
+        diff = samples - mu
+        expected = diff.T @ diff / 3
+        np.testing.assert_allclose(ed.cov(), expected, atol=1e-5)
+
+
 # ---------------------------------------------------------------------------
 # Provenance
 # ---------------------------------------------------------------------------
