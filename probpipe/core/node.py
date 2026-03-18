@@ -197,6 +197,16 @@ class Workflow(Node):
         # Precompute parameter metadata once
         self._param_names = [p for p in self._sig.parameters if p != "self"]
 
+        # Reserved names that would collide with Workflow call-time overrides
+        _RESERVED = {"n_broadcast_samples", "seed"}
+        collision = _RESERVED & set(self._param_names)
+        if collision:
+            raise ValueError(
+                f"Function '{self._name}' has parameter(s) {collision} which are "
+                f"reserved by Workflow for call-time overrides. Rename them in "
+                f"your function signature."
+            )
+
     def _is_dependency_param(self, name: str) -> bool:
         """
         Decide whether a parameter is a dependency (Node) vs normal input.
@@ -216,14 +226,10 @@ class Workflow(Node):
             return False
 
     def __call__(self, **call_inputs):
-        # Extract n_broadcast_samples if it's not a parameter of the wrapped function
-        if "n_broadcast_samples" in call_inputs and "n_broadcast_samples" not in self._param_names:
-            n_broadcast_samples = call_inputs.pop("n_broadcast_samples")
-        else:
-            n_broadcast_samples = self._n_broadcast_samples
+        # Extract reserved call-time overrides (collision already prevented in __init__)
+        n_broadcast_samples = call_inputs.pop("n_broadcast_samples", self._n_broadcast_samples)
 
-        # Extract seed override
-        if "seed" in call_inputs and "seed" not in self._param_names:
+        if "seed" in call_inputs:
             self._key = jax.random.PRNGKey(call_inputs.pop("seed"))
 
         values = self._resolve_inputs(call_inputs)

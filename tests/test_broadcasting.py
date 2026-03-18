@@ -95,6 +95,22 @@ class TestBroadcastingNSamples:
         assert result.n == 10
 
 
+class TestReservedParameterNames:
+    def test_n_broadcast_samples_forbidden(self):
+        def bad_fn(x: jnp.ndarray, n_broadcast_samples: int = 10) -> jnp.ndarray:
+            return x
+
+        with pytest.raises(ValueError, match="reserved"):
+            Workflow(func=bad_fn, broadcast_backend="loop")
+
+    def test_seed_forbidden(self):
+        def bad_fn(x: jnp.ndarray, seed: int = 0) -> jnp.ndarray:
+            return x
+
+        with pytest.raises(ValueError, match="reserved"):
+            Workflow(func=bad_fn, broadcast_backend="loop")
+
+
 class TestNoBroadcasting:
     """Cases where broadcasting should NOT happen."""
 
