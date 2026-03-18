@@ -27,6 +27,7 @@ from probpipe.distributions import (
     Multinomial,
     Wishart,
     VonMisesFisher,
+    TransformedDistribution,
 )
 
 __all__ = [
@@ -58,4 +59,5 @@ __all__ = [
     "Multinomial",
     "Wishart",
     "VonMisesFisher",
+    "TransformedDistribution",
 ]

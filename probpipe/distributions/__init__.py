@@ -41,6 +41,7 @@ from .discrete import (
     Categorical,
     NegativeBinomial,
 )
+from .transformed import TransformedDistribution
 from .multivariate import (
     MultivariateNormal,
     Dirichlet,
@@ -78,6 +79,8 @@ __all__ = [
     "Poisson",
     "Categorical",
     "NegativeBinomial",
+    # Transformed
+    "TransformedDistribution",
     # Multivariate
     "Dirichlet",
     "Multinomial",
