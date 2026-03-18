@@ -142,6 +142,8 @@ class Workflow(Node):
         *workflow_kind* is set, Prefect ``task.map()`` is used instead.
     """
 
+    DEFAULT_N_BROADCAST_SAMPLES: int = 128
+
     def __init__(
         self,
         *,
@@ -150,7 +152,7 @@ class Workflow(Node):
         name: str | None = None,
         bind: Dict[str, Any] | None = None,         # construction-time bindings (defaults/config)
         module: Any | None = None,                  # typically a Module; kept as Any to avoid import cycles
-        n_broadcast_samples: int = 128,              # default number of samples for broadcasting
+        n_broadcast_samples: int | None = None,      # default number of samples for broadcasting
         parallel: bool | int = False,               # True/int for ThreadPoolExecutor, or Prefect .map()
         **kwargs: Any,                              # convenience bindings (merged into bind)
     ):
@@ -160,7 +162,7 @@ class Workflow(Node):
         self._workflow_kind = workflow_kind
         self._name = name or getattr(func, "__name__", self.__class__.__name__)
         self._module = module
-        self._n_broadcast_samples = n_broadcast_samples
+        self._n_broadcast_samples = n_broadcast_samples if n_broadcast_samples is not None else self.DEFAULT_N_BROADCAST_SAMPLES
         self._parallel = parallel
 
         # bind = "construction-time inputs" (defaults/config). kwargs are also treated as bind.

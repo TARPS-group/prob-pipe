@@ -30,13 +30,16 @@ class TestBroadcastingSingleArg:
         def add_one(x: NDArray) -> NDArray:
             return x + 1.0
 
-        w = Workflow(func=add_one, n_broadcast_samples=30)
+        w = Workflow(func=add_one, n_broadcast_samples=500)
         g = Gaussian(mean=np.array([0.0]), cov=np.eye(1), rng=rng)
         result = w(x=g)
 
-        # Mean of result should be approximately 1.0
-        assert result.n == 30
+        assert result.n == 500
         assert result.dim == 1
+        # add_one shifts the mean by 1: Gaussian(0,1) + 1 → mean ≈ 1.0
+        assert abs(float(result.mean()) - 1.0) < 0.3, (
+            f"Expected mean ≈ 1.0, got {float(result.mean()):.3f}"
+        )
 
     def test_scalar_return(self, rng):
         def norm(x: NDArray) -> float:
@@ -86,6 +89,17 @@ class TestBroadcastingMixedArgs:
 
 class TestBroadcastingNSamples:
     """n_broadcast_samples configuration."""
+
+    def test_default_n_broadcast_samples(self, rng):
+        """Default n_broadcast_samples should match the class constant."""
+        def identity(x: NDArray) -> NDArray:
+            return x
+
+        w = Workflow(func=identity)
+        g = Gaussian(mean=np.array([0.0]), cov=np.eye(1), rng=rng)
+        result = w(x=g)
+
+        assert result.n == Workflow.DEFAULT_N_BROADCAST_SAMPLES
 
     def test_call_time_override(self, rng):
         def identity(x: NDArray) -> NDArray:
