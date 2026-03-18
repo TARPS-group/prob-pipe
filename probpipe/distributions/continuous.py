@@ -16,6 +16,7 @@ from .distribution import (
     EmpiricalDistribution,
     Provenance,
     Constraint,
+    _auto_key,
     real,
     positive,
     non_negative,
@@ -107,7 +108,7 @@ class Normal(TFPDistribution):
             return result
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -180,7 +181,7 @@ class Beta(TFPDistribution):
             return result
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -261,7 +262,7 @@ class Gamma(TFPDistribution):
             return result
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -342,7 +343,7 @@ class InverseGamma(TFPDistribution):
             return result
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -409,7 +410,7 @@ class Exponential(TFPDistribution):
             return result
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         rate = 1.0 / m
@@ -482,7 +483,7 @@ class LogNormal(TFPDistribution):
             return result
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -570,7 +571,7 @@ class StudentT(TFPDistribution):
             return result
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -643,7 +644,7 @@ class Uniform(TFPDistribution):
             return result
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -718,7 +719,7 @@ class Cauchy(TFPDistribution):
             return result
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -792,7 +793,7 @@ class Laplace(TFPDistribution):
             return result
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -857,7 +858,7 @@ class HalfNormal(TFPDistribution):
             return result
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         v = jnp.var(samples)
         # var = scale^2 * (1 - 2/pi), so scale = sqrt(var / (1 - 2/pi))
@@ -932,7 +933,7 @@ class HalfCauchy(TFPDistribution):
         # HalfCauchy has infinite moments; use sample-based estimation
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         loc = jnp.float32(0.0)
         median = jnp.median(samples)
@@ -1014,7 +1015,7 @@ class Pareto(TFPDistribution):
         # Sample-based MLE for Pareto
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         # MLE: scale = min(samples), concentration = n / sum(log(samples/scale))
         scale = jnp.min(samples)
@@ -1116,7 +1117,7 @@ class TruncatedNormal(TFPDistribution):
             return result
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)

@@ -16,6 +16,7 @@ from .distribution import (
     EmpiricalDistribution,
     Provenance,
     Constraint,
+    _auto_key,
     boolean,
     non_negative_integer,
     integer_interval,
@@ -110,7 +111,7 @@ class Bernoulli(TFPDistribution):
             )
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         probs = other.mean()
         result = cls(probs=probs, name=name or other.name)
         return result.with_source(
@@ -226,7 +227,7 @@ class Binomial(TFPDistribution):
             )
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         total_count = jnp.asarray(total_count, dtype=jnp.float32)
         probs = other.mean() / total_count
         result = cls(total_count=total_count, probs=probs, name=name or other.name)
@@ -297,7 +298,7 @@ class Poisson(TFPDistribution):
             )
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         rate = other.mean()
         result = cls(rate=rate, name=name or other.name)
         return result.with_source(
@@ -384,7 +385,7 @@ class Categorical(TFPDistribution):
             )
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         num_categories = int(jnp.max(samples)) + 1
         counts = jnp.zeros(num_categories)
@@ -507,7 +508,7 @@ class NegativeBinomial(TFPDistribution):
             )
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         total_count = jnp.asarray(total_count, dtype=jnp.float32)
         mean = other.mean()
         probs = total_count / (total_count + mean)

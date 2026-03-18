@@ -16,6 +16,7 @@ from .distribution import (
     EmpiricalDistribution,
     Provenance,
     Constraint,
+    _auto_key,
     real,
     positive_definite,
     simplex,
@@ -141,7 +142,7 @@ class MultivariateNormal(TFPDistribution):
             cls._check_support_compatible(other)
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
 
         if isinstance(other, EmpiricalDistribution):
             loc = other.mean()
@@ -229,7 +230,7 @@ class Dirichlet(TFPDistribution):
             cls._check_support_compatible(other)
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
 
         if isinstance(other, Dirichlet):
             result = cls(concentration=other.concentration, name=name or other.name)
@@ -355,7 +356,7 @@ class Multinomial(TFPDistribution):
         num_samples = kwargs.pop("num_samples", 1024)
         total_count = kwargs.pop("total_count", None)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
 
         if isinstance(other, Multinomial):
             if total_count is None:
@@ -485,7 +486,7 @@ class Wishart(TFPDistribution):
             cls._check_support_compatible(other)
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
 
         if isinstance(other, Wishart):
             result = cls(
@@ -586,7 +587,7 @@ class VonMisesFisher(TFPDistribution):
             cls._check_support_compatible(other)
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
 
         if isinstance(other, VonMisesFisher):
             result = cls(

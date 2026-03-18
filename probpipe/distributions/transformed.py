@@ -125,7 +125,7 @@ class TransformedDistribution(Distribution):
 
     # -- sampling & density -------------------------------------------------
 
-    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         if self._tfp_transformed is not None:
             return self._tfp_transformed.sample(seed=key, sample_shape=sample_shape)
         raw = self._base.sample(key, sample_shape)

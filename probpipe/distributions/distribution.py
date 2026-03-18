@@ -21,6 +21,24 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..custom_types import Array, ArrayLike, PRNGKey
 
+# ---------------------------------------------------------------------------
+# Auto-key helper (for convenience when key is omitted)
+# ---------------------------------------------------------------------------
+
+_AUTO_KEY_COUNTER: int = 0
+
+
+def _auto_key() -> PRNGKey:
+    """Generate a JAX PRNGKey from a global counter.
+
+    Convenient for interactive / exploratory use.  Not reproducible
+    across runs — pass an explicit key when reproducibility matters.
+    """
+    global _AUTO_KEY_COUNTER
+    key = jax.random.PRNGKey(_AUTO_KEY_COUNTER)
+    _AUTO_KEY_COUNTER += 1
+    return key
+
 
 # ---------------------------------------------------------------------------
 # Constraints
@@ -276,8 +294,29 @@ class Distribution(ABC):
         return jnp.float32
 
     @abstractmethod
-    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+        """Subclass implementation of sampling (called by :meth:`sample`)."""
         ...
+
+    def sample(
+        self,
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
+        """Draw samples from this distribution.
+
+        Parameters
+        ----------
+        key : PRNGKey, optional
+            JAX PRNG key.  If ``None``, a key is generated automatically
+            from a global counter (convenient for interactive use but not
+            reproducible across runs).
+        sample_shape : tuple of int
+            Leading dimensions for the returned array.
+        """
+        if key is None:
+            key = _auto_key()
+        return self._sample(key, sample_shape)
 
     @abstractmethod
     def log_prob(self, x: ArrayLike) -> Array:
@@ -430,7 +469,7 @@ class TFPDistribution(Distribution):
 
     # -- sampling & density -------------------------------------------------
 
-    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         return self._tfp_dist.sample(seed=key, sample_shape=sample_shape)
 
     def log_prob(self, x: ArrayLike) -> Array:
@@ -529,7 +568,7 @@ class EmpiricalDistribution(Distribution):
 
     # -- sampling -----------------------------------------------------------
 
-    def sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         n_draws = int(np.prod(sample_shape)) if sample_shape else 1
         indices = jax.random.choice(
             key, self.n, shape=(n_draws,), p=self._weights, replace=True,
@@ -590,7 +629,7 @@ class EmpiricalDistribution(Distribution):
         """
         num_samples = kwargs.pop("num_samples", 1024)
         if key is None:
-            key = jax.random.PRNGKey(0)
+            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         ed = cls(samples, name=name or other.name)
         ed.with_source(Provenance("from_distribution", parents=(other,)))

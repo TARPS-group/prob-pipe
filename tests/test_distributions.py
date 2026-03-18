@@ -364,7 +364,7 @@ class TestDistributionABC:
             @property
             def event_shape(self):
                 return (1,)
-            def sample(self, key, sample_shape=()):
+            def _sample(self, key, sample_shape=()):
                 return jnp.zeros(sample_shape + (1,))
             def log_prob(self, x):
                 return jnp.zeros(())
@@ -377,7 +377,7 @@ class TestDistributionABC:
             @property
             def event_shape(self):
                 return (1,)
-            def sample(self, key, sample_shape=()):
+            def _sample(self, key, sample_shape=()):
                 return jnp.zeros(sample_shape + (1,))
             def log_prob(self, x):
                 return jnp.zeros(())
