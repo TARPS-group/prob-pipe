@@ -10,8 +10,16 @@ import warnings
 import jax
 import jax.numpy as jnp
 import numpy as np
-from prefect import task, flow
-from graphviz import Digraph
+
+try:
+    from prefect import task, flow
+except ImportError:
+    task = flow = None
+
+try:
+    from graphviz import Digraph
+except ImportError:
+    Digraph = None
 
 from ..distributions.distribution import Distribution, EmpiricalDistribution
 from ..distributions.multivariate import MultivariateNormal
@@ -653,9 +661,14 @@ class Workflow(Node):
           - parallel=True/int    → concurrent.futures.ThreadPoolExecutor
           - otherwise            → sequential list comprehension
         """
-        if self._workflow_kind == "task":
-            return self._execute_many_prefect_task(call_value_list)
-        if self._workflow_kind == "flow":
+        if self._workflow_kind in ("task", "flow"):
+            if task is None:
+                raise ImportError(
+                    "Prefect is required for workflow_kind='task'/'flow'. "
+                    "Install it with: pip install probpipe[prefect]"
+                )
+            if self._workflow_kind == "task":
+                return self._execute_many_prefect_task(call_value_list)
             return self._execute_many_prefect_flow(call_value_list)
         if self._parallel:
             return self._execute_many_threaded(call_value_list)
@@ -743,7 +756,12 @@ class Module(Node):
             setattr(self, attr_name, wf)
 
     def dag(self):
-        """Return a Graphviz DAG visualization of this module."""        
+        """Return a Graphviz DAG visualization of this module."""
+        if Digraph is None:
+            raise ImportError(
+                "graphviz is required for dag visualization. "
+                "Install it with: pip install probpipe[viz]"
+            )
         dot = Digraph(
             name=self.__class__.__name__,
             graph_attr={
