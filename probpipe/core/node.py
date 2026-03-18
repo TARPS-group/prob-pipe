@@ -1,8 +1,12 @@
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, Mapping, get_type_hints
 import inspect
+from concurrent.futures import ThreadPoolExecutor
+from itertools import product as cartesian_product
 from types import MappingProxyType
+import warnings
 
+import numpy as np
 from prefect import task, flow
 from graphviz import Digraph
 
@@ -105,11 +109,40 @@ class Workflow(Node):
     """
     A single executable DAG node wrapping exactly one function.
 
-    Key change:
-      - No longer takes child_nodes/inputs explicitly.
-      - Infers dependency-vs-input from the function signature/type hints.
-      - Optionally resolves missing values from an attached Module.
+    Infers dependency-vs-input from the function signature and type hints.
+    Optionally resolves missing values from an attached Module.
+
+    **Broadcasting**: When a ``Distribution`` is passed for an argument whose
+    type hint is *not* a ``Distribution`` subclass, the workflow automatically
+    samples from the distribution and calls the wrapped function once per
+    sample, returning an ``EmpiricalDistribution`` over the outputs (or a
+    plain list when results are not numeric).
+
+    Parameters
+    ----------
+    func : Callable
+        The function to wrap.
+    workflow_kind : str or None
+        Execution backend: ``"task"`` (Prefect task), ``"flow"`` (Prefect
+        flow), or ``None`` (plain Python).
+    name : str or None
+        Display name; defaults to ``func.__name__``.
+    bind : dict or None
+        Construction-time keyword bindings (defaults / config).
+    module : Module or None
+        Parent module for input / dependency resolution.
+    n_broadcast_samples : int
+        Default number of samples drawn when broadcasting.  Can be overridden
+        at call time by passing ``n_broadcast_samples=…`` (provided the
+        wrapped function does not itself declare a parameter with that name).
+    parallel : bool or int
+        Controls parallel execution during broadcasting.
+        ``False`` → sequential, ``True`` → ``ThreadPoolExecutor`` with
+        default workers, ``int`` → explicit ``max_workers``.  When
+        *workflow_kind* is set, Prefect ``task.map()`` is used instead.
     """
+
+    DEFAULT_N_BROADCAST_SAMPLES: int = 128
 
     def __init__(
         self,
@@ -119,6 +152,8 @@ class Workflow(Node):
         name: str | None = None,
         bind: Dict[str, Any] | None = None,         # construction-time bindings (defaults/config)
         module: Any | None = None,                  # typically a Module; kept as Any to avoid import cycles
+        n_broadcast_samples: int | None = None,      # default number of samples for broadcasting
+        parallel: bool | int = False,               # True/int for ThreadPoolExecutor, or Prefect .map()
         **kwargs: Any,                              # convenience bindings (merged into bind)
     ):
         self._func = func
@@ -127,6 +162,8 @@ class Workflow(Node):
         self._workflow_kind = workflow_kind
         self._name = name or getattr(func, "__name__", self.__class__.__name__)
         self._module = module
+        self._n_broadcast_samples = n_broadcast_samples if n_broadcast_samples is not None else self.DEFAULT_N_BROADCAST_SAMPLES
+        self._parallel = parallel
 
         # bind = "construction-time inputs" (defaults/config). kwargs are also treated as bind.
         b = dict(bind or {})
@@ -140,10 +177,6 @@ class Workflow(Node):
         # Precompute parameter metadata once
         self._param_names = [p for p in self._sig.parameters if p != "self"]
 
-    # -------------------------
-    # classification helpers
-    # -------------------------
-
     def _is_dependency_param(self, name: str) -> bool:
         """
         Decide whether a parameter is a dependency (Node) vs normal input.
@@ -155,22 +188,28 @@ class Workflow(Node):
         This matches your current architecture (deps are Nodes).
         """
         ann = self._hints.get(name)
-        return isinstance(ann, type) and issubclass(ann, Node)
-
-    # -------------------------
-    # execution
-    # -------------------------
+        try:
+            return isinstance(ann, type) and issubclass(ann, Node)
+        except TypeError:
+            # Generic aliases (e.g. NDArray on Python 3.10) can pass
+            # isinstance(ann, type) but fail in issubclass().
+            return False
 
     def __call__(self, **call_inputs):
+        # Extract n_broadcast_samples if it's not a parameter of the wrapped function
+        if "n_broadcast_samples" in call_inputs and "n_broadcast_samples" not in self._param_names:
+            n_broadcast_samples = call_inputs.pop("n_broadcast_samples")
+        else:
+            n_broadcast_samples = self._n_broadcast_samples
+
         values = self._resolve_inputs(call_inputs)
         values = self._convert_distributions(values)
 
-        if self._workflow_kind == "task":
-            return self._run_as_task(values)
-        if self._workflow_kind == "flow":
-            return self._run_as_flow(values)
+        broadcast_args = self._find_broadcast_args(values)
+        if broadcast_args:
+            return self._broadcast(values, broadcast_args, n_broadcast_samples)
 
-        return self._call_python(values)
+        return self._execute_many([values])[0]
 
     def _resolve_inputs(self, call_inputs: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -255,9 +294,15 @@ class Workflow(Node):
             if expected is None:
                 continue
 
+            try:
+                is_dist_subclass = isinstance(expected, type) and issubclass(
+                    expected, Distribution
+                )
+            except TypeError:
+                is_dist_subclass = False
+
             if (
-                isinstance(expected, type)
-                and issubclass(expected, Distribution)
+                is_dist_subclass
                 and isinstance(value, DISTRIBUTION_TYPES)
                 and not isinstance(value, expected)
             ):
@@ -265,23 +310,237 @@ class Workflow(Node):
 
         return out
 
-    def _call_python(self, values: Dict[str, Any]):
-        return self._func(**values)
+    def _find_broadcast_args(self, values: Dict[str, Any]) -> list[str]:
+        """
+        Identify arguments where a Distribution was passed but the type hint
+        expects a concrete (non-Distribution) type.
+        """
+        broadcast = []
+        for name, value in values.items():
+            if not isinstance(value, Distribution):
+                continue
+            expected = self._hints.get(name)
+            # If hint IS a Distribution subclass, _convert_distributions handled it
+            try:
+                is_dist_hint = expected is not None and isinstance(expected, type) and issubclass(expected, Distribution)
+            except TypeError:
+                is_dist_hint = False
+            if is_dist_hint:
+                continue
+            broadcast.append(name)
+        return broadcast
 
-    def _run_as_task(self, values):
-        @task(name=self._name)
-        def wrapped():
-            return self._call_python(values)
+    def _broadcast(
+        self,
+        values: Dict[str, Any],
+        broadcast_args: list[str],
+        n_broadcast_samples: int,
+    ) -> EmpiricalDistribution | list:
+        """
+        Sample from Distribution arguments and call the function once per sample.
+        Returns an EmpiricalDistribution if results are numeric arrays,
+        otherwise returns a list of results.
 
-        return wrapped()
+        When EmpiricalDistribution arguments have small enough support, enumerates their
+        samples (cartesian product) and propagates weights instead of resampling.
+        """
+        MIN_BROADCAST_SAMPLES = 5  # Recommended minimum samples
 
-    def _run_as_flow(self, values):
+        # Validate n_broadcast_samples value and warn if too small
+        if not isinstance(n_broadcast_samples, int) or n_broadcast_samples < MIN_BROADCAST_SAMPLES:
+            warnings.warn(
+                f"n_broadcast_samples={n_broadcast_samples} is too low; "
+                f"results may be unreliable. "
+                f"Recommended minimum is {MIN_BROADCAST_SAMPLES}.",
+                stacklevel=2
+            )
+
+        # Collect candidate empirical dists (small enough individually), sorted smallest first
+        candidates = []
+        sample_args: Dict[str, Distribution] = {}
+        for name in broadcast_args:
+            dist = values[name]
+            if isinstance(dist, EmpiricalDistribution) and dist.n <= n_broadcast_samples:
+                candidates.append((name, dist))
+            else:
+                sample_args[name] = dist
+
+        candidates.sort(key=lambda pair: pair[1].n)
+
+        # Greedily include smallest empirical dists while product stays within budget
+        empirical_args: Dict[str, EmpiricalDistribution] = {}
+        product_size = 1
+        for name, dist in candidates:
+            if product_size * dist.n <= n_broadcast_samples:
+                empirical_args[name] = dist
+                product_size *= dist.n
+            else:
+                # Too large to enumerate — sample from it instead
+                sample_args[name] = dist
+
+        if empirical_args:
+            return self._broadcast_enumerate(
+                values, empirical_args, sample_args, product_size, n_broadcast_samples
+            )
+        else:
+            return self._broadcast_sample(values, broadcast_args, n_broadcast_samples)
+
+    def _broadcast_enumerate(
+        self,
+        values: Dict[str, Any],
+        empirical_args: Dict[str, EmpiricalDistribution],
+        sample_args: Dict[str, Distribution],
+        product_size: int,
+        n_broadcast_samples: int,
+    ) -> EmpiricalDistribution | list:
+        """
+        Enumerate the cartesian product of EmpiricalDistribution samples,
+        propagating their weights. When non-empirical distributions are also
+        present, draws as many samples as the budget allows per combination
+        (n_broadcast_samples // product_size), each receiving equal weight scaled by
+        the empirical product weight.
+        """
+        emp_names = list(empirical_args.keys())
+        emp_dists = [empirical_args[name] for name in emp_names]
+
+        # Use as many non-empirical samples per combo as budget allows
+        reps_per_combo = max(1, n_broadcast_samples // product_size) if sample_args else 1
+        total = product_size * reps_per_combo
+
+        # Pre-sample non-empirical distributions
+        sampled = {
+            name: dist.sample(total)
+            for name, dist in sample_args.items()
+        }
+
+        call_value_list = []
+        weights = []
+        sample_idx = 0
+
+        for combo in cartesian_product(*(range(d.n) for d in emp_dists)):
+            # Compute empirical product weight
+            emp_weight = 1.0
+            for name, dist, i in zip(emp_names, emp_dists, combo):
+                emp_weight *= dist.weights[i]
+
+            for _ in range(reps_per_combo):
+                call_values = dict(values)
+
+                # Set empirical samples
+                for name, dist, i in zip(emp_names, emp_dists, combo):
+                    call_values[name] = dist.samples[i]
+
+                # Set sampled values for non-empirical distributions
+                for name in sample_args:
+                    call_values[name] = sampled[name][sample_idx]
+
+                # Weight: empirical product weight divided evenly across reps
+                weights.append(emp_weight / reps_per_combo)
+                call_value_list.append(call_values)
+                sample_idx += 1
+
+        results = self._execute_many(call_value_list)
+        return self._collect_results(results, total, np.array(weights))
+
+    def _broadcast_sample(
+        self,
+        values: Dict[str, Any],
+        broadcast_args: list[str],
+        n_broadcast_samples: int,
+    ) -> EmpiricalDistribution | list:
+        """
+        Sample n_broadcast_samples from each Distribution argument and call the function
+        once per sample (uniform weights).
+        """
+        samples_per_arg = {
+            name: values[name].sample(n_broadcast_samples)
+            for name in broadcast_args
+        }
+
+        call_value_list = []
+        for i in range(n_broadcast_samples):
+            call_values = dict(values)
+            for name in broadcast_args:
+                call_values[name] = samples_per_arg[name][i]
+            call_value_list.append(call_values)
+
+        results = self._execute_many(call_value_list)
+        return self._collect_results(results, n_broadcast_samples)
+
+    @staticmethod
+    def _collect_results(
+        results: list,
+        n: int,
+        weights: np.ndarray | None = None,
+    ) -> EmpiricalDistribution | list:
+        """
+        Stack results into an EmpiricalDistribution if possible,
+        otherwise return a plain list.
+        """
+        try:
+            stacked = np.stack([np.asarray(r, dtype=float) for r in results], axis=0)
+        except (ValueError, TypeError):
+            return results
+
+        if stacked.ndim == 1:
+            stacked = stacked.reshape(-1, 1)
+        elif stacked.ndim > 2:
+            stacked = stacked.reshape(n, -1)
+
+        return EmpiricalDistribution(stacked, weights=weights)
+
+    def _execute_many(self, call_value_list: list[Dict[str, Any]]) -> list:
+        """
+        Execute the wrapped function for every dict in *call_value_list* and
+        return the results in the same order.
+
+        Dispatch strategy:
+          - workflow_kind="task"  → Prefect task.map() (single mapped task)
+          - workflow_kind="flow"  → Prefect: one wrapping flow with task.map()
+          - parallel=True/int    → concurrent.futures.ThreadPoolExecutor
+          - otherwise            → sequential list comprehension
+        """
+        if self._workflow_kind == "task":
+            return self._execute_many_prefect_task(call_value_list)
+        if self._workflow_kind == "flow":
+            return self._execute_many_prefect_flow(call_value_list)
+        if self._parallel:
+            return self._execute_many_threaded(call_value_list)
+        return [self._func(**v) for v in call_value_list]
+
+    def _execute_many_threaded(self, call_value_list: list[Dict[str, Any]]) -> list:
+        max_workers = self._parallel if isinstance(self._parallel, int) else None
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            return list(pool.map(lambda v: self._func(**v), call_value_list))
+
+    def _map_task(self, call_value_list: list[Dict[str, Any]], task_name: str | None = None) -> list:
+        """Create a Prefect task wrapping self._func, .map() over all calls, and resolve."""
+        func = self._func
+
+        @task(name=task_name or self._name)
+        def run_func(**kwargs):
+            return func(**kwargs)
+
+        keys = call_value_list[0].keys()
+        kwargs_by_param = {k: [d[k] for d in call_value_list] for k in keys}
+        futures = run_func.map(**kwargs_by_param)
+        return [f.result() for f in futures]
+
+    def _execute_many_prefect_task(self, call_value_list: list[Dict[str, Any]]) -> list:
+        """Use Prefect task.map() to run all calls as a single mapped task."""
+        return self._map_task(call_value_list)
+
+    def _execute_many_prefect_flow(self, call_value_list: list[Dict[str, Any]]) -> list:
+        """Wrap a mapped task inside a single Prefect flow."""
+        outer = self
+
         @flow(name=self._name)
-        def wrapped():
-            return self._call_python(values)
+        def mapped_flow():
+            return outer._map_task(call_value_list, task_name=f"{outer._name}_run")
 
-        return wrapped()
+        return mapped_flow()
  
+
 class Module(Node):
     """
     Container for workflow nodes with shared inputs and child nodes.
