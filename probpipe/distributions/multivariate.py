@@ -16,7 +16,6 @@ from .distribution import (
     EmpiricalDistribution,
     Provenance,
     Constraint,
-    _auto_key,
     real,
     positive_definite,
     simplex,
@@ -122,12 +121,11 @@ class MultivariateNormal(TFPDistribution):
     # -- conversion ---------------------------------------------------------
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> MultivariateNormal:
@@ -138,11 +136,7 @@ class MultivariateNormal(TFPDistribution):
         num_samples : int
             Samples drawn for moment-matching (default 1024).
         """
-        if check_support:
-            cls._check_support_compatible(other)
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
 
         if isinstance(other, EmpiricalDistribution):
             loc = other.mean()
@@ -216,21 +210,16 @@ class Dirichlet(TFPDistribution):
     # -- conversion ---------------------------------------------------------
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> Dirichlet:
         """Fit a Dirichlet by method-of-moments from *other*."""
-        if check_support:
-            cls._check_support_compatible(other)
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
 
         if isinstance(other, Dirichlet):
             result = cls(concentration=other.concentration, name=name or other.name)
@@ -332,12 +321,11 @@ class Multinomial(TFPDistribution):
     # -- conversion ---------------------------------------------------------
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> Multinomial:
@@ -351,12 +339,8 @@ class Multinomial(TFPDistribution):
         num_samples : int
             Samples drawn for moment-matching (default 1024).
         """
-        if check_support:
-            cls._check_support_compatible(other)
         num_samples = kwargs.pop("num_samples", 1024)
         total_count = kwargs.pop("total_count", None)
-        if key is None:
-            key = _auto_key()
 
         if isinstance(other, Multinomial):
             if total_count is None:
@@ -472,21 +456,16 @@ class Wishart(TFPDistribution):
     # -- conversion ---------------------------------------------------------
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> Wishart:
         """Fit a Wishart by moment-matching from *other*."""
-        if check_support:
-            cls._check_support_compatible(other)
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
 
         if isinstance(other, Wishart):
             result = cls(
@@ -573,21 +552,16 @@ class VonMisesFisher(TFPDistribution):
     # -- conversion ---------------------------------------------------------
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> VonMisesFisher:
         """Fit a VonMisesFisher from *other* by estimating mean direction and concentration."""
-        if check_support:
-            cls._check_support_compatible(other)
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
 
         if isinstance(other, VonMisesFisher):
             result = cls(

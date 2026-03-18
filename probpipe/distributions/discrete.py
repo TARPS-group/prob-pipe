@@ -16,7 +16,6 @@ from .distribution import (
     EmpiricalDistribution,
     Provenance,
     Constraint,
-    _auto_key,
     boolean,
     non_negative_integer,
     integer_interval,
@@ -89,17 +88,14 @@ class Bernoulli(TFPDistribution):
     # -- conversion ---------------------------------------------------------
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> Bernoulli:
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, Bernoulli):
             result = cls(
                 probs=other.probs,
@@ -110,8 +106,6 @@ class Bernoulli(TFPDistribution):
                 Provenance("from_distribution", parents=(other,))
             )
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         probs = other.mean()
         result = cls(probs=probs, name=name or other.name)
         return result.with_source(
@@ -188,12 +182,11 @@ class Binomial(TFPDistribution):
     # -- conversion ---------------------------------------------------------
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> Binomial:
@@ -207,8 +200,6 @@ class Binomial(TFPDistribution):
         num_samples : int
             Samples drawn for moment-matching (default 1024).
         """
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, Binomial):
             result = cls(
                 total_count=other.total_count,
@@ -226,8 +217,6 @@ class Binomial(TFPDistribution):
                 "when converting a non-Binomial distribution to Binomial."
             )
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         total_count = jnp.asarray(total_count, dtype=jnp.float32)
         probs = other.mean() / total_count
         result = cls(total_count=total_count, probs=probs, name=name or other.name)
@@ -277,17 +266,14 @@ class Poisson(TFPDistribution):
     # -- conversion ---------------------------------------------------------
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> Poisson:
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, Poisson):
             result = cls(
                 rate=other.rate,
@@ -297,8 +283,6 @@ class Poisson(TFPDistribution):
                 Provenance("from_distribution", parents=(other,))
             )
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         rate = other.mean()
         result = cls(rate=rate, name=name or other.name)
         return result.with_source(
@@ -363,17 +347,14 @@ class Categorical(TFPDistribution):
     # -- conversion ---------------------------------------------------------
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> Categorical:
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, Categorical):
             result = cls(
                 probs=other.probs,
@@ -384,8 +365,6 @@ class Categorical(TFPDistribution):
                 Provenance("from_distribution", parents=(other,))
             )
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         num_categories = int(jnp.max(samples)) + 1
         counts = jnp.zeros(num_categories)
@@ -467,12 +446,11 @@ class NegativeBinomial(TFPDistribution):
     # -- conversion ---------------------------------------------------------
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> NegativeBinomial:
@@ -487,8 +465,6 @@ class NegativeBinomial(TFPDistribution):
         num_samples : int
             Samples drawn for moment-matching (default 1024).
         """
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, NegativeBinomial):
             result = cls(
                 total_count=other.total_count,
@@ -507,8 +483,6 @@ class NegativeBinomial(TFPDistribution):
                 "to NegativeBinomial."
             )
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         total_count = jnp.asarray(total_count, dtype=jnp.float32)
         mean = other.mean()
         probs = total_count / (total_count + mean)

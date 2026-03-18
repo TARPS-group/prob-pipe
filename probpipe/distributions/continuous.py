@@ -16,7 +16,6 @@ from .distribution import (
     EmpiricalDistribution,
     Provenance,
     Constraint,
-    _auto_key,
     real,
     positive,
     non_negative,
@@ -91,24 +90,19 @@ class Normal(TFPDistribution):
         return real
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> Normal:
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, Normal):
             result = cls(loc=other._loc, scale=other._scale, name=name or other.name)
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -164,24 +158,19 @@ class Beta(TFPDistribution):
         return unit_interval
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> Beta:
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, Beta):
             result = cls(alpha=other._alpha, beta=other._beta, name=name or other.name)
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -241,17 +230,14 @@ class Gamma(TFPDistribution):
         return positive
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> Gamma:
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, Gamma):
             result = cls(
                 concentration=other._concentration,
@@ -261,8 +247,6 @@ class Gamma(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -322,17 +306,14 @@ class InverseGamma(TFPDistribution):
         return positive
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> InverseGamma:
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, InverseGamma):
             result = cls(
                 concentration=other._concentration,
@@ -342,8 +323,6 @@ class InverseGamma(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -393,24 +372,19 @@ class Exponential(TFPDistribution):
         return positive
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> Exponential:
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, Exponential):
             result = cls(rate=other._rate, name=name or other.name)
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         rate = 1.0 / m
@@ -466,24 +440,19 @@ class LogNormal(TFPDistribution):
         return positive
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> LogNormal:
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, LogNormal):
             result = cls(loc=other._loc, scale=other._scale, name=name or other.name)
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -549,17 +518,14 @@ class StudentT(TFPDistribution):
         return real
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> StudentT:
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, StudentT):
             result = cls(
                 df=other._df,
@@ -570,8 +536,6 @@ class StudentT(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -627,24 +591,19 @@ class Uniform(TFPDistribution):
         return real
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> Uniform:
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, Uniform):
             result = cls(low=other._low, high=other._high, name=name or other.name)
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -702,24 +661,19 @@ class Cauchy(TFPDistribution):
         return real
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> Cauchy:
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, Cauchy):
             result = cls(loc=other._loc, scale=other._scale, name=name or other.name)
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -776,24 +730,19 @@ class Laplace(TFPDistribution):
         return real
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> Laplace:
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, Laplace):
             result = cls(loc=other._loc, scale=other._scale, name=name or other.name)
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
@@ -841,24 +790,19 @@ class HalfNormal(TFPDistribution):
         return non_negative
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> HalfNormal:
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, HalfNormal):
             result = cls(scale=other._scale, name=name or other.name)
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         v = jnp.var(samples)
         # var = scale^2 * (1 - 2/pi), so scale = sqrt(var / (1 - 2/pi))
@@ -915,25 +859,20 @@ class HalfCauchy(TFPDistribution):
         return non_negative
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> HalfCauchy:
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, HalfCauchy):
             result = cls(loc=other._loc, scale=other._scale, name=name or other.name)
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         # HalfCauchy has infinite moments; use sample-based estimation
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         loc = jnp.float32(0.0)
         median = jnp.median(samples)
@@ -993,17 +932,14 @@ class Pareto(TFPDistribution):
         return positive
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> Pareto:
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, Pareto):
             result = cls(
                 concentration=other._concentration,
@@ -1014,8 +950,6 @@ class Pareto(TFPDistribution):
             return result
         # Sample-based MLE for Pareto
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         # MLE: scale = min(samples), concentration = n / sum(log(samples/scale))
         scale = jnp.min(samples)
@@ -1094,17 +1028,14 @@ class TruncatedNormal(TFPDistribution):
         return real
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> TruncatedNormal:
-        if check_support:
-            cls._check_support_compatible(other)
         if isinstance(other, TruncatedNormal):
             result = cls(
                 loc=other._loc,
@@ -1116,8 +1047,6 @@ class TruncatedNormal(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)

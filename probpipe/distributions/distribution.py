@@ -378,7 +378,8 @@ class Distribution(ABC):
         other : Distribution
             Source distribution to convert.
         key : PRNGKey, optional
-            JAX PRNG key for sampling-based conversion.
+            JAX PRNG key for sampling-based conversion.  If ``None``,
+            a key is generated automatically via ``_auto_key()``.
         check_support : bool
             If ``True`` (default), verify the supports are compatible
             before converting. Raises ``ValueError`` on mismatch.
@@ -394,6 +395,25 @@ class Distribution(ABC):
               is not the same class.
             * ``name`` (str | None) — name for the resulting
               distribution; defaults to ``other.name``.
+        """
+        if key is None:
+            key = _auto_key()
+        if check_support:
+            cls._check_support_compatible(other)
+        return cls._from_distribution(other, key=key, **kwargs)
+
+    @classmethod
+    def _from_distribution(
+        cls,
+        other: Distribution,
+        *,
+        key: PRNGKey,
+        **kwargs: Any,
+    ) -> Distribution:
+        """Subclass hook for conversion logic.
+
+        Called by :meth:`from_distribution` after key generation and
+        support checking.  *key* is guaranteed to be a valid PRNGKey.
         """
         raise NotImplementedError(
             f"{cls.__name__}.from_distribution() is not implemented."
@@ -610,11 +630,11 @@ class EmpiricalDistribution(Distribution):
     # -- conversion ---------------------------------------------------------
 
     @classmethod
-    def from_distribution(
+    def _from_distribution(
         cls,
         other: Distribution,
         *,
-        key: PRNGKey | None = None,
+        key: PRNGKey,
         name: str | None = None,
         **kwargs: Any,
     ) -> EmpiricalDistribution:
@@ -628,8 +648,6 @@ class EmpiricalDistribution(Distribution):
             Name for the result; defaults to ``other.name``.
         """
         num_samples = kwargs.pop("num_samples", 1024)
-        if key is None:
-            key = _auto_key()
         samples = other.sample(key, sample_shape=(num_samples,))
         ed = cls(samples, name=name or other.name)
         ed.with_source(Provenance("from_distribution", parents=(other,)))
