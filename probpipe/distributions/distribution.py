@@ -204,7 +204,7 @@ def _supports_compatible(source: Constraint, target: Constraint) -> bool:
         _Positive: {_NonNegative, _Real},
         _NonNegative: {_Real},
         _NonNegativeInteger: {_NonNegative, _Real},
-        _Simplex: {_Real},  # simplex ⊂ [0,1]^k ⊂ R^k
+        _Simplex: {_Real, _UnitInterval, _NonNegative},  # simplex ⊂ [0,1]^k ⊂ R^k
         _Sphere: {_Real},
         _PositiveDefinite: {_Real},
     }

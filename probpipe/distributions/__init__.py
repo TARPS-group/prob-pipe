@@ -42,6 +42,12 @@ from .discrete import (
     NegativeBinomial,
 )
 from .transformed import TransformedDistribution
+from .joint import (
+    JointDistribution,
+    ProductDistribution,
+    DistributionView,
+    PinnedComponent,
+)
 from .multivariate import (
     MultivariateNormal,
     Dirichlet,
@@ -81,6 +87,11 @@ __all__ = [
     "NegativeBinomial",
     # Transformed
     "TransformedDistribution",
+    # Joint
+    "JointDistribution",
+    "ProductDistribution",
+    "DistributionView",
+    "PinnedComponent",
     # Multivariate
     "Dirichlet",
     "Multinomial",

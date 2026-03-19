@@ -28,6 +28,10 @@ from probpipe.distributions import (
     Wishart,
     VonMisesFisher,
     TransformedDistribution,
+    JointDistribution,
+    ProductDistribution,
+    DistributionView,
+    PinnedComponent,
 )
 
 __all__ = [
@@ -60,4 +64,8 @@ __all__ = [
     "Wishart",
     "VonMisesFisher",
     "TransformedDistribution",
+    "JointDistribution",
+    "ProductDistribution",
+    "DistributionView",
+    "PinnedComponent",
 ]

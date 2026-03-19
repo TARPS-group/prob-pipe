@@ -21,7 +21,9 @@ try:
 except ImportError:
     Digraph = None
 
+from ..custom_types import PRNGKey, Array
 from ..distributions.distribution import Distribution, EmpiricalDistribution
+from ..distributions.joint import DistributionView
 from ..distributions.multivariate import MultivariateNormal
 DISTRIBUTION_TYPES = (Distribution, EmpiricalDistribution, MultivariateNormal)
 
@@ -481,6 +483,51 @@ class Workflow(Node):
         else:
             return self._broadcast_sample(values, broadcast_args, n_broadcast_samples)
 
+    def _sample_broadcast_args(
+        self,
+        values: Dict[str, Any],
+        broadcast_args: list[str],
+        n: int,
+        key: PRNGKey,
+    ) -> Dict[str, Array]:
+        """
+        Sample all broadcast arguments, handling DistributionView reconnection.
+
+        When multiple arguments are DistributionViews from the same parent
+        JointDistribution, the parent is sampled once and component samples
+        are distributed to the appropriate arguments.  This preserves
+        correlation between jointly-distributed components.
+        """
+        # Group DistributionView args by parent
+        joint_groups: Dict[int, Dict] = {}  # id(parent) → {parent, mappings}
+        independent: list[str] = []
+
+        for name in broadcast_args:
+            dist = values[name]
+            if isinstance(dist, DistributionView):
+                pid = id(dist._parent)
+                if pid not in joint_groups:
+                    joint_groups[pid] = {"parent": dist._parent, "mappings": {}}
+                joint_groups[pid]["mappings"][name] = dist._component_name
+            else:
+                independent.append(name)
+
+        sampled: Dict[str, Array] = {}
+
+        # Sample each joint group once, distribute to arguments
+        for group in joint_groups.values():
+            key, subkey = jax.random.split(key)
+            structured = group["parent"].sample_structured(subkey, (n,))
+            for arg_name, comp_name in group["mappings"].items():
+                sampled[arg_name] = structured[comp_name]
+
+        # Sample independent distributions
+        for name in independent:
+            key, subkey = jax.random.split(key)
+            sampled[name] = values[name].sample(subkey, (n,))
+
+        return sampled
+
     def _broadcast_jax(
         self,
         values: Dict[str, Any],
@@ -490,17 +537,12 @@ class Workflow(Node):
         """
         Vectorised broadcasting via ``jax.vmap``.
 
-        Samples all broadcast distributions at once, then calls the wrapped
-        function over the batch dimension using ``jax.vmap``.  Requires the
-        wrapped function to be JAX-traceable.
+        Samples all broadcast distributions at once (with joint reconnection),
+        then calls the wrapped function over the batch dimension using
+        ``jax.vmap``.  Requires the wrapped function to be JAX-traceable.
         """
         key = self._get_key()
-
-        # Sample all broadcast distributions: each produces (n, *event_shape)
-        sampled = {}
-        for name in broadcast_args:
-            key, subkey = jax.random.split(key)
-            sampled[name] = values[name].sample(subkey, (n_broadcast_samples,))
+        sampled = self._sample_broadcast_args(values, broadcast_args, n_broadcast_samples, key)
 
         static = {k: v for k, v in values.items() if k not in broadcast_args}
 
@@ -583,14 +625,10 @@ class Workflow(Node):
     ) -> EmpiricalDistribution | list:
         """
         Sample n_broadcast_samples from each Distribution argument and call the function
-        once per sample (uniform weights).
+        once per sample (uniform weights).  Handles DistributionView reconnection.
         """
         key = self._get_key()
-
-        samples_per_arg = {}
-        for name in broadcast_args:
-            key, subkey = jax.random.split(key)
-            samples_per_arg[name] = values[name].sample(subkey, (n_broadcast_samples,))
+        samples_per_arg = self._sample_broadcast_args(values, broadcast_args, n_broadcast_samples, key)
 
         call_value_list = []
         for i in range(n_broadcast_samples):
