@@ -240,15 +240,18 @@ class TestDistributionView:
 
 class TestConditionOn:
 
-    def test_condition_on_root_component(self):
+    def test_condition_on_removes_conditioned_component(self):
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         cond = joint.condition_on(z=jnp.array(2.0))
-        assert isinstance(cond.components["z"], ConditionedComponent)
+        assert "z" not in cond.components
+        assert "x" in cond.components
+        assert cond.component_names == ("x",)
+        assert cond.event_shape == (1,)
 
-    def test_conditioned_sampling_fixes_value(self):
+    def test_conditioned_sampling_uses_observed_value(self):
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
@@ -256,9 +259,9 @@ class TestConditionOn:
         cond = joint.condition_on(z=jnp.array(3.0))
         key = jax.random.PRNGKey(30)
         structured = cond.sample_structured(key, (50,))
-        # z should be fixed at 3.0
-        np.testing.assert_allclose(structured["z"], jnp.full((50,), 3.0), atol=1e-6)
-        # x should be centered around 3.0 (since x = N(z, 0.5))
+        # z should not be in structured (it's conditioned)
+        assert "z" not in structured
+        # x should be centered around 3.0 (since x = N(z=3, 0.5))
         assert abs(float(jnp.mean(structured["x"])) - 3.0) < 0.3
 
     def test_condition_on_downstream_effect(self):
@@ -270,6 +273,7 @@ class TestConditionOn:
         cond = joint.condition_on(z=jnp.array(5.0))
         key = jax.random.PRNGKey(31)
         structured = cond.sample_structured(key, (100,))
+        assert "z" not in structured
         # x should be very close to 5.0
         np.testing.assert_allclose(
             structured["x"], jnp.full((100,), 5.0), atol=0.1
@@ -292,14 +296,16 @@ class TestConditionOn:
         with pytest.raises(KeyError, match="Unknown"):
             joint.condition_on(nonexistent=jnp.array(0.0))
 
-    def test_condition_on_non_root_construction_succeeds(self):
-        """Conditioning on a non-root is allowed at construction time."""
+    def test_condition_on_non_root_removes_component(self):
+        """Conditioning on a non-root removes it from components."""
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         cond = joint.condition_on(x=jnp.array(1.0))
-        assert isinstance(cond.components["x"], ConditionedComponent)
+        assert "x" not in cond.components
+        assert "z" in cond.components
+        assert cond.component_names == ("z",)
 
     def test_condition_on_non_root_with_unconditioned_parent_raises(self):
         """Sampling raises if a conditioned non-root has unconditioned parents."""
@@ -322,9 +328,10 @@ class TestConditionOn:
         cond = joint.condition_on(z=jnp.array(1.0), x=jnp.array(2.0))
         key = jax.random.PRNGKey(40)
         structured = cond.sample_structured(key, (50,))
-        # z and x are fixed; y ~ N(1+2, 0.1) = N(3, 0.1)
-        np.testing.assert_allclose(structured["z"], jnp.full((50,), 1.0), atol=1e-6)
-        np.testing.assert_allclose(structured["x"], jnp.full((50,), 2.0), atol=1e-6)
+        # z and x should not be in structured
+        assert "z" not in structured
+        assert "x" not in structured
+        # y ~ N(1+2, 0.1) = N(3, 0.1)
         assert abs(float(jnp.mean(structured["y"])) - 3.0) < 0.1
 
     def test_condition_on_non_root_log_prob_works(self):
@@ -334,25 +341,42 @@ class TestConditionOn:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         cond = joint.condition_on(x=jnp.array(1.0))
-        # Evaluate log_prob at a specific point
-        flat = jnp.array([0.0, 1.0])  # z=0, x=1
+        # Only z is unconditioned; flat input is just z value
+        flat = jnp.array([0.0])
         lp = cond.log_prob(flat)
         assert jnp.isfinite(lp)
+        # Should be log p(z=0) + log p(x=1|z=0) (unnormalized conditional)
+        expected = (
+            float(Normal(loc=0.0, scale=1.0).log_prob(0.0))
+            + float(Normal(loc=0.0, scale=0.5).log_prob(1.0))
+        )
+        np.testing.assert_allclose(float(lp), expected, atol=1e-5)
 
     def test_condition_on_chain_accumulates(self):
         """Successive condition_on calls accumulate conditioned names."""
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
+            y=lambda z, x: Normal(loc=z + x, scale=0.1),
         )
-        # First condition on x alone — not sampleable
+        # First condition on x alone — not sampleable (z unconditioned parent)
         cond1 = joint.condition_on(x=jnp.array(1.0))
+        assert cond1.component_names == ("z", "y")
         with pytest.raises(NotImplementedError):
             cond1.sample(sample_shape=(5,))
-        # Then also condition on z — now sampleable
+        # Then also condition on z — now sampleable, only y remains
         cond2 = cond1.condition_on(z=jnp.array(0.0))
+        assert cond2.component_names == ("y",)
         s = cond2.sample(sample_shape=(5,))
-        assert s.shape == (5, 2)
+        assert s.shape == (5, 1)
+
+    def test_raises_on_conditioning_all(self):
+        joint = SequentialJointDistribution(
+            z=Normal(loc=0.0, scale=1.0),
+            x=lambda z: Normal(loc=z, scale=0.5),
+        )
+        with pytest.raises(ValueError, match="Cannot condition on all"):
+            joint.condition_on(z=jnp.array(0.0), x=jnp.array(0.0))
 
 
 # ---------------------------------------------------------------------------

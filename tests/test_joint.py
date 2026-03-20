@@ -256,18 +256,19 @@ class TestFromDistributions:
 
 class TestConditionOn:
 
-    def test_condition_on_replaces_with_conditioned_component(self, joint_xy):
+    def test_condition_on_removes_conditioned_component(self, joint_xy):
         cond = joint_xy.condition_on(x=jnp.array(2.0))
-        assert isinstance(cond.components["x"], ConditionedComponent)
-        # Unconditioned component should remain as before
-        assert not isinstance(cond.components["y"], ConditionedComponent)
+        assert "x" not in cond.components
+        assert "y" in cond.components
+        assert cond.component_names == ("y",)
+        assert cond.event_shape == (1,)
 
-    def test_conditioned_sample_returns_fixed_value(self, joint_xy):
-        val = jnp.array(2.0)
-        cond = joint_xy.condition_on(x=val)
+    def test_conditioned_sample_excludes_conditioned(self, joint_xy):
+        cond = joint_xy.condition_on(x=jnp.array(2.0))
         key = jax.random.PRNGKey(20)
         structured = cond.sample_structured(key, (10,))
-        np.testing.assert_allclose(structured["x"], jnp.full((10,), 2.0), atol=1e-6)
+        assert "x" not in structured
+        assert "y" in structured
 
     def test_unconditioned_component_still_varies(self, joint_xy):
         cond = joint_xy.condition_on(x=jnp.array(0.0))
@@ -293,6 +294,10 @@ class TestConditionOn:
     def test_keyerror_on_unknown_component(self, joint_xy):
         with pytest.raises(KeyError, match="Unknown"):
             joint_xy.condition_on(nonexistent=jnp.array(0.0))
+
+    def test_raises_on_conditioning_all(self, joint_xy):
+        with pytest.raises(ValueError, match="Cannot condition on all"):
+            joint_xy.condition_on(x=jnp.array(0.0), y=jnp.array(0.0))
 
 
 # ===========================================================================

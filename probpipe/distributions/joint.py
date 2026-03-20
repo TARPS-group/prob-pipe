@@ -297,8 +297,8 @@ class JointDistribution(Distribution):
 
     def condition_on(self, **observed: ArrayLike) -> "JointDistribution":
         """
-        Return a new joint distribution with specified components conditioned
-        on (fixed to observed values).
+        Return the conditional distribution over the remaining (unconditioned)
+        components, representing p(unconditioned | conditioned = values).
 
         Parameters
         ----------
@@ -308,8 +308,8 @@ class JointDistribution(Distribution):
         Returns
         -------
         JointDistribution
-            A new instance of the same type with conditioned components
-            replaced by :class:`ConditionedComponent` instances.
+            A new instance of the same type with only the unconditioned
+            components.
         """
         unknown = set(observed) - set(self._components)
         if unknown:
@@ -317,16 +317,13 @@ class JointDistribution(Distribution):
                 f"Unknown component(s): {unknown}. "
                 f"Available: {self.component_names}"
             )
-        new_components = {}
-        for cname, cdist in self._components.items():
-            if cname in observed:
-                new_components[cname] = ConditionedComponent(
-                    base=cdist,
-                    value=observed[cname],
-                    name=cname,
-                )
-            else:
-                new_components[cname] = cdist
+        if len(observed) >= len(self._components):
+            raise ValueError("Cannot condition on all components.")
+        new_components = {
+            cname: cdist
+            for cname, cdist in self._components.items()
+            if cname not in observed
+        }
         result = type(self)(**new_components, name=self._name)
         result.with_source(Provenance(
             "condition_on", parents=(self,),
@@ -464,6 +461,7 @@ class SequentialJointDistribution(JointDistribution):
         self._raw_components: dict[str, Distribution | Callable] = dict(components)
         self._name = name
         self._conditioned_names: frozenset[str] = frozenset()
+        self._conditioned_values: dict[str, Array] = {}
         self._sampleable_error: str | None = None
         # Map callable component names to their dependency parameter names
         self._callable_parents: dict[str, tuple[str, ...]] = {}
@@ -559,13 +557,21 @@ class SequentialJointDistribution(JointDistribution):
         key: PRNGKey,
         sample_shape: tuple[int, ...],
     ) -> dict[str, Array]:
-        """Sample components sequentially, feeding earlier samples to later callables."""
+        """Sample components sequentially, feeding earlier samples to later callables.
+
+        Returns a dict of *all* components (including conditioned ones).
+        Callers that expose results externally should filter to unconditioned.
+        """
         self._check_sampleable()
         keys = jax.random.split(key, len(self._raw_components))
         sampled: dict[str, Array] = {}
 
         for subkey, (cname, comp) in zip(keys, self._raw_components.items()):
-            if isinstance(comp, Distribution):
+            if cname in self._conditioned_values:
+                # Conditioned component: broadcast fixed value to sample_shape
+                val = self._conditioned_values[cname]
+                sampled[cname] = jnp.broadcast_to(val, sample_shape + val.shape)
+            elif isinstance(comp, Distribution):
                 # Root distribution: sample with sample_shape
                 sampled[cname] = comp.sample(subkey, sample_shape)
             else:
@@ -589,20 +595,34 @@ class SequentialJointDistribution(JointDistribution):
         from .distribution import _auto_key
         if key is None:
             key = _auto_key()
-        return self._sample_sequential(key, sample_shape)
+        full = self._sample_sequential(key, sample_shape)
+        # Return only unconditioned components
+        return {k: v for k, v in full.items() if k not in self._conditioned_names}
 
     def log_prob(self, x: ArrayLike) -> Array:
-        """Evaluate log p(x) = sum of conditional log-probs."""
-        x = jnp.asarray(x)
-        structured = self.unflatten(x)
-        total = jnp.zeros(x.shape[:-1])
+        """Evaluate the (unnormalized) conditional log-density.
 
+        For an unconditioned joint, this is the full joint log p(x).
+        After conditioning, this is log p(unconditioned, conditioned=values),
+        which is proportional to log p(unconditioned | conditioned=values).
+        """
+        x = jnp.asarray(x)
+        # unflatten gives only unconditioned components
+        structured = self.unflatten(x)
+
+        # Add conditioned values so callables can receive them
+        for cname, val in self._conditioned_values.items():
+            structured[cname] = val
+
+        # Sum log-probs over all components (conditioned ones contribute
+        # the likelihood term, making this proportional to the conditional)
+        total = jnp.zeros(x.shape[:-1])
         for cname, comp in self._raw_components.items():
             val = structured[cname]
             if isinstance(comp, Distribution):
                 total = total + comp.log_prob(val)
             else:
-                # Build conditional distribution from observed parent values
+                # Build conditional distribution from parent values
                 sig = inspect.signature(comp)
                 call_kw = {p: structured[p] for p in sig.parameters if p in structured}
                 cond_dist = comp(**call_kw)
@@ -636,16 +656,17 @@ class SequentialJointDistribution(JointDistribution):
 
     def condition_on(self, **observed: ArrayLike) -> "SequentialJointDistribution":
         """
-        Condition on observed component values.
+        Return the conditional distribution over the remaining (unconditioned)
+        components, representing p(unconditioned | conditioned = values).
 
-        Conditioned components are replaced by :class:`ConditionedComponent`
-        instances.  The resulting distribution is sampleable as long as every
-        conditioned non-root component has all of its parents also conditioned
-        (so that no unconditioned ancestor would be drawn from the prior
-        instead of the posterior).  Root components have no parents, so
-        conditioning on them is always sampleable.  If the sampleability
-        condition is violated, a :class:`NotImplementedError` is raised at
-        sample time.  ``log_prob()`` always works regardless but may be unnormalized. 
+        The resulting distribution is sampleable as long as every conditioned
+        non-root component has all of its parents also conditioned (so that no
+        unconditioned ancestor would be drawn from the prior instead of the
+        posterior).  Root components have no parents, so conditioning on them
+        is always sampleable.  If the sampleability condition is violated, a
+        :class:`NotImplementedError` is raised at sample time.
+        ``log_prob()`` always works regardless (returns the unnormalized
+        conditional log-density).
 
         Parameters
         ----------
@@ -659,34 +680,41 @@ class SequentialJointDistribution(JointDistribution):
                 f"Available: {self.component_names}"
             )
 
-        new_raw = {}
-        for cname, comp in self._raw_components.items():
-            if cname in observed:
-                base = self._proto_components[cname]
-                new_raw[cname] = ConditionedComponent(
-                    base=base,
-                    value=observed[cname],
-                    name=cname,
-                )
-            else:
-                new_raw[cname] = comp
+        all_conditioned = self._conditioned_names | frozenset(observed)
+        if len(all_conditioned) >= len(self._raw_components):
+            raise ValueError("Cannot condition on all components.")
 
         result = SequentialJointDistribution.__new__(SequentialJointDistribution)
-        result._raw_components = new_raw
+        result._raw_components = dict(self._raw_components)  # originals unchanged
         result._name = self._name
-        result._components = dict(self._components)
-        result._component_slices = dict(self._component_slices)
-        result._total_dim = self._total_dim
         result._proto_components = dict(self._proto_components)
         result._callable_parents = self._callable_parents
-        result._conditioned_names = self._conditioned_names | frozenset(observed)
+        result._conditioned_names = all_conditioned
+        result._conditioned_values = {
+            **self._conditioned_values,
+            **{k: jnp.asarray(v, dtype=jnp.float32) for k, v in observed.items()},
+        }
         result._sampleable_error = self._compute_sampleable_error(
             result._conditioned_names, result._callable_parents,
         )
-        # Update proto components for conditioned values
-        for cname in observed:
-            result._proto_components[cname] = result._raw_components[cname]
-            result._components[cname] = result._raw_components[cname]
+
+        # Expose only unconditioned components
+        unconditioned = {
+            k: v for k, v in self._proto_components.items()
+            if k not in result._conditioned_names
+        }
+        result._components = unconditioned
+
+        # Recompute slices for unconditioned components only
+        slices = {}
+        offset = 0
+        for cname, cdist in unconditioned.items():
+            dim = int(np.prod(cdist.event_shape)) if cdist.event_shape else 1
+            slices[cname] = slice(offset, offset + dim)
+            offset += dim
+        result._component_slices = slices
+        result._total_dim = offset
+
         result.with_source(Provenance(
             "condition_on", parents=(self,),
             metadata={"conditioned": list(observed)},
