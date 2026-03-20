@@ -1,388 +1,786 @@
-# distributions/distribution.py
+"""
+Core distribution abstractions for prob-pipe.
+
+Provides:
+  - ``Distribution``          – Abstract base class following TFP shape semantics.
+  - ``TFPDistribution``       – Mixin that delegates to an internal ``tfd.*`` instance.
+  - ``EmpiricalDistribution`` – Weighted set of samples.
+  - ``Provenance``            – Lightweight lineage tracker.
+"""
+
 from __future__ import annotations
 
-from typing import Generic, TypeVar, Any
-from collections.abc import Callable
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any
 
+import jax
+import jax.numpy as jnp
 import numpy as np
+import tensorflow_probability.substrates.jax.distributions as tfd
 
-from ..custom_types import Array, ArrayLike, PRNG, Float, Number
-from ..array_backend.utils import _ensure_matrix, _ensure_vector
-from ..linalg.linear_operator import LinOp, RootLinOp
+from ..custom_types import Array, ArrayLike, PRNGKey
 
-__all__ = [
-    "Distribution",
-    "EmpiricalDistribution",
-]
+# ---------------------------------------------------------------------------
+# Auto-key helper (for convenience when key is omitted)
+# ---------------------------------------------------------------------------
 
-NumberT = TypeVar("NumberT", bound=Number)
-
-# -------------------------- Abstract Classes ----------------------------
+_AUTO_KEY_COUNTER: int = 0
 
 
-class Distribution(Generic[NumberT], ABC):
+def _auto_key() -> PRNGKey:
+    """Generate a JAX PRNGKey from a global counter.
+
+    Convenient for interactive / exploratory use.  Not reproducible
+    across runs — pass an explicit key when reproducibility matters.
     """
-    Abstract base class for probability distributions.
+    global _AUTO_KEY_COUNTER
+    key = jax.random.PRNGKey(_AUTO_KEY_COUNTER)
+    _AUTO_KEY_COUNTER += 1
+    return key
 
-    This class defines the general interface for any probabilistic
-    distribution implementation used within probpipe. Subclasses are
-    expected to implement methods for computing density, log-density,
-    sampling, and expectations.
 
-    Subclasses that cannot support a specific operation (e.g., sampling)
-    may leave that method unimplemented.
+# ---------------------------------------------------------------------------
+# Constraints
+# ---------------------------------------------------------------------------
 
-    Type Variables:
-        T: Numeric data type (e.g., float or np.floating).
+class Constraint:
+    """Describes the support of a distribution (the set of valid values)."""
+
+    def check(self, value: ArrayLike) -> Array:
+        """Return a boolean array indicating which elements satisfy the constraint."""
+        raise NotImplementedError
+
+    def __repr__(self) -> str:
+        return self.__class__.__name__
+
+    def __eq__(self, other: object) -> bool:
+        return type(self) is type(other) and self.__dict__ == other.__dict__
+
+    def __hash__(self) -> int:
+        return hash((type(self), tuple(sorted(self.__dict__.items()))))
+
+
+class _Real(Constraint):
+    """All real numbers."""
+    def check(self, value: ArrayLike) -> Array:
+        return jnp.isfinite(jnp.asarray(value))
+    def __repr__(self) -> str:
+        return "real"
+
+class _Positive(Constraint):
+    """Strictly positive reals (0, inf)."""
+    def check(self, value: ArrayLike) -> Array:
+        return jnp.asarray(value) > 0
+    def __repr__(self) -> str:
+        return "positive"
+
+class _NonNegative(Constraint):
+    """Non-negative reals [0, inf)."""
+    def check(self, value: ArrayLike) -> Array:
+        return jnp.asarray(value) >= 0
+    def __repr__(self) -> str:
+        return "non_negative"
+
+class _NonNegativeInteger(Constraint):
+    """Non-negative integers {0, 1, 2, ...}."""
+    def check(self, value: ArrayLike) -> Array:
+        v = jnp.asarray(value)
+        return (v >= 0) & (v == jnp.floor(v))
+    def __repr__(self) -> str:
+        return "non_negative_integer"
+
+class _Boolean(Constraint):
+    """Binary values {0, 1}."""
+    def check(self, value: ArrayLike) -> Array:
+        v = jnp.asarray(value)
+        return (v == 0) | (v == 1)
+    def __repr__(self) -> str:
+        return "boolean"
+
+class _UnitInterval(Constraint):
+    """Closed unit interval [0, 1]."""
+    def check(self, value: ArrayLike) -> Array:
+        v = jnp.asarray(value)
+        return (v >= 0) & (v <= 1)
+    def __repr__(self) -> str:
+        return "unit_interval"
+
+class _Simplex(Constraint):
+    """Probability simplex (non-negative, sums to 1 along last axis)."""
+    def check(self, value: ArrayLike) -> Array:
+        v = jnp.asarray(value)
+        return (jnp.all(v >= 0, axis=-1)) & (jnp.abs(jnp.sum(v, axis=-1) - 1.0) < 1e-5)
+    def __repr__(self) -> str:
+        return "simplex"
+
+class _PositiveDefinite(Constraint):
+    """Positive-definite matrices."""
+    def check(self, value: ArrayLike) -> Array:
+        v = jnp.asarray(value)
+        eigvals = jnp.linalg.eigvalsh(v)
+        return jnp.all(eigvals > 0, axis=-1)
+    def __repr__(self) -> str:
+        return "positive_definite"
+
+class _Sphere(Constraint):
+    """Unit sphere (vectors with unit L2 norm)."""
+    def check(self, value: ArrayLike) -> Array:
+        v = jnp.asarray(value)
+        return jnp.abs(jnp.linalg.norm(v, axis=-1) - 1.0) < 1e-5
+    def __repr__(self) -> str:
+        return "sphere"
+
+class _Interval(Constraint):
+    """Half-open or closed interval [low, high]."""
+    def __init__(self, low: float, high: float):
+        self.low = low
+        self.high = high
+    def check(self, value: ArrayLike) -> Array:
+        v = jnp.asarray(value)
+        return (v >= self.low) & (v <= self.high)
+    def __repr__(self) -> str:
+        return f"interval({self.low}, {self.high})"
+
+class _GreaterThan(Constraint):
+    """Values strictly greater than a lower bound."""
+    def __init__(self, lower_bound: float):
+        self.lower_bound = lower_bound
+    def check(self, value: ArrayLike) -> Array:
+        return jnp.asarray(value) > self.lower_bound
+    def __repr__(self) -> str:
+        return f"greater_than({self.lower_bound})"
+
+class _IntegerInterval(Constraint):
+    """Integer values in [low, high]."""
+    def __init__(self, low: int, high: int):
+        self.low = low
+        self.high = high
+    def check(self, value: ArrayLike) -> Array:
+        v = jnp.asarray(value)
+        return (v >= self.low) & (v <= self.high) & (v == jnp.floor(v))
+    def __repr__(self) -> str:
+        return f"integer_interval({self.low}, {self.high})"
+
+
+# Singleton instances for common constraints
+real = _Real()
+positive = _Positive()
+non_negative = _NonNegative()
+non_negative_integer = _NonNegativeInteger()
+boolean = _Boolean()
+unit_interval = _UnitInterval()
+simplex = _Simplex()
+positive_definite = _PositiveDefinite()
+sphere = _Sphere()
+
+# Factory functions for parameterized constraints
+def interval(low: float, high: float) -> _Interval:
+    return _Interval(low, high)
+
+def greater_than(lower_bound: float) -> _GreaterThan:
+    return _GreaterThan(lower_bound)
+
+def integer_interval(low: int, high: int) -> _IntegerInterval:
+    return _IntegerInterval(low, high)
+
+
+# Immediate supersets in the constraint partial order.
+# Each constraint type maps to the types that are its direct (one-step)
+# supersets.  The transitive closure is computed once by ``_all_supersets``.
+_IMMEDIATE_SUPERSETS: dict[type, tuple[type, ...]] = {
+    _Boolean: (_NonNegativeInteger, _UnitInterval),
+    _UnitInterval: (_NonNegative,),
+    _Positive: (_NonNegative,),
+    _NonNegative: (_Real,),
+    _NonNegativeInteger: (_NonNegative,),
+    _Simplex: (_UnitInterval,),
+    _Sphere: (_Real,),
+    _PositiveDefinite: (_Real,),
+}
+
+_ALL_SUPERSETS: dict[type, set[type]] | None = None
+
+
+def _all_supersets() -> dict[type, set[type]]:
+    """Return the transitive closure of ``_IMMEDIATE_SUPERSETS``.
+
+    Computed once and cached at module level.
     """
+    global _ALL_SUPERSETS
+    if _ALL_SUPERSETS is not None:
+        return _ALL_SUPERSETS
 
-    def sample(self, n_samples: int = 1) -> Array[NumberT]:
+    result: dict[type, set[type]] = {}
+
+    def _collect(t: type) -> set[type]:
+        if t in result:
+            return result[t]
+        immediate = _IMMEDIATE_SUPERSETS.get(t, ())
+        sups: set[type] = set(immediate)
+        for parent in immediate:
+            sups |= _collect(parent)
+        result[t] = sups
+        return sups
+
+    for t in _IMMEDIATE_SUPERSETS:
+        _collect(t)
+
+    _ALL_SUPERSETS = result
+    return result
+
+
+def _supports_compatible(source: Constraint, target: Constraint) -> bool:
+    """Check whether *source* support is a subset of *target* support.
+
+    Conservative: returns ``True`` when in doubt (e.g. for parameterized
+    constraints that can't be compared structurally).
+    """
+    # Identical constraints are always compatible
+    if source == target:
+        return True
+
+    supersets = _all_supersets()
+    source_type = type(source)
+    target_type = type(target)
+
+    # source ⊆ target?
+    if target_type in supersets.get(source_type, set()):
+        return True
+
+    # target ⊆ source means target is *narrower* — incompatible
+    if source_type in supersets.get(target_type, set()):
+        return False
+
+    # Parameterized constraints: interval/greater_than
+    if isinstance(source, _Interval) and isinstance(target, _Interval):
+        return source.low >= target.low and source.high <= target.high
+    if isinstance(source, _Interval) and isinstance(target, _Real):
+        return True
+    if isinstance(source, _GreaterThan) and isinstance(target, _GreaterThan):
+        return source.lower_bound >= target.lower_bound
+    if isinstance(source, _GreaterThan) and isinstance(target, _Real):
+        return True
+    if isinstance(source, (_Positive, _NonNegative)) and isinstance(target, _GreaterThan):
+        return True  # (0, inf) or [0, inf) ⊂ (lb, inf) when lb <= 0
+    if isinstance(source, _IntegerInterval) and isinstance(target, _IntegerInterval):
+        return source.low >= target.low and source.high <= target.high
+    if isinstance(source, _IntegerInterval) and isinstance(target, (_NonNegativeInteger, _Real)):
+        return True
+
+    # Conservative: allow when we can't determine
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Provenance
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Provenance:
+    """Tracks how a distribution was created."""
+
+    operation: str
+    parents: tuple[Distribution, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __repr__(self) -> str:
+        parent_names = ", ".join(
+            p.name or type(p).__name__ for p in self.parents
+        )
+        return f"Provenance({self.operation!r}, parents=[{parent_names}])"
+
+    # -- Serialization -----------------------------------------------------
+
+    def to_dict(self, *, recurse: bool = True) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dict.
+
+        Parameters
+        ----------
+        recurse : bool
+            If True, recursively serialize parent provenance chains.
+            If False, only include parent type/name references.
         """
-        Samples data points from the distribution.
+        parent_dicts = []
+        for p in self.parents:
+            entry: dict[str, Any] = {
+                "type": type(p).__name__,
+                "name": p.name,
+            }
+            if recurse and p.source is not None:
+                entry["source"] = p.source.to_dict(recurse=True)
+            parent_dicts.append(entry)
 
-        This method may be optionally implemented by subclasses that
-        support random sampling. It returns `n_samples` draws from
-        the distribution.
+        # Filter metadata to JSON-serializable values
+        safe_metadata = {}
+        for k, v in self.metadata.items():
+            if isinstance(v, (str, int, float, bool, list, dict, type(None))):
+                safe_metadata[k] = v
+            else:
+                safe_metadata[k] = str(v)
 
-        Args:
-            n_samples: The number of samples to generate.
-
-        Returns:
-            An array containing `n_samples` draws from the distribution.
-
-        Raises:
-            NotImplementedError: If the subclass does not implement this method.
-        """
-        raise NotImplementedError("This method may be implemented by subclasses (optional)")
-    
-    def density(self, x: Array[NumberT]) -> Array[Float]:
-        """
-        Computes the probability density p(data) under this distribution.
-
-        This method may be optionally implemented by subclasses that
-        can evaluate densities. The returned array corresponds to the
-        pointwise probability density values reduced over event
-        dimensions (i.e., matching the batch shape).
-
-        Args:
-            data: Input array of observations for which to compute densities.
-
-        Returns:
-            Probability density values for each input point.
-
-        Raises:
-            NotImplementedError: If the subclass does not implement this method.
-        """
-        raise NotImplementedError("This method may be implemented by subclasses (optional)")
-    
-    def log_density(self, x: Array[NumberT]) -> Array[Float]:
-        """
-        Computes the log-probability density log p(data).
-
-        This method may be optionally implemented by subclasses that
-        can evaluate log-densities. The returned array corresponds to
-        the pointwise log-probability values reduced over event
-        dimensions (i.e., matching the batch shape).
-
-        Args:
-            data: Input array of observations for which to compute log-densities.
-
-        Returns:
-            Log-probability values for each input point.
-
-        Raises:
-            NotImplementedError: If the subclass does not implement this method.
-        """
-        raise NotImplementedError("This method may be implemented by subclasses (optional)")
-    
-
-    def expectation(self, func: Callable[[Array[NumberT]], Array]) -> Distribution:
-        """
-        Computes the expectation of a function under this distribution.
-
-        This method may be optionally implemented by subclasses that can
-        perform Monte Carlo estimation. The result is typically a new
-        `Distribution` instance representing the mean of the function
-        applied to random samples drawn from this distribution.
-
-        Args:
-            func: A callable function f(x) to compute the expectation of.
-
-        Returns:
-            A distribution representing E[f(X)].
-
-        Raises:
-            NotImplementedError: If the subclass does not implement this method.
-        """
-
-        raise NotImplementedError("This method may be implemented by subclasses (optional)")
-    
+        return {
+            "operation": self.operation,
+            "parents": parent_dicts,
+            "metadata": safe_metadata,
+        }
 
     @classmethod
-    @abstractmethod
-    def from_distribution(cls, other: Distribution, **fit_kwargs: Any) -> Distribution[NumberT]:
+    def from_dict(cls, d: dict[str, Any]) -> "Provenance":
+        """Reconstruct from a dict produced by :meth:`to_dict`.
+
+        Parent distributions are not available at deserialization time, so
+        ``parents`` will be an empty tuple.  The parent information is
+        preserved in the dict under ``"parents"`` for inspection.
         """
-        Convert the distribution `other` into a distribution of type `cls`. This will 
-        typically be an approximation. Examples including moment matching and 
-        kernel density estimation (KDE).
-        """
-        raise NotImplementedError("This method should be implemented by subclasses")
-
-
-class EmpiricalDistribution(Distribution):
-    """ Container for (weighted) empirical samples in R^d.
-
-    The discrete distribution defined by a set of `n`, potentially weighed,
-    samples. 
-    
-    Args:
-        x: array-like, shape (n, d) or (n,)
-            The samples defining the empirical distribution.
-        weights: array-like, shape (n,), optional
-            Nonnegative weights; will be normalized to sum to 1. If None, 
-            uniform weights are assigned.
-        rng: np.random.Generator, optional
-            Random number generator for sampling.
-    """
-
-    def __init__(
-        self,
-        x: Array,
-        weights: Array | None = None,
-        *,
-        rng: PRNG | None = None,
-    ):
-        X = _ensure_matrix(x, as_row_matrix=True)
-        n, d = X.shape
-        if n < 1:
-            raise ValueError("EmpiricalDistribution requires at least one sample.")
-
-        if weights is None:
-            w = np.full(n, 1.0 / n, dtype=X.dtype)
-        else:
-            w = _ensure_vector(weights, as_column=False, length=n)
-            if np.any(w < 0):
-                raise ValueError("weights must be nonnegative.")
-            s = w.sum()
-            if s <= 0:
-                raise ValueError("weights cannot all be zero.")
-            w = w / s
-
-        self._X = X.astype(float)
-        self._w = w.astype(float)
-        self._n = int(n)
-        self._d = int(d)
-        self._rng = rng or np.random.default_rng()
-
-        # Compute empirical mean and covariance.
-        self._mean = (self._w[:, np.newaxis] * self._X).sum(axis=0)
-        cov_root = ((self._X - self._mean) * np.sqrt(self._w)[:, np.newaxis]).T  # (d,n)
-        self._cov = RootLinOp(cov_root)
-
-        # cumulative weights for fast inverse-transform resampling
-        self._cw = np.cumsum(self._w)
-
-    @property
-    def n(self) -> int:
-        """Number of stored samples."""
-        return self._n
-
-    @property
-    def dim(self) -> int:
-        """Dimensionality."""
-        return self._d
-
-    @property
-    def samples(self) -> Array:
-        """A view of the stored samples, shape (n, d)."""
-        return self._X
-
-    @property
-    def weights(self) -> Array:
-        """A view of normalized weights, shape (n,)."""
-        return self._w
-
-    def mean(self) -> Array:
-        """Weighted mean, shape (d,)."""
-        return self._mean
-
-    def cov(self) -> LinOp:
-        """Weighted *population* covariance, shape (d, d)."""
-        return self._cov
-
-    def var(self) -> Array:
-        """Weighted population variance per dimension, shape (d,)."""
-        return self._cov.diag()
-
-    def std(self) -> Array:
-        """Weighted population standard deviation per dimension, shape (d,)."""
-        return np.sqrt(np.maximum(self.var(), 0.0))
-
-    def __str__(self) -> str:
-        """String representation of the empirical distribution."""
-        # Check if weights are uniform
-        uniform_weights = np.allclose(self._w, 1.0 / self._n)
-        weight_info = "uniform" if uniform_weights else "weighted"
-
-        # Format mean and std for display
-        if self._d == 1:
-            mean_str = f"{self._mean[0]:.4g}"
-            std_str = f"{self.std()[0]:.4g}"
-        elif self._d <= 3:
-            mean_str = "[" + ", ".join(f"{m:.4g}" for m in self._mean) + "]"
-            std_str = "[" + ", ".join(f"{s:.4g}" for s in self.std()) + "]"
-        else:
-            mean_str = f"[{self._mean[0]:.4g}, ..., {self._mean[-1]:.4g}]"
-            std_str = f"[{self.std()[0]:.4g}, ..., {self.std()[-1]:.4g}]"
-
-        return (
-            f"EmpiricalDistribution(n={self._n}, dim={self._d}, {weight_info}, "
-            f"mean={mean_str}, std={std_str})"
+        return cls(
+            operation=d["operation"],
+            parents=(),
+            metadata={**d.get("metadata", {}), "_parents_info": d.get("parents", [])},
         )
 
-    def sample(self, n_samples: int = 1, *, replace: bool = True) -> Array:
-        """
-        Resample draws from the empirical distribution with replacement,
-        using the stored weights. Returns shape (n_samples, d).
-        """
-        n_samples = int(n_samples)
-        if not replace and n_samples > self._n:
-            raise ValueError("Cannot sample more than n without replacement.")
-        idx = self._rng.choice(self._n, size=n_samples, replace=replace, p=self._w)
-        return self._X[idx]
 
-    rvs = sample
+# ---------------------------------------------------------------------------
+# Distribution ABC
+# ---------------------------------------------------------------------------
 
-    def density(self, x: Array) -> Array:
-        """Approximate density using a Gaussian fit to the empirical samples. See log_density."""
-        return np.exp(self.log_density(x))
+class Distribution(ABC):
+    """
+    Abstract base for all prob-pipe distributions.
 
-    def log_density(self, x: Array) -> Array:
-        """
-        Approximate log density using a Gaussian fit to the empirical samples.
-        """
-        from .real_vector.gaussian import Gaussian
-        return Gaussian(mean=self._mean, cov=self._cov.to_dense()).log_density(x)
+    Shape semantics follow TFP conventions:
 
-    # TODO: come back to this:
-    def expectation(
+    * ``event_shape``  – shape of a single draw (e.g. ``(d,)`` for a
+      *d*-dimensional vector distribution).
+    * ``batch_shape``  – shape of independent-but-not-identically-distributed
+      parameter batches.
+    * ``sample(key, sample_shape)`` returns an array of shape
+      ``sample_shape + batch_shape + event_shape``.
+    """
+
+    # -- core abstract interface ---------------------------------------------
+
+    @property
+    @abstractmethod
+    def event_shape(self) -> tuple[int, ...]:
+        ...
+
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return ()
+
+    @property
+    def dtype(self) -> jnp.dtype:
+        return jnp.float32
+
+    @abstractmethod
+    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+        """Subclass implementation of sampling (called by :meth:`sample`)."""
+        ...
+
+    def sample(
         self,
-        func: Callable[[Array], Array],
-        *,
-        n_mc: int = 2048,
-    ):
-        raise NotImplemented
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
+        """Draw samples from this distribution.
 
+        Parameters
+        ----------
+        key : PRNGKey, optional
+            JAX PRNG key.  If ``None``, a key is generated automatically
+            from a global counter (convenient for interactive use but not
+            reproducible across runs).
+        sample_shape : tuple of int
+            Leading dimensions for the returned array.
         """
-        Y = np.asarray(func(self._X), dtype=float)
+        if key is None:
+            key = _auto_key()
+        return self._sample(key, sample_shape)
 
-        if Y.ndim == 1:
-            m = float((self._w * Y).sum())
-            var = float((self._w * (Y - m) ** 2).sum())
-            se = np.sqrt(max(var, 0.0)) / np.sqrt(n_mc)
-            return Gaussian(m, max(se, 1e-12), rng=self._rng)
-        else:
-            Y = _ensure_matrix(Y, as_row_matrix=True)
-            m = (self._w[:, None] * Y).sum(axis=0)
-            diff = Y - m
-            cov = diff.T @ (diff * self._w[:, None])
-            cov_mean = cov / float(n_mc)
-            cov_mean = 0.5 * (cov_mean + cov_mean.T) + 1e-12 * np.eye(cov_mean.shape[0])
-            return Gaussian(mean=m, cov=cov_mean, rng=self._rng)
-        """
+    @abstractmethod
+    def log_prob(self, x: ArrayLike) -> Array:
+        ...
+
+    # -- optional concrete methods ------------------------------------------
+
+    def prob(self, x: ArrayLike) -> Array:
+        return jnp.exp(self.log_prob(x))
+
+    def mean(self) -> Array:
+        raise NotImplementedError(f"{type(self).__name__}.mean()")
+
+    def variance(self) -> Array:
+        raise NotImplementedError(f"{type(self).__name__}.variance()")
+
+    # -- support ------------------------------------------------------------
+
+    @property
+    def support(self) -> Constraint:
+        """The support of this distribution (set of values with non-zero density)."""
+        raise NotImplementedError(f"{type(self).__name__}.support")
+
+    # -- naming & provenance ------------------------------------------------
+
+    @property
+    def name(self) -> str | None:
+        return getattr(self, "_name", None)
+
+    @property
+    def source(self) -> Provenance | None:
+        return getattr(self, "_source", None)
+
+    def with_source(self, source: Provenance) -> Distribution:
+        """Attach provenance to this distribution (write-once)."""
+        if getattr(self, "_source", None) is not None:
+            raise RuntimeError(
+                f"Source already set on {self!r}. "
+                "Provenance is write-once; create a new distribution instead."
+            )
+        self._source = source
+        return self
+
+    # -- conversion ---------------------------------------------------------
 
     @classmethod
     def from_distribution(
         cls,
         other: Distribution,
-        **fit_kwargs: Any,
-    ) -> EmpiricalDistribution:
-        samples = other.sample(fit_kwargs.get("num_samples", 2048))
-        return cls(samples)
-        
+        *,
+        key: PRNGKey | None = None,
+        check_support: bool = True,
+        **kwargs: Any,
+    ) -> Distribution:
+        """Convert *other* into an instance of *cls*.
+
+        Parameters
+        ----------
+        other : Distribution
+            Source distribution to convert.
+        key : PRNGKey, optional
+            JAX PRNG key for sampling-based conversion.  If ``None``,
+            a key is generated automatically via ``_auto_key()``.
+        check_support : bool
+            If ``True`` (default), verify the supports are compatible
+            before converting. Raises ``ValueError`` on mismatch.
+        **kwargs
+            Subclass-specific keyword arguments. Common options:
+
+            * ``num_samples`` (int, default 1024) — number of samples
+              drawn from *other* for moment-matching or empirical
+              estimation. Ignored when *other* is the same class
+              (parameters are copied directly).
+            * ``total_count`` (int) — required by ``Binomial``,
+              ``NegativeBinomial``, and ``Multinomial`` when *other*
+              is not the same class.
+            * ``name`` (str | None) — name for the resulting
+              distribution; defaults to ``other.name``.
+        """
+        if key is None:
+            key = _auto_key()
+        if check_support:
+            cls._check_support_compatible(other)
+        return cls._from_distribution(other, key=key, **kwargs)
+
+    @classmethod
+    def _from_distribution(
+        cls,
+        other: Distribution,
+        *,
+        key: PRNGKey,
+        **kwargs: Any,
+    ) -> Distribution:
+        """Subclass hook for conversion logic.
+
+        Called by :meth:`from_distribution` after key generation and
+        support checking.  *key* is guaranteed to be a valid PRNGKey.
+        """
+        raise NotImplementedError(
+            f"{cls.__name__}.from_distribution() is not implemented."
+        )
+
+    @classmethod
+    def _check_support_compatible(cls, other: Distribution) -> None:
+        """Raise ValueError if *other*'s support is incompatible with *cls*."""
+        try:
+            target_support = cls._default_support()
+        except NotImplementedError:
+            return  # can't check if target doesn't declare support
+        try:
+            source_support = other.support
+        except NotImplementedError:
+            return  # can't check if source doesn't declare support
+
+        if not _supports_compatible(source_support, target_support):
+            raise ValueError(
+                f"Cannot convert {type(other).__name__} (support={source_support}) "
+                f"to {cls.__name__} (support={target_support}). "
+                f"Pass check_support=False to override."
+            )
+
+    @classmethod
+    def _default_support(cls) -> Constraint:
+        """Return the default support for this distribution class.
+
+        Override in subclasses. Used by ``_check_support_compatible``
+        when no instance is available yet.
+        """
+        raise NotImplementedError
+
+    # -- repr ---------------------------------------------------------------
+
+    def __repr__(self) -> str:
+        parts = [type(self).__name__]
+        if self.name:
+            parts.append(f"name={self.name!r}")
+        parts.append(f"event_shape={self.event_shape}")
+        if self.batch_shape:
+            parts.append(f"batch_shape={self.batch_shape}")
+        return f"{parts[0]}({', '.join(parts[1:])})"
 
 
-class BootstrapDistribution(EmpiricalDistribution):
+# ---------------------------------------------------------------------------
+# TFPDistribution mixin
+# ---------------------------------------------------------------------------
+
+class TFPDistribution(Distribution):
     """
-    Empirical distribution over bootstrap replicates of a statistic.
+    Base class for distributions backed by a ``tfd.Distribution`` instance.
 
-    Semantics:
-      - 'samples' (inherited) are the bootstrap replicates theta* (shape (B, k)).
-      - 'replicates' is an alias to 'samples' for user-facing clarity.
-      - All summaries (mean/cov/var/std), resampling (sample/rvs), and
-        expectation() behavior are inherited from EmpiricalDistribution.
+    Subclasses set ``self._tfp_dist`` in ``__init__``.  Sampling,
+    ``log_prob``, ``mean``, and ``variance`` delegate to TFP.
+    """
 
-    Notes
-    -----
-    This class intentionally reuses EmpiricalDistribution's implementation to avoid
-    duplication. The only additions are naming (replicates alias) and a convenience
-    constructor 'from_data' to generate bootstrap replicates.
+    _tfp_dist: tfd.Distribution
+
+    # -- shape delegation ---------------------------------------------------
+
+    @property
+    def event_shape(self) -> tuple[int, ...]:
+        return tuple(self._tfp_dist.event_shape)
+
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return tuple(self._tfp_dist.batch_shape)
+
+    @property
+    def dtype(self) -> jnp.dtype:
+        return self._tfp_dist.dtype
+
+    # -- sampling & density -------------------------------------------------
+
+    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+        return self._tfp_dist.sample(seed=key, sample_shape=sample_shape)
+
+    def log_prob(self, x: ArrayLike) -> Array:
+        return self._tfp_dist.log_prob(jnp.asarray(x))
+
+    def prob(self, x: ArrayLike) -> Array:
+        return self._tfp_dist.prob(jnp.asarray(x))
+
+    def mean(self) -> Array:
+        return self._tfp_dist.mean()
+
+    def variance(self) -> Array:
+        return self._tfp_dist.variance()
+
+
+# ---------------------------------------------------------------------------
+# EmpiricalDistribution
+# ---------------------------------------------------------------------------
+
+class EmpiricalDistribution(Distribution):
+    """
+    Weighted empirical distribution over a finite set of samples.
+
+    Parameters
+    ----------
+    samples : array-like, shape ``(n, *event_shape)``
+        The support points.  The leading axis is the sample axis.
+    weights : array-like, shape ``(n,)``, optional
+        Non-negative weights (normalised internally).  Mutually exclusive
+        with *log_weights*.  When neither is given the distribution is
+        uniform.
+    log_weights : array-like, shape ``(n,)``, optional
+        Log-unnormalised weights.  Preferred when weights span many orders
+        of magnitude (e.g. importance sampling).  Normalised internally via
+        ``jax.nn.softmax``.  Mutually exclusive with *weights*.
+    name : str, optional
+        An optional name for provenance / JointDistribution integration.
     """
 
     def __init__(
         self,
-        replicates: Array,
-        weights: Array | None = None,
+        samples: ArrayLike,
+        weights: ArrayLike | None = None,
         *,
-        rng: PRNG | None = None,
+        log_weights: ArrayLike | None = None,
+        name: str | None = None,
     ):
-        # Just forward to EmpiricalDistribution
-        super().__init__(replicates, weights, rng=rng)
+        samples = jnp.asarray(samples, dtype=jnp.float32)
+        if samples.ndim == 0:
+            raise ValueError("samples must have at least 1 dimension (the sample axis).")
 
-    # --------- Aliases for semantics ---------
+        n = samples.shape[0]
+
+        if weights is not None and log_weights is not None:
+            raise ValueError(
+                "Provide either weights or log_weights, not both."
+            )
+
+        if weights is not None:
+            weights = jnp.asarray(weights, dtype=jnp.float32)
+            if weights.shape != (n,):
+                raise ValueError(
+                    f"weights shape {weights.shape} does not match "
+                    f"number of samples {n}."
+                )
+            if jnp.any(weights < 0):
+                raise ValueError("weights must be non-negative.")
+            total = jnp.sum(weights)
+            if total <= 0:
+                raise ValueError("weights must sum to a positive value.")
+            self._log_weights = jnp.log(weights)
+            self._is_uniform = False
+        elif log_weights is not None:
+            log_weights = jnp.asarray(log_weights, dtype=jnp.float32)
+            if log_weights.shape != (n,):
+                raise ValueError(
+                    f"log_weights shape {log_weights.shape} does not match "
+                    f"number of samples {n}."
+                )
+            self._log_weights = log_weights
+            self._is_uniform = False
+        else:
+            self._log_weights = None
+            self._is_uniform = True
+
+        self._samples = samples
+        self._weights_cache: Array | None = None
+        self._name = name
+
+    # -- properties ---------------------------------------------------------
 
     @property
-    def replicates(self) -> Array:
-        """Alias for the stored bootstrap replicates, shape (B, k)."""
-        return self.samples
+    def n(self) -> int:
+        return self._samples.shape[0]
 
-    # --------- Convenience constructor ---------
+    @property
+    def dim(self) -> int:
+        """Flat dimensionality of each sample (product of event_shape, or 1 for scalars)."""
+        return max(1, int(np.prod(self._samples.shape[1:])))
+
+    @property
+    def samples(self) -> Array:
+        return self._samples
+
+    @property
+    def is_uniform(self) -> bool:
+        """True when all samples have equal weight."""
+        return self._is_uniform
+
+    @property
+    def weights(self) -> Array:
+        """Normalised weights, shape ``(n,)``."""
+        if self._is_uniform:
+            return jnp.ones(self.n, dtype=jnp.float32) / self.n
+        if self._weights_cache is None:
+            self._weights_cache = jax.nn.softmax(self._log_weights)
+        return self._weights_cache
+
+    @property
+    def log_weights(self) -> Array | None:
+        """Normalised log-weights, shape ``(n,)``.  ``None`` when uniform."""
+        if self._is_uniform:
+            return None
+        return self._log_weights - jax.scipy.special.logsumexp(self._log_weights)
+
+    @property
+    def event_shape(self) -> tuple[int, ...]:
+        return self._samples.shape[1:]
+
+    @property
+    def dtype(self) -> jnp.dtype:
+        return self._samples.dtype
+
+    @property
+    def support(self) -> Constraint:
+        return real  # empirical samples can be any real values
+
+    # -- sampling -----------------------------------------------------------
+
+    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+        n_draws = int(np.prod(sample_shape)) if sample_shape else 1
+        if self._is_uniform:
+            indices = jax.random.randint(key, shape=(n_draws,), minval=0, maxval=self.n)
+        else:
+            indices = jax.random.choice(
+                key, self.n, shape=(n_draws,), p=self.weights, replace=True,
+            )
+        draws = self._samples[indices]
+        if sample_shape:
+            return draws.reshape(sample_shape + self.event_shape)
+        return draws.squeeze(axis=0)
+
+    # -- density (Gaussian approximation) -----------------------------------
+
+    def log_prob(self, x: ArrayLike) -> Array:
+        """Gaussian-approximation log-density."""
+        x = jnp.asarray(x)
+        mu = self.mean()
+        var = self.variance()
+        # Diagonal Gaussian approx; clamp variance to avoid log(0)
+        var = jnp.maximum(var, 1e-12)
+        log_norm = -0.5 * jnp.sum(jnp.log(2 * jnp.pi * var))
+        diff = x - mu
+        return log_norm - 0.5 * jnp.sum(diff**2 / var, axis=-1)
+
+    # -- moments ------------------------------------------------------------
+
+    def mean(self) -> Array:
+        if self._is_uniform:
+            return jnp.mean(self._samples, axis=0)
+        return jnp.einsum("n,n...->...", self.weights, self._samples)
+
+    def variance(self) -> Array:
+        mu = self.mean()
+        diff = self._samples - mu
+        if self._is_uniform:
+            return jnp.mean(diff**2, axis=0)
+        return jnp.einsum("n,n...->...", self.weights, diff**2)
+
+    def cov(self) -> Array:
+        """Weighted sample covariance matrix, shape ``(d, d)``."""
+        mu = self.mean()
+        # Flatten to 2D: (n, d)
+        flat_samples = self._samples.reshape(self.n, -1)
+        diff = flat_samples - mu.reshape(-1)
+        if self._is_uniform:
+            return jnp.einsum("ni,nj->ij", diff, diff) / self.n
+        return jnp.einsum("ni,nj,n->ij", diff, diff, self.weights)
+
+    # -- conversion ---------------------------------------------------------
 
     @classmethod
-    def from_data(
+    def _from_distribution(
         cls,
-        data: Array,
-        stat_fn: Callable[[Array], Array],
+        other: Distribution,
         *,
-        B: int = 1000,
-        axis: int = 0,
-        rng: PRNG | None = None,
-    ) -> BootstrapDistribution:
+        key: PRNGKey,
+        name: str | None = None,
+        **kwargs: Any,
+    ) -> EmpiricalDistribution:
+        """Create an empirical approximation by sampling from *other*.
+
+        Keyword Args
+        -------------
+        num_samples : int
+            Number of samples to draw (default 1024).
+        name : str | None
+            Name for the result; defaults to ``other.name``.
         """
-        Classic i.i.d. bootstrap for a statistic.
-
-        Parameters
-        ----------
-        data : array-like
-            Observations (samples along `axis`).
-        stat_fn : callable
-            Function mapping a resampled dataset (with samples on axis 0) to a
-            statistic vector (shape (k,) or scalar). We will pass the resampled
-            array with **samples on axis 0**.
-        B : int
-            Number of bootstrap replicates.
-        axis : int
-            Axis of `data` that indexes samples; moved to 0 before calling `stat_fn`.
-        rng : np.random.Generator, optional
-            RNG for resampling indices.
-
-        Returns
-        -------
-        BootstrapDistribution
-            Container of `B` replicates of the statistic.
-        """
-        rng = rng or np.random.default_rng()
-        X = np.asarray(data, dtype=float)
-        X = np.moveaxis(X, axis, 0)  # samples now on axis 0
-        n = X.shape[0]
-
-        reps = []
-        for _ in range(int(B)):
-            idx = rng.integers(0, n, size=n)  # sample n rows with replacement
-            Xb = X[idx]
-            theta = np.asarray(stat_fn(Xb), dtype=float).reshape(-1)
-            reps.append(theta)
-
-        Theta = np.vstack(reps)  # (B, k)
-        return cls(Theta, rng=rng)
+        num_samples = kwargs.pop("num_samples", 1024)
+        samples = other.sample(key, sample_shape=(num_samples,))
+        ed = cls(samples, name=name or other.name)
+        ed.with_source(Provenance("from_distribution", parents=(other,)))
+        return ed

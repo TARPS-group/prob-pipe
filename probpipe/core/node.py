@@ -1,19 +1,33 @@
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, Mapping, get_type_hints
 import inspect
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from itertools import product as cartesian_product
 from types import MappingProxyType
 import warnings
 
+import jax
+import jax.numpy as jnp
 import numpy as np
-from prefect import task, flow
-from graphviz import Digraph
 
-# THIS WILL BE CHANGED; just for implementing the template of conversion logic
-from ..distributions.distribution import Distribution, EmpiricalDistribution
-from ..distributions.real_vector.gaussian import Gaussian
-DISTRIBUTION_TYPES = (Distribution, EmpiricalDistribution, Gaussian)
+try:
+    from prefect import task, flow
+except ImportError:
+    task = flow = None
+
+try:
+    from graphviz import Digraph
+except ImportError:
+    Digraph = None
+
+from ..custom_types import PRNGKey, Array
+from ..distributions.distribution import Distribution, EmpiricalDistribution, Provenance
+from ..distributions.joint import DistributionView
+from ..distributions.multivariate import MultivariateNormal
+DISTRIBUTION_TYPES = (Distribution, EmpiricalDistribution, MultivariateNormal)
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["InputFrozenError", "wf", "Node", "abstractwf", "Workflow", "Module", "AbstractModule"]
 
@@ -39,62 +53,27 @@ def wf(func: Callable):
 
 class Node(ABC):
     """
-    Base DAG unit.
+    Base unit of the ProbPipe computational dependency graph. 
 
-    A Node:
-    - has child nodes (other Nodes it is allowed to call)
-    - has inputs (non-Node values)
-    - knows nothing about execution, prefect, or workflow functions
-
-    New convenience:
-      Node(foo=SomeNode(), bar=123)  # auto-splits
-
-    Backward compatible:
-      Node(child_nodes={...}, inputs={...})
+    Keyword arguments are automatically split by type: values that are
+    ``Node`` instances become *child nodes* (dependencies on other DAG
+    units), and everything else becomes *inputs* (data, configuration,
+    hyperparameters).  Both collections are frozen after construction.
     """
 
-    def __init__(
-        self,
-        *,
-        child_nodes: Dict[str, "Node"] | None = None,
-        inputs: Dict[str, Any] | None = None,
-        **kwargs: Any,
-    ):
-        # Start from explicitly provided dicts
-        child_nodes = dict(child_nodes or {})
-        inputs = dict(inputs or {})
+    def __init__(self, **kwargs: Any):
+        child_nodes: Dict[str, Node] = {}
+        inputs: Dict[str, Any] = {}
 
-        # Auto-split kwargs into child_nodes vs inputs
-        # (kwargs override nothing by default; if you want kwargs to override, swap the order)
         for k, v in kwargs.items():
             if isinstance(v, Node):
-                # If user mistakenly passed a Node both in inputs and kwargs, this will correct it
                 child_nodes[k] = v
-                # In case it was also present in inputs, remove it (avoid inconsistent state)
-                if k in inputs:
-                    del inputs[k]
             else:
-                # If user mistakenly passed a non-Node both in child_nodes and kwargs, correct it
                 inputs[k] = v
-                if k in child_nodes:
-                    del child_nodes[k]
-
-        # Validate child nodes
-        for name, node in child_nodes.items():
-            if not isinstance(node, Node):
-                raise TypeError(f"Child node '{name}' must be a Node, got {type(node)}")
-
-        # Validate inputs
-        for name, value in inputs.items():
-            if isinstance(value, Node):
-                raise TypeError(
-                    f"Input '{name}' is a Node; Nodes must be declared as child_nodes "
-                    f"(or passed as a normal kwarg so it is auto-detected)"
-                )
 
         # Freeze internal state (read-only)
-        self._child_nodes = MappingProxyType(dict(child_nodes))
-        self._inputs = MappingProxyType(dict(inputs))
+        self._child_nodes = MappingProxyType(child_nodes)
+        self._inputs = MappingProxyType(inputs)
 
     @property
     def child_nodes(self) -> Mapping[str, "Node"]:
@@ -118,13 +97,26 @@ class Workflow(Node):
     sample, returning an ``EmpiricalDistribution`` over the outputs (or a
     plain list when results are not numeric).
 
+    **Vectorization and orchestration** are orthogonal concerns:
+
+    - *Vectorization* (``vectorize``) controls **how** samples are dispatched:
+      ``jax.vmap`` for JAX-traceable functions, or a Python loop otherwise.
+    - *Orchestration* (``workflow_kind``) controls **whether** the dispatch
+      is wrapped in a Prefect task or flow for compute-graph tracing.
+
+    When both are active, the JAX-vectorized computation is executed inside
+    a Prefect task/flow, giving the benefits of ``vmap`` performance with
+    full Prefect lineage tracking.
+
     Parameters
     ----------
     func : Callable
         The function to wrap.
     workflow_kind : str or None
-        Execution backend: ``"task"`` (Prefect task), ``"flow"`` (Prefect
-        flow), or ``None`` (plain Python).
+        Prefect orchestration mode: ``"task"`` (wrap in a Prefect task),
+        ``"flow"`` (wrap in a Prefect flow), or ``None`` (plain Python).
+        Orchestration is independent of vectorization: a JAX-vmapped
+        broadcast can still be wrapped in a Prefect task for tracing.
     name : str or None
         Display name; defaults to ``func.__name__``.
     bind : dict or None
@@ -135,11 +127,21 @@ class Workflow(Node):
         Default number of samples drawn when broadcasting.  Can be overridden
         at call time by passing ``n_broadcast_samples=…`` (provided the
         wrapped function does not itself declare a parameter with that name).
+    vectorize : str
+        Vectorization strategy for broadcasting:
+
+        - ``"auto"`` (default): probe with ``jax.make_jaxpr``; on success
+          use ``"jax"``, on failure fall back to ``"loop"``.
+        - ``"jax"``: vectorise via ``jax.vmap``.  Requires the wrapped
+          function to be JAX-traceable.
+        - ``"loop"``: Python loop (optionally threaded via *parallel*).
     parallel : bool or int
-        Controls parallel execution during broadcasting.
-        ``False`` → sequential, ``True`` → ``ThreadPoolExecutor`` with
-        default workers, ``int`` → explicit ``max_workers``.  When
-        *workflow_kind* is set, Prefect ``task.map()`` is used instead.
+        Controls parallel execution during broadcasting (``"loop"``
+        vectorization only).  ``False`` → sequential, ``True`` →
+        ``ThreadPoolExecutor`` with default workers, ``int`` → explicit
+        ``max_workers``.
+    seed : int
+        Random seed for JAX PRNG key management during broadcasting.
     """
 
     DEFAULT_N_BROADCAST_SAMPLES: int = 128
@@ -153,7 +155,9 @@ class Workflow(Node):
         bind: Dict[str, Any] | None = None,         # construction-time bindings (defaults/config)
         module: Any | None = None,                  # typically a Module; kept as Any to avoid import cycles
         n_broadcast_samples: int | None = None,      # default number of samples for broadcasting
+        vectorize: str = "auto",                     # "auto" | "jax" | "loop"
         parallel: bool | int = False,               # True/int for ThreadPoolExecutor, or Prefect .map()
+        seed: int = 0,                              # JAX PRNG seed for broadcasting
         **kwargs: Any,                              # convenience bindings (merged into bind)
     ):
         self._func = func
@@ -163,19 +167,30 @@ class Workflow(Node):
         self._name = name or getattr(func, "__name__", self.__class__.__name__)
         self._module = module
         self._n_broadcast_samples = n_broadcast_samples if n_broadcast_samples is not None else self.DEFAULT_N_BROADCAST_SAMPLES
+        self._vectorize = vectorize
         self._parallel = parallel
+        self._key = jax.random.PRNGKey(seed)
+        self._resolved_vectorize: str | None = None  # cached auto-detection result
 
         # bind = "construction-time inputs" (defaults/config). kwargs are also treated as bind.
         b = dict(bind or {})
         b.update(kwargs)
         self._bind = b
 
-        # Keep Node base class but don't use its child_nodes/inputs split here.
-        # (Module is the container; this node *infers* needs from signature.)
-        super().__init__(child_nodes={}, inputs={})
+        super().__init__()
 
         # Precompute parameter metadata once
         self._param_names = [p for p in self._sig.parameters if p != "self"]
+
+        # Reserved names that would collide with Workflow call-time overrides
+        _RESERVED = {"n_broadcast_samples", "seed"}
+        collision = _RESERVED & set(self._param_names)
+        if collision:
+            raise ValueError(
+                f"Function '{self._name}' has parameter(s) {collision} which are "
+                f"reserved by Workflow for call-time overrides. Rename them in "
+                f"your function signature."
+            )
 
     def _is_dependency_param(self, name: str) -> bool:
         """
@@ -196,11 +211,11 @@ class Workflow(Node):
             return False
 
     def __call__(self, **call_inputs):
-        # Extract n_broadcast_samples if it's not a parameter of the wrapped function
-        if "n_broadcast_samples" in call_inputs and "n_broadcast_samples" not in self._param_names:
-            n_broadcast_samples = call_inputs.pop("n_broadcast_samples")
-        else:
-            n_broadcast_samples = self._n_broadcast_samples
+        # Extract reserved call-time overrides (collision already prevented in __init__)
+        n_broadcast_samples = call_inputs.pop("n_broadcast_samples", self._n_broadcast_samples)
+
+        if "seed" in call_inputs:
+            self._key = jax.random.PRNGKey(call_inputs.pop("seed"))
 
         values = self._resolve_inputs(call_inputs)
         values = self._convert_distributions(values)
@@ -330,6 +345,52 @@ class Workflow(Node):
             broadcast.append(name)
         return broadcast
 
+    def _get_key(self):
+        """Split and advance the internal PRNG key."""
+        self._key, subkey = jax.random.split(self._key)
+        return subkey
+
+    def _resolve_vectorize(self, values: Dict[str, Any], broadcast_args: list[str]) -> str:
+        """Resolve the vectorization strategy, caching the auto-detection result.
+
+        Returns ``"jax"`` or ``"loop"``.  This is independent of orchestration
+        (``workflow_kind``), which wraps whichever strategy is chosen.
+        """
+        if self._vectorize != "auto":
+            return self._vectorize
+
+        if self._resolved_vectorize is not None:
+            return self._resolved_vectorize
+
+        # Probe JAX traceability with dummy inputs
+        try:
+            dummy_kw = {}
+            for name, param in self._sig.parameters.items():
+                if name == "self":
+                    continue
+                if name in broadcast_args:
+                    dist = values[name]
+                    es = dist.event_shape
+                    dummy_kw[name] = jnp.zeros(es) if es else jnp.zeros(())
+                elif name in values:
+                    v = values[name]
+                    if isinstance(v, jnp.ndarray):
+                        dummy_kw[name] = v
+                    elif isinstance(v, np.ndarray):
+                        dummy_kw[name] = jnp.asarray(v)
+                    else:
+                        dummy_kw[name] = v
+            jax.make_jaxpr(lambda kw: self._func(**kw))(dummy_kw)
+            self._resolved_vectorize = "jax"
+        except Exception:
+            logger.info(
+                "Function '%s' is not JAX-traceable; using loop vectorization.",
+                self._name,
+            )
+            self._resolved_vectorize = "loop"
+
+        return self._resolved_vectorize
+
     def _broadcast(
         self,
         values: Dict[str, Any],
@@ -341,8 +402,15 @@ class Workflow(Node):
         Returns an EmpiricalDistribution if results are numeric arrays,
         otherwise returns a list of results.
 
-        When EmpiricalDistribution arguments have small enough support, enumerates their
-        samples (cartesian product) and propagates weights instead of resampling.
+        Vectorization (``"jax"`` vs ``"loop"``) and orchestration
+        (``workflow_kind``) are resolved independently:
+
+        - **vectorize="jax"**: samples are dispatched via ``jax.vmap``.
+        - **vectorize="loop"**: samples are dispatched via a Python loop,
+          with optional empirical enumeration and threading.
+        - **workflow_kind="task"/"flow"**: whichever vectorization strategy
+          is chosen gets wrapped in a Prefect task or flow for compute-graph
+          tracing.
         """
         MIN_BROADCAST_SAMPLES = 5  # Recommended minimum samples
 
@@ -355,35 +423,156 @@ class Workflow(Node):
                 stacklevel=2
             )
 
-        # Collect candidate empirical dists (small enough individually), sorted smallest first
-        candidates = []
-        sample_args: Dict[str, Distribution] = {}
+        vectorize = self._resolve_vectorize(values, broadcast_args)
+
+        # JAX vectorization: vmap (no enumeration path — sample everything)
+        if vectorize == "jax":
+            result = self._broadcast_jax(values, broadcast_args, n_broadcast_samples)
+        else:
+            # Loop vectorization: supports empirical enumeration
+            # Collect candidate empirical dists (small enough individually), sorted smallest first
+            candidates = []
+            sample_args: Dict[str, Distribution] = {}
+            for name in broadcast_args:
+                dist = values[name]
+                if isinstance(dist, EmpiricalDistribution) and dist.n <= n_broadcast_samples:
+                    candidates.append((name, dist))
+                else:
+                    sample_args[name] = dist
+
+            candidates.sort(key=lambda pair: pair[1].n)
+
+            # Greedily include smallest empirical dists while product stays within budget
+            empirical_args: Dict[str, EmpiricalDistribution] = {}
+            product_size = 1
+            for name, dist in candidates:
+                if product_size * dist.n <= n_broadcast_samples:
+                    empirical_args[name] = dist
+                    product_size *= dist.n
+                else:
+                    # Too large to enumerate — sample from it instead
+                    sample_args[name] = dist
+
+            if empirical_args:
+                result = self._broadcast_enumerate(
+                    values, empirical_args, sample_args, product_size, n_broadcast_samples
+                )
+            else:
+                result = self._broadcast_sample(values, broadcast_args, n_broadcast_samples)
+
+        # Attach provenance to EmpiricalDistribution results
+        if isinstance(result, EmpiricalDistribution):
+            parents = tuple(
+                values[name] for name in broadcast_args
+                if isinstance(values[name], Distribution)
+            )
+            result.with_source(Provenance(
+                "broadcast",
+                parents=parents,
+                metadata={
+                    "vectorize": vectorize,
+                    "orchestrate": self._workflow_kind or "none",
+                    "n_samples": n_broadcast_samples,
+                    "func": self._name or self._func.__name__,
+                    "broadcast_args": broadcast_args,
+                },
+            ))
+
+        return result
+
+    def _sample_broadcast_args(
+        self,
+        values: Dict[str, Any],
+        broadcast_args: list[str],
+        n: int,
+        key: PRNGKey,
+    ) -> Dict[str, Array]:
+        """
+        Sample all broadcast arguments, handling DistributionView reconnection.
+
+        When multiple arguments are DistributionViews from the same parent
+        JointDistribution, the parent is sampled once and component samples
+        are distributed to the appropriate arguments.  This preserves
+        correlation between jointly-distributed components.
+        """
+        # Group DistributionView args by parent
+        joint_groups: Dict[int, Dict] = {}  # id(parent) → {parent, mappings}
+        independent: list[str] = []
+
         for name in broadcast_args:
             dist = values[name]
-            if isinstance(dist, EmpiricalDistribution) and dist.n <= n_broadcast_samples:
-                candidates.append((name, dist))
+            if isinstance(dist, DistributionView):
+                pid = id(dist._parent)
+                if pid not in joint_groups:
+                    joint_groups[pid] = {"parent": dist._parent, "mappings": {}}
+                joint_groups[pid]["mappings"][name] = dist._component_name
             else:
-                sample_args[name] = dist
+                independent.append(name)
 
-        candidates.sort(key=lambda pair: pair[1].n)
+        sampled: Dict[str, Array] = {}
 
-        # Greedily include smallest empirical dists while product stays within budget
-        empirical_args: Dict[str, EmpiricalDistribution] = {}
-        product_size = 1
-        for name, dist in candidates:
-            if product_size * dist.n <= n_broadcast_samples:
-                empirical_args[name] = dist
-                product_size *= dist.n
+        # Sample each joint group once, distribute to arguments
+        for group in joint_groups.values():
+            key, subkey = jax.random.split(key)
+            structured = group["parent"].sample_structured(subkey, (n,))
+            for arg_name, comp_name in group["mappings"].items():
+                sampled[arg_name] = structured[comp_name]
+
+        # Sample independent distributions
+        for name in independent:
+            key, subkey = jax.random.split(key)
+            sampled[name] = values[name].sample(subkey, (n,))
+
+        return sampled
+
+    def _broadcast_jax(
+        self,
+        values: Dict[str, Any],
+        broadcast_args: list[str],
+        n_broadcast_samples: int,
+    ) -> EmpiricalDistribution | list:
+        """
+        Vectorised broadcasting via ``jax.vmap``.
+
+        Samples all broadcast distributions at once (with joint reconnection),
+        then calls the wrapped function over the batch dimension using
+        ``jax.vmap``.  Requires the wrapped function to be JAX-traceable.
+
+        If ``workflow_kind`` is set, the entire vmap computation is wrapped
+        in a Prefect task or flow for orchestration tracing.
+        """
+        key = self._get_key()
+        sampled = self._sample_broadcast_args(values, broadcast_args, n_broadcast_samples, key)
+
+        static = {k: v for k, v in values.items() if k not in broadcast_args}
+
+        func = self._func
+
+        def single_call(broadcast_slice):
+            kw = dict(static)
+            kw.update(broadcast_slice)
+            return func(**kw)
+
+        # vmap over the dict of batched arrays (axis 0 for each)
+        batch = {name: sampled[name] for name in broadcast_args}
+
+        def run_vmap():
+            return jax.vmap(single_call)(batch)
+
+        # Wrap in Prefect task/flow if orchestration is requested
+        if self._workflow_kind is not None:
+            if task is None:
+                raise ImportError(
+                    "Prefect is required for workflow_kind='task'/'flow'. "
+                    "Install it with: pip install probpipe[prefect]"
+                )
+            if self._workflow_kind == "task":
+                run_vmap = task(name=f"{self._name}_vmap")(run_vmap)
             else:
-                # Too large to enumerate — sample from it instead
-                sample_args[name] = dist
+                run_vmap = flow(name=f"{self._name}_vmap")(run_vmap)
 
-        if empirical_args:
-            return self._broadcast_enumerate(
-                values, empirical_args, sample_args, product_size, n_broadcast_samples
-            )
-        else:
-            return self._broadcast_sample(values, broadcast_args, n_broadcast_samples)
+        results = run_vmap()
+        return self._collect_results_jax(results, n_broadcast_samples)
 
     def _broadcast_enumerate(
         self,
@@ -400,6 +589,7 @@ class Workflow(Node):
         (n_broadcast_samples // product_size), each receiving equal weight scaled by
         the empirical product weight.
         """
+        key = self._get_key()
         emp_names = list(empirical_args.keys())
         emp_dists = [empirical_args[name] for name in emp_names]
 
@@ -407,11 +597,12 @@ class Workflow(Node):
         reps_per_combo = max(1, n_broadcast_samples // product_size) if sample_args else 1
         total = product_size * reps_per_combo
 
-        # Pre-sample non-empirical distributions
-        sampled = {
-            name: dist.sample(total)
-            for name, dist in sample_args.items()
-        }
+        # Pre-sample non-empirical distributions (with DistributionView reconnection)
+        sample_arg_names = list(sample_args.keys())
+        if sample_arg_names:
+            sampled = self._sample_broadcast_args(values, sample_arg_names, total, key)
+        else:
+            sampled = {}
 
         call_value_list = []
         weights = []
@@ -421,7 +612,7 @@ class Workflow(Node):
             # Compute empirical product weight
             emp_weight = 1.0
             for name, dist, i in zip(emp_names, emp_dists, combo):
-                emp_weight *= dist.weights[i]
+                emp_weight *= float(dist.weights[i])
 
             for _ in range(reps_per_combo):
                 call_values = dict(values)
@@ -440,7 +631,7 @@ class Workflow(Node):
                 sample_idx += 1
 
         results = self._execute_many(call_value_list)
-        return self._collect_results(results, total, np.array(weights))
+        return self._collect_results(results, total, jnp.array(weights))
 
     def _broadcast_sample(
         self,
@@ -450,12 +641,10 @@ class Workflow(Node):
     ) -> EmpiricalDistribution | list:
         """
         Sample n_broadcast_samples from each Distribution argument and call the function
-        once per sample (uniform weights).
+        once per sample (uniform weights).  Handles DistributionView reconnection.
         """
-        samples_per_arg = {
-            name: values[name].sample(n_broadcast_samples)
-            for name in broadcast_args
-        }
+        key = self._get_key()
+        samples_per_arg = self._sample_broadcast_args(values, broadcast_args, n_broadcast_samples, key)
 
         call_value_list = []
         for i in range(n_broadcast_samples):
@@ -471,23 +660,41 @@ class Workflow(Node):
     def _collect_results(
         results: list,
         n: int,
-        weights: np.ndarray | None = None,
+        weights: jnp.ndarray | None = None,
     ) -> EmpiricalDistribution | list:
         """
         Stack results into an EmpiricalDistribution if possible,
-        otherwise return a plain list.
+        otherwise return a plain list.  Works with both JAX and numpy arrays.
+
+        Stacked shape is ``(n, *event_shape)``.  Scalar results give ``(n,)``
+        with ``event_shape=()``.
         """
         try:
-            stacked = np.stack([np.asarray(r, dtype=float) for r in results], axis=0)
+            stacked = jnp.stack([jnp.asarray(r, dtype=jnp.float32) for r in results], axis=0)
         except (ValueError, TypeError):
             return results
 
-        if stacked.ndim == 1:
-            stacked = stacked.reshape(-1, 1)
-        elif stacked.ndim > 2:
-            stacked = stacked.reshape(n, -1)
-
+        # stacked shape: (n,) for scalars, (n, d) for vectors, (n, ...) for higher
         return EmpiricalDistribution(stacked, weights=weights)
+
+    @staticmethod
+    def _collect_results_jax(
+        results,
+        n: int,
+        weights: jnp.ndarray | None = None,
+    ) -> EmpiricalDistribution | list:
+        """
+        Collect results from ``jax.vmap`` — *results* is a JAX array (or
+        pytree) with leading dimension *n*.
+        """
+        if isinstance(results, jnp.ndarray):
+            return EmpiricalDistribution(results, weights=weights)
+        # If results is a pytree or non-array, return as list
+        try:
+            stacked = jnp.stack(jax.tree.leaves(results), axis=-1)
+            return EmpiricalDistribution(stacked, weights=weights)
+        except Exception:
+            return results
 
     def _execute_many(self, call_value_list: list[Dict[str, Any]]) -> list:
         """
@@ -500,9 +707,14 @@ class Workflow(Node):
           - parallel=True/int    → concurrent.futures.ThreadPoolExecutor
           - otherwise            → sequential list comprehension
         """
-        if self._workflow_kind == "task":
-            return self._execute_many_prefect_task(call_value_list)
-        if self._workflow_kind == "flow":
+        if self._workflow_kind in ("task", "flow"):
+            if task is None:
+                raise ImportError(
+                    "Prefect is required for workflow_kind='task'/'flow'. "
+                    "Install it with: pip install probpipe[prefect]"
+                )
+            if self._workflow_kind == "task":
+                return self._execute_many_prefect_task(call_value_list)
             return self._execute_many_prefect_flow(call_value_list)
         if self._parallel:
             return self._execute_many_threaded(call_value_list)
@@ -564,10 +776,6 @@ class Module(Node):
     def _build_workflows(self):
         """
         Replace @wf methods with Workflow instances.
-
-        Key change:
-          - We do NOT precompute wf_child_nodes / wf_inputs here.
-          - Workflow infers needs from signature and resolves from this module at call time.
         """
         for attr_name in dir(self):
             attr = getattr(self, attr_name)
@@ -590,7 +798,12 @@ class Module(Node):
             setattr(self, attr_name, wf)
 
     def dag(self):
-        """Return a Graphviz DAG visualization of this module."""        
+        """Return a Graphviz DAG visualization of this module."""
+        if Digraph is None:
+            raise ImportError(
+                "graphviz is required for dag visualization. "
+                "Install it with: pip install probpipe[viz]"
+            )
         dot = Digraph(
             name=self.__class__.__name__,
             graph_attr={

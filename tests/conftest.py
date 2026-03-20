@@ -1,34 +1,50 @@
-
 import pytest
+import jax
+import jax.numpy as jnp
 import numpy as np
+
 from probpipe import EmpiricalDistribution
+
+
+@pytest.fixture
+def key():
+    return jax.random.PRNGKey(42)
+
 
 @pytest.fixture
 def rng():
+    """Legacy numpy RNG for tests that still need it."""
     return np.random.default_rng(42)
+
 
 @pytest.fixture
 def simple_samples():
-    return np.array([[1.0], [2.0], [3.0]])
+    return jnp.array([[1.0], [2.0], [3.0]])
+
 
 @pytest.fixture
-def empirical(simple_samples, rng):
-    return EmpiricalDistribution(simple_samples, rng=rng)
+def empirical(simple_samples, key):
+    return EmpiricalDistribution(simple_samples)
+
 
 @pytest.fixture
 def simple_weights():
-    return np.array([0.2, 0.3, 0.5])
+    return jnp.array([0.2, 0.3, 0.5])
+
 
 @pytest.fixture
 def dim():
     return 3
 
+
 @pytest.fixture
 def mean(dim):
-    return np.arange(dim, dtype=float)  # [0,1,2]
+    return jnp.arange(dim, dtype=jnp.float32)
+
 
 @pytest.fixture
 def cov_matrix(dim):
-    A = np.eye(dim) * 2.0
-    A[0,1] = A[1,0] = 0.3
+    A = jnp.eye(dim) * 2.0
+    A = A.at[0, 1].set(0.3)
+    A = A.at[1, 0].set(0.3)
     return A

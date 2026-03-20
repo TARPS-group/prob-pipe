@@ -1,134 +1,457 @@
-from .node import wf, abstractwf, Workflow, Module, AbstractModule
-from ..distributions.distribution import Distribution, EmpiricalDistribution
-from ..distributions.real_vector.gaussian import Gaussian
+"""
+Modeling components for prob-pipe.
 
-from typing import Any, Type, TypeVar, Callable
-from numpy.typing import NDArray
-import numpy as np
+Provides abstract interfaces for likelihoods and posterior approximation,
+concrete MCMC samplers (TFP-backed NUTS/HMC with automatic fallback),
+and an iterative forecasting module.
+"""
+
+from __future__ import annotations
+
+import logging
 from abc import ABC
+from dataclasses import dataclass
+from typing import Any, Callable
 
+import jax
+import jax.numpy as jnp
+import numpy as np
+import tensorflow_probability.substrates.jax.mcmc as tfp_mcmc
+from numpy.typing import NDArray
+
+from ..custom_types import Array, ArrayLike, PRNGKey
+from ..distributions.distribution import Distribution, EmpiricalDistribution, Provenance
+from ..distributions.multivariate import MultivariateNormal
+from .node import AbstractModule, Module, Workflow, abstractwf, wf
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "Likelihood",
     "GenerativeLikelihood",
-    "SimpleLikelihood",
-    "PosteriorDistribution",
     "ApproximatePosterior",
+    "MCMCSampler",
+    "MCMCDiagnostics",
     "RWMH",
     "IterativeForecaster",
-    "PredictiveChecker",
-    "PosteriorPredictiveChecker",
 ]
 
-TDistribution = TypeVar("TDistribution", bound=Distribution)
+
+# ---------------------------------------------------------------------------
+# Abstract interfaces
+# ---------------------------------------------------------------------------
+
 
 class Likelihood(AbstractModule):
-    """Abstract module node for computing the likelihood of a model given data and parameters"""
+    """Abstract module for computing log-likelihood of data given parameters."""
+
     @abstractwf
-    def log_likelihood(self,  params: NDArray, data: NDArray) -> float:
-        pass
-
-
-class GenerativeLikelihood(AbstractModule):
-    """Abstract module node for generating synthetic data given parameters."""
-    @abstractwf
-    def generate_data(self, params: NDArray, n_samples: int) -> NDArray:
-        pass
-
-class SimpleLikelihood(Likelihood, GenerativeLikelihood):
-    """A simple likelihood module that wraps a Distribution class."""
-    def __init__(self, dist_cls: Type[TDistribution], params_name: str, **other_params):
-        super().__init__()  # no shared deps required anymore!
-        self.dist_cls = dist_cls
-        # XXX: need to validate params_name and other_params match with dist_cls requirements
-        self.params_name = params_name
-        self.other_params = other_params
-
-    def _get_distribution_for_params(self, params: NDArray) -> Distribution:
-        dist_params = dict(self.other_params)
-        dist_params[self.params_name] = params
-        mean = dist_params["mean"]
-        cov = dist_params["cov"]
-        #print("mean.shape:", np.asarray(mean).shape, "cov.shape:", np.asarray(cov).shape)
-        return self.dist_cls(**dist_params)
-
-    @wf
     def log_likelihood(self, params: NDArray, data: NDArray) -> float:
-        dist = self._get_distribution_for_params(params)
-        return float(dist.log_density(data).sum())
-
-    @wf
-    def generate_data(self, params: NDArray, n_samples: int) -> NDArray:
-        dist = self._get_distribution_for_params(params)
-        return dist.sample(n_samples=n_samples)
-
-
-# Creating and updating approximate posterior distributions ###
-
-# It is necessary to specify T this way.
-T = TypeVar("T", bound=np.number)
-
-class PosteriorDistribution(Distribution[T]):
-    def __init__(self, posterior: Distribution[T], prior: Distribution[T], likelihood: Likelihood, data: NDArray):
-        self.__class__.__name__ = posterior.__class__.__name__  # not sure if this is the best way!
-        self.posterior = posterior
-        self.prior = prior
-        self.likelihood = likelihood
-        self.data = data
-
-    def log_density(self, x: NDArray) -> NDArray[np.floating]:
-        # NOTE: likelihood.log_likelihood is a Workflow once wrapped, so calling it works
-        return self.prior.log_density(x) + self.likelihood.log_likelihood(params=x, data=self.data)
-
-    def density(self, x: NDArray) -> NDArray[np.floating]:
-        return np.exp(self.log_density(x))
-
-    def sample(self, n_samples: int) -> NDArray:
-        return self.posterior.sample(n_samples=n_samples)
-
-    def predictive_log_density(self, x: NDArray) -> NDArray[np.floating]:
-        return self.likelihood.log_likelihood(params=x, data=self.data)
-
-    def sample_predictive(self, n_samples: int) -> NDArray:
-        
-        params = np.asarray(self.posterior.sample(n_samples=1))
-        if params.ndim == 2 and params.shape[0] == 1:
-            params = params[0]
-        if params.ndim != 1:
-            raise ValueError(f"Expected posterior sample to be shape (d,) or (1,d), got {params.shape}")
-
-        return self.likelihood.generate_data(params=params, n_samples=n_samples)
-
-    def expectation(self, func: Callable[[NDArray[T]], NDArray]) -> Distribution[T]:
-        return self.posterior.expectation(func)
-
-    @classmethod
-    def from_distribution(cls, convert_from: Distribution, **fit_kwargs: Any) -> Distribution[T]:
-        raise NotImplementedError
-
-    # Delegation
-    def __getattr__(self, name: str):
-        """
-        Delegate all unknown attributes to the wrapped posterior.
-        This preserves behavior like expectation(), variance(), etc.
-        """
-        return getattr(self.posterior, name)
-    
-    def __str__(self):
-        return f"{self.posterior}"
-
-
-
-class ApproximatePosterior(Workflow, ABC):
-    def __init__(self, *, workflow_kind: str | None = None, name: str = "compute_posterior", **bind):
-        super().__init__(func=self._compute_posterior, workflow_kind=workflow_kind, name=name, bind=bind)
-
-    @abstractwf  
-    def _compute_posterior(self, prior: Distribution, likelihood: Likelihood, data: NDArray) -> PosteriorDistribution:
         ...
 
 
+class GenerativeLikelihood(AbstractModule):
+    """Abstract module for generating synthetic data given parameters."""
+
+    @abstractwf
+    def generate_data(self, params: NDArray, n_samples: int) -> NDArray:
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Approximate posterior base
+# ---------------------------------------------------------------------------
+
+
+class ApproximatePosterior(Workflow, ABC):
+    """Abstract base for all posterior approximation methods."""
+
+    def __init__(
+        self,
+        *,
+        workflow_kind: str | None = None,
+        name: str = "compute_posterior",
+        **bind: Any,
+    ):
+        super().__init__(
+            func=self._compute_posterior,
+            workflow_kind=workflow_kind,
+            name=name,
+            bind=bind,
+        )
+
+    @abstractwf
+    def _compute_posterior(
+        self,
+        prior: Distribution,
+        likelihood: Likelihood,
+        data: NDArray,
+    ) -> EmpiricalDistribution:
+        ...
+
+
+# ---------------------------------------------------------------------------
+# MCMCDiagnostics
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MCMCDiagnostics:
+    """Post-sampling diagnostics from an MCMC run.
+
+    Attributes
+    ----------
+    log_accept_ratio : Array
+        Per-sample log Metropolis-Hastings acceptance ratio.
+    step_size : Array or float
+        Final adapted step size(s).
+    is_accepted : Array or None
+        Per-sample boolean accept/reject flags (if available).
+    algorithm : str
+        Name of the algorithm that produced these diagnostics.
+    """
+
+    log_accept_ratio: Array
+    step_size: Array | float
+    is_accepted: Array | None = None
+    algorithm: str = "unknown"
+
+    @property
+    def accept_rate(self) -> float:
+        """Empirical acceptance rate."""
+        # numpy RWMH fallback stores exact accept rate
+        if hasattr(self, "_numpy_accept_rate"):
+            return self._numpy_accept_rate
+        if self.is_accepted is not None:
+            return float(jnp.mean(self.is_accepted))
+        return float(
+            jnp.mean(jnp.exp(jnp.minimum(self.log_accept_ratio, 0.0)))
+        )
+
+    @property
+    def final_step_size(self) -> float:
+        """Mean final adapted step size."""
+        return float(jnp.mean(jnp.asarray(self.step_size)))
+
+    def summary(self) -> str:
+        """One-line summary of diagnostics."""
+        return (
+            f"algorithm={self.algorithm}, "
+            f"accept_rate={self.accept_rate:.3f}, "
+            f"final_step_size={self.final_step_size:.4f}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# MCMCSampler  (TFP-backed NUTS / HMC with automatic fallback)
+# ---------------------------------------------------------------------------
+
+
+class MCMCSampler(ApproximatePosterior):
+    """
+    Gradient-based MCMC posterior approximation using TFP kernels.
+
+    Runs NUTS (default) or HMC with automatic step-size adaptation during
+    warmup.  If the target log-prob is not JAX-traceable (e.g. wraps scipy
+    or external code), automatically falls back to gradient-free random-walk
+    Metropolis-Hastings.
+
+    Returns an :class:`EmpiricalDistribution` with provenance and
+    diagnostics attached to ``self.diagnostics``.
+
+    Parameters
+    ----------
+    algorithm : ``"nuts"`` or ``"hmc"``
+        MCMC algorithm to use (default ``"nuts"``).  Ignored when the
+        likelihood is not JAX-traceable (always falls back to RW-MH).
+    num_results : int
+        Number of posterior samples to retain after warmup (default 1000).
+    num_warmup : int
+        Number of warmup (adaptation + burn-in) steps (default 500).
+    init : ArrayLike or None
+        Initial chain state.  If *None*, ``prior.mean()`` is tried first,
+        then the column-wise data mean.
+    step_size : float
+        Initial leapfrog step size (default 0.1).  Adapted during warmup.
+    num_leapfrog_steps : int
+        Leapfrog steps per HMC proposal (default 10).  Ignored for NUTS.
+    target_accept_prob : float
+        Target Metropolis acceptance probability for adaptation (default 0.75).
+    seed : int
+        Random seed for JAX PRNG (default 0).
+    """
+
+    def __init__(
+        self,
+        algorithm: str = "nuts",
+        num_results: int = 1000,
+        num_warmup: int = 500,
+        init: ArrayLike | None = None,
+        step_size: float = 0.1,
+        num_leapfrog_steps: int = 10,
+        target_accept_prob: float = 0.75,
+        seed: int = 0,
+        workflow_kind: str | None = None,
+    ):
+        if algorithm not in ("nuts", "hmc"):
+            raise ValueError(f"algorithm must be 'nuts' or 'hmc', got {algorithm!r}")
+        if num_results <= 0:
+            raise ValueError("num_results must be > 0")
+        if num_warmup < 0:
+            raise ValueError("num_warmup must be >= 0")
+
+        super().__init__(
+            workflow_kind=workflow_kind,
+            algorithm=algorithm,
+            num_results=num_results,
+            num_warmup=num_warmup,
+            init=init,
+            step_size=step_size,
+            num_leapfrog_steps=num_leapfrog_steps,
+            target_accept_prob=target_accept_prob,
+            seed=seed,
+        )
+        self.algorithm = algorithm
+        self.num_results = num_results
+        self.num_warmup = num_warmup
+        self.init = init
+        self.step_size = float(step_size)
+        self.num_leapfrog_steps = int(num_leapfrog_steps)
+        self.target_accept_prob = float(target_accept_prob)
+        self.seed = int(seed)
+
+        self.diagnostics: MCMCDiagnostics | None = None
+
+    # -- internal helpers ---------------------------------------------------
+
+    def _get_init_state(
+        self,
+        prior: Distribution,
+        data: NDArray,
+    ) -> jnp.ndarray:
+        """Determine the initial chain state (always at least 1-D)."""
+        if self.init is not None:
+            return jnp.atleast_1d(jnp.asarray(self.init, dtype=jnp.float32))
+
+        # Try prior mean
+        try:
+            m = prior.mean()
+            return jnp.atleast_1d(jnp.asarray(m, dtype=jnp.float32))
+        except (NotImplementedError, Exception):
+            pass
+
+        # Fall back to data column mean
+        return jnp.atleast_1d(
+            jnp.mean(jnp.asarray(data, dtype=jnp.float32), axis=0)
+        )
+
+    def _is_jax_traceable(
+        self,
+        target_log_prob_fn: Callable,
+        init_state: jnp.ndarray,
+    ) -> bool:
+        """Probe whether *target_log_prob_fn* can be traced by JAX."""
+        try:
+            jax.make_jaxpr(target_log_prob_fn)(init_state)
+            return True
+        except Exception:
+            return False
+
+    def _build_kernel(
+        self,
+        target_log_prob_fn: Callable,
+        init_state: jnp.ndarray,
+    ) -> tuple:
+        """Build an MCMC kernel, falling back to ``None`` if not JAX-traceable.
+
+        Returns ``(kernel, used_algorithm)`` where *kernel* is ``None``
+        when the target is not JAX-traceable (caller should use the
+        numpy-based RWMH path instead).
+        """
+        if self._is_jax_traceable(target_log_prob_fn, init_state):
+            # Gradient-based kernel
+            if self.algorithm == "nuts":
+                inner_kernel = tfp_mcmc.NoUTurnSampler(
+                    target_log_prob_fn=target_log_prob_fn,
+                    step_size=self.step_size,
+                )
+            else:
+                inner_kernel = tfp_mcmc.HamiltonianMonteCarlo(
+                    target_log_prob_fn=target_log_prob_fn,
+                    step_size=self.step_size,
+                    num_leapfrog_steps=self.num_leapfrog_steps,
+                )
+
+            # Wrap with dual-averaging step-size adaptation
+            num_adapt = int(0.8 * self.num_warmup) if self.num_warmup > 0 else 0
+            if num_adapt > 0:
+                kernel = tfp_mcmc.DualAveragingStepSizeAdaptation(
+                    inner_kernel=inner_kernel,
+                    num_adaptation_steps=num_adapt,
+                    target_accept_prob=self.target_accept_prob,
+                )
+            else:
+                kernel = inner_kernel
+
+            return kernel, self.algorithm
+        else:
+            logger.info(
+                "Target log-prob is not JAX-traceable; falling back to "
+                "numpy-based random-walk Metropolis-Hastings (no gradients)."
+            )
+            return None, "rwmh_fallback"
+
+    @staticmethod
+    def _extract_diagnostics(
+        trace: Any,
+        used_algorithm: str,
+    ) -> MCMCDiagnostics:
+        """Extract diagnostics from the trace returned by sample_chain."""
+        # The trace structure depends on the kernel stack.  We walk
+        # through common wrapper layers to find the inner results.
+        results = trace
+
+        # Unwrap DualAveragingStepSizeAdaptation
+        if hasattr(results, "new_step_size"):
+            step_size = results.new_step_size
+            results = results.inner_results
+        elif hasattr(results, "step_size"):
+            step_size = results.step_size
+        else:
+            step_size = jnp.nan
+
+        # Extract accept info
+        log_accept_ratio = getattr(results, "log_accept_ratio", jnp.array(jnp.nan))
+        is_accepted = getattr(results, "is_accepted", None)
+
+        return MCMCDiagnostics(
+            log_accept_ratio=log_accept_ratio,
+            step_size=step_size,
+            is_accepted=is_accepted,
+            algorithm=used_algorithm,
+        )
+
+    # -- main implementation ------------------------------------------------
+
+    @wf
+    def _compute_posterior(
+        self,
+        prior: Distribution,
+        likelihood: Likelihood,
+        data: NDArray,
+    ) -> EmpiricalDistribution:
+        data_jnp = jnp.asarray(data, dtype=jnp.float32)
+
+        # Build unnormalized log-posterior
+        def target_log_prob_fn(params):
+            lp = prior.log_prob(params)
+            ll = likelihood.log_likelihood(params=params, data=data_jnp)
+            return lp + ll
+
+        # Determine initial state and build kernel
+        init_state = self._get_init_state(prior, data_jnp)
+        kernel, used_algorithm = self._build_kernel(target_log_prob_fn, init_state)
+
+        if kernel is not None:
+            # JAX-traceable: run TFP sample_chain
+            samples, trace = self._run_tfp_chain(kernel, init_state)
+            self.diagnostics = self._extract_diagnostics(trace, used_algorithm)
+        else:
+            # Not JAX-traceable: fall back to numpy-based RW-MH
+            samples, accept_rate = self._run_numpy_rwmh(
+                target_log_prob_fn, init_state
+            )
+            self.diagnostics = MCMCDiagnostics(
+                log_accept_ratio=jnp.zeros(self.num_results),
+                step_size=self.step_size,
+                is_accepted=None,
+                algorithm=used_algorithm,
+            )
+            # Overwrite accept_rate with the actual value
+            self.diagnostics._numpy_accept_rate = accept_rate
+
+        # Build and return EmpiricalDistribution with provenance
+        posterior = EmpiricalDistribution(samples, name="posterior")
+        posterior.with_source(Provenance(
+            used_algorithm,
+            parents=(prior,),
+            metadata={
+                "num_results": self.num_results,
+                "num_warmup": self.num_warmup,
+                "algorithm": used_algorithm,
+            },
+        ))
+        return posterior
+
+    def _run_tfp_chain(
+        self,
+        kernel,
+        init_state: jnp.ndarray,
+    ) -> tuple:
+        """Run TFP sample_chain and return (samples, trace)."""
+        key = jax.random.PRNGKey(self.seed)
+        return tfp_mcmc.sample_chain(
+            num_results=self.num_results,
+            current_state=init_state,
+            kernel=kernel,
+            num_burnin_steps=self.num_warmup,
+            seed=key,
+            trace_fn=lambda _, kr: kr,
+        )
+
+    def _run_numpy_rwmh(
+        self,
+        target_log_prob_fn: Callable,
+        init_state: jnp.ndarray,
+    ) -> tuple[jnp.ndarray, float]:
+        """Numpy-based random-walk MH for non-JAX-traceable likelihoods.
+
+        Returns ``(samples, accept_rate)``.
+        """
+        rng = np.random.default_rng(self.seed)
+        d = init_state.shape[0]
+        mu_curr = np.asarray(init_state, dtype=np.float64)
+        logp_curr = float(target_log_prob_fn(mu_curr))
+
+        kept: list[np.ndarray] = []
+        accepts = 0
+        total_steps = self.num_warmup + self.num_results
+
+        for t in range(total_steps):
+            mu_prop = mu_curr + self.step_size * rng.normal(size=d)
+            logp_prop = float(target_log_prob_fn(mu_prop))
+
+            if np.log(rng.random()) < min(0.0, logp_prop - logp_curr):
+                mu_curr = mu_prop
+                logp_curr = logp_prop
+                accepts += 1
+
+            if t >= self.num_warmup:
+                kept.append(mu_curr.copy())
+
+        accept_rate = accepts / total_steps
+        samples = jnp.asarray(np.vstack(kept), dtype=jnp.float32)
+        return samples, accept_rate
+
+
+# ---------------------------------------------------------------------------
+# Legacy RWMH  (gradient-free, numpy-based)
+# ---------------------------------------------------------------------------
+
+
 class RWMH(ApproximatePosterior):
+    """
+    Random-walk Metropolis-Hastings (numpy-based, gradient-free).
+
+    Useful when the likelihood wraps external code that isn't JAX-traceable
+    (scipy, sklearn, etc.).  For JAX-traceable likelihoods, prefer
+    :class:`MCMCSampler` which uses NUTS/HMC with automatic adaptation.
+
+    .. deprecated::
+        Use :class:`MCMCSampler` for new code.  ``MCMCSampler`` will
+        automatically fall back to gradient-free sampling when needed.
+    """
+
     def __init__(
         self,
         step_size: float = 1.0,
@@ -139,7 +462,6 @@ class RWMH(ApproximatePosterior):
         rng: np.random.Generator | None = None,
         workflow_kind: str | None = None,
     ):
-        # Binding parameters into workflow node state
         super().__init__(
             workflow_kind=workflow_kind,
             step_size=step_size,
@@ -169,49 +491,40 @@ class RWMH(ApproximatePosterior):
         prior: Distribution,
         likelihood: Likelihood,
         data: NDArray,
-    ) -> PosteriorDistribution:
+    ) -> EmpiricalDistribution:
         data = np.asarray(data, dtype=float)
         if data.ndim != 2:
             raise ValueError(f"Expected data shape (n, d), got {data.shape}")
         d = data.shape[1]
 
-        # target: unnormalized log posterior 
         def log_post(mu: NDArray) -> float:
             mu = np.asarray(mu, dtype=float)
             if mu.shape != (d,):
                 raise ValueError(f"Expected params shape {(d,)}, got {mu.shape}")
-
-            lp = prior.log_density(mu)
-            lp_val = float(np.asarray(lp).sum())  # more robust if prior returns vector
-
+            lp_val = float(np.asarray(prior.log_prob(mu)).sum())
             ll_val = float(likelihood.log_likelihood(params=mu, data=data))
             return lp_val + ll_val
 
-        # initialize 
+        # Initialize
         if self.init is not None:
             mu_curr = self.init.copy()
             if mu_curr.shape != (d,):
                 raise ValueError(f"init must have shape {(d,)}, got {mu_curr.shape}")
         else:
-            # trying prior.mean if it exists, else taking data mean
             mu_curr = None
-            if hasattr(prior, "mean"):
-                try:
-                    m = getattr(prior, "_mean")
-                    m = np.asarray(m, dtype=float)
-                    if m.shape == (d,):
-                        mu_curr = m.copy()
-                except Exception:
-                    mu_curr = None
+            try:
+                m = np.asarray(prior.mean(), dtype=float)
+                if m.shape == (d,):
+                    mu_curr = m.copy()
+            except (NotImplementedError, Exception):
+                pass
             if mu_curr is None:
                 mu_curr = np.mean(data, axis=0).astype(float)
 
         logp_curr = log_post(mu_curr)
 
-        # RWMH loop: mu' = mu + step_size * N(0, I)
         kept = []
         accepts = 0
-
         burn_in = min(self.burn_in, self.n_steps)
 
         for t in range(self.n_steps):
@@ -228,187 +541,68 @@ class RWMH(ApproximatePosterior):
                 kept.append(mu_curr.copy())
 
         if len(kept) == 0:
-            raise ValueError("No samples retained; increase n_steps or reduce burn_in/thin.")
+            raise ValueError(
+                "No samples retained; increase n_steps or reduce burn_in/thin."
+            )
 
-        samples = np.vstack(kept)  # (n_kept, d)
-
-        # Represent the posterior as an EmpiricalDistribution
-        post_approx = EmpiricalDistribution(x=samples, rng=self.rng)
-
-        # This is optional: store diagnostics on the instance (not required, but handy)
+        samples = np.vstack(kept)
         self.accept_rate = accepts / float(self.n_steps)
 
-        return PosteriorDistribution(
-            posterior=post_approx,
-            prior=prior,
-            likelihood=likelihood,
-            data=data,
-        )
+        posterior = EmpiricalDistribution(samples, name="posterior")
+        posterior.with_source(Provenance(
+            "rwmh",
+            parents=(prior,),
+            metadata={
+                "n_steps": self.n_steps,
+                "burn_in": self.burn_in,
+                "thin": self.thin,
+                "accept_rate": self.accept_rate,
+            },
+        ))
+        return posterior
+
+
+# ---------------------------------------------------------------------------
+# IterativeForecaster
+# ---------------------------------------------------------------------------
 
 
 class IterativeForecaster(Module):
-    """Can iteratively update posterior given new data and generate predictions from posterior."""
-    def __init__(self, *, prior: Distribution, likelihood: Likelihood, approx_post: ApproximatePosterior, workflow_kind: str | None = None):
+    """Iteratively update posterior given new data batches."""
 
-        # Infer dimensionality from prior by sampling once
-        try:
-            sample = prior.sample(n_samples=1)
-            sample = np.asarray(sample)
-            if sample.ndim == 2:
-                d = sample.shape[1]
-            elif sample.ndim == 1:
-                d = sample.shape[0]
-            else:
-                d = 1
-            init_data = np.empty((0, d))
-        except Exception:
-            init_data = np.array([])  # fallback
+    def __init__(
+        self,
+        *,
+        prior: Distribution,
+        likelihood: Likelihood,
+        generative_likelihood: GenerativeLikelihood,
+        approx_post: ApproximatePosterior,
+        workflow_kind: str | None = None,
+    ):
+        self._curr_posterior: Distribution = prior
+        self._generative_likelihood = generative_likelihood
 
-        # state
-        self._curr_posterior = PosteriorDistribution(
-            posterior=prior,
-            prior=prior,
+        super().__init__(
             likelihood=likelihood,
-            data=init_data,
+            generative_likelihood=generative_likelihood,
+            approx_post=approx_post,
+            prior=prior,
+            workflow_kind=workflow_kind,
         )
 
-        # auto-split: Nodes become child_nodes; non-Nodes become inputs
-        super().__init__(likelihood=likelihood, approx_post=approx_post, prior=prior, workflow_kind=workflow_kind)
-
     @property
-    def curr_posterior(self) -> PosteriorDistribution:
+    def curr_posterior(self) -> Distribution:
         return self._curr_posterior
 
     @wf
-    def update(self, approx_post: ApproximatePosterior, likelihood: Likelihood, data: NDArray) -> PosteriorDistribution:
-        # Use only the posterior approximation as prior, not the full PosteriorDistribution
-        # This ensures proper Bayesian updating without double-counting likelihoods
-        prior_dist = self.curr_posterior.posterior
-        post_dist = approx_post(prior=prior_dist, likelihood=likelihood, data=data)
+    def update(
+        self,
+        approx_post: ApproximatePosterior,
+        likelihood: Likelihood,
+        data: NDArray,
+    ) -> Distribution:
+        post_dist = approx_post(
+            prior=self._curr_posterior, likelihood=likelihood, data=data
+        )
         self._curr_posterior = post_dist
         return post_dist
-
-    @wf
-    def forecast(self, n_samples: int = 0) -> NDArray:
-        return self.curr_posterior.sample_predictive(n_samples=n_samples)
-
-# Predictive checks 
-
-class PredictiveChecker(AbstractModule):
-    @abstractwf
-    def predictive_p_value(self, posterior: PosteriorDistribution) -> float:
-        ...
-
-
-class PosteriorPredictiveChecker(PredictiveChecker):
-    """
-    Perform a posterior predictive check (PPC) and compute a posterior
-    predictive p-value for a scalar test statistic.
-
-    This class compares a statistic computed on the observed data to the
-    same statistic computed on datasets simulated from the posterior
-    predictive distribution.
-
-    For multivariate data (d > 1), ``statistic`` is applied independently
-    to each dimension (column-wise), producing a vector of shape ``(d,)``.
-    The ``reducer`` then collapses that vector into a single scalar so that
-    observed and simulated statistics are compared on the same scale.
-
-    For univariate data (d = 1), the statistic is already scalar and the
-    reducer has no practical effect.
-
-    The returned value estimates:
-
-        p_ppc = P(T(y_rep) >= T(y_obs) | y_obs)
-
-    where y_rep is drawn from the posterior predictive distribution.
-
-    Args:
-        statistic:
-            A function ``T(x: NDArray) -> float`` applied column-wise to the data.
-            Examples: ``np.mean``, ``np.std``, ``np.max``.
-
-        n_rep:
-            Number of posterior predictive replicate datasets.
-            Larger values reduce Monte Carlo variability in the estimate.
-            Default: 200.
-
-        n_samples:
-            Number of predictive draws used to construct each synthetic
-            replicate dataset.
-
-            If set to 0 (default), the observed dataset size is used,
-            ensuring each replicated dataset matches the original sample
-            size for a well-calibrated PPC.
-
-            If positive, exactly that many predictive draws are used.
-
-        reducer:
-            A function ``r(v: NDArray[shape=(d,)]) -> float`` that collapses
-            the per-dimension statistic vector to a scalar.
-            Default: ``np.mean`` (average across dimensions).
-            Example alternative: ``np.max`` to emphasize worst-case misfit.
-
-    Returns:
-        float:
-            The posterior predictive p-value. Values near 0 or 1 suggest
-            potential model misfit; values near 0.5 indicate consistency
-            between the model and observed data.
-    """
-    def __init__(
-        self,
-        statistic: Callable[[NDArray], float],
-        n_rep: int = 200,
-        n_samples: int = 0,
-        reducer: Callable[[NDArray], float] = lambda v: float(np.mean(v)),
-        workflow_kind: str | None = None,
-    ):
-        super().__init__(
-            statistic=statistic, 
-            n_rep=n_rep, 
-            n_samples=n_samples, 
-            reducer=reducer, 
-            workflow_kind=workflow_kind
-        )
-
-    @wf
-    def predictive_p_value(
-        self,
-        posterior: PosteriorDistribution,
-        statistic: Callable[[NDArray], float],
-        n_samples: int,
-        n_rep: int,
-        reducer: Callable[[NDArray], float],
-    ) -> float:
-        if n_samples < 0:
-            raise ValueError(f"n_samples must be positive, got {n_samples}")
-        if n_rep <= 0:
-            raise ValueError(f"n_rep must be positive, got {n_rep}")
-
-        obs_data = posterior.data
-        if obs_data.size == 0:
-            raise ValueError("Cannot compute PPC with empty observed data")
-        
-        # Match observed dataset size if n_samples == 0
-        if n_samples == 0:
-            n_samples = obs_data.shape[0]
-
-        # per-dimension observed stats, then reduce to scalar
-        obs_vec = np.apply_along_axis(statistic, 0, obs_data)   # shape (d,) or scalar
-        # Handle both scalar and vector outputs
-        if np.ndim(obs_vec) == 0:
-            obs_stat = float(obs_vec)
-        else:
-            obs_stat = float(reducer(obs_vec))
-
-        sim_stats = np.empty(int(n_rep), dtype=float)
-        for r in range(int(n_rep)):
-            samples = posterior.sample_predictive(n_samples=int(n_samples))  # (n_samples, d)
-            sim_vec = np.apply_along_axis(statistic, 0, samples)             # (d,) or scalar
-            # Handle both scalar and vector outputs
-            if np.ndim(sim_vec) == 0:
-                sim_stats[r] = float(sim_vec)
-            else:
-                sim_stats[r] = float(reducer(sim_vec))
-
-        return float((sim_stats >= obs_stat).mean())
