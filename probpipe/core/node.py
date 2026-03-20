@@ -22,7 +22,7 @@ except ImportError:
     Digraph = None
 
 from ..custom_types import PRNGKey, Array
-from ..distributions.distribution import Distribution, EmpiricalDistribution
+from ..distributions.distribution import Distribution, EmpiricalDistribution, Provenance
 from ..distributions.joint import DistributionView
 from ..distributions.multivariate import MultivariateNormal
 DISTRIBUTION_TYPES = (Distribution, EmpiricalDistribution, MultivariateNormal)
@@ -450,38 +450,57 @@ class Workflow(Node):
 
         # JAX backend: vectorize via vmap (no enumeration path — sample everything)
         if backend == "jax":
-            return self._broadcast_jax(values, broadcast_args, n_broadcast_samples)
-
-        # Loop and Prefect backends: support empirical enumeration
-        # Collect candidate empirical dists (small enough individually), sorted smallest first
-        candidates = []
-        sample_args: Dict[str, Distribution] = {}
-        for name in broadcast_args:
-            dist = values[name]
-            if isinstance(dist, EmpiricalDistribution) and dist.n <= n_broadcast_samples:
-                candidates.append((name, dist))
-            else:
-                sample_args[name] = dist
-
-        candidates.sort(key=lambda pair: pair[1].n)
-
-        # Greedily include smallest empirical dists while product stays within budget
-        empirical_args: Dict[str, EmpiricalDistribution] = {}
-        product_size = 1
-        for name, dist in candidates:
-            if product_size * dist.n <= n_broadcast_samples:
-                empirical_args[name] = dist
-                product_size *= dist.n
-            else:
-                # Too large to enumerate — sample from it instead
-                sample_args[name] = dist
-
-        if empirical_args:
-            return self._broadcast_enumerate(
-                values, empirical_args, sample_args, product_size, n_broadcast_samples
-            )
+            result = self._broadcast_jax(values, broadcast_args, n_broadcast_samples)
         else:
-            return self._broadcast_sample(values, broadcast_args, n_broadcast_samples)
+            # Loop and Prefect backends: support empirical enumeration
+            # Collect candidate empirical dists (small enough individually), sorted smallest first
+            candidates = []
+            sample_args: Dict[str, Distribution] = {}
+            for name in broadcast_args:
+                dist = values[name]
+                if isinstance(dist, EmpiricalDistribution) and dist.n <= n_broadcast_samples:
+                    candidates.append((name, dist))
+                else:
+                    sample_args[name] = dist
+
+            candidates.sort(key=lambda pair: pair[1].n)
+
+            # Greedily include smallest empirical dists while product stays within budget
+            empirical_args: Dict[str, EmpiricalDistribution] = {}
+            product_size = 1
+            for name, dist in candidates:
+                if product_size * dist.n <= n_broadcast_samples:
+                    empirical_args[name] = dist
+                    product_size *= dist.n
+                else:
+                    # Too large to enumerate — sample from it instead
+                    sample_args[name] = dist
+
+            if empirical_args:
+                result = self._broadcast_enumerate(
+                    values, empirical_args, sample_args, product_size, n_broadcast_samples
+                )
+            else:
+                result = self._broadcast_sample(values, broadcast_args, n_broadcast_samples)
+
+        # Attach provenance to EmpiricalDistribution results
+        if isinstance(result, EmpiricalDistribution):
+            parents = tuple(
+                values[name] for name in broadcast_args
+                if isinstance(values[name], Distribution)
+            )
+            result.with_source(Provenance(
+                "broadcast",
+                parents=parents,
+                metadata={
+                    "backend": backend,
+                    "n_samples": n_broadcast_samples,
+                    "func": self._name or self._func.__name__,
+                    "broadcast_args": broadcast_args,
+                },
+            ))
+
+        return result
 
     def _sample_broadcast_args(
         self,
@@ -761,10 +780,6 @@ class Module(Node):
     def _build_workflows(self):
         """
         Replace @wf methods with Workflow instances.
-
-        Key change:
-          - We do NOT precompute wf_child_nodes / wf_inputs here.
-          - Workflow infers needs from signature and resolves from this module at call time.
         """
         for attr_name in dir(self):
             attr = getattr(self, attr_name)

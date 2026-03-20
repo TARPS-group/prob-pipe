@@ -36,6 +36,7 @@ from probpipe.distributions import (
     DistributionView,
     ConditionedComponent,
 )
+from probpipe.provenance import provenance_ancestors, provenance_dag
 
 __all__ = [
     "Distribution",
@@ -74,4 +75,6 @@ __all__ = [
     "JointGaussian",
     "DistributionView",
     "ConditionedComponent",
+    "provenance_ancestors",
+    "provenance_dag",
 ]

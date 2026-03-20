@@ -72,6 +72,12 @@ class TransformedDistribution(Distribution):
         else:
             self._tfp_transformed = None
 
+        self.with_source(Provenance(
+            "transform",
+            parents=(base,),
+            metadata={"bijector": type(bijector).__name__},
+        ))
+
     # -- convenient accessors -----------------------------------------------
 
     @property

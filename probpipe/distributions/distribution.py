@@ -290,6 +290,55 @@ class Provenance:
         )
         return f"Provenance({self.operation!r}, parents=[{parent_names}])"
 
+    # -- Serialization -----------------------------------------------------
+
+    def to_dict(self, *, recurse: bool = True) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dict.
+
+        Parameters
+        ----------
+        recurse : bool
+            If True, recursively serialize parent provenance chains.
+            If False, only include parent type/name references.
+        """
+        parent_dicts = []
+        for p in self.parents:
+            entry: dict[str, Any] = {
+                "type": type(p).__name__,
+                "name": p.name,
+            }
+            if recurse and p.source is not None:
+                entry["source"] = p.source.to_dict(recurse=True)
+            parent_dicts.append(entry)
+
+        # Filter metadata to JSON-serializable values
+        safe_metadata = {}
+        for k, v in self.metadata.items():
+            if isinstance(v, (str, int, float, bool, list, dict, type(None))):
+                safe_metadata[k] = v
+            else:
+                safe_metadata[k] = str(v)
+
+        return {
+            "operation": self.operation,
+            "parents": parent_dicts,
+            "metadata": safe_metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Provenance":
+        """Reconstruct from a dict produced by :meth:`to_dict`.
+
+        Parent distributions are not available at deserialization time, so
+        ``parents`` will be an empty tuple.  The parent information is
+        preserved in the dict under ``"parents"`` for inspection.
+        """
+        return cls(
+            operation=d["operation"],
+            parents=(),
+            metadata={**d.get("metadata", {}), "_parents_info": d.get("parents", [])},
+        )
+
 
 # ---------------------------------------------------------------------------
 # Distribution ABC
