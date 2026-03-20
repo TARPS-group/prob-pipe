@@ -97,13 +97,26 @@ class Workflow(Node):
     sample, returning an ``EmpiricalDistribution`` over the outputs (or a
     plain list when results are not numeric).
 
+    **Vectorization and orchestration** are orthogonal concerns:
+
+    - *Vectorization* (``vectorize``) controls **how** samples are dispatched:
+      ``jax.vmap`` for JAX-traceable functions, or a Python loop otherwise.
+    - *Orchestration* (``workflow_kind``) controls **whether** the dispatch
+      is wrapped in a Prefect task or flow for compute-graph tracing.
+
+    When both are active, the JAX-vectorized computation is executed inside
+    a Prefect task/flow, giving the benefits of ``vmap`` performance with
+    full Prefect lineage tracking.
+
     Parameters
     ----------
     func : Callable
         The function to wrap.
     workflow_kind : str or None
-        Execution backend: ``"task"`` (Prefect task), ``"flow"`` (Prefect
-        flow), or ``None`` (plain Python).
+        Prefect orchestration mode: ``"task"`` (wrap in a Prefect task),
+        ``"flow"`` (wrap in a Prefect flow), or ``None`` (plain Python).
+        Orchestration is independent of vectorization: a JAX-vmapped
+        broadcast can still be wrapped in a Prefect task for tracing.
     name : str or None
         Display name; defaults to ``func.__name__``.
     bind : dict or None
@@ -114,20 +127,19 @@ class Workflow(Node):
         Default number of samples drawn when broadcasting.  Can be overridden
         at call time by passing ``n_broadcast_samples=…`` (provided the
         wrapped function does not itself declare a parameter with that name).
-    broadcast_backend : str
-        Broadcasting execution strategy:
+    vectorize : str
+        Vectorization strategy for broadcasting:
 
-        - ``"auto"`` (default): if *workflow_kind* is set use ``"prefect"``,
-          otherwise probe with ``jax.make_jaxpr``; on success use ``"jax"``,
-          on failure fall back to ``"loop"``.
+        - ``"auto"`` (default): probe with ``jax.make_jaxpr``; on success
+          use ``"jax"``, on failure fall back to ``"loop"``.
         - ``"jax"``: vectorise via ``jax.vmap``.  Requires the wrapped
           function to be JAX-traceable.
         - ``"loop"``: Python loop (optionally threaded via *parallel*).
-        - ``"prefect"``: Prefect ``task.map()``.
     parallel : bool or int
-        Controls parallel execution during broadcasting (``"loop"`` backend
-        only).  ``False`` → sequential, ``True`` → ``ThreadPoolExecutor``
-        with default workers, ``int`` → explicit ``max_workers``.
+        Controls parallel execution during broadcasting (``"loop"``
+        vectorization only).  ``False`` → sequential, ``True`` →
+        ``ThreadPoolExecutor`` with default workers, ``int`` → explicit
+        ``max_workers``.
     seed : int
         Random seed for JAX PRNG key management during broadcasting.
     """
@@ -143,7 +155,7 @@ class Workflow(Node):
         bind: Dict[str, Any] | None = None,         # construction-time bindings (defaults/config)
         module: Any | None = None,                  # typically a Module; kept as Any to avoid import cycles
         n_broadcast_samples: int | None = None,      # default number of samples for broadcasting
-        broadcast_backend: str = "auto",             # "auto" | "jax" | "loop" | "prefect"
+        vectorize: str = "auto",                     # "auto" | "jax" | "loop"
         parallel: bool | int = False,               # True/int for ThreadPoolExecutor, or Prefect .map()
         seed: int = 0,                              # JAX PRNG seed for broadcasting
         **kwargs: Any,                              # convenience bindings (merged into bind)
@@ -155,10 +167,10 @@ class Workflow(Node):
         self._name = name or getattr(func, "__name__", self.__class__.__name__)
         self._module = module
         self._n_broadcast_samples = n_broadcast_samples if n_broadcast_samples is not None else self.DEFAULT_N_BROADCAST_SAMPLES
-        self._broadcast_backend = broadcast_backend
+        self._vectorize = vectorize
         self._parallel = parallel
         self._key = jax.random.PRNGKey(seed)
-        self._resolved_backend: str | None = None  # cached auto-detection result
+        self._resolved_vectorize: str | None = None  # cached auto-detection result
 
         # bind = "construction-time inputs" (defaults/config). kwargs are also treated as bind.
         b = dict(bind or {})
@@ -338,19 +350,17 @@ class Workflow(Node):
         self._key, subkey = jax.random.split(self._key)
         return subkey
 
-    def _resolve_backend(self, values: Dict[str, Any], broadcast_args: list[str]) -> str:
-        """Resolve the broadcast backend, caching the auto-detection result."""
-        backend = self._broadcast_backend
+    def _resolve_vectorize(self, values: Dict[str, Any], broadcast_args: list[str]) -> str:
+        """Resolve the vectorization strategy, caching the auto-detection result.
 
-        if backend != "auto":
-            return backend
+        Returns ``"jax"`` or ``"loop"``.  This is independent of orchestration
+        (``workflow_kind``), which wraps whichever strategy is chosen.
+        """
+        if self._vectorize != "auto":
+            return self._vectorize
 
-        # Auto-detection
-        if self._workflow_kind is not None:
-            return "prefect"
-
-        if self._resolved_backend is not None:
-            return self._resolved_backend
+        if self._resolved_vectorize is not None:
+            return self._resolved_vectorize
 
         # Probe JAX traceability with dummy inputs
         try:
@@ -371,15 +381,15 @@ class Workflow(Node):
                     else:
                         dummy_kw[name] = v
             jax.make_jaxpr(lambda kw: self._func(**kw))(dummy_kw)
-            self._resolved_backend = "jax"
+            self._resolved_vectorize = "jax"
         except Exception:
             logger.info(
-                "Function '%s' is not JAX-traceable; using loop backend.",
+                "Function '%s' is not JAX-traceable; using loop vectorization.",
                 self._name,
             )
-            self._resolved_backend = "loop"
+            self._resolved_vectorize = "loop"
 
-        return self._resolved_backend
+        return self._resolved_vectorize
 
     def _broadcast(
         self,
@@ -392,11 +402,15 @@ class Workflow(Node):
         Returns an EmpiricalDistribution if results are numeric arrays,
         otherwise returns a list of results.
 
-        When EmpiricalDistribution arguments have small enough support, enumerates their
-        samples (cartesian product) and propagates weights instead of resampling.
+        Vectorization (``"jax"`` vs ``"loop"``) and orchestration
+        (``workflow_kind``) are resolved independently:
 
-        Dispatches to the appropriate backend (jax/loop/prefect) based on
-        ``broadcast_backend``.
+        - **vectorize="jax"**: samples are dispatched via ``jax.vmap``.
+        - **vectorize="loop"**: samples are dispatched via a Python loop,
+          with optional empirical enumeration and threading.
+        - **workflow_kind="task"/"flow"**: whichever vectorization strategy
+          is chosen gets wrapped in a Prefect task or flow for compute-graph
+          tracing.
         """
         MIN_BROADCAST_SAMPLES = 5  # Recommended minimum samples
 
@@ -409,13 +423,13 @@ class Workflow(Node):
                 stacklevel=2
             )
 
-        backend = self._resolve_backend(values, broadcast_args)
+        vectorize = self._resolve_vectorize(values, broadcast_args)
 
-        # JAX backend: vectorize via vmap (no enumeration path — sample everything)
-        if backend == "jax":
+        # JAX vectorization: vmap (no enumeration path — sample everything)
+        if vectorize == "jax":
             result = self._broadcast_jax(values, broadcast_args, n_broadcast_samples)
         else:
-            # Loop and Prefect backends: support empirical enumeration
+            # Loop vectorization: supports empirical enumeration
             # Collect candidate empirical dists (small enough individually), sorted smallest first
             candidates = []
             sample_args: Dict[str, Distribution] = {}
@@ -456,7 +470,8 @@ class Workflow(Node):
                 "broadcast",
                 parents=parents,
                 metadata={
-                    "backend": backend,
+                    "vectorize": vectorize,
+                    "orchestrate": self._workflow_kind or "none",
                     "n_samples": n_broadcast_samples,
                     "func": self._name or self._func.__name__,
                     "broadcast_args": broadcast_args,
@@ -522,6 +537,9 @@ class Workflow(Node):
         Samples all broadcast distributions at once (with joint reconnection),
         then calls the wrapped function over the batch dimension using
         ``jax.vmap``.  Requires the wrapped function to be JAX-traceable.
+
+        If ``workflow_kind`` is set, the entire vmap computation is wrapped
+        in a Prefect task or flow for orchestration tracing.
         """
         key = self._get_key()
         sampled = self._sample_broadcast_args(values, broadcast_args, n_broadcast_samples, key)
@@ -537,8 +555,23 @@ class Workflow(Node):
 
         # vmap over the dict of batched arrays (axis 0 for each)
         batch = {name: sampled[name] for name in broadcast_args}
-        results = jax.vmap(single_call)(batch)
 
+        def run_vmap():
+            return jax.vmap(single_call)(batch)
+
+        # Wrap in Prefect task/flow if orchestration is requested
+        if self._workflow_kind is not None:
+            if task is None:
+                raise ImportError(
+                    "Prefect is required for workflow_kind='task'/'flow'. "
+                    "Install it with: pip install probpipe[prefect]"
+                )
+            if self._workflow_kind == "task":
+                run_vmap = task(name=f"{self._name}_vmap")(run_vmap)
+            else:
+                run_vmap = flow(name=f"{self._name}_vmap")(run_vmap)
+
+        results = run_vmap()
         return self._collect_results_jax(results, n_broadcast_samples)
 
     def _broadcast_enumerate(

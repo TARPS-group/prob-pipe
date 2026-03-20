@@ -396,7 +396,7 @@ class TestBroadcastingReconnection:
 
         wf = Workflow(
             func=subtract,
-            broadcast_backend="loop",
+            vectorize="loop",
             n_broadcast_samples=30,
             seed=42,
         )
@@ -418,7 +418,7 @@ class TestBroadcastingReconnection:
 
         wf = Workflow(
             func=subtract,
-            broadcast_backend="jax",
+            vectorize="jax",
             n_broadcast_samples=30,
             seed=55,
         )

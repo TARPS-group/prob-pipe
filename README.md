@@ -11,7 +11,7 @@ ProbPipe aims to overturn this paradigm. Just as probabilistic programming syste
 - **Reusable inferential components.** Workflows are expressed in terms of modular, swappable statistical or algorithmic units rather than low-level orchestration primitives. Users can change the likelihood model, swap the inference algorithm, or explore a different prior without restructuring the pipeline.
 - **Interoperability with the Python ecosystem.** ProbPipe is designed to work with existing ML, probabilistic, and orchestration libraries. Modules can serve as thin wrappers around other packages, and automatic conversion among distributional representations (parametric distributions, Monte Carlo samples, amortized posteriors) removes a major source of brittleness in current pipelines.
 - **End-to-end uncertainty propagation.** Once uncertainty is introduced, it is represented and propagated through all downstream steps. When a workflow node expects a concrete value but receives a distribution, ProbPipe automatically broadcasts over samples -- users write deterministic functions and get UQ for free.
-- **Seamless scalability.** The same pipeline runs on a laptop via JAX vectorization or scales to a cluster via Prefect orchestration. The auto backend probes JAX traceability and Prefect availability, then picks the fastest execution strategy transparently.
+- **Seamless scalability.** The same pipeline runs on a laptop via JAX vectorization or scales to a cluster via Prefect orchestration -- and both can be active simultaneously. Auto-detection probes JAX traceability and picks the fastest vectorization strategy; Prefect wrapping is orthogonal and adds compute-graph tracing when enabled.
 - **Provenance and reproducibility.** Every distribution records how it was created -- operation, parents, parameters -- enabling full lineage tracing from any result back to its inputs.
 
 ## Installation
@@ -150,7 +150,7 @@ provenance_ancestors(positive)  # [Normal(name='base', event_shape=())]
 | [01_distributions](examples/01_distributions.ipynb) | Distribution basics, shape semantics, support checking, conversion |
 | [02_transformations](examples/02_transformations.ipynb) | Bijectors, transformed distributions, provenance chains |
 | [03_joint_distributions](examples/03_joint_distributions.ipynb) | Joint distributions, conditioning, correlated broadcasting |
-| [04_broadcasting](examples/04_broadcasting.ipynb) | Broadcasting backends, enumeration, auto-detection |
+| [04_broadcasting](examples/04_broadcasting.ipynb) | Broadcasting vectorization, enumeration, auto-detection |
 | [05_autodiff](examples/05_autodiff.ipynb) | JAX autodiff: score functions, sensitivity analysis, MLE, variational inference |
 | [06_modular_forecasting](examples/06_modular_forecasting.ipynb) | Modular inference pipeline, swappable likelihoods, posterior predictive checks |
 

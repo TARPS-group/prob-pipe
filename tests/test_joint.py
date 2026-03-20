@@ -369,7 +369,7 @@ class TestBroadcastingReconnection:
 
         return Workflow(
             func=add,
-            broadcast_backend=backend,
+            vectorize=backend,
             n_broadcast_samples=50,
             seed=42,
         )
@@ -400,7 +400,7 @@ class TestBroadcastingReconnection:
 
         wf = Workflow(
             func=subtract,
-            broadcast_backend="loop",
+            vectorize="loop",
             n_broadcast_samples=20,
             seed=99,
         )
@@ -424,7 +424,7 @@ class TestBroadcastingReconnection:
 
         wf = Workflow(
             func=add3,
-            broadcast_backend="loop",
+            vectorize="loop",
             n_broadcast_samples=50,
             seed=77,
         )
@@ -446,7 +446,7 @@ class TestBroadcastingReconnection:
 
         wf = Workflow(
             func=add,
-            broadcast_backend="jax",
+            vectorize="jax",
             n_broadcast_samples=50,
             seed=55,
         )
@@ -468,7 +468,7 @@ class TestBroadcastingReconnection:
 
         wf = Workflow(
             func=subtract,
-            broadcast_backend="jax",
+            vectorize="jax",
             n_broadcast_samples=20,
             seed=88,
         )
@@ -638,7 +638,7 @@ class TestEnumerateWithDistributionViews:
 
         wf = Workflow(
             func=compute,
-            broadcast_backend="loop",
+            vectorize="loop",
             n_broadcast_samples=50,
             seed=123,
         )

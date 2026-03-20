@@ -331,7 +331,7 @@ class TestBroadcasting:
 
         wf = Workflow(
             func=add,
-            broadcast_backend="loop",
+            vectorize="loop",
             n_broadcast_samples=50,
             seed=42,
         )
