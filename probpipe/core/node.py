@@ -53,62 +53,27 @@ def wf(func: Callable):
 
 class Node(ABC):
     """
-    Base DAG unit.
+    Base unit of the ProbPipe computational dependency graph. 
 
-    A Node:
-    - has child nodes (other Nodes it is allowed to call)
-    - has inputs (non-Node values)
-    - knows nothing about execution, prefect, or workflow functions
-
-    New convenience:
-      Node(foo=SomeNode(), bar=123)  # auto-splits
-
-    Backward compatible:
-      Node(child_nodes={...}, inputs={...})
+    Keyword arguments are automatically split by type: values that are
+    ``Node`` instances become *child nodes* (dependencies on other DAG
+    units), and everything else becomes *inputs* (data, configuration,
+    hyperparameters).  Both collections are frozen after construction.
     """
 
-    def __init__(
-        self,
-        *,
-        child_nodes: Dict[str, "Node"] | None = None,
-        inputs: Dict[str, Any] | None = None,
-        **kwargs: Any,
-    ):
-        # Start from explicitly provided dicts
-        child_nodes = dict(child_nodes or {})
-        inputs = dict(inputs or {})
+    def __init__(self, **kwargs: Any):
+        child_nodes: Dict[str, Node] = {}
+        inputs: Dict[str, Any] = {}
 
-        # Auto-split kwargs into child_nodes vs inputs
-        # (kwargs override nothing by default; if you want kwargs to override, swap the order)
         for k, v in kwargs.items():
             if isinstance(v, Node):
-                # If user mistakenly passed a Node both in inputs and kwargs, this will correct it
                 child_nodes[k] = v
-                # In case it was also present in inputs, remove it (avoid inconsistent state)
-                if k in inputs:
-                    del inputs[k]
             else:
-                # If user mistakenly passed a non-Node both in child_nodes and kwargs, correct it
                 inputs[k] = v
-                if k in child_nodes:
-                    del child_nodes[k]
-
-        # Validate child nodes
-        for name, node in child_nodes.items():
-            if not isinstance(node, Node):
-                raise TypeError(f"Child node '{name}' must be a Node, got {type(node)}")
-
-        # Validate inputs
-        for name, value in inputs.items():
-            if isinstance(value, Node):
-                raise TypeError(
-                    f"Input '{name}' is a Node; Nodes must be declared as child_nodes "
-                    f"(or passed as a normal kwarg so it is auto-detected)"
-                )
 
         # Freeze internal state (read-only)
-        self._child_nodes = MappingProxyType(dict(child_nodes))
-        self._inputs = MappingProxyType(dict(inputs))
+        self._child_nodes = MappingProxyType(child_nodes)
+        self._inputs = MappingProxyType(inputs)
 
     @property
     def child_nodes(self) -> Mapping[str, "Node"]:
@@ -200,9 +165,7 @@ class Workflow(Node):
         b.update(kwargs)
         self._bind = b
 
-        # Keep Node base class but don't use its child_nodes/inputs split here.
-        # (Module is the container; this node *infers* needs from signature.)
-        super().__init__(child_nodes={}, inputs={})
+        super().__init__()
 
         # Precompute parameter metadata once
         self._param_names = [p for p in self._sig.parameters if p != "self"]
