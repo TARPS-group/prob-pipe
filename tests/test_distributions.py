@@ -199,10 +199,10 @@ class TestEmpiricalDistribution:
         with pytest.raises(ValueError, match="does not match"):
             EmpiricalDistribution(simple_samples, jnp.array([0.5, 0.5]))
 
-    def test_1d_input_promoted(self):
+    def test_1d_input_scalar_event(self):
         ed = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
-        assert ed.event_shape == (1,)
-        assert ed.samples.shape == (3, 1)
+        assert ed.event_shape == ()
+        assert ed.samples.shape == (3,)
 
     def test_multidim_event_shape(self):
         samples = jnp.ones((5, 3))
@@ -442,9 +442,9 @@ class TestDistributionABC:
         with pytest.raises(TypeError):
             Distribution()
 
-    def test_no_pin_method(self, gaussian):
-        """pin() was removed from Distribution ABC."""
-        assert not hasattr(gaussian, "pin")
+    def test_no_condition_on_method(self, gaussian):
+        """condition_on() is only on JointDistribution, not Distribution ABC."""
+        assert not hasattr(gaussian, "condition_on")
 
     def test_default_batch_shape(self, gaussian):
         assert gaussian.batch_shape == ()

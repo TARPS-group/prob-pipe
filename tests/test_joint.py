@@ -9,7 +9,7 @@ from probpipe import (
     MultivariateNormal,
     ProductDistribution,
     DistributionView,
-    PinnedComponent,
+    ConditionedComponent,
     JointDistribution,
     EmpiricalDistribution,
     Distribution,
@@ -251,68 +251,68 @@ class TestFromDistributions:
 
 
 # ===========================================================================
-# 5. TestPinning
+# 5. TestConditionOn
 # ===========================================================================
 
-class TestPinning:
+class TestConditionOn:
 
-    def test_pin_replaces_with_pinned_component(self, joint_xy):
-        pinned = joint_xy.pin(x=jnp.array(2.0))
-        assert isinstance(pinned.components["x"], PinnedComponent)
-        # Unpinned component should remain as before
-        assert not isinstance(pinned.components["y"], PinnedComponent)
+    def test_condition_on_replaces_with_conditioned_component(self, joint_xy):
+        cond = joint_xy.condition_on(x=jnp.array(2.0))
+        assert isinstance(cond.components["x"], ConditionedComponent)
+        # Unconditioned component should remain as before
+        assert not isinstance(cond.components["y"], ConditionedComponent)
 
-    def test_pinned_sample_returns_fixed_value(self, joint_xy):
+    def test_conditioned_sample_returns_fixed_value(self, joint_xy):
         val = jnp.array(2.0)
-        pinned = joint_xy.pin(x=val)
+        cond = joint_xy.condition_on(x=val)
         key = jax.random.PRNGKey(20)
-        structured = pinned.sample_structured(key, (10,))
+        structured = cond.sample_structured(key, (10,))
         np.testing.assert_allclose(structured["x"], jnp.full((10,), 2.0), atol=1e-6)
 
-    def test_unpinned_component_still_varies(self, joint_xy):
-        pinned = joint_xy.pin(x=jnp.array(0.0))
+    def test_unconditioned_component_still_varies(self, joint_xy):
+        cond = joint_xy.condition_on(x=jnp.array(0.0))
         key = jax.random.PRNGKey(21)
-        structured = pinned.sample_structured(key, (100,))
+        structured = cond.sample_structured(key, (100,))
         # y should have non-trivial variance
         assert jnp.std(structured["y"]) > 0.1
 
-    def test_log_prob_works_on_pinned(self, joint_xy):
-        pinned = joint_xy.pin(x=jnp.array(1.0))
+    def test_log_prob_works_on_conditioned(self, joint_xy):
+        cond = joint_xy.condition_on(x=jnp.array(1.0))
         key = jax.random.PRNGKey(22)
-        flat = pinned.sample(key, (5,))
-        lps = pinned.log_prob(flat)
+        flat = cond.sample(key, (5,))
+        lps = cond.log_prob(flat)
         assert lps.shape == (5,)
         assert jnp.all(jnp.isfinite(lps))
 
     def test_provenance_attached(self, joint_xy):
-        pinned = joint_xy.pin(y=jnp.array(0.5))
-        assert pinned.source is not None
-        assert pinned.source.operation == "pin"
-        assert "y" in pinned.source.metadata["pinned"]
+        cond = joint_xy.condition_on(y=jnp.array(0.5))
+        assert cond.source is not None
+        assert cond.source.operation == "condition_on"
+        assert "y" in cond.source.metadata["conditioned"]
 
     def test_keyerror_on_unknown_component(self, joint_xy):
         with pytest.raises(KeyError, match="Unknown"):
-            joint_xy.pin(nonexistent=jnp.array(0.0))
+            joint_xy.condition_on(nonexistent=jnp.array(0.0))
 
 
 # ===========================================================================
-# 6. TestPinnedComponent
+# 6. TestConditionedComponent
 # ===========================================================================
 
-class TestPinnedComponent:
+class TestConditionedComponent:
 
     def test_event_shape_matches_base(self, normal_x):
-        pc = PinnedComponent(normal_x, jnp.array(1.0))
+        pc = ConditionedComponent(normal_x, jnp.array(1.0))
         assert pc.event_shape == normal_x.event_shape
 
     def test_event_shape_mvn(self, mvn_z):
         val = jnp.array([1.0, 2.0, 3.0])
-        pc = PinnedComponent(mvn_z, val)
+        pc = ConditionedComponent(mvn_z, val)
         assert pc.event_shape == (3,)
 
     def test_sample_always_returns_pinned(self, normal_x):
         val = jnp.array(42.0)
-        pc = PinnedComponent(normal_x, val)
+        pc = ConditionedComponent(normal_x, val)
         key = jax.random.PRNGKey(30)
         s1 = pc.sample(key)
         s2 = pc.sample(jax.random.PRNGKey(31))
@@ -321,7 +321,7 @@ class TestPinnedComponent:
 
     def test_sample_broadcast_shape(self, normal_x):
         val = jnp.array(5.0)
-        pc = PinnedComponent(normal_x, val)
+        pc = ConditionedComponent(normal_x, val)
         key = jax.random.PRNGKey(32)
         s = pc.sample(key, (8,))
         assert s.shape == (8,)
@@ -329,11 +329,11 @@ class TestPinnedComponent:
 
     def test_value_error_shape_mismatch(self, mvn_z):
         with pytest.raises(ValueError, match="shape"):
-            PinnedComponent(mvn_z, jnp.array(1.0))  # scalar vs (3,)
+            ConditionedComponent(mvn_z, jnp.array(1.0))  # scalar vs (3,)
 
     def test_log_prob_is_constant(self, normal_x):
         val = jnp.array(0.0)
-        pc = PinnedComponent(normal_x, val)
+        pc = ConditionedComponent(normal_x, val)
         lp1 = pc.log_prob(jnp.array(999.0))
         lp2 = pc.log_prob(jnp.array(-999.0))
         # log_prob always evaluates base at the pinned value, ignoring input
@@ -341,11 +341,11 @@ class TestPinnedComponent:
 
     def test_mean_returns_pinned_value(self, normal_x):
         val = jnp.array(7.0)
-        pc = PinnedComponent(normal_x, val)
+        pc = ConditionedComponent(normal_x, val)
         np.testing.assert_allclose(float(pc.mean()), 7.0, atol=1e-6)
 
     def test_variance_is_zero(self, normal_x):
-        pc = PinnedComponent(normal_x, jnp.array(1.0))
+        pc = ConditionedComponent(normal_x, jnp.array(1.0))
         np.testing.assert_allclose(float(pc.variance()), 0.0, atol=1e-6)
 
 

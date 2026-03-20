@@ -45,8 +45,11 @@ from .transformed import TransformedDistribution
 from .joint import (
     JointDistribution,
     ProductDistribution,
+    SequentialJointDistribution,
+    JointEmpirical,
+    JointGaussian,
     DistributionView,
-    PinnedComponent,
+    ConditionedComponent,
 )
 from .multivariate import (
     MultivariateNormal,
@@ -90,8 +93,11 @@ __all__ = [
     # Joint
     "JointDistribution",
     "ProductDistribution",
+    "SequentialJointDistribution",
+    "JointEmpirical",
+    "JointGaussian",
     "DistributionView",
-    "PinnedComponent",
+    "ConditionedComponent",
     # Multivariate
     "Dirichlet",
     "Multinomial",

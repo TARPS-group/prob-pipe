@@ -650,17 +650,16 @@ class Workflow(Node):
         """
         Stack results into an EmpiricalDistribution if possible,
         otherwise return a plain list.  Works with both JAX and numpy arrays.
+
+        Stacked shape is ``(n, *event_shape)``.  Scalar results give ``(n,)``
+        with ``event_shape=()``.
         """
         try:
             stacked = jnp.stack([jnp.asarray(r, dtype=jnp.float32) for r in results], axis=0)
         except (ValueError, TypeError):
             return results
 
-        if stacked.ndim == 1:
-            stacked = stacked.reshape(-1, 1)
-        elif stacked.ndim > 2:
-            stacked = stacked.reshape(n, -1)
-
+        # stacked shape: (n,) for scalars, (n, d) for vectors, (n, ...) for higher
         return EmpiricalDistribution(stacked, weights=weights)
 
     @staticmethod
@@ -674,17 +673,10 @@ class Workflow(Node):
         pytree) with leading dimension *n*.
         """
         if isinstance(results, jnp.ndarray):
-            stacked = results
-            if stacked.ndim == 1:
-                stacked = stacked.reshape(-1, 1)
-            elif stacked.ndim > 2:
-                stacked = stacked.reshape(n, -1)
-            return EmpiricalDistribution(stacked, weights=weights)
+            return EmpiricalDistribution(results, weights=weights)
         # If results is a pytree or non-array, return as list
         try:
             stacked = jnp.stack(jax.tree.leaves(results), axis=-1)
-            if stacked.ndim == 1:
-                stacked = stacked.reshape(-1, 1)
             return EmpiricalDistribution(stacked, weights=weights)
         except Exception:
             return results

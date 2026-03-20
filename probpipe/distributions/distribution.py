@@ -538,8 +538,8 @@ class EmpiricalDistribution(Distribution):
         name: str | None = None,
     ):
         samples = jnp.asarray(samples, dtype=jnp.float32)
-        if samples.ndim < 2:
-            samples = samples.reshape(-1, 1)
+        if samples.ndim == 0:
+            raise ValueError("samples must have at least 1 dimension (the sample axis).")
 
         n = samples.shape[0]
 
@@ -587,7 +587,8 @@ class EmpiricalDistribution(Distribution):
 
     @property
     def dim(self) -> int:
-        return int(np.prod(self._samples.shape[1:]))
+        """Flat dimensionality of each sample (product of event_shape, or 1 for scalars)."""
+        return max(1, int(np.prod(self._samples.shape[1:])))
 
     @property
     def samples(self) -> Array:
@@ -671,7 +672,9 @@ class EmpiricalDistribution(Distribution):
     def cov(self) -> Array:
         """Weighted sample covariance matrix, shape ``(d, d)``."""
         mu = self.mean()
-        diff = self._samples.reshape(self.n, -1) - mu.ravel()
+        # Flatten to 2D: (n, d)
+        flat_samples = self._samples.reshape(self.n, -1)
+        diff = flat_samples - mu.reshape(-1)
         if self._is_uniform:
             return jnp.einsum("ni,nj->ij", diff, diff) / self.n
         return jnp.einsum("ni,nj,n->ij", diff, diff, self.weights)

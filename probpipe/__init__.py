@@ -30,8 +30,11 @@ from probpipe.distributions import (
     TransformedDistribution,
     JointDistribution,
     ProductDistribution,
+    SequentialJointDistribution,
+    JointEmpirical,
+    JointGaussian,
     DistributionView,
-    PinnedComponent,
+    ConditionedComponent,
 )
 
 __all__ = [
@@ -66,6 +69,9 @@ __all__ = [
     "TransformedDistribution",
     "JointDistribution",
     "ProductDistribution",
+    "SequentialJointDistribution",
+    "JointEmpirical",
+    "JointGaussian",
     "DistributionView",
-    "PinnedComponent",
+    "ConditionedComponent",
 ]
