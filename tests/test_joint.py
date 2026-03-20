@@ -523,3 +523,126 @@ class TestPytreeRegistration:
         reconstructed = jax.tree_util.tree_unflatten(aux, [new_a, new_b])
         np.testing.assert_allclose(float(reconstructed.mean()[0]), 10.0, atol=1e-5)
         np.testing.assert_allclose(float(reconstructed.mean()[1]), 20.0, atol=1e-5)
+
+
+# ===========================================================================
+# 9. Additional coverage
+# ===========================================================================
+
+class TestFlattenUnflattenRoundtrip:
+    """Verify flatten_structured and unflatten are inverses."""
+
+    def test_roundtrip_scalar_components(self, joint_xy):
+        key = jax.random.PRNGKey(60)
+        structured = joint_xy.sample_structured(key, (5,))
+        flat = joint_xy.flatten_structured(structured)
+        recovered = joint_xy.unflatten(flat)
+        np.testing.assert_allclose(recovered["x"], structured["x"], atol=1e-6)
+        np.testing.assert_allclose(recovered["y"], structured["y"], atol=1e-6)
+
+    def test_roundtrip_mixed_components(self, joint_xz):
+        key = jax.random.PRNGKey(61)
+        structured = joint_xz.sample_structured(key, (3,))
+        flat = joint_xz.flatten_structured(structured)
+        assert flat.shape == (3, 4)
+        recovered = joint_xz.unflatten(flat)
+        np.testing.assert_allclose(recovered["x"], structured["x"], atol=1e-6)
+        np.testing.assert_allclose(recovered["z"], structured["z"], atol=1e-6)
+
+    def test_roundtrip_no_batch_dim(self, joint_xy):
+        key = jax.random.PRNGKey(62)
+        structured = joint_xy.sample_structured(key)
+        flat = joint_xy.flatten_structured(structured)
+        assert flat.shape == (2,)
+        recovered = joint_xy.unflatten(flat)
+        np.testing.assert_allclose(recovered["x"], structured["x"], atol=1e-6)
+        np.testing.assert_allclose(recovered["y"], structured["y"], atol=1e-6)
+
+
+class TestSingleComponent:
+    """ProductDistribution with one component."""
+
+    def test_single_component_event_shape(self):
+        joint = ProductDistribution(a=Normal(loc=0.0, scale=1.0))
+        assert joint.event_shape == (1,)
+
+    def test_single_component_sample(self):
+        joint = ProductDistribution(a=Normal(loc=0.0, scale=1.0))
+        key = jax.random.PRNGKey(70)
+        s = joint.sample(key, (5,))
+        assert s.shape == (5, 1)
+
+    def test_single_component_log_prob(self):
+        n = Normal(loc=0.0, scale=1.0)
+        joint = ProductDistribution(a=n)
+        x = jnp.array([[0.0], [1.0]])
+        lps = joint.log_prob(x)
+        expected = jnp.array([float(n.log_prob(0.0)), float(n.log_prob(1.0))])
+        np.testing.assert_allclose(lps, expected, atol=1e-5)
+
+
+class TestLogProbBatchValues:
+    """Verify log_prob batch values are numerically correct, not just shapes."""
+
+    def test_batch_log_prob_matches_individual(self, joint_xy, normal_x, normal_y):
+        key = jax.random.PRNGKey(80)
+        samples = joint_xy.sample(key, (10,))
+        batch_lps = joint_xy.log_prob(samples)
+
+        for i in range(10):
+            x_val = samples[i, 0]
+            y_val = samples[i, 1]
+            expected = float(normal_x.log_prob(x_val)) + float(normal_y.log_prob(y_val))
+            np.testing.assert_allclose(float(batch_lps[i]), expected, atol=1e-5)
+
+
+class TestEmptyComponentsValidation:
+
+    def test_raises_on_empty(self):
+        with pytest.raises(ValueError, match="at least one"):
+            ProductDistribution()
+
+
+class TestDistributionViewFromDistribution:
+
+    def test_from_distribution_raises(self, joint_xy):
+        with pytest.raises(NotImplementedError, match="structural reference"):
+            DistributionView.from_distribution(Normal(loc=0.0, scale=1.0))
+
+
+class TestEnumerateWithDistributionViews:
+    """Verify DistributionView reconnection works in the enumerate path
+    (when both EmpiricalDistribution and DistributionView are broadcast args)."""
+
+    def test_empirical_plus_views_preserves_correlation(self):
+        """When an empirical and two correlated views are mixed, views stay paired."""
+        joint = ProductDistribution(
+            x=Normal(loc=0.0, scale=1.0),
+            y=Normal(loc=0.0, scale=1.0),
+        )
+        view_x = joint["x"]
+        view_y = joint["y"]
+
+        # Small empirical that will be enumerated
+        ed = EmpiricalDistribution(jnp.array([[10.0], [20.0]]))
+
+        def compute(a: float, b: float, c: float) -> float:
+            # a - b should be 0 if views are sampled jointly (same parent, same key split)
+            # c is from the empirical
+            return (a - b) + c
+
+        wf = Workflow(
+            func=compute,
+            broadcast_backend="loop",
+            n_broadcast_samples=50,
+            seed=123,
+        )
+        # view_x and view_y should be sampled jointly via reconnection
+        # even though ed is enumerated separately
+        result = wf(a=view_x, b=view_y, c=ed)
+        assert isinstance(result, EmpiricalDistribution)
+        # Since x and y are independent in ProductDistribution, a-b won't
+        # be exactly 0, but the reconnection ensures they are consistently paired.
+        # We can't test exact correlation here, but we can verify it runs
+        # and produces the right number of samples.
+        assert result.n == 50

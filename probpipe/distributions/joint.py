@@ -168,6 +168,8 @@ class JointDistribution(Distribution):
     """
 
     def __init__(self, *, name: str | None = None, **components: Distribution):
+        if not components:
+            raise ValueError("JointDistribution requires at least one component.")
         for k, v in components.items():
             if not isinstance(v, Distribution):
                 raise TypeError(
@@ -260,13 +262,11 @@ class JointDistribution(Distribution):
     def flatten_structured(self, structured: dict[str, ArrayLike]) -> Array:
         """Concatenate per-component arrays into a flat array."""
         parts = []
-        for cname in self._components:
+        for cname, cdist in self._components.items():
             arr = jnp.asarray(structured[cname])
-            # Flatten event dims
-            flat_shape = arr.shape[:-len(self._components[cname].event_shape) or None]
-            if self._components[cname].event_shape:
-                flat_shape = arr.shape[:-len(self._components[cname].event_shape)]
-                parts.append(arr.reshape(flat_shape + (-1,)))
+            if cdist.event_shape:
+                batch_shape = arr.shape[:-len(cdist.event_shape)]
+                parts.append(arr.reshape(batch_shape + (-1,)))
             else:
                 parts.append(arr[..., None])  # scalar → (*, 1)
         return jnp.concatenate(parts, axis=-1)

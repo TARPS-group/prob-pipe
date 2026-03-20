@@ -582,11 +582,12 @@ class Workflow(Node):
         reps_per_combo = max(1, n_broadcast_samples // product_size) if sample_args else 1
         total = product_size * reps_per_combo
 
-        # Pre-sample non-empirical distributions
-        sampled = {}
-        for name, dist in sample_args.items():
-            key, subkey = jax.random.split(key)
-            sampled[name] = dist.sample(subkey, (total,))
+        # Pre-sample non-empirical distributions (with DistributionView reconnection)
+        sample_arg_names = list(sample_args.keys())
+        if sample_arg_names:
+            sampled = self._sample_broadcast_args(values, sample_arg_names, total, key)
+        else:
+            sampled = {}
 
         call_value_list = []
         weights = []
