@@ -24,7 +24,7 @@ cd prob-pipe
 pip install .
 ```
 
-Core dependencies: JAX, NumPy, SciPy, TensorFlow Probability.
+Core dependencies: JAX, NumPy, SciPy, TensorFlow Probability (nightly, [recommended for JAX users](https://github.com/tensorflow/probability/issues/1994#issuecomment-3129033043)).
 
 Optional extras:
 

@@ -15,11 +15,11 @@ authors = [
   { name = "Can Erozer",    email = "caner@bu.edu" },
 ]  # See AUTHORS file for full list
 dependencies = [
-  "jax>=0.4.35,<0.7",
-  "jaxlib>=0.4.35,<0.7",
+  "jax>=0.4.35",
+  "jaxlib>=0.4.35",
   "numpy>=2.0",
   "scipy>=1.7",
-  "tensorflow-probability>=0.25",
+  "tfp-nightly==0.26.0.dev20260315",
 ]
 
 [project.optional-dependencies]
