@@ -229,19 +229,21 @@ class MCMCSampler(ApproximatePosterior):
         prior: Distribution,
         data: NDArray,
     ) -> jnp.ndarray:
-        """Determine the initial chain state."""
+        """Determine the initial chain state (always at least 1-D)."""
         if self.init is not None:
-            return jnp.asarray(self.init, dtype=jnp.float32)
+            return jnp.atleast_1d(jnp.asarray(self.init, dtype=jnp.float32))
 
         # Try prior mean
         try:
             m = prior.mean()
-            return jnp.asarray(m, dtype=jnp.float32)
+            return jnp.atleast_1d(jnp.asarray(m, dtype=jnp.float32))
         except (NotImplementedError, Exception):
             pass
 
         # Fall back to data column mean
-        return jnp.mean(jnp.asarray(data, dtype=jnp.float32), axis=0)
+        return jnp.atleast_1d(
+            jnp.mean(jnp.asarray(data, dtype=jnp.float32), axis=0)
+        )
 
     def _is_jax_traceable(
         self,
