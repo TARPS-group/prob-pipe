@@ -65,6 +65,20 @@ __all__ = [
     "TFPDistribution",
     "EmpiricalDistribution",
     "Provenance",
+    # Constraints
+    "Constraint",
+    "real",
+    "positive",
+    "non_negative",
+    "non_negative_integer",
+    "boolean",
+    "unit_interval",
+    "simplex",
+    "positive_definite",
+    "sphere",
+    "interval",
+    "greater_than",
+    "integer_interval",
     # Multivariate continuous
     "MultivariateNormal",
     # Univariate continuous

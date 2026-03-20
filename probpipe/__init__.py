@@ -1,9 +1,24 @@
 from probpipe.distributions import (
+    # Base classes
     Distribution,
     TFPDistribution,
     EmpiricalDistribution,
     Provenance,
-    MultivariateNormal,
+    # Constraints
+    Constraint,
+    real,
+    positive,
+    non_negative,
+    non_negative_integer,
+    boolean,
+    unit_interval,
+    simplex,
+    positive_definite,
+    sphere,
+    interval,
+    greater_than,
+    integer_interval,
+    # Continuous
     Normal,
     Beta,
     Gamma,
@@ -18,16 +33,21 @@ from probpipe.distributions import (
     HalfCauchy,
     Pareto,
     TruncatedNormal,
+    # Discrete
     Bernoulli,
     Binomial,
     Poisson,
     Categorical,
     NegativeBinomial,
+    # Multivariate
+    MultivariateNormal,
     Dirichlet,
     Multinomial,
     Wishart,
     VonMisesFisher,
+    # Transformed
     TransformedDistribution,
+    # Joint
     JointDistribution,
     ProductDistribution,
     SequentialJointDistribution,
@@ -36,14 +56,30 @@ from probpipe.distributions import (
     DistributionView,
     ConditionedComponent,
 )
+from probpipe.core.node import Workflow, Module, wf
 from probpipe.provenance import provenance_ancestors, provenance_dag
 
 __all__ = [
+    # Base classes
     "Distribution",
     "TFPDistribution",
     "EmpiricalDistribution",
     "Provenance",
-    "MultivariateNormal",
+    # Constraints
+    "Constraint",
+    "real",
+    "positive",
+    "non_negative",
+    "non_negative_integer",
+    "boolean",
+    "unit_interval",
+    "simplex",
+    "positive_definite",
+    "sphere",
+    "interval",
+    "greater_than",
+    "integer_interval",
+    # Continuous
     "Normal",
     "Beta",
     "Gamma",
@@ -58,16 +94,21 @@ __all__ = [
     "HalfCauchy",
     "Pareto",
     "TruncatedNormal",
+    # Discrete
     "Bernoulli",
     "Binomial",
     "Poisson",
     "Categorical",
     "NegativeBinomial",
+    # Multivariate
+    "MultivariateNormal",
     "Dirichlet",
     "Multinomial",
     "Wishart",
     "VonMisesFisher",
+    # Transformed
     "TransformedDistribution",
+    # Joint
     "JointDistribution",
     "ProductDistribution",
     "SequentialJointDistribution",
@@ -75,6 +116,11 @@ __all__ = [
     "JointGaussian",
     "DistributionView",
     "ConditionedComponent",
+    # Workflow
+    "Workflow",
+    "Module",
+    "wf",
+    # Provenance
     "provenance_ancestors",
     "provenance_dag",
 ]
