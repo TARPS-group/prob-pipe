@@ -185,6 +185,51 @@ def integer_interval(low: int, high: int) -> _IntegerInterval:
     return _IntegerInterval(low, high)
 
 
+# Immediate supersets in the constraint partial order.
+# Each constraint type maps to the types that are its direct (one-step)
+# supersets.  The transitive closure is computed once by ``_all_supersets``.
+_IMMEDIATE_SUPERSETS: dict[type, tuple[type, ...]] = {
+    _Boolean: (_NonNegativeInteger, _UnitInterval),
+    _UnitInterval: (_NonNegative,),
+    _Positive: (_NonNegative,),
+    _NonNegative: (_Real,),
+    _NonNegativeInteger: (_NonNegative,),
+    _Simplex: (_UnitInterval,),
+    _Sphere: (_Real,),
+    _PositiveDefinite: (_Real,),
+}
+
+_ALL_SUPERSETS: dict[type, set[type]] | None = None
+
+
+def _all_supersets() -> dict[type, set[type]]:
+    """Return the transitive closure of ``_IMMEDIATE_SUPERSETS``.
+
+    Computed once and cached at module level.
+    """
+    global _ALL_SUPERSETS
+    if _ALL_SUPERSETS is not None:
+        return _ALL_SUPERSETS
+
+    result: dict[type, set[type]] = {}
+
+    def _collect(t: type) -> set[type]:
+        if t in result:
+            return result[t]
+        immediate = _IMMEDIATE_SUPERSETS.get(t, ())
+        sups: set[type] = set(immediate)
+        for parent in immediate:
+            sups |= _collect(parent)
+        result[t] = sups
+        return sups
+
+    for t in _IMMEDIATE_SUPERSETS:
+        _collect(t)
+
+    _ALL_SUPERSETS = result
+    return result
+
+
 def _supports_compatible(source: Constraint, target: Constraint) -> bool:
     """Check whether *source* support is a subset of *target* support.
 
@@ -195,30 +240,16 @@ def _supports_compatible(source: Constraint, target: Constraint) -> bool:
     if source == target:
         return True
 
-    # Build a partial ordering of common constraints
-    # A source is compatible with a target if every value in source's
-    # domain is also in target's domain (i.e., source ⊆ target).
-    _SUBSETS: dict[type, set[type]] = {
-        _Boolean: {_NonNegativeInteger, _NonNegative, _Real, _UnitInterval},
-        _UnitInterval: {_NonNegative, _Real},
-        _Positive: {_NonNegative, _Real},
-        _NonNegative: {_Real},
-        _NonNegativeInteger: {_NonNegative, _Real},
-        _Simplex: {_Real, _UnitInterval, _NonNegative},  # simplex ⊂ [0,1]^k ⊂ R^k
-        _Sphere: {_Real},
-        _PositiveDefinite: {_Real},
-    }
-
+    supersets = _all_supersets()
     source_type = type(source)
     target_type = type(target)
 
-    # Direct subset check
-    if target_type in _SUBSETS.get(source_type, set()):
+    # source ⊆ target?
+    if target_type in supersets.get(source_type, set()):
         return True
 
-    # source ⊆ target means target is a "wider" constraint
-    # Check the reverse: if target is in source's subset list, that's wrong
-    if source_type in _SUBSETS.get(target_type, set()):
+    # target ⊆ source means target is *narrower* — incompatible
+    if source_type in supersets.get(target_type, set()):
         return False
 
     # Parameterized constraints: interval/greater_than
