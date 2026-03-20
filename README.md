@@ -1,16 +1,18 @@
 # ProbPipe
 
-ProbPipe is a Python workflow management system for probabilistic modeling and uncertainty quantification. Its core organizing principle is **distributions in, distributions out**: every node in a pipeline can consume and emit probability distributions, enabling principled uncertainty propagation across the entire workflow.
+ProbPipe is a Python framework for building probabilistic pipelines with automated uncertainty quantification. Its core organizing principle is **distributions in, distributions out**: every node in a pipeline can consume and emit probability distributions, enabling principled uncertainty propagation across the entire workflow.
 
 ## Philosophy
 
-ProbPipe is a **workflow manager first**. It provides a modular, composable architecture for building probabilistic pipelines using existing new inference frameworks and packages that, by default, are not compatible. The library builds on TensorFlow Probability (TFP) with a JAX backend for distributions and sampling, and provides:
+Scientific discovery and real-world decision-making increasingly depend on complex, end-to-end inferential pipelines that integrate heterogeneous data, fit probabilistic models, propagate uncertainty, and validate predictions. Yet high-quality uncertainty quantification (UQ) is rarely achieved at scale because such pipelines are difficult to construct in a way that is simultaneously flexible, reliable, and scalable. Current workflows are typically assembled in an ad hoc manner, with UQ added only partially -- if at all -- and with limited statistical validation.
 
-- **Distributions as first-class objects.** All 20+ built-in distribution types (continuous, discrete, multivariate, joint, transformed, empirical) follow TFP shape semantics and are fully JAX-differentiable.
-- **Automatic uncertainty propagation.** When a `Workflow` node expects a concrete value but receives a distribution, ProbPipe automatically broadcasts over samples — users write deterministic functions and get uncertainty quantification for free.
-- **Seamless scalability.** The same pipeline runs on a laptop via JAX vectorization or scales to a cluster via optional Prefect orchestration. The `"auto"` backend probes JAX traceability and Prefect availability, then picks the fastest execution strategy.
-- **Composable modules.** Complex pipelines are built from swappable components, making it easy to change the likelihood model, swap the inference algorithm, or explore a different prior — the pipeline structure stays the same, including sensitivity analyses, predictive checks, and other upstream and downstream steps commonly included in scientific workflows.
-- **Provenance tracking.** Every distribution records how it was created (operation, parents, other parameters), which enables full full lineage tracing and improves reproducibility.
+ProbPipe aims to overturn this paradigm. Just as probabilistic programming systems (Stan, PyMC, NumPyro) made Bayesian inference in complex models accessible to non-experts, and deep learning frameworks (PyTorch, TensorFlow, JAX) enabled rapid model development across domains, ProbPipe provides general-purpose abstractions for probabilistic *workflows* -- making composability, scalability, and reproducibility the default. Its design is driven by three requirements:
+
+- **Reusable inferential components.** Workflows are expressed in terms of modular, swappable statistical or algorithmic units rather than low-level orchestration primitives. Users can change the likelihood model, swap the inference algorithm, or explore a different prior without restructuring the pipeline.
+- **Interoperability with the Python ecosystem.** ProbPipe is designed to work with existing ML, probabilistic, and orchestration libraries. Modules can serve as thin wrappers around other packages, and automatic conversion among distributional representations (parametric distributions, Monte Carlo samples, amortized posteriors) removes a major source of brittleness in current pipelines.
+- **End-to-end uncertainty propagation.** Once uncertainty is introduced, it is represented and propagated through all downstream steps. When a workflow node expects a concrete value but receives a distribution, ProbPipe automatically broadcasts over samples -- users write deterministic functions and get UQ for free.
+- **Seamless scalability.** The same pipeline runs on a laptop via JAX vectorization or scales to a cluster via Prefect orchestration. The auto backend probes JAX traceability and Prefect availability, then picks the fastest execution strategy transparently.
+- **Provenance and reproducibility.** Every distribution records how it was created -- operation, parents, parameters -- enabling full lineage tracing from any result back to its inputs.
 
 ## Installation
 
@@ -35,6 +37,8 @@ pip install .[prefect]   # Prefect orchestration backend
 
 ### Distributions
 
+ProbPipe wraps 20+ TensorFlow Probability distributions with a uniform interface. All distributions follow TFP shape semantics (`sample_shape + batch_shape + event_shape`) and are fully JAX-differentiable.
+
 ```python
 from probpipe import Normal, MultivariateNormal, TransformedDistribution
 import jax
@@ -49,17 +53,20 @@ mvn = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
 positive_prior = TransformedDistribution(prior, tfb.Exp())
 
 # Sample and evaluate
-samples = prior.sample(jax.random.PRNGKey(0), (1000,))
-lp = prior.log_prob(0.5)
+samples = prior.sample(jax.random.PRNGKey(0), (1000,))  # shape: (1000,)
+lp = prior.log_prob(0.5)                                # -1.0439...
 
 # Fully differentiable
-score = jax.grad(prior.log_prob)(0.5)
+score = jax.grad(prior.log_prob)(0.5)                    # -0.5
 ```
 
 ### Joint Distributions and Conditioning
 
+Joint distributions compose marginals into a single object. Components can be independent (product), autoregressive (sequential), or jointly Gaussian with exact closed-form conditioning.
+
 ```python
-from probpipe import ProductDistribution, SequentialJointDistribution, JointGaussian
+from probpipe import Normal, ProductDistribution, SequentialJointDistribution, JointGaussian
+import jax.numpy as jnp
 
 # Independent components
 joint = ProductDistribution(
@@ -67,37 +74,42 @@ joint = ProductDistribution(
     sigma=Normal(loc=1.0, scale=0.5),
 )
 
-# Autoregressive dependence
+# Autoregressive dependence: x depends on z
 seq = SequentialJointDistribution(
     z=Normal(loc=0.0, scale=1.0),
     x=lambda z: Normal(loc=z, scale=0.5),
 )
 
-# Exact Gaussian conditioning
+# Exact Gaussian conditioning: p(y | x)
 jg = JointGaussian(mean=jnp.zeros(4), cov=jnp.eye(4), x=2, y=2)
 posterior = jg.condition_on(x=jnp.array([1.0, 2.0]))
+posterior.mean()  # Array([0., 0.], dtype=float32)
 ```
 
 ### Workflows and Broadcasting
 
+When a workflow node receives a distribution where it expects a scalar, ProbPipe automatically draws samples and calls the function once per sample, returning an `EmpiricalDistribution` over the outputs.
+
 ```python
-from probpipe import Normal, wf
+from probpipe import Normal, Workflow
 
-@wf
 def simulate(mu: float, sigma: float) -> float:
-    return mu + sigma * 0.1  # simplified model
+    return mu + sigma * 0.1
 
-# Pass distributions where concrete values are expected —
-# ProbPipe broadcasts automatically
-result = simulate(mu=Normal(loc=0.0, scale=1.0), sigma=Normal(loc=1.0, scale=0.1))
-# result is an EmpiricalDistribution of outputs
+wf = Workflow(func=simulate)
+result = wf(mu=Normal(loc=0.0, scale=1.0), sigma=Normal(loc=1.0, scale=0.1))
+# result is an EmpiricalDistribution with 128 samples
+result.mean()  # ~0.1
 ```
 
-### Bayesian Inference Pipeline
+### Bayesian Inference
+
+The built-in MCMC sampler supports NUTS, HMC, and random-walk Metropolis-Hastings. Define a likelihood module, pair it with a prior, and sample.
 
 ```python
-from probpipe import Normal, MultivariateNormal, wf
-from probpipe.core.modeling import Likelihood, MCMCSampler, IterativeForecaster
+from probpipe import MultivariateNormal, wf
+from probpipe.core.modeling import Likelihood, MCMCSampler
+import jax.numpy as jnp
 
 class GaussianLikelihood(Likelihood):
     @wf
@@ -105,35 +117,31 @@ class GaussianLikelihood(Likelihood):
         return jnp.sum(-0.5 * (data - params) ** 2)
 
 prior = MultivariateNormal(loc=jnp.zeros(2), cov=25.0 * jnp.eye(2))
-sampler = MCMCSampler(algorithm='nuts', num_results=1000, num_warmup=500)
-posterior = sampler(prior=prior, likelihood=GaussianLikelihood(), data=data)
+sampler = MCMCSampler(algorithm='nuts', num_results=500, num_warmup=200)
+data = jnp.array([1.0, 2.0])
 
-# Sequential updating
-forecaster = IterativeForecaster(prior=prior, likelihood=likelihood, approx_post=sampler)
-for batch in data_batches:
-    posterior = forecaster.update(data=batch)
+posterior = sampler(prior=prior, likelihood=GaussianLikelihood(), data=data)
+posterior.mean()          # Array([~1.0, ~2.0], dtype=float32)
+posterior.source          # Provenance('nuts', parents=[MultivariateNormal])
 ```
 
 ### Provenance Tracking
 
+Every distribution records its lineage automatically. Provenance chains can be serialized to JSON or traversed programmatically.
+
 ```python
-from probpipe import provenance_ancestors
+from probpipe import Normal, TransformedDistribution, provenance_ancestors
+import tensorflow_probability.substrates.jax.bijectors as tfb
 
-# Every distribution records its lineage
-print(posterior.source)           # Provenance('nuts', parents=[prior])
-print(posterior.source.to_dict()) # JSON-serializable
+base = Normal(loc=0.0, scale=1.0, name='base')
+positive = TransformedDistribution(base, tfb.Exp())
 
-ancestors = provenance_ancestors(posterior)
-# [prior] — full ancestry chain
+positive.source           # Provenance('transform', parents=[base])
+positive.source.to_dict() # {'operation': 'transform',
+                           #  'parents': [{'type': 'Normal', 'name': 'base'}],
+                           #  'metadata': {'bijector': 'Exp'}}
+provenance_ancestors(positive)  # [Normal(name='base', event_shape=())]
 ```
-
-## Subpackages
-
-| Subpackage | Contents |
-|------------|----------|
-| `probpipe.distributions` | Distribution ABC, 23 TFP-backed distributions, EmpiricalDistribution, TransformedDistribution, joint distributions, constraints |
-| `probpipe.core` | Workflow/Module/Node (DAG execution), MCMCSampler, Likelihood, IterativeForecaster |
-| `probpipe.provenance` | `provenance_ancestors`, `provenance_dag` (lineage utilities) |
 
 ## Example Notebooks
 
