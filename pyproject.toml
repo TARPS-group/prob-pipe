@@ -34,6 +34,7 @@ dev = [
   "probpipe[prefect,viz,docs]",
   "pytest>=7",
   "pytest-cov",
+  "ruff",
   "ipykernel",
   "jupyter",
   "nbformat",
@@ -41,8 +42,38 @@ dev = [
 
 [project.urls]
 "Repository" = "https://github.com/TARPS-group/prob-pipe"
+"Documentation" = "https://tarps-group.github.io/prob-pipe/"
+"Changelog" = "https://github.com/TARPS-group/prob-pipe/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["probpipe*"]
 exclude = ["tests*", "docs*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --cov=probpipe --cov-report=term-missing --cov-fail-under=0"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "F",    # pyflakes
+  "I",    # isort
+  "UP",   # pyupgrade
+  "B",    # flake8-bugbear
+  "SIM",  # flake8-simplify
+  "RUF",  # ruff-specific rules
+]
+ignore = [
+  "E501",   # line too long (handled by formatter)
+  "B905",   # zip without strict= (not always needed)
+  "SIM108", # ternary operator (readability preference)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["probpipe"]
