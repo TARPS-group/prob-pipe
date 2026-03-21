@@ -38,5 +38,5 @@ The result is an `EmpiricalDistribution` -- a first-class distribution object th
 ## Next Steps
 
 - [Getting Started](getting-started.md) -- installation and first steps
-- [Tutorials](examples/01_distributions/) -- guided notebooks covering distributions, transforms, joint models, and more
+- [Tutorials](tutorials.md) -- guided notebooks covering distributions, transforms, joint models, and more
 - [API Reference](api/distributions.md) -- full class and function documentation

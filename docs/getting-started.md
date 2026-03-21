@@ -102,4 +102,4 @@ score = jax.grad(half_life.log_prob)(3.0)   # 4.0 (positive below the mean)
 
 ## Next Steps
 
-Explore the [tutorials](examples/01_distributions/) for in-depth coverage of distributions, joint models, conditioning, automatic differentiation, and modular inference pipelines.
+Explore the [tutorials](tutorials.md) for in-depth coverage of distributions, joint models, conditioning, automatic differentiation, and modular inference pipelines.

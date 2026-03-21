@@ -59,6 +59,7 @@ nav:
   - Home: index.md
   - Getting Started: getting-started.md
   - Tutorials:
+    - Overview: tutorials.md
     - Distributions: examples/01_distributions.ipynb
     - Transformations: examples/02_transformations.ipynb
     - Joint Distributions: examples/03_joint_distributions.ipynb
