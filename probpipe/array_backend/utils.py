@@ -16,25 +16,25 @@ This makes behavior explicit and is compatible with JAX-style functional APIs.
 
 When jax backend support is added, will need to replace
 `return out.copy() if copy else out` statements with something like
-`copy(out)`, a shim for np.array(x, copy=True)/x.copy() [numpy]
+`copy(out)`, a shim for jnp.array(x, copy=True)/x.copy() [numpy]
 and jnp.array(x) [jax]. See Jumpy for example of package supporting both
 backends.
 """
 
 from __future__ import annotations
 
-import numpy as np
+import jax.numpy as jnp
 from typing import Any, Tuple
 
 from ..custom_types import Array, ArrayLike
 
 
 def _is_array(x: Any) -> bool:
-    return isinstance(x, np.ndarray)
+    return isinstance(x, jnp.ndarray)
 
 def _as_array(x: Any) -> Array:
     try:
-        return np.asarray(x)
+        return jnp.asarray(x)
     except Exception as e:
         raise TypeError(
             f"Could not convert input to array.\n"
@@ -44,8 +44,10 @@ def _as_array(x: Any) -> Array:
         ) from e  
 
 def _is_numpy_scalar(x: Any) -> bool:
-    """Return true if object is a numpy generic or Python scalar"""
-    return np.isscalar(x) or isinstance(x, np.generic)
+    """Return true if object is a Python scalar or 0-d JAX array."""
+    return isinstance(x, (int, float, complex, bool)) or (
+        isinstance(x, jnp.ndarray) and x.ndim == 0
+    )
 
 
 def _ensure_real_scalar(x: Any, *, as_array: bool = False) -> float|int|Array:
@@ -66,24 +68,24 @@ def _ensure_real_scalar(x: Any, *, as_array: bool = False) -> float|int|Array:
     """
     # fast path for Python/numpy scalar
     if _is_numpy_scalar(x):
-        # np.iscomplexobj handles python numbers too (returns False for ints/floats)
-        if np.iscomplexobj(x):
+        # jnp.iscomplexobj handles python numbers too (returns False for ints/floats)
+        if jnp.iscomplexobj(x):
             raise ValueError(f"_ensure_real_scalar: input is complex-valued: {x!r}")
-        if isinstance(x, np.generic) and not as_array:
+        if isinstance(x, jnp.ndarray) and x.ndim == 0 and not as_array:
             return x.item()
         if as_array:
-            return np.array(x)
+            return jnp.array(x)
         # Python scalar
         return x
 
     arr = _as_array(x)
     if arr.size != 1:
         raise ValueError(f"_ensure_real_scalar: input must contain exactly one element; got size={arr.size}, shape={arr.shape}")
-    if np.iscomplexobj(arr):
+    if jnp.iscomplexobj(arr):
         raise ValueError(f"_ensure_real_scalar: input is complex-valued (shape={arr.shape}).")
 
     if as_array:
-        return np.array(arr.reshape(()))  # 0-D array
+        return jnp.array(arr.reshape(()))  # 0-D array
     return arr.item()
 
 
@@ -103,7 +105,7 @@ def _ensure_scalar(x: Any) -> Any:
     """
     # handle Python/numpy scalar quickly
     if _is_numpy_scalar(x):
-        if isinstance(x, np.generic):
+        if isinstance(x, jnp.ndarray) and x.ndim == 0:
             return x.item()
         return x  # Python scalar
 
@@ -139,7 +141,7 @@ def _ensure_vector(x: ArrayLike, *, as_column: bool = False,
     elif arr.ndim == 2:
         num_rows, num_cols = arr.shape
         if num_rows == 1 or num_cols == 1:
-            v = np.ravel(arr)
+            v = jnp.ravel(arr)
             out = v.reshape((-1, 1)) if as_column else v
         else:
             raise ValueError(f"_ensure_vector: 2D input has shape {arr.shape}, which is not a vector (expected (n,1) or (1,n)).")
@@ -253,12 +255,12 @@ def _ensure_batch_array(x: ArrayLike, value_shape: Tuple[int, ...] | None = None
     if value_shape is not None:
         # If input is exactly single-value shaped, expand to batch of size 1
         if arr.ndim == len(value_shape):
-            arr = arr[np.newaxis, ...]
+            arr = arr[None, ...]
     else:
         if arr.ndim == 0:
             arr = arr.reshape((1,))  # () -> (1,)
         elif arr.ndim == 1:
-            arr = arr[np.newaxis, :] # (d,) -> (1,d)
+            arr = arr[None, :] # (d,) -> (1,d)
 
     # Optionally validate value shape
     if value_shape is not None:
@@ -298,7 +300,7 @@ def _ensure_batch_real_scalar(x: ArrayLike, *, copy: bool = True) -> Array:
         out = _ensure_real_scalar(arr, as_array=True).reshape((1,))
         return out.copy() if copy else out
     if arr.ndim == 1:
-        if np.iscomplexobj(arr):
+        if jnp.iscomplexobj(arr):
             raise ValueError("_ensure_batch_real_scalar: input contains complex values.")
         return arr.copy() if copy else arr
     raise ValueError(f"_ensure_batch_real_scalar: expected scalar or 1D array. Got shape={arr.shape}.")

@@ -9,7 +9,6 @@ import warnings
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 try:
     from prefect import task, flow
@@ -376,7 +375,7 @@ class Workflow(Node):
                     v = values[name]
                     if isinstance(v, jnp.ndarray):
                         dummy_kw[name] = v
-                    elif isinstance(v, np.ndarray):
+                    elif hasattr(v, '__array__'):
                         dummy_kw[name] = jnp.asarray(v)
                     else:
                         dummy_kw[name] = v

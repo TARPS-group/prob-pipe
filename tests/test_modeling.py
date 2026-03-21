@@ -268,7 +268,7 @@ class TestRWMH:
             n_steps=500,
             burn_in=100,
             thin=2,
-            rng=np.random.default_rng(42),
+            seed=42,
         )
         posterior = sampler(prior=prior, likelihood=likelihood, data=data)
 
@@ -278,7 +278,7 @@ class TestRWMH:
         assert sampler.accept_rate <= 1.0
 
     def test_provenance(self, prior, likelihood, data):
-        sampler = RWMH(n_steps=200, burn_in=50, thin=1, rng=np.random.default_rng(42))
+        sampler = RWMH(n_steps=200, burn_in=50, thin=1, seed=42)
         posterior = sampler(prior=prior, likelihood=likelihood, data=data)
         assert posterior.source is not None
         assert posterior.source.operation == "rwmh"
@@ -297,7 +297,7 @@ class TestRWMH:
 
     def test_init_from_data_mean(self, prior, likelihood, data):
         """When prior.mean() fails, should use data mean."""
-        sampler = RWMH(n_steps=100, burn_in=10, thin=1, rng=np.random.default_rng(42))
+        sampler = RWMH(n_steps=100, burn_in=10, thin=1, seed=42)
         posterior = sampler(prior=prior, likelihood=likelihood, data=data)
         assert isinstance(posterior, EmpiricalDistribution)
 

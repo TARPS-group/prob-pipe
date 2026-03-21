@@ -10,13 +10,12 @@ from typing import TypeAlias
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 # ---------------------------------------------------------------------------
 # Array types
 # ---------------------------------------------------------------------------
 Array: TypeAlias = jnp.ndarray
-ArrayLike: TypeAlias = jnp.ndarray | np.ndarray | list | tuple | float | int
+ArrayLike: TypeAlias = jnp.ndarray | list | tuple | float | int
 
 # ---------------------------------------------------------------------------
 # Scalar numeric types

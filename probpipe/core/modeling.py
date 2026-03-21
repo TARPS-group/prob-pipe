@@ -15,9 +15,7 @@ from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import tensorflow_probability.substrates.jax.mcmc as tfp_mcmc
-from numpy.typing import NDArray
 
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions.distribution import Distribution, EmpiricalDistribution, Provenance
@@ -46,7 +44,7 @@ class Likelihood(AbstractModule):
     """Abstract module for computing log-likelihood of data given parameters."""
 
     @abstractwf
-    def log_likelihood(self, params: NDArray, data: NDArray) -> float:
+    def log_likelihood(self, params: ArrayLike, data: ArrayLike) -> float:
         ...
 
 
@@ -54,7 +52,7 @@ class GenerativeLikelihood(AbstractModule):
     """Abstract module for generating synthetic data given parameters."""
 
     @abstractwf
-    def generate_data(self, params: NDArray, n_samples: int) -> NDArray:
+    def generate_data(self, params: ArrayLike, n_samples: int) -> ArrayLike:
         ...
 
 
@@ -85,7 +83,7 @@ class ApproximatePosterior(Workflow, ABC):
         self,
         prior: Distribution,
         likelihood: Likelihood,
-        data: NDArray,
+        data: ArrayLike,
     ) -> EmpiricalDistribution:
         ...
 
@@ -227,23 +225,21 @@ class MCMCSampler(ApproximatePosterior):
     def _get_init_state(
         self,
         prior: Distribution,
-        data: NDArray,
+        data: ArrayLike,
     ) -> jnp.ndarray:
-        """Determine the initial chain state (always at least 1-D)."""
+        """Determine the initial chain state (always at least 1-D, floating)."""
         if self.init is not None:
-            return jnp.atleast_1d(jnp.asarray(self.init, dtype=jnp.float32))
+            return jnp.atleast_1d(jnp.asarray(self.init, dtype=jnp.float64 if jax.config.jax_enable_x64 else jnp.float32))
 
         # Try prior mean
         try:
             m = prior.mean()
-            return jnp.atleast_1d(jnp.asarray(m, dtype=jnp.float32))
+            return jnp.atleast_1d(jnp.asarray(m))
         except (NotImplementedError, Exception):
             pass
 
         # Fall back to data column mean
-        return jnp.atleast_1d(
-            jnp.mean(jnp.asarray(data, dtype=jnp.float32), axis=0)
-        )
+        return jnp.atleast_1d(jnp.mean(jnp.asarray(data), axis=0))
 
     def _is_jax_traceable(
         self,
@@ -338,9 +334,9 @@ class MCMCSampler(ApproximatePosterior):
         self,
         prior: Distribution,
         likelihood: Likelihood,
-        data: NDArray,
+        data: ArrayLike,
     ) -> EmpiricalDistribution:
-        data_jnp = jnp.asarray(data, dtype=jnp.float32)
+        data_jnp = jnp.asarray(data)
 
         # Build unnormalized log-posterior
         def target_log_prob_fn(params):
@@ -404,33 +400,36 @@ class MCMCSampler(ApproximatePosterior):
         target_log_prob_fn: Callable,
         init_state: jnp.ndarray,
     ) -> tuple[jnp.ndarray, float]:
-        """Numpy-based random-walk MH for non-JAX-traceable likelihoods.
+        """JAX-based random-walk MH for non-JAX-traceable likelihoods.
 
         Returns ``(samples, accept_rate)``.
         """
-        rng = np.random.default_rng(self.seed)
+        key = jax.random.PRNGKey(self.seed)
         d = init_state.shape[0]
-        mu_curr = np.asarray(init_state, dtype=np.float64)
+        mu_curr = jnp.asarray(init_state)
         logp_curr = float(target_log_prob_fn(mu_curr))
 
-        kept: list[np.ndarray] = []
+        kept: list[jnp.ndarray] = []
         accepts = 0
         total_steps = self.num_warmup + self.num_results
 
         for t in range(total_steps):
-            mu_prop = mu_curr + self.step_size * rng.normal(size=d)
+            key, subkey_prop, subkey_accept = jax.random.split(key, 3)
+            noise = jax.random.normal(subkey_prop, shape=(d,), dtype=mu_curr.dtype)
+            mu_prop = mu_curr + self.step_size * noise
             logp_prop = float(target_log_prob_fn(mu_prop))
 
-            if np.log(rng.random()) < min(0.0, logp_prop - logp_curr):
+            u = jax.random.uniform(subkey_accept, dtype=mu_curr.dtype)
+            if jnp.log(u) < min(0.0, logp_prop - logp_curr):
                 mu_curr = mu_prop
                 logp_curr = logp_prop
                 accepts += 1
 
             if t >= self.num_warmup:
-                kept.append(mu_curr.copy())
+                kept.append(mu_curr)
 
         accept_rate = accepts / total_steps
-        samples = jnp.asarray(np.vstack(kept), dtype=jnp.float32)
+        samples = jnp.stack(kept)
         return samples, accept_rate
 
 
@@ -458,8 +457,8 @@ class RWMH(ApproximatePosterior):
         n_steps: int = 10_000,
         burn_in: int = 2_000,
         thin: int = 5,
-        init: NDArray | None = None,
-        rng: np.random.Generator | None = None,
+        init: ArrayLike | None = None,
+        seed: int = 0,
         workflow_kind: str | None = None,
     ):
         super().__init__(
@@ -469,14 +468,14 @@ class RWMH(ApproximatePosterior):
             burn_in=burn_in,
             thin=thin,
             init=init,
-            rng=rng,
+            seed=seed,
         )
         self.step_size = float(step_size)
         self.n_steps = int(n_steps)
         self.burn_in = int(burn_in)
         self.thin = int(thin)
-        self.init = None if init is None else np.asarray(init, dtype=float)
-        self.rng = rng or np.random.default_rng()
+        self.init = None if init is None else jnp.asarray(init, dtype=jnp.float32)
+        self.seed = int(seed)
 
         if self.n_steps <= 0:
             raise ValueError("n_steps must be > 0")
@@ -490,62 +489,64 @@ class RWMH(ApproximatePosterior):
         self,
         prior: Distribution,
         likelihood: Likelihood,
-        data: NDArray,
+        data: ArrayLike,
     ) -> EmpiricalDistribution:
-        data = np.asarray(data, dtype=float)
+        data = jnp.asarray(data, dtype=jnp.float32)
         if data.ndim != 2:
             raise ValueError(f"Expected data shape (n, d), got {data.shape}")
         d = data.shape[1]
 
-        def log_post(mu: NDArray) -> float:
-            mu = np.asarray(mu, dtype=float)
+        def log_post(mu):
+            mu = jnp.asarray(mu, dtype=jnp.float32)
             if mu.shape != (d,):
                 raise ValueError(f"Expected params shape {(d,)}, got {mu.shape}")
-            lp_val = float(np.asarray(prior.log_prob(mu)).sum())
+            lp_val = float(jnp.asarray(prior.log_prob(mu)).sum())
             ll_val = float(likelihood.log_likelihood(params=mu, data=data))
             return lp_val + ll_val
 
         # Initialize
         if self.init is not None:
-            mu_curr = self.init.copy()
+            mu_curr = self.init
             if mu_curr.shape != (d,):
                 raise ValueError(f"init must have shape {(d,)}, got {mu_curr.shape}")
         else:
             mu_curr = None
             try:
-                m = np.asarray(prior.mean(), dtype=float)
+                m = jnp.asarray(prior.mean(), dtype=jnp.float32)
                 if m.shape == (d,):
-                    mu_curr = m.copy()
+                    mu_curr = m
             except (NotImplementedError, Exception):
                 pass
             if mu_curr is None:
-                mu_curr = np.mean(data, axis=0).astype(float)
+                mu_curr = jnp.mean(data, axis=0)
 
         logp_curr = log_post(mu_curr)
 
+        key = jax.random.PRNGKey(self.seed)
         kept = []
         accepts = 0
         burn_in = min(self.burn_in, self.n_steps)
 
         for t in range(self.n_steps):
-            mu_prop = mu_curr + self.step_size * self.rng.normal(size=d)
+            key, subkey_prop, subkey_accept = jax.random.split(key, 3)
+            mu_prop = mu_curr + self.step_size * jax.random.normal(subkey_prop, shape=(d,))
             logp_prop = log_post(mu_prop)
 
             log_alpha = logp_prop - logp_curr
-            if np.log(self.rng.random()) < min(0.0, log_alpha):
+            if jnp.log(jax.random.uniform(subkey_accept)) < min(0.0, log_alpha):
                 mu_curr = mu_prop
                 logp_curr = logp_prop
                 accepts += 1
 
             if t >= burn_in and ((t - burn_in) % self.thin == 0):
-                kept.append(mu_curr.copy())
+                kept.append(mu_curr)
 
         if len(kept) == 0:
             raise ValueError(
                 "No samples retained; increase n_steps or reduce burn_in/thin."
             )
 
-        samples = np.vstack(kept)
+        samples = jnp.stack(kept)
         self.accept_rate = accepts / float(self.n_steps)
 
         posterior = EmpiricalDistribution(samples, name="posterior")
@@ -599,7 +600,7 @@ class IterativeForecaster(Module):
         self,
         approx_post: ApproximatePosterior,
         likelihood: Likelihood,
-        data: NDArray,
+        data: ArrayLike,
     ) -> Distribution:
         post_dist = approx_post(
             prior=self._curr_posterior, likelihood=likelihood, data=data
