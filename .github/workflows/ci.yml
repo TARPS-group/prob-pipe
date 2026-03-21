@@ -2,22 +2,26 @@ name: CI
 
 on:
   push:
-    branches: [ ci-test, main ]
+    branches: [main]
   pull_request:
-    branches: [ ci-test, main ]
+    branches: [main]
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
         run: |
@@ -26,16 +30,17 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          pytest -v --cov=probpipe --cov-report=term-missing --cov-report=xml --cov-report=html --cov-fail-under=0
+          pytest --cov-report=xml --cov-report=html
 
       - name: Upload coverage reports to Codecov
+        if: matrix.python-version == '3.12'
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: TARPS-group/prob-pipe
 
       - name: Upload coverage HTML report
-        if: always()
+        if: always() && matrix.python-version == '3.12'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-html
