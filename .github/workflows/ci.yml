@@ -28,6 +28,12 @@ jobs:
         run: |
           pytest -v --cov=probpipe --cov-report=term-missing --cov-report=xml --cov-report=html --cov-fail-under=0
 
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: TARPS-group/prob-pipe
+
       - name: Upload coverage HTML report
         if: always()
         uses: actions/upload-artifact@v4
