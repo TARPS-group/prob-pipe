@@ -117,7 +117,7 @@ class MCMCDiagnostics:
     @property
     def accept_rate(self) -> float:
         """Empirical acceptance rate."""
-        # numpy RWMH fallback stores exact accept rate
+        # RWMH fallback stores exact accept rate
         if hasattr(self, "_numpy_accept_rate"):
             return self._numpy_accept_rate
         if self.is_accepted is not None:
@@ -353,7 +353,7 @@ class MCMCSampler(ApproximatePosterior):
             samples, trace = self._run_tfp_chain(kernel, init_state)
             self.diagnostics = self._extract_diagnostics(trace, used_algorithm)
         else:
-            # Not JAX-traceable: fall back to numpy-based RW-MH
+            # Not JAX-traceable: fall back to gradient-free RW-MH
             samples, accept_rate = self._run_numpy_rwmh(
                 target_log_prob_fn, init_state
             )
@@ -434,17 +434,17 @@ class MCMCSampler(ApproximatePosterior):
 
 
 # ---------------------------------------------------------------------------
-# Legacy RWMH  (gradient-free, numpy-based)
+# Legacy RWMH  (gradient-free)
 # ---------------------------------------------------------------------------
 
 
 class RWMH(ApproximatePosterior):
     """
-    Random-walk Metropolis-Hastings (numpy-based, gradient-free).
+    Random-walk Metropolis-Hastings (gradient-free).
 
-    Useful when the likelihood wraps external code that isn't JAX-traceable
-    (scipy, sklearn, etc.).  For JAX-traceable likelihoods, prefer
-    :class:`MCMCSampler` which uses NUTS/HMC with automatic adaptation.
+    Useful when the likelihood wraps external code that isn't JAX-traceable.
+    For JAX-traceable likelihoods, prefer :class:`MCMCSampler` which uses
+    NUTS/HMC with automatic adaptation.
 
     .. deprecated::
         Use :class:`MCMCSampler` for new code.  ``MCMCSampler`` will

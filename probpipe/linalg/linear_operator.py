@@ -52,8 +52,7 @@ ALLOWED_FLAGS = frozenset({
 })
 
 def _promote_dtype(*dtypes: Any) -> Any:
-    """Return numpy result_type for given dtypes/arrays."""
-    # Use numpy's result_type semantics (works with numpy scalar dtypes).
+    """Return promoted dtype for given dtypes/arrays."""
     return jnp.result_type(*dtypes)
 
 def _as_linear_operator(A: LinOpLike) -> LinOp:
@@ -104,7 +103,7 @@ class LinOp(ABC):
     @property
     @abstractmethod
     def dtype(self) -> Any:
-        """Return dtype (e.g., np.float64)."""
+        """Return dtype (e.g., jnp.float32)."""
         ...
 
     # ---- Minimal numeric primitives ----

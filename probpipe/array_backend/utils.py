@@ -1,24 +1,9 @@
-# array_backend/utils.py
 """
 Utility functions for array canonicalization used by probpipe.
 
-Notes for backend support
--------------------------
-This module currently imports numpy as `np`. When adding a JAX backend,
-replace `np` with a small backend shim (e.g., `from .backend import xp as np`)
-where `backend.xp` resolves to either `numpy` or `jax.numpy` depending on the
-configured backend. The functions here are written so that the only change
-needed for backend switching is the `np` import.
-
-All functions that return arrays accept `copy: bool = True`. When `copy=True`
-the returned array is guaranteed to be a different object from the input.
-This makes behavior explicit and is compatible with JAX-style functional APIs.
-
-When jax backend support is added, will need to replace
-`return out.copy() if copy else out` statements with something like
-`copy(out)`, a shim for jnp.array(x, copy=True)/x.copy() [numpy]
-and jnp.array(x) [jax]. See Jumpy for example of package supporting both
-backends.
+All array operations use JAX (``jax.numpy``). Since JAX arrays are immutable,
+the ``copy`` parameter on many functions is kept for API compatibility but
+always returns a new array.
 """
 
 from __future__ import annotations
@@ -56,8 +41,7 @@ def _ensure_real_scalar(x: Any, *, as_array: bool = False) -> float|int|Array:
 
     Accepts:
       - Python scalars (int, float)
-      - numpy scalar types (np.float64(...), np.int32(...))
-      - 0-D numpy arrays (shape == ())
+      - 0-D JAX arrays (shape == ())
 
     Returns:
         If as_array=False (default), returns a Python scalar (float or int).
@@ -66,7 +50,7 @@ def _ensure_real_scalar(x: Any, *, as_array: bool = False) -> float|int|Array:
     Raises:
       ValueError if input contains more than one element or is not a float/int.
     """
-    # fast path for Python/numpy scalar
+    # fast path for Python scalar or 0-d JAX array
     if _is_numpy_scalar(x):
         # jnp.iscomplexobj handles python numbers too (returns False for ints/floats)
         if jnp.iscomplexobj(x):
@@ -91,19 +75,18 @@ def _ensure_real_scalar(x: Any, *, as_array: bool = False) -> float|int|Array:
 
 def _ensure_scalar(x: Any) -> Any:
     """
-    Return a Python scalar (via np.ndarray.item()) for inputs that contain a single value.
+    Return a Python scalar for inputs that contain a single value.
 
     Accepts:
       - Python scalars (int, float, complex)
-      - numpy scalar types (np.float64(...), np.int32(...))
-      - 0-D numpy arrays (shape == ())
-      - 1-D numpy arrays of length 1 (shape == (1,))
-      - 2-D numpy arrays of shape (1,1)
+      - 0-D JAX arrays (shape == ())
+      - 1-D arrays of length 1 (shape == (1,))
+      - 2-D arrays of shape (1,1)
 
     Raises:
       ValueError if input contains more than one element.
     """
-    # handle Python/numpy scalar quickly
+    # handle Python scalar or 0-d JAX array quickly
     if _is_numpy_scalar(x):
         if isinstance(x, jnp.ndarray) and x.ndim == 0:
             return x.item()
