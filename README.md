@@ -80,20 +80,26 @@ jax.grad(sensor_noise.log_prob)(0.5)  # Array(-2.0, dtype=float32)
 When a workflow node receives a distribution where it expects a concrete value, ProbPipe automatically draws samples and evaluates the function for each, returning an `EmpiricalDistribution`. Here, uncertain velocity and time propagate through a distance calculation.
 
 ```python
-from probpipe import Normal, Workflow
+from probpipe import Normal, TransformedDistribution, Workflow
+import tensorflow_probability.substrates.jax.bijectors as tfb
 
 # distance = velocity * time
 def compute_distance(velocity, time):
     return velocity * time
 
 wf = Workflow(func=compute_distance)
+
+# Log-normal time ensures non-negative values
+log_time = Normal(loc=1.6, scale=0.04)          # log-seconds
+time = TransformedDistribution(log_time, tfb.Exp())  # ~ 5.0 seconds
+
 result = wf(
     velocity=Normal(loc=10.0, scale=1.0),  # m/s, uncertain
-    time=Normal(loc=5.0, scale=0.2),       # seconds, uncertain
+    time=time,                             # seconds, non-negative
 )
 # result is an EmpiricalDistribution with 128 samples
-result.mean()      # Array(50.302593, dtype=float32)
-result.variance()  # Array(26.641190, dtype=float32)
+result.mean()      # Array(49.875435, dtype=float32)
+result.variance()  # Array(26.283531, dtype=float32)
 ```
 
 ### Joint Distributions and Conditioning
