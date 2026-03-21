@@ -1,5 +1,5 @@
 """
-Core distribution abstractions for prob-pipe.
+Core distribution abstractions for ProbPipe.
 
 Provides:
   - ``Distribution``          – Abstract base class following TFP shape semantics.
@@ -347,7 +347,7 @@ class Provenance:
 
 class Distribution(ABC):
     """
-    Abstract base for all prob-pipe distributions.
+    Abstract base for all ProbPipe distributions.
 
     Shape semantics follow TFP conventions:
 

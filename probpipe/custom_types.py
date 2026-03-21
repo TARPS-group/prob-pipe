@@ -1,7 +1,7 @@
 """
 Type aliases for the array backend.
 
-prob-pipe uses JAX as its primary array backend. These aliases provide a
+ProbPipe uses JAX as its primary array backend. These aliases provide a
 single place to change if the backend ever needs to swap.
 """
 
