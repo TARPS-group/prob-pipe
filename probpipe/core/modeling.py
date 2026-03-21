@@ -1,5 +1,5 @@
 """
-Modeling components for prob-pipe.
+Modeling components for ProbPipe.
 
 Provides abstract interfaces for likelihoods and posterior approximation,
 concrete MCMC samplers (TFP-backed NUTS/HMC with automatic fallback),
