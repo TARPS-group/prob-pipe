@@ -8,6 +8,15 @@ ProbPipe is a Python framework for building probabilistic pipelines with automat
 
 **[Documentation](https://tarps-group.github.io/prob-pipe/)** | **[Tutorials](https://tarps-group.github.io/prob-pipe/tutorials/)** | **[API Reference](https://tarps-group.github.io/prob-pipe/api/distributions/)**
 
+## Key Features
+
+- **20+ probability distributions** wrapping TensorFlow Probability with a uniform interface, all fully JAX-differentiable
+- **Automatic uncertainty propagation** through workflow nodes via sample broadcasting
+- **Joint distributions** with independent, autoregressive, and Gaussian conditioning support
+- **Built-in MCMC inference** with NUTS, HMC, and random-walk Metropolis-Hastings
+- **Provenance tracking** recording full lineage from any result back to its inputs
+- **Prefect orchestration** for distributing pipeline steps across machines
+
 ## Philosophy
 
 Scientific discovery and real-world decision-making increasingly depend on complex, end-to-end inferential pipelines that integrate heterogeneous data, fit probabilistic models, propagate uncertainty, and validate predictions. Yet high-quality uncertainty quantification (UQ) is rarely achieved at scale because such pipelines are difficult to construct in a way that is simultaneously flexible, reliable, and scalable. Current workflows are typically assembled in an ad hoc manner, with UQ added only partially -- if at all -- and with limited statistical validation.
@@ -22,7 +31,7 @@ ProbPipe aims to overturn this paradigm. Just as probabilistic programming syste
 
 ## Installation
 
-Requires Python >= 3.12.
+Requires Python >= 3.12 (tested on 3.12 and 3.13).
 
 ```bash
 git clone https://github.com/TARPS-group/prob-pipe.git
@@ -30,7 +39,7 @@ cd prob-pipe
 pip install .
 ```
 
-Core dependencies: JAX, NumPy, SciPy, TensorFlow Probability (nightly, [recommended for JAX users](https://github.com/tensorflow/probability/issues/1994#issuecomment-3129033043)).
+Core dependencies: JAX and TensorFlow Probability. ProbPipe uses [tfp-nightly](https://pypi.org/project/tfp-nightly/), which is the [recommended approach](https://github.com/tensorflow/probability/issues/1994#issuecomment-3129033043) for TFP on JAX since stable TFP releases are tied to TensorFlow and often lag behind JAX.
 
 Optional extras:
 
@@ -66,6 +75,22 @@ lp = prior.log_prob(0.5)                                # -1.0439...
 score = jax.grad(prior.log_prob)(0.5)                    # -0.5
 ```
 
+### Workflows and Broadcasting
+
+When a workflow node receives a distribution where it expects a scalar, ProbPipe automatically draws samples and calls the function once per sample, returning an `EmpiricalDistribution` over the outputs.
+
+```python
+from probpipe import Normal, Workflow
+
+def simulate(mu: float, sigma: float) -> float:
+    return mu + sigma * 0.1
+
+wf = Workflow(func=simulate)
+result = wf(mu=Normal(loc=0.0, scale=1.0), sigma=Normal(loc=1.0, scale=0.1))
+# result is an EmpiricalDistribution with 128 samples
+result.mean()  # ~0.1
+```
+
 ### Joint Distributions and Conditioning
 
 Joint distributions compose marginals into a single object. Components can be independent (product), autoregressive (sequential), or jointly Gaussian with exact closed-form conditioning.
@@ -90,22 +115,6 @@ seq = SequentialJointDistribution(
 jg = JointGaussian(mean=jnp.zeros(4), cov=jnp.eye(4), x=2, y=2)
 posterior = jg.condition_on(x=jnp.array([1.0, 2.0]))
 posterior.mean()  # Array([0., 0.], dtype=float32)
-```
-
-### Workflows and Broadcasting
-
-When a workflow node receives a distribution where it expects a scalar, ProbPipe automatically draws samples and calls the function once per sample, returning an `EmpiricalDistribution` over the outputs.
-
-```python
-from probpipe import Normal, Workflow
-
-def simulate(mu: float, sigma: float) -> float:
-    return mu + sigma * 0.1
-
-wf = Workflow(func=simulate)
-result = wf(mu=Normal(loc=0.0, scale=1.0), sigma=Normal(loc=1.0, scale=0.1))
-# result is an EmpiricalDistribution with 128 samples
-result.mean()  # ~0.1
 ```
 
 ### Bayesian Inference
@@ -149,4 +158,19 @@ positive.source.to_dict() # {'operation': 'transform',
 provenance_ancestors(positive)  # [Normal(name='base', event_shape=())]
 ```
 
+## Contributing
 
+Contributions are welcome! To get started:
+
+1. Fork and clone the repository:
+   ```bash
+   git clone https://github.com/<your-username>/prob-pipe.git
+   cd prob-pipe
+   pip install -e .[dev]
+   ```
+2. Create a feature branch, make your changes, and ensure tests pass:
+   ```bash
+   git checkout -b my-feature
+   pytest
+   ```
+3. Open a pull request against `main`.
