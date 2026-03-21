@@ -21,13 +21,13 @@ ProbPipe is a Python framework for building probabilistic pipelines with automat
 
 Scientific discovery and real-world decision-making increasingly depend on complex, end-to-end inferential pipelines that integrate heterogeneous data, fit probabilistic models, propagate uncertainty, and validate predictions. Yet high-quality uncertainty quantification (UQ) is rarely achieved at scale because such pipelines are difficult to construct in a way that is simultaneously flexible, reliable, and scalable. Current workflows are typically assembled in an ad hoc manner, with UQ added only partially – if at all – and with limited statistical validation.
 
-ProbPipe aims to overturn this paradigm. Just as probabilistic programming systems (Stan, PyMC, NumPyro) made Bayesian inference in complex models accessible to non-experts, deep learning frameworks (PyTorch, TensorFlow) enabled rapid model development across domains, and automatic differentiation systems (JAX, Autograd) made gradient-based inference practical at scale, ProbPipe provides general-purpose abstractions for probabilistic *workflows* – making composability, scalability, and reproducibility the default. Its design is driven by three requirements:
+ProbPipe aims to overturn this paradigm. Just as probabilistic programming systems (Stan, PyMC, NumPyro) made Bayesian inference in complex models accessible to non-experts, deep learning frameworks (PyTorch, TensorFlow) enabled rapid model development across domains, and automatic differentiation systems (JAX, Autograd) made gradient-based inference practical at scale, ProbPipe provides general-purpose abstractions for probabilistic **workflows** – making composability, scalability, and reproducibility the default. Its design is driven by five principles:
 
-- **Reusable inferential components.** Workflows are expressed in terms of modular, swappable statistical or algorithmic units rather than low-level orchestration primitives. Users can change the likelihood model, swap the inference algorithm, or explore a different prior without restructuring the pipeline.
-- **Interoperability with the Python ecosystem.** ProbPipe is designed to work with existing ML, probabilistic, and orchestration libraries. Modules can serve as thin wrappers around other packages, and automatic conversion among distributional representations (parametric distributions, Monte Carlo samples, amortized posteriors) removes a major source of brittleness in current pipelines.
-- **End-to-end uncertainty propagation.** Once uncertainty is introduced, it is represented and propagated through all downstream steps. When a workflow node expects a concrete value but receives a distribution, ProbPipe automatically broadcasts over samples – users write deterministic functions and get UQ for free.
-- **Seamless scalability.** The same pipeline scales in two complementary directions without code changes: *computationally*, by vectorizing operations across samples via JAX, and *operationally*, by distributing workflow steps across machines via Prefect orchestration. Both can be active simultaneously, so a pipeline prototyped on a laptop can move to a cluster with no restructuring.
-- **Provenance and reproducibility.** Every distribution records how it was created – operation, parents, parameters – enabling full lineage tracing from any result back to its inputs.
+1. **Reusable inferential components.** Workflows are expressed in terms of modular, swappable statistical or algorithmic units rather than low-level orchestration primitives. Users can change the likelihood model, swap the inference algorithm, or explore a different prior without restructuring the pipeline.
+2. **Interoperability with the Python ecosystem.** ProbPipe is designed to work with existing ML, probabilistic, and orchestration libraries. Modules can serve as thin wrappers around other packages, and automatic conversion among distributional representations (parametric distributions, Monte Carlo samples, amortized posteriors) removes a major source of brittleness in current pipelines.
+3. **End-to-end uncertainty propagation.** Once uncertainty is introduced, it is represented and propagated through all downstream steps. When a workflow node expects a concrete value but receives a distribution, ProbPipe automatically broadcasts over samples – users write deterministic functions and get UQ for free.
+4. **Seamless scalability.** The same pipeline scales in two complementary directions without code changes: *computationally*, by vectorizing operations across samples via JAX, and *operationally*, by distributing workflow steps across machines via Prefect orchestration. Both can be active simultaneously, so a pipeline prototyped on a laptop can move to a cluster with no restructuring.
+5. **Provenance and reproducibility.** Every distribution records how it was created – operation, parents, parameters – enabling full lineage tracing from any result back to its inputs.
 
 ## Installation
 
@@ -52,110 +52,133 @@ pip install .[prefect]   # Prefect orchestration backend
 
 ### Distributions
 
-ProbPipe wraps 20+ TensorFlow Probability distributions with a uniform interface. All distributions follow TFP shape semantics (`sample_shape + batch_shape + event_shape`) and are fully JAX-differentiable.
+ProbPipe wraps 20+ TensorFlow Probability distributions with a uniform interface. All distributions follow TFP shape semantics (`sample_shape + batch_shape + event_shape`) and are fully JAX-differentiable. Bijector-based transforms create constrained distributions (e.g., log-normal for positive quantities).
 
 ```python
-from probpipe import Normal, MultivariateNormal, TransformedDistribution
+from probpipe import Normal, TransformedDistribution
 import jax
-import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
-# Scalar and multivariate distributions
-prior = Normal(loc=0.0, scale=1.0)
-mvn = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+# Model measurement uncertainty: sensor reads temperature with noise
+sensor_noise = Normal(loc=0.0, scale=0.5, name='sensor_noise')
 
-# Transform to enforce positivity
-positive_prior = TransformedDistribution(prior, tfb.Exp())
+# Log-normal model for positive-valued quantities (e.g., concentrations)
+log_conc = Normal(loc=2.0, scale=0.3, name='log_concentration')
+concentration = TransformedDistribution(log_conc, tfb.Exp())
 
 # Sample and evaluate
-samples = prior.sample(jax.random.PRNGKey(0), (1000,))  # shape: (1000,)
-lp = prior.log_prob(0.5)                                # -1.0439...
+samples = sensor_noise.sample(jax.random.PRNGKey(0), (1000,))
+samples.shape              # (1000,)
+sensor_noise.log_prob(0.5)  # Array(-0.7257913, dtype=float32)
 
-# Fully differentiable
-score = jax.grad(prior.log_prob)(0.5)                    # -0.5
+# Fully differentiable: compute the score function
+jax.grad(sensor_noise.log_prob)(0.5)  # Array(-2.0, dtype=float32)
 ```
 
 ### Workflows and Broadcasting
 
-When a workflow node receives a distribution where it expects a scalar, ProbPipe automatically draws samples and calls the function once per sample, returning an `EmpiricalDistribution` over the outputs.
+When a workflow node receives a distribution where it expects a concrete value, ProbPipe automatically draws samples and evaluates the function for each, returning an `EmpiricalDistribution`. Here, uncertain velocity and time propagate through a distance calculation.
 
 ```python
 from probpipe import Normal, Workflow
 
-def simulate(mu: float, sigma: float) -> float:
-    return mu + sigma * 0.1
+# distance = velocity * time
+def compute_distance(velocity, time):
+    return velocity * time
 
-wf = Workflow(func=simulate)
-result = wf(mu=Normal(loc=0.0, scale=1.0), sigma=Normal(loc=1.0, scale=0.1))
+wf = Workflow(func=compute_distance)
+result = wf(
+    velocity=Normal(loc=10.0, scale=1.0),  # m/s, uncertain
+    time=Normal(loc=5.0, scale=0.2),       # seconds, uncertain
+)
 # result is an EmpiricalDistribution with 128 samples
-result.mean()  # ~0.1
+result.mean()      # Array(50.302593, dtype=float32)
+result.variance()  # Array(26.641190, dtype=float32)
 ```
 
 ### Joint Distributions and Conditioning
 
-Joint distributions compose marginals into a single object. Components can be independent (product), autoregressive (sequential), or jointly Gaussian with exact closed-form conditioning.
+Build hierarchical models with autoregressive dependence, or fuse multiple noisy observations via exact Gaussian conditioning.
 
 ```python
-from probpipe import Normal, ProductDistribution, SequentialJointDistribution, JointGaussian
+from probpipe import Normal, SequentialJointDistribution, JointGaussian
 import jax.numpy as jnp
 
-# Independent components
-joint = ProductDistribution(
-    mu=Normal(loc=0.0, scale=1.0),
-    sigma=Normal(loc=1.0, scale=0.5),
+# Hierarchical model: population mean height -> individual measurement
+hierarchical = SequentialJointDistribution(
+    population_mean=Normal(loc=170.0, scale=10.0),
+    measurement=lambda population_mean: Normal(loc=population_mean, scale=5.0),
 )
+hierarchical.event_shape       # (2,)
+hierarchical.component_names   # ('population_mean', 'measurement')
 
-# Autoregressive dependence: x depends on z
-seq = SequentialJointDistribution(
-    z=Normal(loc=0.0, scale=1.0),
-    x=lambda z: Normal(loc=z, scale=0.5),
-)
+# Sensor fusion: two noisy sensors measure the same latent signal
+# signal has var=1; sensor1 adds noise var=1; sensor2 adds noise var=4
+cov = jnp.array([
+    [1.0, 1.0, 1.0],
+    [1.0, 2.0, 1.0],
+    [1.0, 1.0, 5.0],
+])
+jg = JointGaussian(mean=jnp.zeros(3), cov=cov, signal=1, sensors=2)
 
-# Exact Gaussian conditioning: p(y | x)
-jg = JointGaussian(mean=jnp.zeros(4), cov=jnp.eye(4), x=2, y=2)
-posterior = jg.condition_on(x=jnp.array([1.0, 2.0]))
-posterior.mean()  # Array([0., 0.], dtype=float32)
+# Observe sensors read [2.5, 3.0] -> infer the latent signal
+posterior = jg.condition_on(sensors=jnp.array([2.5, 3.0]))
+posterior.mean()        # Array([1.4444445], dtype=float32)
+posterior.covariance    # Array([[0.44444442]], dtype=float32)
 ```
 
 ### Bayesian Inference
 
-The built-in MCMC sampler supports NUTS, HMC, and random-walk Metropolis-Hastings. Define a likelihood module, pair it with a prior, and sample.
+Bayesian linear regression in a few lines. Define a likelihood, pair it with a prior, and sample with NUTS. The sampler automatically falls back to gradient-free Metropolis-Hastings when the likelihood is not JAX-traceable.
 
 ```python
+import jax
+import jax.numpy as jnp
 from probpipe import MultivariateNormal, wf
 from probpipe.core.modeling import Likelihood, MCMCSampler
-import jax.numpy as jnp
 
-class GaussianLikelihood(Likelihood):
+class LinearRegressionLikelihood(Likelihood):
     @wf
     def log_likelihood(self, params, data):
-        return jnp.sum(-0.5 * (data - params) ** 2)
+        x, y = data[:, 0], data[:, 1]
+        predicted = params[0] + params[1] * x       # y = w0 + w1*x
+        return jnp.sum(-0.5 * (y - predicted) ** 2)
 
-prior = MultivariateNormal(loc=jnp.zeros(2), cov=25.0 * jnp.eye(2))
-sampler = MCMCSampler(algorithm='nuts', num_results=500, num_warmup=200)
-data = jnp.array([1.0, 2.0])
+# Synthetic data: y = 1.0 + 2.0*x + noise
+key = jax.random.PRNGKey(42)
+x = jnp.linspace(0, 1, 20)
+y = 1.0 + 2.0 * x + 0.3 * jax.random.normal(key, shape=(20,))
+data = jnp.column_stack([x, y])
 
-posterior = sampler(prior=prior, likelihood=GaussianLikelihood(), data=data)
-posterior.mean()          # Array([~1.0, ~2.0], dtype=float32)
-posterior.source          # Provenance('nuts', parents=[MultivariateNormal])
+prior = MultivariateNormal(loc=jnp.zeros(2), cov=10.0 * jnp.eye(2))
+sampler = MCMCSampler(algorithm='nuts', num_results=500, num_warmup=200, seed=0)
+posterior = sampler(prior=prior, likelihood=LinearRegressionLikelihood(), data=data)
+posterior.mean()    # Array([1.0908195, 1.9959916], dtype=float32)  ≈ [1.0, 2.0]
+posterior.source    # Provenance('nuts', parents=[MultivariateNormal])
 ```
 
 ### Provenance Tracking
 
-Every distribution records its lineage automatically. Provenance chains can be serialized to JSON or traversed programmatically.
+Every distribution records its lineage automatically. Provenance chains can be serialized to JSON or traversed programmatically, enabling full reproducibility.
 
 ```python
 from probpipe import Normal, TransformedDistribution, provenance_ancestors
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
-base = Normal(loc=0.0, scale=1.0, name='base')
-positive = TransformedDistribution(base, tfb.Exp())
+# Model a positive rate parameter via log-transform
+log_rate = Normal(loc=1.0, scale=0.5, name='log_rate')
+rate = TransformedDistribution(log_rate, tfb.Exp())
 
-positive.source           # Provenance('transform', parents=[base])
-positive.source.to_dict() # {'operation': 'transform',
-                           #  'parents': [{'type': 'Normal', 'name': 'base'}],
-                           #  'metadata': {'bijector': 'Exp'}}
-provenance_ancestors(positive)  # [Normal(name='base', event_shape=())]
+rate.source
+# Provenance('transform', parents=[log_rate])
+
+rate.source.to_dict()
+# {'operation': 'transform',
+#  'parents': [{'type': 'Normal', 'name': 'log_rate'}],
+#  'metadata': {'bijector': 'Exp'}}
+
+provenance_ancestors(rate)
+# [Normal(name='log_rate', event_shape=())]
 ```
 
 ## Contributing
