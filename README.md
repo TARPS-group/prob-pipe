@@ -154,6 +154,3 @@ provenance_ancestors(positive)  # [Normal(name='base', event_shape=())]
 | [05_autodiff](examples/05_autodiff.ipynb) | JAX autodiff: score functions, sensitivity analysis, MLE, variational inference |
 | [06_modular_forecasting](examples/06_modular_forecasting.ipynb) | Modular inference pipeline, swappable likelihoods, posterior predictive checks |
 
-## License
-
-MIT
