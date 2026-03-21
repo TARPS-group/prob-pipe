@@ -149,14 +149,4 @@ positive.source.to_dict() # {'operation': 'transform',
 provenance_ancestors(positive)  # [Normal(name='base', event_shape=())]
 ```
 
-## Example Notebooks
-
-| Notebook | Topic |
-|----------|-------|
-| [01_distributions](docs/examples/01_distributions.ipynb) | Distribution basics, shape semantics, support checking, conversion |
-| [02_transformations](docs/examples/02_transformations.ipynb) | Bijectors, transformed distributions, provenance chains |
-| [03_joint_distributions](docs/examples/03_joint_distributions.ipynb) | Joint distributions, conditioning, correlated broadcasting |
-| [04_broadcasting](docs/examples/04_broadcasting.ipynb) | Broadcasting vectorization, enumeration, auto-detection |
-| [05_autodiff](docs/examples/05_autodiff.ipynb) | JAX autodiff: score functions, sensitivity analysis, MLE, variational inference |
-| [06_modular_forecasting](docs/examples/06_modular_forecasting.ipynb) | Modular inference pipeline, swappable likelihoods, posterior predictive checks |
 
