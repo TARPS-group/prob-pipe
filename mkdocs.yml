@@ -1,0 +1,75 @@
+site_name: ProbPipe
+site_description: Probabilistic pipelines with automated uncertainty quantification
+site_url: https://tarps-group.github.io/prob-pipe
+repo_url: https://github.com/TARPS-group/prob-pipe
+repo_name: TARPS-group/prob-pipe
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: numpy
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            members_order: source
+            merge_init_into_class: true
+  - mkdocs-jupyter:
+      ignore_h1_titles: true
+      execute: false
+
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Tutorials:
+    - Distributions: examples/01_distributions.ipynb
+    - Transformations: examples/02_transformations.ipynb
+    - Joint Distributions: examples/03_joint_distributions.ipynb
+    - Broadcasting: examples/04_broadcasting.ipynb
+    - Automatic Differentiation: examples/05_autodiff.ipynb
+    - Modular Forecasting: examples/06_modular_forecasting.ipynb
+  - API Reference:
+    - Distributions: api/distributions.md
+    - Joint Distributions: api/joint.md
+    - Transformations: api/transformed.md
+    - Workflows: api/workflows.md
+    - Inference: api/inference.md
+    - Provenance: api/provenance.md
+    - Constraints: api/constraints.md

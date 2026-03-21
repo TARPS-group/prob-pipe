@@ -951,14 +951,14 @@ class JointGaussian(JointDistribution):
         Named components with their dimensionality.  The sum of all
         dimensions must equal ``d``.
 
-    Example::
-
-        joint = JointGaussian(
-            mean=jnp.array([0.0, 0.0, 1.0, 2.0]),
-            cov=jnp.eye(4),
-            x=1,    # x is 1-dimensional
-            yz=3,   # yz is 3-dimensional
-        )
+    Examples
+    --------
+    >>> joint = JointGaussian(
+    ...     mean=jnp.array([0.0, 0.0, 1.0, 2.0]),
+    ...     cov=jnp.eye(4),
+    ...     x=1,    # x is 1-dimensional
+    ...     yz=3,   # yz is 3-dimensional
+    ... )
     """
 
     def __init__(
