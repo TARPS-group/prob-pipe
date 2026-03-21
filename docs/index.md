@@ -1,5 +1,3 @@
-# ProbPipe
-
 ProbPipe is a Python framework for building probabilistic pipelines with automated uncertainty quantification. Its core organizing principle is **distributions in, distributions out**: every node in a pipeline can consume and emit probability distributions, enabling principled uncertainty propagation across the entire workflow.
 
 ## Why ProbPipe?
@@ -16,20 +14,29 @@ ProbPipe provides general-purpose abstractions for probabilistic *workflows* -- 
 
 ## Quick Example
 
+Suppose you want to estimate total revenue, but both the unit price and customer demand are uncertain. Write the business logic as a plain function, pass distributions for the uncertain inputs, and ProbPipe propagates the uncertainty automatically:
+
 ```python
 from probpipe import Normal, Workflow
 
-def simulate(mu: float, sigma: float) -> float:
-    return mu + sigma * 0.1
+price = Normal(loc=50.0, scale=5.0, name="price")
+demand = Normal(loc=1000.0, scale=100.0, name="demand")
 
-wf = Workflow(func=simulate)
-result = wf(mu=Normal(loc=0.0, scale=1.0), sigma=Normal(loc=1.0, scale=0.1))
-# result is an EmpiricalDistribution with 128 samples
-result.mean()  # ~0.1
+def total_revenue(price, demand):
+    return price * demand
+
+wf = Workflow(func=total_revenue)
+revenue = wf(price=price, demand=demand)
+
+revenue.mean()       # ~50000 (mean revenue in dollars)
+revenue.variance()   # captures joint uncertainty from price and demand
+revenue.source       # Provenance('broadcast', parents=[price, demand])
 ```
+
+The result is an `EmpiricalDistribution` -- a first-class distribution object that can be passed into downstream workflow nodes, triggering further uncertainty propagation.
 
 ## Next Steps
 
 - [Getting Started](getting-started.md) -- installation and first steps
-- [Tutorials](examples/01_distributions.ipynb) -- guided notebooks covering distributions, transforms, joint models, and more
+- [Tutorials](tutorials.md) -- guided notebooks covering distributions, transforms, joint models, and more
 - [API Reference](api/distributions.md) -- full class and function documentation

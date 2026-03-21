@@ -22,58 +22,84 @@ pip install .[docs]      # MkDocs documentation tools
 
 ## Your First Pipeline
 
+We'll build a simple pharmacokinetic model: given an uncertain drug half-life, predict the concentration remaining after a fixed time.
+
 ### 1. Create a distribution
 
-ProbPipe wraps 20+ TensorFlow Probability distributions with a uniform interface:
+ProbPipe wraps 20+ TensorFlow Probability distributions with a uniform interface. All distributions follow TFP shape semantics and are fully JAX-differentiable:
 
 ```python
 from probpipe import Normal
 import jax
 
-prior = Normal(loc=0.0, scale=1.0)
-samples = prior.sample(jax.random.PRNGKey(0), (1000,))
-prior.log_prob(0.5)  # -1.0439...
+half_life = Normal(loc=4.0, scale=0.5, name="half_life")
+
+half_life.mean()              # 4.0
+half_life.log_prob(4.0)       # -0.2258 (log-density at the mean)
+
+samples = half_life.sample(jax.random.PRNGKey(0), (1000,))
+samples.shape                 # (1000,)
 ```
 
 ### 2. Transform it
 
-Apply bijectors to create transformed distributions:
+Apply bijectors to create transformed distributions. For example, enforce positivity with an exponential transform:
 
 ```python
 from probpipe import TransformedDistribution
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
-positive_prior = TransformedDistribution(prior, tfb.Exp())
-positive_prior.support  # positive
+pos_half_life = TransformedDistribution(
+    Normal(loc=1.5, scale=0.3), tfb.Exp(), name="pos_half_life"
+)
+pos_half_life.support         # positive
 ```
 
 ### 3. Propagate uncertainty through a workflow
 
-When a workflow node receives a distribution where it expects a scalar, ProbPipe automatically broadcasts:
+Write the science as a plain function. When ProbPipe sees a distribution where a scalar is expected, it automatically draws samples and returns an `EmpiricalDistribution` over the outputs:
 
 ```python
 from probpipe import Workflow
 
-def simulate(mu: float, sigma: float) -> float:
-    return mu + sigma * 0.1
+initial_dose = 100.0  # mg (known)
+t = 8.0               # hours (known)
 
-wf = Workflow(func=simulate)
-result = wf(mu=Normal(loc=0.0, scale=1.0), sigma=Normal(loc=1.0, scale=0.1))
-# result is an EmpiricalDistribution
-result.mean()  # ~0.1
+def concentration(half_life):
+    return initial_dose * (0.5 ** (t / half_life))
+
+wf = Workflow(func=concentration)
+conc = wf(half_life=half_life)
+
+conc.mean()                   # ~25.0 (expected concentration after 8h)
+conc.source                   # Provenance('broadcast', parents=[half_life])
 ```
 
 ### 4. Track provenance
 
-Every distribution records its lineage:
+Every distribution records its lineage automatically. You can traverse the provenance chain or serialize it to JSON:
 
 ```python
 from probpipe import provenance_ancestors
 
-result.source  # Provenance('broadcast', parents=[Normal, Normal], ...)
-provenance_ancestors(result)  # [Normal(name='mu'), Normal(name='sigma')]
+provenance_ancestors(conc)    # [Normal(name='half_life', event_shape=())]
+conc.source.to_dict()         # {'operation': 'broadcast',
+                              #  'parents': [{'type': 'Normal', 'name': 'half_life'}],
+                              #  'metadata': {'vectorize': 'jax', ...}}
+```
+
+### 5. Differentiate through distributions
+
+Since everything is built on JAX, you can compute gradients of distribution operations -- useful for sensitivity analysis, MLE, and variational inference:
+
+```python
+import jax
+
+# Score function: d/d(x) log p(x)
+score = jax.grad(half_life.log_prob)(4.0)   # 0.0 (zero at the mean)
+score = jax.grad(half_life.log_prob)(3.0)   # 4.0 (positive below the mean)
 ```
 
 ## Next Steps
 
-Explore the [tutorials](examples/01_distributions.ipynb) for in-depth coverage of distributions, joint models, conditioning, automatic differentiation, and modular inference pipelines.
+Explore the [tutorials](tutorials.md) for in-depth coverage of distributions, joint models, conditioning, automatic differentiation, and modular inference pipelines.

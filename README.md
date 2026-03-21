@@ -2,8 +2,11 @@
 
 [![CI](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml/badge.svg)](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/TARPS-group/prob-pipe/branch/main/graph/badge.svg)](https://codecov.io/gh/TARPS-group/prob-pipe)
+[![docs](https://img.shields.io/badge/docs-tarps--group.github.io%2Fprob--pipe-blue)](https://tarps-group.github.io/prob-pipe/)
 
 ProbPipe is a Python framework for building probabilistic pipelines with automated uncertainty quantification. Its core organizing principle is **distributions in, distributions out**: every node in a pipeline can consume and emit probability distributions, enabling principled uncertainty propagation across the entire workflow.
+
+**[Documentation](https://tarps-group.github.io/prob-pipe/)** | **[Tutorials](https://tarps-group.github.io/prob-pipe/tutorials/)** | **[API Reference](https://tarps-group.github.io/prob-pipe/api/distributions/)**
 
 ## Philosophy
 
@@ -146,14 +149,4 @@ positive.source.to_dict() # {'operation': 'transform',
 provenance_ancestors(positive)  # [Normal(name='base', event_shape=())]
 ```
 
-## Example Notebooks
-
-| Notebook | Topic |
-|----------|-------|
-| [01_distributions](docs/examples/01_distributions.ipynb) | Distribution basics, shape semantics, support checking, conversion |
-| [02_transformations](docs/examples/02_transformations.ipynb) | Bijectors, transformed distributions, provenance chains |
-| [03_joint_distributions](docs/examples/03_joint_distributions.ipynb) | Joint distributions, conditioning, correlated broadcasting |
-| [04_broadcasting](docs/examples/04_broadcasting.ipynb) | Broadcasting vectorization, enumeration, auto-detection |
-| [05_autodiff](docs/examples/05_autodiff.ipynb) | JAX autodiff: score functions, sensitivity analysis, MLE, variational inference |
-| [06_modular_forecasting](docs/examples/06_modular_forecasting.ipynb) | Modular inference pipeline, swappable likelihoods, posterior predictive checks |
 
