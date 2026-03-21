@@ -1,5 +1,3 @@
-# ProbPipe
-
 ProbPipe is a Python framework for building probabilistic pipelines with automated uncertainty quantification. Its core organizing principle is **distributions in, distributions out**: every node in a pipeline can consume and emit probability distributions, enabling principled uncertainty propagation across the entire workflow.
 
 ## Why ProbPipe?
@@ -31,5 +29,5 @@ result.mean()  # ~0.1
 ## Next Steps
 
 - [Getting Started](getting-started.md) -- installation and first steps
-- [Tutorials](examples/01_distributions.ipynb) -- guided notebooks covering distributions, transforms, joint models, and more
+- [Tutorials](examples/01_distributions/) -- guided notebooks covering distributions, transforms, joint models, and more
 - [API Reference](api/distributions.md) -- full class and function documentation

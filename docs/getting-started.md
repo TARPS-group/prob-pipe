@@ -76,4 +76,4 @@ provenance_ancestors(result)  # [Normal(name='mu'), Normal(name='sigma')]
 
 ## Next Steps
 
-Explore the [tutorials](examples/01_distributions.ipynb) for in-depth coverage of distributions, joint models, conditioning, automatic differentiation, and modular inference pipelines.
+Explore the [tutorials](examples/01_distributions/) for in-depth coverage of distributions, joint models, conditioning, automatic differentiation, and modular inference pipelines.
