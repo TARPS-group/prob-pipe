@@ -17,7 +17,7 @@ ProbPipe provides general-purpose abstractions for probabilistic *workflows* -- 
 Suppose you want to estimate total revenue, but both the unit price and customer demand are uncertain. Write the business logic as a plain function, pass distributions for the uncertain inputs, and ProbPipe propagates the uncertainty automatically:
 
 ```python
-from probpipe import Normal, Workflow
+from probpipe import Normal, WorkflowFunction
 
 price = Normal(loc=50.0, scale=5.0, name="price")
 demand = Normal(loc=1000.0, scale=100.0, name="demand")
@@ -25,7 +25,7 @@ demand = Normal(loc=1000.0, scale=100.0, name="demand")
 def total_revenue(price, demand):
     return price * demand
 
-wf = Workflow(func=total_revenue)
+wf = WorkflowFunction(func=total_revenue)
 revenue = wf(price=price, demand=demand)
 
 revenue.mean()       # ~50000 (mean revenue in dollars)

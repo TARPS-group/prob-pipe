@@ -31,7 +31,7 @@ class DistributionView(Distribution):
     """
     A lightweight reference to a named component of a :class:`JointDistribution`.
 
-    Broadcasting logic in :class:`~probpipe.core.node.Workflow` detects
+    Broadcasting logic in :class:`~probpipe.core.node.WorkflowFunction` detects
     ``DistributionView`` instances and groups those sharing the same
     ``_parent`` so they are sampled jointly (preserving correlation).
 

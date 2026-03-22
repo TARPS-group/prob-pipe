@@ -28,7 +28,7 @@ DISTRIBUTION_TYPES = (Distribution, EmpiricalDistribution, MultivariateNormal)
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["InputFrozenError", "wf", "Node", "abstractwf", "Workflow", "Module", "AbstractModule"]
+__all__ = ["InputFrozenError", "wf", "Node", "abstractwf", "WorkflowFunction", "Module", "AbstractModule"]
 
 class InputFrozenError(Exception):
     pass
@@ -83,7 +83,7 @@ class Node(ABC):
         return self._inputs
     
 
-class Workflow(Node):
+class WorkflowFunction(Node):
     """
     A single executable DAG node wrapping exactly one function.
 
@@ -181,13 +181,13 @@ class Workflow(Node):
         # Precompute parameter metadata once
         self._param_names = [p for p in self._sig.parameters if p != "self"]
 
-        # Reserved names that would collide with Workflow call-time overrides
+        # Reserved names that would collide with WorkflowFunction call-time overrides
         _RESERVED = {"n_broadcast_samples", "seed"}
         collision = _RESERVED & set(self._param_names)
         if collision:
             raise ValueError(
                 f"Function '{self._name}' has parameter(s) {collision} which are "
-                f"reserved by Workflow for call-time overrides. Rename them in "
+                f"reserved by WorkflowFunction for call-time overrides. Rename them in "
                 f"your function signature."
             )
 
@@ -291,7 +291,7 @@ class Workflow(Node):
                 if not isinstance(v, Node):
                     ann = self._hints.get(name)
                     raise TypeError(
-                        f"Workflow '{self._name}' expects dependency '{name}: {ann}' to be a Node, "
+                        f"WorkflowFunction '{self._name}' expects dependency '{name}: {ann}' to be a Node, "
                         f"but got {type(v)}."
                     )
 
@@ -774,7 +774,7 @@ class Module(Node):
 
     def _build_workflows(self):
         """
-        Replace @wf methods with Workflow instances.
+        Replace @wf methods with WorkflowFunction instances.
         """
         for attr_name in dir(self):
             attr = getattr(self, attr_name)
@@ -787,7 +787,7 @@ class Module(Node):
             if getattr(func, "__isabstractmethod__", False):
                 continue
 
-            wf = Workflow(
+            wf = WorkflowFunction(
                 func=func,
                 workflow_kind=self._workflow_kind,
                 name=f"{self.__class__.__name__}.{func.__name__}",
@@ -840,10 +840,10 @@ class Module(Node):
                 fontsize="12",
             )
 
-            # Workflow nodes inside the module
+            # WorkflowFunction nodes inside the module
             for attr_name in dir(self):
                 attr = getattr(self, attr_name)
-                if not isinstance(attr, Workflow):
+                if not isinstance(attr, WorkflowFunction):
                     continue
 
                 wf_name = attr._name  # e.g. PM25ForecastingModule.fit
@@ -862,13 +862,13 @@ class Module(Node):
         # -------------------------
         for attr_name in dir(self):
             attr = getattr(self, attr_name)
-            if not isinstance(attr, Workflow):
+            if not isinstance(attr, WorkflowFunction):
                 continue
 
             wf_name = attr._name
 
             # Infer dependencies from workflow signature
-            # (Workflows don't store child_nodes; they resolve dependencies at runtime)
+            # (WorkflowFunctions don't store child_nodes; they resolve dependencies at runtime)
             for param_name in attr._param_names:
                 if attr._is_dependency_param(param_name) and param_name in self._child_nodes:
                     dot.edge(param_name, wf_name)
@@ -953,13 +953,13 @@ class Module(Node):
             ip = impl_by_name.get(ap.name)
             if ip is None:
                 raise TypeError(
-                    f"Workflow '{name}' implementation is missing parameter '{ap.name}'.\n"
+                    f"WorkflowFunction '{name}' implementation is missing parameter '{ap.name}'.\n"
                     f"Expected (abstract): {abs_sig}\n"
                     f"Got (impl):          {impl_sig}"
                 )
             if ip.kind != ap.kind:
                 raise TypeError(
-                    f"Workflow '{name}' parameter '{ap.name}' kind mismatch.\n"
+                    f"WorkflowFunction '{name}' parameter '{ap.name}' kind mismatch.\n"
                     f"Expected (abstract): {abs_sig}\n"
                     f"Got (impl):          {impl_sig}"
                 )

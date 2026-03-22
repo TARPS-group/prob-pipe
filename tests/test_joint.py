@@ -14,7 +14,7 @@ from probpipe import (
     EmpiricalDistribution,
     Distribution,
 )
-from probpipe.core.node import Workflow
+from probpipe.core.node import WorkflowFunction
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +367,7 @@ class TestBroadcastingReconnection:
         def add(a: float, b: float) -> float:
             return a + b
 
-        return Workflow(
+        return WorkflowFunction(
             func=add,
             vectorize=backend,
             n_broadcast_samples=50,
@@ -398,7 +398,7 @@ class TestBroadcastingReconnection:
         def subtract(a: float, b: float) -> float:
             return a - b
 
-        wf = Workflow(
+        wf = WorkflowFunction(
             func=subtract,
             vectorize="loop",
             n_broadcast_samples=20,
@@ -422,7 +422,7 @@ class TestBroadcastingReconnection:
         def add3(a: float, b: float, c: float) -> float:
             return a + b + c
 
-        wf = Workflow(
+        wf = WorkflowFunction(
             func=add3,
             vectorize="loop",
             n_broadcast_samples=50,
@@ -444,7 +444,7 @@ class TestBroadcastingReconnection:
         def add(a: float, b: float) -> float:
             return a + b
 
-        wf = Workflow(
+        wf = WorkflowFunction(
             func=add,
             vectorize="jax",
             n_broadcast_samples=50,
@@ -466,7 +466,7 @@ class TestBroadcastingReconnection:
         def subtract(a: float, b: float) -> float:
             return a - b
 
-        wf = Workflow(
+        wf = WorkflowFunction(
             func=subtract,
             vectorize="jax",
             n_broadcast_samples=20,
@@ -636,7 +636,7 @@ class TestEnumerateWithDistributionViews:
             # c is from the empirical
             return (a - b) + c
 
-        wf = Workflow(
+        wf = WorkflowFunction(
             func=compute,
             vectorize="loop",
             n_broadcast_samples=50,

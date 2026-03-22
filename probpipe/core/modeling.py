@@ -20,7 +20,7 @@ import tensorflow_probability.substrates.jax.mcmc as tfp_mcmc
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions.distribution import Distribution, EmpiricalDistribution, Provenance
 from ..distributions.multivariate import MultivariateNormal
-from .node import AbstractModule, Module, Workflow, abstractwf, wf
+from .node import AbstractModule, Module, WorkflowFunction, abstractwf, wf
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ class GenerativeLikelihood(AbstractModule):
 # ---------------------------------------------------------------------------
 
 
-class ApproximatePosterior(Workflow, ABC):
+class ApproximatePosterior(WorkflowFunction, ABC):
     """Abstract base for all posterior approximation methods."""
 
     def __init__(
