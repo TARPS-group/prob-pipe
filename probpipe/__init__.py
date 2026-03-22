@@ -1,6 +1,28 @@
 from importlib.metadata import version as _version
+import warnings as _warnings
 
 __version__ = _version("probpipe")
+
+# Suppress known TFP-internal warnings that are harmless but noisy.
+# These are upstream issues in tfp-nightly's JAX substrate:
+#   - float64 requests truncated to float32 (TFP internals assume x64)
+#   - deprecated jax.interpreters.xla API usage
+#   - np.shape(None) deprecation in random generators
+_warnings.filterwarnings(
+    "ignore",
+    message=r"Explicitly requested dtype.*float64.*",
+    category=UserWarning,
+)
+_warnings.filterwarnings(
+    "ignore",
+    message=r"jax\.interpreters\.xla\.pytype_aval_mappings is deprecated",
+    category=DeprecationWarning,
+)
+_warnings.filterwarnings(
+    "ignore",
+    message=r"shape requires ndarray or scalar arguments, got <class 'NoneType'>",
+    category=DeprecationWarning,
+)
 
 from probpipe.distributions import (
     # Base classes
@@ -67,7 +89,7 @@ from probpipe.distributions import (
     DistributionView,
     ConditionedComponent,
 )
-from probpipe.core.node import Workflow, Module, wf
+from probpipe.core.node import WorkflowFunction, Module, wf
 from probpipe.provenance import provenance_ancestors, provenance_dag
 from probpipe.surrogate import (
     Emulator,
@@ -133,8 +155,8 @@ __all__ = [
     "JointGaussian",
     "DistributionView",
     "ConditionedComponent",
-    # Workflow
-    "Workflow",
+    # WorkflowFunction
+    "WorkflowFunction",
     "Module",
     "wf",
     # Provenance

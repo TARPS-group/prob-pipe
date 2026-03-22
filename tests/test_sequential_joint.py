@@ -14,7 +14,7 @@ from probpipe import (
     EmpiricalDistribution,
     JointDistribution,
 )
-from probpipe.core.node import Workflow
+from probpipe.core.node import WorkflowFunction
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +420,7 @@ class TestBroadcastingReconnection:
         def subtract(a: float, b: float) -> float:
             return a - b
 
-        wf = Workflow(
+        wf = WorkflowFunction(
             func=subtract,
             vectorize="loop",
             n_broadcast_samples=30,
@@ -442,7 +442,7 @@ class TestBroadcastingReconnection:
         def subtract(a: float, b: float) -> float:
             return a - b
 
-        wf = Workflow(
+        wf = WorkflowFunction(
             func=subtract,
             vectorize="jax",
             n_broadcast_samples=30,
