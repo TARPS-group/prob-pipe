@@ -4,6 +4,12 @@ from .distribution import (
     TFPDistribution,
     EmpiricalDistribution,
     Provenance,
+    BootstrapDistribution,
+    DEFAULT_NUM_EVALUATIONS,
+    RETURN_APPROX_DIST,
+    set_default_num_evaluations,
+    set_return_approx_dist,
+    monte_carlo,
     # constraint singletons & factories
     real,
     positive,

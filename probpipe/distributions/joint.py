@@ -757,6 +757,10 @@ class SequentialJointDistribution(JointDistribution):
         result._component_slices = slices
         result._total_dim = offset
 
+        # Propagate approximation flag: approximate if parent or any
+        # conditioned value comes from an approximate distribution
+        result._approximate = self.is_approximate
+
         result.with_source(Provenance(
             "condition_on", parents=(self,),
             metadata={"conditioned": list(observed)},

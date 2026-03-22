@@ -10,7 +10,7 @@ cd prob-pipe
 pip install .
 ```
 
-Core dependencies: JAX, NumPy, SciPy, TensorFlow Probability (nightly).
+Core dependencies: JAX and TensorFlow Probability (nightly).
 
 ### Optional extras
 
@@ -75,7 +75,21 @@ conc.mean()                   # ~25.0 (expected concentration after 8h)
 conc.source                   # Provenance('broadcast', parents=[half_life])
 ```
 
-### 4. Track provenance
+### 4. Compute expectations with error tracking
+
+The `expectation(f)` method computes `E[f(X)]`. On empirical distributions (like broadcast results), this is exact. On parametric distributions, it uses Monte Carlo and returns a `BootstrapDistribution` that tracks the sampling error:
+
+```python
+# Exact expectation on the broadcast result (EmpiricalDistribution)
+conc.expectation(lambda x: x)     # Array(~25.0) -- exact weighted sum
+
+# MC expectation on the parametric prior, with error tracking
+ex = half_life.expectation(lambda x: 0.5 ** (8.0 / x), num_evaluations=5000)
+ex.mean()       # point estimate of E[conc(half_life)]
+ex.variance()   # MC error variance -- decreases with more evaluations
+```
+
+### 5. Track provenance
 
 Every distribution records its lineage automatically. You can traverse the provenance chain or serialize it to JSON:
 
@@ -88,7 +102,7 @@ conc.source.to_dict()         # {'operation': 'broadcast',
                               #  'metadata': {'vectorize': 'jax', ...}}
 ```
 
-### 5. Differentiate through distributions
+### 6. Differentiate through distributions
 
 Since everything is built on JAX, you can compute gradients of distribution operations -- useful for sensitivity analysis, MLE, and variational inference:
 

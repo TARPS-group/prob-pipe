@@ -31,6 +31,13 @@ revenue = wf(price=price, demand=demand)
 revenue.mean()       # ~50000 (mean revenue in dollars)
 revenue.variance()   # captures joint uncertainty from price and demand
 revenue.source       # Provenance('broadcast', parents=[price, demand])
+
+# Compute expectations with automatic error tracking
+# On EmpiricalDistribution, this is exact; on parametric distributions,
+# Monte Carlo returns a BootstrapDistribution capturing the sampling error
+ex = price.expectation(lambda p: p**2, num_evaluations=5000)
+ex.mean()       # point estimate of E[price²]
+ex.variance()   # MC error variance (decreases with more evaluations)
 ```
 
 The result is an `EmpiricalDistribution` -- a first-class distribution object that can be passed into downstream workflow nodes, triggering further uncertainty propagation.

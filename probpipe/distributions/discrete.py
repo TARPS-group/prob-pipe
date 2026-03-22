@@ -4,7 +4,7 @@ Discrete distributions backed by TFP.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
@@ -19,6 +19,7 @@ from .distribution import (
     boolean,
     non_negative_integer,
     integer_interval,
+    _auto_key,
 )
 from ..custom_types import Array, ArrayLike, PRNGKey
 
@@ -84,6 +85,22 @@ class Bernoulli(TFPDistribution):
     @classmethod
     def _default_support(cls) -> Constraint:
         return boolean
+
+    # -- expectation (exact over {0, 1}) ------------------------------------
+
+    def expectation(
+        self,
+        f: Callable,
+        *,
+        key: PRNGKey | None = None,
+        num_evaluations: int | None = None,
+        return_dist: bool | None = None,
+    ) -> Array:
+        """Exact expectation over the two-point support {0, 1}."""
+        p = self._tfp_dist.probs_parameter()
+        f0 = f(jnp.zeros(self.event_shape, dtype=self.dtype))
+        f1 = f(jnp.ones(self.event_shape, dtype=self.dtype))
+        return (1 - p) * f0 + p * f1
 
     # -- conversion ---------------------------------------------------------
 
@@ -178,6 +195,23 @@ class Binomial(TFPDistribution):
     @classmethod
     def _default_support(cls) -> Constraint:
         return non_negative_integer
+
+    # -- expectation (exact over {0, ..., total_count}) ---------------------
+
+    def expectation(
+        self,
+        f: Callable,
+        *,
+        key: PRNGKey | None = None,
+        num_evaluations: int | None = None,
+        return_dist: bool | None = None,
+    ) -> Array:
+        """Exact expectation over the finite support {0, ..., total_count}."""
+        n = int(self._total_count) + 1
+        support = jnp.arange(n, dtype=self.dtype)
+        probs = jnp.exp(self._tfp_dist.log_prob(support))
+        f_vals = jax.vmap(f)(support)
+        return jnp.einsum("n,n...->...", probs, f_vals)
 
     # -- conversion ---------------------------------------------------------
 
@@ -343,6 +377,23 @@ class Categorical(TFPDistribution):
     @classmethod
     def _default_support(cls) -> Constraint:
         return non_negative_integer
+
+    # -- expectation (exact over {0, ..., k-1}) ------------------------------
+
+    def expectation(
+        self,
+        f: Callable,
+        *,
+        key: PRNGKey | None = None,
+        num_evaluations: int | None = None,
+        return_dist: bool | None = None,
+    ) -> Array:
+        """Exact expectation over the categorical support {0, ..., k-1}."""
+        probs = self._tfp_dist.probs_parameter()
+        k = probs.shape[-1]
+        support = jnp.arange(k, dtype=self.dtype)
+        f_vals = jax.vmap(f)(support)
+        return jnp.einsum("n,n...->...", probs, f_vals)
 
     # -- conversion ---------------------------------------------------------
 

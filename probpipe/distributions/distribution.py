@@ -12,7 +12,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
+import functools
 
 import math
 
@@ -21,6 +22,71 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..custom_types import Array, ArrayLike, PRNGKey
+
+# ---------------------------------------------------------------------------
+# Global defaults
+# ---------------------------------------------------------------------------
+
+DEFAULT_NUM_EVALUATIONS: int = 1024
+"""Default number of function evaluations for sample-based expectations."""
+
+RETURN_APPROX_DIST: bool = True
+"""When True, approximate expectations return a BootstrapDistribution
+capturing MC error instead of a plain array."""
+
+
+def set_default_num_evaluations(n: int) -> None:
+    """Set the global default for ``expectation()`` on infinite-support distributions."""
+    global DEFAULT_NUM_EVALUATIONS
+    if n < 1:
+        raise ValueError("num_evaluations must be at least 1")
+    DEFAULT_NUM_EVALUATIONS = n
+
+
+def set_return_approx_dist(value: bool) -> None:
+    """Set whether approximate expectations return error-tracking distributions."""
+    global RETURN_APPROX_DIST
+    RETURN_APPROX_DIST = bool(value)
+
+
+# ---------------------------------------------------------------------------
+# @monte_carlo decorator
+# ---------------------------------------------------------------------------
+
+
+def monte_carlo(method):
+    """Decorator for methods that compute expectations via Monte Carlo.
+
+    The decorated method should return a callable ``f`` such that the
+    desired quantity is ``E[f(X)]``.  The decorator adds
+    ``num_evaluations``, ``return_dist``, and ``key`` keyword arguments,
+    delegates to ``self.expectation(f, ...)``, and returns either an
+    ``Array`` or a ``BootstrapDistribution`` depending on settings.
+
+    Example::
+
+        class MyDist(Distribution):
+            @monte_carlo
+            def mean(self):
+                return lambda x: x
+    """
+
+    @functools.wraps(method)
+    def wrapper(
+        self,
+        *args,
+        key: PRNGKey | None = None,
+        num_evaluations: int | None = None,
+        return_dist: bool | None = None,
+        **kwargs,
+    ):
+        f = method(self, *args, **kwargs)
+        return self.expectation(
+            f, key=key, num_evaluations=num_evaluations, return_dist=return_dist,
+        )
+
+    return wrapper
+
 
 # ---------------------------------------------------------------------------
 # Auto-key helper (for convenience when key is omitted)
@@ -418,11 +484,82 @@ class Distribution(ABC):
     def prob(self, x: ArrayLike) -> Array:
         return jnp.exp(self.log_prob(x))
 
-    def mean(self) -> Array:
-        raise NotImplementedError(f"{type(self).__name__}.mean()")
+    @monte_carlo
+    def mean(self):
+        """Mean of this distribution.
 
-    def variance(self) -> Array:
-        raise NotImplementedError(f"{type(self).__name__}.variance()")
+        Subclasses with exact means (e.g., ``TFPDistribution``) override
+        this.  The base implementation falls back to Monte Carlo via
+        ``expectation(lambda x: x)``.
+        """
+        return lambda x: x
+
+    @monte_carlo
+    def variance(self):
+        """Variance of this distribution.
+
+        Subclasses with exact variance (e.g., ``TFPDistribution``)
+        override this.  The base implementation falls back to Monte Carlo.
+        """
+        mu = self.mean(return_dist=False)
+        return lambda x: (x - mu) ** 2
+
+    @monte_carlo
+    def cov(self):
+        """Covariance matrix of this distribution.
+
+        The base implementation falls back to Monte Carlo.
+        """
+        mu = self.mean(return_dist=False)
+
+        def _outer_diff(x):
+            d = x.ravel() - mu.ravel()
+            return jnp.outer(d, d)
+
+        return _outer_diff
+
+    def expectation(
+        self,
+        f: Callable,
+        *,
+        key: PRNGKey | None = None,
+        num_evaluations: int | None = None,
+        return_dist: bool | None = None,
+    ) -> Array | Distribution:
+        """Estimate ``E[f(X)]`` where ``X ~ self``.
+
+        Parameters
+        ----------
+        f : callable
+            Function mapping a single sample to an array.
+        key : PRNGKey, optional
+            JAX PRNG key for sampling.  Auto-generated if ``None``.
+        num_evaluations : int, optional
+            Number of samples to draw.  If ``None``, uses
+            ``DEFAULT_NUM_EVALUATIONS``.  Subclasses with finite support
+            override this to compute exactly when ``None``.
+        return_dist : bool, optional
+            If ``True``, return a ``BootstrapDistribution`` capturing MC
+            error.  If ``False``, return a plain array.  If ``None``,
+            use the global ``RETURN_APPROX_DIST`` setting.
+        """
+        n = num_evaluations if num_evaluations is not None else DEFAULT_NUM_EVALUATIONS
+        if key is None:
+            key = _auto_key()
+        samples = self.sample(key, sample_shape=(n,))
+        evals = jax.vmap(f)(samples)
+
+        rd = return_dist if return_dist is not None else RETURN_APPROX_DIST
+        if rd:
+            return BootstrapDistribution(evals, name=f"E[f(X)]")
+        return jnp.mean(evals, axis=0)
+
+    # -- approximation tracking ---------------------------------------------
+
+    @property
+    def is_approximate(self) -> bool:
+        """Whether this distribution is an approximation (e.g., from sampling or MCMC)."""
+        return getattr(self, "_approximate", False)
 
     # -- support ------------------------------------------------------------
 
@@ -491,7 +628,12 @@ class Distribution(ABC):
             key = _auto_key()
         if check_support:
             cls._check_support_compatible(other)
-        return cls._from_distribution(other, key=key, **kwargs)
+        result = cls._from_distribution(other, key=key, **kwargs)
+        # If the source is approximate or the conversion used sampling
+        # (different class), mark the result as approximate
+        if other.is_approximate or not isinstance(other, cls):
+            result._approximate = True
+        return result
 
     @classmethod
     def _from_distribution(
@@ -592,10 +734,10 @@ class TFPDistribution(Distribution):
     def prob(self, x: ArrayLike) -> Array:
         return self._tfp_dist.prob(jnp.asarray(x))
 
-    def mean(self) -> Array:
+    def mean(self, **kwargs) -> Array:
         return self._tfp_dist.mean()
 
-    def variance(self) -> Array:
+    def variance(self, **kwargs) -> Array:
         return self._tfp_dist.variance()
 
 
@@ -672,6 +814,7 @@ class EmpiricalDistribution(Distribution):
         self._samples = samples
         self._weights_cache: Array | None = None
         self._name = name
+        self._approximate = True
 
     # -- properties ---------------------------------------------------------
 
@@ -751,19 +894,19 @@ class EmpiricalDistribution(Distribution):
 
     # -- moments ------------------------------------------------------------
 
-    def mean(self) -> Array:
+    def mean(self, **kwargs) -> Array:
         if self._is_uniform:
             return jnp.mean(self._samples, axis=0)
         return jnp.einsum("n,n...->...", self.weights, self._samples)
 
-    def variance(self) -> Array:
+    def variance(self, **kwargs) -> Array:
         mu = self.mean()
         diff = self._samples - mu
         if self._is_uniform:
             return jnp.mean(diff**2, axis=0)
         return jnp.einsum("n,n...->...", self.weights, diff**2)
 
-    def cov(self) -> Array:
+    def cov(self, **kwargs) -> Array:
         """Weighted sample covariance matrix, shape ``(d, d)``."""
         mu = self.mean()
         # Flatten to 2D: (n, d)
@@ -772,6 +915,50 @@ class EmpiricalDistribution(Distribution):
         if self._is_uniform:
             return jnp.einsum("ni,nj->ij", diff, diff) / self.n
         return jnp.einsum("ni,nj,n->ij", diff, diff, self.weights)
+
+    def expectation(
+        self,
+        f: Callable,
+        *,
+        key: PRNGKey | None = None,
+        num_evaluations: int | None = None,
+        return_dist: bool | None = None,
+    ) -> Array | Distribution:
+        """Compute ``E[f(X)]`` exactly over the empirical support.
+
+        When ``num_evaluations`` is ``None``, the expectation is computed
+        exactly as a weighted sum over all support points (always returns
+        ``Array``).  When ``num_evaluations`` is specified and smaller
+        than ``self.n``, a random subsample is used and ``return_dist``
+        controls whether a ``BootstrapDistribution`` is returned.
+        """
+        if num_evaluations is not None and num_evaluations < self.n:
+            # Subsample — this is approximate
+            if key is None:
+                key = _auto_key()
+            idx = jax.random.choice(key, self.n, shape=(num_evaluations,), replace=False)
+            sub_samples = self._samples[idx]
+            f_vals = jax.vmap(f)(sub_samples)
+
+            rd = return_dist if return_dist is not None else RETURN_APPROX_DIST
+            if rd:
+                sub_w = None
+                if not self._is_uniform:
+                    sub_w = self.weights[idx]
+                    sub_w = sub_w / jnp.sum(sub_w)
+                return BootstrapDistribution(f_vals, weights=sub_w)
+
+            if self._is_uniform:
+                return jnp.mean(f_vals, axis=0)
+            sub_w = self.weights[idx]
+            sub_w = sub_w / jnp.sum(sub_w)
+            return jnp.einsum("n,n...->...", sub_w, f_vals)
+
+        # Exact: evaluate f on all support points — always returns Array
+        f_vals = jax.vmap(f)(self._samples)
+        if self._is_uniform:
+            return jnp.mean(f_vals, axis=0)
+        return jnp.einsum("n,n...->...", self.weights, f_vals)
 
     # -- conversion ---------------------------------------------------------
 
@@ -798,3 +985,112 @@ class EmpiricalDistribution(Distribution):
         ed = cls(samples, name=name or other.name)
         ed.with_source(Provenance("from_distribution", parents=(other,)))
         return ed
+
+
+# ---------------------------------------------------------------------------
+# BootstrapDistribution
+# ---------------------------------------------------------------------------
+
+class BootstrapDistribution(Distribution):
+    """Distribution over bootstrap-resampled means of a statistic.
+
+    Given *n* evaluations ``f(x_1), ..., f(x_n)`` where ``x_i ~ P``,
+    this represents the sampling distribution of the sample mean
+    ``(1/n) sum f(x_i)``, capturing Monte Carlo error.
+
+    Parameters
+    ----------
+    evaluations : array-like, shape ``(n, *stat_shape)``
+        The individual ``f(x_i)`` values.
+    weights : array-like, shape ``(n,)``, optional
+        Non-negative weights (normalised internally).  When ``None``,
+        uniform weights are used.
+    name : str, optional
+        Distribution name.
+    """
+
+    def __init__(
+        self,
+        evaluations: ArrayLike,
+        *,
+        weights: ArrayLike | None = None,
+        name: str | None = None,
+    ):
+        self._evaluations = jnp.asarray(evaluations, dtype=jnp.float32)
+        if self._evaluations.ndim == 0:
+            raise ValueError("evaluations must have at least 1 dimension.")
+        self._n = self._evaluations.shape[0]
+
+        if weights is not None:
+            w = jnp.asarray(weights, dtype=jnp.float32)
+            self._weights = w / jnp.sum(w)
+        else:
+            self._weights = None
+
+        self._name = name
+        self._approximate = True
+
+    @property
+    def n(self) -> int:
+        """Number of function evaluations."""
+        return self._n
+
+    @property
+    def evaluations(self) -> Array:
+        return self._evaluations
+
+    @property
+    def event_shape(self) -> tuple[int, ...]:
+        return self._evaluations.shape[1:]
+
+    def mean(self) -> Array:
+        """Point estimate: (weighted) mean of evaluations."""
+        if self._weights is None:
+            return jnp.mean(self._evaluations, axis=0)
+        return jnp.einsum("n,n...->...", self._weights, self._evaluations)
+
+    def variance(self) -> Array:
+        """Variance of the sampling distribution (≈ Var[f(X)] / n_eff)."""
+        mu = self.mean()
+        diff = self._evaluations - mu
+        if self._weights is None:
+            sample_var = jnp.mean(diff ** 2, axis=0)
+            return sample_var / self._n
+        # Weighted variance / effective sample size
+        sample_var = jnp.einsum("n,n...->...", self._weights, diff ** 2)
+        n_eff = 1.0 / jnp.sum(self._weights ** 2)
+        return sample_var / n_eff
+
+    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+        """Draw bootstrap resamples of the mean."""
+        total = int(math.prod(sample_shape)) if sample_shape else 1
+        keys = jax.random.split(key, total)
+
+        def _one_resample(k):
+            if self._weights is None:
+                idx = jax.random.choice(k, self._n, shape=(self._n,), replace=True)
+                return jnp.mean(self._evaluations[idx], axis=0)
+            else:
+                idx = jax.random.choice(
+                    k, self._n, shape=(self._n,), replace=True, p=self._weights
+                )
+                return jnp.mean(self._evaluations[idx], axis=0)
+
+        results = jax.vmap(_one_resample)(keys)
+        return results.reshape(sample_shape + self.event_shape)
+
+    def log_prob(self, x: ArrayLike) -> Array:
+        """Log-density via Gaussian approximation (mean ± SE)."""
+        x = jnp.asarray(x)
+        mu = self.mean()
+        var = jnp.maximum(self.variance(), 1e-12)
+        # Diagonal Gaussian
+        return -0.5 * jnp.sum(((x - mu) ** 2) / var + jnp.log(2 * jnp.pi * var))
+
+    @property
+    def support(self) -> Constraint:
+        return real
+
+    def __repr__(self) -> str:
+        return f"BootstrapDistribution(n={self._n}, event_shape={self.event_shape})"
+

@@ -100,6 +100,17 @@ result = wf(
 # result is an EmpiricalDistribution with 128 samples
 result.mean()      # Array(49.875435, dtype=float32)
 result.variance()  # Array(26.283531, dtype=float32)
+
+# Compute expectations with automatic error tracking
+# On the EmpiricalDistribution, this is exact (weighted sum over samples)
+result.expectation(lambda x: x)  # Array(49.875435, dtype=float32)
+
+# On a parametric distribution, Monte Carlo returns a BootstrapDistribution
+# that captures the sampling error
+velocity = Normal(loc=10.0, scale=1.0)
+ex = velocity.expectation(lambda x: x**2, num_evaluations=5000)
+ex.mean()      # Array(101.0413, dtype=float32)  -- point estimate of E[V²]
+ex.variance()  # Array(0.08..., dtype=float32)   -- MC error variance
 ```
 
 ### Joint Distributions and Conditioning
