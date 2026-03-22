@@ -84,9 +84,12 @@ def _build_probpipe_to_tfp() -> dict[str, callable]:
         "HalfNormal": lambda d: tfd.HalfNormal(scale=d._scale),
         "HalfCauchy": lambda d: tfd.HalfCauchy(loc=d._loc, scale=d._scale),
         "Pareto": lambda d: tfd.Pareto(concentration=d._concentration, scale=d._scale),
+        "InverseGamma": lambda d: tfd.InverseGamma(concentration=d._concentration, scale=d._scale),
         "Bernoulli": lambda d: tfd.Bernoulli(probs=d._probs),
         "Poisson": lambda d: tfd.Poisson(rate=d._rate),
         "Categorical": lambda d: tfd.Categorical(probs=d._probs),
+        "Dirichlet": lambda d: tfd.Dirichlet(concentration=d._concentration),
+        "MultivariateNormal": lambda d: tfd.MultivariateNormalTriL(loc=d.loc, scale_tril=d._scale_tril),
     }
 
 

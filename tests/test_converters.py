@@ -105,6 +105,12 @@ class TestProbPipeConverter:
         result = converter_registry.convert(n, Normal)
         assert not result.is_approximate
 
+    def test_same_class_returns_source(self):
+        """Same-class conversion returns the source object itself."""
+        n = Normal(loc=1.0, scale=2.0)
+        result = converter_registry.convert(n, Normal)
+        assert result is n
+
 
 # ---------------------------------------------------------------------------
 # TFP ↔ ProbPipe
@@ -165,6 +171,28 @@ class TestTFPConverter:
         assert isinstance(result, EmpiricalDistribution)
         assert result.n == 50
 
+    def test_probpipe_mvn_to_tfp(self):
+        loc = jnp.array([1.0, 2.0])
+        cov = jnp.array([[1.0, 0.3], [0.3, 2.0]])
+        mvn = MultivariateNormal(loc=loc, cov=cov)
+        result = converter_registry.convert(mvn, tfd.MultivariateNormalTriL)
+        assert isinstance(result, tfd.MultivariateNormalTriL)
+        np.testing.assert_allclose(result.loc, loc, atol=1e-5)
+
+    def test_probpipe_to_tfp_round_trip(self):
+        n = Normal(loc=5.0, scale=2.0)
+        tfp_n = converter_registry.convert(n, tfd.Normal)
+        n2 = converter_registry.convert(tfp_n, Normal)
+        np.testing.assert_allclose(float(n2._loc), 5.0)
+        np.testing.assert_allclose(float(n2._scale), 2.0)
+
+    def test_tfp_cross_family_chain(self):
+        """TFP Gamma → ProbPipe Normal via chained conversion."""
+        tfp_g = tfd.Gamma(concentration=9.0, rate=1.0)
+        result = converter_registry.convert(tfp_g, Normal, num_samples=5000)
+        assert isinstance(result, Normal)
+        np.testing.assert_allclose(float(result._loc), 9.0, atol=0.5)
+
     def test_is_distribution_type_for_tfp(self):
         assert converter_registry.is_distribution_type(tfd.Gamma(1.0, 1.0))
 
@@ -214,6 +242,22 @@ class TestScipyConverter:
         result = converter_registry.convert(ss.norm(0, 1), Normal)
         assert result.source is not None
         assert result.source.operation == "convert_from_scipy"
+
+    def test_scipy_norm_positional_args(self):
+        """Scipy norm created with positional args should still extract correctly."""
+        import scipy.stats as ss
+        result = converter_registry.convert(ss.norm(1.0, 2.0), Normal)
+        assert isinstance(result, Normal)
+        np.testing.assert_allclose(float(result._loc), 1.0)
+        np.testing.assert_allclose(float(result._scale), 2.0)
+
+    def test_scipy_beta_keyword_args(self):
+        """Scipy beta created with keyword args should extract correctly."""
+        import scipy.stats as ss
+        result = converter_registry.convert(ss.beta(a=2.0, b=5.0), Beta)
+        assert isinstance(result, Beta)
+        np.testing.assert_allclose(float(result._alpha), 2.0)
+        np.testing.assert_allclose(float(result._beta), 5.0)
 
     def test_is_distribution_type_scipy(self):
         import scipy.stats as ss
@@ -296,3 +340,29 @@ class TestFromDistributionDelegation:
         emp = EmpiricalDistribution.from_distribution(n, num_samples=50)
         assert isinstance(emp, EmpiricalDistribution)
         assert emp.n == 50
+
+    def test_empirical_to_empirical_returns_source(self):
+        samples = jnp.array([[1.0], [2.0], [3.0]])
+        emp = EmpiricalDistribution(samples, name="orig")
+        emp2 = EmpiricalDistribution.from_distribution(emp)
+        # Same-class: returns source directly
+        assert emp2 is emp
+
+
+# ---------------------------------------------------------------------------
+# Edge cases
+# ---------------------------------------------------------------------------
+
+class TestEdgeCases:
+
+    def test_convert_none_raises(self):
+        with pytest.raises(TypeError):
+            converter_registry.convert(None, Normal)
+
+    def test_convert_non_type_target_raises(self):
+        with pytest.raises(TypeError, match="No converter"):
+            converter_registry.convert(Normal(0, 1), str)
+
+    def test_check_infeasible_non_type_target(self):
+        info = converter_registry.check(Normal(0, 1), "not a type")
+        assert not info.feasible

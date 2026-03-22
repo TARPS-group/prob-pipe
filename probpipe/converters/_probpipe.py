@@ -44,9 +44,7 @@ def _sample_moments(other: Distribution, key: PRNGKey, num_samples: int):
 def _convert_to_normal(source, key, **kw):
     from ..distributions.continuous import Normal
     if isinstance(source, Normal):
-        r = Normal(loc=source._loc, scale=source._scale, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     _, m, v = _sample_moments(source, key, kw.pop("num_samples", 1024))
     r = Normal(loc=m, scale=jnp.sqrt(v), name=kw.get("name") or source.name)
     r.with_source(Provenance("from_distribution", parents=(source,)))
@@ -56,9 +54,7 @@ def _convert_to_normal(source, key, **kw):
 def _convert_to_beta(source, key, **kw):
     from ..distributions.continuous import Beta
     if isinstance(source, Beta):
-        r = Beta(alpha=source._alpha, beta=source._beta, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     _, m, v = _sample_moments(source, key, kw.pop("num_samples", 1024))
     common = m * (1.0 - m) / v - 1.0
     alpha = jnp.maximum(m * common, 0.01)
@@ -71,9 +67,7 @@ def _convert_to_beta(source, key, **kw):
 def _convert_to_gamma(source, key, **kw):
     from ..distributions.continuous import Gamma
     if isinstance(source, Gamma):
-        r = Gamma(concentration=source._concentration, rate=source._rate, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     _, m, v = _sample_moments(source, key, kw.pop("num_samples", 1024))
     r = Gamma(concentration=m ** 2 / v, rate=m / v, name=kw.get("name") or source.name)
     r.with_source(Provenance("from_distribution", parents=(source,)))
@@ -83,9 +77,7 @@ def _convert_to_gamma(source, key, **kw):
 def _convert_to_inverse_gamma(source, key, **kw):
     from ..distributions.continuous import InverseGamma
     if isinstance(source, InverseGamma):
-        r = InverseGamma(concentration=source._concentration, scale=source._scale, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     _, m, v = _sample_moments(source, key, kw.pop("num_samples", 1024))
     conc = m ** 2 / v + 2
     scale = m * (m ** 2 / v + 1)
@@ -97,9 +89,7 @@ def _convert_to_inverse_gamma(source, key, **kw):
 def _convert_to_exponential(source, key, **kw):
     from ..distributions.continuous import Exponential
     if isinstance(source, Exponential):
-        r = Exponential(rate=source._rate, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     _, m, _ = _sample_moments(source, key, kw.pop("num_samples", 1024))
     r = Exponential(rate=1.0 / m, name=kw.get("name") or source.name)
     r.with_source(Provenance("from_distribution", parents=(source,)))
@@ -109,9 +99,7 @@ def _convert_to_exponential(source, key, **kw):
 def _convert_to_lognormal(source, key, **kw):
     from ..distributions.continuous import LogNormal
     if isinstance(source, LogNormal):
-        r = LogNormal(loc=source._loc, scale=source._scale, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     _, m, v = _sample_moments(source, key, kw.pop("num_samples", 1024))
     scale = jnp.sqrt(jnp.log(1.0 + v / (m ** 2)))
     loc = jnp.log(m) - scale ** 2 / 2.0
@@ -123,11 +111,11 @@ def _convert_to_lognormal(source, key, **kw):
 def _convert_to_studentt(source, key, **kw):
     from ..distributions.continuous import StudentT
     if isinstance(source, StudentT):
-        r = StudentT(df=source._df, loc=source._loc, scale=source._scale, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     _, m, v = _sample_moments(source, key, kw.pop("num_samples", 1024))
-    r = StudentT(df=5.0, loc=m, scale=jnp.sqrt(v), name=kw.get("name") or source.name)
+    # var = scale^2 * df/(df-2) for df>2, so scale = sqrt(var * (df-2)/df)
+    df = 5.0
+    r = StudentT(df=df, loc=m, scale=jnp.sqrt(v * (df - 2.0) / df), name=kw.get("name") or source.name)
     r.with_source(Provenance("from_distribution", parents=(source,)))
     return r
 
@@ -135,9 +123,7 @@ def _convert_to_studentt(source, key, **kw):
 def _convert_to_uniform(source, key, **kw):
     from ..distributions.continuous import Uniform
     if isinstance(source, Uniform):
-        r = Uniform(low=source._low, high=source._high, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     _, m, v = _sample_moments(source, key, kw.pop("num_samples", 1024))
     half = jnp.sqrt(3.0 * v)
     r = Uniform(low=m - half, high=m + half, name=kw.get("name") or source.name)
@@ -148,9 +134,7 @@ def _convert_to_uniform(source, key, **kw):
 def _convert_to_cauchy(source, key, **kw):
     from ..distributions.continuous import Cauchy
     if isinstance(source, Cauchy):
-        r = Cauchy(loc=source._loc, scale=source._scale, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     _, m, v = _sample_moments(source, key, kw.pop("num_samples", 1024))
     r = Cauchy(loc=m, scale=jnp.sqrt(v) / 2.0, name=kw.get("name") or source.name)
     r.with_source(Provenance("from_distribution", parents=(source,)))
@@ -160,9 +144,7 @@ def _convert_to_cauchy(source, key, **kw):
 def _convert_to_laplace(source, key, **kw):
     from ..distributions.continuous import Laplace
     if isinstance(source, Laplace):
-        r = Laplace(loc=source._loc, scale=source._scale, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     _, m, v = _sample_moments(source, key, kw.pop("num_samples", 1024))
     r = Laplace(loc=m, scale=jnp.sqrt(v / 2.0), name=kw.get("name") or source.name)
     r.with_source(Provenance("from_distribution", parents=(source,)))
@@ -172,11 +154,10 @@ def _convert_to_laplace(source, key, **kw):
 def _convert_to_halfnormal(source, key, **kw):
     from ..distributions.continuous import HalfNormal
     if isinstance(source, HalfNormal):
-        r = HalfNormal(scale=source._scale, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     _, _, v = _sample_moments(source, key, kw.pop("num_samples", 1024))
-    r = HalfNormal(scale=jnp.sqrt(2.0 * v / (1.0 - 2.0 / jnp.pi)), name=kw.get("name") or source.name)
+    # var = scale^2 * (1 - 2/pi), so scale = sqrt(var / (1 - 2/pi))
+    r = HalfNormal(scale=jnp.sqrt(v / (1.0 - 2.0 / jnp.pi)), name=kw.get("name") or source.name)
     r.with_source(Provenance("from_distribution", parents=(source,)))
     return r
 
@@ -184,9 +165,7 @@ def _convert_to_halfnormal(source, key, **kw):
 def _convert_to_halfcauchy(source, key, **kw):
     from ..distributions.continuous import HalfCauchy
     if isinstance(source, HalfCauchy):
-        r = HalfCauchy(loc=source._loc, scale=source._scale, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     samples, _, _ = _sample_moments(source, key, kw.pop("num_samples", 1024))
     med = jnp.median(samples)
     r = HalfCauchy(loc=0.0, scale=jnp.maximum(med, 0.01), name=kw.get("name") or source.name)
@@ -197,9 +176,7 @@ def _convert_to_halfcauchy(source, key, **kw):
 def _convert_to_pareto(source, key, **kw):
     from ..distributions.continuous import Pareto
     if isinstance(source, Pareto):
-        r = Pareto(concentration=source._concentration, scale=source._scale, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     samples, _, _ = _sample_moments(source, key, kw.pop("num_samples", 1024))
     n = samples.shape[0]
     scale = jnp.maximum(jnp.min(samples), 1e-6)
@@ -212,9 +189,7 @@ def _convert_to_pareto(source, key, **kw):
 def _convert_to_truncatednormal(source, key, **kw):
     from ..distributions.continuous import TruncatedNormal
     if isinstance(source, TruncatedNormal):
-        r = TruncatedNormal(loc=source._loc, scale=source._scale, low=source._low, high=source._high, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     samples, m, v = _sample_moments(source, key, kw.pop("num_samples", 1024))
     r = TruncatedNormal(
         loc=m, scale=jnp.sqrt(v),
@@ -230,9 +205,7 @@ def _convert_to_truncatednormal(source, key, **kw):
 def _convert_to_bernoulli(source, key, **kw):
     from ..distributions.discrete import Bernoulli
     if isinstance(source, Bernoulli):
-        r = Bernoulli(probs=source._probs, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     kw.pop("num_samples", None)
     r = Bernoulli(probs=source.mean(), name=kw.get("name") or source.name)
     r.with_source(Provenance("from_distribution", parents=(source,)))
@@ -242,9 +215,7 @@ def _convert_to_bernoulli(source, key, **kw):
 def _convert_to_binomial(source, key, **kw):
     from ..distributions.discrete import Binomial
     if isinstance(source, Binomial):
-        r = Binomial(total_count=source._total_count, probs=source._probs, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     total_count = kw.pop("total_count", None)
     if total_count is None:
         raise ValueError("total_count is required when converting to Binomial from a non-Binomial source.")
@@ -258,9 +229,7 @@ def _convert_to_binomial(source, key, **kw):
 def _convert_to_poisson(source, key, **kw):
     from ..distributions.discrete import Poisson
     if isinstance(source, Poisson):
-        r = Poisson(rate=source._rate, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     kw.pop("num_samples", None)
     r = Poisson(rate=source.mean(), name=kw.get("name") or source.name)
     r.with_source(Provenance("from_distribution", parents=(source,)))
@@ -270,9 +239,7 @@ def _convert_to_poisson(source, key, **kw):
 def _convert_to_categorical(source, key, **kw):
     from ..distributions.discrete import Categorical
     if isinstance(source, Categorical):
-        r = Categorical(probs=source._probs, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     num_samples = kw.pop("num_samples", 1024)
     samples = source.sample(key, sample_shape=(num_samples,))
     n_cat = int(jnp.max(samples)) + 1
@@ -286,9 +253,7 @@ def _convert_to_categorical(source, key, **kw):
 def _convert_to_negativebinomial(source, key, **kw):
     from ..distributions.discrete import NegativeBinomial
     if isinstance(source, NegativeBinomial):
-        r = NegativeBinomial(total_count=source._total_count, probs=source._probs, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     total_count = kw.pop("total_count", None)
     if total_count is None:
         raise ValueError("total_count is required when converting to NegativeBinomial from a non-NegativeBinomial source.")
@@ -310,9 +275,7 @@ def _convert_to_multivariatenormal(source, key, **kw):
         loc = source.mean()
         cov = source.cov()
     elif isinstance(source, MultivariateNormal):
-        r = MultivariateNormal(loc=source.loc, scale_tril=source._scale_tril, name=name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     else:
         samples = source.sample(key, sample_shape=(num_samples,))
         loc = jnp.mean(samples, axis=0)
@@ -328,9 +291,7 @@ def _convert_to_multivariatenormal(source, key, **kw):
 def _convert_to_dirichlet(source, key, **kw):
     from ..distributions.multivariate import Dirichlet
     if isinstance(source, Dirichlet):
-        r = Dirichlet(concentration=source._concentration, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     samples, m, v = _sample_moments(source, key, kw.pop("num_samples", 1024))
     conc0 = m[0] * (1.0 - m[0]) / (v[0] + 1e-8) - 1.0
     conc0 = jnp.maximum(conc0, 0.01)
@@ -343,9 +304,7 @@ def _convert_to_dirichlet(source, key, **kw):
 def _convert_to_multinomial(source, key, **kw):
     from ..distributions.multivariate import Multinomial
     if isinstance(source, Multinomial):
-        r = Multinomial(total_count=source._total_count, probs=source._probs, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     total_count = kw.pop("total_count", None)
     if total_count is None:
         raise ValueError("total_count is required when converting to Multinomial from a non-Multinomial source.")
@@ -362,9 +321,7 @@ def _convert_to_multinomial(source, key, **kw):
 def _convert_to_wishart(source, key, **kw):
     from ..distributions.multivariate import Wishart
     if isinstance(source, Wishart):
-        r = Wishart(df=source._df, scale_tril=source._scale_tril, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     num_samples = kw.pop("num_samples", 1024)
     samples = source.sample(key, sample_shape=(num_samples,))
     mean_mat = jnp.mean(samples, axis=0)
@@ -381,9 +338,7 @@ def _convert_to_wishart(source, key, **kw):
 def _convert_to_vonmisesfisher(source, key, **kw):
     from ..distributions.multivariate import VonMisesFisher
     if isinstance(source, VonMisesFisher):
-        r = VonMisesFisher(mean_direction=source._mean_direction, concentration=source._concentration, name=kw.get("name") or source.name)
-        r.with_source(Provenance("from_distribution", parents=(source,)))
-        return r
+        return source
     num_samples = kw.pop("num_samples", 1024)
     samples = source.sample(key, sample_shape=(num_samples,))
     mean_vec = jnp.mean(samples, axis=0)

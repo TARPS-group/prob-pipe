@@ -37,28 +37,44 @@ def _build_scipy_to_probpipe() -> dict[type, tuple[str, callable]]:
     if not _HAS_SCIPY:
         return {}
 
-    def _get_loc_scale(d):
-        """Extract loc and scale from a scipy frozen distribution."""
-        loc = d.kwds.get("loc", 0.0)
-        scale = d.kwds.get("scale", 1.0)
-        return loc, scale
+    def _extract(d):
+        """Extract (shape_args, loc, scale) using scipy's internal parser.
+
+        Scipy frozen distributions store positional args in ``d.args``
+        and keyword args in ``d.kwds``.  The positional args may include
+        loc/scale depending on how the distribution was created.  We
+        use the underlying distribution's ``_parse_args``  to reliably
+        separate shape parameters from loc/scale.
+        """
+        shapes, loc, scale = d.dist._parse_args(*d.args, **d.kwds)
+        return shapes, float(loc), float(scale)
 
     # Keys are distribution *classes* (norm_gen, beta_gen, etc.)
     return {
-        type(_stats.norm): (Normal, lambda d: {"loc": _get_loc_scale(d)[0],
-                                                "scale": _get_loc_scale(d)[1]}),
-        type(_stats.beta): (Beta, lambda d: {"alpha": d.args[0], "beta": d.args[1]}),
-        type(_stats.gamma): (Gamma, lambda d: {"concentration": d.args[0],
-                                                "rate": 1.0 / _get_loc_scale(d)[1]}),
-        type(_stats.expon): (Exponential, lambda d: {"rate": 1.0 / _get_loc_scale(d)[1]}),
-        type(_stats.lognorm): (LogNormal, lambda d: {"loc": jnp.log(_get_loc_scale(d)[1]),
-                                                       "scale": d.args[0]}),
-        type(_stats.uniform): (Uniform, lambda d: {"low": _get_loc_scale(d)[0],
-                                                     "high": _get_loc_scale(d)[0] + _get_loc_scale(d)[1]}),
-        type(_stats.cauchy): (Cauchy, lambda d: {"loc": _get_loc_scale(d)[0],
-                                                  "scale": _get_loc_scale(d)[1]}),
-        type(_stats.laplace): (Laplace, lambda d: {"loc": _get_loc_scale(d)[0],
-                                                    "scale": _get_loc_scale(d)[1]}),
+        type(_stats.norm): (Normal, lambda d: (
+            lambda s, loc, scale: {"loc": loc, "scale": scale}
+        )(*_extract(d))),
+        type(_stats.beta): (Beta, lambda d: (
+            lambda s, loc, scale: {"alpha": s[0], "beta": s[1]}
+        )(*_extract(d))),
+        type(_stats.gamma): (Gamma, lambda d: (
+            lambda s, loc, scale: {"concentration": s[0], "rate": 1.0 / scale}
+        )(*_extract(d))),
+        type(_stats.expon): (Exponential, lambda d: (
+            lambda s, loc, scale: {"rate": 1.0 / scale}
+        )(*_extract(d))),
+        type(_stats.lognorm): (LogNormal, lambda d: (
+            lambda s, loc, scale: {"loc": jnp.log(scale), "scale": s[0]}
+        )(*_extract(d))),
+        type(_stats.uniform): (Uniform, lambda d: (
+            lambda s, loc, scale: {"low": loc, "high": loc + scale}
+        )(*_extract(d))),
+        type(_stats.cauchy): (Cauchy, lambda d: (
+            lambda s, loc, scale: {"loc": loc, "scale": scale}
+        )(*_extract(d))),
+        type(_stats.laplace): (Laplace, lambda d: (
+            lambda s, loc, scale: {"loc": loc, "scale": scale}
+        )(*_extract(d))),
     }
 
 
