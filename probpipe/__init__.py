@@ -69,6 +69,12 @@ from probpipe.distributions import (
 )
 from probpipe.core.node import Workflow, Module, wf
 from probpipe.provenance import provenance_ancestors, provenance_dag
+from probpipe.surrogate import (
+    Emulator,
+    GaussianEmulator,
+    LinCombGaussianWeights,
+    LinearGaussianRegressor,
+)
 
 __all__ = [
     # Base classes
@@ -134,4 +140,9 @@ __all__ = [
     # Provenance
     "provenance_ancestors",
     "provenance_dag",
+    # Emulators
+    "Emulator",
+    "GaussianEmulator",
+    "LinCombGaussianWeights",
+    "LinearGaussianRegressor",
 ]

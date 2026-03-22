@@ -66,6 +66,7 @@ nav:
     - Broadcasting: examples/04_broadcasting.ipynb
     - Automatic Differentiation: examples/05_autodiff.ipynb
     - Modular Forecasting: examples/06_modular_forecasting.ipynb
+    - Emulators: examples/07_emulators.ipynb
   - API Reference:
     - Distributions: api/distributions.md
     - Joint Distributions: api/joint.md
@@ -73,4 +74,5 @@ nav:
     - Workflows: api/workflows.md
     - Inference: api/inference.md
     - Provenance: api/provenance.md
+    - Emulators: api/emulator.md
     - Constraints: api/constraints.md
