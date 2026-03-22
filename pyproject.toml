@@ -17,8 +17,6 @@ authors = [
 dependencies = [
   "jax>=0.4.35",
   "jaxlib>=0.4.35",
-  "numpy>=2.0",
-  "scipy>=1.7",
   "tfp-nightly==0.26.0.dev20260315",
 ]
 

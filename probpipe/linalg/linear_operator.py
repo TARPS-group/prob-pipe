@@ -9,9 +9,9 @@ This file contains:
 from __future__ import annotations
 
 from typing import Any, Iterable, FrozenSet, TypeAlias
-import numpy as np
+import jax.numpy as jnp
+import jax.scipy.linalg as jsla
 from abc import ABC, abstractmethod
-from scipy.linalg import cholesky, solve_triangular
 import math
 
 from ..custom_types import Array, ArrayLike
@@ -21,6 +21,9 @@ from ..array_backend.utils import (
     _ensure_matrix,
     _ensure_square_matrix,
 )
+
+class LinAlgError(Exception):
+    """Linear algebra error (e.g., singular matrix, non-positive-definite)."""
 
 __all__ = [
     "LinOp",
@@ -49,9 +52,8 @@ ALLOWED_FLAGS = frozenset({
 })
 
 def _promote_dtype(*dtypes: Any) -> Any:
-    """Return numpy result_type for given dtypes/arrays."""
-    # Use numpy's result_type semantics (works with numpy scalar dtypes).
-    return np.result_type(*dtypes)
+    """Return promoted dtype for given dtypes/arrays."""
+    return jnp.result_type(*dtypes)
 
 def _as_linear_operator(A: LinOpLike) -> LinOp:
     """
@@ -101,7 +103,7 @@ class LinOp(ABC):
     @property
     @abstractmethod
     def dtype(self) -> Any:
-        """Return dtype (e.g., np.float64)."""
+        """Return dtype (e.g., jnp.float32)."""
         ...
 
     # ---- Minimal numeric primitives ----
@@ -124,7 +126,7 @@ class LinOp(ABC):
         """ Throw error if operator is not square """
         n_out, n_in = self.shape
         if n_out != n_in:
-            raise np.linalg.LinAlgError(f"Linear operator is not square. Has shape ({n_out}, {n_in})")
+            raise LinAlgError(f"Linear operator is not square. Has shape ({n_out}, {n_in})")
     
     # ---- Optional convenience methods that implementors may override for speed ----
     def matvec(self, x: ArrayLike) -> Array:
@@ -153,12 +155,12 @@ class LinOp(ABC):
         n, _ = self.shape
         dense_op = self.to_dense()
         
-        b = np.asarray(b)
+        b = jnp.asarray(b)
         if b.ndim < 2:
             b = _ensure_vector(b, as_column=True)
         b = _ensure_matrix(b, num_rows=n)
 
-        return np.linalg.solve(dense_op, b)
+        return jnp.linalg.solve(dense_op, b)
 
     def cholesky(self, lower: bool = True, **kwargs) -> CholeskyFactor:
         """Return triangular LinOp L (lower) or L.T (upper) such that A = L @ L.T.
@@ -168,7 +170,9 @@ class LinOp(ABC):
         TriangularLinOp; for example, DiagonalLinOp.
         """
         self._check_square()
-        L = cholesky(self.to_dense(), lower=lower)
+        L = jnp.linalg.cholesky(self.to_dense())
+        if not lower:
+            L = L.T
         return TriangularLinOp(L, lower=lower)
     
     def to_cholesky_representation(self, lower: bool = True, **kwargs) -> CholeskyRepresentation:
@@ -185,21 +189,21 @@ class LinOp(ABC):
     def diag(self) -> Array:
         """Return diagonal of operator; default uses dense fallback."""
         A = self.to_dense()
-        return np.diag(A)
+        return jnp.diag(A)
 
     def logdet(self) -> float:
         """Return log determinant; default uses dense fallback. Raises if sign <= 0"""
         self._check_square()
         A = self.to_dense()
-        sign, log_det = np.linalg.slogdet(A)
+        sign, log_det = jnp.linalg.slogdet(A)
         if sign <= 0:
-            raise np.linalg.LinAlgError("Log-determinant undefined: matrix has non-positive determinant.")
+            raise LinAlgError("Log-determinant undefined: matrix has non-positive determinant.")
         return float(log_det)
 
     def trace(self) -> float:
         """Return trace of operator; default uses dense fallback."""
         self._check_square()
-        return float(np.linalg.trace(self.to_dense()))
+        return float(jnp.trace(self.to_dense()))
 
     # ---- Flags API ----
     def add_flag(self, flag: str) -> None:
@@ -349,14 +353,14 @@ class SumLinOp(LinOp):
 
     def matvec(self, x: ArrayLike) -> Array:
         x = _ensure_vector(x)
-        arr = np.zeros((self.shape[0],), dtype=self.dtype)
+        arr = jnp.zeros((self.shape[0],), dtype=self.dtype)
         for op in self.ops:
             arr = arr + op.matvec(x)
         return arr
 
     def rmatvec(self, x: ArrayLike) -> Array:
         x = _ensure_vector(x)
-        arr = np.zeros((self.shape[1],), dtype=self.dtype)
+        arr = jnp.zeros((self.shape[1],), dtype=self.dtype)
         for op in self.ops:
             arr = arr + op.rmatvec(x)
         return arr
@@ -380,7 +384,7 @@ class SumLinOp(LinOp):
         if X.shape[1] == 1:
             return self.matvec(X)
         
-        arr = np.zeros((self.shape[0], X.shape[1]), dtype=self.dtype)
+        arr = jnp.zeros((self.shape[0], X.shape[1]), dtype=self.dtype)
         for op in self.ops:
             arr = arr + op.matmat(X)
         return arr
@@ -396,13 +400,13 @@ class SumLinOp(LinOp):
         if X.shape[1] == 1:
             return self.rmatvec(X)
         
-        arr = np.zeros((self.shape[1], X.shape[1]), dtype=self.dtype)
+        arr = jnp.zeros((self.shape[1], X.shape[1]), dtype=self.dtype)
         for op in self.ops:
             arr = arr + op.rmatmat(X)
         return arr
 
     def to_dense(self) -> Array:
-        arr_sum = np.zeros(self.shape, dtype=self.dtype)
+        arr_sum = jnp.zeros(self.shape, dtype=self.dtype)
         for op in self.ops:
             arr_sum = arr_sum + op.to_dense()
         return arr_sum
@@ -436,7 +440,7 @@ class ScaledLinOp(LinOp):
     @property
     def dtype(self) -> Any:
         # scalar might be Python float; use array dtype promotion
-        return _promote_dtype(self.op.dtype, np.array(self.scalar).dtype)
+        return _promote_dtype(self.op.dtype, jnp.array(self.scalar).dtype)
 
     def matvec(self, x: ArrayLike) -> Array:
         return self.scalar * self.op.matvec(x)
@@ -544,13 +548,13 @@ class DiagonalLinOp(LinOp):
     def __init__(self, diag: ArrayLike, copy: bool = True) -> None:
         """`diag` may be higher-dimensional array, but will be flattened."""
         super().__init__()
-        self.diagonal = _ensure_vector(np.asarray(diag).ravel(), copy=copy)
+        self.diagonal = _ensure_vector(jnp.asarray(diag).ravel(), copy=copy)
         self._n = int(self.diagonal.size)
         self._dtype = self.diagonal.dtype
 
         self.add_flag("diagonal")
         self.add_flag("symmetric")
-        if np.all(self.diagonal > 0):
+        if jnp.all(self.diagonal > 0):
             self.add_flag("positive_definite")
 
     @property
@@ -570,33 +574,33 @@ class DiagonalLinOp(LinOp):
 
     def matmat(self, X: ArrayLike) -> Array:
         X = _ensure_matrix(X)
-        return X * self.diagonal[:, np.newaxis]
+        return X * self.diagonal[:, None]
 
     def rmatmat(self, X: ArrayLike) -> Array:
         return self.matmat(X)
 
     def to_dense(self) -> Array:
-        return np.diag(self.diagonal)
+        return jnp.diag(self.diagonal)
 
     def solve(self, b: ArrayLike, **kwargs) -> Array:
         """
-        For consistency with np.linalg.solve(), b can be (n,) or (n,k).
+        For consistency with jnp.linalg.solve(), b can be (n,) or (n,k).
         """
-        if np.any(self.diagonal == 0):
-            raise np.linalg.LinAlgError("Diagonal contains zero entries; not invertible.")
+        if jnp.any(self.diagonal == 0):
+            raise LinAlgError("Diagonal contains zero entries; not invertible.")
 
-        b = np.asarray(b)
+        b = jnp.asarray(b)
         if b.ndim < 2:
             b = _ensure_vector(b, as_column=True)
         b = _ensure_matrix(b, num_rows=self._n)
 
-        return b / self.diagonal[:, np.newaxis]
+        return b / self.diagonal[:, None]
 
     def cholesky(self, lower: bool = True, **kwargs) -> DiagonalLinOp:
         """Note that `lower` has no effect on Cholesky decomposition of diagonal matrix"""
-        if np.any(self.diagonal <= 0):
-            raise np.linalg.LinAlgError("Diagonal has non-positive entries; cholesky not defined.")
-        return DiagonalLinOp(np.sqrt(self.diagonal))
+        if jnp.any(self.diagonal <= 0):
+            raise LinAlgError("Diagonal has non-positive entries; cholesky not defined.")
+        return DiagonalLinOp(jnp.sqrt(self.diagonal))
 
     def to_cholesky_representation(self, lower: bool = True, **kwargs) -> DiagonalRootLinOp:
         return DiagonalRootLinOp(self.cholesky(lower=lower))
@@ -605,9 +609,9 @@ class DiagonalLinOp(LinOp):
         return self.diagonal.copy()
 
     def logdet(self) -> float:
-        if np.any(self.diagonal <= 0):
-            raise np.linalg.LinAlgError("Non-positive diagonal entries; logdet undefined.")
-        return float(np.sum(np.log(self.diagonal)))
+        if jnp.any(self.diagonal <= 0):
+            raise LinAlgError("Non-positive diagonal entries; logdet undefined.")
+        return float(jnp.sum(jnp.log(self.diagonal)))
 
 
 class TriangularLinOp(LinOp):
@@ -631,7 +635,7 @@ class TriangularLinOp(LinOp):
         else:
             self.add_flag("triangular_upper")
         # if strictly triangular with ones on diagonal, mark unit_diagonal
-        if np.allclose(np.diag(self.tri), 1.0):
+        if jnp.allclose(jnp.diag(self.tri), 1.0):
             self.add_flag("unit_diagonal")
 
     @property
@@ -659,22 +663,18 @@ class TriangularLinOp(LinOp):
         return self.tri.T @ X
 
     def to_dense(self) -> Array:
-        return np.array(self.tri)
+        return jnp.array(self.tri)
 
-    def solve(self, b: ArrayLike, *, unit_diagonal: bool = False,
-              overwrite_b: bool = False, check_finite: bool = True, **kwargs) -> Array:
-        """
-        Solve triangular system Lx=b or Ux=b. Optional arguments are forwarded
-        to scipy.solve_triangular.
-        """
-        b_arr = np.asarray(b)
+    def solve(self, b: ArrayLike, *, unit_diagonal: bool = False, **kwargs) -> Array:
+        """Solve triangular system Lx=b or Ux=b."""
+        b_arr = jnp.asarray(b)
         if b_arr.ndim < 2:
             b_arr = _ensure_vector(b_arr, as_column=True)
         b_arr = _ensure_matrix(b_arr, num_rows=self._n)
 
-        return solve_triangular(self.tri, b_arr, lower=self.lower,
-                                unit_diagonal=unit_diagonal,
-                                overwrite_b=overwrite_b, check_finite=check_finite)
+        return jsla.solve_triangular(
+            self.tri, b_arr, lower=self.lower, unit_diagonal=unit_diagonal,
+        )
 
 
 class RootLinOp(LinOp):
@@ -715,28 +715,28 @@ class RootLinOp(LinOp):
         To compute A^{-1}b = (S @ S.T)^{-1}b first compute y = S^{-1}b
         then S.T^{-1}y.
         """
-        b = np.asarray(b)
+        b = jnp.asarray(b)
         if b.ndim < 2:
             b = _ensure_vector(b, as_column=True)
         b = _ensure_matrix(b, num_rows=self._n)
 
         S = self.root.to_dense()
-        y = np.linalg.solve(S, b)
-        return np.linalg.solve(S.T, y)
+        y = jnp.linalg.solve(S, b)
+        return jnp.linalg.solve(S.T, y)
     
     def diag(self) -> Array:
         if isinstance(self.root, DiagonalLinOp):
             return self.root.diagonal
 
         S = self.root.to_dense()
-        return np.einsum('ij,ij->i', S, S)
+        return jnp.einsum('ij,ij->i', S, S)
     
     def trace(self) -> float:
         if isinstance(self.root, DiagonalLinOp):
-            return np.sum(self.root.diagonal ** 2)
+            return jnp.sum(self.root.diagonal ** 2)
 
         S = self.root.to_dense()
-        return np.sum(S**2)
+        return jnp.sum(S**2)
 
     def to_dense(self) -> Array:
         S = self.root
@@ -764,14 +764,14 @@ class CholeskyLinOp(RootLinOp):
         To compute A^{-1}b = (L @ L.T)^{-1}b first compute y = L^{-1}b
         then L.T^{-1}y.
         """
-        b = np.asarray(b)
+        b = jnp.asarray(b)
         if b.ndim < 2:
             b = _ensure_vector(b, as_column=True)
         b = _ensure_matrix(b, num_rows=self._n)
 
         S = self.root.to_dense()
-        y = solve_triangular(S, b, lower=self.root.lower)
-        return solve_triangular(S, y, trans=1, lower=self.root.lower)
+        y = jsla.solve_triangular(S, b, lower=self.root.lower)
+        return jsla.solve_triangular(S.T, y, lower=not self.root.lower)
     
 
     def cholesky(self, lower: bool = True, **kwargs) -> TriangularLinOp:
@@ -805,8 +805,8 @@ class DiagonalRootLinOp(DiagonalLinOp):
 
     def cholesky(self, lower: bool = True, **kwargs) -> DiagonalLinOp:
         """Note that `lower` has no effect on Cholesky decomposition of diagonal matrix"""
-        if np.any(self.diagonal <= 0):
-            raise np.linalg.LinAlgError("Diagonal has non-positive entries; cholesky not defined.")
+        if jnp.any(self.diagonal <= 0):
+            raise LinAlgError("Diagonal has non-positive entries; cholesky not defined.")
         return DiagonalLinOp(self.root.diagonal)
 
 

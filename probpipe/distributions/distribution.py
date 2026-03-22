@@ -14,9 +14,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+import math
+
 import jax
 import jax.numpy as jnp
-import numpy as np
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..custom_types import Array, ArrayLike, PRNGKey
@@ -681,7 +682,7 @@ class EmpiricalDistribution(Distribution):
     @property
     def dim(self) -> int:
         """Flat dimensionality of each sample (product of event_shape, or 1 for scalars)."""
-        return max(1, int(np.prod(self._samples.shape[1:])))
+        return max(1, int(math.prod(self._samples.shape[1:])))
 
     @property
     def samples(self) -> Array:
@@ -723,7 +724,7 @@ class EmpiricalDistribution(Distribution):
     # -- sampling -----------------------------------------------------------
 
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
-        n_draws = int(np.prod(sample_shape)) if sample_shape else 1
+        n_draws = int(math.prod(sample_shape)) if sample_shape else 1
         if self._is_uniform:
             indices = jax.random.randint(key, shape=(n_draws,), minval=0, maxval=self.n)
         else:

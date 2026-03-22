@@ -1,7 +1,7 @@
 # linalg/utils.py
 from __future__ import annotations
 
-import numpy as np
+import jax.numpy as jnp
 from ..custom_types import Array, ArrayLike
 from ..array_backend.utils import (
     _ensure_real_scalar,
@@ -33,38 +33,24 @@ def add_diag_jitter(matrix: ArrayLike, jitter: float | ArrayLike = 1e-6, *, copy
     # Normalize jitter into a 1D real array of length n (or scalar)
     try:
         jitter_scalar = _ensure_real_scalar(jitter)
-        jitter_arr = np.full((n,), jitter_scalar, dtype=np.result_type(mat.dtype, np.array(jitter_scalar).dtype))
+        jitter_arr = jnp.full((n,), jitter_scalar, dtype=jnp.result_type(mat.dtype, jnp.array(jitter_scalar).dtype))
     except ValueError:
         # Not a scalar real: try array-like
-        jitter_arr = np.asarray(jitter)
+        jitter_arr = jnp.asarray(jitter)
         if jitter_arr.ndim == 0:
             jitter_scalar = _ensure_real_scalar(jitter_arr)
-            jitter_arr = np.full((n,), jitter_scalar, dtype=np.result_type(mat.dtype, np.array(jitter_scalar).dtype))
+            jitter_arr = jnp.full((n,), jitter_scalar, dtype=jnp.result_type(mat.dtype, jnp.array(jitter_scalar).dtype))
         elif jitter_arr.ndim == 1:
             if jitter_arr.shape != (n,):
                 raise ValueError(f"add_diag_jitter: jitter must be scalar or shape ({n},). Got {jitter_arr.shape}.")
-            if np.iscomplexobj(jitter_arr):
+            if jnp.iscomplexobj(jitter_arr):
                 raise ValueError("add_diag_jitter: jitter contains complex values.")
         else:
             raise ValueError(f"add_diag_jitter: jitter must be scalar or 1D array. Got ndim={jitter_arr.ndim}.")
 
-    # Determine result dtype (promote matrix dtype and jitter dtype)
-    result_dtype = np.result_type(mat.dtype, jitter_arr.dtype)
-
-    # Decide whether to perform in-place update.
-    if copy:
-        out = mat.astype(result_dtype, copy=True)
-    else:
-        if result_dtype == mat.dtype:
-            out = mat  # safe to update in-place
-        else:
-            # cannot change dtype in-place => must return a promoted copy
-            out = mat.astype(result_dtype, copy=True)
-
-    # Add jitter to diagonal
-    diag_idcs = np.diag_indices(n)
-    out[diag_idcs] = out[diag_idcs] + jitter_arr.astype(result_dtype, copy=False)
-    return out
+    # Add jitter to diagonal (JAX arrays are immutable; always returns new array)
+    idx = jnp.arange(n)
+    return mat.at[idx, idx].add(jitter_arr)
 
 
 def symmetrize_pd(matrix: ArrayLike, 

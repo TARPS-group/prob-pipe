@@ -8,7 +8,8 @@ Also included are more specialized operations like `mah_dist_squared()`
 that are not in one-to-one correspondence with `LinOp` methods.
 """
 
-import numpy as np
+import jax.numpy as jnp
+from .linear_operator import LinAlgError
 from typing import Any, TypeAlias
 
 from ..custom_types import Array, ArrayLike
@@ -72,7 +73,7 @@ def trace_Ainv_B(A: LinOpLike, B: LinOpLike) -> float:
     A._check_square()
     B._check_square()
     if A.shape[1] != B.shape[0]:
-        raise np.linalg.LinAlgError(
+        raise LinAlgError(
             f"trace_Ainv_B requires A and B to be square and of equal dimension.\n" 
             f"Got A and B with shapes {A.shape} and {B.shape}, respectively."
         )
@@ -129,4 +130,4 @@ def mah_dist_squared(x: ArrayLike,
         X = X - Y
 
     Ainv_Xt = solve(A, X.T).T # (n, d)
-    return np.sum(X * Ainv_Xt, axis=1)
+    return jnp.sum(X * Ainv_Xt, axis=1)

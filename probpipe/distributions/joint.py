@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
-import numpy as np
+import math
 
 from ..custom_types import Array, ArrayLike, PRNGKey
 from .distribution import Distribution, EmpiricalDistribution, Provenance, Constraint, real
@@ -511,7 +511,7 @@ class SequentialJointDistribution(JointDistribution):
         slices = {}
         offset = 0
         for cname, cdist in self._components.items():
-            dim = int(np.prod(cdist.event_shape)) if cdist.event_shape else 1
+            dim = int(math.prod(cdist.event_shape)) if cdist.event_shape else 1
             slices[cname] = slice(offset, offset + dim)
             offset += dim
         self._component_slices = slices
@@ -751,7 +751,7 @@ class SequentialJointDistribution(JointDistribution):
         slices = {}
         offset = 0
         for cname, cdist in unconditioned.items():
-            dim = int(np.prod(cdist.event_shape)) if cdist.event_shape else 1
+            dim = int(math.prod(cdist.event_shape)) if cdist.event_shape else 1
             slices[cname] = slice(offset, offset + dim)
             offset += dim
         result._component_slices = slices
@@ -876,7 +876,7 @@ class JointEmpirical(JointDistribution):
         slices = {}
         offset = 0
         for cname, cdist in self._components.items():
-            dim = int(np.prod(cdist.event_shape)) if cdist.event_shape else 1
+            dim = int(math.prod(cdist.event_shape)) if cdist.event_shape else 1
             slices[cname] = slice(offset, offset + dim)
             offset += dim
         self._component_slices = slices
@@ -908,7 +908,7 @@ class JointEmpirical(JointDistribution):
         self, key: PRNGKey, sample_shape: tuple[int, ...]
     ) -> dict[str, Array]:
         """Resample rows jointly, preserving correlation."""
-        n_draws = int(np.prod(sample_shape)) if sample_shape else 1
+        n_draws = int(math.prod(sample_shape)) if sample_shape else 1
         if self._is_uniform:
             indices = jax.random.randint(key, shape=(n_draws,), minval=0, maxval=self._n)
         else:
@@ -958,7 +958,7 @@ class JointEmpirical(JointDistribution):
         parts = []
         offset = 0
         for cname, arr in self._joint_samples.items():
-            flat_dim = int(np.prod(arr.shape[1:])) if arr.ndim > 1 else 1
+            flat_dim = int(math.prod(arr.shape[1:])) if arr.ndim > 1 else 1
             mu_comp = mu_flat[offset:offset + flat_dim]
             arr_flat = arr.reshape(self._n, -1)
             diff = arr_flat - mu_comp
