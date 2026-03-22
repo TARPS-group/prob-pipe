@@ -109,8 +109,8 @@ result.expectation(lambda x: x)  # Array(49.875435, dtype=float32)
 # that captures the sampling error
 velocity = Normal(loc=10.0, scale=1.0)
 ex = velocity.expectation(lambda x: x**2, num_evaluations=5000)
-ex.mean()      # Array(101.0413, dtype=float32)  -- point estimate of E[V²]
-ex.variance()  # Array(0.08..., dtype=float32)   -- MC error variance
+ex.mean()      # ~101.0  -- point estimate of E[V²] = loc² + scale² = 101
+ex.variance()  # ~0.08   -- MC error variance (decreases with more evaluations)
 ```
 
 ### Joint Distributions and Conditioning
