@@ -9,8 +9,12 @@ from probpipe.distributions import (
     EmpiricalDistribution,
     Provenance,
     # Global settings
+    BootstrapDistribution,
     DEFAULT_NUM_EVALUATIONS,
+    RETURN_APPROX_DIST,
     set_default_num_evaluations,
+    set_return_approx_dist,
+    monte_carlo,
     # Constraints
     Constraint,
     real,

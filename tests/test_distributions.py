@@ -460,8 +460,8 @@ class TestDistributionABC:
             rtol=1e-5,
         )
 
-    def test_mean_raises_by_default(self):
-        """Subclasses that don't implement mean() raise NotImplementedError."""
+    def test_mean_mc_fallback(self):
+        """Subclasses without explicit mean() use MC fallback."""
         class MinimalDist(Distribution):
             @property
             def event_shape(self):
@@ -471,10 +471,12 @@ class TestDistributionABC:
             def log_prob(self, x):
                 return jnp.zeros(())
         d = MinimalDist()
-        with pytest.raises(NotImplementedError):
-            d.mean()
+        # MC fallback returns BootstrapDistribution by default
+        result = d.mean()
+        from probpipe import BootstrapDistribution
+        assert isinstance(result, BootstrapDistribution) or isinstance(result, jnp.ndarray)
 
-    def test_variance_raises_by_default(self):
+    def test_variance_mc_fallback(self):
         class MinimalDist(Distribution):
             @property
             def event_shape(self):
@@ -484,8 +486,9 @@ class TestDistributionABC:
             def log_prob(self, x):
                 return jnp.zeros(())
         d = MinimalDist()
-        with pytest.raises(NotImplementedError):
-            d.variance()
+        result = d.variance()
+        from probpipe import BootstrapDistribution
+        assert isinstance(result, BootstrapDistribution) or isinstance(result, jnp.ndarray)
 
     def test_from_distribution_raises_by_default(self):
         with pytest.raises(NotImplementedError):

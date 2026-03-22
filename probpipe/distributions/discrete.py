@@ -94,6 +94,7 @@ class Bernoulli(TFPDistribution):
         *,
         key: PRNGKey | None = None,
         num_evaluations: int | None = None,
+        return_dist: bool | None = None,
     ) -> Array:
         """Exact expectation over the two-point support {0, 1}."""
         p = self._tfp_dist.probs_parameter()
@@ -203,6 +204,7 @@ class Binomial(TFPDistribution):
         *,
         key: PRNGKey | None = None,
         num_evaluations: int | None = None,
+        return_dist: bool | None = None,
     ) -> Array:
         """Exact expectation over the finite support {0, ..., total_count}."""
         n = int(self._total_count) + 1
@@ -384,6 +386,7 @@ class Categorical(TFPDistribution):
         *,
         key: PRNGKey | None = None,
         num_evaluations: int | None = None,
+        return_dist: bool | None = None,
     ) -> Array:
         """Exact expectation over the categorical support {0, ..., k-1}."""
         probs = self._tfp_dist.probs_parameter()
