@@ -334,8 +334,34 @@ class TestConditionOn:
         # y ~ N(1+2, 0.1) = N(3, 0.1)
         assert abs(float(jnp.mean(structured["y"])) - 3.0) < 0.1
 
-    def test_condition_on_non_root_log_prob_works(self):
-        """log_prob should still work after conditioning on a non-root."""
+    def test_condition_on_root_log_prob_works(self):
+        """log_prob should work when conditioning on root components."""
+        joint = SequentialJointDistribution(
+            z=Normal(loc=0.0, scale=1.0),
+            x=lambda z: Normal(loc=z, scale=0.5),
+        )
+        # Condition on root z — x's conditional p(x|z=2) is normalized
+        cond = joint.condition_on(z=jnp.array(2.0))
+        flat = jnp.array([1.5])
+        lp = cond.log_prob(flat)
+        assert jnp.isfinite(lp)
+        # Should equal log p(x=1.5 | z=2.0) = log N(1.5; 2.0, 0.5)
+        expected = float(Normal(loc=2.0, scale=0.5).log_prob(1.5))
+        np.testing.assert_allclose(float(lp), expected, atol=1e-5)
+
+    def test_condition_on_non_root_log_prob_raises(self):
+        """log_prob should raise when conditioning on non-root with free parents."""
+        joint = SequentialJointDistribution(
+            z=Normal(loc=0.0, scale=1.0),
+            x=lambda z: Normal(loc=z, scale=0.5),
+        )
+        cond = joint.condition_on(x=jnp.array(1.0))
+        flat = jnp.array([0.0])
+        with pytest.raises(NotImplementedError, match="unnormalized_log_prob"):
+            cond.log_prob(flat)
+
+    def test_condition_on_non_root_unnormalized_log_prob_works(self):
+        """unnormalized_log_prob should work after conditioning on a non-root."""
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
@@ -343,7 +369,7 @@ class TestConditionOn:
         cond = joint.condition_on(x=jnp.array(1.0))
         # Only z is unconditioned; flat input is just z value
         flat = jnp.array([0.0])
-        lp = cond.log_prob(flat)
+        lp = cond.unnormalized_log_prob(flat)
         assert jnp.isfinite(lp)
         # Should be log p(z=0) + log p(x=1|z=0) (unnormalized conditional)
         expected = (
