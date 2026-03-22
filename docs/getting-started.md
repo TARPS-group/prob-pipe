@@ -60,7 +60,7 @@ pos_half_life.support         # positive
 Write the science as a plain function. When ProbPipe sees a distribution where a scalar is expected, it automatically draws samples and returns an `EmpiricalDistribution` over the outputs:
 
 ```python
-from probpipe import Workflow
+from probpipe import WorkflowFunction
 
 initial_dose = 100.0  # mg (known)
 t = 8.0               # hours (known)
@@ -68,7 +68,7 @@ t = 8.0               # hours (known)
 def concentration(half_life):
     return initial_dose * (0.5 ** (t / half_life))
 
-wf = Workflow(func=concentration)
+wf = WorkflowFunction(func=concentration)
 conc = wf(half_life=half_life)
 
 conc.mean()                   # ~25.0 (expected concentration after 8h)

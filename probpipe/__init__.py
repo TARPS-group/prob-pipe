@@ -89,7 +89,7 @@ from probpipe.distributions import (
     DistributionView,
     ConditionedComponent,
 )
-from probpipe.core.node import Workflow, Module, wf
+from probpipe.core.node import WorkflowFunction, Module, wf
 from probpipe.provenance import provenance_ancestors, provenance_dag
 
 __all__ = [
@@ -149,8 +149,8 @@ __all__ = [
     "JointGaussian",
     "DistributionView",
     "ConditionedComponent",
-    # Workflow
-    "Workflow",
+    # WorkflowFunction
+    "WorkflowFunction",
     "Module",
     "wf",
     # Provenance

@@ -11,7 +11,7 @@ from probpipe import (
     EmpiricalDistribution,
     JointDistribution,
 )
-from probpipe.core.node import Workflow
+from probpipe.core.node import WorkflowFunction
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +258,7 @@ class TestBroadcasting:
         def add(a: float, b: float) -> float:
             return a + b
 
-        wf = Workflow(
+        wf = WorkflowFunction(
             func=add,
             vectorize="loop",
             n_broadcast_samples=30,

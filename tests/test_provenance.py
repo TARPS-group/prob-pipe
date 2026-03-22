@@ -19,7 +19,7 @@ from probpipe import (
     provenance_ancestors,
     provenance_dag,
 )
-from probpipe.core.node import Workflow
+from probpipe.core.node import WorkflowFunction
 
 
 # ===========================================================================
@@ -149,7 +149,7 @@ class TestBroadcastingProvenance:
         def identity(x: float) -> float:
             return x
 
-        wf = Workflow(func=identity, vectorize="loop",
+        wf = WorkflowFunction(func=identity, vectorize="loop",
                       n_broadcast_samples=20, seed=42)
         result = wf(x=n)
         assert isinstance(result, EmpiricalDistribution)
@@ -167,7 +167,7 @@ class TestBroadcastingProvenance:
         def double(x: float) -> float:
             return 2.0 * x
 
-        wf = Workflow(func=double, vectorize="jax",
+        wf = WorkflowFunction(func=double, vectorize="jax",
                       n_broadcast_samples=20, seed=42)
         result = wf(x=n)
         assert isinstance(result, EmpiricalDistribution)
@@ -182,7 +182,7 @@ class TestBroadcastingProvenance:
         def add(x: float, y: float) -> float:
             return x + y
 
-        wf = Workflow(func=add, vectorize="loop",
+        wf = WorkflowFunction(func=add, vectorize="loop",
                       n_broadcast_samples=20, seed=42)
         result = wf(x=a, y=b)
         assert result.source is not None
@@ -196,7 +196,7 @@ class TestBroadcastingProvenance:
         def add(a: float, b: float) -> float:
             return a + b
 
-        wf = Workflow(func=add, vectorize="loop",
+        wf = WorkflowFunction(func=add, vectorize="loop",
                       n_broadcast_samples=20, seed=42)
         result = wf(a=ed, b=n)
         assert isinstance(result, EmpiricalDistribution)
@@ -233,7 +233,7 @@ class TestProvenanceChains:
         def log_val(x: float) -> float:
             return jnp.log(x)
 
-        wf = Workflow(func=log_val, vectorize="loop",
+        wf = WorkflowFunction(func=log_val, vectorize="loop",
                       n_broadcast_samples=20, seed=42)
         result = wf(x=td)
         # result → broadcast → td → transform → base
@@ -333,7 +333,7 @@ class TestProvenanceAncestors:
         def identity(x: float) -> float:
             return x
 
-        wf = Workflow(func=identity, vectorize="loop",
+        wf = WorkflowFunction(func=identity, vectorize="loop",
                       n_broadcast_samples=10, seed=42)
         result = wf(x=td)
         ancestors = provenance_ancestors(result)
@@ -349,7 +349,7 @@ class TestProvenanceAncestors:
         def add(x: float, y: float) -> float:
             return x + y
 
-        wf = Workflow(func=add, vectorize="loop",
+        wf = WorkflowFunction(func=add, vectorize="loop",
                       n_broadcast_samples=10, seed=42)
         result = wf(x=n, y=n)
         ancestors = provenance_ancestors(result)
@@ -386,7 +386,7 @@ class TestProvenanceDag:
         def identity(x: float) -> float:
             return x
 
-        wf = Workflow(func=identity, vectorize="loop",
+        wf = WorkflowFunction(func=identity, vectorize="loop",
                       n_broadcast_samples=10, seed=42)
         result = wf(x=td)
         dag = provenance_dag(result)

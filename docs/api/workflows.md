@@ -1,6 +1,6 @@
 # Workflows
 
-::: probpipe.Workflow
+::: probpipe.WorkflowFunction
 
 ::: probpipe.Module
 
