@@ -72,5 +72,6 @@ nav:
     - Transformations: api/transformed.md
     - Workflows: api/workflows.md
     - Inference: api/inference.md
+    - Converters: api/converters.md
     - Provenance: api/provenance.md
     - Constraints: api/constraints.md
