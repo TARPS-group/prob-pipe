@@ -4,6 +4,8 @@ from .distribution import (
     TFPDistribution,
     EmpiricalDistribution,
     Provenance,
+    DEFAULT_NUM_EVALUATIONS,
+    set_default_num_evaluations,
     # constraint singletons & factories
     real,
     positive,

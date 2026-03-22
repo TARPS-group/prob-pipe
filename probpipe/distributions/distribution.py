@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 import math
 
@@ -21,6 +21,22 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..custom_types import Array, ArrayLike, PRNGKey
+
+# ---------------------------------------------------------------------------
+# Global defaults
+# ---------------------------------------------------------------------------
+
+DEFAULT_NUM_EVALUATIONS: int = 1024
+"""Default number of function evaluations for sample-based expectations."""
+
+
+def set_default_num_evaluations(n: int) -> None:
+    """Set the global default for ``expectation()`` on infinite-support distributions."""
+    global DEFAULT_NUM_EVALUATIONS
+    if n < 1:
+        raise ValueError("num_evaluations must be at least 1")
+    DEFAULT_NUM_EVALUATIONS = n
+
 
 # ---------------------------------------------------------------------------
 # Auto-key helper (for convenience when key is omitted)
@@ -424,6 +440,39 @@ class Distribution(ABC):
     def variance(self) -> Array:
         raise NotImplementedError(f"{type(self).__name__}.variance()")
 
+    def expectation(
+        self,
+        f: Callable,
+        *,
+        key: PRNGKey | None = None,
+        num_evaluations: int | None = None,
+    ) -> Array:
+        """Estimate ``E[f(X)]`` where ``X ~ self``.
+
+        Parameters
+        ----------
+        f : callable
+            Function mapping a single sample to an array.
+        key : PRNGKey, optional
+            JAX PRNG key for sampling.  Auto-generated if ``None``.
+        num_evaluations : int, optional
+            Number of samples to draw.  If ``None``, uses
+            ``DEFAULT_NUM_EVALUATIONS``.  Subclasses with finite support
+            override this to compute exactly when ``None``.
+        """
+        n = num_evaluations if num_evaluations is not None else DEFAULT_NUM_EVALUATIONS
+        if key is None:
+            key = _auto_key()
+        samples = self.sample(key, sample_shape=(n,))
+        return jnp.mean(jax.vmap(f)(samples), axis=0)
+
+    # -- approximation tracking ---------------------------------------------
+
+    @property
+    def is_approximate(self) -> bool:
+        """Whether this distribution is an approximation (e.g., from sampling or MCMC)."""
+        return getattr(self, "_approximate", False)
+
     # -- support ------------------------------------------------------------
 
     @property
@@ -491,7 +540,12 @@ class Distribution(ABC):
             key = _auto_key()
         if check_support:
             cls._check_support_compatible(other)
-        return cls._from_distribution(other, key=key, **kwargs)
+        result = cls._from_distribution(other, key=key, **kwargs)
+        # If the source is approximate or the conversion used sampling
+        # (different class), mark the result as approximate
+        if other.is_approximate or not isinstance(other, cls):
+            result._approximate = True
+        return result
 
     @classmethod
     def _from_distribution(
@@ -672,6 +726,7 @@ class EmpiricalDistribution(Distribution):
         self._samples = samples
         self._weights_cache: Array | None = None
         self._name = name
+        self._approximate = True
 
     # -- properties ---------------------------------------------------------
 
@@ -772,6 +827,39 @@ class EmpiricalDistribution(Distribution):
         if self._is_uniform:
             return jnp.einsum("ni,nj->ij", diff, diff) / self.n
         return jnp.einsum("ni,nj,n->ij", diff, diff, self.weights)
+
+    def expectation(
+        self,
+        f: Callable,
+        *,
+        key: PRNGKey | None = None,
+        num_evaluations: int | None = None,
+    ) -> Array:
+        """Compute ``E[f(X)]`` exactly over the empirical support.
+
+        When ``num_evaluations`` is ``None``, the expectation is computed
+        exactly as a weighted sum over all support points.  When
+        ``num_evaluations`` is specified and smaller than ``self.n``,
+        a random subsample is used instead.
+        """
+        if num_evaluations is not None and num_evaluations < self.n:
+            # Subsample
+            if key is None:
+                key = _auto_key()
+            idx = jax.random.choice(key, self.n, shape=(num_evaluations,), replace=False)
+            sub_samples = self._samples[idx]
+            f_vals = jax.vmap(f)(sub_samples)
+            if self._is_uniform:
+                return jnp.mean(f_vals, axis=0)
+            sub_w = self.weights[idx]
+            sub_w = sub_w / jnp.sum(sub_w)
+            return jnp.einsum("n,n...->...", sub_w, f_vals)
+
+        # Exact: evaluate f on all support points
+        f_vals = jax.vmap(f)(self._samples)
+        if self._is_uniform:
+            return jnp.mean(f_vals, axis=0)
+        return jnp.einsum("n,n...->...", self.weights, f_vals)
 
     # -- conversion ---------------------------------------------------------
 

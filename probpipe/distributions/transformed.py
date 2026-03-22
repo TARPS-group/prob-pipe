@@ -72,6 +72,8 @@ class TransformedDistribution(Distribution):
         else:
             self._tfp_transformed = None
 
+        self._approximate = base.is_approximate
+
         self.with_source(Provenance(
             "transform",
             parents=(base,),

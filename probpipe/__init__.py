@@ -8,6 +8,9 @@ from probpipe.distributions import (
     TFPDistribution,
     EmpiricalDistribution,
     Provenance,
+    # Global settings
+    DEFAULT_NUM_EVALUATIONS,
+    set_default_num_evaluations,
     # Constraints
     Constraint,
     real,
