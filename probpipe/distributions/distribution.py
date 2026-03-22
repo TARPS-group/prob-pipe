@@ -13,6 +13,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable
+import functools
 
 import math
 
@@ -46,6 +47,45 @@ def set_return_approx_dist(value: bool) -> None:
     """Set whether approximate expectations return error-tracking distributions."""
     global RETURN_APPROX_DIST
     RETURN_APPROX_DIST = bool(value)
+
+
+# ---------------------------------------------------------------------------
+# @monte_carlo decorator
+# ---------------------------------------------------------------------------
+
+
+def monte_carlo(method):
+    """Decorator for methods that compute expectations via Monte Carlo.
+
+    The decorated method should return a callable ``f`` such that the
+    desired quantity is ``E[f(X)]``.  The decorator adds
+    ``num_evaluations``, ``return_dist``, and ``key`` keyword arguments,
+    delegates to ``self.expectation(f, ...)``, and returns either an
+    ``Array`` or a ``BootstrapDistribution`` depending on settings.
+
+    Example::
+
+        class MyDist(Distribution):
+            @monte_carlo
+            def mean(self):
+                return lambda x: x
+    """
+
+    @functools.wraps(method)
+    def wrapper(
+        self,
+        *args,
+        key: PRNGKey | None = None,
+        num_evaluations: int | None = None,
+        return_dist: bool | None = None,
+        **kwargs,
+    ):
+        f = method(self, *args, **kwargs)
+        return self.expectation(
+            f, key=key, num_evaluations=num_evaluations, return_dist=return_dist,
+        )
+
+    return wrapper
 
 
 # ---------------------------------------------------------------------------
@@ -444,24 +484,28 @@ class Distribution(ABC):
     def prob(self, x: ArrayLike) -> Array:
         return jnp.exp(self.log_prob(x))
 
-    def mean(self, **kwargs) -> Array | Distribution:
+    @monte_carlo
+    def mean(self):
         """Mean of this distribution.
 
         Subclasses with exact means (e.g., ``TFPDistribution``) override
         this.  The base implementation falls back to Monte Carlo via
         ``expectation(lambda x: x)``.
         """
-        return self.expectation(lambda x: x, **kwargs)
+        return lambda x: x
 
-    def variance(self, **kwargs) -> Array | Distribution:
+    @monte_carlo
+    def variance(self):
         """Variance of this distribution.
 
         Subclasses with exact variance (e.g., ``TFPDistribution``)
         override this.  The base implementation falls back to Monte Carlo.
         """
-        return self.expectation(lambda x: (x - self.mean(return_dist=False)) ** 2, **kwargs)
+        mu = self.mean(return_dist=False)
+        return lambda x: (x - mu) ** 2
 
-    def cov(self, **kwargs) -> Array | Distribution:
+    @monte_carlo
+    def cov(self):
         """Covariance matrix of this distribution.
 
         The base implementation falls back to Monte Carlo.
@@ -472,7 +516,7 @@ class Distribution(ABC):
             d = x.ravel() - mu.ravel()
             return jnp.outer(d, d)
 
-        return self.expectation(_outer_diff, **kwargs)
+        return _outer_diff
 
     def expectation(
         self,
@@ -1050,43 +1094,3 @@ class BootstrapDistribution(Distribution):
     def __repr__(self) -> str:
         return f"BootstrapDistribution(n={self._n}, event_shape={self.event_shape})"
 
-
-# ---------------------------------------------------------------------------
-# @monte_carlo decorator
-# ---------------------------------------------------------------------------
-
-import functools
-
-
-def monte_carlo(method):
-    """Decorator for methods that compute expectations via Monte Carlo.
-
-    The decorated method should return a callable ``f`` such that the
-    desired quantity is ``E[f(X)]``.  The decorator adds
-    ``num_evaluations``, ``return_dist``, and ``key`` keyword arguments,
-    delegates to ``self.expectation(f, ...)``, and returns either an
-    ``Array`` or a ``BootstrapDistribution`` depending on settings.
-
-    Example::
-
-        class MyDist(Distribution):
-            @monte_carlo
-            def mean(self):
-                return lambda x: x
-    """
-
-    @functools.wraps(method)
-    def wrapper(
-        self,
-        *args,
-        key: PRNGKey | None = None,
-        num_evaluations: int | None = None,
-        return_dist: bool | None = None,
-        **kwargs,
-    ):
-        f = method(self, *args, **kwargs)
-        return self.expectation(
-            f, key=key, num_evaluations=num_evaluations, return_dist=return_dist,
-        )
-
-    return wrapper
