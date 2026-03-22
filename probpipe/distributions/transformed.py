@@ -149,6 +149,18 @@ class TransformedDistribution(Distribution):
             )
         )
 
+    def unnormalized_log_prob(self, x: ArrayLike) -> Array:
+        x = jnp.asarray(x)
+        if self._tfp_transformed is not None:
+            return self._tfp_transformed.unnormalized_log_prob(x)
+        raw = self._bijector.inverse(x)
+        return (
+            self._base.unnormalized_log_prob(raw)
+            + self._bijector.inverse_log_det_jacobian(
+                x, event_ndims=len(self.event_shape)
+            )
+        )
+
     def prob(self, x: ArrayLike) -> Array:
         x = jnp.asarray(x)
         if self._tfp_transformed is not None:

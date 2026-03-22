@@ -599,36 +599,78 @@ class SequentialJointDistribution(JointDistribution):
         # Return only unconditioned components
         return {k: v for k, v in full.items() if k not in self._conditioned_names}
 
-    def log_prob(self, x: ArrayLike) -> Array:
-        """Evaluate the (unnormalized) conditional log-density.
+    def _eval_log_prob(self, x: ArrayLike, *, components: str) -> Array:
+        """Evaluate log-density over selected components.
 
-        For an unconditioned joint, this is the full joint log p(x).
-        After conditioning, this is log p(unconditioned, conditioned=values),
-        which is proportional to log p(unconditioned | conditioned=values).
+        Parameters
+        ----------
+        x : array
+            Flat vector of unconditioned component values.
+        components : ``"all"`` or ``"unconditioned"``
+            Which components to include in the sum.  ``"all"`` sums over
+            every component (conditioned ones evaluated at their observed
+            values), giving the unnormalized conditional.
+            ``"unconditioned"`` sums only over unconditioned components
+            (with conditioned values plugged in as parents), giving the
+            normalized conditional when the Markov structure permits it.
         """
         x = jnp.asarray(x)
-        # unflatten gives only unconditioned components
         structured = self.unflatten(x)
 
         # Add conditioned values so callables can receive them
         for cname, val in self._conditioned_values.items():
             structured[cname] = val
 
-        # Sum log-probs over all components (conditioned ones contribute
-        # the likelihood term, making this proportional to the conditional)
         total = jnp.zeros(x.shape[:-1])
         for cname, comp in self._raw_components.items():
+            if components == "unconditioned" and cname in self._conditioned_names:
+                continue
             val = structured[cname]
             if isinstance(comp, Distribution):
                 total = total + comp.log_prob(val)
             else:
-                # Build conditional distribution from parent values
                 sig = inspect.signature(comp)
                 call_kw = {p: structured[p] for p in sig.parameters if p in structured}
                 cond_dist = comp(**call_kw)
                 total = total + cond_dist.log_prob(val)
 
         return total
+
+    def log_prob(self, x: ArrayLike) -> Array:
+        """Evaluate the normalized log-density.
+
+        For an unconditioned joint, this is the full joint log p(x).
+
+        After conditioning on a set of components whose parents are all
+        also conditioned (i.e., the conditioned set forms a root
+        sub-graph), the Markov structure makes the normalized conditional
+        log p(unconditioned | conditioned) computable by summing only
+        the unconditioned components' log-densities with conditioned
+        values substituted for their parents.
+
+        Raises ``NotImplementedError`` when conditioning makes the
+        normalizing constant intractable (e.g., conditioning on a leaf
+        whose parents are unconditioned).
+        """
+        if self._sampleable_error is not None:
+            raise NotImplementedError(
+                "log_prob is not available for this conditioned "
+                "SequentialJointDistribution because the normalizing "
+                "constant is intractable.  Use unnormalized_log_prob "
+                "instead."
+            )
+        return self._eval_log_prob(x, components="unconditioned")
+
+    def unnormalized_log_prob(self, x: ArrayLike) -> Array:
+        """Evaluate the (possibly unnormalized) log-density.
+
+        For an unconditioned joint, this equals the full joint log p(x).
+        After conditioning, this sums log-densities of *all* components
+        (conditioned ones evaluated at their observed values), giving
+        log p(unconditioned, conditioned=values), which is proportional
+        to log p(unconditioned | conditioned=values).
+        """
+        return self._eval_log_prob(x, components="all")
 
     def mean(self) -> Array:
         # For sequential joints, the marginal mean is not simply the concatenation

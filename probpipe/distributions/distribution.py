@@ -402,6 +402,16 @@ class Distribution(ABC):
     def log_prob(self, x: ArrayLike) -> Array:
         ...
 
+    def unnormalized_log_prob(self, x: ArrayLike) -> Array:
+        """Evaluate the unnormalized log-density at *x*.
+
+        By default this returns ``log_prob(x)``.  Subclasses that only
+        know the density up to a normalizing constant (e.g., conditioned
+        distributions) should override this method and may raise
+        ``NotImplementedError`` from ``log_prob`` instead.
+        """
+        return self.log_prob(x)
+
     # -- optional concrete methods ------------------------------------------
 
     def prob(self, x: ArrayLike) -> Array:
@@ -574,6 +584,9 @@ class TFPDistribution(Distribution):
 
     def log_prob(self, x: ArrayLike) -> Array:
         return self._tfp_dist.log_prob(jnp.asarray(x))
+
+    def unnormalized_log_prob(self, x: ArrayLike) -> Array:
+        return self._tfp_dist.unnormalized_log_prob(jnp.asarray(x))
 
     def prob(self, x: ArrayLike) -> Array:
         return self._tfp_dist.prob(jnp.asarray(x))
