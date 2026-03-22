@@ -13,6 +13,12 @@ from probpipe import (
     EmpiricalDistribution, Distribution,
     converter_registry, ConversionInfo, ConversionMethod, Converter,
 )
+from probpipe.distributions.continuous import (
+    InverseGamma, LogNormal, StudentT, Uniform, Cauchy, Laplace,
+    HalfNormal, HalfCauchy, Pareto, TruncatedNormal,
+)
+from probpipe.distributions.discrete import Binomial, NegativeBinomial
+from probpipe.distributions.multivariate import Dirichlet, Multinomial, Wishart, VonMisesFisher
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +119,114 @@ class TestProbPipeConverter:
 
 
 # ---------------------------------------------------------------------------
+# Cross-family moment-matching (exercises all _convert_to_* functions)
+# ---------------------------------------------------------------------------
+
+class TestAllCrossFamilyConversions:
+    """Exercise every _convert_to_* path with a cross-family source."""
+
+    key = jax.random.PRNGKey(42)
+
+    @pytest.mark.parametrize("target_cls", [
+        Normal, Beta, InverseGamma, Exponential, LogNormal,
+        Uniform, Cauchy, Laplace, HalfNormal, HalfCauchy, Pareto,
+        TruncatedNormal, StudentT,
+    ])
+    def test_continuous_from_gamma(self, target_cls):
+        """Convert Gamma(9,1) to each continuous type (skip support issues)."""
+        g = Gamma(concentration=9.0, rate=1.0)
+        result = converter_registry.convert(g, target_cls, check_support=False, num_samples=500)
+        assert isinstance(result, target_cls)
+        assert result.source is not None  # cross-family: provenance attached
+
+    def test_bernoulli_from_poisson(self):
+        p = Poisson(rate=0.5)
+        result = converter_registry.convert(p, Bernoulli, check_support=False)
+        assert isinstance(result, Bernoulli)
+
+    def test_binomial_from_poisson(self):
+        p = Poisson(rate=3.0)
+        result = converter_registry.convert(p, Binomial, check_support=False, total_count=10)
+        assert isinstance(result, Binomial)
+
+    def test_binomial_requires_total_count(self):
+        p = Poisson(rate=3.0)
+        with pytest.raises(ValueError, match="total_count"):
+            converter_registry.convert(p, Binomial, check_support=False)
+
+    def test_poisson_from_bernoulli(self):
+        b = Bernoulli(probs=0.3)
+        result = converter_registry.convert(b, Poisson, check_support=False)
+        assert isinstance(result, Poisson)
+
+    def test_categorical_from_bernoulli(self):
+        b = Bernoulli(probs=0.7)
+        result = converter_registry.convert(b, Categorical, check_support=False, num_samples=500)
+        assert isinstance(result, Categorical)
+
+    def test_negativebinomial_from_poisson(self):
+        p = Poisson(rate=3.0)
+        result = converter_registry.convert(p, NegativeBinomial, check_support=False, total_count=5)
+        assert isinstance(result, NegativeBinomial)
+
+    def test_negativebinomial_requires_total_count(self):
+        p = Poisson(rate=3.0)
+        with pytest.raises(ValueError, match="total_count"):
+            converter_registry.convert(p, NegativeBinomial, check_support=False)
+
+    def test_dirichlet_from_mvn(self):
+        mvn = MultivariateNormal(loc=jnp.array([0.3, 0.5, 0.2]),
+                                  cov=0.01 * jnp.eye(3))
+        result = converter_registry.convert(mvn, Dirichlet, check_support=False, num_samples=500)
+        assert isinstance(result, Dirichlet)
+
+    def test_multinomial_from_mvn(self):
+        mvn = MultivariateNormal(loc=jnp.array([3.0, 5.0, 2.0]),
+                                  cov=jnp.eye(3))
+        result = converter_registry.convert(mvn, Multinomial, check_support=False,
+                                             total_count=10, num_samples=500)
+        assert isinstance(result, Multinomial)
+
+    def test_multinomial_requires_total_count(self):
+        mvn = MultivariateNormal(loc=jnp.array([3.0, 5.0]),
+                                  cov=jnp.eye(2))
+        with pytest.raises(ValueError, match="total_count"):
+            converter_registry.convert(mvn, Multinomial, check_support=False)
+
+    def test_wishart_from_mvn(self):
+        mvn = MultivariateNormal(loc=jnp.array([1.0, 0.0]),
+                                  cov=jnp.eye(2))
+        # Wishart samples are matrices; use Wishart as source for itself
+        w = Wishart(df=5.0, scale_tril=jnp.eye(2))
+        result = converter_registry.convert(w, Wishart)
+        assert result is w  # same-class
+
+    def test_wishart_to_empirical(self):
+        w = Wishart(df=5.0, scale_tril=jnp.eye(2))
+        result = converter_registry.convert(w, EmpiricalDistribution, num_samples=50)
+        assert isinstance(result, EmpiricalDistribution)
+        assert result.n == 50
+
+    def test_vonmisesfisher_same_class(self):
+        vmf = VonMisesFisher(mean_direction=jnp.array([1.0, 0.0, 0.0]),
+                              concentration=5.0)
+        result = converter_registry.convert(vmf, VonMisesFisher)
+        assert result is vmf
+
+    def test_mvn_from_empirical(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
+        emp = EmpiricalDistribution(samples)
+        result = converter_registry.convert(emp, MultivariateNormal)
+        assert isinstance(result, MultivariateNormal)
+        assert result.loc.shape == (3,)
+
+    def test_mvn_from_mvn(self):
+        mvn = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        result = converter_registry.convert(mvn, MultivariateNormal)
+        assert result is mvn
+
+
+# ---------------------------------------------------------------------------
 # TFP ↔ ProbPipe
 # ---------------------------------------------------------------------------
 
@@ -193,6 +307,51 @@ class TestTFPConverter:
         assert isinstance(result, Normal)
         np.testing.assert_allclose(float(result._loc), 9.0, atol=0.5)
 
+    def test_probpipe_gamma_to_tfp(self):
+        g = Gamma(concentration=3.0, rate=1.0)
+        result = converter_registry.convert(g, tfd.Gamma)
+        assert isinstance(result, tfd.Gamma)
+        np.testing.assert_allclose(float(result.concentration), 3.0)
+
+    def test_probpipe_exponential_to_tfp(self):
+        e = Exponential(rate=2.0)
+        result = converter_registry.convert(e, tfd.Exponential)
+        assert isinstance(result, tfd.Exponential)
+        np.testing.assert_allclose(float(result.rate), 2.0)
+
+    def test_probpipe_bernoulli_to_tfp(self):
+        b = Bernoulli(probs=0.3)
+        result = converter_registry.convert(b, tfd.Bernoulli)
+        assert isinstance(result, tfd.Bernoulli)
+
+    def test_probpipe_dirichlet_to_tfp(self):
+        d = Dirichlet(concentration=jnp.array([2.0, 3.0, 1.0]))
+        result = converter_registry.convert(d, tfd.Dirichlet)
+        assert isinstance(result, tfd.Dirichlet)
+
+    def test_tfp_poisson_to_probpipe(self):
+        result = converter_registry.convert(tfd.Poisson(rate=3.0), Poisson)
+        assert isinstance(result, Poisson)
+        np.testing.assert_allclose(float(result._rate), 3.0)
+
+    def test_tfp_categorical_to_probpipe(self):
+        probs = jnp.array([0.2, 0.3, 0.5])
+        result = converter_registry.convert(tfd.Categorical(probs=probs), Categorical)
+        assert isinstance(result, Categorical)
+        np.testing.assert_allclose(result._probs, probs, atol=1e-5)
+
+    def test_tfp_dirichlet_to_probpipe(self):
+        conc = jnp.array([2.0, 3.0])
+        result = converter_registry.convert(tfd.Dirichlet(concentration=conc), Dirichlet)
+        assert isinstance(result, Dirichlet)
+
+    def test_tfp_mvn_diag_to_probpipe(self):
+        result = converter_registry.convert(
+            tfd.MultivariateNormalDiag(loc=jnp.zeros(2), scale_diag=jnp.ones(2)),
+            MultivariateNormal,
+        )
+        assert isinstance(result, MultivariateNormal)
+
     def test_is_distribution_type_for_tfp(self):
         assert converter_registry.is_distribution_type(tfd.Gamma(1.0, 1.0))
 
@@ -258,6 +417,61 @@ class TestScipyConverter:
         assert isinstance(result, Beta)
         np.testing.assert_allclose(float(result._alpha), 2.0)
         np.testing.assert_allclose(float(result._beta), 5.0)
+
+    def test_scipy_expon_to_probpipe(self):
+        import scipy.stats as ss
+        result = converter_registry.convert(ss.expon(scale=2.0), Exponential)
+        assert isinstance(result, Exponential)
+        np.testing.assert_allclose(float(result._rate), 0.5)
+
+    def test_scipy_uniform_to_probpipe(self):
+        import scipy.stats as ss
+        result = converter_registry.convert(ss.uniform(loc=1.0, scale=3.0), Uniform)
+        assert isinstance(result, Uniform)
+        np.testing.assert_allclose(float(result._low), 1.0)
+        np.testing.assert_allclose(float(result._high), 4.0)
+
+    def test_scipy_laplace_to_probpipe(self):
+        import scipy.stats as ss
+        result = converter_registry.convert(ss.laplace(loc=2.0, scale=0.5), Laplace)
+        assert isinstance(result, Laplace)
+        np.testing.assert_allclose(float(result._loc), 2.0)
+        np.testing.assert_allclose(float(result._scale), 0.5)
+
+    def test_probpipe_gamma_to_scipy(self):
+        from scipy.stats._distn_infrastructure import rv_frozen
+        g = Gamma(concentration=3.0, rate=0.5)
+        result = converter_registry.convert(g, rv_frozen)
+        assert isinstance(result, rv_frozen)
+        np.testing.assert_allclose(result.mean(), 6.0, atol=0.01)
+
+    def test_probpipe_exponential_to_scipy(self):
+        from scipy.stats._distn_infrastructure import rv_frozen
+        e = Exponential(rate=2.0)
+        result = converter_registry.convert(e, rv_frozen)
+        assert isinstance(result, rv_frozen)
+        np.testing.assert_allclose(result.mean(), 0.5, atol=0.01)
+
+    def test_probpipe_beta_to_scipy(self):
+        from scipy.stats._distn_infrastructure import rv_frozen
+        b = Beta(alpha=2.0, beta=5.0)
+        result = converter_registry.convert(b, rv_frozen)
+        assert isinstance(result, rv_frozen)
+        np.testing.assert_allclose(result.mean(), 2.0 / 7.0, atol=0.01)
+
+    def test_unknown_scipy_fallback_to_sampling(self):
+        """Unknown scipy distribution type falls back to sampling."""
+        import scipy.stats as ss
+        # Use a scipy distribution we haven't mapped (e.g., chi2)
+        result = converter_registry.convert(ss.chi2(df=3), EmpiricalDistribution, num_samples=100)
+        assert isinstance(result, EmpiricalDistribution)
+        assert result.n == 100
+
+    def test_scipy_check_unknown_type(self):
+        import scipy.stats as ss
+        info = converter_registry.check(ss.chi2(df=3), Normal)
+        assert info.feasible
+        assert info.method == ConversionMethod.SAMPLE
 
     def test_is_distribution_type_scipy(self):
         import scipy.stats as ss
