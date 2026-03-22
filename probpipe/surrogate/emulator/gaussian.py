@@ -312,71 +312,33 @@ class LinCombGaussianWeights(GaussianEmulator):
             return self._output_covariance_per_point(X)
 
         if joint_inputs and not joint_outputs:
-            # Cross-input covariance per output: (*eb, d_out, n, n)
-            # Get weight cross-input cov: (*eb, d_w, n, n) if weight has
-            # joint_outputs, or (*eb, n, n) per weight dim.
-            if self._weight_emulator.supports_joint_outputs:
-                # Weight emulator provides (*eb, *out_w, n, n) where
-                # out_w = (d_w,), so shape is (*eb, d_w, n, n)
-                w_cov = self._weight_emulator.predict_covariance(
-                    X, joint_inputs=True, joint_outputs=False
-                )
-                # w_cov: (*eb, d_w, n, n)
-                # result[o, i, j] = sum_w sum_v phi[o,w] * w_cov[w, i, j]
-                #                              * phi[o,v]
-                # But weight dims are independent in this mode, so
-                # w_cov is (*eb, d_w, n, n) - one nxn per weight dim.
-                # Phi @ diag_block(w_cov) @ Phi^T per (i,j):
-                # result[o, i, j] = sum_w phi[o,w]^2 * w_cov[w, i, j]
-                # Wrong - we need the full cross-weight nxn covariance.
-                # Actually in joint_inputs=True, joint_outputs=False mode,
-                # the weight emulator returns one nxn cov per output dim
-                # (weight dim), treating outputs as batch.
-                # result[o, i, j] = sum_w phi[o,w]^2 * w_cov_w[i, j]
-                return jnp.einsum(
-                    "ow,...wij->...oij",
-                    self._phi ** 2,
-                    w_cov,
-                )
-            else:
-                # Weight emulator only supports joint_inputs (scalar or
-                # independent outputs).  Get one nxn cov per weight dim.
-                # For scalar weight output, w_cov is (*eb, n, n).
-                # For (d_w,) weight output, need to call per weight.
-                # Actually if weight emulator has supports_joint_inputs=True
-                # but NOT supports_joint_outputs, and output_shape=(d_w,),
-                # then joint_inputs=True, joint_outputs=False gives
-                # (*eb, d_w, n, n).
-                w_cov = self._weight_emulator.predict_covariance(
-                    X, joint_inputs=True, joint_outputs=False
-                )
-                # w_cov: (*eb, d_w, n, n) - one nxn per weight dim
-                return jnp.einsum(
-                    "ow,...wij->...oij",
-                    self._phi ** 2,
-                    w_cov,
-                )
+            # Per-output cross-input covariance: (*eb, d_out, n, n).
+            # Weight cov is (*eb, d_w, n, n) — one nxn matrix per weight dim.
+            # Output cov[o,i,j] = sum_w phi[o,w]^2 * w_cov[w,i,j].
+            w_cov = self._weight_emulator.predict_covariance(
+                X, joint_inputs=True, joint_outputs=False
+            )
+            return jnp.einsum(
+                "ow,...wij->...oij",
+                self._phi ** 2,
+                w_cov,
+            )
 
         # joint_inputs=True, joint_outputs=True
-        # Full joint: (*eb, n*d_out, n*d_out)
-        # Event is flattened as (n, *output_shape), i.e. row index = i*d_out+o.
+        # Full joint covariance: (*eb, n*d_out, n*d_out).
         extra_batch, n = self._parse_X(X)
         d_out = self._phi.shape[0]
 
-        # Build from per-weight nxn covariance (works whether or not
-        # weight emulator supports joint_outputs, since independent
-        # weights give the same result either way).
+        # Per-weight cross-input cov: (*eb, d_w, n, n).
         w_cov = self._weight_emulator.predict_covariance(
             X, joint_inputs=True, joint_outputs=False
         )
-        # w_cov: (*eb, d_w, n, n) - one nxn per weight dim
-        # cov_block[o1, o2, i, j] = sum_w phi[o1,w]*phi[o2,w]*w_cov[w,i,j]
+        # cov_block[o1,o2,i,j] = sum_w phi[o1,w]*phi[o2,w]*w_cov[w,i,j]
         cov_block = jnp.einsum(
             "ow,pw,...wij->...opij", self._phi, self._phi, w_cov
         )
-        # cov_block: (*eb, d_out, d_out, n, n)
-        # Target: (*eb, n*d_out, n*d_out) with row (i*d_out+o1)
-        # Transpose to (*eb, n, d_out, n, d_out) then reshape.
+        # Reorder from (*eb, d_out, d_out, n, n) to (*eb, n, d_out, n, d_out)
+        # then flatten to (*eb, n*d_out, n*d_out).
         ndim_eb = len(extra_batch)
         perm = [*range(ndim_eb), ndim_eb + 2, ndim_eb, ndim_eb + 3, ndim_eb + 1]
         cov_reordered = cov_block.transpose(perm)
@@ -489,13 +451,8 @@ class LinearGaussianRegressor(GaussianEmulator):
 
         Returns shape ``(*extra_batch, n, *output_shape)``.
         """
-        phi = self._feature_map(X)  # (*eb, n, d_w) or (*eb, n, d_out, d_w)
-        if self._output_shape:
-            # phi: (*eb, n, *out, d_w), m: (d_w,)
-            return self._bias + jnp.einsum("...w,w->...", phi, self._w_mean)
-        else:
-            # phi: (*eb, n, d_w), m: (d_w,)
-            return self._bias + jnp.einsum("...w,w->...", phi, self._w_mean)
+        phi = self._feature_map(X)  # (*eb, n, [*out,] d_w)
+        return self._bias + jnp.einsum("...w,w->...", phi, self._w_mean)
 
     def predict_variance(self, X: Array) -> Array:
         """Marginal predictive variance.
@@ -519,50 +476,39 @@ class LinearGaussianRegressor(GaussianEmulator):
                 "Use predict_variance for fully marginal predictions."
             )
 
-        phi = self._feature_map(X)  # (*eb, n, d_w) or (*eb, n, d_out, d_w)
+        phi = self._feature_map(X)  # (*eb, n, [*out,] d_w)
         extra_batch, n = self._parse_X(X)
 
         if joint_inputs and not joint_outputs:
             if self._output_shape:
-                # phi: (*eb, n, *out, d_w)
-                # Per output dim: cov[o, i, j] = phi[i, o, :] C phi[j, o, :]^T
+                # Per-output cross-input cov: (*eb, *out, n, n)
                 d_out = _prod(self._output_shape)
-                # Flatten output dims: (*eb, n, d_out, d_w)
                 phi_flat = phi.reshape(*extra_batch, n, d_out, -1)
-                # cov per output: (*eb, d_out, n, n)
                 cov = jnp.einsum(
                     "...iow,wv,...jov->...oij",
                     phi_flat, self._w_cov, phi_flat
                 )
-                # Reshape to (*eb, *out, n, n)
-                return cov.reshape(
-                    *extra_batch, *self._output_shape, n, n
-                )
-            else:
-                # phi: (*eb, n, d_w)
-                # cov[i, j] = phi[i,:] C phi[j,:]^T -> (*eb, n, n)
-                return jnp.einsum(
-                    "...iw,wv,...jv->...ij", phi, self._w_cov, phi
-                )
+                return cov.reshape(*extra_batch, *self._output_shape, n, n)
+            # Scalar output: cross-input cov (*eb, n, n)
+            return jnp.einsum(
+                "...iw,wv,...jv->...ij", phi, self._w_cov, phi
+            )
 
         if not joint_inputs and joint_outputs:
-            # Per input point, cross-output covariance: (*eb, n, d_out, d_out)
+            # Per-point cross-output cov: (*eb, n, d_out, d_out)
             d_out = _prod(self._output_shape)
             phi_flat = phi.reshape(*extra_batch, n, d_out, -1)
-            # cov[n, o1, o2] = phi[n, o1, :] C phi[n, o2, :]^T
             return jnp.einsum(
                 "...ow,wv,...pv->...op",
                 phi_flat, self._w_cov, phi_flat
             )
 
-        # joint_inputs=True, joint_outputs=True
+        # Full joint cov: (*eb, n*d_out, n*d_out)
         d_out = _prod(self._output_shape) if self._output_shape else 1
         if self._output_shape:
-            # phi: (*eb, n, d_out, d_w) -> flatten to (*eb, n*d_out, d_w)
             phi_flat = phi.reshape(*extra_batch, n * d_out, -1)
         else:
-            phi_flat = phi  # (*eb, n, d_w)
-        # Full cov: (*eb, n*d_out, n*d_out)
+            phi_flat = phi
         return jnp.einsum(
             "...iw,wv,...jv->...ij", phi_flat, self._w_cov, phi_flat
         )
