@@ -100,11 +100,11 @@ class ConverterRegistry:
         )
 
     def is_distribution_type(self, obj: Any) -> bool:
-        """Return ``True`` if *obj* is any recognized distribution type.
+        """Return ``True`` if *obj* is a recognized distribution-like object.
 
-        Checks ProbPipe ``Distribution`` first, then falls back to
-        asking registered converters whether *obj* matches any of their
-        declared source types.
+        This includes ProbPipe ``Distribution`` instances as well as
+        external distribution types (e.g., TFP, scipy.stats) for which
+        a registered converter declares support.
         """
         from ..distributions.distribution import Distribution
 
