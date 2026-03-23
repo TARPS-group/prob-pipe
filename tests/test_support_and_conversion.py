@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 from probpipe.distributions import (
-    Distribution, EmpiricalDistribution, MultivariateNormal,
+    ArrayDistribution, EmpiricalDistribution, MultivariateNormal,
     Normal, Beta, Gamma, InverseGamma, Exponential, LogNormal,
     StudentT, Uniform, Cauchy, Laplace, HalfNormal, HalfCauchy,
     Pareto, TruncatedNormal,

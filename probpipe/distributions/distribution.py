@@ -2,9 +2,11 @@
 Core distribution abstractions for ProbPipe.
 
 Provides:
-  - ``Distribution``          – Abstract base class following TFP shape semantics.
+  - ``Distribution``          – Generic base class parameterized by value type T.
+  - ``ArrayDistribution``     – Distribution over arrays with TFP shape semantics.
   - ``TFPDistribution``       – Mixin that delegates to an internal ``tfd.*`` instance.
   - ``EmpiricalDistribution`` – Weighted set of samples.
+  - ``BootstrapDistribution`` – MC error tracking via bootstrap resampling.
   - ``Provenance``            – Lightweight lineage tracker.
 """
 
@@ -12,7 +14,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Generic, TypeVar
 import functools
 
 import math
@@ -22,6 +24,12 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..custom_types import Array, ArrayLike, PRNGKey
+
+# ---------------------------------------------------------------------------
+# Type variables
+# ---------------------------------------------------------------------------
+
+T = TypeVar('T')
 
 # ---------------------------------------------------------------------------
 # Global defaults
@@ -65,7 +73,7 @@ def monte_carlo(method):
 
     Example::
 
-        class MyDist(Distribution):
+        class MyDist(ArrayDistribution):
             @monte_carlo
             def mean(self):
                 return lambda x: x
@@ -393,7 +401,7 @@ class Provenance:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Provenance":
+    def from_dict(cls, d: dict[str, Any]) -> Provenance:
         """Reconstruct from a dict produced by :meth:`to_dict`.
 
         Parent distributions are not available at deserialization time, so
@@ -408,49 +416,37 @@ class Provenance:
 
 
 # ---------------------------------------------------------------------------
-# Distribution ABC
+# Distribution[T] — generic base class
 # ---------------------------------------------------------------------------
 
-class Distribution(ABC):
+class Distribution(Generic[T], ABC):
     """
-    Abstract base for all ProbPipe distributions.
+    Abstract base for all ProbPipe distributions, parameterized by
+    value type ``T``.
 
-    Shape semantics follow TFP conventions:
+    Commits to a sampling contract and optional log-density.  Shape
+    semantics, batch/event conventions, and domain-specific methods
+    live in specialized subclasses (e.g., ``ArrayDistribution``).
 
-    * ``event_shape``  – shape of a single draw (e.g. ``(d,)`` for a
-      *d*-dimensional vector distribution).
-    * ``batch_shape``  – shape of independent-but-not-identically-distributed
-      parameter batches.
-    * ``sample(key, sample_shape)`` returns an array of shape
-      ``sample_shape + batch_shape + event_shape``.
+    The abstract primitive is ``_sample(key)``, which draws a single
+    sample of type ``T``.  The public ``sample(key, sample_shape)``
+    method handles batching via ``jax.vmap`` by default; subclasses
+    may override for efficiency.
     """
 
     # -- core abstract interface ---------------------------------------------
 
-    @property
     @abstractmethod
-    def event_shape(self) -> tuple[int, ...]:
-        ...
-
-    @property
-    def batch_shape(self) -> tuple[int, ...]:
-        return ()
-
-    @property
-    def dtype(self) -> jnp.dtype:
-        return jnp.float32
-
-    @abstractmethod
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
-        """Subclass implementation of sampling (called by :meth:`sample`)."""
+    def _sample(self, key: PRNGKey) -> T:
+        """Draw a single sample. Subclasses implement this."""
         ...
 
     def sample(
         self,
         key: PRNGKey | None = None,
         sample_shape: tuple[int, ...] = (),
-    ) -> Array:
-        """Draw samples from this distribution.
+    ) -> T:
+        """Draw sample(s) from this distribution.
 
         Parameters
         ----------
@@ -459,64 +455,53 @@ class Distribution(ABC):
             from a global counter (convenient for interactive use but not
             reproducible across runs).
         sample_shape : tuple of int
-            Leading dimensions for the returned array.
+            Number of independent draws.  The meaning depends on ``T``:
+            for arrays, prepends dimensions; for pytrees, prepends
+            dimensions to every leaf; for distributions, enriches
+            batch shape.
+
+        Returns
+        -------
+        T
+            A single sample when ``sample_shape == ()``, or a batched
+            representation when ``sample_shape`` is non-empty.
         """
         if key is None:
             key = _auto_key()
-        return self._sample(key, sample_shape)
+        if sample_shape == ():
+            return self._sample(key)
+        n = math.prod(sample_shape)
+        keys = jax.random.split(key, n)
+        flat_samples = jax.vmap(self._sample)(keys)
+        return jax.tree.map(
+            lambda x: x.reshape(*sample_shape, *x.shape[1:]),
+            flat_samples,
+        )
 
-    @abstractmethod
-    def log_prob(self, x: ArrayLike) -> Array:
-        ...
+    # -- log-density (optional) ----------------------------------------------
 
-    def unnormalized_log_prob(self, x: ArrayLike) -> Array:
-        """Evaluate the unnormalized log-density at *x*.
+    def log_prob(self, value: T) -> Array:
+        """Log-density of *value*.  Optional; raises by default.
 
-        By default this returns ``log_prob(x)``.  Subclasses that only
+        Subclasses that define a density should override this method.
+        Takes one value of type T in, returns a scalar (or batch of
+        scalars) out.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support log_prob"
+        )
+
+    def unnormalized_log_prob(self, value: T) -> Array:
+        """Evaluate the unnormalized log-density at *value*.
+
+        By default this returns ``log_prob(value)``.  Subclasses that only
         know the density up to a normalizing constant (e.g., conditioned
         distributions) should override this method and may raise
         ``NotImplementedError`` from ``log_prob`` instead.
         """
-        return self.log_prob(x)
+        return self.log_prob(value)
 
-    # -- optional concrete methods ------------------------------------------
-
-    def prob(self, x: ArrayLike) -> Array:
-        return jnp.exp(self.log_prob(x))
-
-    @monte_carlo
-    def mean(self):
-        """Mean of this distribution.
-
-        Subclasses with exact means (e.g., ``TFPDistribution``) override
-        this.  The base implementation falls back to Monte Carlo via
-        ``expectation(lambda x: x)``.
-        """
-        return lambda x: x
-
-    @monte_carlo
-    def variance(self):
-        """Variance of this distribution.
-
-        Subclasses with exact variance (e.g., ``TFPDistribution``)
-        override this.  The base implementation falls back to Monte Carlo.
-        """
-        mu = self.mean(return_dist=False)
-        return lambda x: (x - mu) ** 2
-
-    @monte_carlo
-    def cov(self):
-        """Covariance matrix of this distribution.
-
-        The base implementation falls back to Monte Carlo.
-        """
-        mu = self.mean(return_dist=False)
-
-        def _outer_diff(x):
-            d = x.ravel() - mu.ravel()
-            return jnp.outer(d, d)
-
-        return _outer_diff
+    # -- expectations (Monte Carlo) ------------------------------------------
 
     def expectation(
         self,
@@ -525,13 +510,14 @@ class Distribution(ABC):
         key: PRNGKey | None = None,
         num_evaluations: int | None = None,
         return_dist: bool | None = None,
-    ) -> Array | Distribution:
+    ) -> Any:
         """Estimate ``E[f(X)]`` where ``X ~ self``.
 
         Parameters
         ----------
         f : callable
-            Function mapping a single sample to an array.
+            Function mapping a single sample to an array (or pytree of
+            arrays).
         key : PRNGKey, optional
             JAX PRNG key for sampling.  Auto-generated if ``None``.
         num_evaluations : int, optional
@@ -552,7 +538,27 @@ class Distribution(ABC):
         rd = return_dist if return_dist is not None else RETURN_APPROX_DIST
         if rd:
             return BootstrapDistribution(evals, name=f"E[f(X)]")
-        return jnp.mean(evals, axis=0)
+        return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
+
+    @monte_carlo
+    def mean(self):
+        """Mean of this distribution.
+
+        Subclasses with exact means (e.g., ``TFPDistribution``) override
+        this.  The base implementation falls back to Monte Carlo via
+        ``expectation(lambda x: x)``.
+        """
+        return lambda x: x
+
+    @monte_carlo
+    def variance(self):
+        """Variance of this distribution.
+
+        Subclasses with exact variance (e.g., ``TFPDistribution``)
+        override this.  The base implementation falls back to Monte Carlo.
+        """
+        mu = self.mean(return_dist=False)
+        return lambda x: jax.tree.map(lambda xi, mi: (xi - mi) ** 2, x, mu)
 
     # -- approximation tracking ---------------------------------------------
 
@@ -560,13 +566,6 @@ class Distribution(ABC):
     def is_approximate(self) -> bool:
         """Whether this distribution is an approximation (e.g., from sampling or MCMC)."""
         return getattr(self, "_approximate", False)
-
-    # -- support ------------------------------------------------------------
-
-    @property
-    def support(self) -> Constraint:
-        """The support of this distribution (set of values with non-zero density)."""
-        raise NotImplementedError(f"{type(self).__name__}.support")
 
     # -- naming & provenance ------------------------------------------------
 
@@ -588,17 +587,95 @@ class Distribution(ABC):
         self._source = source
         return self
 
+    # -- repr ---------------------------------------------------------------
+
+    def __repr__(self) -> str:
+        parts = [type(self).__name__]
+        if self.name:
+            parts.append(f"name={self.name!r}")
+        return f"{parts[0]}({', '.join(parts[1:])})"
+
+
+# ---------------------------------------------------------------------------
+# ArrayDistribution — distribution over arrays (TFP shape semantics)
+# ---------------------------------------------------------------------------
+
+class ArrayDistribution(Distribution[Array]):
+    """
+    Distribution over a single array with TFP-style shape semantics.
+
+    Shape semantics follow TFP conventions:
+
+    * ``event_shape``  -- shape of a single draw (e.g. ``(d,)`` for a
+      *d*-dimensional vector distribution).
+    * ``batch_shape``  -- shape of independent-but-not-identically-distributed
+      parameter batches.
+    * ``sample(key, sample_shape)`` returns an array of shape
+      ``sample_shape + batch_shape + event_shape``.
+
+    This is the renamed version of the original ``Distribution`` class.
+    All existing concrete distributions (Normal, Gamma, MVN, etc.)
+    inherit from this class.
+    """
+
+    # -- shape properties ---------------------------------------------------
+
+    @property
+    @abstractmethod
+    def event_shape(self) -> tuple[int, ...]:
+        ...
+
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return ()
+
+    @property
+    def dtype(self) -> jnp.dtype:
+        return jnp.float32
+
+    # -- log-density (required at this level) --------------------------------
+
+    @abstractmethod
+    def log_prob(self, x: ArrayLike) -> Array:
+        ...
+
+    # -- array-specific convenience methods ----------------------------------
+
+    def prob(self, x: ArrayLike) -> Array:
+        return jnp.exp(self.log_prob(x))
+
+    @monte_carlo
+    def cov(self):
+        """Covariance matrix of this distribution.
+
+        The base implementation falls back to Monte Carlo.
+        """
+        mu = self.mean(return_dist=False)
+
+        def _outer_diff(x):
+            d = x.ravel() - mu.ravel()
+            return jnp.outer(d, d)
+
+        return _outer_diff
+
+    # -- support ------------------------------------------------------------
+
+    @property
+    def support(self) -> Constraint:
+        """The support of this distribution (set of values with non-zero density)."""
+        raise NotImplementedError(f"{type(self).__name__}.support")
+
     # -- conversion ---------------------------------------------------------
 
     @classmethod
     def from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey | None = None,
         check_support: bool = True,
         **kwargs: Any,
-    ) -> Distribution:
+    ) -> ArrayDistribution:
         """Convert *other* into an instance of *cls*.
 
         Delegates to the global converter registry.  See
@@ -607,7 +684,7 @@ class Distribution(ABC):
 
         Parameters
         ----------
-        other : Distribution
+        other : ArrayDistribution
             Source distribution to convert.
         key : PRNGKey, optional
             JAX PRNG key for sampling-based conversion.  If ``None``,
@@ -618,14 +695,14 @@ class Distribution(ABC):
         **kwargs
             Subclass-specific keyword arguments. Common options:
 
-            * ``num_samples`` (int, default 1024) — number of samples
+            * ``num_samples`` (int, default 1024) -- number of samples
               drawn from *other* for moment-matching or empirical
               estimation. Ignored when *other* is the same class
               (parameters are copied directly).
-            * ``total_count`` (int) — required by ``Binomial``,
+            * ``total_count`` (int) -- required by ``Binomial``,
               ``NegativeBinomial``, and ``Multinomial`` when *other*
               is not the same class.
-            * ``name`` (str | None) — name for the resulting
+            * ``name`` (str | None) -- name for the resulting
               distribution; defaults to ``other.name``.
         """
         from ..converters import converter_registry
@@ -634,7 +711,7 @@ class Distribution(ABC):
         )
 
     @classmethod
-    def _check_support_compatible(cls, other: Distribution) -> None:
+    def _check_support_compatible(cls, other: ArrayDistribution) -> None:
         """Raise ValueError if *other*'s support is incompatible with *cls*."""
         try:
             target_support = cls._default_support()
@@ -677,7 +754,7 @@ class Distribution(ABC):
 # TFPDistribution mixin
 # ---------------------------------------------------------------------------
 
-class TFPDistribution(Distribution):
+class TFPDistribution(ArrayDistribution):
     """
     Base class for distributions backed by a ``tfd.Distribution`` instance.
 
@@ -703,7 +780,18 @@ class TFPDistribution(Distribution):
 
     # -- sampling & density -------------------------------------------------
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+    def _sample(self, key: PRNGKey) -> Array:
+        """Draw a single sample from the TFP distribution."""
+        return self._tfp_dist.sample(seed=key)
+
+    def sample(
+        self,
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
+        """Draw samples using TFP's efficient batched sampling."""
+        if key is None:
+            key = _auto_key()
         return self._tfp_dist.sample(seed=key, sample_shape=sample_shape)
 
     def log_prob(self, x: ArrayLike) -> Array:
@@ -726,7 +814,7 @@ class TFPDistribution(Distribution):
 # EmpiricalDistribution
 # ---------------------------------------------------------------------------
 
-class EmpiricalDistribution(Distribution):
+class EmpiricalDistribution(ArrayDistribution):
     """
     Weighted empirical distribution over a finite set of samples.
 
@@ -847,8 +935,25 @@ class EmpiricalDistribution(Distribution):
 
     # -- sampling -----------------------------------------------------------
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
-        n_draws = int(math.prod(sample_shape)) if sample_shape else 1
+    def _sample(self, key: PRNGKey) -> Array:
+        """Draw a single sample (with replacement according to weights)."""
+        if self._is_uniform:
+            idx = jax.random.randint(key, shape=(), minval=0, maxval=self.n)
+        else:
+            idx = jax.random.choice(key, self.n, p=self.weights)
+        return self._samples[idx]
+
+    def sample(
+        self,
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
+        """Draw samples using efficient batched resampling."""
+        if key is None:
+            key = _auto_key()
+        if sample_shape == ():
+            return self._sample(key)
+        n_draws = int(math.prod(sample_shape))
         if self._is_uniform:
             indices = jax.random.randint(key, shape=(n_draws,), minval=0, maxval=self.n)
         else:
@@ -856,9 +961,7 @@ class EmpiricalDistribution(Distribution):
                 key, self.n, shape=(n_draws,), p=self.weights, replace=True,
             )
         draws = self._samples[indices]
-        if sample_shape:
-            return draws.reshape(sample_shape + self.event_shape)
-        return draws.squeeze(axis=0)
+        return draws.reshape(sample_shape + self.event_shape)
 
     # -- density (Gaussian approximation) -----------------------------------
 
@@ -904,7 +1007,7 @@ class EmpiricalDistribution(Distribution):
         key: PRNGKey | None = None,
         num_evaluations: int | None = None,
         return_dist: bool | None = None,
-    ) -> Array | Distribution:
+    ) -> Array | ArrayDistribution:
         """Compute ``E[f(X)]`` exactly over the empirical support.
 
         When ``num_evaluations`` is ``None``, the expectation is computed
@@ -946,7 +1049,7 @@ class EmpiricalDistribution(Distribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -972,7 +1075,7 @@ class EmpiricalDistribution(Distribution):
 # BootstrapDistribution
 # ---------------------------------------------------------------------------
 
-class BootstrapDistribution(Distribution):
+class BootstrapDistribution(ArrayDistribution):
     """Distribution over bootstrap-resampled means of a statistic.
 
     Given *n* evaluations ``f(x_1), ..., f(x_n)`` where ``x_i ~ P``,
@@ -1031,7 +1134,7 @@ class BootstrapDistribution(Distribution):
         return jnp.einsum("n,n...->...", self._weights, self._evaluations)
 
     def variance(self) -> Array:
-        """Variance of the sampling distribution (≈ Var[f(X)] / n_eff)."""
+        """Variance of the sampling distribution (approx Var[f(X)] / n_eff)."""
         mu = self.mean()
         diff = self._evaluations - mu
         if self._weights is None:
@@ -1042,9 +1145,28 @@ class BootstrapDistribution(Distribution):
         n_eff = 1.0 / jnp.sum(self._weights ** 2)
         return sample_var / n_eff
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+    def _sample(self, key: PRNGKey) -> Array:
+        """Draw a single bootstrap resample of the mean."""
+        if self._weights is None:
+            idx = jax.random.choice(key, self._n, shape=(self._n,), replace=True)
+            return jnp.mean(self._evaluations[idx], axis=0)
+        else:
+            idx = jax.random.choice(
+                key, self._n, shape=(self._n,), replace=True, p=self._weights
+            )
+            return jnp.mean(self._evaluations[idx], axis=0)
+
+    def sample(
+        self,
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
         """Draw bootstrap resamples of the mean."""
-        total = int(math.prod(sample_shape)) if sample_shape else 1
+        if key is None:
+            key = _auto_key()
+        if sample_shape == ():
+            return self._sample(key)
+        total = int(math.prod(sample_shape))
         keys = jax.random.split(key, total)
 
         def _one_resample(k):
@@ -1061,7 +1183,7 @@ class BootstrapDistribution(Distribution):
         return results.reshape(sample_shape + self.event_shape)
 
     def log_prob(self, x: ArrayLike) -> Array:
-        """Log-density via Gaussian approximation (mean ± SE)."""
+        """Log-density via Gaussian approximation (mean +/- SE)."""
         x = jnp.asarray(x)
         mu = self.mean()
         var = jnp.maximum(self.variance(), 1e-12)
@@ -1074,4 +1196,3 @@ class BootstrapDistribution(Distribution):
 
     def __repr__(self) -> str:
         return f"BootstrapDistribution(n={self._n}, event_shape={self.event_shape})"
-

@@ -12,7 +12,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .distribution import (
     TFPDistribution,
-    Distribution,
+    ArrayDistribution,
     EmpiricalDistribution,
     Provenance,
     Constraint,
@@ -92,7 +92,7 @@ class Normal(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -160,7 +160,7 @@ class Beta(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -232,7 +232,7 @@ class Gamma(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -308,7 +308,7 @@ class InverseGamma(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -374,7 +374,7 @@ class Exponential(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -442,7 +442,7 @@ class LogNormal(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -520,7 +520,7 @@ class StudentT(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -595,7 +595,7 @@ class Uniform(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -665,7 +665,7 @@ class Cauchy(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -734,7 +734,7 @@ class Laplace(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -794,7 +794,7 @@ class HalfNormal(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -863,7 +863,7 @@ class HalfCauchy(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -936,7 +936,7 @@ class Pareto(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -1032,7 +1032,7 @@ class TruncatedNormal(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,

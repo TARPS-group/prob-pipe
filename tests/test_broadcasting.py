@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import EmpiricalDistribution, MultivariateNormal, Normal, Distribution
+from probpipe import EmpiricalDistribution, MultivariateNormal, Normal, ArrayDistribution
 from probpipe.core.node import WorkflowFunction
 
 

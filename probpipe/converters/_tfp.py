@@ -13,7 +13,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..custom_types import PRNGKey
 from ..distributions.distribution import (
-    Distribution,
+    ArrayDistribution,
     EmpiricalDistribution,
     Provenance,
     _auto_key,
@@ -113,15 +113,15 @@ class TFPConverter(Converter):
         return self._to_tfp
 
     def source_types(self) -> tuple[type, ...]:
-        return (tfd.Distribution, Distribution)
+        return (tfd.Distribution, ArrayDistribution)
 
     def target_types(self) -> tuple[type, ...]:
-        return (Distribution, tfd.Distribution)
+        return (ArrayDistribution, tfd.Distribution)
 
     def check(self, source: Any, target_type: type) -> ConversionInfo:
         # Case 1: TFP -> ProbPipe
-        if isinstance(source, tfd.Distribution) and not isinstance(source, Distribution):
-            if isinstance(target_type, type) and issubclass(target_type, Distribution):
+        if isinstance(source, tfd.Distribution) and not isinstance(source, ArrayDistribution):
+            if isinstance(target_type, type) and issubclass(target_type, ArrayDistribution):
                 src_cls = type(source)
                 if src_cls in self._tfp_map:
                     pp_cls, _ = self._tfp_map[src_cls]
@@ -140,7 +140,7 @@ class TFPConverter(Converter):
                         description=f"TFP {src_cls.__name__} -> ProbPipe -> {target_type.__name__}",
                     )
                 # Unknown TFP type -> sample fallback
-                if issubclass(target_type, (Distribution, EmpiricalDistribution)):
+                if issubclass(target_type, (ArrayDistribution, EmpiricalDistribution)):
                     return ConversionInfo(
                         feasible=True, method=ConversionMethod.SAMPLE,
                         estimated_time=0.2,
@@ -149,7 +149,7 @@ class TFPConverter(Converter):
                     )
 
         # Case 2: ProbPipe -> TFP
-        if isinstance(source, Distribution) and isinstance(target_type, type) and issubclass(target_type, tfd.Distribution):
+        if isinstance(source, ArrayDistribution) and isinstance(target_type, type) and issubclass(target_type, tfd.Distribution):
             src_name = type(source).__name__
             if src_name in self._pp_map:
                 return ConversionInfo(
@@ -163,8 +163,8 @@ class TFPConverter(Converter):
 
     def convert(self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any) -> Any:
         # Case 1: TFP -> ProbPipe
-        if isinstance(source, tfd.Distribution) and not isinstance(source, Distribution):
-            if isinstance(target_type, type) and issubclass(target_type, Distribution):
+        if isinstance(source, tfd.Distribution) and not isinstance(source, ArrayDistribution):
+            if isinstance(target_type, type) and issubclass(target_type, ArrayDistribution):
                 src_cls = type(source)
                 if src_cls in self._tfp_map:
                     pp_cls, extractor = self._tfp_map[src_cls]
@@ -189,7 +189,7 @@ class TFPConverter(Converter):
                 return converter_registry.convert(emp, target_type, key=key, **kwargs)
 
         # Case 2: ProbPipe -> TFP
-        if isinstance(source, Distribution):
+        if isinstance(source, ArrayDistribution):
             src_name = type(source).__name__
             fn = self._pp_map.get(src_name)
             if fn is not None:

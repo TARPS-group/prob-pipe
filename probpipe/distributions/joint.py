@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import math
 
 from ..custom_types import Array, ArrayLike, PRNGKey
-from .distribution import Distribution, EmpiricalDistribution, Provenance, Constraint, real
+from .distribution import ArrayDistribution, EmpiricalDistribution, Provenance, Constraint, real
 
 __all__ = [
     "JointDistribution",
@@ -27,7 +27,7 @@ __all__ = [
 # DistributionView — lightweight reference to a JointDistribution component
 # ---------------------------------------------------------------------------
 
-class DistributionView(Distribution):
+class DistributionView(ArrayDistribution):
     """
     A lightweight reference to a named component of a :class:`JointDistribution`.
 
@@ -68,7 +68,18 @@ class DistributionView(Distribution):
     def support(self) -> Constraint:
         return self._component.support
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+    def _sample(self, key: PRNGKey) -> Array:
+        structured = self._parent.sample_structured(key)
+        return structured[self._component_name]
+
+    def sample(
+        self,
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
+        from .distribution import _auto_key
+        if key is None:
+            key = _auto_key()
         structured = self._parent.sample_structured(key, sample_shape)
         return structured[self._component_name]
 
@@ -102,7 +113,7 @@ class DistributionView(Distribution):
 # ConditionedComponent — a distribution fixed to an observed value
 # ---------------------------------------------------------------------------
 
-class ConditionedComponent(Distribution):
+class ConditionedComponent(ArrayDistribution):
     """
     A distribution whose value is fixed (observed / conditioned on).
 
@@ -111,7 +122,7 @@ class ConditionedComponent(Distribution):
     ``log_prob`` evaluates the base distribution at the conditioned value.
     """
 
-    def __init__(self, base: Distribution, value: ArrayLike, *, name: str | None = None):
+    def __init__(self, base: ArrayDistribution, value: ArrayLike, *, name: str | None = None):
         self._base = base
         self._value = jnp.asarray(value, dtype=jnp.float32)
         self._name = name or getattr(base, "name", None)
@@ -129,7 +140,16 @@ class ConditionedComponent(Distribution):
     def support(self) -> Constraint:
         return self._base.support
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+    def _sample(self, key: PRNGKey) -> Array:
+        return self._value
+
+    def sample(
+        self,
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
+        if sample_shape == ():
+            return self._value
         return jnp.broadcast_to(self._value, sample_shape + self.event_shape)
 
     def log_prob(self, x: ArrayLike) -> Array:
@@ -158,7 +178,7 @@ class ConditionedComponent(Distribution):
 # JointDistribution — base class for named multi-component distributions
 # ---------------------------------------------------------------------------
 
-class JointDistribution(Distribution):
+class JointDistribution(ArrayDistribution):
     """
     Base class for named multi-component distributions.
 
@@ -172,13 +192,13 @@ class JointDistribution(Distribution):
     ``total_dim = sum(prod(c.event_shape) for c in components)``.
     """
 
-    def __init__(self, *, name: str | None = None, **components: Distribution):
+    def __init__(self, *, name: str | None = None, **components: ArrayDistribution):
         if not components:
             raise ValueError("JointDistribution requires at least one component.")
         for k, v in components.items():
-            if not isinstance(v, Distribution):
+            if not isinstance(v, ArrayDistribution):
                 raise TypeError(
-                    f"Component '{k}' must be a Distribution, got {type(v).__name__}"
+                    f"Component '{k}' must be an ArrayDistribution, got {type(v).__name__}"
                 )
         self._components = dict(components)
         self._name = name
@@ -196,7 +216,7 @@ class JointDistribution(Distribution):
         self._total_dim = offset
 
     @classmethod
-    def from_distributions(cls, distributions: list[Distribution], **kwargs):
+    def from_distributions(cls, distributions: list[ArrayDistribution], **kwargs):
         """
         Construct from a list of named distributions.
 
@@ -218,7 +238,7 @@ class JointDistribution(Distribution):
     # -- Properties --------------------------------------------------------
 
     @property
-    def components(self) -> dict[str, Distribution]:
+    def components(self) -> dict[str, ArrayDistribution]:
         return MappingProxyType(self._components)
 
     @property
@@ -290,7 +310,7 @@ class JointDistribution(Distribution):
         from .distribution import _auto_key
         if key is None:
             key = _auto_key()
-        flat = self._sample(key, sample_shape)
+        flat = self.sample(key, sample_shape)
         return self.unflatten(flat)
 
     # -- Conditioning ------------------------------------------------------
@@ -364,17 +384,38 @@ class ProductDistribution(JointDistribution):
     ``log_prob`` is the sum of component log-probs.
     """
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+    def _sample(self, key: PRNGKey) -> Array:
+        keys = jax.random.split(key, len(self._components))
+        parts = []
+        for subkey, (cname, cdist) in zip(keys, self._components.items()):
+            s = cdist.sample(subkey)
+            # Flatten event dims to (dim_i,)
+            if cdist.event_shape:
+                parts.append(s.reshape(-1))
+            else:
+                parts.append(s[None])  # scalar → (1,)
+        return jnp.concatenate(parts, axis=-1)
+
+    def sample(
+        self,
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
+        """Draw samples using efficient per-component batched sampling."""
+        from .distribution import _auto_key
+        if key is None:
+            key = _auto_key()
+        if sample_shape == ():
+            return self._sample(key)
         keys = jax.random.split(key, len(self._components))
         parts = []
         for subkey, (cname, cdist) in zip(keys, self._components.items()):
             s = cdist.sample(subkey, sample_shape)
-            # Flatten event dims to (..., dim_i)
             if cdist.event_shape:
                 flat_shape = s.shape[:len(sample_shape)] + (-1,)
                 parts.append(s.reshape(flat_shape))
             else:
-                parts.append(s[..., None])  # scalar → (..., 1)
+                parts.append(s[..., None])
         return jnp.concatenate(parts, axis=-1)
 
     def sample_structured(
@@ -453,12 +494,12 @@ class SequentialJointDistribution(JointDistribution):
         self,
         *,
         name: str | None = None,
-        **components: Distribution | Callable[..., Distribution],
+        **components: ArrayDistribution | Callable[..., ArrayDistribution],
     ):
         if not components:
             raise ValueError("SequentialJointDistribution requires at least one component.")
 
-        self._raw_components: dict[str, Distribution | Callable] = dict(components)
+        self._raw_components: dict[str, ArrayDistribution | Callable] = dict(components)
         self._name = name
         self._conditioned_names: frozenset[str] = frozenset()
         self._conditioned_values: dict[str, Array] = {}
@@ -469,7 +510,7 @@ class SequentialJointDistribution(JointDistribution):
         # Validate ordering: callable args must reference earlier names
         seen: list[str] = []
         for cname, comp in self._raw_components.items():
-            if callable(comp) and not isinstance(comp, Distribution):
+            if callable(comp) and not isinstance(comp, ArrayDistribution):
                 params = list(inspect.signature(comp).parameters.keys())
                 for p in params:
                     if p not in seen:
@@ -485,11 +526,11 @@ class SequentialJointDistribution(JointDistribution):
         # and compute event shapes / slices
         proto_key = jax.random.PRNGKey(0)
         proto_structured = self._sample_sequential(proto_key, ())
-        self._proto_components: dict[str, Distribution] = {}
+        self._proto_components: dict[str, ArrayDistribution] = {}
 
-        resolved: dict[str, Distribution] = {}
+        resolved: dict[str, ArrayDistribution] = {}
         for cname, comp in self._raw_components.items():
-            if isinstance(comp, Distribution):
+            if isinstance(comp, ArrayDistribution):
                 resolved[cname] = comp
             else:
                 # Resolve the callable with zero-valued parents to get shape info
@@ -571,7 +612,7 @@ class SequentialJointDistribution(JointDistribution):
                 # Conditioned component: broadcast fixed value to sample_shape
                 val = self._conditioned_values[cname]
                 sampled[cname] = jnp.broadcast_to(val, sample_shape + val.shape)
-            elif isinstance(comp, Distribution):
+            elif isinstance(comp, ArrayDistribution):
                 # Root distribution: sample with sample_shape
                 sampled[cname] = comp.sample(subkey, sample_shape)
             else:
@@ -585,7 +626,20 @@ class SequentialJointDistribution(JointDistribution):
 
         return sampled
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+    def _sample(self, key: PRNGKey) -> Array:
+        structured = self._sample_sequential(key, ())
+        return self.flatten_structured(structured)
+
+    def sample(
+        self,
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
+        from .distribution import _auto_key
+        if key is None:
+            key = _auto_key()
+        if sample_shape == ():
+            return self._sample(key)
         structured = self._sample_sequential(key, sample_shape)
         return self.flatten_structured(structured)
 
@@ -626,7 +680,7 @@ class SequentialJointDistribution(JointDistribution):
             if components == "unconditioned" and cname in self._conditioned_names:
                 continue
             val = structured[cname]
-            if isinstance(comp, Distribution):
+            if isinstance(comp, ArrayDistribution):
                 total = total + comp.log_prob(val)
             else:
                 sig = inspect.signature(comp)
@@ -770,7 +824,7 @@ class SequentialJointDistribution(JointDistribution):
     def __repr__(self) -> str:
         parts = []
         for k, v in self._raw_components.items():
-            if isinstance(v, Distribution):
+            if isinstance(v, ArrayDistribution):
                 parts.append(f"{k}={type(v).__name__}")
             else:
                 parts.append(f"{k}=<callable>")
@@ -904,7 +958,20 @@ class JointEmpirical(JointDistribution):
             self._weights_cache = jax.nn.softmax(self._log_weights)
         return self._weights_cache
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+    def _sample(self, key: PRNGKey) -> Array:
+        structured = self._sample_joint_rows(key, ())
+        return self.flatten_structured(structured)
+
+    def sample(
+        self,
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
+        from .distribution import _auto_key
+        if key is None:
+            key = _auto_key()
+        if sample_shape == ():
+            return self._sample(key)
         structured = self._sample_joint_rows(key, sample_shape)
         return self.flatten_structured(structured)
 
@@ -1067,8 +1134,20 @@ class JointGaussian(JointDistribution):
         """Full covariance matrix."""
         return self._cov_mat
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+    def _sample(self, key: PRNGKey) -> Array:
         from .multivariate import MultivariateNormal as MVN
+        full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
+        return full_mvn.sample(key)
+
+    def sample(
+        self,
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
+        from .distribution import _auto_key
+        from .multivariate import MultivariateNormal as MVN
+        if key is None:
+            key = _auto_key()
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
         return full_mvn.sample(key, sample_shape)
 
@@ -1078,7 +1157,7 @@ class JointGaussian(JointDistribution):
         from .distribution import _auto_key
         if key is None:
             key = _auto_key()
-        flat = self._sample(key, sample_shape)
+        flat = self.sample(key, sample_shape)
         return self.unflatten(flat)
 
     def log_prob(self, x: ArrayLike) -> Array:

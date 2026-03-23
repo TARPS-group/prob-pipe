@@ -1,6 +1,7 @@
 from .distribution import (
     Constraint,
     Distribution,
+    ArrayDistribution,
     TFPDistribution,
     EmpiricalDistribution,
     Provenance,
@@ -68,6 +69,7 @@ from .multivariate import (
 __all__ = [
     # Base classes
     "Distribution",
+    "ArrayDistribution",
     "TFPDistribution",
     "EmpiricalDistribution",
     "Provenance",

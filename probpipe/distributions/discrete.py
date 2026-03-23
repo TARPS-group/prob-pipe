@@ -12,7 +12,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .distribution import (
     TFPDistribution,
-    Distribution,
+    ArrayDistribution,
     EmpiricalDistribution,
     Provenance,
     Constraint,
@@ -107,7 +107,7 @@ class Bernoulli(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -218,7 +218,7 @@ class Binomial(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -302,7 +302,7 @@ class Poisson(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -400,7 +400,7 @@ class Categorical(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -499,7 +499,7 @@ class NegativeBinomial(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,

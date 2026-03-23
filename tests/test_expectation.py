@@ -8,7 +8,7 @@ import pytest
 
 import probpipe.distributions.distribution as dist_mod
 from probpipe import (
-    Distribution,
+    ArrayDistribution,
     EmpiricalDistribution,
     BootstrapDistribution,
     Normal,

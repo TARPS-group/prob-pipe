@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    Distribution,
+    ArrayDistribution,
     TFPDistribution,
     EmpiricalDistribution,
     Provenance,
@@ -433,17 +433,17 @@ class TestProvenance:
 
 
 # ---------------------------------------------------------------------------
-# Distribution ABC
+# ArrayDistribution ABC
 # ---------------------------------------------------------------------------
 
 
 class TestDistributionABC:
     def test_cannot_instantiate(self):
         with pytest.raises(TypeError):
-            Distribution()
+            ArrayDistribution()
 
     def test_no_condition_on_method(self, gaussian):
-        """condition_on() is only on JointDistribution, not Distribution ABC."""
+        """condition_on() is only on JointDistribution, not ArrayDistribution ABC."""
         assert not hasattr(gaussian, "condition_on")
 
     def test_default_batch_shape(self, gaussian):
@@ -462,12 +462,12 @@ class TestDistributionABC:
 
     def test_mean_mc_fallback(self):
         """Subclasses without explicit mean() use MC fallback."""
-        class MinimalDist(Distribution):
+        class MinimalDist(ArrayDistribution):
             @property
             def event_shape(self):
                 return (1,)
-            def _sample(self, key, sample_shape=()):
-                return jnp.zeros(sample_shape + (1,))
+            def _sample(self, key):
+                return jnp.zeros((1,))
             def log_prob(self, x):
                 return jnp.zeros(())
         d = MinimalDist()
@@ -477,12 +477,12 @@ class TestDistributionABC:
         assert isinstance(result, BootstrapDistribution) or isinstance(result, jnp.ndarray)
 
     def test_variance_mc_fallback(self):
-        class MinimalDist(Distribution):
+        class MinimalDist(ArrayDistribution):
             @property
             def event_shape(self):
                 return (1,)
-            def _sample(self, key, sample_shape=()):
-                return jnp.zeros(sample_shape + (1,))
+            def _sample(self, key):
+                return jnp.zeros((1,))
             def log_prob(self, x):
                 return jnp.zeros(())
         d = MinimalDist()
@@ -492,7 +492,7 @@ class TestDistributionABC:
 
     def test_from_distribution_raises_for_invalid_input(self):
         with pytest.raises(TypeError):
-            Distribution.from_distribution(None)
+            ArrayDistribution.from_distribution(None)
 
     def test_source_default_none(self, gaussian):
         g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
@@ -523,7 +523,7 @@ class TestDistributionABC:
 class TestTFPDistribution:
     def test_gaussian_is_tfp_distribution(self, gaussian):
         assert isinstance(gaussian, TFPDistribution)
-        assert isinstance(gaussian, Distribution)
+        assert isinstance(gaussian, ArrayDistribution)
 
     def test_tfp_dist_accessible(self, gaussian):
         assert hasattr(gaussian, "_tfp_dist")
