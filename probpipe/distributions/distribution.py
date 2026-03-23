@@ -613,9 +613,7 @@ class ArrayDistribution(Distribution[Array]):
     * ``sample(key, sample_shape)`` returns an array of shape
       ``sample_shape + batch_shape + event_shape``.
 
-    This is the renamed version of the original ``Distribution`` class.
-    All existing concrete distributions (Normal, Gamma, MVN, etc.)
-    inherit from this class.
+    Standard distributions (Normal, Gamma, Poisson, etc.) inherit from this class.
     """
 
     # -- shape properties ---------------------------------------------------
