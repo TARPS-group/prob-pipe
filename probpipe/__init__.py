@@ -96,6 +96,11 @@ from probpipe.surrogate import (
     GaussianEmulator,
     LinCombGaussianWeights,
     LinearGaussianRegressor,
+from probpipe.converters import (
+    converter_registry,
+    ConversionInfo,
+    ConversionMethod,
+    Converter,
 )
 
 __all__ = [
@@ -167,4 +172,9 @@ __all__ = [
     "GaussianEmulator",
     "LinCombGaussianWeights",
     "LinearGaussianRegressor",
+    # Converters
+    "converter_registry",
+    "ConversionInfo",
+    "ConversionMethod",
+    "Converter",
 ]

@@ -539,7 +539,9 @@ class StudentT(TFPDistribution):
         samples = other.sample(key, sample_shape=(num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
-        result = cls(df=5.0, loc=m, scale=jnp.sqrt(v), name=name or other.name)
+        # var = scale^2 * df/(df-2) for df>2, so scale = sqrt(var * (df-2)/df)
+        df = 5.0
+        result = cls(df=df, loc=m, scale=jnp.sqrt(v * (df - 2.0) / df), name=name or other.name)
         result.with_source(Provenance("from_distribution", parents=(other,)))
         return result
 
@@ -806,7 +808,7 @@ class HalfNormal(TFPDistribution):
         samples = other.sample(key, sample_shape=(num_samples,))
         v = jnp.var(samples)
         # var = scale^2 * (1 - 2/pi), so scale = sqrt(var / (1 - 2/pi))
-        scale = jnp.sqrt(2.0 * v / (1.0 - 2.0 / jnp.pi))
+        scale = jnp.sqrt(v / (1.0 - 2.0 / jnp.pi))
         result = cls(scale=scale, name=name or other.name)
         result.with_source(Provenance("from_distribution", parents=(other,)))
         return result

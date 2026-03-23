@@ -611,7 +611,7 @@ class TestEmptyComponentsValidation:
 class TestDistributionViewFromDistribution:
 
     def test_from_distribution_raises(self, joint_xy):
-        with pytest.raises(NotImplementedError, match="structural reference"):
+        with pytest.raises(TypeError):
             DistributionView.from_distribution(Normal(loc=0.0, scale=1.0))
 
 

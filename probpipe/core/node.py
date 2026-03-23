@@ -23,8 +23,7 @@ except ImportError:
 from ..custom_types import PRNGKey, Array
 from ..distributions.distribution import Distribution, EmpiricalDistribution, Provenance
 from ..distributions.joint import DistributionView
-from ..distributions.multivariate import MultivariateNormal
-DISTRIBUTION_TYPES = (Distribution, EmpiricalDistribution, MultivariateNormal)
+from ..converters import converter_registry
 
 logger = logging.getLogger(__name__)
 
@@ -317,10 +316,10 @@ class WorkflowFunction(Node):
 
             if (
                 is_dist_subclass
-                and isinstance(value, DISTRIBUTION_TYPES)
+                and converter_registry.is_distribution_type(value)
                 and not isinstance(value, expected)
             ):
-                out[name] = expected.from_distribution(value)
+                out[name] = converter_registry.convert(value, expected)
 
         return out
 
@@ -331,8 +330,12 @@ class WorkflowFunction(Node):
         """
         broadcast = []
         for name, value in values.items():
-            if not isinstance(value, Distribution):
+            if not converter_registry.is_distribution_type(value):
                 continue
+            # Auto-convert external distribution types to ProbPipe
+            if not isinstance(value, Distribution):
+                values[name] = converter_registry.convert(value, Distribution)
+                value = values[name]
             expected = self._hints.get(name)
             # If hint IS a Distribution subclass, _convert_distributions handled it
             try:
