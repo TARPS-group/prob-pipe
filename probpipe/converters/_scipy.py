@@ -136,19 +136,19 @@ class ScipyConverter(Converter):
                     if target_type is pp_cls or issubclass(pp_cls, target_type):
                         return ConversionInfo(
                             feasible=True, method=ConversionMethod.EXACT,
-                            estimated_error=0.0, cost=0.01,
+                            estimated_time=0.0,
                             source_type=type(source), target_type=target_type,
                             description=f"Extract parameters from scipy {dist_cls.__name__}",
                         )
                     return ConversionInfo(
                         feasible=True, method=ConversionMethod.MOMENT_MATCH,
-                        estimated_error=0.1, cost=0.3,
+                        estimated_time=0.1,
                         source_type=type(source), target_type=target_type,
                     )
                 # Unknown scipy dist -> sample
                 return ConversionInfo(
                     feasible=True, method=ConversionMethod.SAMPLE,
-                    estimated_error=0.2, cost=0.5,
+                    estimated_time=0.2,
                     source_type=type(source), target_type=target_type,
                     description="Sample from scipy distribution",
                 )
@@ -160,7 +160,7 @@ class ScipyConverter(Converter):
                 if src_name in self._pp_map:
                     return ConversionInfo(
                         feasible=True, method=ConversionMethod.EXACT,
-                        estimated_error=0.0, cost=0.01,
+                        estimated_time=0.0,
                         source_type=type(source), target_type=target_type,
                     )
 

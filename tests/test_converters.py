@@ -62,7 +62,7 @@ class TestProbPipeConverter:
         n = Normal(loc=2.0, scale=0.5)
         info = converter_registry.check(n, Normal)
         assert info.method == ConversionMethod.EXACT
-        assert info.estimated_error == 0.0
+        assert info.estimated_time == 0.0
 
         result = converter_registry.convert(n, Normal)
         assert isinstance(result, Normal)
@@ -566,6 +566,38 @@ class TestFromDistributionDelegation:
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
+
+class TestBootstrapMetadata:
+    """Verify bootstrap distributions are stored in provenance metadata."""
+
+    def test_moment_match_has_bootstrap_metadata(self):
+        """Cross-family conversion stores mean/var bootstrap in provenance."""
+        g = Gamma(concentration=9.0, rate=1.0)
+        result = converter_registry.convert(g, Normal, num_samples=500)
+        assert result.source is not None
+        meta = result.source.metadata
+        assert "mean_bootstrap" in meta
+        assert "var_bootstrap" in meta
+        from probpipe import BootstrapDistribution
+        assert isinstance(meta["mean_bootstrap"], BootstrapDistribution)
+        assert isinstance(meta["var_bootstrap"], BootstrapDistribution)
+
+    def test_same_class_no_bootstrap_metadata(self):
+        """Same-class conversion returns source directly, no provenance."""
+        n = Normal(loc=2.0, scale=0.5)
+        result = converter_registry.convert(n, Normal)
+        assert result is n  # same object, no conversion
+        # No provenance was added
+        assert result.source is None or "mean_bootstrap" not in (result.source.metadata or {})
+
+    def test_exponential_has_mean_bootstrap_only(self):
+        """Exponential uses only mean, so only mean_bootstrap in metadata."""
+        g = Gamma(concentration=9.0, rate=1.0)
+        result = converter_registry.convert(g, Exponential, check_support=False)
+        meta = result.source.metadata
+        assert "mean_bootstrap" in meta
+        # var_bootstrap may or may not be present (exponential only uses mean)
+
 
 class TestEdgeCases:
 

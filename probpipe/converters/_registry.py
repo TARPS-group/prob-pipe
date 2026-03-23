@@ -28,8 +28,7 @@ class ConversionInfo:
 
     feasible: bool
     method: ConversionMethod | None = None
-    estimated_error: float = 0.0
-    cost: float = 0.0
+    estimated_time: float = 0.0
     source_type: type | None = None
     target_type: type | None = None
     description: str = ""
