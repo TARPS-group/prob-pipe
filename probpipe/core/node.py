@@ -21,7 +21,7 @@ except ImportError:
     Digraph = None
 
 from ..custom_types import PRNGKey, Array
-from ..distributions.distribution import Distribution, EmpiricalDistribution, Provenance
+from ..distributions.distribution import ArrayDistribution, EmpiricalDistribution, Provenance
 from ..distributions.joint import DistributionView
 from ..converters import converter_registry
 
@@ -309,7 +309,7 @@ class WorkflowFunction(Node):
 
             try:
                 is_dist_subclass = isinstance(expected, type) and issubclass(
-                    expected, Distribution
+                    expected, ArrayDistribution
                 )
             except TypeError:
                 is_dist_subclass = False
@@ -333,13 +333,13 @@ class WorkflowFunction(Node):
             if not converter_registry.is_distribution_type(value):
                 continue
             # Auto-convert external distribution types to ProbPipe
-            if not isinstance(value, Distribution):
-                values[name] = converter_registry.convert(value, Distribution)
+            if not isinstance(value, ArrayDistribution):
+                values[name] = converter_registry.convert(value, ArrayDistribution)
                 value = values[name]
             expected = self._hints.get(name)
             # If hint IS a Distribution subclass, _convert_distributions handled it
             try:
-                is_dist_hint = expected is not None and isinstance(expected, type) and issubclass(expected, Distribution)
+                is_dist_hint = expected is not None and isinstance(expected, type) and issubclass(expected, ArrayDistribution)
             except TypeError:
                 is_dist_hint = False
             if is_dist_hint:
@@ -434,7 +434,7 @@ class WorkflowFunction(Node):
             # Loop vectorization: supports empirical enumeration
             # Collect candidate empirical dists (small enough individually), sorted smallest first
             candidates = []
-            sample_args: Dict[str, Distribution] = {}
+            sample_args: Dict[str, ArrayDistribution] = {}
             for name in broadcast_args:
                 dist = values[name]
                 if isinstance(dist, EmpiricalDistribution) and dist.n <= n_broadcast_samples:
@@ -466,7 +466,7 @@ class WorkflowFunction(Node):
         if isinstance(result, EmpiricalDistribution):
             parents = tuple(
                 values[name] for name in broadcast_args
-                if isinstance(values[name], Distribution)
+                if isinstance(values[name], ArrayDistribution)
             )
             result.with_source(Provenance(
                 "broadcast",
@@ -580,7 +580,7 @@ class WorkflowFunction(Node):
         self,
         values: Dict[str, Any],
         empirical_args: Dict[str, EmpiricalDistribution],
-        sample_args: Dict[str, Distribution],
+        sample_args: Dict[str, ArrayDistribution],
         product_size: int,
         n_broadcast_samples: int,
     ) -> EmpiricalDistribution | list:

@@ -12,7 +12,7 @@ from probpipe import (
     ConditionedComponent,
     JointDistribution,
     EmpiricalDistribution,
-    Distribution,
+    ArrayDistribution,
 )
 from probpipe.core.node import WorkflowFunction
 

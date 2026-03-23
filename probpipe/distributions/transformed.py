@@ -11,7 +11,7 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .distribution import (
-    Distribution,
+    ArrayDistribution,
     TFPDistribution,
     Constraint,
     Provenance,
@@ -33,7 +33,7 @@ _BIJECTOR_SUPPORT_MAP: dict[str, Constraint] = {
 }
 
 
-class TransformedDistribution(Distribution):
+class TransformedDistribution(ArrayDistribution):
     """
     Distribution formed by applying a TFP bijector to a base distribution.
 
@@ -55,7 +55,7 @@ class TransformedDistribution(Distribution):
 
     def __init__(
         self,
-        base: Distribution,
+        base: ArrayDistribution,
         bijector: tfb.Bijector,
         *,
         name: str | None = None,
@@ -83,7 +83,7 @@ class TransformedDistribution(Distribution):
     # -- convenient accessors -----------------------------------------------
 
     @property
-    def base(self) -> Distribution:
+    def base(self) -> ArrayDistribution:
         """The untransformed base distribution."""
         return self._base
 
@@ -133,7 +133,22 @@ class TransformedDistribution(Distribution):
 
     # -- sampling & density -------------------------------------------------
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+    def _sample(self, key: PRNGKey) -> Array:
+        """Draw a single sample by transforming a base sample."""
+        if self._tfp_transformed is not None:
+            return self._tfp_transformed.sample(seed=key)
+        raw = self._base.sample(key)
+        return self._bijector.forward(raw)
+
+    def sample(
+        self,
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
+        """Draw samples, delegating to TFP when available for efficiency."""
+        if key is None:
+            from .distribution import _auto_key
+            key = _auto_key()
         if self._tfp_transformed is not None:
             return self._tfp_transformed.sample(seed=key, sample_shape=sample_shape)
         raw = self._base.sample(key, sample_shape)

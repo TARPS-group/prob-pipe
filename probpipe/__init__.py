@@ -27,6 +27,7 @@ _warnings.filterwarnings(
 from probpipe.distributions import (
     # Base classes
     Distribution,
+    ArrayDistribution,
     TFPDistribution,
     EmpiricalDistribution,
     Provenance,
@@ -96,6 +97,7 @@ from probpipe.surrogate import (
     GaussianEmulator,
     LinCombGaussianWeights,
     LinearGaussianRegressor,
+)
 from probpipe.converters import (
     converter_registry,
     ConversionInfo,
@@ -106,6 +108,7 @@ from probpipe.converters import (
 __all__ = [
     # Base classes
     "Distribution",
+    "ArrayDistribution",
     "TFPDistribution",
     "EmpiricalDistribution",
     "Provenance",

@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe.distributions import (
-    Distribution,
+    ArrayDistribution,
     Normal,
     Beta,
     Gamma,
@@ -69,7 +69,7 @@ def continuous_dist(request):
 
 class TestContinuousGeneric:
     def test_is_distribution(self, continuous_dist):
-        assert isinstance(continuous_dist, Distribution)
+        assert isinstance(continuous_dist, ArrayDistribution)
 
     def test_event_shape(self, continuous_dist):
         assert isinstance(continuous_dist.event_shape, tuple)

@@ -24,7 +24,7 @@ from ..custom_types import PRNGKey
 # Default sample count for moment-matching conversions
 DEFAULT_NUM_SAMPLES = 1024
 from ..distributions.distribution import (
-    Distribution,
+    ArrayDistribution,
     EmpiricalDistribution,
     Provenance,
     _auto_key,
@@ -66,7 +66,7 @@ def _point_estimate(x):
 # Per-target conversion functions
 #
 # Each function has signature:
-#   (source, key, **kwargs) -> Distribution
+#   (source, key, **kwargs) -> ArrayDistribution
 # ---------------------------------------------------------------------------
 
 def _convert_to_normal(source, key, **kw):
@@ -495,15 +495,15 @@ class ProbPipeConverter(Converter):
         return self._dispatch
 
     def source_types(self) -> tuple[type, ...]:
-        return (Distribution,)
+        return (ArrayDistribution,)
 
     def target_types(self) -> tuple[type, ...]:
-        return (Distribution,)
+        return (ArrayDistribution,)
 
     def check(self, source: Any, target_type: type) -> ConversionInfo:
-        if not isinstance(source, Distribution):
+        if not isinstance(source, ArrayDistribution):
             return ConversionInfo(feasible=False)
-        if not (isinstance(target_type, type) and issubclass(target_type, Distribution)):
+        if not (isinstance(target_type, type) and issubclass(target_type, ArrayDistribution)):
             return ConversionInfo(feasible=False)
 
         target_name = target_type.__name__
@@ -540,7 +540,7 @@ class ProbPipeConverter(Converter):
             description=f"Moment-match {type(source).__name__} -> {target_name}{support_note}",
         )
 
-    def convert(self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any) -> Distribution:
+    def convert(self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any) -> ArrayDistribution:
         if key is None:
             key = _auto_key()
         target_name = target_type.__name__

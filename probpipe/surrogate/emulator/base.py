@@ -14,7 +14,7 @@ from collections.abc import Callable
 import jax.numpy as jnp
 
 from ...custom_types import Array, ArrayLike, PRNGKey
-from ...distributions import Distribution
+from ...distributions import ArrayDistribution
 
 
 def _prod(shape: tuple[int, ...]) -> int:
@@ -91,7 +91,7 @@ class Emulator(ABC):
         *,
         joint_inputs: bool = False,
         joint_outputs: bool = False,
-    ) -> Distribution:
+    ) -> ArrayDistribution:
         """Return a predictive distribution over outputs at input points *X*.
 
         This method validates inputs, parses shapes, and delegates to the
@@ -115,7 +115,7 @@ class Emulator(ABC):
 
         Returns
         -------
-        Distribution
+        ArrayDistribution
             A distribution whose ``batch_shape`` and ``event_shape`` follow
             the shape table in the class docstring.
 
@@ -141,7 +141,7 @@ class Emulator(ABC):
         *,
         joint_inputs: bool = False,
         joint_outputs: bool = False,
-    ) -> Distribution:
+    ) -> ArrayDistribution:
         """Subclass implementation of prediction.
 
         When this method is called, ``X`` has already been validated and
@@ -161,7 +161,7 @@ class Emulator(ABC):
 
         Returns
         -------
-        Distribution
+        ArrayDistribution
         """
         ...
 

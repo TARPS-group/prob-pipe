@@ -8,7 +8,7 @@ import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from probpipe.distributions import (
-    Distribution,
+    ArrayDistribution,
     TransformedDistribution,
     Normal,
     MultivariateNormal,
@@ -209,7 +209,7 @@ class TestNameAndRepr:
 
     def test_is_distribution(self):
         td = TransformedDistribution(Normal(0.0, 1.0), tfb.Exp())
-        assert isinstance(td, Distribution)
+        assert isinstance(td, ArrayDistribution)
 
     def test_dtype(self):
         td = TransformedDistribution(Normal(0.0, 1.0), tfb.Exp())
