@@ -102,7 +102,31 @@ conc.source.to_dict()         # {'operation': 'broadcast',
                               #  'metadata': {'vectorize': 'jax', ...}}
 ```
 
-### 6. Differentiate through distributions
+### 6. Interoperate with TFP and scipy
+
+The converter registry handles automatic bidirectional conversion between ProbPipe, raw TFP, and scipy.stats distributions. Workflows accept any recognized distribution type as input:
+
+```python
+from probpipe import converter_registry
+import tensorflow_probability.substrates.jax.distributions as tfd
+import scipy.stats as ss
+
+# Raw TFP and scipy distributions work directly in workflows
+conc_from_tfp = wf(half_life=tfd.Normal(loc=4.0, scale=0.5))
+conc_from_scipy = wf(half_life=ss.norm(loc=4.0, scale=0.5))
+
+# Inspect a conversion before performing it
+info = converter_registry.check(tfd.Normal(loc=4.0, scale=0.5), Normal)
+info.method   # ConversionMethod.EXACT
+info.cost     # 0.01
+
+# Convert ProbPipe distributions to scipy for use with scipy tools
+from scipy.stats._distn_infrastructure import rv_frozen
+sp = converter_registry.convert(half_life, rv_frozen)
+sp.ppf(0.975)  # 95th percentile via scipy
+```
+
+### 7. Differentiate through distributions
 
 Since everything is built on JAX, you can compute gradients of distribution operations -- useful for sensitivity analysis, MLE, and variational inference:
 

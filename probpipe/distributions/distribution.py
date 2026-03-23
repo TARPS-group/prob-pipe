@@ -601,6 +601,10 @@ class Distribution(ABC):
     ) -> Distribution:
         """Convert *other* into an instance of *cls*.
 
+        Delegates to the global converter registry.  See
+        :mod:`probpipe.converters` for details on how conversions are
+        resolved.
+
         Parameters
         ----------
         other : Distribution
@@ -624,32 +628,9 @@ class Distribution(ABC):
             * ``name`` (str | None) — name for the resulting
               distribution; defaults to ``other.name``.
         """
-        if key is None:
-            key = _auto_key()
-        if check_support:
-            cls._check_support_compatible(other)
-        result = cls._from_distribution(other, key=key, **kwargs)
-        # If the source is approximate or the conversion used sampling
-        # (different class), mark the result as approximate
-        if other.is_approximate or not isinstance(other, cls):
-            result._approximate = True
-        return result
-
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: Distribution,
-        *,
-        key: PRNGKey,
-        **kwargs: Any,
-    ) -> Distribution:
-        """Subclass hook for conversion logic.
-
-        Called by :meth:`from_distribution` after key generation and
-        support checking.  *key* is guaranteed to be a valid PRNGKey.
-        """
-        raise NotImplementedError(
-            f"{cls.__name__}.from_distribution() is not implemented."
+        from ..converters import converter_registry
+        return converter_registry.convert(
+            other, cls, key=key, check_support=check_support, **kwargs
         )
 
     @classmethod

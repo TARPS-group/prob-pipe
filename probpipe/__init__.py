@@ -91,6 +91,12 @@ from probpipe.distributions import (
 )
 from probpipe.core.node import WorkflowFunction, Module, wf
 from probpipe.provenance import provenance_ancestors, provenance_dag
+from probpipe.converters import (
+    converter_registry,
+    ConversionInfo,
+    ConversionMethod,
+    Converter,
+)
 
 __all__ = [
     # Base classes
@@ -156,4 +162,9 @@ __all__ = [
     # Provenance
     "provenance_ancestors",
     "provenance_dag",
+    # Converters
+    "converter_registry",
+    "ConversionInfo",
+    "ConversionMethod",
+    "Converter",
 ]

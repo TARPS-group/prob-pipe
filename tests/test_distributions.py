@@ -490,8 +490,8 @@ class TestDistributionABC:
         from probpipe import BootstrapDistribution
         assert isinstance(result, BootstrapDistribution) or isinstance(result, jnp.ndarray)
 
-    def test_from_distribution_raises_by_default(self):
-        with pytest.raises(NotImplementedError):
+    def test_from_distribution_raises_for_invalid_input(self):
+        with pytest.raises(TypeError):
             Distribution.from_distribution(None)
 
     def test_source_default_none(self, gaussian):

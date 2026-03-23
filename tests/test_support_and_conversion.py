@@ -218,12 +218,18 @@ class TestFromDistribution:
         assert jnp.allclose(d2.concentration, d.concentration)
 
     # -- provenance --
-    def test_from_distribution_provenance(self, key):
+    def test_from_distribution_same_class_returns_source(self, key):
+        """Same-class conversion returns the source object (no-op)."""
         n = Normal(loc=0.0, scale=1.0)
-        n2 = Normal.from_distribution(n, key=key, name="fitted")
-        assert n2.source is not None
-        assert n2.source.operation == "from_distribution"
-        assert n2.name == "fitted"
+        n2 = Normal.from_distribution(n, key=key)
+        assert n2 is n
+
+    def test_from_distribution_cross_class_provenance(self, key):
+        """Cross-class conversion attaches provenance."""
+        g = Gamma(concentration=3.0, rate=1.0)
+        n = Normal.from_distribution(g, key=key, check_support=False)
+        assert n.source is not None
+        assert n.source.operation == "from_distribution"
 
     # -- empirical from anything --
     def test_empirical_from_normal(self, key):
