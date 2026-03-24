@@ -2,12 +2,18 @@
 Core distribution abstractions for ProbPipe.
 
 Provides:
-  - ``Distribution``          – Generic base class parameterized by value type T.
-  - ``ArrayDistribution``     – Distribution over arrays with TFP shape semantics.
-  - ``TFPDistribution``       – Mixin that delegates to an internal ``tfd.*`` instance.
-  - ``EmpiricalDistribution`` – Weighted set of samples.
-  - ``BootstrapDistribution`` – MC error tracking via bootstrap resampling.
-  - ``Provenance``            – Lightweight lineage tracker.
+  - ``Distribution``                – Generic base class parameterized by value type T.
+  - ``PyTreeArrayDistribution``     – Pytree-of-arrays layer with batch/event shape
+                                      semantics, flatten/unflatten, and flat-view interop.
+  - ``ArrayDistribution``           – Single-array specialization (T = Array) with TFP
+                                      shape conventions. All standard distributions
+                                      (Normal, Gamma, MVN, ...) inherit from this.
+  - ``FlattenedView``               – Wraps any ``PyTreeArrayDistribution`` as a flat
+                                      ``ArrayDistribution`` for algorithm interoperability.
+  - ``TFPDistribution``             – Mixin that delegates to an internal ``tfd.*`` instance.
+  - ``EmpiricalDistribution``       – Weighted set of samples.
+  - ``BootstrapDistribution``       – MC error tracking via bootstrap resampling.
+  - ``Provenance``                  – Lightweight lineage tracker.
 """
 
 from __future__ import annotations
