@@ -11,6 +11,7 @@ from probpipe import (
     EmpiricalDistribution,
     JointDistribution,
 )
+from probpipe.distributions.distribution import PyTreeArrayDistribution
 from probpipe.core.node import WorkflowFunction
 
 
@@ -27,6 +28,7 @@ class TestConstruction:
         )
         assert isinstance(je, JointEmpirical)
         assert isinstance(je, JointDistribution)
+        assert isinstance(je, PyTreeArrayDistribution)
 
     def test_component_names(self):
         je = JointEmpirical(
@@ -42,13 +44,13 @@ class TestConstruction:
         )
         assert je.n == 3
 
-    def test_event_shape(self):
+    def test_event_shapes(self):
         je = JointEmpirical(
-            x=jnp.array([1.0, 2.0]),  # scalar → dim 1
-            y=jnp.array([[1.0, 2.0], [3.0, 4.0]]),  # dim 2
+            x=jnp.array([1.0, 2.0]),  # scalar → event_shape ()
+            y=jnp.array([[1.0, 2.0], [3.0, 4.0]]),  # event_shape (2,)
         )
-        # total_dim = 1 + 2 = 3
-        assert je.event_shape == (3,)
+        assert je.event_shapes == {"x": (), "y": (2,)}
+        assert je.event_size == 3  # 1 + 2
 
     def test_raises_on_mismatched_n(self):
         with pytest.raises(ValueError, match="same number of samples"):
@@ -104,25 +106,30 @@ class TestConstruction:
 
 class TestSampling:
 
-    def test_sample_flat_shape(self):
+    def test_sample_returns_dict(self):
         je = JointEmpirical(
             x=jnp.array([1.0, 2.0, 3.0]),
             y=jnp.array([4.0, 5.0, 6.0]),
         )
         key = jax.random.PRNGKey(0)
         s = je.sample(key)
-        assert s.shape == (2,)
+        assert isinstance(s, dict)
+        assert set(s.keys()) == {"x", "y"}
+        assert s["x"].shape == ()
+        assert s["y"].shape == ()
 
-    def test_sample_flat_batch(self):
+    def test_sample_batch(self):
         je = JointEmpirical(
             x=jnp.array([1.0, 2.0, 3.0]),
             y=jnp.array([4.0, 5.0, 6.0]),
         )
         key = jax.random.PRNGKey(1)
         s = je.sample(key, (10,))
-        assert s.shape == (10, 2)
+        assert isinstance(s, dict)
+        assert s["x"].shape == (10,)
+        assert s["y"].shape == (10,)
 
-    def test_sample_structured(self):
+    def test_sample_structured_alias(self):
         je = JointEmpirical(
             x=jnp.array([1.0, 2.0, 3.0]),
             y=jnp.array([4.0, 5.0, 6.0]),
@@ -141,12 +148,10 @@ class TestSampling:
         je = JointEmpirical(x=x, y=y)
 
         key = jax.random.PRNGKey(3)
-        structured = je.sample_structured(key, (100,))
+        s = je.sample(key, (100,))
 
         # For each sample, y should be 10 * x
-        np.testing.assert_allclose(
-            structured["y"], 10.0 * structured["x"], atol=1e-5
-        )
+        np.testing.assert_allclose(s["y"], 10.0 * s["x"], atol=1e-5)
 
     def test_multidimensional_components(self):
         je = JointEmpirical(
@@ -154,9 +159,9 @@ class TestSampling:
             b=jnp.array([10.0, 20.0, 30.0]),
         )
         key = jax.random.PRNGKey(4)
-        structured = je.sample_structured(key, (5,))
-        assert structured["a"].shape == (5, 2)
-        assert structured["b"].shape == (5,)
+        s = je.sample(key, (5,))
+        assert s["a"].shape == (5, 2)
+        assert s["b"].shape == (5,)
 
     def test_weighted_sampling(self):
         """Heavily weighted sample should appear most often."""
@@ -165,9 +170,9 @@ class TestSampling:
             weights=jnp.array([0.01, 0.99]),
         )
         key = jax.random.PRNGKey(5)
-        structured = je.sample_structured(key, (200,))
+        s = je.sample(key, (200,))
         # Most samples should be close to 100
-        assert float(jnp.mean(structured["x"])) > 90.0
+        assert float(jnp.mean(s["x"])) > 90.0
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +220,9 @@ class TestMoments:
             y=jnp.array([10.0, 20.0]),
         )
         m = je.mean()
-        np.testing.assert_allclose(m, jnp.array([2.0, 15.0]), atol=1e-5)
+        assert isinstance(m, dict)
+        np.testing.assert_allclose(m["x"], 2.0, atol=1e-5)
+        np.testing.assert_allclose(m["y"], 15.0, atol=1e-5)
 
     def test_mean_weighted(self):
         je = JointEmpirical(
@@ -223,14 +230,16 @@ class TestMoments:
             weights=jnp.array([0.25, 0.75]),
         )
         m = je.mean()
-        np.testing.assert_allclose(m, jnp.array([7.5]), atol=1e-5)
+        assert isinstance(m, dict)
+        np.testing.assert_allclose(m["x"], 7.5, atol=1e-5)
 
     def test_variance_uniform(self):
         je = JointEmpirical(
             x=jnp.array([0.0, 2.0]),
         )
         v = je.variance()
-        np.testing.assert_allclose(v, jnp.array([1.0]), atol=1e-5)
+        assert isinstance(v, dict)
+        np.testing.assert_allclose(v["x"], 1.0, atol=1e-5)
 
     def test_log_prob_finite(self):
         je = JointEmpirical(
@@ -241,6 +250,26 @@ class TestMoments:
         s = je.sample(key)
         lp = je.log_prob(s)
         assert jnp.isfinite(lp)
+
+
+# ---------------------------------------------------------------------------
+# Flatten / Unflatten
+# ---------------------------------------------------------------------------
+
+class TestFlattenUnflatten:
+
+    def test_flatten_roundtrip(self):
+        je = JointEmpirical(
+            a=jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]),
+            b=jnp.array([10.0, 20.0, 30.0]),
+        )
+        key = jax.random.PRNGKey(30)
+        s = je.sample(key, (5,))
+        flat = je.flatten_value(s)
+        assert flat.shape == (5, 3)  # 2 + 1 = 3
+        unflat = je.unflatten_value(flat)
+        np.testing.assert_allclose(unflat["a"], s["a"], atol=1e-6)
+        np.testing.assert_allclose(unflat["b"], s["b"], atol=1e-6)
 
 
 # ---------------------------------------------------------------------------

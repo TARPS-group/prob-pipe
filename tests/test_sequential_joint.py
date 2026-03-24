@@ -14,6 +14,7 @@ from probpipe import (
     EmpiricalDistribution,
     JointDistribution,
 )
+from probpipe.distributions.distribution import PyTreeArrayDistribution
 from probpipe.core.node import WorkflowFunction
 
 
@@ -30,6 +31,7 @@ class TestConstruction:
         )
         assert isinstance(joint, SequentialJointDistribution)
         assert isinstance(joint, JointDistribution)
+        assert isinstance(joint, PyTreeArrayDistribution)
 
     def test_component_names(self):
         joint = SequentialJointDistribution(
@@ -38,13 +40,13 @@ class TestConstruction:
         )
         assert joint.component_names == ("z", "x")
 
-    def test_event_shape(self):
+    def test_event_shapes(self):
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
         )
-        # Two scalars → total_dim = 2
-        assert joint.event_shape == (2,)
+        assert joint.event_shapes == {"z": (), "x": ()}
+        assert joint.event_size == 2
 
     def test_three_components(self):
         joint = SequentialJointDistribution(
@@ -52,7 +54,8 @@ class TestConstruction:
             x=lambda z: Normal(loc=z, scale=0.5),
             y=lambda z, x: Normal(loc=z + x, scale=0.1),
         )
-        assert joint.event_shape == (3,)
+        assert joint.event_shapes == {"z": (), "x": (), "y": ()}
+        assert joint.event_size == 3
         assert joint.component_names == ("z", "x", "y")
 
     def test_independent_root(self):
@@ -61,7 +64,8 @@ class TestConstruction:
             a=Normal(loc=0.0, scale=1.0),
             b=Normal(loc=1.0, scale=2.0),
         )
-        assert joint.event_shape == (2,)
+        assert joint.event_shapes == {"a": (), "b": ()}
+        assert joint.event_size == 2
 
     def test_raises_on_invalid_dependency(self):
         with pytest.raises(ValueError, match="not defined before"):
@@ -89,25 +93,31 @@ class TestConstruction:
 
 class TestSampling:
 
-    def test_sample_flat_shape(self):
+    def test_sample_returns_dict(self):
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         key = jax.random.PRNGKey(0)
         s = joint.sample(key)
-        assert s.shape == (2,)
+        assert isinstance(s, dict)
+        assert set(s.keys()) == {"z", "x"}
+        assert s["z"].shape == ()
+        assert s["x"].shape == ()
 
-    def test_sample_flat_batch(self):
+    def test_sample_batch(self):
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         key = jax.random.PRNGKey(1)
         s = joint.sample(key, (10,))
-        assert s.shape == (10, 2)
+        assert isinstance(s, dict)
+        assert s["z"].shape == (10,)
+        assert s["x"].shape == (10,)
 
-    def test_sample_structured(self):
+    def test_sample_structured_alias(self):
+        """sample_structured should still work as backward-compat alias."""
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
@@ -125,11 +135,9 @@ class TestSampling:
             x=lambda z: Normal(loc=z, scale=0.01),  # x ≈ z
         )
         key = jax.random.PRNGKey(3)
-        structured = joint.sample_structured(key, (500,))
+        s = joint.sample(key, (500,))
         # x should be very close to z
-        np.testing.assert_allclose(
-            structured["x"], structured["z"], atol=0.1
-        )
+        np.testing.assert_allclose(s["x"], s["z"], atol=0.1)
 
     def test_auto_key(self):
         """sample() without explicit key should work."""
@@ -138,7 +146,9 @@ class TestSampling:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         s = joint.sample(sample_shape=(5,))
-        assert s.shape == (5, 2)
+        assert isinstance(s, dict)
+        assert s["z"].shape == (5,)
+        assert s["x"].shape == (5,)
 
 
 # ---------------------------------------------------------------------------
@@ -175,8 +185,8 @@ class TestLogProb:
         )
         z_val = jnp.array(1.0)
         x_val = jnp.array(1.5)
-        flat = jnp.array([z_val, x_val])
-        lp = joint.log_prob(flat)
+        value = {"z": z_val, "x": x_val}
+        lp = joint.log_prob(value)
 
         lp_z = Normal(loc=0.0, scale=1.0).log_prob(z_val)
         lp_x_given_z = Normal(loc=z_val, scale=0.5).log_prob(x_val)
@@ -190,8 +200,8 @@ class TestLogProb:
             y=lambda z, x: Normal(loc=z + x, scale=0.1),
         )
         z_val, x_val, y_val = 0.5, 0.8, 1.2
-        flat = jnp.array([z_val, x_val, y_val])
-        lp = joint.log_prob(flat)
+        value = {"z": jnp.array(z_val), "x": jnp.array(x_val), "y": jnp.array(y_val)}
+        lp = joint.log_prob(value)
 
         expected = (
             float(Normal(loc=0.0, scale=1.0).log_prob(z_val))
@@ -249,7 +259,8 @@ class TestConditionOn:
         assert "z" not in cond.components
         assert "x" in cond.components
         assert cond.component_names == ("x",)
-        assert cond.event_shape == (1,)
+        assert cond.event_shapes == {"x": ()}
+        assert cond.event_size == 1
 
     def test_conditioned_sampling_uses_observed_value(self):
         joint = SequentialJointDistribution(
@@ -258,11 +269,11 @@ class TestConditionOn:
         )
         cond = joint.condition_on(z=jnp.array(3.0))
         key = jax.random.PRNGKey(30)
-        structured = cond.sample_structured(key, (50,))
-        # z should not be in structured (it's conditioned)
-        assert "z" not in structured
+        s = cond.sample(key, (50,))
+        # z should not be in s (it's conditioned)
+        assert "z" not in s
         # x should be centered around 3.0 (since x = N(z=3, 0.5))
-        assert abs(float(jnp.mean(structured["x"])) - 3.0) < 0.3
+        assert abs(float(jnp.mean(s["x"])) - 3.0) < 0.3
 
     def test_condition_on_downstream_effect(self):
         """Conditioning on z should make downstream x use the observed value."""
@@ -272,12 +283,10 @@ class TestConditionOn:
         )
         cond = joint.condition_on(z=jnp.array(5.0))
         key = jax.random.PRNGKey(31)
-        structured = cond.sample_structured(key, (100,))
-        assert "z" not in structured
+        s = cond.sample(key, (100,))
+        assert "z" not in s
         # x should be very close to 5.0
-        np.testing.assert_allclose(
-            structured["x"], jnp.full((100,), 5.0), atol=0.1
-        )
+        np.testing.assert_allclose(s["x"], jnp.full((100,), 5.0), atol=0.1)
 
     def test_condition_on_provenance(self):
         joint = SequentialJointDistribution(
@@ -327,12 +336,12 @@ class TestConditionOn:
         # Condition on z (root) and x (non-root, parent=z which is conditioned)
         cond = joint.condition_on(z=jnp.array(1.0), x=jnp.array(2.0))
         key = jax.random.PRNGKey(40)
-        structured = cond.sample_structured(key, (50,))
-        # z and x should not be in structured
-        assert "z" not in structured
-        assert "x" not in structured
+        s = cond.sample(key, (50,))
+        # z and x should not be in s
+        assert "z" not in s
+        assert "x" not in s
         # y ~ N(1+2, 0.1) = N(3, 0.1)
-        assert abs(float(jnp.mean(structured["y"])) - 3.0) < 0.1
+        assert abs(float(jnp.mean(s["y"])) - 3.0) < 0.1
 
     def test_condition_on_root_log_prob_works(self):
         """log_prob should work when conditioning on root components."""
@@ -342,8 +351,8 @@ class TestConditionOn:
         )
         # Condition on root z — x's conditional p(x|z=2) is normalized
         cond = joint.condition_on(z=jnp.array(2.0))
-        flat = jnp.array([1.5])
-        lp = cond.log_prob(flat)
+        value = {"x": jnp.array(1.5)}
+        lp = cond.log_prob(value)
         assert jnp.isfinite(lp)
         # Should equal log p(x=1.5 | z=2.0) = log N(1.5; 2.0, 0.5)
         expected = float(Normal(loc=2.0, scale=0.5).log_prob(1.5))
@@ -356,9 +365,9 @@ class TestConditionOn:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         cond = joint.condition_on(x=jnp.array(1.0))
-        flat = jnp.array([0.0])
+        value = {"z": jnp.array(0.0)}
         with pytest.raises(NotImplementedError, match="unnormalized_log_prob"):
-            cond.log_prob(flat)
+            cond.log_prob(value)
 
     def test_condition_on_non_root_unnormalized_log_prob_works(self):
         """unnormalized_log_prob should work after conditioning on a non-root."""
@@ -367,9 +376,9 @@ class TestConditionOn:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         cond = joint.condition_on(x=jnp.array(1.0))
-        # Only z is unconditioned; flat input is just z value
-        flat = jnp.array([0.0])
-        lp = cond.unnormalized_log_prob(flat)
+        # Only z is unconditioned; input is dict with just z
+        value = {"z": jnp.array(0.0)}
+        lp = cond.unnormalized_log_prob(value)
         assert jnp.isfinite(lp)
         # Should be log p(z=0) + log p(x=1|z=0) (unnormalized conditional)
         expected = (
@@ -394,7 +403,9 @@ class TestConditionOn:
         cond2 = cond1.condition_on(z=jnp.array(0.0))
         assert cond2.component_names == ("y",)
         s = cond2.sample(sample_shape=(5,))
-        assert s.shape == (5, 1)
+        assert isinstance(s, dict)
+        assert set(s.keys()) == {"y"}
+        assert s["y"].shape == (5,)
 
     def test_raises_on_conditioning_all(self):
         joint = SequentialJointDistribution(
@@ -403,6 +414,26 @@ class TestConditionOn:
         )
         with pytest.raises(ValueError, match="Cannot condition on all"):
             joint.condition_on(z=jnp.array(0.0), x=jnp.array(0.0))
+
+
+# ---------------------------------------------------------------------------
+# Flatten / Unflatten
+# ---------------------------------------------------------------------------
+
+class TestFlattenUnflatten:
+
+    def test_flatten_roundtrip(self):
+        joint = SequentialJointDistribution(
+            z=Normal(loc=0.0, scale=1.0),
+            x=lambda z: Normal(loc=z, scale=0.5),
+        )
+        key = jax.random.PRNGKey(50)
+        s = joint.sample(key, (5,))
+        flat = joint.flatten_value(s)
+        assert flat.shape == (5, 2)
+        unflat = joint.unflatten_value(flat)
+        np.testing.assert_allclose(unflat["z"], s["z"], atol=1e-6)
+        np.testing.assert_allclose(unflat["x"], s["x"], atol=1e-6)
 
 
 # ---------------------------------------------------------------------------

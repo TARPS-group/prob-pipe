@@ -690,7 +690,8 @@ class PyTreeArrayDistribution(Distribution[T]):
             leaf = jnp.asarray(leaf)
             n_event = math.prod(es) if es else 1
             # Reshape: (*batch_dims, *event_shape) -> (*batch_dims, n_event)
-            batch_dims = leaf.shape[:leaf.ndim - len(es)] if es else leaf.shape[:-1] if leaf.ndim > 0 else ()
+            n_event_dims = len(es)
+            batch_dims = leaf.shape[:leaf.ndim - n_event_dims] if n_event_dims else leaf.shape
             flat_leaves.append(leaf.reshape(*batch_dims, n_event))
         return jnp.concatenate(flat_leaves, axis=-1)
 

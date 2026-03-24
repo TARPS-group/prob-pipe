@@ -1,4 +1,37 @@
-"""Joint distributions and component views for correlated broadcasting."""
+"""Joint distributions and component views for correlated broadcasting.
+
+This module implements joint distributions whose samples are **dictionaries**
+mapping component names to arrays.  The base class :class:`JointDistribution`
+inherits from :class:`PyTreeArrayDistribution[dict]`, so all pytree shape
+semantics (``event_shapes``, ``event_size``, ``flatten_value`` /
+``unflatten_value``, ``as_flat_distribution()``) are available.
+
+**Structural contract:**
+
+*  Components are identified by string keys in a flat ``dict``.
+*  ``sample()`` returns ``dict[str, Array]`` where each value has shape
+   ``(*sample_shape, *batch_shape, *event_shape_for_that_component)``.
+*  ``log_prob()`` accepts a ``dict[str, Array]`` with the same structure.
+*  ``event_shapes`` returns ``{name: event_shape}`` for each component.
+*  ``batch_shape`` is shared across all components (an empty tuple unless
+   the component distributions themselves are batched identically).
+*  ``flatten_value`` / ``unflatten_value`` (inherited from
+   ``PyTreeArrayDistribution``) convert between the dict representation
+   and a flat ``(*leading_dims, event_size)`` array.  Leaf ordering
+   follows Python's canonical dict iteration order (insertion order,
+   which for these dicts is the order components were passed to the
+   constructor).
+*  ``as_flat_distribution()`` returns a :class:`FlattenedView` with
+   ``event_shape = (event_size,)`` for use with algorithms expecting
+   flat vectors.
+
+**Independence assumptions:**
+
+*  :class:`JointDistribution` (base) makes **no** independence assumption.
+   Subclasses define the factorization structure.
+*  :class:`ProductDistribution` assumes **all components are independent**.
+   ``log_prob`` is the sum of per-component log-probs with no coupling.
+"""
 from __future__ import annotations
 
 import inspect
@@ -10,7 +43,15 @@ import jax.numpy as jnp
 import math
 
 from ..custom_types import Array, ArrayLike, PRNGKey
-from .distribution import ArrayDistribution, EmpiricalDistribution, Provenance, Constraint, real
+from .distribution import (
+    ArrayDistribution,
+    PyTreeArrayDistribution,
+    EmpiricalDistribution,
+    Provenance,
+    Constraint,
+    real,
+    _auto_key,
+)
 
 __all__ = [
     "JointDistribution",
@@ -28,15 +69,33 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 class DistributionView(ArrayDistribution):
-    """
-    A lightweight reference to a named component of a :class:`JointDistribution`.
+    """A lightweight reference to a named component of a :class:`JointDistribution`.
 
-    Broadcasting logic in :class:`~probpipe.core.node.WorkflowFunction` detects
+    A ``DistributionView`` acts as an ``ArrayDistribution`` for a single
+    component of a joint distribution.  It is the object returned by
+    ``joint["component_name"]``.
+
+    **Broadcasting contract:** The broadcasting logic in
+    :class:`~probpipe.core.node.WorkflowFunction` detects
     ``DistributionView`` instances and groups those sharing the same
-    ``_parent`` so they are sampled jointly (preserving correlation).
+    ``_parent`` so they are sampled jointly (preserving correlation
+    between components).
 
-    For standalone use (outside broadcasting), sampling draws from the
-    parent and extracts this component.
+    **Standalone sampling:** When sampled outside of broadcasting, the
+    view draws a full joint sample from its parent and extracts this
+    component.
+
+    **Key path (current implementation):** The view stores a single
+    string ``component_name`` that addresses a leaf in the parent's
+    flat-dict structure.  A future extension will generalize this to
+    tuple key paths for nested pytree joints.
+
+    Parameters
+    ----------
+    parent : JointDistribution
+        The joint distribution this view belongs to.
+    component_name : str
+        The name of the component to extract.
     """
 
     def __init__(self, parent: JointDistribution, component_name: str):
@@ -69,7 +128,7 @@ class DistributionView(ArrayDistribution):
         return self._component.support
 
     def _sample(self, key: PRNGKey) -> Array:
-        structured = self._parent.sample_structured(key)
+        structured = self._parent.sample(key)
         return structured[self._component_name]
 
     def sample(
@@ -77,10 +136,9 @@ class DistributionView(ArrayDistribution):
         key: PRNGKey | None = None,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
-        from .distribution import _auto_key
         if key is None:
             key = _auto_key()
-        structured = self._parent.sample_structured(key, sample_shape)
+        structured = self._parent.sample(key, sample_shape)
         return structured[self._component_name]
 
     def log_prob(self, x: ArrayLike) -> Array:
@@ -178,18 +236,59 @@ class ConditionedComponent(ArrayDistribution):
 # JointDistribution — base class for named multi-component distributions
 # ---------------------------------------------------------------------------
 
-class JointDistribution(ArrayDistribution):
-    """
-    Base class for named multi-component distributions.
+class JointDistribution(PyTreeArrayDistribution[dict]):
+    """Base class for named multi-component distributions.
 
-    Components are stored as an ordered mapping ``{name: Distribution}``.
-    Access individual components via ``joint['name']`` (returns a
-    :class:`DistributionView`) or ``joint.bind(a='x', b='y')`` for name
-    remapping.
+    A ``JointDistribution`` is a :class:`PyTreeArrayDistribution` whose
+    samples are **dictionaries** mapping component names (strings) to
+    arrays.  Each component is backed by an ``ArrayDistribution`` that
+    defines the marginal (or conditional) distribution for that
+    component.
 
-    The flat representation concatenates component samples along the last
-    axis: shape ``(*sample_shape, total_dim)`` where
-    ``total_dim = sum(prod(c.event_shape) for c in components)``.
+    **Structural requirements:**
+
+    *  Components are passed as keyword arguments to ``__init__`` and
+       stored in insertion order.
+    *  Each component must be an ``ArrayDistribution``.
+    *  Component names are strings (dict keys); the pytree structure
+       (``treedef``) is the corresponding ``dict`` treedef.
+    *  ``batch_shape`` is assumed to be shared across all components
+       and defaults to ``()``.
+
+    **Sample type:**
+
+    ``sample()`` returns ``dict[str, Array]`` where each value has shape
+    ``(*sample_shape, *batch_shape, *component_event_shape)``.
+
+    **Log-prob contract:**
+
+    ``log_prob()`` accepts a ``dict[str, Array]`` with the same
+    structure and returns a scalar (or batch-shaped array).  The base
+    class raises ``NotImplementedError``; subclasses define the
+    factorization (e.g., product of marginals for
+    :class:`ProductDistribution`).
+
+    **Flat-vector interop:**
+
+    The inherited ``flatten_value`` / ``unflatten_value`` methods convert
+    between the dict representation and flat ``(*leading, event_size)``
+    arrays.  ``as_flat_distribution()`` returns a :class:`FlattenedView`
+    with ``event_shape = (event_size,)`` for algorithms expecting flat
+    vectors.
+
+    **Component access:**
+
+    ``joint["name"]`` returns a :class:`DistributionView` — an
+    ``ArrayDistribution`` that extracts the named component from joint
+    samples.  ``joint.bind(a="x", b="y")`` creates a dict of views
+    with remapped names for use in broadcasting.
+
+    Parameters
+    ----------
+    name : str, optional
+        Distribution name for provenance / display.
+    **components : ArrayDistribution
+        Named component distributions.  At least one required.
     """
 
     def __init__(self, *, name: str | None = None, **components: ArrayDistribution):
@@ -203,25 +302,19 @@ class JointDistribution(ArrayDistribution):
         self._components = dict(components)
         self._name = name
 
-        # Precompute component slices for flat ↔ structured conversion
-        slices = {}
-        offset = 0
-        for cname, cdist in self._components.items():
-            dim = 1
-            for s in cdist.event_shape:
-                dim *= s
-            slices[cname] = slice(offset, offset + dim)
-            offset += dim
-        self._component_slices = slices
-        self._total_dim = offset
-
     @classmethod
     def from_distributions(cls, distributions: list[ArrayDistribution], **kwargs):
-        """
-        Construct from a list of named distributions.
+        """Construct from a list of named distributions.
 
-        Each distribution must have a non-None ``name`` attribute, and names
-        must be unique.
+        Each distribution must have a non-``None`` ``name`` attribute,
+        and names must be unique.
+
+        Parameters
+        ----------
+        distributions : list[ArrayDistribution]
+            Distributions with unique, non-None ``.name`` attributes.
+        **kwargs
+            Passed to the constructor (e.g., ``name``).
         """
         components = {}
         for dist in distributions:
@@ -235,32 +328,63 @@ class JointDistribution(ArrayDistribution):
             components[dist.name] = dist
         return cls(**components, **kwargs)
 
+    # -- PyTreeArrayDistribution interface ---------------------------------
+
+    @property
+    def treedef(self) -> jax.tree_util.PyTreeDef:
+        """Pytree structure of a single sample (a dict with component keys)."""
+        prototype = {k: 0 for k in self._components}
+        return jax.tree.structure(prototype)
+
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        """Batch shape, shared across all components.
+
+        Defaults to ``()``.  If the component distributions themselves
+        have non-trivial batch shapes, they must all agree.
+        """
+        return ()
+
+    @property
+    def event_shapes(self) -> dict[str, tuple[int, ...]]:
+        """Per-component event shapes.
+
+        Returns a dict ``{name: event_shape}`` with the same key
+        ordering as the components.
+        """
+        return {k: v.event_shape for k, v in self._components.items()}
+
     # -- Properties --------------------------------------------------------
 
     @property
     def components(self) -> dict[str, ArrayDistribution]:
+        """Read-only view of the component distributions."""
         return MappingProxyType(self._components)
 
     @property
     def component_names(self) -> tuple[str, ...]:
+        """Component names in insertion order."""
         return tuple(self._components.keys())
-
-    @property
-    def event_shape(self) -> tuple[int, ...]:
-        return (self._total_dim,)
-
-    @property
-    def support(self) -> Constraint:
-        return real  # conservative default for the flat representation
 
     # -- Structured access -------------------------------------------------
 
     def __getitem__(self, name: str) -> DistributionView:
+        """Return a :class:`DistributionView` for the named component.
+
+        The returned view is an ``ArrayDistribution`` whose samples
+        are the marginal values of this component.  When sampled
+        standalone, it draws a full joint sample and extracts the
+        relevant component.
+
+        Parameters
+        ----------
+        name : str
+            Component name (must exist in ``component_names``).
+        """
         return DistributionView(self, name)
 
     def bind(self, **mapping: str) -> dict[str, DistributionView]:
-        """
-        Create a dict of :class:`DistributionView` instances with remapped names.
+        """Create a dict of views with remapped names.
 
         Example::
 
@@ -270,66 +394,76 @@ class JointDistribution(ArrayDistribution):
         """
         return {arg_name: self[comp_name] for arg_name, comp_name in mapping.items()}
 
-    # -- Flat ↔ structured conversion -------------------------------------
-
-    def unflatten(self, flat: ArrayLike) -> dict[str, Array]:
-        """Split a flat array into per-component arrays."""
-        flat = jnp.asarray(flat)
-        result = {}
-        for cname, cdist in self._components.items():
-            sl = self._component_slices[cname]
-            chunk = flat[..., sl]
-            # Reshape back to component event_shape if needed
-            target_shape = flat.shape[:-1] + cdist.event_shape
-            result[cname] = chunk.reshape(target_shape)
-        return result
-
-    def flatten_structured(self, structured: dict[str, ArrayLike]) -> Array:
-        """Concatenate per-component arrays into a flat array."""
-        parts = []
-        for cname, cdist in self._components.items():
-            arr = jnp.asarray(structured[cname])
-            if cdist.event_shape:
-                batch_shape = arr.shape[:-len(cdist.event_shape)]
-                parts.append(arr.reshape(batch_shape + (-1,)))
-            else:
-                parts.append(arr[..., None])  # scalar → (*, 1)
-        return jnp.concatenate(parts, axis=-1)
-
-    # -- Sampling (abstract — subclasses must implement) -------------------
+    # -- Backward-compatible structured conversion -------------------------
 
     def sample_structured(
         self, key: PRNGKey | None = None, sample_shape: tuple[int, ...] = ()
     ) -> dict[str, Array]:
-        """
-        Draw samples and return a dict of per-component arrays.
+        """Draw samples and return a dict of per-component arrays.
 
-        Subclasses should override this to implement their sampling strategy.
-        The default calls :meth:`sample` (flat) and unflattens.
+        This is now equivalent to :meth:`sample` (which returns dicts
+        natively).  Retained for backward compatibility.
         """
-        from .distribution import _auto_key
         if key is None:
             key = _auto_key()
-        flat = self.sample(key, sample_shape)
-        return self.unflatten(flat)
+        return self.sample(key, sample_shape)
+
+    def unflatten(self, flat: ArrayLike) -> dict[str, Array]:
+        """Split a flat array into per-component arrays.
+
+        Equivalent to :meth:`unflatten_value`.  Retained for backward
+        compatibility.
+        """
+        return self.unflatten_value(jnp.asarray(flat))
+
+    def flatten_structured(self, structured: dict[str, ArrayLike]) -> Array:
+        """Concatenate per-component arrays into a flat array.
+
+        Equivalent to :meth:`flatten_value`.  Retained for backward
+        compatibility.
+        """
+        return self.flatten_value(structured)
+
+    # -- Component-level log_prob ------------------------------------------
+
+    def component_log_prob(self, value: dict[str, ArrayLike]) -> dict[str, Array]:
+        """Per-component log-density contributions.
+
+        Returns a dict ``{name: scalar_or_batch}`` with the same
+        structure as the components.  The total ``log_prob`` is the
+        sum of these values (plus any cross-component coupling terms
+        defined by the subclass).
+
+        The base implementation evaluates each component's ``log_prob``
+        independently.  Subclasses with cross-component dependencies
+        should override this method.
+        """
+        return {
+            k: self._components[k].log_prob(jnp.asarray(value[k]))
+            for k in self._components
+        }
 
     # -- Conditioning ------------------------------------------------------
 
     def condition_on(self, **observed: ArrayLike) -> "JointDistribution":
-        """
-        Return the conditional distribution over the remaining (unconditioned)
-        components, representing p(unconditioned | conditioned = values).
+        """Return the conditional distribution given observed component values.
 
         Parameters
         ----------
         **observed
-            Keyword arguments mapping component names to their observed values.
+            Component names mapped to their observed values.
 
         Returns
         -------
         JointDistribution
-            A new instance of the same type with only the unconditioned
-            components.
+            A new joint over the unconditioned components.
+
+        Raises
+        ------
+        KeyError
+            If an observed name is not a valid component.
+        ValueError
+            If all components are conditioned on.
         """
         unknown = set(observed) - set(self._components)
         if unknown:
@@ -351,18 +485,25 @@ class JointDistribution(ArrayDistribution):
         ))
         return result
 
-    def log_prob(self, x: ArrayLike) -> Array:
+    # -- log_prob (abstract) -----------------------------------------------
+
+    def log_prob(self, value: dict[str, ArrayLike]) -> Array:
+        """Log-density of the joint distribution.
+
+        Parameters
+        ----------
+        value : dict[str, ArrayLike]
+            A dict mapping component names to arrays, each with shape
+            ``(*batch_dims, *component_event_shape)``.
+
+        Returns
+        -------
+        Array
+            Scalar (or batch-shaped array) of log-densities.
+        """
         raise NotImplementedError(
             f"{type(self).__name__}.log_prob() must be implemented by subclasses."
         )
-
-    @classmethod
-    def _from_distribution(cls, other, *, key, **kwargs):
-        raise NotImplementedError("Cannot convert to JointDistribution.")
-
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return real
 
     def __repr__(self) -> str:
         comp_str = ", ".join(
@@ -377,86 +518,103 @@ class JointDistribution(ArrayDistribution):
 # ---------------------------------------------------------------------------
 
 class ProductDistribution(JointDistribution):
-    """
-    Joint distribution with independent components.
+    """Joint distribution with **independent** components.
 
-    Sampling draws from each component independently and concatenates.
-    ``log_prob`` is the sum of component log-probs.
+    All components are sampled independently.  The joint ``log_prob``
+    is the sum of per-component log-probs (no coupling terms).
+
+    **Sample type:** ``dict[str, Array]`` — same as
+    :class:`JointDistribution`.
+
+    **Independence assumption:** This class assumes statistical
+    independence across all components.  For sequential/autoregressive
+    dependence, use :class:`SequentialJointDistribution`.  For
+    arbitrary dependence with a known joint density, subclass
+    :class:`JointDistribution` directly.
+
+    **Flat-vector interop:** Use ``as_flat_distribution()`` or
+    ``flatten_value()`` to obtain flat representations compatible
+    with algorithms expecting ``ArrayDistribution``.
+
+    Parameters
+    ----------
+    name : str, optional
+        Distribution name.
+    **components : ArrayDistribution
+        Named independent component distributions.
+
+    Examples
+    --------
+    >>> joint = ProductDistribution(
+    ...     x=Normal(loc=0.0, scale=1.0),
+    ...     y=Normal(loc=3.0, scale=2.0),
+    ... )
+    >>> s = joint.sample(jax.random.PRNGKey(0))
+    >>> s.keys()
+    dict_keys(['x', 'y'])
     """
 
-    def _sample(self, key: PRNGKey) -> Array:
+    def _sample(self, key: PRNGKey) -> dict[str, Array]:
         keys = jax.random.split(key, len(self._components))
-        parts = []
-        for subkey, (cname, cdist) in zip(keys, self._components.items()):
-            s = cdist.sample(subkey)
-            # Flatten event dims to (dim_i,)
-            if cdist.event_shape:
-                parts.append(s.reshape(-1))
-            else:
-                parts.append(s[None])  # scalar → (1,)
-        return jnp.concatenate(parts, axis=-1)
+        return {
+            cname: cdist.sample(subkey)
+            for subkey, (cname, cdist) in zip(keys, self._components.items())
+        }
 
     def sample(
         self,
         key: PRNGKey | None = None,
         sample_shape: tuple[int, ...] = (),
-    ) -> Array:
-        """Draw samples using efficient per-component batched sampling."""
-        from .distribution import _auto_key
-        if key is None:
-            key = _auto_key()
-        if sample_shape == ():
-            return self._sample(key)
-        keys = jax.random.split(key, len(self._components))
-        parts = []
-        for subkey, (cname, cdist) in zip(keys, self._components.items()):
-            s = cdist.sample(subkey, sample_shape)
-            if cdist.event_shape:
-                flat_shape = s.shape[:len(sample_shape)] + (-1,)
-                parts.append(s.reshape(flat_shape))
-            else:
-                parts.append(s[..., None])
-        return jnp.concatenate(parts, axis=-1)
-
-    def sample_structured(
-        self, key: PRNGKey | None = None, sample_shape: tuple[int, ...] = ()
     ) -> dict[str, Array]:
-        from .distribution import _auto_key
+        """Draw independent samples from each component.
+
+        Parameters
+        ----------
+        key : PRNGKey, optional
+            JAX PRNG key.  Auto-generated if ``None``.
+        sample_shape : tuple[int, ...], optional
+            Leading dimensions for the samples.
+
+        Returns
+        -------
+        dict[str, Array]
+            Per-component samples.  Each value has shape
+            ``(*sample_shape, *batch_shape, *component_event_shape)``.
+        """
         if key is None:
             key = _auto_key()
         keys = jax.random.split(key, len(self._components))
-        result = {}
-        for subkey, (cname, cdist) in zip(keys, self._components.items()):
-            result[cname] = cdist.sample(subkey, sample_shape)
-        return result
+        return {
+            cname: cdist.sample(subkey, sample_shape)
+            for subkey, (cname, cdist) in zip(keys, self._components.items())
+        }
 
-    def log_prob(self, x: ArrayLike) -> Array:
-        x = jnp.asarray(x)
-        structured = self.unflatten(x)
-        total = jnp.zeros(x.shape[:-1])
+    def log_prob(self, value: dict[str, ArrayLike]) -> Array:
+        """Sum of independent component log-probs.
+
+        Parameters
+        ----------
+        value : dict[str, ArrayLike]
+            A dict mapping component names to arrays.
+
+        Returns
+        -------
+        Array
+            Scalar (or batch-shaped) log-density.
+        """
+        total = None
         for cname, cdist in self._components.items():
-            total = total + cdist.log_prob(structured[cname])
+            lp = cdist.log_prob(jnp.asarray(value[cname]))
+            total = lp if total is None else total + lp
         return total
 
-    def mean(self) -> Array:
-        parts = []
-        for cname, cdist in self._components.items():
-            m = cdist.mean()
-            if cdist.event_shape:
-                parts.append(m.reshape(-1))
-            else:
-                parts.append(m[None])
-        return jnp.concatenate(parts)
+    def mean(self, **kwargs) -> dict[str, Array]:
+        """Per-component means (exact, no MC needed for independent components)."""
+        return {k: v.mean() for k, v in self._components.items()}
 
-    def variance(self) -> Array:
-        parts = []
-        for cname, cdist in self._components.items():
-            v = cdist.variance()
-            if cdist.event_shape:
-                parts.append(v.reshape(-1))
-            else:
-                parts.append(v[None])
-        return jnp.concatenate(parts)
+    def variance(self, **kwargs) -> dict[str, Array]:
+        """Per-component variances (exact, no MC needed for independent components)."""
+        return {k: v.variance() for k, v in self._components.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -544,19 +702,8 @@ class SequentialJointDistribution(JointDistribution):
                 resolved[cname] = comp(**call_kw)
         self._proto_components = resolved
 
-        # Build _components dict from resolved prototypes (for slices, event_shape, etc.)
-        # Note: we store resolved prototypes for shape introspection only
+        # Build _components dict from resolved prototypes (for shape introspection)
         self._components = resolved
-
-        # Compute slices from resolved components
-        slices = {}
-        offset = 0
-        for cname, cdist in self._components.items():
-            dim = int(math.prod(cdist.event_shape)) if cdist.event_shape else 1
-            slices[cname] = slice(offset, offset + dim)
-            offset += dim
-        self._component_slices = slices
-        self._total_dim = offset
 
     @staticmethod
     def _compute_sampleable_error(
@@ -626,40 +773,27 @@ class SequentialJointDistribution(JointDistribution):
 
         return sampled
 
-    def _sample(self, key: PRNGKey) -> Array:
-        structured = self._sample_sequential(key, ())
-        return self.flatten_structured(structured)
+    def _sample(self, key: PRNGKey) -> dict[str, Array]:
+        full = self._sample_sequential(key, ())
+        return {k: v for k, v in full.items() if k not in self._conditioned_names}
 
     def sample(
         self,
         key: PRNGKey | None = None,
         sample_shape: tuple[int, ...] = (),
-    ) -> Array:
-        from .distribution import _auto_key
-        if key is None:
-            key = _auto_key()
-        if sample_shape == ():
-            return self._sample(key)
-        structured = self._sample_sequential(key, sample_shape)
-        return self.flatten_structured(structured)
-
-    def sample_structured(
-        self, key: PRNGKey | None = None, sample_shape: tuple[int, ...] = ()
     ) -> dict[str, Array]:
-        from .distribution import _auto_key
         if key is None:
             key = _auto_key()
         full = self._sample_sequential(key, sample_shape)
-        # Return only unconditioned components
         return {k: v for k, v in full.items() if k not in self._conditioned_names}
 
-    def _eval_log_prob(self, x: ArrayLike, *, components: str) -> Array:
+    def _eval_log_prob(self, value: dict[str, ArrayLike], *, components: str) -> Array:
         """Evaluate log-density over selected components.
 
         Parameters
         ----------
-        x : array
-            Flat vector of unconditioned component values.
+        value : dict[str, ArrayLike]
+            Dict of unconditioned component values.
         components : ``"all"`` or ``"unconditioned"``
             Which components to include in the sum.  ``"all"`` sums over
             every component (conditioned ones evaluated at their observed
@@ -668,29 +802,29 @@ class SequentialJointDistribution(JointDistribution):
             (with conditioned values plugged in as parents), giving the
             normalized conditional when the Markov structure permits it.
         """
-        x = jnp.asarray(x)
-        structured = self.unflatten(x)
+        structured = {k: jnp.asarray(v) for k, v in value.items()}
 
         # Add conditioned values so callables can receive them
         for cname, val in self._conditioned_values.items():
             structured[cname] = val
 
-        total = jnp.zeros(x.shape[:-1])
+        total = None
         for cname, comp in self._raw_components.items():
             if components == "unconditioned" and cname in self._conditioned_names:
                 continue
             val = structured[cname]
             if isinstance(comp, ArrayDistribution):
-                total = total + comp.log_prob(val)
+                lp = comp.log_prob(val)
             else:
                 sig = inspect.signature(comp)
                 call_kw = {p: structured[p] for p in sig.parameters if p in structured}
                 cond_dist = comp(**call_kw)
-                total = total + cond_dist.log_prob(val)
+                lp = cond_dist.log_prob(val)
+            total = lp if total is None else total + lp
 
         return total
 
-    def log_prob(self, x: ArrayLike) -> Array:
+    def log_prob(self, value: dict[str, ArrayLike]) -> Array:
         """Evaluate the normalized log-density.
 
         For an unconditioned joint, this is the full joint log p(x).
@@ -713,9 +847,9 @@ class SequentialJointDistribution(JointDistribution):
                 "constant is intractable.  Use unnormalized_log_prob "
                 "instead."
             )
-        return self._eval_log_prob(x, components="unconditioned")
+        return self._eval_log_prob(value, components="unconditioned")
 
-    def unnormalized_log_prob(self, x: ArrayLike) -> Array:
+    def unnormalized_log_prob(self, value: dict[str, ArrayLike]) -> Array:
         """Evaluate the (possibly unnormalized) log-density.
 
         For an unconditioned joint, this equals the full joint log p(x).
@@ -724,31 +858,21 @@ class SequentialJointDistribution(JointDistribution):
         log p(unconditioned, conditioned=values), which is proportional
         to log p(unconditioned | conditioned=values).
         """
-        return self._eval_log_prob(x, components="all")
+        return self._eval_log_prob(value, components="all")
 
-    def mean(self) -> Array:
-        # For sequential joints, the marginal mean is not simply the concatenation
-        # of component means (because components depend on earlier samples).
-        # We use the prototype components' means as an approximation.
-        parts = []
-        for cname, cdist in self._proto_components.items():
-            m = cdist.mean()
-            if cdist.event_shape:
-                parts.append(m.reshape(-1))
-            else:
-                parts.append(m[None])
-        return jnp.concatenate(parts)
+    def mean(self, **kwargs) -> dict[str, Array]:
+        """Per-component means (approximate — uses prototype components).
 
-    def variance(self) -> Array:
-        # Same caveat as mean() — uses prototype components
-        parts = []
-        for cname, cdist in self._proto_components.items():
-            v = cdist.variance()
-            if cdist.event_shape:
-                parts.append(v.reshape(-1))
-            else:
-                parts.append(v[None])
-        return jnp.concatenate(parts)
+        For sequential joints, the true marginal mean is not simply the
+        per-component mean because later components depend on earlier
+        samples.  This returns the prototype (prior-evaluated) means
+        as an approximation.
+        """
+        return {k: v.mean() for k, v in self._proto_components.items()}
+
+    def variance(self, **kwargs) -> dict[str, Array]:
+        """Per-component variances (approximate — uses prototype components)."""
+        return {k: v.variance() for k, v in self._proto_components.items()}
 
     def condition_on(self, **observed: ArrayLike) -> "SequentialJointDistribution":
         """
@@ -800,20 +924,6 @@ class SequentialJointDistribution(JointDistribution):
             if k not in result._conditioned_names
         }
         result._components = unconditioned
-
-        # Recompute slices for unconditioned components only
-        slices = {}
-        offset = 0
-        for cname, cdist in unconditioned.items():
-            dim = int(math.prod(cdist.event_shape)) if cdist.event_shape else 1
-            slices[cname] = slice(offset, offset + dim)
-            offset += dim
-        result._component_slices = slices
-        result._total_dim = offset
-
-        # Propagate approximation flag: approximate if parent or any
-        # conditioned value comes from an approximate distribution
-        result._approximate = self.is_approximate
 
         result.with_source(Provenance(
             "condition_on", parents=(self,),
@@ -930,16 +1040,6 @@ class JointEmpirical(JointDistribution):
                 )
         self._components = comp_dists
 
-        # Compute slices
-        slices = {}
-        offset = 0
-        for cname, cdist in self._components.items():
-            dim = int(math.prod(cdist.event_shape)) if cdist.event_shape else 1
-            slices[cname] = slice(offset, offset + dim)
-            offset += dim
-        self._component_slices = slices
-        self._total_dim = offset
-
     @property
     def n(self) -> int:
         """Number of joint samples."""
@@ -958,22 +1058,17 @@ class JointEmpirical(JointDistribution):
             self._weights_cache = jax.nn.softmax(self._log_weights)
         return self._weights_cache
 
-    def _sample(self, key: PRNGKey) -> Array:
-        structured = self._sample_joint_rows(key, ())
-        return self.flatten_structured(structured)
+    def _sample(self, key: PRNGKey) -> dict[str, Array]:
+        return self._sample_joint_rows(key, ())
 
     def sample(
         self,
         key: PRNGKey | None = None,
         sample_shape: tuple[int, ...] = (),
-    ) -> Array:
-        from .distribution import _auto_key
+    ) -> dict[str, Array]:
         if key is None:
             key = _auto_key()
-        if sample_shape == ():
-            return self._sample(key)
-        structured = self._sample_joint_rows(key, sample_shape)
-        return self.flatten_structured(structured)
+        return self._sample_joint_rows(key, sample_shape)
 
     def _sample_joint_rows(
         self, key: PRNGKey, sample_shape: tuple[int, ...]
@@ -995,25 +1090,21 @@ class JointEmpirical(JointDistribution):
                 result[cname] = drawn.squeeze(axis=0)
         return result
 
-    def sample_structured(
-        self, key: PRNGKey | None = None, sample_shape: tuple[int, ...] = ()
-    ) -> dict[str, Array]:
-        from .distribution import _auto_key
-        if key is None:
-            key = _auto_key()
-        return self._sample_joint_rows(key, sample_shape)
+    def log_prob(self, value: dict[str, ArrayLike]) -> Array:
+        """Gaussian-approximation log-density (same as EmpiricalDistribution).
 
-    def log_prob(self, x: ArrayLike) -> Array:
-        """Gaussian-approximation log-density (same as EmpiricalDistribution)."""
-        x = jnp.asarray(x)
-        mu = self.mean()
-        var = self.variance()
+        Evaluates a diagonal Gaussian approximation in the flat space.
+        """
+        flat = self.flatten_value(value)
+        mu = self._flat_mean()
+        var = self._flat_variance()
         var = jnp.maximum(var, 1e-12)
         log_norm = -0.5 * jnp.sum(jnp.log(2 * jnp.pi * var))
-        diff = x - mu
+        diff = flat - mu
         return log_norm - 0.5 * jnp.sum(diff**2 / var, axis=-1)
 
-    def mean(self) -> Array:
+    def _flat_mean(self) -> Array:
+        """Flat mean vector (for internal use by log_prob)."""
         parts = []
         for cname, arr in self._joint_samples.items():
             if self._is_uniform:
@@ -1023,9 +1114,9 @@ class JointEmpirical(JointDistribution):
             parts.append(m.reshape(-1))
         return jnp.concatenate(parts)
 
-    def variance(self) -> Array:
-        mu_flat = self.mean()
-        # Compute per-component variances
+    def _flat_variance(self) -> Array:
+        """Flat variance vector (for internal use by log_prob)."""
+        mu_flat = self._flat_mean()
         parts = []
         offset = 0
         for cname, arr in self._joint_samples.items():
@@ -1040,6 +1131,28 @@ class JointEmpirical(JointDistribution):
             parts.append(v)
             offset += flat_dim
         return jnp.concatenate(parts)
+
+    def mean(self, **kwargs) -> dict[str, Array]:
+        """Per-component weighted means."""
+        result = {}
+        for cname, arr in self._joint_samples.items():
+            if self._is_uniform:
+                result[cname] = jnp.mean(arr, axis=0)
+            else:
+                result[cname] = jnp.einsum("n,n...->...", self.weights, arr)
+        return result
+
+    def variance(self, **kwargs) -> dict[str, Array]:
+        """Per-component weighted variances."""
+        means = self.mean()
+        result = {}
+        for cname, arr in self._joint_samples.items():
+            diff = arr - means[cname]
+            if self._is_uniform:
+                result[cname] = jnp.mean(diff**2, axis=0)
+            else:
+                result[cname] = jnp.einsum("n,n...->...", self.weights, diff**2)
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -1121,8 +1234,8 @@ class JointGaussian(JointDistribution):
             offset += dim
 
         self._components = components
-        self._component_slices = slices
-        self._total_dim = total_dim
+        self._component_slices = slices  # still needed for Gaussian conditioning
+        self._total_dim = total_dim  # still needed for Gaussian conditioning
 
     @property
     def mean_vector(self) -> Array:
@@ -1134,42 +1247,52 @@ class JointGaussian(JointDistribution):
         """Full covariance matrix."""
         return self._cov_mat
 
-    def _sample(self, key: PRNGKey) -> Array:
+    def _sample(self, key: PRNGKey) -> dict[str, Array]:
         from .multivariate import MultivariateNormal as MVN
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
-        return full_mvn.sample(key)
+        flat = full_mvn.sample(key)
+        return self._unflatten_flat_vec(flat)
 
     def sample(
         self,
         key: PRNGKey | None = None,
         sample_shape: tuple[int, ...] = (),
-    ) -> Array:
-        from .distribution import _auto_key
-        from .multivariate import MultivariateNormal as MVN
-        if key is None:
-            key = _auto_key()
-        full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
-        return full_mvn.sample(key, sample_shape)
-
-    def sample_structured(
-        self, key: PRNGKey | None = None, sample_shape: tuple[int, ...] = ()
     ) -> dict[str, Array]:
-        from .distribution import _auto_key
+        from .multivariate import MultivariateNormal as MVN
         if key is None:
             key = _auto_key()
-        flat = self.sample(key, sample_shape)
-        return self.unflatten(flat)
+        full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
+        flat = full_mvn.sample(key, sample_shape)
+        return self._unflatten_flat_vec(flat)
 
-    def log_prob(self, x: ArrayLike) -> Array:
+    def _unflatten_flat_vec(self, flat: Array) -> dict[str, Array]:
+        """Split a flat Gaussian sample vector into per-component arrays."""
+        result = {}
+        for cname in self._component_shapes:
+            sl = self._component_slices[cname]
+            result[cname] = flat[..., sl]
+        return result
+
+    def log_prob(self, value: dict[str, ArrayLike]) -> Array:
         from .multivariate import MultivariateNormal as MVN
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
-        return full_mvn.log_prob(x)
+        flat = self.flatten_value(value)
+        return full_mvn.log_prob(flat)
 
-    def mean(self) -> Array:
-        return self._mean_vec
+    def mean(self, **kwargs) -> dict[str, Array]:
+        result = {}
+        for cname in self._component_shapes:
+            sl = self._component_slices[cname]
+            result[cname] = self._mean_vec[sl]
+        return result
 
-    def variance(self) -> Array:
-        return jnp.diag(self._cov_mat)
+    def variance(self, **kwargs) -> dict[str, Array]:
+        diag = jnp.diag(self._cov_mat)
+        result = {}
+        for cname in self._component_shapes:
+            sl = self._component_slices[cname]
+            result[cname] = diag[sl]
+        return result
 
     def condition_on(self, **observed: ArrayLike) -> "JointGaussian":
         """

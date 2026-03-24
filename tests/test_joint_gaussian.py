@@ -12,6 +12,7 @@ from probpipe import (
     EmpiricalDistribution,
     JointDistribution,
 )
+from probpipe.distributions.distribution import PyTreeArrayDistribution
 from probpipe.core.node import WorkflowFunction
 
 
@@ -30,6 +31,7 @@ class TestConstruction:
         )
         assert isinstance(jg, JointGaussian)
         assert isinstance(jg, JointDistribution)
+        assert isinstance(jg, PyTreeArrayDistribution)
 
     def test_component_names(self):
         jg = JointGaussian(
@@ -40,14 +42,15 @@ class TestConstruction:
         )
         assert jg.component_names == ("a", "bc")
 
-    def test_event_shape(self):
+    def test_event_shapes(self):
         jg = JointGaussian(
             mean=jnp.array([0.0, 1.0, 2.0, 3.0]),
             cov=jnp.eye(4),
             x=1,
             yz=3,
         )
-        assert jg.event_shape == (4,)
+        assert jg.event_shapes == {"x": (1,), "yz": (3,)}
+        assert jg.event_size == 4
 
     def test_raises_on_empty(self):
         with pytest.raises(ValueError, match="at least one"):
@@ -88,7 +91,7 @@ class TestConstruction:
 
 class TestSampling:
 
-    def test_sample_flat_shape(self):
+    def test_sample_returns_dict(self):
         jg = JointGaussian(
             mean=jnp.array([0.0, 1.0]),
             cov=jnp.eye(2),
@@ -96,9 +99,12 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(0)
         s = jg.sample(key)
-        assert s.shape == (2,)
+        assert isinstance(s, dict)
+        assert set(s.keys()) == {"x", "y"}
+        assert s["x"].shape == (1,)
+        assert s["y"].shape == (1,)
 
-    def test_sample_flat_batch(self):
+    def test_sample_batch(self):
         jg = JointGaussian(
             mean=jnp.array([0.0, 1.0]),
             cov=jnp.eye(2),
@@ -106,9 +112,11 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(1)
         s = jg.sample(key, (10,))
-        assert s.shape == (10, 2)
+        assert isinstance(s, dict)
+        assert s["x"].shape == (10, 1)
+        assert s["y"].shape == (10, 1)
 
-    def test_sample_structured(self):
+    def test_sample_structured_alias(self):
         jg = JointGaussian(
             mean=jnp.array([0.0, 1.0, 2.0]),
             cov=jnp.eye(3),
@@ -124,7 +132,9 @@ class TestSampling:
         jg = JointGaussian(mean=m, cov=0.01 * jnp.eye(2), x=1, y=1)
         key = jax.random.PRNGKey(3)
         s = jg.sample(key, (1000,))
-        np.testing.assert_allclose(jnp.mean(s, axis=0), m, atol=0.1)
+        # Flatten the dict to check mean
+        flat = jg.flatten_value(s)
+        np.testing.assert_allclose(jnp.mean(flat, axis=0), m, atol=0.1)
 
     def test_sample_preserves_cross_covariance(self):
         """Strong positive cross-covariance should appear in samples."""
@@ -132,7 +142,8 @@ class TestSampling:
         jg = JointGaussian(mean=jnp.zeros(2), cov=cov, x=1, y=1)
         key = jax.random.PRNGKey(4)
         s = jg.sample(key, (2000,))
-        empirical_corr = jnp.corrcoef(s.T)[0, 1]
+        flat = jg.flatten_value(s)
+        empirical_corr = jnp.corrcoef(flat.T)[0, 1]
         assert float(empirical_corr) > 0.7
 
 
@@ -165,7 +176,9 @@ class TestLogProb:
         key = jax.random.PRNGKey(11)
         s = jg.sample(key, (10,))
         lp_jg = jg.log_prob(s)
-        lp_mvn = mvn.log_prob(s)
+        # MVN expects flat arrays
+        flat = jg.flatten_value(s)
+        lp_mvn = mvn.log_prob(flat)
         np.testing.assert_allclose(lp_jg, lp_mvn, atol=1e-4)
 
 
@@ -178,12 +191,18 @@ class TestMoments:
     def test_mean(self):
         m = jnp.array([1.0, 2.0, 3.0])
         jg = JointGaussian(mean=m, cov=jnp.eye(3), a=1, b=2)
-        np.testing.assert_allclose(jg.mean(), m, atol=1e-6)
+        mean_dict = jg.mean()
+        assert isinstance(mean_dict, dict)
+        np.testing.assert_allclose(mean_dict["a"], jnp.array([1.0]), atol=1e-6)
+        np.testing.assert_allclose(mean_dict["b"], jnp.array([2.0, 3.0]), atol=1e-6)
 
     def test_variance(self):
         c = jnp.array([[2.0, 0.5], [0.5, 3.0]])
         jg = JointGaussian(mean=jnp.zeros(2), cov=c, x=1, y=1)
-        np.testing.assert_allclose(jg.variance(), jnp.array([2.0, 3.0]), atol=1e-6)
+        var_dict = jg.variance()
+        assert isinstance(var_dict, dict)
+        np.testing.assert_allclose(var_dict["x"], jnp.array([2.0]), atol=1e-6)
+        np.testing.assert_allclose(var_dict["y"], jnp.array([3.0]), atol=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +263,8 @@ class TestConditionOn:
         cond = jg.condition_on(x=jnp.array([1.0]))
         assert isinstance(cond, JointGaussian)
         assert cond.component_names == ("y",)
-        assert cond.event_shape == (1,)
+        assert cond.event_shapes == {"y": (1,)}
+        assert cond.event_size == 1
 
     def test_conditional_mean(self):
         """Verify the Gaussian conditioning formula for the mean."""
@@ -256,7 +276,8 @@ class TestConditionOn:
         # mu_y|x = mu_y + Sigma_yx @ Sigma_xx^{-1} @ (x - mu_x)
         # = 0 + 0.8 * 1.0 * (2 - 0) = 1.6
         cond = jg.condition_on(x=jnp.array([2.0]))
-        np.testing.assert_allclose(float(cond.mean()[0]), 1.6, atol=1e-5)
+        cond_mean = cond.mean()
+        np.testing.assert_allclose(float(cond_mean["y"][0]), 1.6, atol=1e-5)
 
     def test_conditional_variance(self):
         """Verify the Gaussian conditioning formula for the variance."""
@@ -266,7 +287,8 @@ class TestConditionOn:
         # Var_y|x = Sigma_yy - Sigma_yx @ Sigma_xx^{-1} @ Sigma_xy
         # = 1.0 - 0.8 * 1.0 * 0.8 = 0.36
         cond = jg.condition_on(x=jnp.array([0.0]))
-        np.testing.assert_allclose(float(cond.variance()[0]), 0.36, atol=1e-5)
+        cond_var = cond.variance()
+        np.testing.assert_allclose(float(cond_var["y"][0]), 0.36, atol=1e-5)
 
     def test_conditioning_reduces_dimensions(self):
         jg = JointGaussian(
@@ -275,7 +297,8 @@ class TestConditionOn:
             a=1, b=1, c=2,
         )
         cond = jg.condition_on(a=jnp.array([0.0]))
-        assert cond.event_shape == (3,)
+        assert cond.event_shapes == {"b": (1,), "c": (2,)}
+        assert cond.event_size == 3
         assert cond.component_names == ("b", "c")
 
     def test_conditioning_multiple(self):
@@ -285,7 +308,8 @@ class TestConditionOn:
             a=1, b=1, c=2,
         )
         cond = jg.condition_on(a=jnp.array([0.0]), c=jnp.array([2.0, 3.0]))
-        assert cond.event_shape == (1,)
+        assert cond.event_shapes == {"b": (1,)}
+        assert cond.event_size == 1
         assert cond.component_names == ("b",)
 
     def test_raises_on_unknown_component(self):
@@ -313,7 +337,29 @@ class TestConditionOn:
         # mu_y|x=3 = 0 + 0.9 * 1 * 3 = 2.7
         key = jax.random.PRNGKey(20)
         s = cond.sample(key, (1000,))
-        np.testing.assert_allclose(float(jnp.mean(s)), 2.7, atol=0.2)
+        assert isinstance(s, dict)
+        np.testing.assert_allclose(float(jnp.mean(s["y"])), 2.7, atol=0.2)
+
+
+# ---------------------------------------------------------------------------
+# Flatten / Unflatten
+# ---------------------------------------------------------------------------
+
+class TestFlattenUnflatten:
+
+    def test_flatten_roundtrip(self):
+        jg = JointGaussian(
+            mean=jnp.array([0.0, 1.0, 2.0]),
+            cov=jnp.eye(3),
+            a=1, bc=2,
+        )
+        key = jax.random.PRNGKey(30)
+        s = jg.sample(key, (5,))
+        flat = jg.flatten_value(s)
+        assert flat.shape == (5, 3)
+        unflat = jg.unflatten_value(flat)
+        np.testing.assert_allclose(unflat["a"], s["a"], atol=1e-6)
+        np.testing.assert_allclose(unflat["bc"], s["bc"], atol=1e-6)
 
 
 # ---------------------------------------------------------------------------
