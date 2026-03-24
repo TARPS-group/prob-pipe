@@ -27,7 +27,9 @@ _warnings.filterwarnings(
 from probpipe.distributions import (
     # Base classes
     Distribution,
+    PyTreeArrayDistribution,
     ArrayDistribution,
+    FlattenedView,
     TFPDistribution,
     EmpiricalDistribution,
     Provenance,
@@ -108,7 +110,9 @@ from probpipe.converters import (
 __all__ = [
     # Base classes
     "Distribution",
+    "PyTreeArrayDistribution",
     "ArrayDistribution",
+    "FlattenedView",
     "TFPDistribution",
     "EmpiricalDistribution",
     "Provenance",
