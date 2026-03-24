@@ -46,11 +46,14 @@ samples, ``event_shapes``, ``log_prob`` inputs, etc.
 
 **Component access:**
 
-*  ``joint["name"]`` returns a :class:`DistributionView` for a
-   top-level component (which may itself be an ``ArrayDistribution``
-   leaf, or a sub-dict group).
+*  ``joint["name"]`` returns a :class:`DistributionView` when the
+   key resolves to an ``ArrayDistribution`` leaf.
 *  ``joint["group", "leaf"]`` returns a ``DistributionView`` for a
    nested leaf, navigating through intermediate dict levels.
+*  ``joint["group"]`` returns a new :class:`ProductDistribution`
+   when the key resolves to an internal dict node (a sub-tree).
+   This sub-joint is the **marginal** distribution over that group's
+   components — sampling it draws only from those leaves.
 *  ``component_names`` returns a tuple of key paths — plain strings
    for flat dicts, or tuples of strings for nested leaves.
 
@@ -601,32 +604,64 @@ class JointDistribution(PyTreeArrayDistribution):
 
     # -- Structured access -------------------------------------------------
 
-    def __getitem__(self, key) -> DistributionView:
-        """Return a :class:`DistributionView` for a leaf component.
+    def __getitem__(self, key):
+        """Access a component by key path.
+
+        The return type depends on what the key path resolves to in the
+        component pytree:
+
+        *  **Leaf** (``ArrayDistribution``): returns a
+           :class:`DistributionView` — a lightweight ``ArrayDistribution``
+           whose samples are the marginal values of that leaf.
+        *  **Internal node** (``dict``): returns a new
+           :class:`ProductDistribution` wrapping the sub-tree.  This
+           sub-joint is a **marginal** distribution — sampling it draws
+           only from the components in that group, independent of sibling
+           groups.
 
         Accepts a single string for top-level access, or a tuple of
         strings for nested access::
 
-            joint["x"]               # flat dict access
-            joint["physics", "force"]  # nested dict access
-
-        The returned view is an ``ArrayDistribution`` whose samples
-        are the marginal values of this component.  When sampled
-        standalone, it draws a full joint sample and extracts the
-        relevant component via the key path.
+            joint["x"]               # leaf → DistributionView
+            joint["physics", "force"]  # nested leaf → DistributionView
+            joint["physics"]          # internal node → ProductDistribution
 
         Parameters
         ----------
         key : str or tuple[str, ...]
             Component key path.
 
+        Returns
+        -------
+        DistributionView or ProductDistribution
+            A view for leaf access, or a sub-joint for internal-node access.
+
         Raises
         ------
         KeyError
-            If the key path does not resolve to an ``ArrayDistribution``
-            leaf in the component pytree.
+            If the key path does not resolve to a valid node in the
+            component pytree.
+
+        Notes
+        -----
+        The sub-joint returned for an internal node is an **independent
+        copy** — it does not preserve correlations with sibling groups
+        that may exist in subclasses like
+        :class:`SequentialJointDistribution`.  For
+        :class:`ProductDistribution` (where all leaves are independent),
+        the marginal sub-joint is exact.
         """
-        return DistributionView(self, key)
+        key_path = _normalize_key(key)
+        node = _walk_pytree(self._components, key_path)
+        if isinstance(node, ArrayDistribution):
+            return DistributionView(self, key)
+        if isinstance(node, dict):
+            # Internal node → return a sub-joint over the sub-tree.
+            return ProductDistribution(**node)
+        raise KeyError(
+            f"Key path {key_path} resolves to {type(node).__name__}, "
+            f"which is neither an ArrayDistribution leaf nor a dict node."
+        )
 
     def bind(self, **mapping) -> dict[str, DistributionView]:
         """Create a dict of views with remapped names.

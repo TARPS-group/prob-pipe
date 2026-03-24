@@ -912,10 +912,53 @@ class TestNestedProductDistribution:
         assert isinstance(view, DistributionView)
         assert view._key_path == ("observation",)
 
-    def test_getitem_intermediate_raises(self, nested_joint):
-        """Indexing to a sub-dict (not a leaf) should raise."""
-        with pytest.raises(KeyError, match="not an ArrayDistribution leaf"):
-            nested_joint["physics"]
+    def test_getitem_internal_node_returns_sub_joint(self, nested_joint):
+        """Indexing to a sub-dict returns a ProductDistribution."""
+        sub = nested_joint["physics"]
+        assert isinstance(sub, ProductDistribution)
+        assert set(sub._components.keys()) == {"force", "mass"}
+
+    def test_getitem_internal_node_sample(self, nested_joint):
+        """Sub-joint from internal node should sample correctly."""
+        sub = nested_joint["physics"]
+        key = jax.random.PRNGKey(99)
+        s = sub.sample(key, (10,))
+        assert isinstance(s, dict)
+        assert set(s.keys()) == {"force", "mass"}
+        assert s["force"].shape == (10,)
+        assert s["mass"].shape == (10,)
+        # Gamma samples should be positive
+        assert jnp.all(s["mass"] > 0)
+
+    def test_getitem_internal_node_log_prob(self, nested_joint):
+        """Sub-joint log_prob should work."""
+        sub = nested_joint["physics"]
+        key = jax.random.PRNGKey(100)
+        s = sub.sample(key)
+        lp = sub.log_prob(s)
+        assert jnp.isfinite(lp)
+
+    def test_getitem_internal_node_moments(self, nested_joint):
+        """Sub-joint mean/variance should work."""
+        sub = nested_joint["physics"]
+        m = sub.mean()
+        assert isinstance(m, dict)
+        assert set(m.keys()) == {"force", "mass"}
+
+    def test_getitem_internal_node_event_shapes(self, nested_joint):
+        """Sub-joint should have correct event_shapes."""
+        sub = nested_joint["physics"]
+        es = sub.event_shapes
+        assert es == {"force": (), "mass": ()}
+        assert sub.event_size == 2
+
+    def test_getitem_internal_node_is_independent(self, nested_joint):
+        """Sub-joint is a marginal — it does not share state with parent."""
+        sub = nested_joint["physics"]
+        parent_names = nested_joint.component_names
+        sub_names = sub.component_names
+        # Sub-joint is flat, so names are plain strings
+        assert sub_names == ("force", "mass")
 
     def test_getitem_invalid_raises(self, nested_joint):
         with pytest.raises(KeyError, match="not found"):
