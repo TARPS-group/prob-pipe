@@ -648,7 +648,7 @@ class PyTreeArrayDistribution(Distribution[T]):
     @property
     def flat_event_shapes(self) -> list[tuple[int, ...]]:
         """Event shapes as a flat list in canonical leaf order."""
-        return jax.tree.leaves(self.event_shapes)
+        return self.treedef.flatten_up_to(self.event_shapes)
 
     @property
     def event_size(self) -> int:
