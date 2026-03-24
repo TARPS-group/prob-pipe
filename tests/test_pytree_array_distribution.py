@@ -90,14 +90,14 @@ class TestArrayDistributionPyTreeInterface:
         fes = scalar_normal.flat_event_shapes
         assert fes == [()]
 
-    def test_flat_dim_scalar(self, scalar_normal):
-        assert scalar_normal.flat_dim == 1
+    def test_event_size_scalar(self, scalar_normal):
+        assert scalar_normal.event_size == 1
 
-    def test_flat_dim_vector(self, vector_mvn):
-        assert vector_mvn.flat_dim == 3
+    def test_event_size_vector(self, vector_mvn):
+        assert vector_mvn.event_size == 3
 
-    def test_flat_dim_4d(self, matrix_mvn):
-        assert matrix_mvn.flat_dim == 4
+    def test_event_size_4d(self, matrix_mvn):
+        assert matrix_mvn.event_size == 4
 
 
 # ---------------------------------------------------------------------------

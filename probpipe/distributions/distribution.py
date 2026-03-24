@@ -651,8 +651,11 @@ class PyTreeArrayDistribution(Distribution[T]):
         return jax.tree.leaves(self.event_shapes)
 
     @property
-    def flat_dim(self) -> int:
-        """Total dimensionality of the flattened representation."""
+    def event_size(self) -> int:
+        """Total number of scalar elements in one event (analogous to ``numpy.ndarray.size``).
+
+        Equal to the sum of ``math.prod(s)`` over all leaf event shapes.
+        """
         return sum(math.prod(s) for s in self.flat_event_shapes)
 
     # -- log-density (required at this layer) --------------------------------
@@ -666,12 +669,19 @@ class PyTreeArrayDistribution(Distribution[T]):
     # -- flatten / unflatten ------------------------------------------------
 
     def flatten_value(self, value: T) -> Array:
-        """Flatten a pytree value to a 1D array.
+        """Flatten the event dimensions of a pytree value into a single trailing axis.
 
-        Each leaf array (of shape ``*event_shape``) is raveled and the
-        results are concatenated in canonical leaf order.
-        For batched values (leaves have shape ``*batch_dims, *event_shape``),
-        returns array of shape ``(*batch_dims, flat_dim)``.
+        Each leaf's event dimensions are raveled and the results are
+        concatenated in canonical leaf order.  All leading dimensions
+        (``sample_shape``, ``batch_shape``, or both) are preserved.
+
+        Shape contract for each leaf::
+
+            (*sample_shape, *batch_shape, *event_shape)
+            → (*sample_shape, *batch_shape, prod(event_shape))
+
+        After concatenating across leaves the result has shape
+        ``(*sample_shape, *batch_shape, event_size)``.
         """
         leaves = jax.tree.leaves(value)
         event_shapes = self.flat_event_shapes
@@ -685,17 +695,22 @@ class PyTreeArrayDistribution(Distribution[T]):
         return jnp.concatenate(flat_leaves, axis=-1)
 
     def unflatten_value(self, flat: Array) -> T:
-        """Unflatten a 1D (or batched) array back to the pytree structure.
+        """Unflatten a flat array back to the pytree structure.
+
+        Reverses :meth:`flatten_value`.  All dimensions preceding the
+        final ``event_size`` axis are preserved (whether they represent
+        ``sample_shape``, ``batch_shape``, or both).
 
         Parameters
         ----------
         flat : Array
-            Array of shape ``(*batch_dims, flat_dim)``.
+            Array of shape ``(*sample_shape, *batch_shape, event_size)``.
 
         Returns
         -------
         T
-            Pytree with each leaf reshaped to ``(*batch_dims, *event_shape)``.
+            Pytree with each leaf reshaped to
+            ``(*sample_shape, *batch_shape, *event_shape)``.
         """
         event_shapes = self.flat_event_shapes
         batch_dims = flat.shape[:-1]
@@ -711,7 +726,7 @@ class PyTreeArrayDistribution(Distribution[T]):
     def as_flat_distribution(self) -> ArrayDistribution:
         """View this distribution as a flat ``ArrayDistribution``.
 
-        Returns an ``ArrayDistribution`` with ``event_shape=(flat_dim,)``.
+        Returns an ``ArrayDistribution`` with ``event_shape=(event_size,)``.
         Enables interoperability with algorithms that expect flat vectors
         (MCMC, optimizers, VI methods).
         """
@@ -778,13 +793,20 @@ class ArrayDistribution(PyTreeArrayDistribution[Array]):
         return [self.event_shape]
 
     @property
-    def flat_dim(self) -> int:
+    def event_size(self) -> int:
         """Total flat dimensionality."""
         es = self.event_shape
         return math.prod(es) if es else 1
 
     def flatten_value(self, value: ArrayLike) -> Array:
-        """Flatten event dims of a single array to a 1D vector."""
+        """Flatten event dimensions into a single trailing axis.
+
+        Leading dimensions (``sample_shape``, ``batch_shape``) are
+        preserved::
+
+            (*sample_shape, *batch_shape, *event_shape)
+            → (*sample_shape, *batch_shape, prod(event_shape))
+        """
         value = jnp.asarray(value)
         es = self.event_shape
         n_event = math.prod(es) if es else 1
@@ -796,7 +818,14 @@ class ArrayDistribution(PyTreeArrayDistribution[Array]):
         return value.reshape(*batch_dims, n_event)
 
     def unflatten_value(self, flat: ArrayLike) -> Array:
-        """Unflatten a 1D vector back to event shape."""
+        """Unflatten a flat trailing axis back to event dimensions.
+
+        Leading dimensions (``sample_shape``, ``batch_shape``) are
+        preserved::
+
+            (*sample_shape, *batch_shape, event_size)
+            → (*sample_shape, *batch_shape, *event_shape)
+        """
         flat = jnp.asarray(flat)
         es = self.event_shape
         if not es:
@@ -933,7 +962,7 @@ class ArrayDistribution(PyTreeArrayDistribution[Array]):
 class FlattenedView(ArrayDistribution):
     """Wraps a ``PyTreeArrayDistribution`` as a flat ``ArrayDistribution``.
 
-    Sampling produces flat vectors of shape ``(flat_dim,)``, and
+    Sampling produces flat vectors of shape ``(event_size,)``, and
     ``log_prob`` accepts flat vectors and delegates to the wrapped
     distribution after unflattening.
 
@@ -947,7 +976,7 @@ class FlattenedView(ArrayDistribution):
 
     @property
     def event_shape(self) -> tuple[int, ...]:
-        return (self._base.flat_dim,)
+        return (self._base.event_size,)
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
