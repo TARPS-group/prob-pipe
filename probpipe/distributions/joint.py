@@ -1,36 +1,75 @@
 """Joint distributions and component views for correlated broadcasting.
 
-This module implements joint distributions whose samples are **dictionaries**
-mapping component names to arrays.  The base class :class:`JointDistribution`
-inherits from :class:`PyTreeArrayDistribution[dict]`, so all pytree shape
-semantics (``event_shapes``, ``event_size``, ``flatten_value`` /
+This module implements joint distributions whose samples are **pytrees of
+arrays** (typically nested dicts).  The base class
+:class:`JointDistribution` inherits from
+:class:`PyTreeArrayDistribution[T]`, so all pytree shape semantics
+(``event_shapes``, ``event_size``, ``flatten_value`` /
 ``unflatten_value``, ``as_flat_distribution()``) are available.
+
+**Component structure:**
+
+Components are stored as a pytree whose leaves are
+``ArrayDistribution`` instances.  The simplest case is a flat dict::
+
+    ProductDistribution(x=Normal(0, 1), y=Normal(1, 2))
+
+but components may also be nested dicts::
+
+    ProductDistribution(
+        physics={"force": Normal(0, 1), "mass": Gamma(2, 1)},
+        observation=Normal(0, 0.1),
+    )
+
+The pytree structure of the components determines the structure of
+samples, ``event_shapes``, ``log_prob`` inputs, etc.
 
 **Structural contract:**
 
-*  Components are identified by string keys in a flat ``dict``.
-*  ``sample()`` returns ``dict[str, Array]`` where each value has shape
-   ``(*sample_shape, *batch_shape, *event_shape_for_that_component)``.
-*  ``log_prob()`` accepts a ``dict[str, Array]`` with the same structure.
-*  ``event_shapes`` returns ``{name: event_shape}`` for each component.
+*  ``sample()`` returns a pytree with the same structure as the
+   components, but with ``ArrayDistribution`` leaves replaced by
+   arrays of shape ``(*sample_shape, *batch_shape, *leaf_event_shape)``.
+*  ``log_prob()`` accepts a pytree with the same structure.
+*  ``event_shapes`` returns a pytree with the same structure, where
+   each leaf is the ``event_shape`` tuple of the corresponding
+   component distribution.
 *  ``batch_shape`` is shared across all components (an empty tuple unless
    the component distributions themselves are batched identically).
 *  ``flatten_value`` / ``unflatten_value`` (inherited from
-   ``PyTreeArrayDistribution``) convert between the dict representation
-   and a flat ``(*leading_dims, event_size)`` array.  Leaf ordering
-   follows Python's canonical dict iteration order (insertion order,
-   which for these dicts is the order components were passed to the
-   constructor).
+   ``PyTreeArrayDistribution``) convert between the pytree
+   representation and a flat ``(*leading_dims, event_size)`` array.
+   Leaf ordering follows JAX's canonical pytree traversal order
+   (sorted dict keys, depth-first).
 *  ``as_flat_distribution()`` returns a :class:`FlattenedView` with
    ``event_shape = (event_size,)`` for use with algorithms expecting
    flat vectors.
+
+**Component access:**
+
+*  ``joint["name"]`` returns a :class:`DistributionView` for a
+   top-level component (which may itself be an ``ArrayDistribution``
+   leaf, or a sub-dict group).
+*  ``joint["group", "leaf"]`` returns a ``DistributionView`` for a
+   nested leaf, navigating through intermediate dict levels.
+*  ``component_names`` returns a tuple of key paths — plain strings
+   for flat dicts, or tuples of strings for nested leaves.
 
 **Independence assumptions:**
 
 *  :class:`JointDistribution` (base) makes **no** independence assumption.
    Subclasses define the factorization structure.
-*  :class:`ProductDistribution` assumes **all components are independent**.
-   ``log_prob`` is the sum of per-component log-probs with no coupling.
+*  :class:`ProductDistribution` assumes **all leaf components are
+   independent**.  ``log_prob`` is the sum of per-leaf log-probs with
+   no coupling.
+
+**Subclass structure limitations:**
+
+*  :class:`SequentialJointDistribution`, :class:`JointEmpirical`, and
+   :class:`JointGaussian` currently support **flat dicts only** (no
+   nesting).  This is because sequential dependencies use function
+   parameter names (inherently flat), empirical distributions store
+   sample arrays keyed by name, and Gaussian conditioning operates on
+   flat index slices.
 """
 from __future__ import annotations
 
@@ -63,17 +102,119 @@ __all__ = [
     "ConditionedComponent",
 ]
 
+# Type alias for key paths used to address components in nested pytrees.
+# A KeyPath is a tuple of strings, e.g. ("physics", "force").
+# For flat dicts, component_names returns plain strings for convenience,
+# but DistributionView and __getitem__ always normalize to tuples internally.
+KeyPath = tuple[str, ...]
+
+
+def _normalize_key(key) -> KeyPath:
+    """Normalize a component key to a KeyPath tuple.
+
+    Accepts a single string (``"x"``), a tuple of strings
+    (``("physics", "force")``), or a sequence passed as ``__getitem__``
+    positional args.
+
+    Returns
+    -------
+    KeyPath
+        A tuple of strings, e.g. ``("x",)`` or ``("physics", "force")``.
+    """
+    if isinstance(key, str):
+        return (key,)
+    if isinstance(key, tuple) and all(isinstance(k, str) for k in key):
+        return key
+    raise TypeError(
+        f"Component key must be a string or tuple of strings, got {key!r}"
+    )
+
+
+def _walk_pytree(tree, key_path: KeyPath):
+    """Navigate a nested dict/pytree by following a key path.
+
+    Parameters
+    ----------
+    tree : dict or leaf
+        The pytree to navigate.
+    key_path : KeyPath
+        Sequence of string keys, e.g. ``("physics", "force")``.
+
+    Returns
+    -------
+    object
+        The leaf (or sub-tree) at the given path.
+
+    Raises
+    ------
+    KeyError
+        If any key in the path is not found.
+    """
+    node = tree
+    for k in key_path:
+        if not isinstance(node, dict):
+            raise KeyError(
+                f"Cannot navigate further into non-dict node at "
+                f"key path prefix; remaining key: {k!r}"
+            )
+        if k not in node:
+            raise KeyError(
+                f"Key {k!r} not found. Available: {tuple(node.keys())}"
+            )
+        node = node[k]
+    return node
+
+
+def _component_key_paths(components) -> tuple:
+    """Extract leaf key paths from a pytree of ArrayDistributions.
+
+    For a flat dict ``{"x": Normal, "y": MVN}``, returns
+    ``("x", "y")`` — plain strings for backward compatibility.
+
+    For a nested dict ``{"g": {"a": Normal}, "b": MVN}``, returns
+    ``(("b",), ("g", "a"))`` — tuples of strings in JAX's canonical
+    traversal order (sorted dict keys, depth-first).
+
+    Parameters
+    ----------
+    components : dict
+        A (possibly nested) dict whose leaves are ArrayDistribution.
+
+    Returns
+    -------
+    tuple[str, ...] or tuple[KeyPath, ...]
+        Leaf identifiers.  Plain strings if the dict is flat; tuples
+        of strings if any nesting is present.
+    """
+    # Check if the dict is flat (all values are ArrayDistribution leaves)
+    is_flat = isinstance(components, dict) and all(
+        isinstance(v, ArrayDistribution) for v in components.values()
+    )
+    if is_flat:
+        return tuple(components.keys())
+
+    # Nested: extract full key paths from JAX's traversal
+    paths_and_leaves = jax.tree_util.tree_leaves_with_path(components)
+    key_paths = []
+    for path, _leaf in paths_and_leaves:
+        str_path = tuple(
+            k.key if hasattr(k, "key") else str(k) for k in path
+        )
+        key_paths.append(str_path)
+    return tuple(key_paths)
+
 
 # ---------------------------------------------------------------------------
 # DistributionView — lightweight reference to a JointDistribution component
 # ---------------------------------------------------------------------------
 
 class DistributionView(ArrayDistribution):
-    """A lightweight reference to a named component of a :class:`JointDistribution`.
+    """A lightweight reference to a leaf component of a :class:`JointDistribution`.
 
     A ``DistributionView`` acts as an ``ArrayDistribution`` for a single
-    component of a joint distribution.  It is the object returned by
-    ``joint["component_name"]``.
+    leaf of a joint distribution's component pytree.  It is the object
+    returned by ``joint["component_name"]`` or
+    ``joint["group", "leaf"]``.
 
     **Broadcasting contract:** The broadcasting logic in
     :class:`~probpipe.core.node.WorkflowFunction` detects
@@ -83,31 +224,51 @@ class DistributionView(ArrayDistribution):
 
     **Standalone sampling:** When sampled outside of broadcasting, the
     view draws a full joint sample from its parent and extracts this
-    component.
+    component by walking the sample pytree using the stored key path.
 
-    **Key path (current implementation):** The view stores a single
-    string ``component_name`` that addresses a leaf in the parent's
-    flat-dict structure.  A future extension will generalize this to
-    tuple key paths for nested pytree joints.
+    **Key path:** The view stores a :data:`KeyPath` — a tuple of
+    strings that addresses a leaf in the parent's (possibly nested)
+    pytree structure.  For flat joints ``("x",)`` navigates to
+    ``sample["x"]``; for nested joints ``("physics", "force")``
+    navigates to ``sample["physics"]["force"]``.
+
+    **Backward compatibility:** The ``_component_name`` property
+    returns the last element of the key path (the leaf name) for
+    code that reads it as a simple string.
 
     Parameters
     ----------
     parent : JointDistribution
         The joint distribution this view belongs to.
-    component_name : str
-        The name of the component to extract.
+    key_path : str or KeyPath
+        A string (for flat access) or tuple of strings (for nested
+        access) identifying the leaf component.
     """
 
-    def __init__(self, parent: JointDistribution, component_name: str):
-        if component_name not in parent.component_names:
+    def __init__(self, parent: JointDistribution, key_path: str | KeyPath):
+        self._key_path: KeyPath = _normalize_key(key_path)
+        # Validate: the key path must resolve to an ArrayDistribution leaf
+        leaf = _walk_pytree(parent._components, self._key_path)
+        if not isinstance(leaf, ArrayDistribution):
             raise KeyError(
-                f"Component '{component_name}' not found in "
-                f"{type(parent).__name__}. Available: {parent.component_names}"
+                f"Key path {self._key_path} resolves to "
+                f"{type(leaf).__name__}, not an ArrayDistribution leaf. "
+                f"Use a longer key path to reach a leaf."
             )
         self._parent = parent
-        self._component_name = component_name
-        self._component = parent.components[component_name]
-        self._name = component_name
+        self._component = leaf
+        self._name = self._key_path[-1]
+
+    @property
+    def _component_name(self) -> str:
+        """Leaf name (last element of key path).
+
+        Provided for backward compatibility with code that reads
+        ``view._component_name`` as a simple string — including
+        the broadcasting logic in
+        :class:`~probpipe.core.node.WorkflowFunction`.
+        """
+        return self._key_path[-1] if len(self._key_path) == 1 else None
 
     # -- Distribution ABC --------------------------------------------------
 
@@ -129,7 +290,7 @@ class DistributionView(ArrayDistribution):
 
     def _sample(self, key: PRNGKey) -> Array:
         structured = self._parent.sample(key)
-        return structured[self._component_name]
+        return _walk_pytree(structured, self._key_path)
 
     def sample(
         self,
@@ -139,7 +300,7 @@ class DistributionView(ArrayDistribution):
         if key is None:
             key = _auto_key()
         structured = self._parent.sample(key, sample_shape)
-        return structured[self._component_name]
+        return _walk_pytree(structured, self._key_path)
 
     def log_prob(self, x: ArrayLike) -> Array:
         return self._component.log_prob(x)
@@ -161,9 +322,10 @@ class DistributionView(ArrayDistribution):
         return real
 
     def __repr__(self) -> str:
+        path_str = " > ".join(self._key_path)
         return (
             f"DistributionView(parent={type(self._parent).__name__}, "
-            f"component='{self._component_name}')"
+            f"path='{path_str}')"
         )
 
 
@@ -236,78 +398,111 @@ class ConditionedComponent(ArrayDistribution):
 # JointDistribution — base class for named multi-component distributions
 # ---------------------------------------------------------------------------
 
-class JointDistribution(PyTreeArrayDistribution[dict]):
+class JointDistribution(PyTreeArrayDistribution):
     """Base class for named multi-component distributions.
 
     A ``JointDistribution`` is a :class:`PyTreeArrayDistribution` whose
-    samples are **dictionaries** mapping component names (strings) to
-    arrays.  Each component is backed by an ``ArrayDistribution`` that
-    defines the marginal (or conditional) distribution for that
-    component.
+    samples are **pytrees** (typically dicts, possibly nested) mapping
+    component names to arrays.  Each leaf of the component pytree is
+    an ``ArrayDistribution`` that defines the marginal (or conditional)
+    distribution for that component.
 
-    **Structural requirements:**
+    **Component structure:**
 
-    *  Components are passed as keyword arguments to ``__init__`` and
-       stored in insertion order.
-    *  Each component must be an ``ArrayDistribution``.
-    *  Component names are strings (dict keys); the pytree structure
-       (``treedef``) is the corresponding ``dict`` treedef.
-    *  ``batch_shape`` is assumed to be shared across all components
-       and defaults to ``()``.
+    Components are stored in ``self._components`` as a pytree whose
+    leaves are ``ArrayDistribution`` instances.  For flat dicts this is
+    ``{"x": Normal, "y": MVN}``.  For nested dicts this is e.g.
+    ``{"physics": {"force": Normal, "mass": Gamma}, "obs": Normal}``.
+
+    The pytree structure determines:
+
+    *  The ``treedef`` — derived from the component pytree by replacing
+       each ``ArrayDistribution`` leaf with a scalar placeholder, then
+       calling ``jax.tree.structure()``.
+    *  ``event_shapes`` — a pytree of the same structure where each
+       leaf is the component's ``event_shape`` tuple.
+    *  ``component_names`` — a tuple of key paths.  For flat dicts these
+       are plain strings ``("x", "y")``.  For nested dicts these are
+       tuples ``(("physics", "force"), ("physics", "mass"), ("obs",))``,
+       in JAX's canonical traversal order (sorted dict keys, depth-first).
+
+    **Flat-dict backward compatibility:**
+
+    When all top-level values are ``ArrayDistribution`` leaves (no
+    nesting), the API behaves identically to a flat-dict joint:
+    ``component_names`` returns plain strings, ``__getitem__`` accepts
+    a single string, and ``sample()`` returns a flat dict.
 
     **Sample type:**
 
-    ``sample()`` returns ``dict[str, Array]`` where each value has shape
-    ``(*sample_shape, *batch_shape, *component_event_shape)``.
+    ``sample()`` returns a pytree with the same structure as the
+    components, but with ``ArrayDistribution`` leaves replaced by
+    arrays of shape ``(*sample_shape, *batch_shape, *leaf_event_shape)``.
 
     **Log-prob contract:**
 
-    ``log_prob()`` accepts a ``dict[str, Array]`` with the same
-    structure and returns a scalar (or batch-shaped array).  The base
-    class raises ``NotImplementedError``; subclasses define the
-    factorization (e.g., product of marginals for
-    :class:`ProductDistribution`).
+    ``log_prob()`` accepts a pytree with the same structure and returns
+    a scalar (or batch-shaped array).  The base class raises
+    ``NotImplementedError``; subclasses define the factorization.
 
     **Flat-vector interop:**
 
     The inherited ``flatten_value`` / ``unflatten_value`` methods convert
-    between the dict representation and flat ``(*leading, event_size)``
-    arrays.  ``as_flat_distribution()`` returns a :class:`FlattenedView`
-    with ``event_shape = (event_size,)`` for algorithms expecting flat
-    vectors.
+    between the pytree representation and flat
+    ``(*leading, event_size)`` arrays.  ``as_flat_distribution()``
+    returns a :class:`FlattenedView` with ``event_shape = (event_size,)``
+    for algorithms expecting flat vectors.
 
     **Component access:**
 
     ``joint["name"]`` returns a :class:`DistributionView` — an
-    ``ArrayDistribution`` that extracts the named component from joint
-    samples.  ``joint.bind(a="x", b="y")`` creates a dict of views
-    with remapped names for use in broadcasting.
+    ``ArrayDistribution`` that extracts the named leaf component from
+    joint samples.  For nested joints, use
+    ``joint["group", "leaf"]`` to reach a nested leaf.
+    ``joint.bind(a="x", b="y")`` creates a dict of views with
+    remapped names for use in broadcasting.
+
+    **Subclass note:**
+
+    :class:`SequentialJointDistribution`, :class:`JointEmpirical`, and
+    :class:`JointGaussian` override ``__init__`` and only support flat
+    dicts.  Nested pytree support is available in
+    :class:`ProductDistribution` and the base ``JointDistribution``.
 
     Parameters
     ----------
     name : str, optional
         Distribution name for provenance / display.
-    **components : ArrayDistribution
-        Named component distributions.  At least one required.
+    **components : ArrayDistribution or dict
+        Named component distributions.  Values may be
+        ``ArrayDistribution`` instances (leaves) or nested dicts
+        whose leaves are ``ArrayDistribution`` instances.
+        At least one leaf component is required.
     """
 
-    def __init__(self, *, name: str | None = None, **components: ArrayDistribution):
+    def __init__(self, *, name: str | None = None, **components):
         if not components:
             raise ValueError("JointDistribution requires at least one component.")
-        for k, v in components.items():
-            if not isinstance(v, ArrayDistribution):
+        # Validate: all leaves must be ArrayDistribution
+        leaves = jax.tree.leaves(components)
+        if not leaves:
+            raise ValueError("JointDistribution requires at least one component.")
+        for leaf in leaves:
+            if not isinstance(leaf, ArrayDistribution):
                 raise TypeError(
-                    f"Component '{k}' must be an ArrayDistribution, got {type(v).__name__}"
+                    f"All leaf components must be ArrayDistribution, "
+                    f"got {type(leaf).__name__}"
                 )
         self._components = dict(components)
         self._name = name
 
     @classmethod
     def from_distributions(cls, distributions: list[ArrayDistribution], **kwargs):
-        """Construct from a list of named distributions.
+        """Construct a flat joint from a list of named distributions.
 
         Each distribution must have a non-``None`` ``name`` attribute,
-        and names must be unique.
+        and names must be unique.  The result is always a flat dict
+        (no nesting).
 
         Parameters
         ----------
@@ -332,8 +527,14 @@ class JointDistribution(PyTreeArrayDistribution[dict]):
 
     @property
     def treedef(self) -> jax.tree_util.PyTreeDef:
-        """Pytree structure of a single sample (a dict with component keys)."""
-        prototype = {k: 0 for k in self._components}
+        """Pytree structure of a single sample.
+
+        Derived from the component pytree by replacing each
+        ``ArrayDistribution`` leaf with a scalar placeholder.
+        For flat dicts this produces a flat-dict ``PyTreeDef``;
+        for nested dicts it produces a nested-dict ``PyTreeDef``.
+        """
+        prototype = jax.tree.map(lambda _: 0, self._components)
         return jax.tree.structure(prototype)
 
     @property
@@ -346,82 +547,141 @@ class JointDistribution(PyTreeArrayDistribution[dict]):
         return ()
 
     @property
-    def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-component event shapes.
+    def event_shapes(self):
+        """Per-component event shapes as a pytree.
 
-        Returns a dict ``{name: event_shape}`` with the same key
-        ordering as the components.
+        Returns a pytree with the same structure as the components,
+        where each leaf is the ``event_shape`` tuple of the
+        corresponding ``ArrayDistribution``.
+
+        For a flat dict ``{"x": Normal, "y": MVN(3)}`` this returns
+        ``{"x": (), "y": (3,)}``.  For a nested dict it returns
+        a nested dict of shapes.
         """
-        return {k: v.event_shape for k, v in self._components.items()}
+        return jax.tree.map(lambda d: d.event_shape, self._components)
 
     # -- Properties --------------------------------------------------------
 
     @property
-    def components(self) -> dict[str, ArrayDistribution]:
-        """Read-only view of the component distributions."""
-        return MappingProxyType(self._components)
+    def components(self):
+        """The component pytree (read-only for flat dicts).
+
+        For flat dicts, returns a ``MappingProxyType`` for read-only
+        access.  For nested dicts, returns the dict directly (Python
+        does not support nested read-only views without deep copying).
+        """
+        if self._is_flat:
+            return MappingProxyType(self._components)
+        return self._components
 
     @property
-    def component_names(self) -> tuple[str, ...]:
-        """Component names in insertion order."""
-        return tuple(self._components.keys())
+    def _is_flat(self) -> bool:
+        """True if all top-level dict values are ArrayDistribution leaves."""
+        return isinstance(self._components, dict) and all(
+            isinstance(v, ArrayDistribution) for v in self._components.values()
+        )
+
+    @property
+    def component_names(self) -> tuple:
+        """Leaf component identifiers.
+
+        For flat dicts, returns a tuple of plain strings::
+
+            ("x", "y")
+
+        For nested dicts, returns a tuple of key-path tuples in JAX's
+        canonical traversal order (sorted dict keys, depth-first)::
+
+            (("physics", "force"), ("physics", "mass"), ("obs",))
+
+        These key paths can be passed to ``joint[key_path]`` to get
+        a :class:`DistributionView` for the leaf.
+        """
+        return _component_key_paths(self._components)
 
     # -- Structured access -------------------------------------------------
 
-    def __getitem__(self, name: str) -> DistributionView:
-        """Return a :class:`DistributionView` for the named component.
+    def __getitem__(self, key) -> DistributionView:
+        """Return a :class:`DistributionView` for a leaf component.
+
+        Accepts a single string for top-level access, or a tuple of
+        strings for nested access::
+
+            joint["x"]               # flat dict access
+            joint["physics", "force"]  # nested dict access
 
         The returned view is an ``ArrayDistribution`` whose samples
         are the marginal values of this component.  When sampled
         standalone, it draws a full joint sample and extracts the
-        relevant component.
+        relevant component via the key path.
 
         Parameters
         ----------
-        name : str
-            Component name (must exist in ``component_names``).
-        """
-        return DistributionView(self, name)
+        key : str or tuple[str, ...]
+            Component key path.
 
-    def bind(self, **mapping: str) -> dict[str, DistributionView]:
+        Raises
+        ------
+        KeyError
+            If the key path does not resolve to an ``ArrayDistribution``
+            leaf in the component pytree.
+        """
+        return DistributionView(self, key)
+
+    def bind(self, **mapping) -> dict[str, DistributionView]:
         """Create a dict of views with remapped names.
 
-        Example::
+        Values may be strings (for flat access) or tuples of strings
+        (for nested access)::
 
-            joint = ProductDistribution(x=Normal(0, 1), y=Normal(1, 2))
-            views = joint.bind(a='x', b='y')
-            # views == {'a': DistributionView(x), 'b': DistributionView(y)}
+            joint.bind(a='x', b='y')                     # flat
+            joint.bind(f=('physics', 'force'), m='obs')   # nested
+
+        Parameters
+        ----------
+        **mapping
+            ``{workflow_arg_name: component_key_or_path}``.
         """
-        return {arg_name: self[comp_name] for arg_name, comp_name in mapping.items()}
+        return {arg_name: self[comp_key] for arg_name, comp_key in mapping.items()}
 
     # -- Component-level log_prob ------------------------------------------
 
-    def component_log_prob(self, value: dict[str, ArrayLike]) -> dict[str, Array]:
-        """Per-component log-density contributions.
+    def component_log_prob(self, value) -> dict:
+        """Per-leaf log-density contributions.
 
-        Returns a dict ``{name: scalar_or_batch}`` with the same
-        structure as the components.  The total ``log_prob`` is the
-        sum of these values (plus any cross-component coupling terms
-        defined by the subclass).
+        Returns a pytree with the same structure as the components,
+        where each leaf is the scalar (or batch-shaped) log-density
+        from the corresponding component evaluated at the matching
+        value.
 
-        The base implementation evaluates each component's ``log_prob``
-        independently.  Subclasses with cross-component dependencies
-        should override this method.
+        The base implementation evaluates each leaf component's
+        ``log_prob`` independently.  Subclasses with cross-component
+        dependencies should override this method.
+
+        Parameters
+        ----------
+        value : pytree
+            A pytree with the same structure as the components, where
+            each leaf is an array.
         """
-        return {
-            k: self._components[k].log_prob(jnp.asarray(value[k]))
-            for k in self._components
-        }
+        return jax.tree.map(
+            lambda dist, val: dist.log_prob(jnp.asarray(val)),
+            self._components,
+            value,
+        )
 
     # -- Conditioning ------------------------------------------------------
 
     def condition_on(self, **observed: ArrayLike) -> "JointDistribution":
         """Return the conditional distribution given observed component values.
 
+        Currently supports conditioning on **top-level** component names
+        only.  For nested joints, this removes entire top-level subtrees.
+
         Parameters
         ----------
         **observed
-            Component names mapped to their observed values.
+            Top-level component names mapped to their observed values.
 
         Returns
         -------
@@ -431,7 +691,7 @@ class JointDistribution(PyTreeArrayDistribution[dict]):
         Raises
         ------
         KeyError
-            If an observed name is not a valid component.
+            If an observed name is not a valid top-level component.
         ValueError
             If all components are conditioned on.
         """
@@ -439,7 +699,7 @@ class JointDistribution(PyTreeArrayDistribution[dict]):
         if unknown:
             raise KeyError(
                 f"Unknown component(s): {unknown}. "
-                f"Available: {self.component_names}"
+                f"Available: {tuple(self._components.keys())}"
             )
         if len(observed) >= len(self._components):
             raise ValueError("Cannot condition on all components.")
@@ -457,13 +717,14 @@ class JointDistribution(PyTreeArrayDistribution[dict]):
 
     # -- log_prob (abstract) -----------------------------------------------
 
-    def log_prob(self, value: dict[str, ArrayLike]) -> Array:
+    def log_prob(self, value) -> Array:
         """Log-density of the joint distribution.
 
         Parameters
         ----------
-        value : dict[str, ArrayLike]
-            A dict mapping component names to arrays, each with shape
+        value : pytree
+            A pytree with the same structure as the components, where
+            each leaf is an array of shape
             ``(*batch_dims, *component_event_shape)``.
 
         Returns
@@ -476,9 +737,15 @@ class JointDistribution(PyTreeArrayDistribution[dict]):
         )
 
     def __repr__(self) -> str:
-        comp_str = ", ".join(
-            f"{k}={type(v).__name__}" for k, v in self._components.items()
-        )
+        if self._is_flat:
+            comp_str = ", ".join(
+                f"{k}={type(v).__name__}" for k, v in self._components.items()
+            )
+        else:
+            # For nested, show the tree structure compactly
+            def _leaf_repr(d):
+                return type(d).__name__
+            comp_str = str(jax.tree.map(_leaf_repr, self._components))
         name_str = f", name='{self._name}'" if self._name else ""
         return f"{type(self).__name__}({comp_str}{name_str})"
 
@@ -488,19 +755,25 @@ class JointDistribution(PyTreeArrayDistribution[dict]):
 # ---------------------------------------------------------------------------
 
 class ProductDistribution(JointDistribution):
-    """Joint distribution with **independent** components.
+    """Joint distribution with **independent** leaf components.
 
-    All components are sampled independently.  The joint ``log_prob``
-    is the sum of per-component log-probs (no coupling terms).
+    All leaf components are sampled independently.  The joint
+    ``log_prob`` is the sum of per-leaf log-probs (no coupling terms).
 
-    **Sample type:** ``dict[str, Array]`` — same as
-    :class:`JointDistribution`.
+    **Sample type:** A pytree with the same structure as the components,
+    where each ``ArrayDistribution`` leaf is replaced by a sample array.
+    For flat dicts this is ``dict[str, Array]``; for nested dicts it is
+    a nested dict of arrays.
 
     **Independence assumption:** This class assumes statistical
-    independence across all components.  For sequential/autoregressive
-    dependence, use :class:`SequentialJointDistribution`.  For
-    arbitrary dependence with a known joint density, subclass
-    :class:`JointDistribution` directly.
+    independence across **all leaf** components.  Grouping components
+    into nested dicts is purely organizational — it does not introduce
+    any dependence between leaves within a group.
+
+    For sequential/autoregressive dependence, use
+    :class:`SequentialJointDistribution`.  For arbitrary dependence
+    with a known joint density, subclass :class:`JointDistribution`
+    directly.
 
     **Flat-vector interop:** Use ``as_flat_distribution()`` or
     ``flatten_value()`` to obtain flat representations compatible
@@ -510,33 +783,48 @@ class ProductDistribution(JointDistribution):
     ----------
     name : str, optional
         Distribution name.
-    **components : ArrayDistribution
-        Named independent component distributions.
+    **components : ArrayDistribution or dict
+        Named independent component distributions.  Values may be
+        ``ArrayDistribution`` instances (leaves) or nested dicts
+        whose leaves are ``ArrayDistribution`` instances.
 
     Examples
     --------
-    >>> joint = ProductDistribution(
-    ...     x=Normal(loc=0.0, scale=1.0),
-    ...     y=Normal(loc=3.0, scale=2.0),
-    ... )
-    >>> s = joint.sample(jax.random.PRNGKey(0))
-    >>> s.keys()
-    dict_keys(['x', 'y'])
+    Flat dict (most common)::
+
+        >>> joint = ProductDistribution(
+        ...     x=Normal(loc=0.0, scale=1.0),
+        ...     y=Normal(loc=3.0, scale=2.0),
+        ... )
+        >>> s = joint.sample(jax.random.PRNGKey(0))
+        >>> s.keys()
+        dict_keys(['x', 'y'])
+
+    Nested dict (grouped parameters)::
+
+        >>> joint = ProductDistribution(
+        ...     physics={"force": Normal(0, 1), "mass": Gamma(2, 1)},
+        ...     observation=Normal(0, 0.1),
+        ... )
+        >>> s = joint.sample(jax.random.PRNGKey(0))
+        >>> s["physics"]["force"].shape  # scalar leaf
+        ()
     """
 
-    def _sample(self, key: PRNGKey) -> dict[str, Array]:
-        keys = jax.random.split(key, len(self._components))
-        return {
-            cname: cdist.sample(subkey)
-            for subkey, (cname, cdist) in zip(keys, self._components.items())
-        }
+    def _sample(self, key: PRNGKey):
+        leaves = jax.tree.leaves(self._components)
+        keys = jax.random.split(key, len(leaves))
+        sampled_leaves = [
+            dist.sample(subkey) for subkey, dist in zip(keys, leaves)
+        ]
+        return jax.tree.unflatten(self.treedef, sampled_leaves)
 
     def sample(
         self,
         key: PRNGKey | None = None,
         sample_shape: tuple[int, ...] = (),
-    ) -> dict[str, Array]:
-        """Draw independent samples from each component.
+    ):
+        """Draw independent samples from each leaf component.
 
         Parameters
         ----------
@@ -547,44 +835,59 @@ class ProductDistribution(JointDistribution):
 
         Returns
         -------
-        dict[str, Array]
-            Per-component samples.  Each value has shape
-            ``(*sample_shape, *batch_shape, *component_event_shape)``.
+        pytree
+            A pytree with the same structure as the components.
+            Each leaf is an array of shape
+            ``(*sample_shape, *batch_shape, *leaf_event_shape)``.
         """
         if key is None:
             key = _auto_key()
-        keys = jax.random.split(key, len(self._components))
-        return {
-            cname: cdist.sample(subkey, sample_shape)
-            for subkey, (cname, cdist) in zip(keys, self._components.items())
-        }
+        leaves = jax.tree.leaves(self._components)
+        keys = jax.random.split(key, len(leaves))
+        sampled_leaves = [
+            dist.sample(subkey, sample_shape) for subkey, dist in zip(keys, leaves)
+        ]
+        return jax.tree.unflatten(self.treedef, sampled_leaves)
 
-    def log_prob(self, value: dict[str, ArrayLike]) -> Array:
-        """Sum of independent component log-probs.
+    def log_prob(self, value) -> Array:
+        """Sum of independent leaf log-probs.
 
         Parameters
         ----------
-        value : dict[str, ArrayLike]
-            A dict mapping component names to arrays.
+        value : pytree
+            A pytree with the same structure as the components,
+            where each leaf is an array.
 
         Returns
         -------
         Array
-            Scalar (or batch-shaped) log-density.
+            Scalar (or batch-shaped) log-density: sum of all leaf
+            log-probs.
         """
-        total = None
-        for cname, cdist in self._components.items():
-            lp = cdist.log_prob(jnp.asarray(value[cname]))
-            total = lp if total is None else total + lp
+        lp_tree = jax.tree.map(
+            lambda dist, val: dist.log_prob(jnp.asarray(val)),
+            self._components,
+            value,
+        )
+        lp_leaves = jax.tree.leaves(lp_tree)
+        total = lp_leaves[0]
+        for lp in lp_leaves[1:]:
+            total = total + lp
         return total
 
-    def mean(self, **kwargs) -> dict[str, Array]:
-        """Per-component means (exact, no MC needed for independent components)."""
-        return {k: v.mean() for k, v in self._components.items()}
+    def mean(self, **kwargs):
+        """Per-leaf means (exact for independent components).
 
-    def variance(self, **kwargs) -> dict[str, Array]:
-        """Per-component variances (exact, no MC needed for independent components)."""
-        return {k: v.variance() for k, v in self._components.items()}
+        Returns a pytree with the same structure as the components.
+        """
+        return jax.tree.map(lambda d: d.mean(), self._components)
+
+    def variance(self, **kwargs):
+        """Per-leaf variances (exact for independent components).
+
+        Returns a pytree with the same structure as the components.
+        """
+        return jax.tree.map(lambda d: d.variance(), self._components)
 
 
 # ---------------------------------------------------------------------------
@@ -1356,14 +1659,27 @@ class JointGaussian(JointDistribution):
 # ---------------------------------------------------------------------------
 
 def _product_flatten(dist):
-    children = tuple(dist._components.values())
-    aux = (tuple(dist._components.keys()), dist._name)
-    return children, aux
+    """Flatten a ProductDistribution for JAX pytree registration.
+
+    Stores the leaf ArrayDistributions as children and the component
+    pytree structure (treedef) + name as auxiliary data.  This handles
+    both flat and nested component dicts.
+    """
+    leaves = jax.tree.leaves(dist._components)
+    comp_treedef = jax.tree.structure(dist._components)
+    aux = (comp_treedef, dist._name)
+    return leaves, aux
 
 
 def _product_unflatten(aux, children):
-    keys, name = aux
-    return ProductDistribution(**dict(zip(keys, children)), name=name)
+    """Unflatten a ProductDistribution from JAX pytree data.
+
+    Reconstructs the component pytree from the stored treedef and
+    then passes it to the constructor as keyword arguments.
+    """
+    comp_treedef, name = aux
+    components = jax.tree.unflatten(comp_treedef, children)
+    return ProductDistribution(**components, name=name)
 
 
 jax.tree_util.register_pytree_node(

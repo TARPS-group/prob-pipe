@@ -7,6 +7,7 @@ import pytest
 from probpipe import (
     Normal,
     MultivariateNormal,
+    Gamma,
     ProductDistribution,
     DistributionView,
     ConditionedComponent,
@@ -732,3 +733,320 @@ class TestEnumerateWithDistributionViews:
         result = wf(a=view_x, b=view_y, c=ed)
         assert isinstance(result, EmpiricalDistribution)
         assert result.n == 50
+
+
+# ===========================================================================
+# 8. TestNestedProductDistribution
+# ===========================================================================
+
+class TestNestedProductDistribution:
+    """Tests for ProductDistribution with nested dict components.
+
+    A nested ProductDistribution groups components into sub-dicts::
+
+        ProductDistribution(
+            physics={"force": Normal(0, 1), "mass": Gamma(2, 1)},
+            observation=Normal(0, 0.1),
+        )
+
+    The nesting is purely organizational — all leaf components remain
+    statistically independent.  Samples, event_shapes, log_prob, etc.
+    mirror the nested dict structure.
+    """
+
+    @pytest.fixture
+    def nested_joint(self):
+        return ProductDistribution(
+            physics={"force": Normal(loc=0.0, scale=1.0),
+                     "mass": Gamma(concentration=2.0, rate=1.0)},
+            observation=Normal(loc=0.0, scale=0.1),
+        )
+
+    # -- Construction and introspection ------------------------------------
+
+    def test_isinstance(self, nested_joint):
+        assert isinstance(nested_joint, ProductDistribution)
+        assert isinstance(nested_joint, JointDistribution)
+        assert isinstance(nested_joint, PyTreeArrayDistribution)
+        assert not isinstance(nested_joint, ArrayDistribution)
+
+    def test_is_not_flat(self, nested_joint):
+        assert not nested_joint._is_flat
+
+    def test_event_shapes_nested(self, nested_joint):
+        es = nested_joint.event_shapes
+        assert isinstance(es, dict)
+        assert isinstance(es["physics"], dict)
+        assert es["physics"]["force"] == ()
+        assert es["physics"]["mass"] == ()
+        assert es["observation"] == ()
+
+    def test_event_size(self, nested_joint):
+        # 3 scalar leaves → event_size = 3
+        assert nested_joint.event_size == 3
+
+    def test_component_names_are_key_paths(self, nested_joint):
+        names = nested_joint.component_names
+        # JAX sorts dict keys, so order is: observation, physics.force, physics.mass
+        assert len(names) == 3
+        # Each name is a tuple (since the dict is nested)
+        assert all(isinstance(n, tuple) for n in names)
+        # Check expected key paths (JAX canonical order: sorted keys, depth-first)
+        assert ("observation",) in names
+        assert ("physics", "force") in names
+        assert ("physics", "mass") in names
+
+    def test_treedef_matches_sample_structure(self, nested_joint):
+        key = jax.random.PRNGKey(0)
+        s = nested_joint.sample(key)
+        assert jax.tree.structure(s) == nested_joint.treedef
+
+    # -- Sampling ----------------------------------------------------------
+
+    def test_sample_returns_nested_dict(self, nested_joint):
+        key = jax.random.PRNGKey(1)
+        s = nested_joint.sample(key)
+        assert isinstance(s, dict)
+        assert isinstance(s["physics"], dict)
+        assert "force" in s["physics"]
+        assert "mass" in s["physics"]
+        assert "observation" in s
+
+    def test_sample_leaf_shapes(self, nested_joint):
+        key = jax.random.PRNGKey(2)
+        s = nested_joint.sample(key, (10,))
+        assert s["physics"]["force"].shape == (10,)
+        assert s["physics"]["mass"].shape == (10,)
+        assert s["observation"].shape == (10,)
+
+    def test_sample_single(self, nested_joint):
+        key = jax.random.PRNGKey(3)
+        s = nested_joint.sample(key)
+        # Each leaf should be a scalar
+        assert s["physics"]["force"].shape == ()
+        assert s["physics"]["mass"].shape == ()
+        assert s["observation"].shape == ()
+
+    # -- log_prob ----------------------------------------------------------
+
+    def test_log_prob_accepts_nested_dict(self, nested_joint):
+        key = jax.random.PRNGKey(10)
+        s = nested_joint.sample(key, (5,))
+        lps = nested_joint.log_prob(s)
+        assert lps.shape == (5,)
+        assert jnp.all(jnp.isfinite(lps))
+
+    def test_log_prob_equals_sum_of_components(self, nested_joint):
+        key = jax.random.PRNGKey(11)
+        s = nested_joint.sample(key)
+        lp_joint = nested_joint.log_prob(s)
+
+        # Manual sum of leaf log-probs
+        force_dist = Normal(loc=0.0, scale=1.0)
+        mass_dist = Gamma(concentration=2.0, rate=1.0)
+        obs_dist = Normal(loc=0.0, scale=0.1)
+        lp_manual = (
+            force_dist.log_prob(s["physics"]["force"])
+            + mass_dist.log_prob(s["physics"]["mass"])
+            + obs_dist.log_prob(s["observation"])
+        )
+        np.testing.assert_allclose(float(lp_joint), float(lp_manual), atol=1e-5)
+
+    # -- component_log_prob ------------------------------------------------
+
+    def test_component_log_prob_nested(self, nested_joint):
+        key = jax.random.PRNGKey(12)
+        s = nested_joint.sample(key)
+        clp = nested_joint.component_log_prob(s)
+        assert isinstance(clp, dict)
+        assert isinstance(clp["physics"], dict)
+        assert jnp.isfinite(clp["physics"]["force"])
+        assert jnp.isfinite(clp["physics"]["mass"])
+        assert jnp.isfinite(clp["observation"])
+
+    # -- mean / variance ---------------------------------------------------
+
+    def test_mean_nested(self, nested_joint):
+        m = nested_joint.mean()
+        assert isinstance(m, dict)
+        assert isinstance(m["physics"], dict)
+        assert m["physics"]["force"].shape == ()
+        assert m["physics"]["mass"].shape == ()
+        assert m["observation"].shape == ()
+
+    def test_variance_nested(self, nested_joint):
+        v = nested_joint.variance()
+        assert isinstance(v, dict)
+        assert isinstance(v["physics"], dict)
+        assert jnp.all(jnp.asarray(jax.tree.leaves(v)) >= 0)
+
+    # -- flatten / unflatten -----------------------------------------------
+
+    def test_flatten_unflatten_roundtrip(self, nested_joint):
+        key = jax.random.PRNGKey(20)
+        s = nested_joint.sample(key, (5,))
+        flat = nested_joint.flatten_value(s)
+        assert flat.shape == (5, 3)
+        recovered = nested_joint.unflatten_value(flat)
+        # Check all leaves match
+        for orig, rec in zip(jax.tree.leaves(s), jax.tree.leaves(recovered)):
+            np.testing.assert_allclose(orig, rec, atol=1e-6)
+
+    def test_as_flat_distribution(self, nested_joint):
+        flat_dist = nested_joint.as_flat_distribution()
+        assert isinstance(flat_dist, FlattenedView)
+        assert flat_dist.event_shape == (3,)
+        key = jax.random.PRNGKey(21)
+        s = flat_dist.sample(key, (5,))
+        assert s.shape == (5, 3)
+
+    # -- __getitem__ with key paths ----------------------------------------
+
+    def test_getitem_nested_key_path(self, nested_joint):
+        view = nested_joint["physics", "force"]
+        assert isinstance(view, DistributionView)
+        assert view._key_path == ("physics", "force")
+
+    def test_getitem_top_level(self, nested_joint):
+        view = nested_joint["observation"]
+        assert isinstance(view, DistributionView)
+        assert view._key_path == ("observation",)
+
+    def test_getitem_intermediate_raises(self, nested_joint):
+        """Indexing to a sub-dict (not a leaf) should raise."""
+        with pytest.raises(KeyError, match="not an ArrayDistribution leaf"):
+            nested_joint["physics"]
+
+    def test_getitem_invalid_raises(self, nested_joint):
+        with pytest.raises(KeyError, match="not found"):
+            nested_joint["nonexistent"]
+
+    def test_view_sample_nested(self, nested_joint):
+        key = jax.random.PRNGKey(30)
+        view = nested_joint["physics", "mass"]
+        s = view.sample(key, (10,))
+        assert s.shape == (10,)
+        # Gamma samples should be positive
+        assert jnp.all(s > 0)
+
+    def test_view_event_shape_nested(self, nested_joint):
+        assert nested_joint["physics", "force"].event_shape == ()
+        assert nested_joint["observation"].event_shape == ()
+
+    # -- bind with key paths -----------------------------------------------
+
+    def test_bind_nested(self, nested_joint):
+        views = nested_joint.bind(
+            f=("physics", "force"),
+            o="observation",
+        )
+        assert isinstance(views["f"], DistributionView)
+        assert isinstance(views["o"], DistributionView)
+        assert views["f"]._key_path == ("physics", "force")
+        assert views["o"]._key_path == ("observation",)
+
+    # -- condition_on (top-level only) -------------------------------------
+
+    def test_condition_on_top_level(self, nested_joint):
+        cond = nested_joint.condition_on(observation=jnp.array(0.5))
+        assert "observation" not in cond._components
+        assert "physics" in cond._components
+        assert cond.event_size == 2  # force + mass
+
+    def test_condition_on_nested_group(self, nested_joint):
+        """Conditioning on a top-level group removes the entire subtree."""
+        cond = nested_joint.condition_on(
+            physics={"force": jnp.array(1.0), "mass": jnp.array(2.0)}
+        )
+        assert "physics" not in cond._components
+        assert "observation" in cond._components
+        assert cond.event_size == 1
+
+    # -- repr --------------------------------------------------------------
+
+    def test_repr_nested(self, nested_joint):
+        r = repr(nested_joint)
+        assert "ProductDistribution" in r
+
+    # -- JAX pytree registration -------------------------------------------
+
+    def test_pytree_roundtrip(self, nested_joint):
+        children, aux = jax.tree_util.tree_flatten(nested_joint)
+        reconstructed = jax.tree_util.tree_unflatten(aux, children)
+        assert isinstance(reconstructed, ProductDistribution)
+        assert reconstructed.event_size == nested_joint.event_size
+        # Verify sample structure matches
+        key = jax.random.PRNGKey(40)
+        s1 = nested_joint.sample(key)
+        s2 = reconstructed.sample(key)
+        for l1, l2 in zip(jax.tree.leaves(s1), jax.tree.leaves(s2)):
+            np.testing.assert_allclose(l1, l2, atol=1e-6)
+
+    # -- broadcasting with nested views ------------------------------------
+
+    def test_workflow_broadcasting_nested(self, nested_joint):
+        """DistributionViews from nested joints should work in WorkflowFunction."""
+        view_force = nested_joint["physics", "force"]
+        view_obs = nested_joint["observation"]
+
+        def add(a: float, b: float) -> float:
+            return a + b
+
+        wf = WorkflowFunction(
+            func=add,
+            vectorize="loop",
+            n_broadcast_samples=30,
+            seed=42,
+        )
+        result = wf(a=view_force, b=view_obs)
+        assert isinstance(result, EmpiricalDistribution)
+        assert result.n == 30
+
+
+# ===========================================================================
+# 9. TestNestedWithMVN
+# ===========================================================================
+
+class TestNestedWithMVN:
+    """Nested dicts where some leaves are multivariate (non-scalar event)."""
+
+    @pytest.fixture
+    def nested_mvn(self):
+        return ProductDistribution(
+            group={"position": MultivariateNormal(
+                        loc=jnp.zeros(2), cov=jnp.eye(2)),
+                   "scale": Normal(loc=1.0, scale=0.1)},
+            label=Normal(loc=0.0, scale=1.0),
+        )
+
+    def test_event_shapes(self, nested_mvn):
+        es = nested_mvn.event_shapes
+        assert es["group"]["position"] == (2,)
+        assert es["group"]["scale"] == ()
+        assert es["label"] == ()
+
+    def test_event_size(self, nested_mvn):
+        # 2 (MVN) + 1 (scalar) + 1 (scalar) = 4
+        assert nested_mvn.event_size == 4
+
+    def test_sample_and_flatten(self, nested_mvn):
+        key = jax.random.PRNGKey(50)
+        s = nested_mvn.sample(key, (5,))
+        assert s["group"]["position"].shape == (5, 2)
+        assert s["group"]["scale"].shape == (5,)
+        assert s["label"].shape == (5,)
+
+        flat = nested_mvn.flatten_value(s)
+        assert flat.shape == (5, 4)
+
+        recovered = nested_mvn.unflatten_value(flat)
+        np.testing.assert_allclose(
+            recovered["group"]["position"], s["group"]["position"], atol=1e-6
+        )
+
+    def test_getitem_mvn_leaf(self, nested_mvn):
+        view = nested_mvn["group", "position"]
+        assert view.event_shape == (2,)
+        key = jax.random.PRNGKey(51)
+        s = view.sample(key, (3,))
+        assert s.shape == (3, 2)

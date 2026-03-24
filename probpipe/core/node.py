@@ -507,7 +507,8 @@ class WorkflowFunction(Node):
                 pid = id(dist._parent)
                 if pid not in joint_groups:
                     joint_groups[pid] = {"parent": dist._parent, "mappings": {}}
-                joint_groups[pid]["mappings"][name] = dist._component_name
+                # Store the key path (tuple of strings) for nested pytree navigation
+                joint_groups[pid]["mappings"][name] = dist._key_path
             else:
                 independent.append(name)
 
@@ -517,8 +518,12 @@ class WorkflowFunction(Node):
         for group in joint_groups.values():
             key, subkey = jax.random.split(key)
             structured = group["parent"].sample(subkey, (n,))
-            for arg_name, comp_name in group["mappings"].items():
-                sampled[arg_name] = structured[comp_name]
+            for arg_name, key_path in group["mappings"].items():
+                # Walk the (possibly nested) sample pytree to extract the leaf
+                val = structured
+                for k in key_path:
+                    val = val[k]
+                sampled[arg_name] = val
 
         # Sample independent distributions
         for name in independent:
