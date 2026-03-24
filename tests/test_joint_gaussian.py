@@ -303,7 +303,7 @@ class TestConditionOn:
 
     def test_raises_on_unknown_component(self):
         jg = JointGaussian(mean=jnp.zeros(2), cov=jnp.eye(2), x=1, y=1)
-        with pytest.raises(KeyError, match="Unknown"):
+        with pytest.raises(KeyError, match="not found"):
             jg.condition_on(z=jnp.array([0.0]))
 
     def test_raises_on_conditioning_all(self):

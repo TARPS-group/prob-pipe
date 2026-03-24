@@ -707,48 +707,258 @@ class JointDistribution(PyTreeArrayDistribution):
 
     # -- Conditioning ------------------------------------------------------
 
-    def condition_on(self, **observed: ArrayLike) -> "JointDistribution":
-        """Return the conditional distribution given observed component values.
+    def condition_on(self, observed=None, /, **kwargs) -> "JointDistribution":
+        """Return a new joint distribution with some components fixed to observed values.
 
-        Currently supports conditioning on **top-level** component names
-        only.  For nested joints, this removes entire top-level subtrees.
+        You must condition on one or more **leaf** component distributions
+        (``ArrayDistribution`` instances in the component pytree).  You
+        cannot condition on an internal group node — you must specify
+        values for individual component distributions within that group.
+
+        **Calling conventions:**
+
+        *Flat kwargs* (works for all subclasses)::
+
+            joint.condition_on(x=jnp.array(1.0))
+            joint.condition_on(x=jnp.array(1.0), y=jnp.array(2.0))
+
+        *Nested dict* (mirrors the component/sample structure)::
+
+            joint.condition_on({"physics": {"force": jnp.array(1.0)}})
+
+        *Mixed* — kwargs whose values are dicts are interpreted as
+        sub-tree selections::
+
+            joint.condition_on(physics={"force": jnp.array(1.0)})
+
+        All forms are normalized to a set of ``(key_path, value)`` pairs
+        identifying which leaf components to condition on.
 
         Parameters
         ----------
-        **observed
-            Top-level component names mapped to their observed values.
+        observed : dict, optional
+            A (possibly nested) dict whose structure matches a subset of
+            the component pytree.  Each leaf value is the observed array
+            for that component distribution.  Mutually exclusive with
+            ``**kwargs``.
+        **kwargs
+            Component names mapped to observed values (arrays) or to
+            nested dicts selecting leaves within a group.
 
         Returns
         -------
         JointDistribution
-            A new joint over the unconditioned components.
+            A new joint distribution over the remaining (unconditioned)
+            components.  The concrete type depends on the subclass.
+
+        Raises
+        ------
+        TypeError
+            If both ``observed`` and ``**kwargs`` are provided.
+        KeyError
+            If a key does not exist in the component pytree.
+        TypeError
+            If a key path resolves to an internal dict node (a group)
+            rather than a leaf component distribution.  You must
+            condition on individual component distributions.
+        ValueError
+            If conditioning on all leaf components (nothing would remain).
+
+        Examples
+        --------
+        Flat joint::
+
+            >>> joint = ProductDistribution(x=Normal(0, 1), y=Normal(0, 1))
+            >>> cond = joint.condition_on(x=jnp.array(2.0))
+            >>> cond.component_names
+            ('y',)
+
+        Nested joint — condition on a single nested leaf::
+
+            >>> nested = ProductDistribution(
+            ...     physics={"force": Normal(0, 1), "mass": Gamma(2, 1)},
+            ...     obs=Normal(0, 0.1),
+            ... )
+            >>> cond = nested.condition_on(physics={"force": jnp.array(1.0)})
+            >>> # physics group still exists but only contains mass
+            >>> cond.component_names
+            (('observation',), ('physics', 'mass'))
+
+        Nested joint — condition on all leaves in a group::
+
+            >>> cond = nested.condition_on(
+            ...     physics={"force": jnp.array(1.0), "mass": jnp.array(2.0)}
+            ... )
+            >>> # physics group is fully conditioned → removed
+            >>> cond.component_names
+            ('obs',)
+        """
+        observed_leaves = self._parse_condition_args(observed, kwargs)
+        return self._condition_on_impl(observed_leaves)
+
+    def _parse_condition_args(
+        self, observed: dict | None, kwargs: dict,
+    ) -> dict[KeyPath, ArrayLike]:
+        """Parse and validate conditioning arguments.
+
+        Normalizes both calling conventions (positional dict and kwargs)
+        into a flat mapping ``{key_path: observed_value}`` where each
+        key path addresses a leaf ``ArrayDistribution`` in the component
+        pytree.
+
+        Parameters
+        ----------
+        observed : dict or None
+            Positional dict argument from ``condition_on``.
+        kwargs : dict
+            Keyword arguments from ``condition_on``.
+
+        Returns
+        -------
+        dict[KeyPath, ArrayLike]
+            Mapping from leaf key paths to observed values.
+
+        Raises
+        ------
+        TypeError
+            If both ``observed`` and ``kwargs`` are provided, or if a
+            key path resolves to an internal node.
+        KeyError
+            If a key is not found in the component pytree.
+        ValueError
+            If no leaves are specified, or if all leaves are conditioned.
+        """
+        if observed is not None and kwargs:
+            raise TypeError(
+                "condition_on() accepts either a positional dict or keyword "
+                "arguments, not both."
+            )
+        tree = observed if observed is not None else kwargs
+        if not tree:
+            raise ValueError("condition_on() requires at least one observed value.")
+
+        # Walk the provided tree to extract (key_path, value) for each leaf
+        observed_leaves: dict[KeyPath, ArrayLike] = {}
+        self._collect_observed_leaves(tree, self._components, prefix=(), out=observed_leaves)
+
+        # Check we're not conditioning on everything
+        all_leaf_paths = set(
+            p if isinstance(p, tuple) else (p,)
+            for p in _component_key_paths(self._components)
+        )
+        conditioned_paths = set(observed_leaves.keys())
+        if conditioned_paths >= all_leaf_paths:
+            raise ValueError(
+                "Cannot condition on all component distributions — "
+                "at least one must remain unconditioned."
+            )
+        return observed_leaves
+
+    @staticmethod
+    def _collect_observed_leaves(
+        obs_tree: dict,
+        comp_tree: dict,
+        prefix: KeyPath,
+        out: dict[KeyPath, ArrayLike],
+    ) -> None:
+        """Recursively walk an observed-value tree, validating against the component tree.
+
+        For each leaf (non-dict) value in *obs_tree*, verifies that the
+        corresponding node in *comp_tree* is an ``ArrayDistribution``
+        (not an internal dict node), and records the ``(key_path, value)``
+        pair in *out*.
+
+        Parameters
+        ----------
+        obs_tree : dict
+            The user-provided observed values (possibly nested).
+        comp_tree : dict
+            The corresponding level of the component pytree.
+        prefix : KeyPath
+            Key path accumulated so far.
+        out : dict
+            Accumulator for ``{key_path: value}`` pairs.
 
         Raises
         ------
         KeyError
-            If an observed name is not a valid top-level component.
-        ValueError
-            If all components are conditioned on.
+            If a key in *obs_tree* is not present in *comp_tree*.
+        TypeError
+            If the user provides a scalar/array for a key that maps to a
+            dict group (must condition on individual leaves), or provides
+            a dict for a key that maps to a leaf distribution.
         """
-        unknown = set(observed) - set(self._components)
-        if unknown:
-            raise KeyError(
-                f"Unknown component(s): {unknown}. "
-                f"Available: {tuple(self._components.keys())}"
-            )
-        if len(observed) >= len(self._components):
-            raise ValueError("Cannot condition on all components.")
-        new_components = {
-            cname: cdist
-            for cname, cdist in self._components.items()
-            if cname not in observed
-        }
-        result = type(self)(**new_components, name=self._name)
-        result.with_source(Provenance(
-            "condition_on", parents=(self,),
-            metadata={"conditioned": list(observed)},
-        ))
-        return result
+        for key, obs_val in obs_tree.items():
+            path = prefix + (key,)
+            path_str = " > ".join(path)
+
+            # Validate key exists
+            if not isinstance(comp_tree, dict) or key not in comp_tree:
+                available = tuple(comp_tree.keys()) if isinstance(comp_tree, dict) else ()
+                raise KeyError(
+                    f"Component key {key!r} not found at level "
+                    f"'{' > '.join(prefix)}'. "
+                    f"Available keys: {available}"
+                )
+
+            comp_node = comp_tree[key]
+
+            if isinstance(obs_val, dict):
+                # User provided a nested dict — component must also be a dict
+                if isinstance(comp_node, ArrayDistribution):
+                    raise TypeError(
+                        f"Key path '{path_str}' resolves to a leaf "
+                        f"distribution ({type(comp_node).__name__}), but a "
+                        f"dict of values was provided.  Pass a single array "
+                        f"value to condition on this component."
+                    )
+                if not isinstance(comp_node, dict):
+                    raise TypeError(
+                        f"Key path '{path_str}' resolves to "
+                        f"{type(comp_node).__name__}, which is neither a "
+                        f"leaf distribution nor a dict group."
+                    )
+                # Recurse
+                JointDistribution._collect_observed_leaves(
+                    obs_val, comp_node, path, out,
+                )
+            else:
+                # User provided a value — component must be a leaf distribution
+                if isinstance(comp_node, dict):
+                    leaf_names = list(comp_node.keys())
+                    raise TypeError(
+                        f"Cannot condition on '{path_str}' with a single "
+                        f"value — it is a group containing components "
+                        f"{leaf_names}.  Provide values for individual "
+                        f"component distributions, e.g.: "
+                        f"condition_on({key}={{'{leaf_names[0]}': ...}})"
+                    )
+                if not isinstance(comp_node, ArrayDistribution):
+                    raise TypeError(
+                        f"Key path '{path_str}' resolves to "
+                        f"{type(comp_node).__name__}, not a leaf "
+                        f"distribution."
+                    )
+                out[path] = obs_val
+
+    def _condition_on_impl(
+        self, observed_leaves: dict[KeyPath, ArrayLike],
+    ) -> "JointDistribution":
+        """Construct the conditioned distribution.
+
+        Subclasses override this to implement their conditioning logic.
+        The base implementation raises ``NotImplementedError``.
+
+        Parameters
+        ----------
+        observed_leaves : dict[KeyPath, ArrayLike]
+            Validated mapping from leaf key paths to observed values.
+            Every key path is guaranteed to resolve to an
+            ``ArrayDistribution`` leaf in the component pytree.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement condition_on()."
+        )
 
     # -- log_prob (abstract) -----------------------------------------------
 
@@ -923,6 +1133,69 @@ class ProductDistribution(JointDistribution):
         Returns a pytree with the same structure as the components.
         """
         return jax.tree.map(lambda d: d.variance(), self._components)
+
+    # -- Conditioning (full nested support) --------------------------------
+
+    def _condition_on_impl(
+        self, observed_leaves: dict[KeyPath, ArrayLike],
+    ) -> "ProductDistribution":
+        """Remove conditioned leaves and return a new ProductDistribution.
+
+        Since all components are independent, conditioning simply removes
+        the specified leaves from the component pytree.  If removing
+        leaves causes an intermediate dict to become empty, that dict is
+        pruned from the tree.
+
+        Parameters
+        ----------
+        observed_leaves : dict[KeyPath, ArrayLike]
+            Validated mapping from leaf key paths to observed values.
+        """
+        new_components = _prune_leaves(self._components, set(observed_leaves.keys()))
+        result = ProductDistribution(**new_components, name=self._name)
+        # Record provenance
+        conditioned_names = [
+            " > ".join(path) for path in observed_leaves
+        ]
+        result.with_source(Provenance(
+            "condition_on", parents=(self,),
+            metadata={"conditioned": conditioned_names},
+        ))
+        return result
+
+
+def _prune_leaves(tree: dict, remove_paths: set[KeyPath], prefix: tuple = ()) -> dict:
+    """Remove specified leaves from a nested dict and prune empty sub-dicts.
+
+    Parameters
+    ----------
+    tree : dict
+        The component pytree (nested dict of ``ArrayDistribution`` leaves).
+    remove_paths : set[KeyPath]
+        Set of key paths to remove.
+    prefix : tuple
+        Current path prefix (used in recursion).
+
+    Returns
+    -------
+    dict
+        A new dict with the specified leaves removed.  Empty intermediate
+        dicts are also removed.
+    """
+    result = {}
+    for key, value in tree.items():
+        path = prefix + (key,)
+        if path in remove_paths:
+            # Skip this leaf — it's being conditioned on
+            continue
+        if isinstance(value, dict):
+            # Recurse into sub-dict
+            pruned = _prune_leaves(value, remove_paths, path)
+            if pruned:  # Only keep non-empty sub-dicts
+                result[key] = pruned
+        else:
+            result[key] = value
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1182,10 +1455,10 @@ class SequentialJointDistribution(JointDistribution):
         """Per-component variances (approximate — uses prototype components)."""
         return {k: v.variance() for k, v in self._proto_components.items()}
 
-    def condition_on(self, **observed: ArrayLike) -> "SequentialJointDistribution":
-        """
-        Return the conditional distribution over the remaining (unconditioned)
-        components, representing p(unconditioned | conditioned = values).
+    def _condition_on_impl(
+        self, observed_leaves: dict[KeyPath, ArrayLike],
+    ) -> "SequentialJointDistribution":
+        """Condition on observed component values.
 
         The resulting distribution is sampleable as long as every conditioned
         non-root component has all of its parents also conditioned (so that no
@@ -1196,21 +1469,29 @@ class SequentialJointDistribution(JointDistribution):
         ``log_prob()`` always works regardless (returns the unnormalized
         conditional log-density).
 
-        Parameters
-        ----------
-        **observed
-            Component names mapped to their observed values.
+        .. note::
+
+            ``SequentialJointDistribution`` only supports **flat dicts**
+            (no nesting).  All key paths must be length-1 (top-level
+            component names).
         """
-        unknown = set(observed) - set(self._raw_components)
-        if unknown:
-            raise KeyError(
-                f"Unknown component(s): {unknown}. "
-                f"Available: {self.component_names}"
-            )
+        # Enforce flat-only: all key paths must be length 1
+        for path in observed_leaves:
+            if len(path) != 1:
+                raise TypeError(
+                    f"SequentialJointDistribution only supports flat "
+                    f"(non-nested) components.  Cannot condition on "
+                    f"nested key path {path!r}."
+                )
+        # Convert {("x",): val} → {"x": val}
+        observed = {path[0]: val for path, val in observed_leaves.items()}
 
         all_conditioned = self._conditioned_names | frozenset(observed)
         if len(all_conditioned) >= len(self._raw_components):
-            raise ValueError("Cannot condition on all components.")
+            raise ValueError(
+                "Cannot condition on all component distributions — "
+                "at least one must remain unconditioned."
+            )
 
         result = SequentialJointDistribution.__new__(SequentialJointDistribution)
         result._raw_components = dict(self._raw_components)  # originals unchanged
@@ -1462,6 +1743,56 @@ class JointEmpirical(JointDistribution):
                 result[cname] = jnp.einsum("n,n...->...", self.weights, diff**2)
         return result
 
+    def _condition_on_impl(
+        self, observed_leaves: dict[KeyPath, ArrayLike],
+    ) -> "JointEmpirical":
+        """Remove conditioned components and return a new JointEmpirical.
+
+        Since ``JointEmpirical`` stores raw sample arrays keyed by name,
+        conditioning simply drops those components from the joint sample
+        matrix (preserving the row-wise correlation among the remaining
+        components).
+
+        .. note::
+
+            ``JointEmpirical`` only supports **flat dicts** (no nesting).
+            All key paths must be length-1 (top-level component names).
+        """
+        # Enforce flat-only
+        for path in observed_leaves:
+            if len(path) != 1:
+                raise TypeError(
+                    f"JointEmpirical only supports flat (non-nested) "
+                    f"components.  Cannot condition on nested key path "
+                    f"{path!r}."
+                )
+        observed_names = {path[0] for path in observed_leaves}
+
+        remaining_samples = {
+            cname: arr
+            for cname, arr in self._joint_samples.items()
+            if cname not in observed_names
+        }
+        if not remaining_samples:
+            raise ValueError(
+                "Cannot condition on all component distributions — "
+                "at least one must remain unconditioned."
+            )
+
+        if self._is_uniform:
+            result = JointEmpirical(**remaining_samples, name=self._name)
+        else:
+            result = JointEmpirical(
+                **remaining_samples,
+                log_weights=self._log_weights,
+                name=self._name,
+            )
+        result.with_source(Provenance(
+            "condition_on", parents=(self,),
+            metadata={"conditioned": list(observed_names)},
+        ))
+        return result
+
 
 # ---------------------------------------------------------------------------
 # JointGaussian — analytical joint Gaussian with cross-covariance
@@ -1602,29 +1933,30 @@ class JointGaussian(JointDistribution):
             result[cname] = diag[sl]
         return result
 
-    def condition_on(self, **observed: ArrayLike) -> "JointGaussian":
-        """
-        Condition on observed component values using exact Gaussian formulas.
+    def _condition_on_impl(
+        self, observed_leaves: dict[KeyPath, ArrayLike],
+    ) -> "JointGaussian":
+        """Condition on observed component values using exact Gaussian formulas.
 
         Returns a new :class:`JointGaussian` over the remaining (unobserved)
         components.
 
-        Parameters
-        ----------
-        **observed
-            Component names mapped to their observed values.
+        .. note::
 
-        Returns
-        -------
-        JointGaussian
-            Conditional distribution over the remaining components.
+            ``JointGaussian`` only supports **flat dicts** (no nesting)
+            because the conditioning math operates on flat index slices
+            of the joint mean vector and covariance matrix.
         """
-        unknown = set(observed) - set(self._component_shapes)
-        if unknown:
-            raise KeyError(
-                f"Unknown component(s): {unknown}. "
-                f"Available: {tuple(self._component_shapes.keys())}"
-            )
+        # Enforce flat-only: all key paths must be length 1
+        for path in observed_leaves:
+            if len(path) != 1:
+                raise TypeError(
+                    f"JointGaussian only supports flat (non-nested) "
+                    f"components.  Cannot condition on nested key path "
+                    f"{path!r}."
+                )
+        # Convert {("x",): val} → {"x": val}
+        observed = {path[0]: val for path, val in observed_leaves.items()}
 
         # Partition into observed (o) and unobserved (u) indices
         o_indices = []
@@ -1640,7 +1972,10 @@ class JointGaussian(JointDistribution):
                 u_shapes[cname] = dim
 
         if not u_shapes:
-            raise ValueError("Cannot condition on all components.")
+            raise ValueError(
+                "Cannot condition on all component distributions — "
+                "at least one must remain unconditioned."
+            )
 
         o_idx = jnp.array(o_indices)
         u_idx = jnp.array(u_indices)

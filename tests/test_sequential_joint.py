@@ -290,7 +290,7 @@ class TestConditionOn:
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
         )
-        with pytest.raises(KeyError, match="Unknown"):
+        with pytest.raises(KeyError, match="not found"):
             joint.condition_on(nonexistent=jnp.array(0.0))
 
     def test_condition_on_non_root_removes_component(self):
