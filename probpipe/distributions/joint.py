@@ -47,15 +47,16 @@ samples, ``event_shapes``, ``log_prob`` inputs, etc.
 **Component access:**
 
 *  ``joint["name"]`` returns a :class:`DistributionView` when the
-   key resolves to an ``ArrayDistribution`` leaf.
-*  ``joint["group", "leaf"]`` returns a ``DistributionView`` for a
-   nested leaf, navigating through intermediate dict levels.
-*  ``joint["group"]`` returns a new :class:`ProductDistribution`
-   when the key resolves to an internal dict node (a sub-tree).
-   This sub-joint is the **marginal** distribution over that group's
-   components — sampling it draws only from those leaves.
+   key resolves to a component distribution (leaf).
+*  ``joint["physics", "force"]`` returns a ``DistributionView`` for a
+   nested component, navigating through intermediate dict levels.
+*  ``joint["physics"]`` returns a new :class:`ProductDistribution`
+   when the key resolves to an intermediate dict node (a sub-tree).
+   This sub-joint is the **marginal** distribution over the
+   components in that sub-tree — sampling it draws only from those
+   components.
 *  ``component_names`` returns a tuple of key paths — plain strings
-   for flat dicts, or tuples of strings for nested leaves.
+   for flat dicts, or tuples of strings for nested components.
 
 **Independence assumptions:**
 
@@ -215,9 +216,9 @@ class DistributionView(ArrayDistribution):
     """A lightweight reference to a leaf component of a :class:`JointDistribution`.
 
     A ``DistributionView`` acts as an ``ArrayDistribution`` for a single
-    leaf of a joint distribution's component pytree.  It is the object
-    returned by ``joint["component_name"]`` or
-    ``joint["group", "leaf"]``.
+    component distribution (leaf) of a joint distribution's pytree.  It
+    is the object returned by ``joint["component_name"]`` or
+    ``joint["physics", "force"]``.
 
     **Broadcasting contract:** The broadcasting logic in
     :class:`~probpipe.core.node.WorkflowFunction` detects
@@ -459,9 +460,9 @@ class JointDistribution(PyTreeArrayDistribution):
     **Component access:**
 
     ``joint["name"]`` returns a :class:`DistributionView` — an
-    ``ArrayDistribution`` that extracts the named leaf component from
-    joint samples.  For nested joints, use
-    ``joint["group", "leaf"]`` to reach a nested leaf.
+    ``ArrayDistribution`` that extracts the named component from
+    joint samples.  For nested dicts, use a key-path tuple like
+    ``joint["physics", "force"]`` to reach a nested component.
     ``joint.bind(a="x", b="y")`` creates a dict of views with
     remapped names for use in broadcasting.
 
@@ -610,21 +611,21 @@ class JointDistribution(PyTreeArrayDistribution):
         The return type depends on what the key path resolves to in the
         component pytree:
 
-        *  **Leaf** (``ArrayDistribution``): returns a
-           :class:`DistributionView` — a lightweight ``ArrayDistribution``
-           whose samples are the marginal values of that leaf.
-        *  **Internal node** (``dict``): returns a new
+        *  **Component distribution** (``ArrayDistribution`` leaf):
+           returns a :class:`DistributionView` — a lightweight
+           ``ArrayDistribution`` whose samples are the marginal values
+           of that component.
+        *  **Intermediate dict node**: returns a new
            :class:`ProductDistribution` wrapping the sub-tree.  This
-           sub-joint is a **marginal** distribution — sampling it draws
-           only from the components in that group, independent of sibling
-           groups.
+           sub-joint is the **marginal** distribution over the
+           component distributions in that sub-tree.
 
         Accepts a single string for top-level access, or a tuple of
         strings for nested access::
 
-            joint["x"]               # leaf → DistributionView
-            joint["physics", "force"]  # nested leaf → DistributionView
-            joint["physics"]          # internal node → ProductDistribution
+            joint["x"]               # component → DistributionView
+            joint["physics", "force"]  # nested component → DistributionView
+            joint["physics"]          # intermediate node → ProductDistribution
 
         Parameters
         ----------
@@ -634,7 +635,8 @@ class JointDistribution(PyTreeArrayDistribution):
         Returns
         -------
         DistributionView or ProductDistribution
-            A view for leaf access, or a sub-joint for internal-node access.
+            A view for a component distribution, or a sub-joint for an
+            intermediate dict node.
 
         Raises
         ------
@@ -644,12 +646,12 @@ class JointDistribution(PyTreeArrayDistribution):
 
         Notes
         -----
-        The sub-joint returned for an internal node is an **independent
-        copy** — it does not preserve correlations with sibling groups
-        that may exist in subclasses like
+        The sub-joint returned for an intermediate dict node is an
+        **independent copy** — it does not preserve correlations with
+        sibling sub-trees that may exist in subclasses like
         :class:`SequentialJointDistribution`.  For
-        :class:`ProductDistribution` (where all leaves are independent),
-        the marginal sub-joint is exact.
+        :class:`ProductDistribution` (where all components are
+        independent), the marginal sub-joint is exact.
         """
         key_path = _normalize_key(key)
         node = _walk_pytree(self._components, key_path)
@@ -708,48 +710,60 @@ class JointDistribution(PyTreeArrayDistribution):
     # -- Conditioning ------------------------------------------------------
 
     def condition_on(self, observed=None, /, **kwargs) -> "JointDistribution":
-        """Return a new joint distribution with some components fixed to observed values.
+        """Return a new joint distribution with some component distributions
+        fixed to observed values.
 
-        You must condition on one or more **leaf** component distributions
-        (``ArrayDistribution`` instances in the component pytree).  You
-        cannot condition on an internal group node — you must specify
-        values for individual component distributions within that group.
+        Each component distribution in a ``JointDistribution`` is an
+        ``ArrayDistribution`` leaf in the component pytree.  You
+        condition on one or more of these component distributions by
+        providing their observed values.  The result is a new joint
+        distribution over the remaining (unconditioned) components.
+
+        You cannot condition on an intermediate dict node directly —
+        you must specify values for the individual component
+        distributions it contains.  For example, if ``physics``
+        contains ``force`` and ``mass`` distributions, you condition on
+        them individually::
+
+            joint.condition_on(physics={"force": jnp.array(1.0)})
 
         **Calling conventions:**
 
-        *Flat kwargs* (works for all subclasses)::
+        *Flat kwargs* — condition on one or more top-level components::
 
             joint.condition_on(x=jnp.array(1.0))
             joint.condition_on(x=jnp.array(1.0), y=jnp.array(2.0))
 
-        *Nested dict* (mirrors the component/sample structure)::
-
-            joint.condition_on({"physics": {"force": jnp.array(1.0)}})
-
-        *Mixed* — kwargs whose values are dicts are interpreted as
-        sub-tree selections::
+        *Nested dict via kwargs* — condition on components inside a
+        nested dict structure by mirroring the component structure::
 
             joint.condition_on(physics={"force": jnp.array(1.0)})
 
+        *Positional dict* — same as above, passed as a single argument::
+
+            joint.condition_on({"physics": {"force": jnp.array(1.0)}})
+
         All forms are normalized to a set of ``(key_path, value)`` pairs
-        identifying which leaf components to condition on.
+        identifying which component distributions to condition on.
 
         Parameters
         ----------
         observed : dict, optional
             A (possibly nested) dict whose structure matches a subset of
             the component pytree.  Each leaf value is the observed array
-            for that component distribution.  Mutually exclusive with
-            ``**kwargs``.
+            for the corresponding component distribution.  Mutually
+            exclusive with ``**kwargs``.
         **kwargs
-            Component names mapped to observed values (arrays) or to
-            nested dicts selecting leaves within a group.
+            Component names mapped to observed values (arrays), or to
+            nested dicts that mirror the component structure to select
+            specific nested components.
 
         Returns
         -------
         JointDistribution
             A new joint distribution over the remaining (unconditioned)
-            components.  The concrete type depends on the subclass.
+            component distributions.  The concrete type depends on the
+            subclass.
 
         Raises
         ------
@@ -758,38 +772,40 @@ class JointDistribution(PyTreeArrayDistribution):
         KeyError
             If a key does not exist in the component pytree.
         TypeError
-            If a key path resolves to an internal dict node (a group)
-            rather than a leaf component distribution.  You must
-            condition on individual component distributions.
+            If a key path resolves to an intermediate dict node rather
+            than a component distribution.  You must condition on
+            individual component distributions, not on the dict
+            structure that contains them.
         ValueError
-            If conditioning on all leaf components (nothing would remain).
+            If conditioning on all component distributions (nothing
+            would remain).
 
         Examples
         --------
-        Flat joint::
+        Flat joint — condition on a single component::
 
             >>> joint = ProductDistribution(x=Normal(0, 1), y=Normal(0, 1))
             >>> cond = joint.condition_on(x=jnp.array(2.0))
             >>> cond.component_names
             ('y',)
 
-        Nested joint — condition on a single nested leaf::
+        Nested joint — condition on one component inside a nested dict::
 
             >>> nested = ProductDistribution(
             ...     physics={"force": Normal(0, 1), "mass": Gamma(2, 1)},
             ...     obs=Normal(0, 0.1),
             ... )
             >>> cond = nested.condition_on(physics={"force": jnp.array(1.0)})
-            >>> # physics group still exists but only contains mass
+            >>> # force is conditioned; mass and obs remain
             >>> cond.component_names
             (('observation',), ('physics', 'mass'))
 
-        Nested joint — condition on all leaves in a group::
+        Nested joint — condition on multiple components::
 
             >>> cond = nested.condition_on(
             ...     physics={"force": jnp.array(1.0), "mass": jnp.array(2.0)}
             ... )
-            >>> # physics group is fully conditioned → removed
+            >>> # both physics components conditioned → dict pruned
             >>> cond.component_names
             ('obs',)
         """
@@ -884,9 +900,10 @@ class JointDistribution(PyTreeArrayDistribution):
         KeyError
             If a key in *obs_tree* is not present in *comp_tree*.
         TypeError
-            If the user provides a scalar/array for a key that maps to a
-            dict group (must condition on individual leaves), or provides
-            a dict for a key that maps to a leaf distribution.
+            If the user provides a scalar/array for a key that maps to
+            an intermediate dict node (must condition on individual
+            component distributions), or provides a dict for a key that
+            maps to a component distribution.
         """
         for key, obs_val in obs_tree.items():
             path = prefix + (key,)
@@ -907,7 +924,7 @@ class JointDistribution(PyTreeArrayDistribution):
                 # User provided a nested dict — component must also be a dict
                 if isinstance(comp_node, ArrayDistribution):
                     raise TypeError(
-                        f"Key path '{path_str}' resolves to a leaf "
+                        f"Key path '{path_str}' resolves to a component "
                         f"distribution ({type(comp_node).__name__}), but a "
                         f"dict of values was provided.  Pass a single array "
                         f"value to condition on this component."
@@ -916,19 +933,19 @@ class JointDistribution(PyTreeArrayDistribution):
                     raise TypeError(
                         f"Key path '{path_str}' resolves to "
                         f"{type(comp_node).__name__}, which is neither a "
-                        f"leaf distribution nor a dict group."
+                        f"component distribution nor a dict."
                     )
                 # Recurse
                 JointDistribution._collect_observed_leaves(
                     obs_val, comp_node, path, out,
                 )
             else:
-                # User provided a value — component must be a leaf distribution
+                # User provided a value — must be a component distribution
                 if isinstance(comp_node, dict):
                     leaf_names = list(comp_node.keys())
                     raise TypeError(
                         f"Cannot condition on '{path_str}' with a single "
-                        f"value — it is a group containing components "
+                        f"value — it contains component distributions "
                         f"{leaf_names}.  Provide values for individual "
                         f"component distributions, e.g.: "
                         f"condition_on({key}={{'{leaf_names[0]}': ...}})"
@@ -936,7 +953,7 @@ class JointDistribution(PyTreeArrayDistribution):
                 if not isinstance(comp_node, ArrayDistribution):
                     raise TypeError(
                         f"Key path '{path_str}' resolves to "
-                        f"{type(comp_node).__name__}, not a leaf "
+                        f"{type(comp_node).__name__}, not a component "
                         f"distribution."
                     )
                 out[path] = obs_val
@@ -1011,9 +1028,9 @@ class ProductDistribution(JointDistribution):
     a nested dict of arrays.
 
     **Independence assumption:** This class assumes statistical
-    independence across **all leaf** components.  Grouping components
-    into nested dicts is purely organizational — it does not introduce
-    any dependence between leaves within a group.
+    independence across **all** component distributions.  Organizing
+    components into nested dicts is purely structural — it does not
+    introduce any dependence between components.
 
     For sequential/autoregressive dependence, use
     :class:`SequentialJointDistribution`.  For arbitrary dependence
@@ -1139,12 +1156,13 @@ class ProductDistribution(JointDistribution):
     def _condition_on_impl(
         self, observed_leaves: dict[KeyPath, ArrayLike],
     ) -> "ProductDistribution":
-        """Remove conditioned leaves and return a new ProductDistribution.
+        """Remove conditioned component distributions and return a new
+        ProductDistribution.
 
-        Since all components are independent, conditioning simply removes
-        the specified leaves from the component pytree.  If removing
-        leaves causes an intermediate dict to become empty, that dict is
-        pruned from the tree.
+        Since all component distributions are independent, conditioning
+        simply removes the specified components from the pytree.  If
+        removing components causes an intermediate dict to become empty,
+        that dict is pruned from the tree.
 
         Parameters
         ----------

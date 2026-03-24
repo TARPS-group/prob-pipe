@@ -998,7 +998,7 @@ class TestNestedProductDistribution:
         assert cond.event_size == 2  # force + mass
 
     def test_condition_on_all_leaves_in_group(self, nested_joint):
-        """Conditioning on all leaves in a group removes the entire subtree."""
+        """Conditioning on all components under a dict removes it."""
         cond = nested_joint.condition_on(
             physics={"force": jnp.array(1.0), "mass": jnp.array(2.0)}
         )
@@ -1007,11 +1007,11 @@ class TestNestedProductDistribution:
         assert cond.event_size == 1
 
     def test_condition_on_single_nested_leaf(self, nested_joint):
-        """Condition on one leaf inside a group, keeping the other."""
+        """Condition on one component, keeping the sibling."""
         cond = nested_joint.condition_on(
             physics={"force": jnp.array(1.0)}
         )
-        # physics group still exists but only contains mass
+        # physics dict still exists but only contains mass
         assert "physics" in cond._components
         assert isinstance(cond._components["physics"], dict)
         assert "mass" in cond._components["physics"]
@@ -1073,19 +1073,19 @@ class TestNestedProductDistribution:
             )
 
     def test_condition_on_group_with_scalar_raises(self, nested_joint):
-        """Conditioning on a group node with a scalar should raise TypeError."""
-        with pytest.raises(TypeError, match="group containing"):
+        """Conditioning on a dict node with a scalar should raise TypeError."""
+        with pytest.raises(TypeError, match="contains component distributions"):
             nested_joint.condition_on(physics=jnp.array(1.0))
 
     def test_condition_on_leaf_with_dict_raises(self, nested_joint):
-        """Passing a dict for a leaf component should raise TypeError."""
-        with pytest.raises(TypeError, match="leaf distribution"):
+        """Passing a dict for a component distribution should raise TypeError."""
+        with pytest.raises(TypeError, match="component distribution"):
             nested_joint.condition_on(
                 observation={"sub": jnp.array(1.0)}
             )
 
     def test_condition_on_unknown_nested_key_raises(self, nested_joint):
-        """Unknown key inside a group should raise KeyError."""
+        """Unknown key inside a nested dict should raise KeyError."""
         with pytest.raises(KeyError, match="not found"):
             nested_joint.condition_on(
                 physics={"nonexistent": jnp.array(1.0)}
