@@ -116,18 +116,6 @@ class TestSampling:
         assert s["z"].shape == (10,)
         assert s["x"].shape == (10,)
 
-    def test_sample_structured_alias(self):
-        """sample_structured should still work as backward-compat alias."""
-        joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
-        )
-        key = jax.random.PRNGKey(2)
-        structured = joint.sample_structured(key, (20,))
-        assert set(structured.keys()) == {"z", "x"}
-        assert structured["z"].shape == (20,)
-        assert structured["x"].shape == (20,)
-
     def test_conditional_sampling_correlation(self):
         """x depends on z, so they should be correlated."""
         joint = SequentialJointDistribution(

@@ -516,7 +516,7 @@ class WorkflowFunction(Node):
         # Sample each joint group once, distribute to arguments
         for group in joint_groups.values():
             key, subkey = jax.random.split(key)
-            structured = group["parent"].sample_structured(subkey, (n,))
+            structured = group["parent"].sample(subkey, (n,))
             for arg_name, comp_name in group["mappings"].items():
                 sampled[arg_name] = structured[comp_name]
 

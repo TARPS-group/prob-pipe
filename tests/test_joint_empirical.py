@@ -129,18 +129,6 @@ class TestSampling:
         assert s["x"].shape == (10,)
         assert s["y"].shape == (10,)
 
-    def test_sample_structured_alias(self):
-        je = JointEmpirical(
-            x=jnp.array([1.0, 2.0, 3.0]),
-            y=jnp.array([4.0, 5.0, 6.0]),
-        )
-        key = jax.random.PRNGKey(2)
-        structured = je.sample_structured(key, (5,))
-        assert set(structured.keys()) == {"x", "y"}
-        # 1D inputs have event_shape=() per TFP convention
-        assert structured["x"].shape == (5,)
-        assert structured["y"].shape == (5,)
-
     def test_joint_resampling_preserves_correlation(self):
         """Rows should be resampled jointly."""
         x = jnp.array([10.0, 20.0, 30.0])

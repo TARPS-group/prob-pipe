@@ -394,36 +394,6 @@ class JointDistribution(PyTreeArrayDistribution[dict]):
         """
         return {arg_name: self[comp_name] for arg_name, comp_name in mapping.items()}
 
-    # -- Backward-compatible structured conversion -------------------------
-
-    def sample_structured(
-        self, key: PRNGKey | None = None, sample_shape: tuple[int, ...] = ()
-    ) -> dict[str, Array]:
-        """Draw samples and return a dict of per-component arrays.
-
-        This is now equivalent to :meth:`sample` (which returns dicts
-        natively).  Retained for backward compatibility.
-        """
-        if key is None:
-            key = _auto_key()
-        return self.sample(key, sample_shape)
-
-    def unflatten(self, flat: ArrayLike) -> dict[str, Array]:
-        """Split a flat array into per-component arrays.
-
-        Equivalent to :meth:`unflatten_value`.  Retained for backward
-        compatibility.
-        """
-        return self.unflatten_value(jnp.asarray(flat))
-
-    def flatten_structured(self, structured: dict[str, ArrayLike]) -> Array:
-        """Concatenate per-component arrays into a flat array.
-
-        Equivalent to :meth:`flatten_value`.  Retained for backward
-        compatibility.
-        """
-        return self.flatten_value(structured)
-
     # -- Component-level log_prob ------------------------------------------
 
     def component_log_prob(self, value: dict[str, ArrayLike]) -> dict[str, Array]:

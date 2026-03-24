@@ -116,17 +116,6 @@ class TestSampling:
         assert s["x"].shape == (10, 1)
         assert s["y"].shape == (10, 1)
 
-    def test_sample_structured_alias(self):
-        jg = JointGaussian(
-            mean=jnp.array([0.0, 1.0, 2.0]),
-            cov=jnp.eye(3),
-            a=1, bc=2,
-        )
-        key = jax.random.PRNGKey(2)
-        structured = jg.sample_structured(key, (5,))
-        assert structured["a"].shape == (5, 1)
-        assert structured["bc"].shape == (5, 2)
-
     def test_sample_mean_convergence(self):
         m = jnp.array([3.0, -1.0])
         jg = JointGaussian(mean=m, cov=0.01 * jnp.eye(2), x=1, y=1)

@@ -108,18 +108,6 @@ class TestProductDistribution:
         assert s["x"].shape == (10,)
         assert s["z"].shape == (10, 3)
 
-    def test_sample_structured_returns_dict(self, joint_xy):
-        key = jax.random.PRNGKey(2)
-        structured = joint_xy.sample_structured(key)
-        assert isinstance(structured, dict)
-        assert set(structured.keys()) == {"x", "y"}
-
-    def test_sample_structured_shapes(self, joint_xz):
-        key = jax.random.PRNGKey(3)
-        structured = joint_xz.sample_structured(key, (5,))
-        assert structured["x"].shape == (5,)
-        assert structured["z"].shape == (5, 3)
-
     def test_log_prob_accepts_dict(self, joint_xy, normal_x, normal_y):
         key = jax.random.PRNGKey(4)
         s = joint_xy.sample(key)
@@ -202,16 +190,6 @@ class TestFlattenUnflatten:
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
         np.testing.assert_allclose(recovered["y"], s["y"], atol=1e-6)
 
-    def test_backward_compat_aliases(self, joint_xy):
-        """unflatten and flatten_structured are aliases for the new methods."""
-        key = jax.random.PRNGKey(63)
-        s = joint_xy.sample(key, (3,))
-        flat1 = joint_xy.flatten_value(s)
-        flat2 = joint_xy.flatten_structured(s)
-        np.testing.assert_allclose(flat1, flat2, atol=1e-6)
-        r1 = joint_xy.unflatten_value(flat1)
-        r2 = joint_xy.unflatten(flat1)
-        np.testing.assert_allclose(r1["x"], r2["x"], atol=1e-6)
 
 
 # ===========================================================================
