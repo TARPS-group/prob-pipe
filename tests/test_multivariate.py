@@ -10,7 +10,7 @@ from probpipe.distributions import (
     Wishart,
     VonMisesFisher,
 )
-from probpipe.distributions.distribution import Distribution
+from probpipe.distributions.distribution import ArrayDistribution
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +68,7 @@ EXPECTED_EVENT_SHAPES = {
 
 class TestGeneric:
     def test_is_distribution(self, multivariate_dist):
-        assert isinstance(multivariate_dist, Distribution)
+        assert isinstance(multivariate_dist, ArrayDistribution)
 
     def test_event_shape(self, multivariate_dist):
         name = type(multivariate_dist).__name__

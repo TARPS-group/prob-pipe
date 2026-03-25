@@ -2,17 +2,25 @@
 Core distribution abstractions for ProbPipe.
 
 Provides:
-  - ``Distribution``          – Abstract base class following TFP shape semantics.
-  - ``TFPDistribution``       – Mixin that delegates to an internal ``tfd.*`` instance.
-  - ``EmpiricalDistribution`` – Weighted set of samples.
-  - ``Provenance``            – Lightweight lineage tracker.
+  - ``Distribution``                – Generic base class parameterized by value type T.
+  - ``PyTreeArrayDistribution``     – Pytree-of-arrays layer with batch/event shape
+                                      semantics, flatten/unflatten, and flat-view interop.
+  - ``ArrayDistribution``           – Single-array specialization (T = Array) with TFP
+                                      shape conventions. All standard distributions
+                                      (Normal, Gamma, MVN, ...) inherit from this.
+  - ``FlattenedView``               – Wraps any ``PyTreeArrayDistribution`` as a flat
+                                      ``ArrayDistribution`` for algorithm interoperability.
+  - ``TFPDistribution``             – Mixin that delegates to an internal ``tfd.*`` instance.
+  - ``EmpiricalDistribution``       – Weighted set of samples.
+  - ``BootstrapDistribution``       – MC error tracking via bootstrap resampling.
+  - ``Provenance``                  – Lightweight lineage tracker.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Generic, TypeVar
 import functools
 
 import math
@@ -22,6 +30,12 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..custom_types import Array, ArrayLike, PRNGKey
+
+# ---------------------------------------------------------------------------
+# Type variables
+# ---------------------------------------------------------------------------
+
+T = TypeVar('T')
 
 # ---------------------------------------------------------------------------
 # Global defaults
@@ -65,7 +79,7 @@ def monte_carlo(method):
 
     Example::
 
-        class MyDist(Distribution):
+        class MyDist(ArrayDistribution):
             @monte_carlo
             def mean(self):
                 return lambda x: x
@@ -393,7 +407,7 @@ class Provenance:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Provenance":
+    def from_dict(cls, d: dict[str, Any]) -> Provenance:
         """Reconstruct from a dict produced by :meth:`to_dict`.
 
         Parent distributions are not available at deserialization time, so
@@ -408,49 +422,37 @@ class Provenance:
 
 
 # ---------------------------------------------------------------------------
-# Distribution ABC
+# Distribution[T] — generic base class
 # ---------------------------------------------------------------------------
 
-class Distribution(ABC):
+class Distribution(Generic[T], ABC):
     """
-    Abstract base for all ProbPipe distributions.
+    Abstract base for all ProbPipe distributions, parameterized by
+    value type ``T``.
 
-    Shape semantics follow TFP conventions:
+    Commits to a sampling contract and optional log-density.  Shape
+    semantics, batch/event conventions, and domain-specific methods
+    live in specialized subclasses (e.g., ``ArrayDistribution``).
 
-    * ``event_shape``  – shape of a single draw (e.g. ``(d,)`` for a
-      *d*-dimensional vector distribution).
-    * ``batch_shape``  – shape of independent-but-not-identically-distributed
-      parameter batches.
-    * ``sample(key, sample_shape)`` returns an array of shape
-      ``sample_shape + batch_shape + event_shape``.
+    The abstract primitive is ``_sample(key)``, which draws a single
+    sample of type ``T``.  The public ``sample(key, sample_shape)``
+    method handles batching via ``jax.vmap`` by default; subclasses
+    may override for efficiency.
     """
 
     # -- core abstract interface ---------------------------------------------
 
-    @property
     @abstractmethod
-    def event_shape(self) -> tuple[int, ...]:
-        ...
-
-    @property
-    def batch_shape(self) -> tuple[int, ...]:
-        return ()
-
-    @property
-    def dtype(self) -> jnp.dtype:
-        return jnp.float32
-
-    @abstractmethod
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
-        """Subclass implementation of sampling (called by :meth:`sample`)."""
+    def _sample(self, key: PRNGKey) -> T:
+        """Draw a single sample. Subclasses implement this."""
         ...
 
     def sample(
         self,
         key: PRNGKey | None = None,
         sample_shape: tuple[int, ...] = (),
-    ) -> Array:
-        """Draw samples from this distribution.
+    ) -> T:
+        """Draw sample(s) from this distribution.
 
         Parameters
         ----------
@@ -459,64 +461,53 @@ class Distribution(ABC):
             from a global counter (convenient for interactive use but not
             reproducible across runs).
         sample_shape : tuple of int
-            Leading dimensions for the returned array.
+            Number of independent draws.  The meaning depends on ``T``:
+            for arrays, prepends dimensions; for pytrees, prepends
+            dimensions to every leaf; for distributions, enriches
+            batch shape.
+
+        Returns
+        -------
+        T
+            A single sample when ``sample_shape == ()``, or a batched
+            representation when ``sample_shape`` is non-empty.
         """
         if key is None:
             key = _auto_key()
-        return self._sample(key, sample_shape)
+        if sample_shape == ():
+            return self._sample(key)
+        n = math.prod(sample_shape)
+        keys = jax.random.split(key, n)
+        flat_samples = jax.vmap(self._sample)(keys)
+        return jax.tree.map(
+            lambda x: x.reshape(*sample_shape, *x.shape[1:]),
+            flat_samples,
+        )
 
-    @abstractmethod
-    def log_prob(self, x: ArrayLike) -> Array:
-        ...
+    # -- log-density (optional) ----------------------------------------------
 
-    def unnormalized_log_prob(self, x: ArrayLike) -> Array:
-        """Evaluate the unnormalized log-density at *x*.
+    def log_prob(self, value: T) -> Array:
+        """Log-density of *value*.  Optional; raises by default.
 
-        By default this returns ``log_prob(x)``.  Subclasses that only
+        Subclasses that define a density should override this method.
+        Takes one value of type T in, returns a scalar (or batch of
+        scalars) out.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support log_prob"
+        )
+
+    def unnormalized_log_prob(self, value: T) -> Array:
+        """Evaluate the unnormalized log-density at *value*.
+
+        By default this returns ``log_prob(value)``.  Subclasses that only
         know the density up to a normalizing constant (e.g., conditioned
         distributions) should override this method and may raise
         ``NotImplementedError`` from ``log_prob`` instead.
         """
-        return self.log_prob(x)
+        return self.log_prob(value)
 
-    # -- optional concrete methods ------------------------------------------
-
-    def prob(self, x: ArrayLike) -> Array:
-        return jnp.exp(self.log_prob(x))
-
-    @monte_carlo
-    def mean(self):
-        """Mean of this distribution.
-
-        Subclasses with exact means (e.g., ``TFPDistribution``) override
-        this.  The base implementation falls back to Monte Carlo via
-        ``expectation(lambda x: x)``.
-        """
-        return lambda x: x
-
-    @monte_carlo
-    def variance(self):
-        """Variance of this distribution.
-
-        Subclasses with exact variance (e.g., ``TFPDistribution``)
-        override this.  The base implementation falls back to Monte Carlo.
-        """
-        mu = self.mean(return_dist=False)
-        return lambda x: (x - mu) ** 2
-
-    @monte_carlo
-    def cov(self):
-        """Covariance matrix of this distribution.
-
-        The base implementation falls back to Monte Carlo.
-        """
-        mu = self.mean(return_dist=False)
-
-        def _outer_diff(x):
-            d = x.ravel() - mu.ravel()
-            return jnp.outer(d, d)
-
-        return _outer_diff
+    # -- expectations ---------------------------------------------------------
 
     def expectation(
         self,
@@ -525,13 +516,14 @@ class Distribution(ABC):
         key: PRNGKey | None = None,
         num_evaluations: int | None = None,
         return_dist: bool | None = None,
-    ) -> Array | Distribution:
+    ) -> Any:
         """Estimate ``E[f(X)]`` where ``X ~ self``.
 
         Parameters
         ----------
         f : callable
-            Function mapping a single sample to an array.
+            Function mapping a single sample to an array (or pytree of
+            arrays).
         key : PRNGKey, optional
             JAX PRNG key for sampling.  Auto-generated if ``None``.
         num_evaluations : int, optional
@@ -539,9 +531,9 @@ class Distribution(ABC):
             ``DEFAULT_NUM_EVALUATIONS``.  Subclasses with finite support
             override this to compute exactly when ``None``.
         return_dist : bool, optional
-            If ``True``, return a ``BootstrapDistribution`` capturing MC
-            error.  If ``False``, return a plain array.  If ``None``,
-            use the global ``RETURN_APPROX_DIST`` setting.
+            If ``True``, return a ``BootstrapDistribution`` capturing
+            estimation uncertainty.  If ``False``, return a plain array.
+            If ``None``, use the global ``RETURN_APPROX_DIST`` setting.
         """
         n = num_evaluations if num_evaluations is not None else DEFAULT_NUM_EVALUATIONS
         if key is None:
@@ -552,7 +544,7 @@ class Distribution(ABC):
         rd = return_dist if return_dist is not None else RETURN_APPROX_DIST
         if rd:
             return BootstrapDistribution(evals, name=f"E[f(X)]")
-        return jnp.mean(evals, axis=0)
+        return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
 
     # -- approximation tracking ---------------------------------------------
 
@@ -560,13 +552,6 @@ class Distribution(ABC):
     def is_approximate(self) -> bool:
         """Whether this distribution is an approximation (e.g., from sampling or MCMC)."""
         return getattr(self, "_approximate", False)
-
-    # -- support ------------------------------------------------------------
-
-    @property
-    def support(self) -> Constraint:
-        """The support of this distribution (set of values with non-zero density)."""
-        raise NotImplementedError(f"{type(self).__name__}.support")
 
     # -- naming & provenance ------------------------------------------------
 
@@ -593,12 +578,12 @@ class Distribution(ABC):
     @classmethod
     def from_distribution(
         cls,
-        other: Distribution,
+        other: "Distribution",
         *,
         key: PRNGKey | None = None,
         check_support: bool = True,
         **kwargs: Any,
-    ) -> Distribution:
+    ) -> "Distribution":
         """Convert *other* into an instance of *cls*.
 
         Delegates to the global converter registry.  See
@@ -616,16 +601,17 @@ class Distribution(ABC):
             If ``True`` (default), verify the supports are compatible
             before converting. Raises ``ValueError`` on mismatch.
         **kwargs
-            Subclass-specific keyword arguments. Common options:
+            Subclass-specific keyword arguments.  Common options for
+            ``ArrayDistribution`` targets:
 
-            * ``num_samples`` (int, default 1024) — number of samples
+            * ``num_samples`` (int, default 1024) -- number of samples
               drawn from *other* for moment-matching or empirical
               estimation. Ignored when *other* is the same class
               (parameters are copied directly).
-            * ``total_count`` (int) — required by ``Binomial``,
+            * ``total_count`` (int) -- required by ``Binomial``,
               ``NegativeBinomial``, and ``Multinomial`` when *other*
               is not the same class.
-            * ``name`` (str | None) — name for the resulting
+            * ``name`` (str | None) -- name for the resulting
               distribution; defaults to ``other.name``.
         """
         from ..converters import converter_registry
@@ -633,8 +619,295 @@ class Distribution(ABC):
             other, cls, key=key, check_support=check_support, **kwargs
         )
 
+    # -- repr ---------------------------------------------------------------
+
+    def __repr__(self) -> str:
+        parts = [type(self).__name__]
+        if self.name:
+            parts.append(f"name={self.name!r}")
+        return f"{parts[0]}({', '.join(parts[1:])})"
+
+
+# ---------------------------------------------------------------------------
+# PyTreeArrayDistribution[T] — pytree of arrays with shape semantics
+# ---------------------------------------------------------------------------
+
+class PyTreeArrayDistribution(Distribution[T]):
+    """
+    Distribution over a pytree of arrays with TFP-style shape semantics.
+
+    All leaves are JAX arrays. ``batch_shape`` is shared across all leaves.
+    Each leaf has its own ``event_shape``. The full shape identity is:
+    ``treedef + batch_shape + per-leaf event_shapes``.
+
+    This is the workhorse layer for distributions over structured values
+    (e.g., dicts of arrays for joint parameter distributions). Single-array
+    distributions use the ``ArrayDistribution`` subclass.
+    """
+
+    # -- pytree structure ---------------------------------------------------
+
+    @property
+    @abstractmethod
+    def treedef(self) -> jax.tree_util.PyTreeDef:
+        """The pytree structure of a single sample."""
+        ...
+
+    # -- shape properties ---------------------------------------------------
+
+    @property
+    @abstractmethod
+    def batch_shape(self) -> tuple[int, ...]:
+        """Batch shape, shared across all leaves."""
+        ...
+
+    @property
+    @abstractmethod
+    def event_shapes(self) -> T:
+        """Per-leaf event shapes.
+
+        Returns a pytree with the same structure as T, with
+        ``tuple[int, ...]`` at each leaf position.
+        """
+        ...
+
+    @property
+    def flat_event_shapes(self) -> list[tuple[int, ...]]:
+        """Event shapes as a flat list in canonical leaf order."""
+        return self.treedef.flatten_up_to(self.event_shapes)
+
+    @property
+    def event_size(self) -> int:
+        """Total number of scalar elements in one event (analogous to ``numpy.ndarray.size``).
+
+        Equal to the sum of ``math.prod(s)`` over all leaf event shapes.
+        """
+        return sum(math.prod(s) for s in self.flat_event_shapes)
+
+    # -- flatten / unflatten ------------------------------------------------
+
+    def flatten_value(self, value: T) -> Array:
+        """Flatten the event dimensions of a pytree value into a single trailing axis.
+
+        Each leaf's event dimensions are raveled and the results are
+        concatenated in canonical leaf order.  All leading dimensions
+        (``sample_shape``, ``batch_shape``, or both) are preserved.
+
+        Shape contract for each leaf::
+
+            (*sample_shape, *batch_shape, *event_shape)
+            → (*sample_shape, *batch_shape, prod(event_shape))
+
+        After concatenating across leaves the result has shape
+        ``(*sample_shape, *batch_shape, event_size)``.
+        """
+        leaves = jax.tree.leaves(value)
+        event_shapes = self.flat_event_shapes
+        flat_leaves = []
+        for leaf, es in zip(leaves, event_shapes):
+            leaf = jnp.asarray(leaf)
+            n_event = math.prod(es) if es else 1
+            # Reshape: (*batch_dims, *event_shape) -> (*batch_dims, n_event)
+            n_event_dims = len(es)
+            batch_dims = leaf.shape[:leaf.ndim - n_event_dims] if n_event_dims else leaf.shape
+            flat_leaves.append(leaf.reshape(*batch_dims, n_event))
+        return jnp.concatenate(flat_leaves, axis=-1)
+
+    def unflatten_value(self, flat: Array) -> T:
+        """Unflatten a flat array back to the pytree structure.
+
+        Reverses :meth:`flatten_value`.  All dimensions preceding the
+        final ``event_size`` axis are preserved (whether they represent
+        ``sample_shape``, ``batch_shape``, or both).
+
+        Parameters
+        ----------
+        flat : Array
+            Array of shape ``(*sample_shape, *batch_shape, event_size)``.
+
+        Returns
+        -------
+        T
+            Pytree with each leaf reshaped to
+            ``(*sample_shape, *batch_shape, *event_shape)``.
+        """
+        event_shapes = self.flat_event_shapes
+        batch_dims = flat.shape[:-1]
+        leaves = []
+        offset = 0
+        for es in event_shapes:
+            n = math.prod(es) if es else 1
+            chunk = flat[..., offset:offset + n]
+            leaves.append(chunk.reshape(*batch_dims, *es))
+            offset += n
+        return jax.tree.unflatten(self.treedef, leaves)
+
+    def as_flat_distribution(self) -> ArrayDistribution:
+        """View this distribution as a flat ``ArrayDistribution``.
+
+        Returns an ``ArrayDistribution`` with ``event_shape=(event_size,)``.
+        Enables interoperability with algorithms that expect flat vectors
+        (MCMC, optimizers, VI methods).
+        """
+        return FlattenedView(self)
+
+    # -- moments ------------------------------------------------------------
+
+    @monte_carlo
+    def mean(self):
+        """Mean of this distribution.
+
+        Subclasses with exact means (e.g., ``TFPDistribution``) override
+        this.  The default implementation uses ``expectation(lambda x: x)``.
+        """
+        return lambda x: x
+
+    @monte_carlo
+    def variance(self):
+        """Variance of this distribution.
+
+        Subclasses with exact variance (e.g., ``TFPDistribution``)
+        override this.  The default implementation uses ``expectation``.
+        """
+        mu = self.mean(return_dist=False)
+        return lambda x: jax.tree.map(lambda xi, mi: (xi - mi) ** 2, x, mu)
+
+    # -- supports (pytree of per-leaf constraints) ---------------------------
+
+    @property
+    def supports(self) -> T:
+        """Per-leaf constraints. Default returns ``real`` for every leaf."""
+        return jax.tree.map(lambda _: real, self.event_shapes)
+
+
+# ---------------------------------------------------------------------------
+# ArrayDistribution — distribution over arrays (TFP shape semantics)
+# ---------------------------------------------------------------------------
+
+class ArrayDistribution(PyTreeArrayDistribution[Array]):
+    """
+    Distribution over a single array with TFP-style shape semantics.
+
+    Shape semantics follow TFP conventions:
+
+    * ``event_shape``  -- shape of a single draw (e.g. ``(d,)`` for a
+      *d*-dimensional vector distribution).
+    * ``batch_shape``  -- shape of independent-but-not-identically-distributed
+      parameter batches.
+    * ``sample(key, sample_shape)`` returns an array of shape
+      ``sample_shape + batch_shape + event_shape``.
+
+    Standard distributions (Normal, Gamma, Poisson, etc.) inherit from this class.
+    """
+
+    # -- shape properties ---------------------------------------------------
+
+    @property
+    @abstractmethod
+    def event_shape(self) -> tuple[int, ...]:
+        ...
+
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return ()
+
+    @property
+    def dtype(self) -> jnp.dtype:
+        return jnp.float32
+
+    # -- PyTreeArrayDistribution interface (trivial single-leaf) -------------
+
+    @property
+    def treedef(self) -> jax.tree_util.PyTreeDef:
+        """Treedef for a single array (one-leaf pytree)."""
+        return jax.tree.structure(None)
+
+    @property
+    def event_shapes(self) -> Array:
+        """Single event shape, wrapped to satisfy the pytree interface."""
+        return self.event_shape
+
+    @property
+    def flat_event_shapes(self) -> list[tuple[int, ...]]:
+        """Single-leaf: just the one event_shape."""
+        return [self.event_shape]
+
+    @property
+    def event_size(self) -> int:
+        """Total flat dimensionality."""
+        es = self.event_shape
+        return math.prod(es) if es else 1
+
+    def flatten_value(self, value: ArrayLike) -> Array:
+        """Flatten event dimensions into a single trailing axis.
+
+        Leading dimensions (``sample_shape``, ``batch_shape``) are
+        preserved::
+
+            (*sample_shape, *batch_shape, *event_shape)
+            → (*sample_shape, *batch_shape, prod(event_shape))
+        """
+        value = jnp.asarray(value)
+        es = self.event_shape
+        n_event = math.prod(es) if es else 1
+        if not es:
+            # scalar event: just add a trailing dim
+            return value[..., None]
+        n_batch = value.ndim - len(es)
+        batch_dims = value.shape[:n_batch]
+        return value.reshape(*batch_dims, n_event)
+
+    def unflatten_value(self, flat: ArrayLike) -> Array:
+        """Unflatten a flat trailing axis back to event dimensions.
+
+        Leading dimensions (``sample_shape``, ``batch_shape``) are
+        preserved::
+
+            (*sample_shape, *batch_shape, event_size)
+            → (*sample_shape, *batch_shape, *event_shape)
+        """
+        flat = jnp.asarray(flat)
+        es = self.event_shape
+        if not es:
+            return flat[..., 0]
+        batch_dims = flat.shape[:-1]
+        return flat.reshape(*batch_dims, *es)
+
+    # -- array-specific convenience methods ----------------------------------
+
+    def prob(self, x: ArrayLike) -> Array:
+        return jnp.exp(self.log_prob(x))
+
+    @monte_carlo
+    def cov(self):
+        """Covariance matrix of this distribution.
+
+        The base implementation falls back to Monte Carlo.
+        """
+        mu = self.mean(return_dist=False)
+
+        def _outer_diff(x):
+            d = x.ravel() - mu.ravel()
+            return jnp.outer(d, d)
+
+        return _outer_diff
+
+    # -- support ------------------------------------------------------------
+
+    @property
+    def support(self) -> Constraint:
+        """The support of this distribution (set of values with non-zero density)."""
+        raise NotImplementedError(f"{type(self).__name__}.support")
+
+    @property
+    def supports(self) -> Constraint:
+        """For ArrayDistribution, supports is just the singular support."""
+        return self.support
+
+    # -- support compatibility (for conversion) ------------------------------
+
     @classmethod
-    def _check_support_compatible(cls, other: Distribution) -> None:
+    def _check_support_compatible(cls, other: ArrayDistribution) -> None:
         """Raise ValueError if *other*'s support is incompatible with *cls*."""
         try:
             target_support = cls._default_support()
@@ -674,10 +947,76 @@ class Distribution(ABC):
 
 
 # ---------------------------------------------------------------------------
+# FlattenedView — wrap a PyTreeArrayDistribution as an ArrayDistribution
+# ---------------------------------------------------------------------------
+
+class FlattenedView(ArrayDistribution):
+    """Wraps a ``PyTreeArrayDistribution`` as a flat ``ArrayDistribution``.
+
+    Sampling produces flat vectors of shape ``(event_size,)``, and
+    ``log_prob`` accepts flat vectors and delegates to the wrapped
+    distribution after unflattening.
+
+    This is the primary interoperability mechanism: any algorithm written
+    for ``ArrayDistribution`` works with ``PyTreeArrayDistribution`` via
+    ``dist.as_flat_distribution()``.
+    """
+
+    def __init__(self, base: PyTreeArrayDistribution):
+        self._base = base
+
+    @property
+    def event_shape(self) -> tuple[int, ...]:
+        return (self._base.event_size,)
+
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return self._base.batch_shape
+
+    def _sample(self, key: PRNGKey) -> Array:
+        pytree_sample = self._base._sample(key)
+        return self._base.flatten_value(pytree_sample)
+
+    def sample(
+        self,
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
+        if key is None:
+            key = _auto_key()
+        pytree_samples = self._base.sample(key, sample_shape)
+        return self._base.flatten_value(pytree_samples)
+
+    def log_prob(self, x: ArrayLike) -> Array:
+        x = jnp.asarray(x)
+        value = self._base.unflatten_value(x)
+        return self._base.log_prob(value)
+
+    @property
+    def support(self) -> Constraint:
+        return real
+
+    @property
+    def base_distribution(self) -> PyTreeArrayDistribution:
+        """The underlying pytree distribution."""
+        return self._base
+
+    def unflatten_sample(self, flat_sample: ArrayLike):
+        """Convenience: unflatten a flat sample back to the pytree structure."""
+        return self._base.unflatten_value(jnp.asarray(flat_sample))
+
+    def __repr__(self) -> str:
+        return (
+            f"FlattenedView(base={type(self._base).__name__}, "
+            f"event_shape={self.event_shape})"
+        )
+
+
+# ---------------------------------------------------------------------------
 # TFPDistribution mixin
 # ---------------------------------------------------------------------------
 
-class TFPDistribution(Distribution):
+class TFPDistribution(ArrayDistribution):
     """
     Base class for distributions backed by a ``tfd.Distribution`` instance.
 
@@ -703,7 +1042,18 @@ class TFPDistribution(Distribution):
 
     # -- sampling & density -------------------------------------------------
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+    def _sample(self, key: PRNGKey) -> Array:
+        """Draw a single sample from the TFP distribution."""
+        return self._tfp_dist.sample(seed=key)
+
+    def sample(
+        self,
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
+        """Draw samples using TFP's efficient batched sampling."""
+        if key is None:
+            key = _auto_key()
         return self._tfp_dist.sample(seed=key, sample_shape=sample_shape)
 
     def log_prob(self, x: ArrayLike) -> Array:
@@ -726,7 +1076,7 @@ class TFPDistribution(Distribution):
 # EmpiricalDistribution
 # ---------------------------------------------------------------------------
 
-class EmpiricalDistribution(Distribution):
+class EmpiricalDistribution(ArrayDistribution):
     """
     Weighted empirical distribution over a finite set of samples.
 
@@ -847,8 +1197,25 @@ class EmpiricalDistribution(Distribution):
 
     # -- sampling -----------------------------------------------------------
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
-        n_draws = int(math.prod(sample_shape)) if sample_shape else 1
+    def _sample(self, key: PRNGKey) -> Array:
+        """Draw a single sample (with replacement according to weights)."""
+        if self._is_uniform:
+            idx = jax.random.randint(key, shape=(), minval=0, maxval=self.n)
+        else:
+            idx = jax.random.choice(key, self.n, p=self.weights)
+        return self._samples[idx]
+
+    def sample(
+        self,
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
+        """Draw samples using efficient batched resampling."""
+        if key is None:
+            key = _auto_key()
+        if sample_shape == ():
+            return self._sample(key)
+        n_draws = int(math.prod(sample_shape))
         if self._is_uniform:
             indices = jax.random.randint(key, shape=(n_draws,), minval=0, maxval=self.n)
         else:
@@ -856,9 +1223,7 @@ class EmpiricalDistribution(Distribution):
                 key, self.n, shape=(n_draws,), p=self.weights, replace=True,
             )
         draws = self._samples[indices]
-        if sample_shape:
-            return draws.reshape(sample_shape + self.event_shape)
-        return draws.squeeze(axis=0)
+        return draws.reshape(sample_shape + self.event_shape)
 
     # -- density (Gaussian approximation) -----------------------------------
 
@@ -904,7 +1269,7 @@ class EmpiricalDistribution(Distribution):
         key: PRNGKey | None = None,
         num_evaluations: int | None = None,
         return_dist: bool | None = None,
-    ) -> Array | Distribution:
+    ) -> Array | ArrayDistribution:
         """Compute ``E[f(X)]`` exactly over the empirical support.
 
         When ``num_evaluations`` is ``None``, the expectation is computed
@@ -946,7 +1311,7 @@ class EmpiricalDistribution(Distribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -972,7 +1337,7 @@ class EmpiricalDistribution(Distribution):
 # BootstrapDistribution
 # ---------------------------------------------------------------------------
 
-class BootstrapDistribution(Distribution):
+class BootstrapDistribution(ArrayDistribution):
     """Distribution over bootstrap-resampled means of a statistic.
 
     Given *n* evaluations ``f(x_1), ..., f(x_n)`` where ``x_i ~ P``,
@@ -1031,7 +1396,7 @@ class BootstrapDistribution(Distribution):
         return jnp.einsum("n,n...->...", self._weights, self._evaluations)
 
     def variance(self) -> Array:
-        """Variance of the sampling distribution (≈ Var[f(X)] / n_eff)."""
+        """Variance of the sampling distribution (approx Var[f(X)] / n_eff)."""
         mu = self.mean()
         diff = self._evaluations - mu
         if self._weights is None:
@@ -1042,9 +1407,28 @@ class BootstrapDistribution(Distribution):
         n_eff = 1.0 / jnp.sum(self._weights ** 2)
         return sample_var / n_eff
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+    def _sample(self, key: PRNGKey) -> Array:
+        """Draw a single bootstrap resample of the mean."""
+        if self._weights is None:
+            idx = jax.random.choice(key, self._n, shape=(self._n,), replace=True)
+            return jnp.mean(self._evaluations[idx], axis=0)
+        else:
+            idx = jax.random.choice(
+                key, self._n, shape=(self._n,), replace=True, p=self._weights
+            )
+            return jnp.mean(self._evaluations[idx], axis=0)
+
+    def sample(
+        self,
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
         """Draw bootstrap resamples of the mean."""
-        total = int(math.prod(sample_shape)) if sample_shape else 1
+        if key is None:
+            key = _auto_key()
+        if sample_shape == ():
+            return self._sample(key)
+        total = int(math.prod(sample_shape))
         keys = jax.random.split(key, total)
 
         def _one_resample(k):
@@ -1061,7 +1445,7 @@ class BootstrapDistribution(Distribution):
         return results.reshape(sample_shape + self.event_shape)
 
     def log_prob(self, x: ArrayLike) -> Array:
-        """Log-density via Gaussian approximation (mean ± SE)."""
+        """Log-density via Gaussian approximation (mean +/- SE)."""
         x = jnp.asarray(x)
         mu = self.mean()
         var = jnp.maximum(self.variance(), 1e-12)
@@ -1074,4 +1458,3 @@ class BootstrapDistribution(Distribution):
 
     def __repr__(self) -> str:
         return f"BootstrapDistribution(n={self._n}, event_shape={self.event_shape})"
-

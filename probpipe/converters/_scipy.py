@@ -11,7 +11,7 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..distributions.distribution import (
-    Distribution,
+    ArrayDistribution,
     EmpiricalDistribution,
     Provenance,
     _auto_key,
@@ -115,12 +115,12 @@ class ScipyConverter(Converter):
     def source_types(self) -> tuple[type, ...]:
         if not _HAS_SCIPY:
             return ()
-        return (_rv_frozen, Distribution)
+        return (_rv_frozen, ArrayDistribution)
 
     def target_types(self) -> tuple[type, ...]:
         if not _HAS_SCIPY:
             return ()
-        return (Distribution, _rv_frozen)
+        return (ArrayDistribution, _rv_frozen)
 
     def check(self, source: Any, target_type: type) -> ConversionInfo:
         if not _HAS_SCIPY:
@@ -128,7 +128,7 @@ class ScipyConverter(Converter):
 
         # Case 1: scipy -> ProbPipe
         if isinstance(source, _rv_frozen):
-            if isinstance(target_type, type) and issubclass(target_type, Distribution):
+            if isinstance(target_type, type) and issubclass(target_type, ArrayDistribution):
                 # Find the underlying scipy distribution class
                 dist_cls = type(source.dist)
                 if dist_cls in self._scipy_map:
@@ -154,7 +154,7 @@ class ScipyConverter(Converter):
                 )
 
         # Case 2: ProbPipe -> scipy
-        if isinstance(source, Distribution):
+        if isinstance(source, ArrayDistribution):
             if _HAS_SCIPY and isinstance(target_type, type) and issubclass(target_type, _rv_frozen):
                 src_name = type(source).__name__
                 if src_name in self._pp_map:
@@ -193,7 +193,7 @@ class ScipyConverter(Converter):
             return converter_registry.convert(emp, target_type, key=key, **kwargs)
 
         # Case 2: ProbPipe -> scipy
-        if isinstance(source, Distribution):
+        if isinstance(source, ArrayDistribution):
             src_name = type(source).__name__
             fn = self._pp_map.get(src_name)
             if fn is not None:

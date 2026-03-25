@@ -18,7 +18,7 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.mcmc as tfp_mcmc
 
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ..distributions.distribution import Distribution, EmpiricalDistribution, Provenance
+from ..distributions.distribution import ArrayDistribution, EmpiricalDistribution, Provenance
 from ..distributions.multivariate import MultivariateNormal
 from .node import AbstractModule, Module, WorkflowFunction, abstractwf, wf
 
@@ -81,7 +81,7 @@ class ApproximatePosterior(WorkflowFunction, ABC):
     @abstractwf
     def _compute_posterior(
         self,
-        prior: Distribution,
+        prior: ArrayDistribution,
         likelihood: Likelihood,
         data: ArrayLike,
     ) -> EmpiricalDistribution:
@@ -224,7 +224,7 @@ class MCMCSampler(ApproximatePosterior):
 
     def _get_init_state(
         self,
-        prior: Distribution,
+        prior: ArrayDistribution,
         data: ArrayLike,
     ) -> jnp.ndarray:
         """Determine the initial chain state (always at least 1-D, floating)."""
@@ -332,7 +332,7 @@ class MCMCSampler(ApproximatePosterior):
     @wf
     def _compute_posterior(
         self,
-        prior: Distribution,
+        prior: ArrayDistribution,
         likelihood: Likelihood,
         data: ArrayLike,
     ) -> EmpiricalDistribution:
@@ -487,7 +487,7 @@ class RWMH(ApproximatePosterior):
     @wf
     def _compute_posterior(
         self,
-        prior: Distribution,
+        prior: ArrayDistribution,
         likelihood: Likelihood,
         data: ArrayLike,
     ) -> EmpiricalDistribution:
@@ -574,13 +574,13 @@ class IterativeForecaster(Module):
     def __init__(
         self,
         *,
-        prior: Distribution,
+        prior: ArrayDistribution,
         likelihood: Likelihood,
         generative_likelihood: GenerativeLikelihood,
         approx_post: ApproximatePosterior,
         workflow_kind: str | None = None,
     ):
-        self._curr_posterior: Distribution = prior
+        self._curr_posterior: ArrayDistribution = prior
         self._generative_likelihood = generative_likelihood
 
         super().__init__(
@@ -592,7 +592,7 @@ class IterativeForecaster(Module):
         )
 
     @property
-    def curr_posterior(self) -> Distribution:
+    def curr_posterior(self) -> ArrayDistribution:
         return self._curr_posterior
 
     @wf
@@ -601,7 +601,7 @@ class IterativeForecaster(Module):
         approx_post: ApproximatePosterior,
         likelihood: Likelihood,
         data: ArrayLike,
-    ) -> Distribution:
+    ) -> ArrayDistribution:
         post_dist = approx_post(
             prior=self._curr_posterior, likelihood=likelihood, data=data
         )

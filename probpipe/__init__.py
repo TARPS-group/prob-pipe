@@ -27,6 +27,9 @@ _warnings.filterwarnings(
 from probpipe.distributions import (
     # Base classes
     Distribution,
+    PyTreeArrayDistribution,
+    ArrayDistribution,
+    FlattenedView,
     TFPDistribution,
     EmpiricalDistribution,
     Provenance,
@@ -91,6 +94,12 @@ from probpipe.distributions import (
 )
 from probpipe.core.node import WorkflowFunction, Module, wf
 from probpipe.provenance import provenance_ancestors, provenance_dag
+from probpipe.surrogate import (
+    Emulator,
+    GaussianEmulator,
+    LinCombGaussianWeights,
+    LinearGaussianRegressor,
+)
 from probpipe.converters import (
     converter_registry,
     ConversionInfo,
@@ -101,6 +110,9 @@ from probpipe.converters import (
 __all__ = [
     # Base classes
     "Distribution",
+    "PyTreeArrayDistribution",
+    "ArrayDistribution",
+    "FlattenedView",
     "TFPDistribution",
     "EmpiricalDistribution",
     "Provenance",
@@ -162,6 +174,11 @@ __all__ = [
     # Provenance
     "provenance_ancestors",
     "provenance_dag",
+    # Emulators
+    "Emulator",
+    "GaussianEmulator",
+    "LinCombGaussianWeights",
+    "LinearGaussianRegressor",
     # Converters
     "converter_registry",
     "ConversionInfo",

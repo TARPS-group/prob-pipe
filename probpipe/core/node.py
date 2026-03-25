@@ -21,7 +21,7 @@ except ImportError:
     Digraph = None
 
 from ..custom_types import PRNGKey, Array
-from ..distributions.distribution import Distribution, EmpiricalDistribution, Provenance
+from ..distributions.distribution import ArrayDistribution, Distribution, EmpiricalDistribution, Provenance
 from ..distributions.joint import DistributionView
 from ..converters import converter_registry
 
@@ -333,8 +333,8 @@ class WorkflowFunction(Node):
             if not converter_registry.is_distribution_type(value):
                 continue
             # Auto-convert external distribution types to ProbPipe
-            if not isinstance(value, Distribution):
-                values[name] = converter_registry.convert(value, Distribution)
+            if not isinstance(value, ArrayDistribution):
+                values[name] = converter_registry.convert(value, ArrayDistribution)
                 value = values[name]
             expected = self._hints.get(name)
             # If hint IS a Distribution subclass, _convert_distributions handled it
@@ -507,7 +507,8 @@ class WorkflowFunction(Node):
                 pid = id(dist._parent)
                 if pid not in joint_groups:
                     joint_groups[pid] = {"parent": dist._parent, "mappings": {}}
-                joint_groups[pid]["mappings"][name] = dist._component_name
+                # Store the key path (tuple of strings) for nested pytree navigation
+                joint_groups[pid]["mappings"][name] = dist._key_path
             else:
                 independent.append(name)
 
@@ -516,9 +517,13 @@ class WorkflowFunction(Node):
         # Sample each joint group once, distribute to arguments
         for group in joint_groups.values():
             key, subkey = jax.random.split(key)
-            structured = group["parent"].sample_structured(subkey, (n,))
-            for arg_name, comp_name in group["mappings"].items():
-                sampled[arg_name] = structured[comp_name]
+            structured = group["parent"].sample(subkey, (n,))
+            for arg_name, key_path in group["mappings"].items():
+                # Walk the (possibly nested) sample pytree to extract the leaf
+                val = structured
+                for k in key_path:
+                    val = val[k]
+                sampled[arg_name] = val
 
         # Sample independent distributions
         for name in independent:

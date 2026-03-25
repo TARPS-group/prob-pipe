@@ -10,7 +10,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 from probpipe import (
     Normal, Beta, Gamma, Exponential, MultivariateNormal,
     Bernoulli, Poisson, Categorical,
-    EmpiricalDistribution, Distribution,
+    EmpiricalDistribution, ArrayDistribution,
     converter_registry, ConversionInfo, ConversionMethod, Converter,
 )
 from probpipe.distributions.continuous import (

@@ -12,7 +12,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .distribution import (
     TFPDistribution,
-    Distribution,
+    ArrayDistribution,
     EmpiricalDistribution,
     Provenance,
     Constraint,
@@ -123,7 +123,7 @@ class MultivariateNormal(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -212,7 +212,7 @@ class Dirichlet(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -323,7 +323,7 @@ class Multinomial(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -458,7 +458,7 @@ class Wishart(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,
@@ -554,7 +554,7 @@ class VonMisesFisher(TFPDistribution):
     @classmethod
     def _from_distribution(
         cls,
-        other: Distribution,
+        other: ArrayDistribution,
         *,
         key: PRNGKey,
         name: str | None = None,

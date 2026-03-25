@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe.distributions import (
-    Distribution,
+    ArrayDistribution,
     Bernoulli,
     Binomial,
     Poisson,
@@ -47,7 +47,7 @@ def discrete_dist(request):
 
 class TestGeneric:
     def test_is_distribution(self, discrete_dist):
-        assert isinstance(discrete_dist, Distribution)
+        assert isinstance(discrete_dist, ArrayDistribution)
 
     def test_event_shape(self, discrete_dist):
         assert isinstance(discrete_dist.event_shape, tuple)
