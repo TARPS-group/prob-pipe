@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from abc import abstractmethod
 from collections.abc import Callable
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 import jax.numpy as jnp
 
@@ -27,7 +27,7 @@ Y = TypeVar('Y')
 # ---------------------------------------------------------------------------
 
 
-class RandomFunction(Distribution[Callable[[X], Y]], Generic[X, Y]):
+class RandomFunction(Distribution[Callable[[X], Y]]):
     """A distribution over functions f: X → Y.
 
     The primary interface is :meth:`__call__`. Calling the random 
