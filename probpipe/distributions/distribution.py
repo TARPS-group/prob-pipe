@@ -507,7 +507,7 @@ class Distribution(Generic[T], ABC):
         """
         return self.log_prob(value)
 
-    # -- expectations (Monte Carlo) ------------------------------------------
+    # -- expectations ---------------------------------------------------------
 
     def expectation(
         self,
@@ -531,9 +531,9 @@ class Distribution(Generic[T], ABC):
             ``DEFAULT_NUM_EVALUATIONS``.  Subclasses with finite support
             override this to compute exactly when ``None``.
         return_dist : bool, optional
-            If ``True``, return a ``BootstrapDistribution`` capturing MC
-            error.  If ``False``, return a plain array.  If ``None``,
-            use the global ``RETURN_APPROX_DIST`` setting.
+            If ``True``, return a ``BootstrapDistribution`` capturing
+            estimation uncertainty.  If ``False``, return a plain array.
+            If ``None``, use the global ``RETURN_APPROX_DIST`` setting.
         """
         n = num_evaluations if num_evaluations is not None else DEFAULT_NUM_EVALUATIONS
         if key is None:
@@ -545,26 +545,6 @@ class Distribution(Generic[T], ABC):
         if rd:
             return BootstrapDistribution(evals, name=f"E[f(X)]")
         return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
-
-    @monte_carlo
-    def mean(self):
-        """Mean of this distribution.
-
-        Subclasses with exact means (e.g., ``TFPDistribution``) override
-        this.  The base implementation falls back to Monte Carlo via
-        ``expectation(lambda x: x)``.
-        """
-        return lambda x: x
-
-    @monte_carlo
-    def variance(self):
-        """Variance of this distribution.
-
-        Subclasses with exact variance (e.g., ``TFPDistribution``)
-        override this.  The base implementation falls back to Monte Carlo.
-        """
-        mu = self.mean(return_dist=False)
-        return lambda x: jax.tree.map(lambda xi, mi: (xi - mi) ** 2, x, mu)
 
     # -- approximation tracking ---------------------------------------------
 
@@ -704,19 +684,6 @@ class PyTreeArrayDistribution(Distribution[T]):
         """
         return sum(math.prod(s) for s in self.flat_event_shapes)
 
-    # -- log-density (optional at this layer) ---------------------------------
-
-    def log_prob(self, value: T) -> Array:
-        """Log-density.  Takes a pytree of arrays, returns array of shape
-        ``batch_shape``.
-
-        Optional — the default raises ``NotImplementedError``.  Subclasses
-        that define a density should override this method.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support log_prob"
-        )
-
     # -- flatten / unflatten ------------------------------------------------
 
     def flatten_value(self, value: T) -> Array:
@@ -783,6 +750,27 @@ class PyTreeArrayDistribution(Distribution[T]):
         (MCMC, optimizers, VI methods).
         """
         return FlattenedView(self)
+
+    # -- moments ------------------------------------------------------------
+
+    @monte_carlo
+    def mean(self):
+        """Mean of this distribution.
+
+        Subclasses with exact means (e.g., ``TFPDistribution``) override
+        this.  The default implementation uses ``expectation(lambda x: x)``.
+        """
+        return lambda x: x
+
+    @monte_carlo
+    def variance(self):
+        """Variance of this distribution.
+
+        Subclasses with exact variance (e.g., ``TFPDistribution``)
+        override this.  The default implementation uses ``expectation``.
+        """
+        mu = self.mean(return_dist=False)
+        return lambda x: jax.tree.map(lambda xi, mi: (xi - mi) ** 2, x, mu)
 
     # -- supports (pytree of per-leaf constraints) ---------------------------
 
@@ -884,19 +872,6 @@ class ArrayDistribution(PyTreeArrayDistribution[Array]):
             return flat[..., 0]
         batch_dims = flat.shape[:-1]
         return flat.reshape(*batch_dims, *es)
-
-    # -- log-density (optional at this level) ---------------------------------
-
-    def log_prob(self, x: ArrayLike) -> Array:
-        """Log-density at *x*.
-
-        Optional — the default raises ``NotImplementedError``.  Most
-        concrete ``ArrayDistribution`` subclasses (e.g., ``TFPDistribution``,
-        ``EmpiricalDistribution``) override this method.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support log_prob"
-        )
 
     # -- array-specific convenience methods ----------------------------------
 
