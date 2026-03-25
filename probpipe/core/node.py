@@ -21,7 +21,7 @@ except ImportError:
     Digraph = None
 
 from ..custom_types import PRNGKey, Array
-from ..distributions.distribution import ArrayDistribution, EmpiricalDistribution, Provenance
+from ..distributions.distribution import ArrayDistribution, Distribution, EmpiricalDistribution, Provenance
 from ..distributions.joint import DistributionView
 from ..converters import converter_registry
 
@@ -309,7 +309,7 @@ class WorkflowFunction(Node):
 
             try:
                 is_dist_subclass = isinstance(expected, type) and issubclass(
-                    expected, ArrayDistribution
+                    expected, Distribution
                 )
             except TypeError:
                 is_dist_subclass = False
@@ -339,7 +339,7 @@ class WorkflowFunction(Node):
             expected = self._hints.get(name)
             # If hint IS a Distribution subclass, _convert_distributions handled it
             try:
-                is_dist_hint = expected is not None and isinstance(expected, type) and issubclass(expected, ArrayDistribution)
+                is_dist_hint = expected is not None and isinstance(expected, type) and issubclass(expected, Distribution)
             except TypeError:
                 is_dist_hint = False
             if is_dist_hint:
@@ -434,7 +434,7 @@ class WorkflowFunction(Node):
             # Loop vectorization: supports empirical enumeration
             # Collect candidate empirical dists (small enough individually), sorted smallest first
             candidates = []
-            sample_args: Dict[str, ArrayDistribution] = {}
+            sample_args: Dict[str, Distribution] = {}
             for name in broadcast_args:
                 dist = values[name]
                 if isinstance(dist, EmpiricalDistribution) and dist.n <= n_broadcast_samples:
@@ -466,7 +466,7 @@ class WorkflowFunction(Node):
         if isinstance(result, EmpiricalDistribution):
             parents = tuple(
                 values[name] for name in broadcast_args
-                if isinstance(values[name], ArrayDistribution)
+                if isinstance(values[name], Distribution)
             )
             result.with_source(Provenance(
                 "broadcast",
@@ -585,7 +585,7 @@ class WorkflowFunction(Node):
         self,
         values: Dict[str, Any],
         empirical_args: Dict[str, EmpiricalDistribution],
-        sample_args: Dict[str, ArrayDistribution],
+        sample_args: Dict[str, Distribution],
         product_size: int,
         n_broadcast_samples: int,
     ) -> EmpiricalDistribution | list:
