@@ -91,14 +91,17 @@ from probpipe.distributions import (
     JointGaussian,
     DistributionView,
     ConditionedComponent,
+    # Random functions
+    RandomFunction,
+    ArrayRandomFunction,
+    GaussianRandomFunction,
+    LinearBasisFunction,
+    LinearOutputTransform,
 )
 from probpipe.core.node import WorkflowFunction, Module, wf
 from probpipe.provenance import provenance_ancestors, provenance_dag
 from probpipe.surrogate import (
-    Emulator,
-    GaussianEmulator,
-    LinCombGaussianWeights,
-    LinearGaussianRegressor,
+    EmulatorMixin,
 )
 from probpipe.converters import (
     converter_registry,
@@ -174,11 +177,14 @@ __all__ = [
     # Provenance
     "provenance_ancestors",
     "provenance_dag",
+    # Random functions
+    "RandomFunction",
+    "ArrayRandomFunction",
+    "GaussianRandomFunction",
+    "LinearBasisFunction",
+    "LinearOutputTransform",
     # Emulators
-    "Emulator",
-    "GaussianEmulator",
-    "LinCombGaussianWeights",
-    "LinearGaussianRegressor",
+    "EmulatorMixin",
     # Converters
     "converter_registry",
     "ConversionInfo",
