@@ -658,13 +658,18 @@ class PyTreeArrayDistribution(Distribution[T]):
         """
         return sum(math.prod(s) for s in self.flat_event_shapes)
 
-    # -- log-density (required at this layer) --------------------------------
+    # -- log-density (optional at this layer) ---------------------------------
 
-    @abstractmethod
     def log_prob(self, value: T) -> Array:
-        """Log-density. Takes a pytree of arrays, returns
-        array of shape ``batch_shape``."""
-        ...
+        """Log-density.  Takes a pytree of arrays, returns array of shape
+        ``batch_shape``.
+
+        Optional — the default raises ``NotImplementedError``.  Subclasses
+        that define a density should override this method.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support log_prob"
+        )
 
     # -- flatten / unflatten ------------------------------------------------
 
@@ -834,11 +839,18 @@ class ArrayDistribution(PyTreeArrayDistribution[Array]):
         batch_dims = flat.shape[:-1]
         return flat.reshape(*batch_dims, *es)
 
-    # -- log-density (required at this level) --------------------------------
+    # -- log-density (optional at this level) ---------------------------------
 
-    @abstractmethod
     def log_prob(self, x: ArrayLike) -> Array:
-        ...
+        """Log-density at *x*.
+
+        Optional — the default raises ``NotImplementedError``.  Most
+        concrete ``ArrayDistribution`` subclasses (e.g., ``TFPDistribution``,
+        ``EmpiricalDistribution``) override this method.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support log_prob"
+        )
 
     # -- array-specific convenience methods ----------------------------------
 
