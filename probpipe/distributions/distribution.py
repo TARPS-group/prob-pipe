@@ -593,6 +593,52 @@ class Distribution(Generic[T], ABC):
         self._source = source
         return self
 
+    # -- conversion ---------------------------------------------------------
+
+    @classmethod
+    def from_distribution(
+        cls,
+        other: "Distribution",
+        *,
+        key: PRNGKey | None = None,
+        check_support: bool = True,
+        **kwargs: Any,
+    ) -> "Distribution":
+        """Convert *other* into an instance of *cls*.
+
+        Delegates to the global converter registry.  See
+        :mod:`probpipe.converters` for details on how conversions are
+        resolved.
+
+        Parameters
+        ----------
+        other : Distribution
+            Source distribution to convert.
+        key : PRNGKey, optional
+            JAX PRNG key for sampling-based conversion.  If ``None``,
+            a key is generated automatically via ``_auto_key()``.
+        check_support : bool
+            If ``True`` (default), verify the supports are compatible
+            before converting. Raises ``ValueError`` on mismatch.
+        **kwargs
+            Subclass-specific keyword arguments.  Common options for
+            ``ArrayDistribution`` targets:
+
+            * ``num_samples`` (int, default 1024) -- number of samples
+              drawn from *other* for moment-matching or empirical
+              estimation. Ignored when *other* is the same class
+              (parameters are copied directly).
+            * ``total_count`` (int) -- required by ``Binomial``,
+              ``NegativeBinomial``, and ``Multinomial`` when *other*
+              is not the same class.
+            * ``name`` (str | None) -- name for the resulting
+              distribution; defaults to ``other.name``.
+        """
+        from ..converters import converter_registry
+        return converter_registry.convert(
+            other, cls, key=key, check_support=check_support, **kwargs
+        )
+
     # -- repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
@@ -883,50 +929,7 @@ class ArrayDistribution(PyTreeArrayDistribution[Array]):
         """For ArrayDistribution, supports is just the singular support."""
         return self.support
 
-    # -- conversion ---------------------------------------------------------
-
-    @classmethod
-    def from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey | None = None,
-        check_support: bool = True,
-        **kwargs: Any,
-    ) -> ArrayDistribution:
-        """Convert *other* into an instance of *cls*.
-
-        Delegates to the global converter registry.  See
-        :mod:`probpipe.converters` for details on how conversions are
-        resolved.
-
-        Parameters
-        ----------
-        other : ArrayDistribution
-            Source distribution to convert.
-        key : PRNGKey, optional
-            JAX PRNG key for sampling-based conversion.  If ``None``,
-            a key is generated automatically via ``_auto_key()``.
-        check_support : bool
-            If ``True`` (default), verify the supports are compatible
-            before converting. Raises ``ValueError`` on mismatch.
-        **kwargs
-            Subclass-specific keyword arguments. Common options:
-
-            * ``num_samples`` (int, default 1024) -- number of samples
-              drawn from *other* for moment-matching or empirical
-              estimation. Ignored when *other* is the same class
-              (parameters are copied directly).
-            * ``total_count`` (int) -- required by ``Binomial``,
-              ``NegativeBinomial``, and ``Multinomial`` when *other*
-              is not the same class.
-            * ``name`` (str | None) -- name for the resulting
-              distribution; defaults to ``other.name``.
-        """
-        from ..converters import converter_registry
-        return converter_registry.convert(
-            other, cls, key=key, check_support=check_support, **kwargs
-        )
+    # -- support compatibility (for conversion) ------------------------------
 
     @classmethod
     def _check_support_compatible(cls, other: ArrayDistribution) -> None:
