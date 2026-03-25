@@ -67,6 +67,50 @@ class TestHierarchy:
 
 
 # ---------------------------------------------------------------------------
+# Distribution[T] base class methods
+# ---------------------------------------------------------------------------
+
+class TestDistributionBase:
+    """Tests for methods defined on Distribution[T] itself."""
+
+    def test_log_prob_raises_by_default(self):
+        """Distribution[T].log_prob raises NotImplementedError."""
+        class StubDist(Distribution):
+            def _sample(self, key):
+                return jnp.array(0.0)
+        d = StubDist()
+        with pytest.raises(NotImplementedError, match="does not support log_prob"):
+            d.log_prob(jnp.array(0.0))
+
+    def test_unnormalized_log_prob_delegates_to_log_prob(self, scalar_normal):
+        """unnormalized_log_prob defaults to log_prob."""
+        val = jnp.array(0.5)
+        np.testing.assert_allclose(
+            scalar_normal.unnormalized_log_prob(val),
+            scalar_normal.log_prob(val),
+            atol=1e-6,
+        )
+
+    def test_repr_with_name(self):
+        """Distribution.__repr__ includes the name when set."""
+        n = Normal(loc=0.0, scale=1.0, name="my_normal")
+        r = repr(n)
+        assert "my_normal" in r
+
+    def test_repr_without_name(self):
+        """Distribution.__repr__ works without a name."""
+        n = Normal(loc=0.0, scale=1.0)
+        r = repr(n)
+        assert "Normal" in r
+
+    def test_from_distribution_on_base_class(self, scalar_normal):
+        """from_distribution is accessible on Distribution[T] base."""
+        # Normal inherits from_distribution from Distribution[T]
+        result = Normal.from_distribution(scalar_normal, num_samples=100)
+        assert isinstance(result, Normal)
+
+
+# ---------------------------------------------------------------------------
 # ArrayDistribution trivial pytree interface
 # ---------------------------------------------------------------------------
 

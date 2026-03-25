@@ -1112,11 +1112,20 @@ class TestNestedProductDistribution:
         with pytest.raises(ValueError, match="at least one"):
             nested_joint.condition_on()
 
+    def test_condition_on_empty_dict_raises(self, nested_joint):
+        """Calling condition_on with an empty dict should raise."""
+        with pytest.raises(ValueError, match="at least one"):
+            nested_joint.condition_on({})
+
     # -- repr --------------------------------------------------------------
 
     def test_repr_nested(self, nested_joint):
         r = repr(nested_joint)
         assert "ProductDistribution" in r
+        # Should include component names from the nested structure
+        assert "force" in r
+        assert "mass" in r
+        assert "observation" in r
 
     # -- JAX pytree registration -------------------------------------------
 

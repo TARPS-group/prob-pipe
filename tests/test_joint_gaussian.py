@@ -329,6 +329,12 @@ class TestConditionOn:
         assert isinstance(s, dict)
         np.testing.assert_allclose(float(jnp.mean(s["y"])), 2.7, atol=0.2)
 
+    def test_dict_for_leaf_raises(self):
+        """Passing a dict value for a leaf component should raise TypeError."""
+        jg = JointGaussian(mean=jnp.zeros(2), cov=jnp.eye(2), x=1, y=1)
+        with pytest.raises(TypeError, match="component distribution"):
+            jg.condition_on(x={"sub": jnp.array([0.0])})
+
 
 # ---------------------------------------------------------------------------
 # Flatten / Unflatten

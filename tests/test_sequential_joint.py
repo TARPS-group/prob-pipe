@@ -403,6 +403,15 @@ class TestConditionOn:
         with pytest.raises(ValueError, match="Cannot condition on all"):
             joint.condition_on(z=jnp.array(0.0), x=jnp.array(0.0))
 
+    def test_dict_for_leaf_raises(self):
+        """Passing a dict value for a leaf component should raise TypeError."""
+        joint = SequentialJointDistribution(
+            z=Normal(loc=0.0, scale=1.0),
+            x=lambda z: Normal(loc=z, scale=0.5),
+        )
+        with pytest.raises(TypeError, match="component distribution"):
+            joint.condition_on(z={"sub": jnp.array(0.0)})
+
 
 # ---------------------------------------------------------------------------
 # Flatten / Unflatten

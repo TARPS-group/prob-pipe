@@ -261,6 +261,100 @@ class TestFlattenUnflatten:
 
 
 # ---------------------------------------------------------------------------
+# Conditioning
+# ---------------------------------------------------------------------------
+
+class TestConditionOn:
+
+    def test_condition_on_removes_component(self):
+        """Conditioning removes the specified component."""
+        je = JointEmpirical(
+            x=jnp.array([1.0, 2.0, 3.0]),
+            y=jnp.array([4.0, 5.0, 6.0]),
+        )
+        cond = je.condition_on(x=jnp.array(1.0))
+        assert cond.component_names == ("y",)
+        assert isinstance(cond, JointEmpirical)
+
+    def test_conditioned_sample_shape(self):
+        """Conditioned distribution samples the remaining components."""
+        je = JointEmpirical(
+            x=jnp.array([1.0, 2.0, 3.0]),
+            y=jnp.array([4.0, 5.0, 6.0]),
+        )
+        cond = je.condition_on(x=jnp.array(1.0))
+        s = cond.sample(jax.random.PRNGKey(0), (5,))
+        assert set(s.keys()) == {"y"}
+        assert s["y"].shape == (5,)
+
+    def test_condition_on_preserves_correlation(self):
+        """Row-wise correlation is preserved after conditioning."""
+        x = jnp.array([10.0, 20.0, 30.0])
+        y = jnp.array([100.0, 200.0, 300.0])  # y = 10 * x
+        z = jnp.array([1.0, 2.0, 3.0])        # z = x / 10
+        je = JointEmpirical(x=x, y=y, z=z)
+        cond = je.condition_on(x=jnp.array(0.0))  # remove x
+        s = cond.sample(jax.random.PRNGKey(1), (100,))
+        # y and z still come from the same row, so y = 100 * z
+        np.testing.assert_allclose(s["y"], 100.0 * s["z"], atol=1e-5)
+
+    def test_condition_on_weighted(self):
+        """Conditioning on weighted JointEmpirical preserves weights."""
+        je = JointEmpirical(
+            x=jnp.array([1.0, 2.0, 3.0]),
+            y=jnp.array([4.0, 5.0, 6.0]),
+            log_weights=jnp.array([0.0, 1.0, 2.0]),
+        )
+        cond = je.condition_on(x=jnp.array(1.0))
+        assert not cond.is_uniform
+        assert cond.n == 3
+
+    def test_condition_on_uniform_stays_uniform(self):
+        """Conditioning on uniform JointEmpirical stays uniform."""
+        je = JointEmpirical(
+            x=jnp.array([1.0, 2.0, 3.0]),
+            y=jnp.array([4.0, 5.0, 6.0]),
+        )
+        cond = je.condition_on(x=jnp.array(1.0))
+        assert cond.is_uniform
+
+    def test_condition_on_provenance(self):
+        je = JointEmpirical(
+            x=jnp.array([1.0, 2.0]),
+            y=jnp.array([3.0, 4.0]),
+        )
+        cond = je.condition_on(x=jnp.array(1.0))
+        assert cond.source is not None
+        assert cond.source.operation == "condition_on"
+        assert "x" in cond.source.metadata["conditioned"]
+
+    def test_condition_on_unknown_raises(self):
+        je = JointEmpirical(
+            x=jnp.array([1.0, 2.0]),
+            y=jnp.array([3.0, 4.0]),
+        )
+        with pytest.raises(KeyError, match="not found"):
+            je.condition_on(z=jnp.array(1.0))
+
+    def test_condition_on_all_raises(self):
+        je = JointEmpirical(
+            x=jnp.array([1.0, 2.0]),
+            y=jnp.array([3.0, 4.0]),
+        )
+        with pytest.raises(ValueError, match="Cannot condition on all"):
+            je.condition_on(x=jnp.array(1.0), y=jnp.array(2.0))
+
+    def test_condition_on_dict_for_leaf_raises(self):
+        """Passing a dict value for a leaf component should raise TypeError."""
+        je = JointEmpirical(
+            x=jnp.array([1.0, 2.0]),
+            y=jnp.array([3.0, 4.0]),
+        )
+        with pytest.raises(TypeError, match="component distribution"):
+            je.condition_on(x={"sub": jnp.array(1.0)})
+
+
+# ---------------------------------------------------------------------------
 # Broadcasting
 # ---------------------------------------------------------------------------
 
