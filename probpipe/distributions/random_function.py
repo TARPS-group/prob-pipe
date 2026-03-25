@@ -27,7 +27,7 @@ Y = TypeVar('Y')
 # ---------------------------------------------------------------------------
 
 
-class RandomFunction(Distribution[Callable], Generic[X, Y]):
+class RandomFunction(Distribution[Callable[[X], Y]], Generic[X, Y]):
     """A distribution over functions f: X → Y.
 
     The primary interface is :meth:`__call__`. Calling the random 
@@ -48,10 +48,7 @@ class RandomFunction(Distribution[Callable], Generic[X, Y]):
     may opt to implement this method using an approximate functional
     sampling approach.
 
-    Type Parameters
-    ---------------
-    X : input type
-    Y : output type
+    This class is generic in ``X`` (input type) and ``Y`` (output type).
     """
 
     # -- Distribution[T] contract -------------------------------------------
