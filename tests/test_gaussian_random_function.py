@@ -1,4 +1,4 @@
-"""Tests for GaussianRandomFunction, LinearBasisFunction, and LinearOutputTransform."""
+"""Tests for GaussianRandomFunction, LinearBasisFunction, and GRF algebra."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from probpipe import (
     ArrayRandomFunction,
     GaussianRandomFunction,
     LinearBasisFunction,
-    LinearOutputTransform,
 )
 
 
@@ -407,7 +406,7 @@ class TestLinearBasisFunction:
 
 
 # ---------------------------------------------------------------------------
-# LinearOutputTransform tests
+# GRF algebra tests
 # ---------------------------------------------------------------------------
 
 
@@ -434,93 +433,327 @@ def weight_grf():
     )
 
 
-@pytest.fixture
-def transformed_grf(weight_grf):
-    """LinearOutputTransform wrapping a 3→2 linear map."""
-    phi = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])  # (2, 3)
-    return LinearOutputTransform(
-        base_function=weight_grf,
-        phi=phi,
-    )
+class TestLinearMap:
+    """Tests for ``A @ grf``."""
 
+    def test_isinstance_hierarchy(self, weight_grf):
+        h = jnp.eye(3, 3) @ weight_grf
+        assert isinstance(h, GaussianRandomFunction)
+        assert isinstance(h, ArrayRandomFunction)
+        assert isinstance(h, RandomFunction)
 
-class TestLinearOutputTransform:
-    """Tests for the LinearOutputTransform class."""
+    def test_shapes(self, weight_grf):
+        A = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])  # (2, 3)
+        h = A @ weight_grf
+        assert h.input_shape == (1,)
+        assert h.output_shape == (2,)
 
-    def test_isinstance_hierarchy(self, transformed_grf):
-        assert isinstance(transformed_grf, LinearOutputTransform)
-        assert isinstance(transformed_grf, GaussianRandomFunction)
-        assert isinstance(transformed_grf, ArrayRandomFunction)
-        assert isinstance(transformed_grf, RandomFunction)
+    def test_supports_joint_outputs(self, weight_grf):
+        A = jnp.ones((2, 3))
+        h = A @ weight_grf
+        assert h.supports_joint_outputs is True
 
-    def test_shapes(self, transformed_grf):
-        assert transformed_grf.input_shape == (1,)
-        assert transformed_grf.output_shape == (2,)
+    def test_inherits_joint_inputs(self, weight_grf):
+        A = jnp.ones((2, 3))
+        h = A @ weight_grf
+        assert h.supports_joint_inputs == weight_grf.supports_joint_inputs
 
-    def test_supports_joint_outputs(self, transformed_grf):
-        assert transformed_grf.supports_joint_outputs is True
-
-    def test_inherits_joint_inputs(self, weight_grf, transformed_grf):
-        assert transformed_grf.supports_joint_inputs == weight_grf.supports_joint_inputs
-
-    def test_marginal(self, transformed_grf):
+    def test_marginal(self, weight_grf):
+        A = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
+        h = A @ weight_grf
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
-        dist = transformed_grf(X)
+        dist = h(X)
         assert isinstance(dist, Normal)
         assert dist.batch_shape == (5, 2)
 
-    def test_joint_outputs(self, transformed_grf):
+    def test_joint_outputs(self, weight_grf):
+        A = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
+        h = A @ weight_grf
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
-        dist = transformed_grf(X, joint_outputs=True)
+        dist = h(X, joint_outputs=True)
         assert isinstance(dist, MultivariateNormal)
         assert dist.event_shape == (2,)
         assert dist.batch_shape == (5,)
 
-    def test_joint_inputs(self, transformed_grf):
+    def test_joint_inputs(self, weight_grf):
+        A = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
+        h = A @ weight_grf
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
-        dist = transformed_grf(X, joint_inputs=True)
+        dist = h(X, joint_inputs=True)
         assert isinstance(dist, MultivariateNormal)
-        # Joint over n=5 input points, independent over 2 outputs
         assert dist.batch_shape == (2,)
         assert dist.event_shape == (5,)
 
-    def test_full_joint(self, transformed_grf):
+    def test_full_joint(self, weight_grf):
+        A = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
+        h = A @ weight_grf
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
-        dist = transformed_grf(X, joint_inputs=True, joint_outputs=True)
+        dist = h(X, joint_inputs=True, joint_outputs=True)
         assert isinstance(dist, MultivariateNormal)
         assert dist.event_shape == (10,)  # 5 * 2
 
-    # -- Validation ---------------------------------------------------------
-
-    def test_invalid_base_type(self):
-        with pytest.raises(TypeError, match="GaussianRandomFunction"):
-            LinearOutputTransform(
-                base_function="not_a_grf",
-                phi=jnp.eye(2),
-            )
-
-    def test_invalid_base_output_shape(self, scalar_lbf):
-        """base_function must have 1-D output_shape."""
-        with pytest.raises(ValueError, match="1-D"):
-            LinearOutputTransform(
-                base_function=scalar_lbf,
-                phi=jnp.eye(2),
-            )
-
-    def test_phi_dim_mismatch(self, weight_grf):
-        """phi columns must match base output dim."""
-        with pytest.raises(ValueError, match="phi columns"):
-            LinearOutputTransform(
-                base_function=weight_grf,
-                phi=jnp.eye(2),  # (2, 2) but weight_grf output is (3,)
-            )
-
-    def test_mean_value(self, weight_grf, transformed_grf):
-        """Transformed mean = bias + Phi @ base_mean."""
+    def test_mean_value(self, weight_grf):
+        """Transformed mean = A @ base_mean."""
+        A = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
+        h = A @ weight_grf
         X = jnp.array([[0.5]])
         base_mean = weight_grf.predict_mean(X)  # (1, 3)
-        transformed_mean = transformed_grf.predict_mean(X)  # (1, 2)
+        expected = jnp.einsum("ow,...w->...o", A, base_mean)
+        np.testing.assert_allclose(h.predict_mean(X), expected, atol=1e-5)
 
-        phi = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
-        expected = jnp.einsum("ow,...w->...o", phi, base_mean)  # (1, 2)
-        np.testing.assert_allclose(transformed_mean, expected, atol=1e-5)
+    def test_covariance_with_correlated_outputs(self, weight_grf):
+        """joint_inputs covariance should use full cross-output correlations."""
+        A = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
+        h = A @ weight_grf
+        X = jnp.linspace(-1, 1, 3).reshape(-1, 1)
+
+        # Get via per-output path
+        cov_per_out = h.predict_covariance(X, joint_inputs=True)
+        assert cov_per_out.shape == (2, 3, 3)
+
+        # Get via full joint and extract
+        cov_full = h.predict_covariance(
+            X, joint_inputs=True, joint_outputs=True
+        )
+        assert cov_full.shape == (6, 6)
+
+        # The per-output covariance for output 0 should match the
+        # corresponding block of the full joint.
+        # Full joint layout: (x0_o0, x0_o1, x1_o0, x1_o1, x2_o0, x2_o1)
+        # Output 0 indices: [0, 2, 4]
+        idx = jnp.array([0, 2, 4])
+        cov_o0_from_full = cov_full[jnp.ix_(idx, idx)]
+        np.testing.assert_allclose(cov_per_out[0], cov_o0_from_full, atol=1e-5)
+
+    def test_rejects_scalar_output(self, scalar_lbf):
+        """A @ grf requires 1-D output_shape."""
+        with pytest.raises(ValueError, match="1-D"):
+            jnp.eye(2) @ scalar_lbf
+
+    def test_rejects_dim_mismatch(self, weight_grf):
+        """A columns must match output dim."""
+        with pytest.raises(ValueError, match="columns"):
+            jnp.eye(2) @ weight_grf  # (2,2) but output is (3,)
+
+
+class TestShift:
+    """Tests for ``grf + b``."""
+
+    def test_mean_shifted(self, scalar_lbf):
+        X = jnp.array([[0.0], [1.0]])
+        b = jnp.float32(10.0)
+        h = scalar_lbf + b
+        np.testing.assert_allclose(
+            h.predict_mean(X),
+            scalar_lbf.predict_mean(X) + b,
+            atol=1e-5,
+        )
+
+    def test_variance_unchanged(self, scalar_lbf):
+        X = jnp.array([[0.0], [1.0]])
+        h = scalar_lbf + 10.0
+        np.testing.assert_allclose(
+            h.predict_variance(X),
+            scalar_lbf.predict_variance(X),
+            atol=1e-6,
+        )
+
+    def test_covariance_unchanged(self, scalar_lbf):
+        X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
+        h = scalar_lbf + 10.0
+        np.testing.assert_allclose(
+            h.predict_covariance(X, joint_inputs=True),
+            scalar_lbf.predict_covariance(X, joint_inputs=True),
+            atol=1e-6,
+        )
+
+    def test_shapes_preserved(self, scalar_lbf):
+        h = scalar_lbf + 1.0
+        assert h.input_shape == scalar_lbf.input_shape
+        assert h.output_shape == scalar_lbf.output_shape
+
+    def test_radd(self, scalar_lbf):
+        """``b + grf`` works via __radd__."""
+        X = jnp.array([[0.0]])
+        h = 5.0 + scalar_lbf
+        np.testing.assert_allclose(
+            h.predict_mean(X),
+            scalar_lbf.predict_mean(X) + 5.0,
+            atol=1e-5,
+        )
+
+    def test_sub(self, scalar_lbf):
+        """``grf - b`` is equivalent to ``grf + (-b)``."""
+        X = jnp.array([[0.0], [1.0]])
+        h = scalar_lbf - 3.0
+        np.testing.assert_allclose(
+            h.predict_mean(X),
+            scalar_lbf.predict_mean(X) - 3.0,
+            atol=1e-5,
+        )
+
+
+class TestScale:
+    """Tests for ``alpha * grf``."""
+
+    def test_mean_scaled(self, scalar_lbf):
+        X = jnp.array([[0.0], [1.0]])
+        h = 3.0 * scalar_lbf
+        np.testing.assert_allclose(
+            h.predict_mean(X),
+            3.0 * scalar_lbf.predict_mean(X),
+            atol=1e-5,
+        )
+
+    def test_variance_scaled_squared(self, scalar_lbf):
+        X = jnp.array([[0.0], [1.0]])
+        h = 3.0 * scalar_lbf
+        np.testing.assert_allclose(
+            h.predict_variance(X),
+            9.0 * scalar_lbf.predict_variance(X),
+            atol=1e-5,
+        )
+
+    def test_covariance_scaled_squared(self, scalar_lbf):
+        X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
+        h = 2.0 * scalar_lbf
+        np.testing.assert_allclose(
+            h.predict_covariance(X, joint_inputs=True),
+            4.0 * scalar_lbf.predict_covariance(X, joint_inputs=True),
+            atol=1e-5,
+        )
+
+    def test_rmul(self, scalar_lbf):
+        """``grf * alpha`` works via __mul__."""
+        X = jnp.array([[0.0]])
+        h = scalar_lbf * 2.0
+        np.testing.assert_allclose(
+            h.predict_mean(X),
+            2.0 * scalar_lbf.predict_mean(X),
+            atol=1e-5,
+        )
+
+    def test_neg(self, scalar_lbf):
+        """``-grf`` negates the mean, preserves variance."""
+        X = jnp.array([[0.0], [1.0]])
+        h = -scalar_lbf
+        np.testing.assert_allclose(
+            h.predict_mean(X),
+            -scalar_lbf.predict_mean(X),
+            atol=1e-5,
+        )
+        np.testing.assert_allclose(
+            h.predict_variance(X),
+            scalar_lbf.predict_variance(X),
+            atol=1e-6,
+        )
+
+
+class TestIndependentSum:
+    """Tests for ``grf1 + grf2``."""
+
+    def test_mean_is_sum(self):
+        gp1 = _ScalarGP(lengthscale=1.0, variance=1.0)
+        gp2 = _ScalarGP(lengthscale=0.5, variance=0.5)
+        h = gp1 + gp2
+        X = jnp.ones((5, 2))
+        np.testing.assert_allclose(
+            h.predict_mean(X),
+            gp1.predict_mean(X) + gp2.predict_mean(X),
+            atol=1e-6,
+        )
+
+    def test_variance_is_sum(self):
+        gp1 = _ScalarGP(lengthscale=1.0, variance=1.0)
+        gp2 = _ScalarGP(lengthscale=0.5, variance=0.5)
+        h = gp1 + gp2
+        X = jnp.ones((5, 2))
+        np.testing.assert_allclose(
+            h.predict_variance(X),
+            gp1.predict_variance(X) + gp2.predict_variance(X),
+            atol=1e-6,
+        )
+
+    def test_covariance_is_sum(self):
+        gp1 = _ScalarGP(lengthscale=1.0, variance=1.0)
+        gp2 = _ScalarGP(lengthscale=0.5, variance=0.5)
+        h = gp1 + gp2
+        X = jnp.stack([jnp.linspace(-1, 1, 5), jnp.zeros(5)], axis=-1)  # (5, 2)
+        np.testing.assert_allclose(
+            h.predict_covariance(X, joint_inputs=True),
+            (gp1.predict_covariance(X, joint_inputs=True)
+             + gp2.predict_covariance(X, joint_inputs=True)),
+            atol=1e-5,
+        )
+
+    def test_joint_support_intersection(self):
+        """Sum supports joint only if both operands do."""
+        gp = _ScalarGP()  # supports_joint_inputs=True
+        marginal = _MarginalOnlyGRF()  # supports_joint_inputs=False
+        h = gp + marginal
+        assert h.supports_joint_inputs is False
+
+    def test_same_object_raises(self):
+        gp = _ScalarGP()
+        with pytest.raises(ValueError, match="itself"):
+            gp + gp
+
+    def test_shape_mismatch_raises(self):
+        gp = _ScalarGP()  # output_shape=()
+        multi = _MultiOutputGRF()  # output_shape=(2,)
+        with pytest.raises(ValueError, match="output_shape"):
+            gp + multi
+
+    def test_sub_grfs(self):
+        """``grf1 - grf2`` = grf1 + (-grf2)."""
+        gp1 = _ScalarGP(lengthscale=1.0, variance=1.0)
+        gp2 = _ScalarGP(lengthscale=0.5, variance=0.5)
+        h = gp1 - gp2
+        X = jnp.ones((5, 2))
+        np.testing.assert_allclose(
+            h.predict_mean(X),
+            gp1.predict_mean(X) - gp2.predict_mean(X),
+            atol=1e-6,
+        )
+
+
+class TestAlgebraComposition:
+    """Tests for composing multiple algebraic operations."""
+
+    def test_affine_transform(self, weight_grf):
+        """``A @ grf + b`` composes linear map and shift."""
+        A = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
+        b = jnp.array([0.1, -0.2])
+        h = A @ weight_grf + b
+
+        X = jnp.array([[0.5]])
+        base_mean = weight_grf.predict_mean(X)
+        expected = jnp.einsum("ow,...w->...o", A, base_mean) + b
+        np.testing.assert_allclose(h.predict_mean(X), expected, atol=1e-5)
+
+    def test_scale_then_shift(self, scalar_lbf):
+        """``alpha * grf + b``."""
+        h = 2.0 * scalar_lbf + 5.0
+        X = jnp.array([[1.0]])
+        np.testing.assert_allclose(
+            h.predict_mean(X),
+            2.0 * scalar_lbf.predict_mean(X) + 5.0,
+            atol=1e-5,
+        )
+
+    def test_scale_sum(self):
+        """``alpha * (grf1 + grf2)``."""
+        gp1 = _ScalarGP(lengthscale=1.0, variance=1.0)
+        gp2 = _ScalarGP(lengthscale=0.5, variance=0.5)
+        h = 3.0 * (gp1 + gp2)
+        X = jnp.ones((5, 2))
+        np.testing.assert_allclose(
+            h.predict_mean(X),
+            3.0 * (gp1.predict_mean(X) + gp2.predict_mean(X)),
+            atol=1e-5,
+        )
+        np.testing.assert_allclose(
+            h.predict_variance(X),
+            9.0 * (gp1.predict_variance(X) + gp2.predict_variance(X)),
+            atol=1e-5,
+        )

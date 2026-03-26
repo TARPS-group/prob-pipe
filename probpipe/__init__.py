@@ -96,7 +96,6 @@ from probpipe.distributions import (
     ArrayRandomFunction,
     GaussianRandomFunction,
     LinearBasisFunction,
-    LinearOutputTransform,
 )
 from probpipe.core.node import WorkflowFunction, Module, wf
 from probpipe.provenance import provenance_ancestors, provenance_dag
@@ -182,7 +181,6 @@ __all__ = [
     "ArrayRandomFunction",
     "GaussianRandomFunction",
     "LinearBasisFunction",
-    "LinearOutputTransform",
     # Emulators
     "EmulatorMixin",
     # Converters

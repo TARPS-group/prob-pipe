@@ -71,7 +71,6 @@ from .random_function import RandomFunction, ArrayRandomFunction
 from .gaussian_random_function import (
     GaussianRandomFunction,
     LinearBasisFunction,
-    LinearOutputTransform,
 )
 
 __all__ = [
@@ -140,5 +139,4 @@ __all__ = [
     "ArrayRandomFunction",
     "GaussianRandomFunction",
     "LinearBasisFunction",
-    "LinearOutputTransform",
 ]

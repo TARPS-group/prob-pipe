@@ -4,9 +4,11 @@ Gaussian random function classes for ProbPipe.
 Provides:
   - ``GaussianRandomFunction``    – Abstract base for random functions with
                                     Gaussian predictive distributions.
+                                    Supports algebraic operations that preserve
+                                    the Gaussian property: ``A @ grf``,
+                                    ``grf + b``, ``alpha * grf``,
+                                    ``grf1 + grf2``.
   - ``LinearBasisFunction``       – f(x) = a + Φ(x) @ w, w ~ N(m, C).
-  - ``LinearOutputTransform``     – f(x) = a + Φ @ g(x), where g is a
-                                    GaussianRandomFunction.
 """
 
 from __future__ import annotations
@@ -125,6 +127,45 @@ class GaussianRandomFunction(ArrayRandomFunction):
             f"{type(self).__name__} does not implement predict_covariance "
             f"for joint_inputs={joint_inputs}, joint_outputs={joint_outputs}."
         )
+
+    # -- Algebraic operations preserving Gaussianity -------------------------
+
+    def __rmatmul__(self, other):
+        """``A @ grf`` — linear map of outputs.
+
+        *other* must be a 2-D array of shape ``(d_out, d_w)`` and
+        ``self.output_shape`` must be 1-D ``(d_w,)``.
+        """
+        return _LinearMapGRF(self, jnp.asarray(other, dtype=jnp.float32))
+
+    def __add__(self, other):
+        if isinstance(other, GaussianRandomFunction):
+            return _IndependentSumGRF(self, other)
+        return _ShiftedGRF(self, jnp.asarray(other, dtype=jnp.float32))
+
+    def __radd__(self, other):
+        if isinstance(other, GaussianRandomFunction):
+            return _IndependentSumGRF(other, self)
+        return _ShiftedGRF(self, jnp.asarray(other, dtype=jnp.float32))
+
+    def __mul__(self, other):
+        return _ScaledGRF(self, jnp.asarray(other, dtype=jnp.float32))
+
+    def __rmul__(self, other):
+        return _ScaledGRF(self, jnp.asarray(other, dtype=jnp.float32))
+
+    def __neg__(self):
+        return _ScaledGRF(self, jnp.float32(-1.0))
+
+    def __sub__(self, other):
+        if isinstance(other, GaussianRandomFunction):
+            return self + (-other)
+        return _ShiftedGRF(self, -jnp.asarray(other, dtype=jnp.float32))
+
+    def __rsub__(self, other):
+        return (-self) + other
+
+    # -- Prediction assembly ---------------------------------------------------
 
     def predict(
         self,
@@ -400,96 +441,53 @@ class LinearBasisFunction(GaussianRandomFunction):
 
 
 # ---------------------------------------------------------------------------
-# LinearOutputTransform
+# Algebraic wrappers (private — constructed via operators on GRF)
 # ---------------------------------------------------------------------------
 
 
-class LinearOutputTransform(GaussianRandomFunction):
-    r"""Gaussian random function formed by linearly transforming another.
+class _LinearMapGRF(GaussianRandomFunction):
+    r"""``h(x) = A @ g(x)`` where *g* is a :class:`GaussianRandomFunction`.
 
-    Implements the model:
-
-    .. math::
-
-        f(x) = a + \Phi\, g(x)
-
-    where :math:`g(x)` is itself a :class:`GaussianRandomFunction` mapping
-    inputs to a Gaussian distribution over weight vectors, :math:`\Phi` is
-    a fixed matrix mapping from :math:`g`'s output space to this model's
-    output space, and :math:`a` is an optional bias.
-
-    Since linear transformations of Gaussians are Gaussian, this produces
-    a new :class:`GaussianRandomFunction`.
-
-    Parameters
-    ----------
-    base_function : GaussianRandomFunction
-        The underlying random function.  Must have 1-D ``output_shape``,
-        i.e. ``output_shape = (d_w,)``.
-    phi : array-like, shape ``(d_out, d_w)``
-        Linear map from base output space to this model's output space.
-    bias : array-like, shape ``(d_out,)`` or broadcastable, optional
-        Additive bias.  Defaults to zero.
+    Constructed via ``A @ grf``.  *g* must have 1-D ``output_shape``.
     """
 
-    def __init__(
-        self,
-        base_function: GaussianRandomFunction,
-        phi: ArrayLike,
-        bias: ArrayLike | None = None,
-    ) -> None:
-        if not isinstance(base_function, GaussianRandomFunction):
+    def __init__(self, base: GaussianRandomFunction, A: Array) -> None:
+        if not isinstance(base, GaussianRandomFunction):
             raise TypeError(
-                f"base_function must be a GaussianRandomFunction, "
-                f"got {type(base_function).__name__}"
+                f"base must be a GaussianRandomFunction, "
+                f"got {type(base).__name__}"
             )
-        if len(base_function.output_shape) != 1:
+        if len(base.output_shape) != 1:
             raise ValueError(
-                f"base_function.output_shape must be 1-D (d_w,), "
-                f"got {base_function.output_shape}"
+                f"A @ grf requires grf.output_shape to be 1-D (d,), "
+                f"got {base.output_shape}"
+            )
+        if A.ndim != 2:
+            raise ValueError(
+                f"A must be 2-D (d_out, d_w), got shape {A.shape}"
+            )
+        d_out, d_w = A.shape
+        if d_w != base.output_shape[0]:
+            raise ValueError(
+                f"A columns ({d_w}) must match "
+                f"grf.output_shape[0] ({base.output_shape[0]})"
             )
 
-        phi = jnp.asarray(phi, dtype=jnp.float32)
-        if phi.ndim != 2:
-            raise ValueError(
-                f"phi must be 2-D (d_out, d_w), got shape {phi.shape}"
-            )
-
-        d_out, d_w = phi.shape
-        if d_w != base_function.output_shape[0]:
-            raise ValueError(
-                f"phi columns ({d_w}) must match "
-                f"base_function.output_shape[0] "
-                f"({base_function.output_shape[0]})"
-            )
-
-        self._base_function = base_function
-        self._phi = phi
-        self._bias = (
-            jnp.asarray(bias, dtype=jnp.float32)
-            if bias is not None
-            else jnp.zeros(d_out, dtype=jnp.float32)
-        )
+        self._base = base
+        self._A = A
 
         super().__init__(
-            input_shape=base_function.input_shape,
+            input_shape=base.input_shape,
             output_shape=(d_out,),
         )
-
-        # Inherit joint_inputs capability; always support joint_outputs
-        # since Phi couples the outputs.
-        self.supports_joint_inputs = base_function.supports_joint_inputs
+        self.supports_joint_inputs = base.supports_joint_inputs
         self.supports_joint_outputs = True
 
-    # -- GaussianRandomFunction interface -----------------------------------
-
     def predict_mean(self, X: Array) -> Array:
-        r"""Predictive mean: ``a + Phi @ mean_g(x)``."""
-        g_mean = self._base_function.predict_mean(X)  # (*eb, n, d_w)
-        return self._bias + jnp.einsum("ow,...w->...o", self._phi, g_mean)
+        g_mean = self._base.predict_mean(X)  # (*eb, n, d_w)
+        return jnp.einsum("ow,...w->...o", self._A, g_mean)
 
     def predict_variance(self, X: Array) -> Array:
-        r"""Marginal predictive variance: ``diag(Phi @ Cov_g @ Phi^T)``."""
         return jnp.diagonal(
             self._output_covariance_per_point(X), axis1=-2, axis2=-1
         )
@@ -509,47 +507,199 @@ class LinearOutputTransform(GaussianRandomFunction):
         if not joint_inputs and joint_outputs:
             return self._output_covariance_per_point(X)
 
+        extra_batch, n = self._parse_X(X)
+        d_w = self._base.output_shape[0]
+        d_out = self._A.shape[0]
+
         if joint_inputs and not joint_outputs:
             # Per-output cross-input covariance: (*eb, d_out, n, n).
-            g_cov = self._base_function.predict_covariance(
-                X, joint_inputs=True, joint_outputs=False
-            )
-            return jnp.einsum(
-                "ow,...wij->...oij",
-                self._phi ** 2,
-                g_cov,
-            )
+            if self._base.supports_joint_outputs:
+                # Use full cross-output covariance for correctness
+                # when base outputs are correlated.
+                g_full = self._base.predict_covariance(
+                    X, joint_inputs=True, joint_outputs=True
+                )  # (*eb, n*d_w, n*d_w)
+                g_full = g_full.reshape(
+                    *extra_batch, n, d_w, n, d_w
+                )
+                # A_{o,w} * g_{i,w,j,v} * A_{o,v} → result_{o,i,j}
+                return jnp.einsum(
+                    "ow,...iwjv,ov->...oij", self._A, g_full, self._A
+                )
+            else:
+                # Base outputs independent — fast path.
+                g_cov = self._base.predict_covariance(
+                    X, joint_inputs=True, joint_outputs=False
+                )  # (*eb, d_w, n, n)
+                return jnp.einsum(
+                    "ow,ov,...wij->...oij", self._A, self._A, g_cov
+                )
 
         # joint_inputs=True, joint_outputs=True
-        # Full joint covariance: (*eb, n*d_out, n*d_out).
-        extra_batch, n = self._parse_X(X)
-        d_out = self._phi.shape[0]
-
-        g_cov = self._base_function.predict_covariance(
-            X, joint_inputs=True, joint_outputs=False
-        )
-        cov_block = jnp.einsum(
-            "ow,pw,...wij->...opij", self._phi, self._phi, g_cov
-        )
-        ndim_eb = len(extra_batch)
-        perm = [*range(ndim_eb), ndim_eb + 2, ndim_eb, ndim_eb + 3, ndim_eb + 1]
-        cov_reordered = cov_block.transpose(perm)
-        return cov_reordered.reshape(*extra_batch, n * d_out, n * d_out)
+        # Full joint: (*eb, n*d_out, n*d_out).
+        if self._base.supports_joint_outputs:
+            g_full = self._base.predict_covariance(
+                X, joint_inputs=True, joint_outputs=True
+            )  # (*eb, n*d_w, n*d_w)
+            g_full = g_full.reshape(*extra_batch, n, d_w, n, d_w)
+            # A_{o,w} * g_{i,w,j,v} * A_{p,v} → result_{i,o,j,p}
+            result = jnp.einsum(
+                "ow,...iwjv,pv->...iojp", self._A, g_full, self._A
+            )
+            return result.reshape(*extra_batch, n * d_out, n * d_out)
+        else:
+            g_cov = self._base.predict_covariance(
+                X, joint_inputs=True, joint_outputs=False
+            )  # (*eb, d_w, n, n)
+            # A_{o,w} * A_{p,w} * g_{w,i,j} → result block (o,p) at (i,j)
+            cov_block = jnp.einsum(
+                "ow,pw,...wij->...opij", self._A, self._A, g_cov
+            )
+            ndim_eb = len(extra_batch)
+            perm = [
+                *range(ndim_eb),
+                ndim_eb + 2, ndim_eb, ndim_eb + 3, ndim_eb + 1,
+            ]
+            cov_reordered = cov_block.transpose(perm)
+            return cov_reordered.reshape(*extra_batch, n * d_out, n * d_out)
 
     def _output_covariance_per_point(self, X: Array) -> Array:
-        """Compute per-point output covariance: ``Phi @ Cov_g @ Phi^T``.
+        """Per-point output covariance: ``A @ Cov_g @ A^T``.
 
         Returns shape ``(*extra_batch, n, d_out, d_out)``.
         """
-        if self._base_function.supports_joint_outputs:
-            g_cov = self._base_function.predict_covariance(
+        if self._base.supports_joint_outputs:
+            g_cov = self._base.predict_covariance(
                 X, joint_inputs=False, joint_outputs=True
-            )
+            )  # (*eb, n, d_w, d_w)
             return jnp.einsum(
-                "ow,...wv,pv->...op", self._phi, g_cov, self._phi
+                "ow,...wv,pv->...op", self._A, g_cov, self._A
             )
         else:
-            g_var = self._base_function.predict_variance(X)  # (*eb, n, d_w)
+            g_var = self._base.predict_variance(X)  # (*eb, n, d_w)
             return jnp.einsum(
-                "ow,pw,...w->...op", self._phi, self._phi, g_var
+                "ow,pw,...w->...op", self._A, self._A, g_var
             )
+
+
+class _ShiftedGRF(GaussianRandomFunction):
+    """``h(x) = g(x) + b`` — constant bias shift.
+
+    Constructed via ``grf + b``.
+    """
+
+    def __init__(self, base: GaussianRandomFunction, b: Array) -> None:
+        self._base = base
+        self._b = b
+        super().__init__(
+            input_shape=base.input_shape,
+            output_shape=base.output_shape,
+        )
+        self.supports_joint_inputs = base.supports_joint_inputs
+        self.supports_joint_outputs = base.supports_joint_outputs
+
+    def predict_mean(self, X: Array) -> Array:
+        return self._base.predict_mean(X) + self._b
+
+    def predict_variance(self, X: Array) -> Array:
+        return self._base.predict_variance(X)
+
+    def predict_covariance(
+        self, X: Array, *, joint_inputs: bool = False, joint_outputs: bool = False,
+    ) -> Array:
+        return self._base.predict_covariance(
+            X, joint_inputs=joint_inputs, joint_outputs=joint_outputs,
+        )
+
+
+class _ScaledGRF(GaussianRandomFunction):
+    """``h(x) = alpha * g(x)`` — scalar scaling.
+
+    Constructed via ``alpha * grf``.
+    """
+
+    def __init__(self, base: GaussianRandomFunction, alpha: Array) -> None:
+        self._base = base
+        self._alpha = alpha
+        super().__init__(
+            input_shape=base.input_shape,
+            output_shape=base.output_shape,
+        )
+        self.supports_joint_inputs = base.supports_joint_inputs
+        self.supports_joint_outputs = base.supports_joint_outputs
+
+    def predict_mean(self, X: Array) -> Array:
+        return self._alpha * self._base.predict_mean(X)
+
+    def predict_variance(self, X: Array) -> Array:
+        return self._alpha ** 2 * self._base.predict_variance(X)
+
+    def predict_covariance(
+        self, X: Array, *, joint_inputs: bool = False, joint_outputs: bool = False,
+    ) -> Array:
+        return self._alpha ** 2 * self._base.predict_covariance(
+            X, joint_inputs=joint_inputs, joint_outputs=joint_outputs,
+        )
+
+
+class _IndependentSumGRF(GaussianRandomFunction):
+    r"""``h(x) = g_1(x) + g_2(x)`` — sum of independent GRFs.
+
+    Constructed via ``grf1 + grf2``.  The two GRFs are assumed to be
+    **independent**; the resulting covariance is the sum of the
+    individual covariances.
+
+    A basic safety check rejects ``grf + grf`` (same object), but
+    beyond that, independence is the caller's responsibility.
+    """
+
+    def __init__(
+        self, left: GaussianRandomFunction, right: GaussianRandomFunction,
+    ) -> None:
+        if left is right:
+            raise ValueError(
+                "Cannot add a GaussianRandomFunction to itself — the "
+                "result would not be independent.  Use 2 * grf instead."
+            )
+        if left.input_shape != right.input_shape:
+            raise ValueError(
+                f"input_shape mismatch: {left.input_shape} vs "
+                f"{right.input_shape}"
+            )
+        if left.output_shape != right.output_shape:
+            raise ValueError(
+                f"output_shape mismatch: {left.output_shape} vs "
+                f"{right.output_shape}"
+            )
+        self._left = left
+        self._right = right
+        super().__init__(
+            input_shape=left.input_shape,
+            output_shape=left.output_shape,
+        )
+        self.supports_joint_inputs = (
+            left.supports_joint_inputs and right.supports_joint_inputs
+        )
+        self.supports_joint_outputs = (
+            left.supports_joint_outputs and right.supports_joint_outputs
+        )
+
+    def predict_mean(self, X: Array) -> Array:
+        return self._left.predict_mean(X) + self._right.predict_mean(X)
+
+    def predict_variance(self, X: Array) -> Array:
+        return (
+            self._left.predict_variance(X) + self._right.predict_variance(X)
+        )
+
+    def predict_covariance(
+        self, X: Array, *, joint_inputs: bool = False, joint_outputs: bool = False,
+    ) -> Array:
+        return (
+            self._left.predict_covariance(
+                X, joint_inputs=joint_inputs, joint_outputs=joint_outputs,
+            )
+            + self._right.predict_covariance(
+                X, joint_inputs=joint_inputs, joint_outputs=joint_outputs,
+            )
+        )
