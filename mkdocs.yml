@@ -68,6 +68,8 @@ nav:
     - Modular Forecasting: examples/06_modular_forecasting.ipynb
     - Emulators: examples/07_emulators.ipynb
     - Random Functions: examples/07_random_functions.ipynb
+  - Worked Examples:
+    - Synthetic Likelihood: tutorials/synthetic_likelihood.ipynb
   - API Reference:
     - Distributions: api/distributions.md
     - Joint Distributions: api/joint.md
