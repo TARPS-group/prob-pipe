@@ -67,6 +67,11 @@ from .multivariate import (
     Wishart,
     VonMisesFisher,
 )
+from .random_function import RandomFunction, ArrayRandomFunction
+from .gaussian_random_function import (
+    GaussianRandomFunction,
+    LinearBasisFunction,
+)
 
 __all__ = [
     # Base classes
@@ -129,4 +134,9 @@ __all__ = [
     "Multinomial",
     "Wishart",
     "VonMisesFisher",
+    # Random functions
+    "RandomFunction",
+    "ArrayRandomFunction",
+    "GaussianRandomFunction",
+    "LinearBasisFunction",
 ]

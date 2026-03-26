@@ -1,13 +1,17 @@
-# Emulators
+# Random Functions
 
 ## Base Classes
 
-::: probpipe.surrogate.emulator.base.Emulator
+::: probpipe.distributions.random_function.RandomFunction
 
-## Gaussian Emulators
+::: probpipe.distributions.random_function.ArrayRandomFunction
 
-::: probpipe.surrogate.emulator.gaussian.GaussianEmulator
+## Gaussian Random Functions
 
-::: probpipe.surrogate.emulator.gaussian.LinCombGaussianWeights
+::: probpipe.distributions.gaussian_random_function.GaussianRandomFunction
 
-::: probpipe.surrogate.emulator.gaussian.LinearGaussianRegressor
+::: probpipe.distributions.gaussian_random_function.LinearBasisFunction
+
+## Emulator Mixin
+
+::: probpipe.surrogate.emulator_mixin.EmulatorMixin
