@@ -13,7 +13,6 @@ Provides:
 
 from __future__ import annotations
 
-import math
 from abc import abstractmethod
 from collections.abc import Callable
 
@@ -22,7 +21,8 @@ import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions.distribution import _auto_key
-from .random_function import ArrayRandomFunction, _prod
+from ..utils import prod
+from .random_function import ArrayRandomFunction
 
 # Delay import to avoid circular import at module level; these are
 # imported from the *same* package, so we import lazily inside methods
@@ -200,7 +200,7 @@ class GaussianRandomFunction(ArrayRandomFunction):
             X, joint_inputs=joint_inputs, joint_outputs=joint_outputs
         )
         extra_batch, n = self._parse_X(X)
-        d_out = _prod(self._output_shape)
+        d_out = prod(self._output_shape)
 
         scale_tril = jnp.linalg.cholesky(cov)
 
@@ -347,7 +347,7 @@ class LinearBasisFunction(GaussianRandomFunction):
 
         if joint_inputs and not joint_outputs:
             if self._output_shape:
-                d_out = _prod(self._output_shape)
+                d_out = prod(self._output_shape)
                 phi_flat = phi.reshape(*extra_batch, n, d_out, -1)
                 cov = jnp.einsum(
                     "...iow,wv,...jov->...oij",
@@ -359,7 +359,7 @@ class LinearBasisFunction(GaussianRandomFunction):
             )
 
         if not joint_inputs and joint_outputs:
-            d_out = _prod(self._output_shape)
+            d_out = prod(self._output_shape)
             phi_flat = phi.reshape(*extra_batch, n, d_out, -1)
             return jnp.einsum(
                 "...ow,wv,...pv->...op",
@@ -367,7 +367,7 @@ class LinearBasisFunction(GaussianRandomFunction):
             )
 
         # Full joint: (*eb, n*d_out, n*d_out)
-        d_out = _prod(self._output_shape) if self._output_shape else 1
+        d_out = prod(self._output_shape)
         if self._output_shape:
             phi_flat = phi.reshape(*extra_batch, n * d_out, -1)
         else:
@@ -423,7 +423,7 @@ class LinearBasisFunction(GaussianRandomFunction):
         if sample_shape == ():
             return self._sample(key)
 
-        n_samples = math.prod(sample_shape)
+        n_samples = prod(sample_shape)
         w_samples = self._weights.sample(key, sample_shape=(n_samples,))  # (n, d_w)
         bias = self._bias
         feature_map = self._feature_map

@@ -8,7 +8,6 @@ Provides:
 
 from __future__ import annotations
 
-import math
 from abc import abstractmethod
 from collections.abc import Callable
 from typing import TypeVar
@@ -16,6 +15,7 @@ from typing import TypeVar
 import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ..utils import prod
 from .distribution import Distribution
 
 X = TypeVar('X')
@@ -118,11 +118,6 @@ class RandomFunction(Distribution[Callable[[X], Y]]):
 # ---------------------------------------------------------------------------
 # ArrayRandomFunction
 # ---------------------------------------------------------------------------
-
-
-def _prod(shape: tuple[int, ...]) -> int:
-    """Product of a shape tuple, returning 1 for empty tuple."""
-    return math.prod(shape) if shape else 1
 
 
 class ArrayRandomFunction(RandomFunction[Array, Array]):

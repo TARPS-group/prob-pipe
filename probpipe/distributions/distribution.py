@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, TypeVar
 import functools
 
-import math
+from ..utils import prod
 
 import jax
 import jax.numpy as jnp
@@ -476,7 +476,7 @@ class Distribution(Generic[T], ABC):
             key = _auto_key()
         if sample_shape == ():
             return self._sample(key)
-        n = math.prod(sample_shape)
+        n = prod(sample_shape)
         keys = jax.random.split(key, n)
         flat_samples = jax.vmap(self._sample)(keys)
         return jax.tree.map(
@@ -680,9 +680,9 @@ class PyTreeArrayDistribution(Distribution[T]):
     def event_size(self) -> int:
         """Total number of scalar elements in one event (analogous to ``numpy.ndarray.size``).
 
-        Equal to the sum of ``math.prod(s)`` over all leaf event shapes.
+        Equal to the sum of ``prod(s)`` over all leaf event shapes.
         """
-        return sum(math.prod(s) for s in self.flat_event_shapes)
+        return sum(prod(s) for s in self.flat_event_shapes)
 
     # -- flatten / unflatten ------------------------------------------------
 
@@ -706,7 +706,7 @@ class PyTreeArrayDistribution(Distribution[T]):
         flat_leaves = []
         for leaf, es in zip(leaves, event_shapes):
             leaf = jnp.asarray(leaf)
-            n_event = math.prod(es) if es else 1
+            n_event = prod(es)
             # Reshape: (*batch_dims, *event_shape) -> (*batch_dims, n_event)
             n_event_dims = len(es)
             batch_dims = leaf.shape[:leaf.ndim - n_event_dims] if n_event_dims else leaf.shape
@@ -736,7 +736,7 @@ class PyTreeArrayDistribution(Distribution[T]):
         leaves = []
         offset = 0
         for es in event_shapes:
-            n = math.prod(es) if es else 1
+            n = prod(es)
             chunk = flat[..., offset:offset + n]
             leaves.append(chunk.reshape(*batch_dims, *es))
             offset += n
@@ -836,7 +836,7 @@ class ArrayDistribution(PyTreeArrayDistribution[Array]):
     def event_size(self) -> int:
         """Total flat dimensionality."""
         es = self.event_shape
-        return math.prod(es) if es else 1
+        return prod(es)
 
     def flatten_value(self, value: ArrayLike) -> Array:
         """Flatten event dimensions into a single trailing axis.
@@ -849,7 +849,7 @@ class ArrayDistribution(PyTreeArrayDistribution[Array]):
         """
         value = jnp.asarray(value)
         es = self.event_shape
-        n_event = math.prod(es) if es else 1
+        n_event = prod(es)
         if not es:
             # scalar event: just add a trailing dim
             return value[..., None]
@@ -1156,7 +1156,7 @@ class EmpiricalDistribution(ArrayDistribution):
     @property
     def dim(self) -> int:
         """Flat dimensionality of each sample (product of event_shape, or 1 for scalars)."""
-        return max(1, int(math.prod(self._samples.shape[1:])))
+        return max(1, prod(self._samples.shape[1:]))
 
     @property
     def samples(self) -> Array:
@@ -1215,7 +1215,7 @@ class EmpiricalDistribution(ArrayDistribution):
             key = _auto_key()
         if sample_shape == ():
             return self._sample(key)
-        n_draws = int(math.prod(sample_shape))
+        n_draws = prod(sample_shape)
         if self._is_uniform:
             indices = jax.random.randint(key, shape=(n_draws,), minval=0, maxval=self.n)
         else:
@@ -1428,7 +1428,7 @@ class BootstrapDistribution(ArrayDistribution):
             key = _auto_key()
         if sample_shape == ():
             return self._sample(key)
-        total = int(math.prod(sample_shape))
+        total = prod(sample_shape)
         keys = jax.random.split(key, total)
 
         def _one_resample(k):
