@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..custom_types import PRNGKey
-from ..distributions.distribution import (
+from ..core.distribution import (
     ArrayDistribution,
     EmpiricalDistribution,
     Provenance,

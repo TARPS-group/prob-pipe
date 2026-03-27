@@ -1,4 +1,4 @@
-from .distribution import (
+from ..core.distribution import (
     Constraint,
     Distribution,
     PyTreeArrayDistribution,

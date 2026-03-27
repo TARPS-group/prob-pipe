@@ -1,8 +1,8 @@
-# tests/array_backend/test_array_backend_utils.py
+# tests/test_array_utils.py
 import numpy as np
 import pytest
 
-from probpipe.array_backend import utils as U
+from probpipe import _array_utils as U
 
 
 def test_ensure_real_scalar_from_python_scalar():

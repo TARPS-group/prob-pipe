@@ -21,7 +21,7 @@ except ImportError:
     Digraph = None
 
 from ..custom_types import PRNGKey, Array
-from ..distributions.distribution import ArrayDistribution, Distribution, EmpiricalDistribution, Provenance
+from .distribution import ArrayDistribution, Distribution, EmpiricalDistribution, Provenance
 from ..distributions.joint import DistributionView
 from ..converters import converter_registry
 

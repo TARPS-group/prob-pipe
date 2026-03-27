@@ -14,7 +14,7 @@ from probpipe.distributions import (
     MultivariateNormal,
     EmpiricalDistribution,
 )
-from probpipe.distributions.distribution import (
+from probpipe.core.distribution import (
     real,
     positive,
     unit_interval,

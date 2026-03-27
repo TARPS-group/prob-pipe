@@ -6,7 +6,7 @@ import jax.scipy.special as jsp
 import numpy as np
 import pytest
 
-import probpipe.distributions.distribution as dist_mod
+import probpipe.core.distribution as dist_mod
 from probpipe import (
     ArrayDistribution,
     EmpiricalDistribution,

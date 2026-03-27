@@ -83,10 +83,10 @@ from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
-from ..utils import prod
+from .._utils import prod
 
 from ..custom_types import Array, ArrayLike, PRNGKey
-from .distribution import (
+from ..core.distribution import (
     ArrayDistribution,
     PyTreeArrayDistribution,
     EmpiricalDistribution,

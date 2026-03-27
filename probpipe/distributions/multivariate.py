@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from .distribution import (
+from ..core.distribution import (
     TFPDistribution,
     ArrayDistribution,
     EmpiricalDistribution,

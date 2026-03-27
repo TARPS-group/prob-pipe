@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .distributions.distribution import Distribution
+    from .distribution import Distribution
 
 __all__ = ["provenance_ancestors", "provenance_dag"]
 

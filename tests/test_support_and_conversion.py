@@ -12,7 +12,7 @@ from probpipe.distributions import (
     Dirichlet, Multinomial, Wishart, VonMisesFisher,
     Provenance,
 )
-from probpipe.distributions.distribution import (
+from probpipe.core.distribution import (
     Constraint, real, positive, non_negative, non_negative_integer,
     boolean, unit_interval, simplex, positive_definite, sphere,
     interval, greater_than, integer_interval,

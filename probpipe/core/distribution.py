@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, TypeVar
 import functools
 
-from ..utils import prod
+from .._utils import prod
 
 import jax
 import jax.numpy as jnp

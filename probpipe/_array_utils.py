@@ -11,7 +11,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 from typing import Any, Tuple
 
-from ..custom_types import Array, ArrayLike
+from .custom_types import Array, ArrayLike
 
 
 def _is_array(x: Any) -> bool:

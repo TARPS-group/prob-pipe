@@ -98,10 +98,7 @@ from probpipe.distributions import (
     LinearBasisFunction,
 )
 from probpipe.core.node import WorkflowFunction, Module, wf
-from probpipe.provenance import provenance_ancestors, provenance_dag
-from probpipe.surrogate import (
-    EmulatorMixin,
-)
+from probpipe.core.provenance import provenance_ancestors, provenance_dag
 from probpipe.converters import (
     converter_registry,
     ConversionInfo,
@@ -181,8 +178,6 @@ __all__ = [
     "ArrayRandomFunction",
     "GaussianRandomFunction",
     "LinearBasisFunction",
-    # Emulators
-    "EmulatorMixin",
     # Converters
     "converter_registry",
     "ConversionInfo",

@@ -10,7 +10,7 @@ from probpipe.distributions import (
     Wishart,
     VonMisesFisher,
 )
-from probpipe.distributions.distribution import ArrayDistribution
+from probpipe.core.distribution import ArrayDistribution
 
 
 # ---------------------------------------------------------------------------

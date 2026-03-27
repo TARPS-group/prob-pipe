@@ -15,8 +15,8 @@ from typing import TypeVar
 import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ..utils import prod
-from .distribution import Distribution
+from .._utils import prod
+from ..core.distribution import Distribution
 
 X = TypeVar('X')
 Y = TypeVar('Y')
