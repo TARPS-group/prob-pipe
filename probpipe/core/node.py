@@ -22,6 +22,31 @@ except ImportError:
 
 from ..custom_types import PRNGKey, Array
 from .distribution import ArrayDistribution, Distribution, EmpiricalDistribution, Provenance
+from .protocols import (
+    SupportsConditioning,
+    SupportsCovariance,
+    SupportsExpectation,
+    SupportsLogProb,
+    SupportsMean,
+    SupportsNamedComponents,
+    SupportsSampling,
+    SupportsUnnormalizedLogProb,
+    SupportsVariance,
+)
+
+# Protocol types that indicate a parameter expects a distribution object.
+# Used by _find_broadcast_args to avoid broadcasting over such parameters.
+_DISTRIBUTION_PROTOCOLS: tuple[type, ...] = (
+    SupportsExpectation,
+    SupportsSampling,
+    SupportsUnnormalizedLogProb,
+    SupportsLogProb,
+    SupportsMean,
+    SupportsVariance,
+    SupportsCovariance,
+    SupportsConditioning,
+    SupportsNamedComponents,
+)
 from ..distributions.joint import DistributionView
 from ..converters import converter_registry
 
@@ -276,9 +301,21 @@ class WorkflowFunction(Node):
                 if param.default is not param.empty:
                     values[name] = param.default
 
+        # Pass through extra kwargs when the function accepts **kwargs
+        has_var_keyword = any(
+            p.kind == p.VAR_KEYWORD for p in self._sig.parameters.values()
+        )
+        if has_var_keyword:
+            known_params = set(self._sig.parameters.keys())
+            for k, v in call_inputs.items():
+                if k not in known_params:
+                    values[k] = v
+
         # validate required params exist (after resolution)
         for name, param in self._sig.parameters.items():
             if name == "self":
+                continue
+            if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
                 continue
             if param.default is param.empty and name not in values:
                 raise TypeError(f"Missing required input '{name}' for workflow '{self._name}'")
@@ -332,18 +369,21 @@ class WorkflowFunction(Node):
         for name, value in values.items():
             if not converter_registry.is_distribution_type(value):
                 continue
-            # Auto-convert external distribution types to ProbPipe
-            if not isinstance(value, ArrayDistribution):
-                values[name] = converter_registry.convert(value, ArrayDistribution)
-                value = values[name]
+            # Check if the type hint indicates a distribution/protocol parameter.
+            # If so, the caller expects a distribution object — don't broadcast.
             expected = self._hints.get(name)
-            # If hint IS a Distribution subclass, _convert_distributions handled it
             try:
                 is_dist_hint = expected is not None and isinstance(expected, type) and issubclass(expected, Distribution)
             except TypeError:
                 is_dist_hint = False
+            if not is_dist_hint and expected in _DISTRIBUTION_PROTOCOLS:
+                is_dist_hint = True
             if is_dist_hint:
                 continue
+            # Auto-convert external distribution types to ProbPipe
+            if not isinstance(value, ArrayDistribution):
+                values[name] = converter_registry.convert(value, ArrayDistribution)
+                value = values[name]
             broadcast.append(name)
         return broadcast
 

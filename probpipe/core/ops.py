@@ -1,15 +1,11 @@
 """Built-in operations for distribution computation.
 
-This module provides two layers of API:
-
-1. **Plain functions** — ``sample(dist, ...)``, ``mean(dist)``, etc.
-   These check protocol compliance and delegate to the distribution's
-   private protocol methods.  Use these for direct computation.
-
-2. **WorkflowFunction wrappers** — accessible via :data:`wf_sample`,
-   :data:`wf_mean`, etc.  These participate in Prefect orchestration
-   and broadcasting.  Use these when you want to pass a distribution
-   through a ``WorkflowFunction`` pipeline.
+Each public function (``sample``, ``mean``, ``log_prob``, …) is a
+lightweight positional-arg wrapper around an internal
+:class:`~probpipe.core.node.WorkflowFunction`.  This means every call
+automatically participates in broadcasting and Prefect orchestration
+when a distribution argument is passed where a concrete value is
+expected.
 
 Usage::
 
@@ -23,6 +19,8 @@ Usage::
 
 from __future__ import annotations
 
+import functools
+import inspect
 from typing import Any
 
 import jax.numpy as jnp
@@ -40,11 +38,16 @@ from .protocols import (
 )
 
 # ---------------------------------------------------------------------------
-# Plain-function API
+# Implementation functions (private)
+#
+# Each function contains the actual protocol-check + delegation logic.
+# They are wrapped by WorkflowFunction instances (for broadcasting /
+# Prefect) and then by lightweight positional-arg adapters that form
+# the public API.
 # ---------------------------------------------------------------------------
 
 
-def sample(
+def _sample_impl(
     dist: SupportsSampling,
     *,
     key: PRNGKey | None = None,
@@ -69,7 +72,7 @@ def sample(
     return dist.sample(key=key, sample_shape=sample_shape)
 
 
-def log_prob(dist: SupportsLogProb, value: Any) -> Array:
+def _log_prob_impl(dist: SupportsLogProb, value: Any) -> Array:
     """Evaluate the normalized log-density at *value*."""
     if not isinstance(dist, SupportsLogProb):
         raise TypeError(
@@ -78,7 +81,7 @@ def log_prob(dist: SupportsLogProb, value: Any) -> Array:
     return dist._log_prob(value)
 
 
-def prob(dist: SupportsLogProb, value: Any) -> Array:
+def _prob_impl(dist: SupportsLogProb, value: Any) -> Array:
     """Evaluate the density at *value* (computed as ``exp(log_prob)``)."""
     if not isinstance(dist, SupportsLogProb):
         raise TypeError(
@@ -88,7 +91,7 @@ def prob(dist: SupportsLogProb, value: Any) -> Array:
     return jnp.exp(dist._log_prob(value))
 
 
-def unnormalized_log_prob(
+def _unnormalized_log_prob_impl(
     dist: SupportsUnnormalizedLogProb, value: Any,
 ) -> Array:
     """Evaluate the unnormalized log-density at *value*."""
@@ -100,7 +103,7 @@ def unnormalized_log_prob(
     return dist._unnormalized_log_prob(value)
 
 
-def unnormalized_prob(
+def _unnormalized_prob_impl(
     dist: SupportsUnnormalizedLogProb, value: Any,
 ) -> Array:
     """Evaluate the unnormalized density at *value* (computed as ``exp(unnormalized_log_prob)``)."""
@@ -112,7 +115,7 @@ def unnormalized_prob(
     return jnp.exp(dist._unnormalized_log_prob(value))
 
 
-def mean(dist: Any) -> Any:
+def _mean_impl(dist: SupportsExpectation) -> Any:
     """Compute E[X].
 
     Uses exact moments if the distribution supports :class:`SupportsMean`,
@@ -128,7 +131,7 @@ def mean(dist: Any) -> Any:
     )
 
 
-def variance(dist: Any) -> Any:
+def _variance_impl(dist: SupportsExpectation) -> Any:
     """Compute Var[X].
 
     Uses exact variance if available, otherwise MC fallback.
@@ -136,7 +139,7 @@ def variance(dist: Any) -> Any:
     if isinstance(dist, SupportsVariance):
         return dist._variance()
     if isinstance(dist, SupportsExpectation):
-        mu = mean(dist)
+        mu = _mean_impl(dist)
         return dist.expectation(
             lambda x: (x - mu) ** 2, return_dist=False,
         )
@@ -146,7 +149,7 @@ def variance(dist: Any) -> Any:
     )
 
 
-def cov(dist: Any) -> Array:
+def _cov_impl(dist: SupportsExpectation) -> Array:
     """Compute the covariance matrix.
 
     Uses exact covariance if available, otherwise MC fallback.
@@ -154,7 +157,7 @@ def cov(dist: Any) -> Array:
     if isinstance(dist, SupportsCovariance):
         return dist._cov()
     if isinstance(dist, SupportsExpectation):
-        mu = mean(dist)
+        mu = _mean_impl(dist)
 
         def _outer_diff(x):
             d = jnp.ravel(x) - jnp.ravel(mu)
@@ -167,7 +170,7 @@ def cov(dist: Any) -> Array:
     )
 
 
-def expectation(
+def _expectation_impl(
     dist: SupportsExpectation,
     f: Any,
     *,
@@ -185,10 +188,9 @@ def expectation(
     )
 
 
-def condition_on(
+def _condition_on_impl(
     dist: SupportsConditioning,
     observed: Any = None,
-    /,
     **kwargs: Any,
 ) -> Any:
     """Condition a joint distribution on observed values."""
@@ -200,26 +202,22 @@ def condition_on(
 
 
 # ---------------------------------------------------------------------------
-# Single source of truth for op names
+# Op registry — single source of truth
 # ---------------------------------------------------------------------------
 
-# All plain-function op names.  WorkflowFunction wrappers, __all__, and
-# module __getattr__ are derived from this list automatically.
-_OP_NAMES: list[str] = [
-    "sample",
-    "log_prob",
-    "prob",
-    "unnormalized_log_prob",
-    "unnormalized_prob",
-    "mean",
-    "variance",
-    "cov",
-    "expectation",
-    "condition_on",
-]
-
-# Map name → function object (populated from module globals)
-_OP_FUNCS: dict[str, Any] = {name: globals()[name] for name in _OP_NAMES}
+# Maps public name → implementation function.
+_OP_REGISTRY: dict[str, Any] = {
+    "sample": _sample_impl,
+    "log_prob": _log_prob_impl,
+    "prob": _prob_impl,
+    "unnormalized_log_prob": _unnormalized_log_prob_impl,
+    "unnormalized_prob": _unnormalized_prob_impl,
+    "mean": _mean_impl,
+    "variance": _variance_impl,
+    "cov": _cov_impl,
+    "expectation": _expectation_impl,
+    "condition_on": _condition_on_impl,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -229,29 +227,61 @@ _OP_FUNCS: dict[str, Any] = {name: globals()[name] for name in _OP_NAMES}
 _wf_ops: dict | None = None
 
 
-def _make_wf_ops() -> dict:
-    """Create WorkflowFunction instances wrapping the plain functions."""
-    from .node import WorkflowFunction
-
-    return {
-        name: WorkflowFunction(func=func, name=name)
-        for name, func in _OP_FUNCS.items()
-    }
-
-
-def __getattr__(name: str):
-    """Lazy access to WorkflowFunction wrappers (``wf_*`` names)."""
+def _ensure_wf_ops() -> dict:
+    """Lazily create WorkflowFunction instances wrapping the impl functions."""
     global _wf_ops
-    if name.startswith("wf_"):
-        op_name = name.removeprefix("wf_")
-        if op_name in _OP_FUNCS:
-            if _wf_ops is None:
-                _wf_ops = _make_wf_ops()
-            return _wf_ops[op_name]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    if _wf_ops is None:
+        from .node import WorkflowFunction
+
+        _wf_ops = {
+            name: WorkflowFunction(func=impl, name=name)
+            for name, impl in _OP_REGISTRY.items()
+        }
+    return _wf_ops
 
 
-__all__ = (
-    _OP_NAMES
-    + [f"wf_{name}" for name in _OP_NAMES]
-)
+# ---------------------------------------------------------------------------
+# Public API — positional-arg wrappers routing through WorkflowFunction
+# ---------------------------------------------------------------------------
+
+def _make_op(name: str, impl):
+    """Build a public wrapper that accepts positional args and routes
+    through the corresponding :class:`WorkflowFunction`.
+
+    The wrapper preserves the implementation's signature, docstring,
+    and type annotations so that IDE tooling and ``help()`` work as
+    expected.
+    """
+    sig = inspect.signature(impl)
+
+    # Detect if the impl has a **kwargs parameter.
+    has_var_keyword = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD
+        for p in sig.parameters.values()
+    )
+
+    @functools.wraps(impl)
+    def wrapper(*args, **kwargs):
+        wf_ops = _ensure_wf_ops()
+        bound = sig.bind(*args, **kwargs)
+        bound.apply_defaults()
+        call_kwargs = dict(bound.arguments)
+        # If the impl has **kwargs, sig.bind nests them under the
+        # parameter name (e.g. "kwargs": {...}).  Unpack so that
+        # WorkflowFunction receives them as top-level keyword args.
+        if has_var_keyword:
+            for p in sig.parameters.values():
+                if p.kind == inspect.Parameter.VAR_KEYWORD and p.name in call_kwargs:
+                    extra = call_kwargs.pop(p.name)
+                    call_kwargs.update(extra)
+        return wf_ops[name](**call_kwargs)
+
+    return wrapper
+
+
+# Generate the public functions and populate __all__.
+__all__: list[str] = []
+
+for _name, _impl in _OP_REGISTRY.items():
+    globals()[_name] = _make_op(_name, _impl)
+    __all__.append(_name)

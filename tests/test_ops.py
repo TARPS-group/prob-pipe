@@ -223,22 +223,25 @@ class TestConditionOn:
 
 
 # ---------------------------------------------------------------------------
-# WorkflowFunction wrappers
+# WorkflowFunction routing
 # ---------------------------------------------------------------------------
 
-class TestWorkflowFunctionWrappers:
-    """Verify wf_* accessors are WorkflowFunction instances."""
+class TestWorkflowFunctionRouting:
+    """Verify public ops route through WorkflowFunction internally."""
 
-    def test_all_wf_ops_exist(self):
+    def test_wf_ops_are_created(self):
         from probpipe.core.node import WorkflowFunction
-        wf_names = [
-            "wf_sample", "wf_log_prob", "wf_prob",
-            "wf_unnormalized_log_prob", "wf_unnormalized_prob",
-            "wf_mean", "wf_variance", "wf_cov", "wf_expectation", "wf_condition_on",
-        ]
-        for name in wf_names:
-            wf = getattr(ops, name)
-            assert isinstance(wf, WorkflowFunction), f"{name} is not a WorkflowFunction"
+        wf_ops = ops._ensure_wf_ops()
+        for name in ops._OP_REGISTRY:
+            assert name in wf_ops, f"missing WF for {name}"
+            assert isinstance(wf_ops[name], WorkflowFunction), (
+                f"wf_ops[{name!r}] is not a WorkflowFunction"
+            )
+
+    def test_public_ops_are_callable(self):
+        for name in ops._OP_REGISTRY:
+            fn = getattr(ops, name)
+            assert callable(fn), f"ops.{name} is not callable"
 
 
 # ---------------------------------------------------------------------------
