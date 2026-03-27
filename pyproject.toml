@@ -51,6 +51,9 @@ exclude = ["tests*", "docs*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --cov=probpipe --cov-report=term-missing --cov-fail-under=0"
+markers = [
+    "prefect: marks tests requiring prefect (deselect with '-m \"not prefect\"')",
+]
 
 [tool.ruff]
 target-version = "py312"
