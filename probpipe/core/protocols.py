@@ -106,6 +106,16 @@ class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
 
     def _log_prob(self, value: Any) -> Array: ...
 
+    def _unnormalized_log_prob(self, value: Any) -> Array:
+        """Default: delegates to ``_log_prob``."""
+        return self._log_prob(value)
+
+    def _unnormalized_prob(self, value: Any) -> Array:
+        """Default: ``exp(_log_prob(value))``."""
+        import jax.numpy as jnp
+
+        return jnp.exp(self._log_prob(value))
+
     def _prob(self, value: Any) -> Array:
         """Default: ``exp(_log_prob(value))``."""
         import jax.numpy as jnp
