@@ -136,11 +136,35 @@ class TestProtocolHierarchy:
         assert isinstance(normal, SupportsLogProb)
         assert isinstance(normal, SupportsUnnormalizedLogProb)
 
+    def test_mean_implies_expectation(self, normal):
+        """SupportsMean extends SupportsExpectation."""
+        assert isinstance(normal, SupportsMean)
+        assert isinstance(normal, SupportsExpectation)
+
+    def test_variance_implies_expectation(self, normal):
+        """SupportsVariance extends SupportsExpectation."""
+        assert isinstance(normal, SupportsVariance)
+        assert isinstance(normal, SupportsExpectation)
+
+    def test_covariance_implies_expectation(self, empirical):
+        """SupportsCovariance extends SupportsExpectation."""
+        assert isinstance(empirical, SupportsCovariance)
+        assert isinstance(empirical, SupportsExpectation)
+
     def test_sampling_subclass_check(self):
         assert issubclass(SupportsSampling, SupportsExpectation)
 
     def test_log_prob_subclass_check(self):
         assert issubclass(SupportsLogProb, SupportsUnnormalizedLogProb)
+
+    def test_mean_subclass_check(self):
+        assert issubclass(SupportsMean, SupportsExpectation)
+
+    def test_variance_subclass_check(self):
+        assert issubclass(SupportsVariance, SupportsExpectation)
+
+    def test_covariance_subclass_check(self):
+        assert issubclass(SupportsCovariance, SupportsExpectation)
 
 
 # ---------------------------------------------------------------------------

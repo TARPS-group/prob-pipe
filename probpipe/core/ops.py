@@ -132,12 +132,12 @@ def _mean_impl(dist: SupportsExpectation) -> Any:
     """Compute E[X].
 
     Uses exact moments if the distribution supports :class:`SupportsMean`,
-    otherwise falls back to Monte Carlo via :class:`SupportsExpectation`.
+    otherwise falls back to Monte Carlo via :func:`_expectation_impl`.
     """
     if isinstance(dist, SupportsMean):
         return dist._mean()
     if isinstance(dist, SupportsExpectation):
-        return dist.expectation(lambda x: x, return_dist=False)
+        return _expectation_impl(dist, lambda x: x, return_dist=False)
     raise TypeError(
         f"{type(dist).__name__} does not support mean "
         f"(implements neither SupportsMean nor SupportsExpectation)"
@@ -147,14 +147,15 @@ def _mean_impl(dist: SupportsExpectation) -> Any:
 def _variance_impl(dist: SupportsExpectation) -> Any:
     """Compute Var[X].
 
-    Uses exact variance if available, otherwise MC fallback.
+    Uses exact variance if available, otherwise MC fallback via
+    :func:`_expectation_impl`.
     """
     if isinstance(dist, SupportsVariance):
         return dist._variance()
     if isinstance(dist, SupportsExpectation):
         mu = _mean_impl(dist)
-        return dist.expectation(
-            lambda x: (x - mu) ** 2, return_dist=False,
+        return _expectation_impl(
+            dist, lambda x: (x - mu) ** 2, return_dist=False,
         )
     raise TypeError(
         f"{type(dist).__name__} does not support variance "
@@ -165,7 +166,8 @@ def _variance_impl(dist: SupportsExpectation) -> Any:
 def _cov_impl(dist: SupportsExpectation) -> Array:
     """Compute the covariance matrix.
 
-    Uses exact covariance if available, otherwise MC fallback.
+    Uses exact covariance if available, otherwise MC fallback via
+    :func:`_expectation_impl`.
     """
     if isinstance(dist, SupportsCovariance):
         return dist._cov()
@@ -176,7 +178,7 @@ def _cov_impl(dist: SupportsExpectation) -> Array:
             d = jnp.ravel(x) - jnp.ravel(mu)
             return jnp.outer(d, d)
 
-        return dist.expectation(_outer_diff, return_dist=False)
+        return _expectation_impl(dist, _outer_diff, return_dist=False)
     raise TypeError(
         f"{type(dist).__name__} does not support covariance "
         f"(implements neither SupportsCovariance nor SupportsExpectation)"

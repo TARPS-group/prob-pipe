@@ -30,7 +30,9 @@ Protocol hierarchy
         ↑ inherits
     SupportsLogProb           provides _unnormalized_log_prob via _log_prob
 
-    SupportsMean, SupportsVariance, SupportsCovariance — independent
+    SupportsExpectation
+        ↑ inherits
+    SupportsMean, SupportsVariance, SupportsCovariance
 
 """
 
@@ -116,22 +118,33 @@ class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
 # ---------------------------------------------------------------------------
 
 @runtime_checkable
-class SupportsMean(Protocol):
-    """Distribution with an exact (non-MC) mean via ``_mean()``."""
+class SupportsMean(SupportsExpectation, Protocol):
+    """Distribution with an exact (non-MC) mean via ``_mean()``.
+
+    Extends :class:`SupportsExpectation` because the ``mean`` op
+    falls back to Monte Carlo via ``expectation`` when a distribution
+    supports expectations but not exact moments.
+    """
 
     def _mean(self) -> Any: ...
 
 
 @runtime_checkable
-class SupportsVariance(Protocol):
-    """Distribution with an exact (non-MC) variance via ``_variance()``."""
+class SupportsVariance(SupportsExpectation, Protocol):
+    """Distribution with an exact (non-MC) variance via ``_variance()``.
+
+    Extends :class:`SupportsExpectation` for MC fallback.
+    """
 
     def _variance(self) -> Any: ...
 
 
 @runtime_checkable
-class SupportsCovariance(Protocol):
-    """Distribution with an exact (non-MC) covariance via ``_cov()``."""
+class SupportsCovariance(SupportsExpectation, Protocol):
+    """Distribution with an exact (non-MC) covariance via ``_cov()``.
+
+    Extends :class:`SupportsExpectation` for MC fallback.
+    """
 
     def _cov(self) -> Array: ...
 
