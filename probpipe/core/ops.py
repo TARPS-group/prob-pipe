@@ -23,10 +23,8 @@ import functools
 import inspect
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 
-from .._utils import prod as _prod
 from ..custom_types import Array, PRNGKey
 from .distribution import _auto_key
 from .protocols import (
@@ -74,20 +72,7 @@ def _sample_impl(
         )
     if key is None:
         key = _auto_key()
-    if sample_shape == ():
-        return dist._sample(key)
-    # Distributions may define a custom batched-sample method that handles
-    # sample_shape natively (e.g., function-valued distributions return a
-    # single callable that evaluates all draws at once).
-    if hasattr(dist, "_sample_batched"):
-        return dist._sample_batched(key, sample_shape)
-    n = _prod(sample_shape)
-    keys = jax.random.split(key, n)
-    flat_samples = jax.vmap(dist._sample)(keys)
-    return jax.tree.map(
-        lambda x: x.reshape(*sample_shape, *x.shape[1:]),
-        flat_samples,
-    )
+    return dist._sample(key, sample_shape)
 
 
 def _log_prob_impl(dist: SupportsLogProb, value: Any) -> Array:

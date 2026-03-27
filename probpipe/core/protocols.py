@@ -98,7 +98,7 @@ class SupportsSampling(SupportsExpectation, Protocol):
     _sampling_cost: ClassVar[str]  # "low", "medium", "high"
     _preferred_orchestration: ClassVar[str | None]  # "task", "flow", or None
 
-    def _sample(self, key: PRNGKey) -> Any: ...
+    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any: ...
 
 
 # ---------------------------------------------------------------------------

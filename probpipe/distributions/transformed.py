@@ -133,25 +133,22 @@ class TransformedDistribution(ArrayDistribution):
 
     # -- sampling & density -------------------------------------------------
 
-    def _sample(self, key: PRNGKey) -> Array:
+    def _sample_one(self, key: PRNGKey) -> Array:
         """Draw a single sample by transforming a base sample."""
         if self._tfp_transformed is not None:
             return self._tfp_transformed.sample(seed=key)
-        raw = self._base.sample(key)
+        raw = self._base._sample(key)
         return self._bijector.forward(raw)
 
-    def sample(
+    def _sample(
         self,
-        key: PRNGKey | None = None,
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         """Draw samples, delegating to TFP when available for efficiency."""
-        if key is None:
-            from ..core.distribution import _auto_key
-            key = _auto_key()
         if self._tfp_transformed is not None:
             return self._tfp_transformed.sample(seed=key, sample_shape=sample_shape)
-        raw = self._base.sample(key, sample_shape)
+        raw = self._base._sample(key, sample_shape)
         return self._bijector.forward(raw)
 
     def _log_prob(self, x: ArrayLike) -> Array:

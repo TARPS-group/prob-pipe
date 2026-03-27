@@ -292,18 +292,16 @@ class DistributionView(ArrayDistribution):
     def support(self) -> Constraint:
         return self._component.support
 
-    def _sample(self, key: PRNGKey) -> Array:
-        structured = self._parent.sample(key)
+    def _sample_one(self, key: PRNGKey) -> Array:
+        structured = self._parent._sample(key)
         return _walk_pytree(structured, self._key_path)
 
-    def sample(
+    def _sample(
         self,
-        key: PRNGKey | None = None,
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
-        if key is None:
-            key = _auto_key()
-        structured = self._parent.sample(key, sample_shape)
+        structured = self._parent._sample(key, sample_shape)
         return _walk_pytree(structured, self._key_path)
 
     def _log_prob(self, x: ArrayLike) -> Array:
@@ -372,12 +370,12 @@ class ConditionedComponent(ArrayDistribution):
     def support(self) -> Constraint:
         return self._base.support
 
-    def _sample(self, key: PRNGKey) -> Array:
+    def _sample_one(self, key: PRNGKey) -> Array:
         return self._value
 
-    def sample(
+    def _sample(
         self,
-        key: PRNGKey | None = None,
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         if sample_shape == ():
@@ -1093,25 +1091,25 @@ class ProductDistribution(JointDistribution):
         ()
     """
 
-    def _sample(self, key: PRNGKey):
+    def _sample_one(self, key: PRNGKey):
         leaves = jax.tree.leaves(self._components)
         keys = jax.random.split(key, len(leaves))
         sampled_leaves = [
-            dist.sample(subkey) for subkey, dist in zip(keys, leaves)
+            dist._sample(subkey) for subkey, dist in zip(keys, leaves)
         ]
         return jax.tree.unflatten(self.treedef, sampled_leaves)
 
-    def sample(
+    def _sample(
         self,
-        key: PRNGKey | None = None,
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ):
         """Draw independent samples from each leaf component.
 
         Parameters
         ----------
-        key : PRNGKey, optional
-            JAX PRNG key.  Auto-generated if ``None``.
+        key : PRNGKey
+            JAX PRNG key.
         sample_shape : tuple[int, ...], optional
             Leading dimensions for the samples.
 
@@ -1122,12 +1120,10 @@ class ProductDistribution(JointDistribution):
             Each leaf is an array of shape
             ``(*sample_shape, *batch_shape, *leaf_event_shape)``.
         """
-        if key is None:
-            key = _auto_key()
         leaves = jax.tree.leaves(self._components)
         keys = jax.random.split(key, len(leaves))
         sampled_leaves = [
-            dist.sample(subkey, sample_shape) for subkey, dist in zip(keys, leaves)
+            dist._sample(subkey, sample_shape) for subkey, dist in zip(keys, leaves)
         ]
         return jax.tree.unflatten(self.treedef, sampled_leaves)
 
@@ -1388,7 +1384,7 @@ class SequentialJointDistribution(JointDistribution):
                 sampled[cname] = jnp.broadcast_to(val, sample_shape + val.shape)
             elif isinstance(comp, ArrayDistribution):
                 # Root distribution: sample with sample_shape
-                sampled[cname] = comp.sample(subkey, sample_shape)
+                sampled[cname] = comp._sample(subkey, sample_shape)
             else:
                 # Conditional: callable receives batched parent samples,
                 # returning a batched distribution.  Sample with () since
@@ -1396,21 +1392,19 @@ class SequentialJointDistribution(JointDistribution):
                 sig = inspect.signature(comp)
                 call_kw = {p: sampled[p] for p in sig.parameters if p in sampled}
                 dist = comp(**call_kw)
-                sampled[cname] = dist.sample(subkey)
+                sampled[cname] = dist._sample(subkey)
 
         return sampled
 
-    def _sample(self, key: PRNGKey) -> dict[str, Array]:
+    def _sample_one(self, key: PRNGKey) -> dict[str, Array]:
         full = self._sample_sequential(key, ())
         return {k: v for k, v in full.items() if k not in self._conditioned_names}
 
-    def sample(
+    def _sample(
         self,
-        key: PRNGKey | None = None,
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> dict[str, Array]:
-        if key is None:
-            key = _auto_key()
         full = self._sample_sequential(key, sample_shape)
         return {k: v for k, v in full.items() if k not in self._conditioned_names}
 
@@ -1701,16 +1695,14 @@ class JointEmpirical(JointDistribution):
             self._weights_cache = jax.nn.softmax(self._log_weights)
         return self._weights_cache
 
-    def _sample(self, key: PRNGKey) -> dict[str, Array]:
+    def _sample_one(self, key: PRNGKey) -> dict[str, Array]:
         return self._sample_joint_rows(key, ())
 
-    def sample(
+    def _sample(
         self,
-        key: PRNGKey | None = None,
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> dict[str, Array]:
-        if key is None:
-            key = _auto_key()
         return self._sample_joint_rows(key, sample_shape)
 
     def _sample_joint_rows(
@@ -1948,22 +1940,20 @@ class JointGaussian(JointDistribution):
         """Full covariance matrix."""
         return self._cov_mat
 
-    def _sample(self, key: PRNGKey) -> dict[str, Array]:
+    def _sample_one(self, key: PRNGKey) -> dict[str, Array]:
         from .multivariate import MultivariateNormal as MVN
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
-        flat = full_mvn.sample(key)
+        flat = full_mvn._sample(key)
         return self._unflatten_flat_vec(flat)
 
-    def sample(
+    def _sample(
         self,
-        key: PRNGKey | None = None,
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> dict[str, Array]:
         from .multivariate import MultivariateNormal as MVN
-        if key is None:
-            key = _auto_key()
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
-        flat = full_mvn.sample(key, sample_shape)
+        flat = full_mvn._sample(key, sample_shape)
         return self._unflatten_flat_vec(flat)
 
     def _unflatten_flat_vec(self, flat: Array) -> dict[str, Array]:

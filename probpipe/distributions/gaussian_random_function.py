@@ -378,13 +378,13 @@ class LinearBasisFunction(GaussianRandomFunction):
 
     # -- Function sampling (finite-dimensional) -----------------------------
 
-    def _sample(self, key: PRNGKey) -> Callable[[ArrayLike], Array]:
+    def _sample_one(self, key: PRNGKey) -> Callable[[ArrayLike], Array]:
         """Draw a single function realization via weight-space sampling.
 
         Returns a callable ``f(X) -> Array`` that evaluates the linear
         model at arbitrary inputs using a single weight draw.
         """
-        w = self._weights.sample(key)  # (d_w,)
+        w = self._weights._sample(key)  # (d_w,)
         bias = self._bias
 
         # Capture feature_map in closure for consistency across calls.
@@ -397,20 +397,22 @@ class LinearBasisFunction(GaussianRandomFunction):
 
         return f
 
-    def _sample_batched(
+    def _sample(
         self,
         key: PRNGKey,
-        sample_shape: tuple[int, ...],
+        sample_shape: tuple[int, ...] = (),
     ) -> Callable[[ArrayLike], Array]:
-        """Draw batched function realizations via weight-space sampling.
+        """Draw function realization(s) via weight-space sampling.
 
-        Returns a single callable that evaluates all draws at once,
-        accepting ``X`` with shape ``(*extra_batch, n, *input_shape)``
-        and returning array of shape
+        When ``sample_shape`` is non-empty, returns a single callable
+        that evaluates all draws at once, accepting ``X`` with shape
+        ``(*extra_batch, n, *input_shape)`` and returning array of shape
         ``(*sample_shape, *extra_batch, n, *output_shape)``.
         """
+        if sample_shape == ():
+            return self._sample_one(key)
         n_samples = prod(sample_shape)
-        w_samples = self._weights.sample(key, sample_shape=(n_samples,))  # (n, d_w)
+        w_samples = self._weights._sample(key, sample_shape=(n_samples,))  # (n, d_w)
         bias = self._bias
         feature_map = self._feature_map
         reshape_to = sample_shape
@@ -424,18 +426,6 @@ class LinearBasisFunction(GaussianRandomFunction):
             return result.reshape(*reshape_to, *phi.shape[:-1])
 
         return f
-
-    def sample(
-        self,
-        key: PRNGKey | None = None,
-        sample_shape: tuple[int, ...] = (),
-    ) -> Callable[[ArrayLike], Array]:
-        """Public API — delegates to ``_sample`` / ``_sample_batched``."""
-        if key is None:
-            key = _auto_key()
-        if sample_shape == ():
-            return self._sample(key)
-        return self._sample_batched(key, sample_shape)
 
 
 # ---------------------------------------------------------------------------

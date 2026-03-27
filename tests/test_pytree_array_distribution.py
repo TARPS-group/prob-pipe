@@ -77,7 +77,7 @@ class TestDistributionBase:
     def test_log_prob_raises_by_default(self):
         """Distribution[T].log_prob raises NotImplementedError."""
         class StubDist(Distribution):
-            def _sample(self, key):
+            def _sample_one(self, key):
                 return jnp.array(0.0)
         d = StubDist()
         with pytest.raises(NotImplementedError, match="does not support log_prob"):

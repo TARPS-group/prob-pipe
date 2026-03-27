@@ -53,7 +53,7 @@ class RandomFunction(Distribution[Callable[[X], Y]]):
 
     # -- Distribution[T] contract -------------------------------------------
 
-    def _sample(self, key: PRNGKey) -> Callable:
+    def _sample_one(self, key: PRNGKey) -> Callable:
         """Draw a single function realization.
 
         Raises ``NotImplementedError`` by default.  Override in
@@ -67,9 +67,9 @@ class RandomFunction(Distribution[Callable[[X], Y]]):
             f"distribution at specific inputs."
         )
 
-    def sample(
+    def _sample(
         self,
-        key: PRNGKey | None = None,
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Callable:
         """Draw function realization(s).
@@ -78,9 +78,9 @@ class RandomFunction(Distribution[Callable[[X], Y]]):
         :class:`Distribution` cannot batch over Python callables.
         This override raises ``NotImplementedError`` by default.
 
-        Subclasses should override both :meth:`_sample` and :meth:`sample`.  
-        The returned callable should produce outputs with leading 
-        ``sample_shape`` dimensions.
+        Subclasses should override both :meth:`_sample_one` and
+        :meth:`_sample`.  The returned callable should produce outputs
+        with leading ``sample_shape`` dimensions.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support sampling function "

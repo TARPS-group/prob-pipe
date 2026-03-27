@@ -443,23 +443,21 @@ class Distribution(Generic[T], ABC):
     # -- core abstract interface ---------------------------------------------
 
     @abstractmethod
-    def _sample(self, key: PRNGKey) -> T:
+    def _sample_one(self, key: PRNGKey) -> T:
         """Draw a single sample. Subclasses implement this."""
         ...
 
-    def sample(
+    def _sample(
         self,
-        key: PRNGKey | None = None,
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> T:
         """Draw sample(s) from this distribution.
 
         Parameters
         ----------
-        key : PRNGKey, optional
-            JAX PRNG key.  If ``None``, a key is generated automatically
-            from a global counter (convenient for interactive use but not
-            reproducible across runs).
+        key : PRNGKey
+            JAX PRNG key.
         sample_shape : tuple of int
             Number of independent draws.  The meaning depends on ``T``:
             for arrays, prepends dimensions; for pytrees, prepends
@@ -472,17 +470,25 @@ class Distribution(Generic[T], ABC):
             A single sample when ``sample_shape == ()``, or a batched
             representation when ``sample_shape`` is non-empty.
         """
-        if key is None:
-            key = _auto_key()
         if sample_shape == ():
-            return self._sample(key)
+            return self._sample_one(key)
         n = prod(sample_shape)
         keys = jax.random.split(key, n)
-        flat_samples = jax.vmap(self._sample)(keys)
+        flat_samples = jax.vmap(self._sample_one)(keys)
         return jax.tree.map(
             lambda x: x.reshape(*sample_shape, *x.shape[1:]),
             flat_samples,
         )
+
+    def sample(
+        self,
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> T:
+        """Public API — delegates to ``_sample``."""
+        if key is None:
+            key = _auto_key()
+        return self._sample(key, sample_shape)
 
     # -- orchestration hints (protocol defaults) -----------------------------
 
@@ -559,7 +565,7 @@ class Distribution(Generic[T], ABC):
         n = num_evaluations if num_evaluations is not None else DEFAULT_NUM_EVALUATIONS
         if key is None:
             key = _auto_key()
-        samples = self.sample(key, sample_shape=(n,))
+        samples = self._sample(key, sample_shape=(n,))
         evals = jax.vmap(f)(samples)
 
         rd = return_dist if return_dist is not None else RETURN_APPROX_DIST
@@ -998,18 +1004,16 @@ class FlattenedView(ArrayDistribution):
     def batch_shape(self) -> tuple[int, ...]:
         return self._base.batch_shape
 
-    def _sample(self, key: PRNGKey) -> Array:
-        pytree_sample = self._base._sample(key)
+    def _sample_one(self, key: PRNGKey) -> Array:
+        pytree_sample = self._base._sample_one(key)
         return self._base.flatten_value(pytree_sample)
 
-    def sample(
+    def _sample(
         self,
-        key: PRNGKey | None = None,
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
-        if key is None:
-            key = _auto_key()
-        pytree_samples = self._base.sample(key, sample_shape)
+        pytree_samples = self._base._sample(key, sample_shape)
         return self._base.flatten_value(pytree_samples)
 
     def _log_prob(self, x: ArrayLike) -> Array:
@@ -1067,18 +1071,16 @@ class TFPDistribution(ArrayDistribution):
 
     # -- sampling & density -------------------------------------------------
 
-    def _sample(self, key: PRNGKey) -> Array:
+    def _sample_one(self, key: PRNGKey) -> Array:
         """Draw a single sample from the TFP distribution."""
         return self._tfp_dist.sample(seed=key)
 
-    def sample(
+    def _sample(
         self,
-        key: PRNGKey | None = None,
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         """Draw samples using TFP's efficient batched sampling."""
-        if key is None:
-            key = _auto_key()
         return self._tfp_dist.sample(seed=key, sample_shape=sample_shape)
 
     def _log_prob(self, x: ArrayLike) -> Array:
@@ -1230,7 +1232,7 @@ class EmpiricalDistribution(ArrayDistribution):
 
     # -- sampling -----------------------------------------------------------
 
-    def _sample(self, key: PRNGKey) -> Array:
+    def _sample_one(self, key: PRNGKey) -> Array:
         """Draw a single sample (with replacement according to weights)."""
         if self._is_uniform:
             idx = jax.random.randint(key, shape=(), minval=0, maxval=self.n)
@@ -1238,16 +1240,14 @@ class EmpiricalDistribution(ArrayDistribution):
             idx = jax.random.choice(key, self.n, p=self.weights)
         return self._samples[idx]
 
-    def sample(
+    def _sample(
         self,
-        key: PRNGKey | None = None,
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         """Draw samples using efficient batched resampling."""
-        if key is None:
-            key = _auto_key()
         if sample_shape == ():
-            return self._sample(key)
+            return self._sample_one(key)
         n_draws = prod(sample_shape)
         if self._is_uniform:
             indices = jax.random.randint(key, shape=(n_draws,), minval=0, maxval=self.n)
@@ -1372,7 +1372,7 @@ class EmpiricalDistribution(ArrayDistribution):
             Name for the result; defaults to ``other.name``.
         """
         num_samples = kwargs.pop("num_samples", 1024)
-        samples = other.sample(key, sample_shape=(num_samples,))
+        samples = other._sample(key, sample_shape=(num_samples,))
         ed = cls(samples, name=name or other.name)
         ed.with_source(Provenance("from_distribution", parents=(other,)))
         return ed
@@ -1460,7 +1460,7 @@ class BootstrapDistribution(ArrayDistribution):
         """Public API — delegates to ``_variance``."""
         return self._variance()
 
-    def _sample(self, key: PRNGKey) -> Array:
+    def _sample_one(self, key: PRNGKey) -> Array:
         """Draw a single bootstrap resample of the mean."""
         if self._weights is None:
             idx = jax.random.choice(key, self._n, shape=(self._n,), replace=True)
@@ -1471,16 +1471,14 @@ class BootstrapDistribution(ArrayDistribution):
             )
             return jnp.mean(self._evaluations[idx], axis=0)
 
-    def sample(
+    def _sample(
         self,
-        key: PRNGKey | None = None,
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         """Draw bootstrap resamples of the mean."""
-        if key is None:
-            key = _auto_key()
         if sample_shape == ():
-            return self._sample(key)
+            return self._sample_one(key)
         total = prod(sample_shape)
         keys = jax.random.split(key, total)
 
