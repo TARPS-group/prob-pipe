@@ -491,7 +491,7 @@ class Distribution(Generic[T], ABC):
 
     # -- log-density (optional) ----------------------------------------------
 
-    def log_prob(self, value: T) -> Array:
+    def _log_prob(self, value: T) -> Array:
         """Log-density of *value*.  Optional; raises by default.
 
         Subclasses that define a density should override this method.
@@ -502,23 +502,23 @@ class Distribution(Generic[T], ABC):
             f"{type(self).__name__} does not support log_prob"
         )
 
-    # Protocol alias — will become the canonical name in a future PR.
-    def _log_prob(self, value: T) -> Array:
-        return self.log_prob(value)
+    def log_prob(self, value: T) -> Array:
+        """Public API — delegates to ``_log_prob``."""
+        return self._log_prob(value)
 
-    def unnormalized_log_prob(self, value: T) -> Array:
+    def _unnormalized_log_prob(self, value: T) -> Array:
         """Evaluate the unnormalized log-density at *value*.
 
-        By default this returns ``log_prob(value)``.  Subclasses that only
+        By default this returns ``_log_prob(value)``.  Subclasses that only
         know the density up to a normalizing constant (e.g., conditioned
         distributions) should override this method and may raise
-        ``NotImplementedError`` from ``log_prob`` instead.
+        ``NotImplementedError`` from ``_log_prob`` instead.
         """
-        return self.log_prob(value)
+        return self._log_prob(value)
 
-    # Protocol alias
-    def _unnormalized_log_prob(self, value: T) -> Array:
-        return self.unnormalized_log_prob(value)
+    def unnormalized_log_prob(self, value: T) -> Array:
+        """Public API — delegates to ``_unnormalized_log_prob``."""
+        return self._unnormalized_log_prob(value)
 
     # Protocol method — exp of the log form
     def _unnormalized_prob(self, value: T) -> Array:
@@ -896,12 +896,12 @@ class ArrayDistribution(PyTreeArrayDistribution[Array]):
 
     # -- array-specific convenience methods ----------------------------------
 
-    def prob(self, x: ArrayLike) -> Array:
-        return jnp.exp(self.log_prob(x))
-
-    # Protocol alias
     def _prob(self, x: ArrayLike) -> Array:
-        return self.prob(x)
+        return jnp.exp(self._log_prob(x))
+
+    def prob(self, x: ArrayLike) -> Array:
+        """Public API — delegates to ``_prob``."""
+        return self._prob(x)
 
     @monte_carlo
     def cov(self):
@@ -1012,7 +1012,7 @@ class FlattenedView(ArrayDistribution):
         pytree_samples = self._base.sample(key, sample_shape)
         return self._base.flatten_value(pytree_samples)
 
-    def log_prob(self, x: ArrayLike) -> Array:
+    def _log_prob(self, x: ArrayLike) -> Array:
         x = jnp.asarray(x)
         value = self._base.unflatten_value(x)
         return self._base.log_prob(value)
@@ -1081,27 +1081,28 @@ class TFPDistribution(ArrayDistribution):
             key = _auto_key()
         return self._tfp_dist.sample(seed=key, sample_shape=sample_shape)
 
-    def log_prob(self, x: ArrayLike) -> Array:
+    def _log_prob(self, x: ArrayLike) -> Array:
         return self._tfp_dist.log_prob(jnp.asarray(x))
 
-    def unnormalized_log_prob(self, x: ArrayLike) -> Array:
+    def _unnormalized_log_prob(self, x: ArrayLike) -> Array:
         return self._tfp_dist.unnormalized_log_prob(jnp.asarray(x))
 
-    def prob(self, x: ArrayLike) -> Array:
+    def _prob(self, x: ArrayLike) -> Array:
         return self._tfp_dist.prob(jnp.asarray(x))
 
-    def mean(self, **kwargs) -> Array:
-        return self._tfp_dist.mean()
-
-    # Protocol aliases for exact moments
     def _mean(self) -> Array:
         return self._tfp_dist.mean()
 
-    def variance(self, **kwargs) -> Array:
-        return self._tfp_dist.variance()
+    def mean(self, **kwargs) -> Array:
+        """Public API — delegates to ``_mean``."""
+        return self._mean()
 
     def _variance(self) -> Array:
         return self._tfp_dist.variance()
+
+    def variance(self, **kwargs) -> Array:
+        """Public API — delegates to ``_variance``."""
+        return self._variance()
 
 
 # ---------------------------------------------------------------------------
@@ -1259,11 +1260,11 @@ class EmpiricalDistribution(ArrayDistribution):
 
     # -- density (Gaussian approximation) -----------------------------------
 
-    def log_prob(self, x: ArrayLike) -> Array:
+    def _log_prob(self, x: ArrayLike) -> Array:
         """Gaussian-approximation log-density."""
         x = jnp.asarray(x)
-        mu = self.mean()
-        var = self.variance()
+        mu = self._mean()
+        var = self._variance()
         # Diagonal Gaussian approx; clamp variance to avoid log(0)
         var = jnp.maximum(var, 1e-12)
         log_norm = -0.5 * jnp.sum(jnp.log(2 * jnp.pi * var))
@@ -1272,28 +1273,29 @@ class EmpiricalDistribution(ArrayDistribution):
 
     # -- moments ------------------------------------------------------------
 
-    def mean(self, **kwargs) -> Array:
+    def _mean(self) -> Array:
         if self._is_uniform:
             return jnp.mean(self._samples, axis=0)
         return jnp.einsum("n,n...->...", self.weights, self._samples)
 
-    # Protocol aliases for exact moments
-    def _mean(self) -> Array:
-        return self.mean()
+    def mean(self, **kwargs) -> Array:
+        """Public API — delegates to ``_mean``."""
+        return self._mean()
 
-    def variance(self, **kwargs) -> Array:
-        mu = self.mean()
+    def _variance(self) -> Array:
+        mu = self._mean()
         diff = self._samples - mu
         if self._is_uniform:
             return jnp.mean(diff**2, axis=0)
         return jnp.einsum("n,n...->...", self.weights, diff**2)
 
-    def _variance(self) -> Array:
-        return self.variance()
+    def variance(self, **kwargs) -> Array:
+        """Public API — delegates to ``_variance``."""
+        return self._variance()
 
-    def cov(self, **kwargs) -> Array:
+    def _cov(self) -> Array:
         """Weighted sample covariance matrix, shape ``(d, d)``."""
-        mu = self.mean()
+        mu = self._mean()
         # Flatten to 2D: (n, d)
         flat_samples = self._samples.reshape(self.n, -1)
         diff = flat_samples - mu.reshape(-1)
@@ -1301,8 +1303,9 @@ class EmpiricalDistribution(ArrayDistribution):
             return jnp.einsum("ni,nj->ij", diff, diff) / self.n
         return jnp.einsum("ni,nj,n->ij", diff, diff, self.weights)
 
-    def _cov(self) -> Array:
-        return self.cov()
+    def cov(self, **kwargs) -> Array:
+        """Public API — delegates to ``_cov``."""
+        return self._cov()
 
     def expectation(
         self,
@@ -1431,18 +1434,19 @@ class BootstrapDistribution(ArrayDistribution):
     def event_shape(self) -> tuple[int, ...]:
         return self._evaluations.shape[1:]
 
-    def mean(self) -> Array:
+    def _mean(self) -> Array:
         """Point estimate: (weighted) mean of evaluations."""
         if self._weights is None:
             return jnp.mean(self._evaluations, axis=0)
         return jnp.einsum("n,n...->...", self._weights, self._evaluations)
 
-    # Protocol alias
-    _mean = mean
+    def mean(self) -> Array:
+        """Public API — delegates to ``_mean``."""
+        return self._mean()
 
-    def variance(self) -> Array:
+    def _variance(self) -> Array:
         """Variance of the sampling distribution (approx Var[f(X)] / n_eff)."""
-        mu = self.mean()
+        mu = self._mean()
         diff = self._evaluations - mu
         if self._weights is None:
             sample_var = jnp.mean(diff ** 2, axis=0)
@@ -1452,8 +1456,9 @@ class BootstrapDistribution(ArrayDistribution):
         n_eff = 1.0 / jnp.sum(self._weights ** 2)
         return sample_var / n_eff
 
-    # Protocol alias
-    _variance = variance
+    def variance(self) -> Array:
+        """Public API — delegates to ``_variance``."""
+        return self._variance()
 
     def _sample(self, key: PRNGKey) -> Array:
         """Draw a single bootstrap resample of the mean."""
@@ -1492,11 +1497,11 @@ class BootstrapDistribution(ArrayDistribution):
         results = jax.vmap(_one_resample)(keys)
         return results.reshape(sample_shape + self.event_shape)
 
-    def log_prob(self, x: ArrayLike) -> Array:
+    def _log_prob(self, x: ArrayLike) -> Array:
         """Log-density via Gaussian approximation (mean +/- SE)."""
         x = jnp.asarray(x)
-        mu = self.mean()
-        var = jnp.maximum(self.variance(), 1e-12)
+        mu = self._mean()
+        var = jnp.maximum(self._variance(), 1e-12)
         # Diagonal Gaussian
         return -0.5 * jnp.sum(((x - mu) ** 2) / var + jnp.log(2 * jnp.pi * var))
 

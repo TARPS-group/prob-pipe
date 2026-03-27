@@ -154,35 +154,35 @@ class TransformedDistribution(ArrayDistribution):
         raw = self._base.sample(key, sample_shape)
         return self._bijector.forward(raw)
 
-    def log_prob(self, x: ArrayLike) -> Array:
+    def _log_prob(self, x: ArrayLike) -> Array:
         x = jnp.asarray(x)
         if self._tfp_transformed is not None:
             return self._tfp_transformed.log_prob(x)
         raw = self._bijector.inverse(x)
         return (
-            self._base.log_prob(raw)
+            self._base._log_prob(raw)
             + self._bijector.inverse_log_det_jacobian(
                 x, event_ndims=len(self.event_shape)
             )
         )
 
-    def unnormalized_log_prob(self, x: ArrayLike) -> Array:
+    def _unnormalized_log_prob(self, x: ArrayLike) -> Array:
         x = jnp.asarray(x)
         if self._tfp_transformed is not None:
             return self._tfp_transformed.unnormalized_log_prob(x)
         raw = self._bijector.inverse(x)
         return (
-            self._base.unnormalized_log_prob(raw)
+            self._base._unnormalized_log_prob(raw)
             + self._bijector.inverse_log_det_jacobian(
                 x, event_ndims=len(self.event_shape)
             )
         )
 
-    def prob(self, x: ArrayLike) -> Array:
+    def _prob(self, x: ArrayLike) -> Array:
         x = jnp.asarray(x)
         if self._tfp_transformed is not None:
             return self._tfp_transformed.prob(x)
-        return jnp.exp(self.log_prob(x))
+        return jnp.exp(self._log_prob(x))
 
     # -- moments (delegate to TFP when available) ---------------------------
 

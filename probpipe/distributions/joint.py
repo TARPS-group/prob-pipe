@@ -306,14 +306,22 @@ class DistributionView(ArrayDistribution):
         structured = self._parent.sample(key, sample_shape)
         return _walk_pytree(structured, self._key_path)
 
-    def log_prob(self, x: ArrayLike) -> Array:
+    def _log_prob(self, x: ArrayLike) -> Array:
         return self._component.log_prob(x)
 
-    def mean(self) -> Array:
+    def _mean(self) -> Array:
         return self._component.mean()
 
-    def variance(self) -> Array:
+    def mean(self, **kwargs) -> Array:
+        """Public API — delegates to ``_mean``."""
+        return self._mean()
+
+    def _variance(self) -> Array:
         return self._component.variance()
+
+    def variance(self, **kwargs) -> Array:
+        """Public API — delegates to ``_variance``."""
+        return self._variance()
 
     @classmethod
     def _from_distribution(cls, other, *, key, **kwargs):
@@ -376,15 +384,23 @@ class ConditionedComponent(ArrayDistribution):
             return self._value
         return jnp.broadcast_to(self._value, sample_shape + self.event_shape)
 
-    def log_prob(self, x: ArrayLike) -> Array:
+    def _log_prob(self, x: ArrayLike) -> Array:
         # Log-prob is constant: the base distribution evaluated at the pinned value
         return self._base.log_prob(self._value)
 
-    def mean(self) -> Array:
+    def _mean(self) -> Array:
         return self._value
 
-    def variance(self) -> Array:
+    def mean(self, **kwargs) -> Array:
+        """Public API — delegates to ``_mean``."""
+        return self._mean()
+
+    def _variance(self) -> Array:
         return jnp.zeros(self.event_shape, dtype=jnp.float32)
+
+    def variance(self, **kwargs) -> Array:
+        """Public API — delegates to ``_variance``."""
+        return self._variance()
 
     @classmethod
     def _from_distribution(cls, other, *, key, **kwargs):
@@ -809,12 +825,12 @@ class JointDistribution(PyTreeArrayDistribution):
             >>> cond.component_names
             ('obs',)
         """
+        return self._condition_on(observed, **kwargs)
+
+    def _condition_on(self, observed=None, /, **kwargs) -> "JointDistribution":
+        """Protocol implementation — parse args and delegate to subclass."""
         observed_leaves = self._parse_condition_args(observed, kwargs)
         return self._condition_on_impl(observed_leaves)
-
-    # Protocol alias
-    def _condition_on(self, observed=None, /, **kwargs) -> "JointDistribution":
-        return self.condition_on(observed, **kwargs)
 
     def _parse_condition_args(
         self, observed: dict | None, kwargs: dict,
@@ -983,7 +999,7 @@ class JointDistribution(PyTreeArrayDistribution):
 
     # -- log_prob (abstract) -----------------------------------------------
 
-    def log_prob(self, value) -> Array:
+    def _log_prob(self, value) -> Array:
         """Log-density of the joint distribution.
 
         Parameters
@@ -999,7 +1015,7 @@ class JointDistribution(PyTreeArrayDistribution):
             Scalar (or batch-shaped array) of log-densities.
         """
         raise NotImplementedError(
-            f"{type(self).__name__}.log_prob() must be implemented by subclasses."
+            f"{type(self).__name__}._log_prob() must be implemented by subclasses."
         )
 
     def __repr__(self) -> str:
@@ -1115,7 +1131,7 @@ class ProductDistribution(JointDistribution):
         ]
         return jax.tree.unflatten(self.treedef, sampled_leaves)
 
-    def log_prob(self, value) -> Array:
+    def _log_prob(self, value) -> Array:
         """Sum of independent leaf log-probs.
 
         Parameters
@@ -1141,19 +1157,27 @@ class ProductDistribution(JointDistribution):
             total = total + lp
         return total
 
-    def mean(self, **kwargs):
+    def _mean(self, **kwargs):
         """Per-leaf means (exact for independent components).
 
         Returns a pytree with the same structure as the components.
         """
         return jax.tree.map(lambda d: d.mean(), self._components)
 
-    def variance(self, **kwargs):
+    def mean(self, **kwargs):
+        """Public API — delegates to ``_mean``."""
+        return self._mean(**kwargs)
+
+    def _variance(self, **kwargs):
         """Per-leaf variances (exact for independent components).
 
         Returns a pytree with the same structure as the components.
         """
         return jax.tree.map(lambda d: d.variance(), self._components)
+
+    def variance(self, **kwargs):
+        """Public API — delegates to ``_variance``."""
+        return self._variance(**kwargs)
 
     # -- Conditioning (full nested support) --------------------------------
 
@@ -1427,7 +1451,7 @@ class SequentialJointDistribution(JointDistribution):
 
         return total
 
-    def log_prob(self, value: dict[str, ArrayLike]) -> Array:
+    def _log_prob(self, value: dict[str, ArrayLike]) -> Array:
         """Evaluate the normalized log-density.
 
         For an unconditioned joint, this is the full joint log p(x).
@@ -1452,7 +1476,7 @@ class SequentialJointDistribution(JointDistribution):
             )
         return self._eval_log_prob(value, components="unconditioned")
 
-    def unnormalized_log_prob(self, value: dict[str, ArrayLike]) -> Array:
+    def _unnormalized_log_prob(self, value: dict[str, ArrayLike]) -> Array:
         """Evaluate the (possibly unnormalized) log-density.
 
         For an unconditioned joint, this equals the full joint log p(x).
@@ -1463,7 +1487,7 @@ class SequentialJointDistribution(JointDistribution):
         """
         return self._eval_log_prob(value, components="all")
 
-    def mean(self, **kwargs) -> dict[str, Array]:
+    def _mean(self, **kwargs) -> dict[str, Array]:
         """Per-component means (approximate — uses prototype components).
 
         For sequential joints, the true marginal mean is not simply the
@@ -1473,9 +1497,17 @@ class SequentialJointDistribution(JointDistribution):
         """
         return {k: v.mean() for k, v in self._proto_components.items()}
 
-    def variance(self, **kwargs) -> dict[str, Array]:
+    def mean(self, **kwargs) -> dict[str, Array]:
+        """Public API — delegates to ``_mean``."""
+        return self._mean(**kwargs)
+
+    def _variance(self, **kwargs) -> dict[str, Array]:
         """Per-component variances (approximate — uses prototype components)."""
         return {k: v.variance() for k, v in self._proto_components.items()}
+
+    def variance(self, **kwargs) -> dict[str, Array]:
+        """Public API — delegates to ``_variance``."""
+        return self._variance(**kwargs)
 
     def _condition_on_impl(
         self, observed_leaves: dict[KeyPath, ArrayLike],
@@ -1701,7 +1733,7 @@ class JointEmpirical(JointDistribution):
                 result[cname] = drawn.squeeze(axis=0)
         return result
 
-    def log_prob(self, value: dict[str, ArrayLike]) -> Array:
+    def _log_prob(self, value: dict[str, ArrayLike]) -> Array:
         """Gaussian-approximation log-density (same as EmpiricalDistribution).
 
         Evaluates a diagonal Gaussian approximation in the flat space.
@@ -1743,7 +1775,7 @@ class JointEmpirical(JointDistribution):
             offset += flat_dim
         return jnp.concatenate(parts)
 
-    def mean(self, **kwargs) -> dict[str, Array]:
+    def _mean(self, **kwargs) -> dict[str, Array]:
         """Per-component weighted means."""
         result = {}
         for cname, arr in self._joint_samples.items():
@@ -1753,9 +1785,13 @@ class JointEmpirical(JointDistribution):
                 result[cname] = jnp.einsum("n,n...->...", self.weights, arr)
         return result
 
-    def variance(self, **kwargs) -> dict[str, Array]:
+    def mean(self, **kwargs) -> dict[str, Array]:
+        """Public API — delegates to ``_mean``."""
+        return self._mean(**kwargs)
+
+    def _variance(self, **kwargs) -> dict[str, Array]:
         """Per-component weighted variances."""
-        means = self.mean()
+        means = self._mean()
         result = {}
         for cname, arr in self._joint_samples.items():
             diff = arr - means[cname]
@@ -1764,6 +1800,10 @@ class JointEmpirical(JointDistribution):
             else:
                 result[cname] = jnp.einsum("n,n...->...", self.weights, diff**2)
         return result
+
+    def variance(self, **kwargs) -> dict[str, Array]:
+        """Public API — delegates to ``_variance``."""
+        return self._variance(**kwargs)
 
     def _condition_on_impl(
         self, observed_leaves: dict[KeyPath, ArrayLike],
@@ -1934,26 +1974,34 @@ class JointGaussian(JointDistribution):
             result[cname] = flat[..., sl]
         return result
 
-    def log_prob(self, value: dict[str, ArrayLike]) -> Array:
+    def _log_prob(self, value: dict[str, ArrayLike]) -> Array:
         from .multivariate import MultivariateNormal as MVN
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
         flat = self.flatten_value(value)
         return full_mvn.log_prob(flat)
 
-    def mean(self, **kwargs) -> dict[str, Array]:
+    def _mean(self, **kwargs) -> dict[str, Array]:
         result = {}
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = self._mean_vec[sl]
         return result
 
-    def variance(self, **kwargs) -> dict[str, Array]:
+    def mean(self, **kwargs) -> dict[str, Array]:
+        """Public API — delegates to ``_mean``."""
+        return self._mean(**kwargs)
+
+    def _variance(self, **kwargs) -> dict[str, Array]:
         diag = jnp.diag(self._cov_mat)
         result = {}
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = diag[sl]
         return result
+
+    def variance(self, **kwargs) -> dict[str, Array]:
+        """Public API — delegates to ``_variance``."""
+        return self._variance(**kwargs)
 
     def _condition_on_impl(
         self, observed_leaves: dict[KeyPath, ArrayLike],
