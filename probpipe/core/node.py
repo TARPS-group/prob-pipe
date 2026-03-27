@@ -746,11 +746,22 @@ class WorkflowFunction(Node):
         return [f.result() for f in futures]
 
     def _execute_many_prefect_task(self, call_value_list: list[Dict[str, Any]]) -> list:
-        """Use Prefect task.map() to run all calls as a single mapped task."""
-        return self._map_task(call_value_list)
+        """Use Prefect task.map() inside a lightweight flow.
+
+        Prefect 3.x requires ``task.map()`` to be called within a flow
+        context.  This mode creates a minimal wrapper flow so the mapped
+        task runs are tracked but not grouped under a named flow.
+        """
+        outer = self
+
+        @flow(name=f"{self._name}_map")
+        def _task_map_flow():
+            return outer._map_task(call_value_list)
+
+        return _task_map_flow()
 
     def _execute_many_prefect_flow(self, call_value_list: list[Dict[str, Any]]) -> list:
-        """Wrap a mapped task inside a single Prefect flow."""
+        """Wrap a mapped task inside a named Prefect flow."""
         outer = self
 
         @flow(name=self._name)
