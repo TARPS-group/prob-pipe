@@ -109,6 +109,12 @@ class TestUnnormalizedLogProb:
         lp = ops.log_prob(normal, x)
         np.testing.assert_allclose(float(ulp), float(lp), atol=1e-6)
 
+    def test_unnormalized_prob_equals_exp(self, normal):
+        x = jnp.array(1.5)
+        up = ops.unnormalized_prob(normal, x)
+        ulp = ops.unnormalized_log_prob(normal, x)
+        np.testing.assert_allclose(float(up), float(jnp.exp(ulp)), atol=1e-6)
+
 
 # ---------------------------------------------------------------------------
 # mean
@@ -226,7 +232,8 @@ class TestWorkflowFunctionWrappers:
     def test_all_wf_ops_exist(self):
         from probpipe.core.node import WorkflowFunction
         wf_names = [
-            "wf_sample", "wf_log_prob", "wf_prob", "wf_unnormalized_log_prob",
+            "wf_sample", "wf_log_prob", "wf_prob",
+            "wf_unnormalized_log_prob", "wf_unnormalized_prob",
             "wf_mean", "wf_variance", "wf_cov", "wf_expectation", "wf_condition_on",
         ]
         for name in wf_names:

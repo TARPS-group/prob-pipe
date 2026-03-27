@@ -100,11 +100,10 @@ from probpipe.distributions import (
 from probpipe.core.node import WorkflowFunction, Module, wf
 from probpipe.core.provenance import provenance_ancestors, provenance_dag
 from probpipe.core.protocols import (
-    SupportsSampling,
     SupportsExpectation,
-    SupportsLogProb,
-    SupportsProb,
+    SupportsSampling,
     SupportsUnnormalizedLogProb,
+    SupportsLogProb,
     SupportsMean,
     SupportsVariance,
     SupportsCovariance,
@@ -191,11 +190,10 @@ __all__ = [
     "GaussianRandomFunction",
     "LinearBasisFunction",
     # Protocols
-    "SupportsSampling",
     "SupportsExpectation",
-    "SupportsLogProb",
-    "SupportsProb",
+    "SupportsSampling",
     "SupportsUnnormalizedLogProb",
+    "SupportsLogProb",
     "SupportsMean",
     "SupportsVariance",
     "SupportsCovariance",
@@ -216,6 +214,7 @@ from probpipe.core.ops import (  # noqa: E402
     log_prob,
     prob,
     unnormalized_log_prob,
+    unnormalized_prob,
     mean,
     variance,
     cov,

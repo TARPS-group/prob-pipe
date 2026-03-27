@@ -13,9 +13,25 @@ inheriting from ProbPipe base classes.
 primitive implementation from the public workflow-function API in
 :mod:`probpipe.core.ops`.
 
-**Orchestration hints:** Protocols define class-attribute defaults
-for orchestration preferences.  Distribution subclasses override
-as needed.
+**Orchestration hints:** ``SupportsSampling`` defines class-attribute
+defaults for orchestration preferences.  Distribution subclasses
+override as needed.
+
+Protocol hierarchy
+------------------
+
+::
+
+    SupportsExpectation
+        ↑ inherits
+    SupportsSampling          provides default expectation via MC
+
+    SupportsUnnormalizedLogProb
+        ↑ inherits
+    SupportsLogProb           provides _unnormalized_log_prob via _log_prob
+
+    SupportsMean, SupportsVariance, SupportsCovariance — independent
+
 """
 
 from __future__ import annotations
@@ -26,18 +42,8 @@ from ..custom_types import Array, PRNGKey
 
 
 # ---------------------------------------------------------------------------
-# Sampling & expectation
+# Expectation & sampling
 # ---------------------------------------------------------------------------
-
-@runtime_checkable
-class SupportsSampling(Protocol):
-    """Distribution that can produce samples via ``_sample(key)``."""
-
-    _sampling_cost: ClassVar[str]  # "low", "medium", "high"
-    _preferred_orchestration: ClassVar[str | None]  # "task", "flow", or None
-
-    def _sample(self, key: PRNGKey) -> Any: ...
-
 
 @runtime_checkable
 class SupportsExpectation(Protocol):
@@ -47,29 +53,52 @@ class SupportsExpectation(Protocol):
                     return_dist: Any) -> Any: ...
 
 
+@runtime_checkable
+class SupportsSampling(SupportsExpectation, Protocol):
+    """Distribution that can produce samples via ``_sample(key)``.
+
+    Extends :class:`SupportsExpectation` because any distribution
+    supporting sampling also supports Monte Carlo expectations.
+    The base :class:`~probpipe.core.distribution.Distribution` class
+    provides a default ``expectation`` implementation via ``sample``.
+    """
+
+    _sampling_cost: ClassVar[str]  # "low", "medium", "high"
+    _preferred_orchestration: ClassVar[str | None]  # "task", "flow", or None
+
+    def _sample(self, key: PRNGKey) -> Any: ...
+
+
 # ---------------------------------------------------------------------------
 # Density evaluation
 # ---------------------------------------------------------------------------
 
 @runtime_checkable
-class SupportsLogProb(Protocol):
-    """Distribution with a (normalized) log-density ``_log_prob(value)``."""
-
-    def _log_prob(self, value: Any) -> Array: ...
-
-
-@runtime_checkable
-class SupportsProb(Protocol):
-    """Distribution with a density ``_prob(value)``."""
-
-    def _prob(self, value: Any) -> Array: ...
-
-
-@runtime_checkable
 class SupportsUnnormalizedLogProb(Protocol):
-    """Distribution with an unnormalized log-density."""
+    """Distribution with an unnormalized log-density.
+
+    Provides ``_unnormalized_log_prob(value)``.  The corresponding
+    ``unnormalized_prob`` is computed as ``exp(unnormalized_log_prob)``
+    by the ops layer — no separate protocol method is needed.
+    """
 
     def _unnormalized_log_prob(self, value: Any) -> Array: ...
+
+
+@runtime_checkable
+class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
+    """Distribution with a (normalized) log-density.
+
+    Extends :class:`SupportsUnnormalizedLogProb` because any distribution
+    with a normalized density also has an unnormalized one (they coincide).
+    The base :class:`~probpipe.core.distribution.Distribution` class
+    provides ``_unnormalized_log_prob`` defaulting to ``_log_prob``.
+
+    ``prob`` is computed as ``exp(log_prob)`` by the ops layer — no
+    separate protocol method is needed.
+    """
+
+    def _log_prob(self, value: Any) -> Array: ...
 
 
 # ---------------------------------------------------------------------------
@@ -123,11 +152,10 @@ class SupportsNamedComponents(Protocol):
 
 
 __all__ = [
-    "SupportsSampling",
     "SupportsExpectation",
-    "SupportsLogProb",
-    "SupportsProb",
+    "SupportsSampling",
     "SupportsUnnormalizedLogProb",
+    "SupportsLogProb",
     "SupportsMean",
     "SupportsVariance",
     "SupportsCovariance",

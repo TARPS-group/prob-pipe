@@ -34,7 +34,6 @@ from .protocols import (
     SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
-    SupportsProb,
     SupportsSampling,
     SupportsUnnormalizedLogProb,
     SupportsVariance,
@@ -79,13 +78,14 @@ def log_prob(dist: SupportsLogProb, value: Any) -> Array:
     return dist._log_prob(value)
 
 
-def prob(dist: SupportsProb, value: Any) -> Array:
-    """Evaluate the density at *value*."""
-    if not isinstance(dist, SupportsProb):
+def prob(dist: SupportsLogProb, value: Any) -> Array:
+    """Evaluate the density at *value* (computed as ``exp(log_prob)``)."""
+    if not isinstance(dist, SupportsLogProb):
         raise TypeError(
-            f"{type(dist).__name__} does not support prob"
+            f"{type(dist).__name__} does not support prob "
+            f"(missing _log_prob method)"
         )
-    return dist._prob(value)
+    return jnp.exp(dist._log_prob(value))
 
 
 def unnormalized_log_prob(
@@ -94,9 +94,22 @@ def unnormalized_log_prob(
     """Evaluate the unnormalized log-density at *value*."""
     if not isinstance(dist, SupportsUnnormalizedLogProb):
         raise TypeError(
-            f"{type(dist).__name__} does not support unnormalized_log_prob"
+            f"{type(dist).__name__} does not support unnormalized_log_prob "
+            f"(missing _unnormalized_log_prob method)"
         )
     return dist._unnormalized_log_prob(value)
+
+
+def unnormalized_prob(
+    dist: SupportsUnnormalizedLogProb, value: Any,
+) -> Array:
+    """Evaluate the unnormalized density at *value* (computed as ``exp(unnormalized_log_prob)``)."""
+    if not isinstance(dist, SupportsUnnormalizedLogProb):
+        raise TypeError(
+            f"{type(dist).__name__} does not support unnormalized_prob "
+            f"(missing _unnormalized_log_prob method)"
+        )
+    return jnp.exp(dist._unnormalized_log_prob(value))
 
 
 def mean(dist: Any) -> Any:
@@ -187,64 +200,58 @@ def condition_on(
 
 
 # ---------------------------------------------------------------------------
+# Single source of truth for op names
+# ---------------------------------------------------------------------------
+
+# All plain-function op names.  WorkflowFunction wrappers, __all__, and
+# module __getattr__ are derived from this list automatically.
+_OP_NAMES: list[str] = [
+    "sample",
+    "log_prob",
+    "prob",
+    "unnormalized_log_prob",
+    "unnormalized_prob",
+    "mean",
+    "variance",
+    "cov",
+    "expectation",
+    "condition_on",
+]
+
+# Map name → function object (populated from module globals)
+_OP_FUNCS: dict[str, Any] = {name: globals()[name] for name in _OP_NAMES}
+
+
+# ---------------------------------------------------------------------------
 # WorkflowFunction wrappers (lazy to avoid circular imports)
 # ---------------------------------------------------------------------------
 
 _wf_ops: dict | None = None
 
 
-def _make_wf_ops():
+def _make_wf_ops() -> dict:
     """Create WorkflowFunction instances wrapping the plain functions."""
     from .node import WorkflowFunction
 
     return {
-        "sample": WorkflowFunction(func=sample, name="sample"),
-        "log_prob": WorkflowFunction(func=log_prob, name="log_prob"),
-        "prob": WorkflowFunction(func=prob, name="prob"),
-        "unnormalized_log_prob": WorkflowFunction(
-            func=unnormalized_log_prob, name="unnormalized_log_prob",
-        ),
-        "mean": WorkflowFunction(func=mean, name="mean"),
-        "variance": WorkflowFunction(func=variance, name="variance"),
-        "cov": WorkflowFunction(func=cov, name="cov"),
-        "expectation": WorkflowFunction(func=expectation, name="expectation"),
-        "condition_on": WorkflowFunction(func=condition_on, name="condition_on"),
+        name: WorkflowFunction(func=func, name=name)
+        for name, func in _OP_FUNCS.items()
     }
 
 
 def __getattr__(name: str):
     """Lazy access to WorkflowFunction wrappers (``wf_*`` names)."""
     global _wf_ops
-    _wf_names = {
-        "wf_sample", "wf_log_prob", "wf_prob", "wf_unnormalized_log_prob",
-        "wf_mean", "wf_variance", "wf_cov", "wf_expectation", "wf_condition_on",
-    }
-    if name in _wf_names:
-        if _wf_ops is None:
-            _wf_ops = _make_wf_ops()
-        return _wf_ops[name.removeprefix("wf_")]
+    if name.startswith("wf_"):
+        op_name = name.removeprefix("wf_")
+        if op_name in _OP_FUNCS:
+            if _wf_ops is None:
+                _wf_ops = _make_wf_ops()
+            return _wf_ops[op_name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = [
-    # Plain functions
-    "sample",
-    "log_prob",
-    "prob",
-    "unnormalized_log_prob",
-    "mean",
-    "variance",
-    "cov",
-    "expectation",
-    "condition_on",
-    # WorkflowFunction wrappers
-    "wf_sample",
-    "wf_log_prob",
-    "wf_prob",
-    "wf_unnormalized_log_prob",
-    "wf_mean",
-    "wf_variance",
-    "wf_cov",
-    "wf_expectation",
-    "wf_condition_on",
-]
+__all__ = (
+    _OP_NAMES
+    + [f"wf_{name}" for name in _OP_NAMES]
+)

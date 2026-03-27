@@ -20,11 +20,10 @@ from probpipe import (
     JointGaussian,
 )
 from probpipe.core.protocols import (
-    SupportsSampling,
     SupportsExpectation,
-    SupportsLogProb,
-    SupportsProb,
+    SupportsSampling,
     SupportsUnnormalizedLogProb,
+    SupportsLogProb,
     SupportsMean,
     SupportsVariance,
     SupportsCovariance,
@@ -121,15 +120,27 @@ class TestSupportsLogProb:
 
 
 # ---------------------------------------------------------------------------
-# SupportsProb
+# Protocol hierarchy
 # ---------------------------------------------------------------------------
 
-class TestSupportsProb:
-    def test_normal(self, normal):
-        assert isinstance(normal, SupportsProb)
+class TestProtocolHierarchy:
+    """Verify that protocol inheritance relationships hold."""
 
-    def test_empirical(self, empirical):
-        assert isinstance(empirical, SupportsProb)
+    def test_sampling_implies_expectation(self, normal):
+        """SupportsSampling extends SupportsExpectation."""
+        assert isinstance(normal, SupportsSampling)
+        assert isinstance(normal, SupportsExpectation)
+
+    def test_log_prob_implies_unnormalized(self, normal):
+        """SupportsLogProb extends SupportsUnnormalizedLogProb."""
+        assert isinstance(normal, SupportsLogProb)
+        assert isinstance(normal, SupportsUnnormalizedLogProb)
+
+    def test_sampling_subclass_check(self):
+        assert issubclass(SupportsSampling, SupportsExpectation)
+
+    def test_log_prob_subclass_check(self):
+        assert issubclass(SupportsLogProb, SupportsUnnormalizedLogProb)
 
 
 # ---------------------------------------------------------------------------
