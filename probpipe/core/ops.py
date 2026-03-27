@@ -23,9 +23,12 @@ import functools
 import inspect
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 
+from .._utils import prod as _prod
 from ..custom_types import Array, PRNGKey
+from .distribution import _auto_key
 from .protocols import (
     SupportsConditioning,
     SupportsCovariance,
@@ -69,7 +72,17 @@ def _sample_impl(
             f"{type(dist).__name__} does not support sampling "
             f"(missing _sample method)"
         )
-    return dist.sample(key=key, sample_shape=sample_shape)
+    if key is None:
+        key = _auto_key()
+    if sample_shape == ():
+        return dist._sample(key)
+    n = _prod(sample_shape)
+    keys = jax.random.split(key, n)
+    flat_samples = jax.vmap(dist._sample)(keys)
+    return jax.tree.map(
+        lambda x: x.reshape(*sample_shape, *x.shape[1:]),
+        flat_samples,
+    )
 
 
 def _log_prob_impl(dist: SupportsLogProb, value: Any) -> Array:
