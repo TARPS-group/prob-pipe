@@ -76,6 +76,11 @@ def _sample_impl(
         key = _auto_key()
     if sample_shape == ():
         return dist._sample(key)
+    # Distributions may define a custom batched-sample method that handles
+    # sample_shape natively (e.g., function-valued distributions return a
+    # single callable that evaluates all draws at once).
+    if hasattr(dist, "_sample_batched"):
+        return dist._sample_batched(key, sample_shape)
     n = _prod(sample_shape)
     keys = jax.random.split(key, n)
     flat_samples = jax.vmap(dist._sample)(keys)
@@ -135,7 +140,10 @@ def _mean_impl(dist: SupportsExpectation) -> Any:
     otherwise falls back to Monte Carlo via :func:`_expectation_impl`.
     """
     if isinstance(dist, SupportsMean):
-        return dist._mean()
+        try:
+            return dist._mean()
+        except NotImplementedError:
+            pass  # fall through to MC
     if isinstance(dist, SupportsExpectation):
         return _expectation_impl(dist, lambda x: x, return_dist=False)
     raise TypeError(
@@ -151,7 +159,10 @@ def _variance_impl(dist: SupportsExpectation) -> Any:
     :func:`_expectation_impl`.
     """
     if isinstance(dist, SupportsVariance):
-        return dist._variance()
+        try:
+            return dist._variance()
+        except NotImplementedError:
+            pass  # fall through to MC
     if isinstance(dist, SupportsExpectation):
         mu = _mean_impl(dist)
         return _expectation_impl(
@@ -170,7 +181,10 @@ def _cov_impl(dist: SupportsExpectation) -> Array:
     :func:`_expectation_impl`.
     """
     if isinstance(dist, SupportsCovariance):
-        return dist._cov()
+        try:
+            return dist._cov()
+        except NotImplementedError:
+            pass  # fall through to MC
     if isinstance(dist, SupportsExpectation):
         mu = _mean_impl(dist)
 

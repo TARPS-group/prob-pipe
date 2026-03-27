@@ -22,6 +22,7 @@ from ..core.distribution import (
     _auto_key,
 )
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ..core.ops import mean, sample
 
 __all__ = [
     "Bernoulli",
@@ -123,7 +124,7 @@ class Bernoulli(TFPDistribution):
                 Provenance("from_distribution", parents=(other,))
             )
         num_samples = kwargs.pop("num_samples", 1024)
-        probs = other.mean()
+        probs = mean(other)
         result = cls(probs=probs, name=name or other.name)
         return result.with_source(
             Provenance("from_distribution", parents=(other,))
@@ -252,7 +253,7 @@ class Binomial(TFPDistribution):
             )
         num_samples = kwargs.pop("num_samples", 1024)
         total_count = jnp.asarray(total_count, dtype=jnp.float32)
-        probs = other.mean() / total_count
+        probs = mean(other) / total_count
         result = cls(total_count=total_count, probs=probs, name=name or other.name)
         return result.with_source(
             Provenance("from_distribution", parents=(other,))
@@ -317,7 +318,7 @@ class Poisson(TFPDistribution):
                 Provenance("from_distribution", parents=(other,))
             )
         num_samples = kwargs.pop("num_samples", 1024)
-        rate = other.mean()
+        rate = mean(other)
         result = cls(rate=rate, name=name or other.name)
         return result.with_source(
             Provenance("from_distribution", parents=(other,))
@@ -416,7 +417,7 @@ class Categorical(TFPDistribution):
                 Provenance("from_distribution", parents=(other,))
             )
         num_samples = kwargs.pop("num_samples", 1024)
-        samples = other.sample(key, sample_shape=(num_samples,))
+        samples = sample(other, key=key, sample_shape=(num_samples,))
         num_categories = int(jnp.max(samples)) + 1
         counts = jnp.zeros(num_categories)
         for i in range(num_categories):
@@ -535,8 +536,8 @@ class NegativeBinomial(TFPDistribution):
             )
         num_samples = kwargs.pop("num_samples", 1024)
         total_count = jnp.asarray(total_count, dtype=jnp.float32)
-        mean = other.mean()
-        probs = total_count / (total_count + mean)
+        m = mean(other)
+        probs = total_count / (total_count + m)
         result = cls(
             total_count=total_count, probs=probs, name=name or other.name
         )

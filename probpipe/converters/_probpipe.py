@@ -20,6 +20,7 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..custom_types import PRNGKey
+from ..core.ops import cov, mean, sample, variance
 
 # Default sample count for moment-matching conversions
 DEFAULT_NUM_SAMPLES = 1024
@@ -58,7 +59,7 @@ def _point_estimate(x):
     """Extract a plain array from a value that may be a BootstrapDistribution."""
     from ..core.distribution import BootstrapDistribution
     if isinstance(x, BootstrapDistribution):
-        return x.mean()
+        return mean(x)
     return x
 
 
@@ -74,7 +75,7 @@ def _convert_to_normal(source, key, **kw):
     if isinstance(source, Normal):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source.mean(), source.variance()
+    m_raw, v_raw = mean(source), variance(source)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     r = Normal(loc=m, scale=jnp.sqrt(v), name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source, m_raw, v_raw))
@@ -86,7 +87,7 @@ def _convert_to_beta(source, key, **kw):
     if isinstance(source, Beta):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source.mean(), source.variance()
+    m_raw, v_raw = mean(source), variance(source)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     common = m * (1.0 - m) / v - 1.0
     alpha = jnp.maximum(m * common, 0.01)
@@ -101,7 +102,7 @@ def _convert_to_gamma(source, key, **kw):
     if isinstance(source, Gamma):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source.mean(), source.variance()
+    m_raw, v_raw = mean(source), variance(source)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     r = Gamma(concentration=m ** 2 / v, rate=m / v, name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source, m_raw, v_raw))
@@ -113,7 +114,7 @@ def _convert_to_inverse_gamma(source, key, **kw):
     if isinstance(source, InverseGamma):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source.mean(), source.variance()
+    m_raw, v_raw = mean(source), variance(source)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     conc = m ** 2 / v + 2
     scale = m * (m ** 2 / v + 1)
@@ -127,7 +128,7 @@ def _convert_to_exponential(source, key, **kw):
     if isinstance(source, Exponential):
         return source
     kw.pop("num_samples", None)
-    m_raw = source.mean()
+    m_raw = mean(source)
     m = _point_estimate(m_raw)
     r = Exponential(rate=1.0 / m, name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source, m_raw))
@@ -139,7 +140,7 @@ def _convert_to_lognormal(source, key, **kw):
     if isinstance(source, LogNormal):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source.mean(), source.variance()
+    m_raw, v_raw = mean(source), variance(source)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     scale = jnp.sqrt(jnp.log(1.0 + v / (m ** 2)))
     loc = jnp.log(m) - scale ** 2 / 2.0
@@ -153,7 +154,7 @@ def _convert_to_studentt(source, key, **kw):
     if isinstance(source, StudentT):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source.mean(), source.variance()
+    m_raw, v_raw = mean(source), variance(source)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     # var = scale^2 * df/(df-2) for df>2, so scale = sqrt(var * (df-2)/df)
     df = 5.0
@@ -167,7 +168,7 @@ def _convert_to_uniform(source, key, **kw):
     if isinstance(source, Uniform):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source.mean(), source.variance()
+    m_raw, v_raw = mean(source), variance(source)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     half = jnp.sqrt(3.0 * v)
     r = Uniform(low=m - half, high=m + half, name=kw.get("name") or source.name)
@@ -180,7 +181,7 @@ def _convert_to_cauchy(source, key, **kw):
     if isinstance(source, Cauchy):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source.mean(), source.variance()
+    m_raw, v_raw = mean(source), variance(source)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     r = Cauchy(loc=m, scale=jnp.sqrt(v) / 2.0, name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source, m_raw, v_raw))
@@ -192,7 +193,7 @@ def _convert_to_laplace(source, key, **kw):
     if isinstance(source, Laplace):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source.mean(), source.variance()
+    m_raw, v_raw = mean(source), variance(source)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     r = Laplace(loc=m, scale=jnp.sqrt(v / 2.0), name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source, m_raw, v_raw))
@@ -204,7 +205,7 @@ def _convert_to_halfnormal(source, key, **kw):
     if isinstance(source, HalfNormal):
         return source
     kw.pop("num_samples", None)
-    v_raw = source.variance()
+    v_raw = variance(source)
     v = _point_estimate(v_raw)
     # var = scale^2 * (1 - 2/pi), so scale = sqrt(var / (1 - 2/pi))
     r = HalfNormal(scale=jnp.sqrt(v / (1.0 - 2.0 / jnp.pi)), name=kw.get("name") or source.name)
@@ -219,7 +220,7 @@ def _convert_to_halfcauchy(source, key, **kw):
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
     if key is None:
         key = _auto_key()
-    samples = source.sample(key, sample_shape=(num_samples,))
+    samples = sample(source, key=key, sample_shape=(num_samples,))
     med = jnp.median(samples)
     r = HalfCauchy(loc=0.0, scale=jnp.maximum(med, 0.01), name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source))
@@ -233,7 +234,7 @@ def _convert_to_pareto(source, key, **kw):
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
     if key is None:
         key = _auto_key()
-    samples = source.sample(key, sample_shape=(num_samples,))
+    samples = sample(source, key=key, sample_shape=(num_samples,))
     n = samples.shape[0]
     scale = jnp.maximum(jnp.min(samples), 1e-6)
     conc = jnp.maximum(n / jnp.sum(jnp.log(samples / scale)), 0.01)
@@ -249,9 +250,9 @@ def _convert_to_truncatednormal(source, key, **kw):
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
     if key is None:
         key = _auto_key()
-    m_raw, v_raw = source.mean(), source.variance()
+    m_raw, v_raw = mean(source), variance(source)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
-    samples = source.sample(key, sample_shape=(num_samples,))
+    samples = sample(source, key=key, sample_shape=(num_samples,))
     r = TruncatedNormal(
         loc=m, scale=jnp.sqrt(v),
         low=jnp.min(samples), high=jnp.max(samples),
@@ -268,7 +269,7 @@ def _convert_to_bernoulli(source, key, **kw):
     if isinstance(source, Bernoulli):
         return source
     kw.pop("num_samples", None)
-    r = Bernoulli(probs=source.mean(), name=kw.get("name") or source.name)
+    r = Bernoulli(probs=mean(source), name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source))
     return r
 
@@ -281,7 +282,7 @@ def _convert_to_binomial(source, key, **kw):
     if total_count is None:
         raise ValueError("total_count is required when converting to Binomial from a non-Binomial source.")
     kw.pop("num_samples", None)
-    probs = source.mean() / total_count
+    probs = mean(source) / total_count
     r = Binomial(total_count=total_count, probs=probs, name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source))
     return r
@@ -292,7 +293,7 @@ def _convert_to_poisson(source, key, **kw):
     if isinstance(source, Poisson):
         return source
     kw.pop("num_samples", None)
-    r = Poisson(rate=source.mean(), name=kw.get("name") or source.name)
+    r = Poisson(rate=mean(source), name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source))
     return r
 
@@ -302,7 +303,7 @@ def _convert_to_categorical(source, key, **kw):
     if isinstance(source, Categorical):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    samples = source.sample(key, sample_shape=(num_samples,))
+    samples = sample(source, key=key, sample_shape=(num_samples,))
     n_cat = int(jnp.max(samples)) + 1
     counts = jnp.array([(samples == k).sum() for k in range(n_cat)])
     probs = counts / counts.sum()
@@ -319,7 +320,7 @@ def _convert_to_negativebinomial(source, key, **kw):
     if total_count is None:
         raise ValueError("total_count is required when converting to NegativeBinomial from a non-NegativeBinomial source.")
     kw.pop("num_samples", None)
-    m = source.mean()
+    m = mean(source)
     probs = total_count / (total_count + m)
     r = NegativeBinomial(total_count=total_count, probs=probs, name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source))
@@ -335,26 +336,26 @@ def _convert_to_multivariatenormal(source, key, **kw):
     if isinstance(source, MultivariateNormal):
         return source
     if isinstance(source, EmpiricalDistribution):
-        loc = source.mean()
-        cov = source.cov()
-        r = MultivariateNormal(loc=loc, cov=cov, name=name)
+        loc = mean(source)
+        cov_mat = cov(source)
+        r = MultivariateNormal(loc=loc, cov=cov_mat, name=name)
         r.with_source(_mm_provenance(source))
         return r
     # General case: use mean() and cov() directly
-    m_raw = source.mean()
+    m_raw = mean(source)
     loc = _point_estimate(m_raw)
     try:
-        cov = source.cov()
+        cov_mat = cov(source)
     except (NotImplementedError, AttributeError):
         # Fallback to sample-based covariance
         if key is None:
             key = _auto_key()
-        samples = source.sample(key, sample_shape=(num_samples,))
+        samples = sample(source, key=key, sample_shape=(num_samples,))
         diff = samples - loc
-        cov = jnp.einsum("ni,nj->ij", diff, diff) / num_samples
-    cov = 0.5 * (cov + cov.T)
-    cov = cov + 1e-6 * jnp.eye(cov.shape[0])
-    r = MultivariateNormal(loc=loc, cov=cov, name=name)
+        cov_mat = jnp.einsum("ni,nj->ij", diff, diff) / num_samples
+    cov_mat = 0.5 * (cov_mat + cov_mat.T)
+    cov_mat = cov_mat + 1e-6 * jnp.eye(cov_mat.shape[0])
+    r = MultivariateNormal(loc=loc, cov=cov_mat, name=name)
     r.with_source(_mm_provenance(source, m_raw))
     return r
 
@@ -364,7 +365,7 @@ def _convert_to_dirichlet(source, key, **kw):
     if isinstance(source, Dirichlet):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source.mean(), source.variance()
+    m_raw, v_raw = mean(source), variance(source)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     conc0 = m[0] * (1.0 - m[0]) / (v[0] + 1e-8) - 1.0
     conc0 = jnp.maximum(conc0, 0.01)
@@ -382,7 +383,7 @@ def _convert_to_multinomial(source, key, **kw):
     if total_count is None:
         raise ValueError("total_count is required when converting to Multinomial from a non-Multinomial source.")
     kw.pop("num_samples", None)
-    m_raw = source.mean()
+    m_raw = mean(source)
     m = _point_estimate(m_raw)
     probs = m / total_count
     probs = probs / probs.sum()
@@ -396,7 +397,7 @@ def _convert_to_wishart(source, key, **kw):
     if isinstance(source, Wishart):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    samples = source.sample(key, sample_shape=(num_samples,))
+    samples = sample(source, key=key, sample_shape=(num_samples,))
     mean_mat = jnp.mean(samples, axis=0)
     d = mean_mat.shape[-1]
     df = d + 2.0
@@ -413,7 +414,7 @@ def _convert_to_vonmisesfisher(source, key, **kw):
     if isinstance(source, VonMisesFisher):
         return source
     kw.pop("num_samples", None)
-    m_raw = source.mean()
+    m_raw = mean(source)
     mean_vec = _point_estimate(m_raw)
     R = jnp.linalg.norm(mean_vec)
     mean_dir = mean_vec / jnp.maximum(R, 1e-8)
@@ -432,7 +433,7 @@ def _convert_to_empirical(source, key, **kw):
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
     if key is None:
         key = _auto_key()
-    samples = source.sample(key, sample_shape=(num_samples,))
+    samples = sample(source, key=key, sample_shape=(num_samples,))
     r = EmpiricalDistribution(samples, name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source))
     return r

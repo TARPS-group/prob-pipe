@@ -14,6 +14,7 @@ from probpipe import (
 )
 from probpipe.core.distribution import PyTreeArrayDistribution
 from probpipe.core.node import WorkflowFunction
+from probpipe import condition_on, log_prob, mean, sample, variance
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +99,7 @@ class TestSampling:
             x=1, y=1,
         )
         key = jax.random.PRNGKey(0)
-        s = jg.sample(key)
+        s = sample(jg, key=key)
         assert isinstance(s, dict)
         assert set(s.keys()) == {"x", "y"}
         assert s["x"].shape == (1,)
@@ -111,7 +112,7 @@ class TestSampling:
             x=1, y=1,
         )
         key = jax.random.PRNGKey(1)
-        s = jg.sample(key, (10,))
+        s = sample(jg, key=key, sample_shape=(10,))
         assert isinstance(s, dict)
         assert s["x"].shape == (10, 1)
         assert s["y"].shape == (10, 1)
@@ -120,7 +121,7 @@ class TestSampling:
         m = jnp.array([3.0, -1.0])
         jg = JointGaussian(mean=m, cov=0.01 * jnp.eye(2), x=1, y=1)
         key = jax.random.PRNGKey(3)
-        s = jg.sample(key, (1000,))
+        s = sample(jg, key=key, sample_shape=(1000,))
         # Flatten the dict to check mean
         flat = jg.flatten_value(s)
         np.testing.assert_allclose(jnp.mean(flat, axis=0), m, atol=0.1)
@@ -130,7 +131,7 @@ class TestSampling:
         cov = jnp.array([[1.0, 0.9], [0.9, 1.0]])
         jg = JointGaussian(mean=jnp.zeros(2), cov=cov, x=1, y=1)
         key = jax.random.PRNGKey(4)
-        s = jg.sample(key, (2000,))
+        s = sample(jg, key=key, sample_shape=(2000,))
         flat = jg.flatten_value(s)
         empirical_corr = jnp.corrcoef(flat.T)[0, 1]
         assert float(empirical_corr) > 0.7
@@ -149,8 +150,8 @@ class TestLogProb:
             x=1, y=1,
         )
         key = jax.random.PRNGKey(10)
-        s = jg.sample(key, (5,))
-        lps = jg.log_prob(s)
+        s = sample(jg, key=key, sample_shape=(5,))
+        lps = log_prob(jg, s)
         assert lps.shape == (5,)
 
     def test_log_prob_matches_mvn(self):
@@ -163,11 +164,11 @@ class TestLogProb:
         mvn = MultivariateNormal(loc=m, cov=c)
 
         key = jax.random.PRNGKey(11)
-        s = jg.sample(key, (10,))
-        lp_jg = jg.log_prob(s)
+        s = sample(jg, key=key, sample_shape=(10,))
+        lp_jg = log_prob(jg, s)
         # MVN expects flat arrays
         flat = jg.flatten_value(s)
-        lp_mvn = mvn.log_prob(flat)
+        lp_mvn = log_prob(mvn, flat)
         np.testing.assert_allclose(lp_jg, lp_mvn, atol=1e-4)
 
 
@@ -180,7 +181,7 @@ class TestMoments:
     def test_mean(self):
         m = jnp.array([1.0, 2.0, 3.0])
         jg = JointGaussian(mean=m, cov=jnp.eye(3), a=1, b=2)
-        mean_dict = jg.mean()
+        mean_dict = mean(jg)
         assert isinstance(mean_dict, dict)
         np.testing.assert_allclose(mean_dict["a"], jnp.array([1.0]), atol=1e-6)
         np.testing.assert_allclose(mean_dict["b"], jnp.array([2.0, 3.0]), atol=1e-6)
@@ -188,7 +189,7 @@ class TestMoments:
     def test_variance(self):
         c = jnp.array([[2.0, 0.5], [0.5, 3.0]])
         jg = JointGaussian(mean=jnp.zeros(2), cov=c, x=1, y=1)
-        var_dict = jg.variance()
+        var_dict = variance(jg)
         assert isinstance(var_dict, dict)
         np.testing.assert_allclose(var_dict["x"], jnp.array([2.0]), atol=1e-6)
         np.testing.assert_allclose(var_dict["y"], jnp.array([3.0]), atol=1e-6)
@@ -216,10 +217,10 @@ class TestViews:
             x=1, yz=2,
         )
         np.testing.assert_allclose(
-            jg.components["x"].mean(), jnp.array([5.0]), atol=1e-6
+            mean(jg.components["x"]), jnp.array([5.0]), atol=1e-6
         )
         np.testing.assert_allclose(
-            jg.components["yz"].mean(), jnp.array([10.0, 15.0]), atol=1e-6
+            mean(jg.components["yz"]), jnp.array([10.0, 15.0]), atol=1e-6
         )
 
     def test_marginal_cov_correct(self):
@@ -249,7 +250,7 @@ class TestConditionOn:
         """Condition x=1 → should get a JointGaussian with only y."""
         cov = jnp.array([[1.0, 0.5], [0.5, 1.0]])
         jg = JointGaussian(mean=jnp.zeros(2), cov=cov, x=1, y=1)
-        cond = jg.condition_on(x=jnp.array([1.0]))
+        cond = condition_on(jg, x=jnp.array([1.0]))
         assert isinstance(cond, JointGaussian)
         assert cond.component_names == ("y",)
         assert cond.event_shapes == {"y": (1,)}
@@ -264,8 +265,8 @@ class TestConditionOn:
         # Condition on x=2.0
         # mu_y|x = mu_y + Sigma_yx @ Sigma_xx^{-1} @ (x - mu_x)
         # = 0 + 0.8 * 1.0 * (2 - 0) = 1.6
-        cond = jg.condition_on(x=jnp.array([2.0]))
-        cond_mean = cond.mean()
+        cond = condition_on(jg, x=jnp.array([2.0]))
+        cond_mean = mean(cond)
         np.testing.assert_allclose(float(cond_mean["y"][0]), 1.6, atol=1e-5)
 
     def test_conditional_variance(self):
@@ -275,8 +276,8 @@ class TestConditionOn:
 
         # Var_y|x = Sigma_yy - Sigma_yx @ Sigma_xx^{-1} @ Sigma_xy
         # = 1.0 - 0.8 * 1.0 * 0.8 = 0.36
-        cond = jg.condition_on(x=jnp.array([0.0]))
-        cond_var = cond.variance()
+        cond = condition_on(jg, x=jnp.array([0.0]))
+        cond_var = variance(cond)
         np.testing.assert_allclose(float(cond_var["y"][0]), 0.36, atol=1e-5)
 
     def test_conditioning_reduces_dimensions(self):
@@ -285,7 +286,7 @@ class TestConditionOn:
             cov=jnp.eye(4),
             a=1, b=1, c=2,
         )
-        cond = jg.condition_on(a=jnp.array([0.0]))
+        cond = condition_on(jg, a=jnp.array([0.0]))
         assert cond.event_shapes == {"b": (1,), "c": (2,)}
         assert cond.event_size == 3
         assert cond.component_names == ("b", "c")
@@ -296,7 +297,7 @@ class TestConditionOn:
             cov=jnp.eye(4),
             a=1, b=1, c=2,
         )
-        cond = jg.condition_on(a=jnp.array([0.0]), c=jnp.array([2.0, 3.0]))
+        cond = condition_on(jg, a=jnp.array([0.0]), c=jnp.array([2.0, 3.0]))
         assert cond.event_shapes == {"b": (1,)}
         assert cond.event_size == 1
         assert cond.component_names == ("b",)
@@ -304,16 +305,16 @@ class TestConditionOn:
     def test_raises_on_unknown_component(self):
         jg = JointGaussian(mean=jnp.zeros(2), cov=jnp.eye(2), x=1, y=1)
         with pytest.raises(KeyError, match="not found"):
-            jg.condition_on(z=jnp.array([0.0]))
+            condition_on(jg, z=jnp.array([0.0]))
 
     def test_raises_on_conditioning_all(self):
         jg = JointGaussian(mean=jnp.zeros(2), cov=jnp.eye(2), x=1, y=1)
         with pytest.raises(ValueError, match="Cannot condition on all"):
-            jg.condition_on(x=jnp.array([0.0]), y=jnp.array([0.0]))
+            condition_on(jg, x=jnp.array([0.0]), y=jnp.array([0.0]))
 
     def test_provenance(self):
         jg = JointGaussian(mean=jnp.zeros(2), cov=jnp.eye(2), x=1, y=1)
-        cond = jg.condition_on(x=jnp.array([0.0]))
+        cond = condition_on(jg, x=jnp.array([0.0]))
         assert cond.source is not None
         assert cond.source.operation == "condition_on"
         assert "x" in cond.source.metadata["conditioned"]
@@ -322,10 +323,10 @@ class TestConditionOn:
         """Draw samples from conditional and verify they're centered correctly."""
         cov = jnp.array([[1.0, 0.9], [0.9, 1.0]])
         jg = JointGaussian(mean=jnp.zeros(2), cov=cov, x=1, y=1)
-        cond = jg.condition_on(x=jnp.array([3.0]))
+        cond = condition_on(jg, x=jnp.array([3.0]))
         # mu_y|x=3 = 0 + 0.9 * 1 * 3 = 2.7
         key = jax.random.PRNGKey(20)
-        s = cond.sample(key, (1000,))
+        s = sample(cond, key=key, sample_shape=(1000,))
         assert isinstance(s, dict)
         np.testing.assert_allclose(float(jnp.mean(s["y"])), 2.7, atol=0.2)
 
@@ -333,7 +334,7 @@ class TestConditionOn:
         """Passing a dict value for a leaf component should raise TypeError."""
         jg = JointGaussian(mean=jnp.zeros(2), cov=jnp.eye(2), x=1, y=1)
         with pytest.raises(TypeError, match="component distribution"):
-            jg.condition_on(x={"sub": jnp.array([0.0])})
+            condition_on(jg, x={"sub": jnp.array([0.0])})
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +350,7 @@ class TestFlattenUnflatten:
             a=1, bc=2,
         )
         key = jax.random.PRNGKey(30)
-        s = jg.sample(key, (5,))
+        s = sample(jg, key=key, sample_shape=(5,))
         flat = jg.flatten_value(s)
         assert flat.shape == (5, 3)
         unflat = jg.unflatten_value(flat)

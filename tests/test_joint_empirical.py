@@ -13,6 +13,7 @@ from probpipe import (
 )
 from probpipe.core.distribution import PyTreeArrayDistribution
 from probpipe.core.node import WorkflowFunction
+from probpipe import condition_on, log_prob, mean, sample, variance
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +113,7 @@ class TestSampling:
             y=jnp.array([4.0, 5.0, 6.0]),
         )
         key = jax.random.PRNGKey(0)
-        s = je.sample(key)
+        s = sample(je, key=key)
         assert isinstance(s, dict)
         assert set(s.keys()) == {"x", "y"}
         assert s["x"].shape == ()
@@ -124,7 +125,7 @@ class TestSampling:
             y=jnp.array([4.0, 5.0, 6.0]),
         )
         key = jax.random.PRNGKey(1)
-        s = je.sample(key, (10,))
+        s = sample(je, key=key, sample_shape=(10,))
         assert isinstance(s, dict)
         assert s["x"].shape == (10,)
         assert s["y"].shape == (10,)
@@ -136,7 +137,7 @@ class TestSampling:
         je = JointEmpirical(x=x, y=y)
 
         key = jax.random.PRNGKey(3)
-        s = je.sample(key, (100,))
+        s = sample(je, key=key, sample_shape=(100,))
 
         # For each sample, y should be 10 * x
         np.testing.assert_allclose(s["y"], 10.0 * s["x"], atol=1e-5)
@@ -147,7 +148,7 @@ class TestSampling:
             b=jnp.array([10.0, 20.0, 30.0]),
         )
         key = jax.random.PRNGKey(4)
-        s = je.sample(key, (5,))
+        s = sample(je, key=key, sample_shape=(5,))
         assert s["a"].shape == (5, 2)
         assert s["b"].shape == (5,)
 
@@ -158,7 +159,7 @@ class TestSampling:
             weights=jnp.array([0.01, 0.99]),
         )
         key = jax.random.PRNGKey(5)
-        s = je.sample(key, (200,))
+        s = sample(je, key=key, sample_shape=(200,))
         # Most samples should be close to 100
         assert float(jnp.mean(s["x"])) > 90.0
 
@@ -183,7 +184,7 @@ class TestViews:
             y=jnp.array([3.0, 4.0]),
         )
         key = jax.random.PRNGKey(10)
-        s = je["x"].sample(key, (5,))
+        s = sample(je["x"], key=key, sample_shape=(5,))
         assert s.shape == (5,)
 
     def test_marginal_is_empirical(self):
@@ -207,7 +208,7 @@ class TestMoments:
             x=jnp.array([1.0, 3.0]),
             y=jnp.array([10.0, 20.0]),
         )
-        m = je.mean()
+        m = mean(je)
         assert isinstance(m, dict)
         np.testing.assert_allclose(m["x"], 2.0, atol=1e-5)
         np.testing.assert_allclose(m["y"], 15.0, atol=1e-5)
@@ -217,7 +218,7 @@ class TestMoments:
             x=jnp.array([0.0, 10.0]),
             weights=jnp.array([0.25, 0.75]),
         )
-        m = je.mean()
+        m = mean(je)
         assert isinstance(m, dict)
         np.testing.assert_allclose(m["x"], 7.5, atol=1e-5)
 
@@ -225,7 +226,7 @@ class TestMoments:
         je = JointEmpirical(
             x=jnp.array([0.0, 2.0]),
         )
-        v = je.variance()
+        v = variance(je)
         assert isinstance(v, dict)
         np.testing.assert_allclose(v["x"], 1.0, atol=1e-5)
 
@@ -235,8 +236,8 @@ class TestMoments:
             y=jnp.array([4.0, 5.0, 6.0]),
         )
         key = jax.random.PRNGKey(20)
-        s = je.sample(key)
-        lp = je.log_prob(s)
+        s = sample(je, key=key)
+        lp = log_prob(je, s)
         assert jnp.isfinite(lp)
 
 
@@ -252,7 +253,7 @@ class TestFlattenUnflatten:
             b=jnp.array([10.0, 20.0, 30.0]),
         )
         key = jax.random.PRNGKey(30)
-        s = je.sample(key, (5,))
+        s = sample(je, key=key, sample_shape=(5,))
         flat = je.flatten_value(s)
         assert flat.shape == (5, 3)  # 2 + 1 = 3
         unflat = je.unflatten_value(flat)
@@ -272,7 +273,7 @@ class TestConditionOn:
             x=jnp.array([1.0, 2.0, 3.0]),
             y=jnp.array([4.0, 5.0, 6.0]),
         )
-        cond = je.condition_on(x=jnp.array(1.0))
+        cond = condition_on(je, x=jnp.array(1.0))
         assert cond.component_names == ("y",)
         assert isinstance(cond, JointEmpirical)
 
@@ -282,8 +283,8 @@ class TestConditionOn:
             x=jnp.array([1.0, 2.0, 3.0]),
             y=jnp.array([4.0, 5.0, 6.0]),
         )
-        cond = je.condition_on(x=jnp.array(1.0))
-        s = cond.sample(jax.random.PRNGKey(0), (5,))
+        cond = condition_on(je, x=jnp.array(1.0))
+        s = sample(cond, key=jax.random.PRNGKey(0), sample_shape=(5,))
         assert set(s.keys()) == {"y"}
         assert s["y"].shape == (5,)
 
@@ -293,8 +294,8 @@ class TestConditionOn:
         y = jnp.array([100.0, 200.0, 300.0])  # y = 10 * x
         z = jnp.array([1.0, 2.0, 3.0])        # z = x / 10
         je = JointEmpirical(x=x, y=y, z=z)
-        cond = je.condition_on(x=jnp.array(0.0))  # remove x
-        s = cond.sample(jax.random.PRNGKey(1), (100,))
+        cond = condition_on(je, x=jnp.array(0.0))  # remove x
+        s = sample(cond, key=jax.random.PRNGKey(1), sample_shape=(100,))
         # y and z still come from the same row, so y = 100 * z
         np.testing.assert_allclose(s["y"], 100.0 * s["z"], atol=1e-5)
 
@@ -305,7 +306,7 @@ class TestConditionOn:
             y=jnp.array([4.0, 5.0, 6.0]),
             log_weights=jnp.array([0.0, 1.0, 2.0]),
         )
-        cond = je.condition_on(x=jnp.array(1.0))
+        cond = condition_on(je, x=jnp.array(1.0))
         assert not cond.is_uniform
         assert cond.n == 3
 
@@ -315,7 +316,7 @@ class TestConditionOn:
             x=jnp.array([1.0, 2.0, 3.0]),
             y=jnp.array([4.0, 5.0, 6.0]),
         )
-        cond = je.condition_on(x=jnp.array(1.0))
+        cond = condition_on(je, x=jnp.array(1.0))
         assert cond.is_uniform
 
     def test_condition_on_provenance(self):
@@ -323,7 +324,7 @@ class TestConditionOn:
             x=jnp.array([1.0, 2.0]),
             y=jnp.array([3.0, 4.0]),
         )
-        cond = je.condition_on(x=jnp.array(1.0))
+        cond = condition_on(je, x=jnp.array(1.0))
         assert cond.source is not None
         assert cond.source.operation == "condition_on"
         assert "x" in cond.source.metadata["conditioned"]
@@ -334,7 +335,7 @@ class TestConditionOn:
             y=jnp.array([3.0, 4.0]),
         )
         with pytest.raises(KeyError, match="not found"):
-            je.condition_on(z=jnp.array(1.0))
+            condition_on(je, z=jnp.array(1.0))
 
     def test_condition_on_all_raises(self):
         je = JointEmpirical(
@@ -342,7 +343,7 @@ class TestConditionOn:
             y=jnp.array([3.0, 4.0]),
         )
         with pytest.raises(ValueError, match="Cannot condition on all"):
-            je.condition_on(x=jnp.array(1.0), y=jnp.array(2.0))
+            condition_on(je, x=jnp.array(1.0), y=jnp.array(2.0))
 
     def test_condition_on_dict_for_leaf_raises(self):
         """Passing a dict value for a leaf component should raise TypeError."""
@@ -351,7 +352,7 @@ class TestConditionOn:
             y=jnp.array([3.0, 4.0]),
         )
         with pytest.raises(TypeError, match="component distribution"):
-            je.condition_on(x={"sub": jnp.array(1.0)})
+            condition_on(je, x={"sub": jnp.array(1.0)})
 
 
 # ---------------------------------------------------------------------------

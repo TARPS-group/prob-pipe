@@ -307,17 +307,17 @@ class DistributionView(ArrayDistribution):
         return _walk_pytree(structured, self._key_path)
 
     def _log_prob(self, x: ArrayLike) -> Array:
-        return self._component.log_prob(x)
+        return self._component._log_prob(x)
 
     def _mean(self) -> Array:
-        return self._component.mean()
+        return self._component._mean()
 
     def mean(self, **kwargs) -> Array:
         """Public API — delegates to ``_mean``."""
         return self._mean()
 
     def _variance(self) -> Array:
-        return self._component.variance()
+        return self._component._variance()
 
     def variance(self, **kwargs) -> Array:
         """Public API — delegates to ``_variance``."""
@@ -386,7 +386,7 @@ class ConditionedComponent(ArrayDistribution):
 
     def _log_prob(self, x: ArrayLike) -> Array:
         # Log-prob is constant: the base distribution evaluated at the pinned value
-        return self._base.log_prob(self._value)
+        return self._base._log_prob(self._value)
 
     def _mean(self) -> Array:
         return self._value
@@ -718,7 +718,7 @@ class JointDistribution(PyTreeArrayDistribution):
             each leaf is an array.
         """
         return jax.tree.map(
-            lambda dist, val: dist.log_prob(jnp.asarray(val)),
+            lambda dist, val: dist._log_prob(jnp.asarray(val)),
             self._components,
             value,
         )
@@ -1147,7 +1147,7 @@ class ProductDistribution(JointDistribution):
             log-probs.
         """
         lp_tree = jax.tree.map(
-            lambda dist, val: dist.log_prob(jnp.asarray(val)),
+            lambda dist, val: dist._log_prob(jnp.asarray(val)),
             self._components,
             value,
         )
@@ -1162,7 +1162,7 @@ class ProductDistribution(JointDistribution):
 
         Returns a pytree with the same structure as the components.
         """
-        return jax.tree.map(lambda d: d.mean(), self._components)
+        return jax.tree.map(lambda d: d._mean(), self._components)
 
     def mean(self, **kwargs):
         """Public API — delegates to ``_mean``."""
@@ -1173,7 +1173,7 @@ class ProductDistribution(JointDistribution):
 
         Returns a pytree with the same structure as the components.
         """
-        return jax.tree.map(lambda d: d.variance(), self._components)
+        return jax.tree.map(lambda d: d._variance(), self._components)
 
     def variance(self, **kwargs):
         """Public API — delegates to ``_variance``."""
@@ -1441,12 +1441,12 @@ class SequentialJointDistribution(JointDistribution):
                 continue
             val = structured[cname]
             if isinstance(comp, ArrayDistribution):
-                lp = comp.log_prob(val)
+                lp = comp._log_prob(val)
             else:
                 sig = inspect.signature(comp)
                 call_kw = {p: structured[p] for p in sig.parameters if p in structured}
                 cond_dist = comp(**call_kw)
-                lp = cond_dist.log_prob(val)
+                lp = cond_dist._log_prob(val)
             total = lp if total is None else total + lp
 
         return total
@@ -1495,7 +1495,7 @@ class SequentialJointDistribution(JointDistribution):
         samples.  This returns the prototype (prior-evaluated) means
         as an approximation.
         """
-        return {k: v.mean() for k, v in self._proto_components.items()}
+        return {k: v._mean() for k, v in self._proto_components.items()}
 
     def mean(self, **kwargs) -> dict[str, Array]:
         """Public API — delegates to ``_mean``."""
@@ -1503,7 +1503,7 @@ class SequentialJointDistribution(JointDistribution):
 
     def _variance(self, **kwargs) -> dict[str, Array]:
         """Per-component variances (approximate — uses prototype components)."""
-        return {k: v.variance() for k, v in self._proto_components.items()}
+        return {k: v._variance() for k, v in self._proto_components.items()}
 
     def variance(self, **kwargs) -> dict[str, Array]:
         """Public API — delegates to ``_variance``."""
@@ -1978,7 +1978,7 @@ class JointGaussian(JointDistribution):
         from .multivariate import MultivariateNormal as MVN
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
         flat = self.flatten_value(value)
-        return full_mvn.log_prob(flat)
+        return full_mvn._log_prob(flat)
 
     def _mean(self, **kwargs) -> dict[str, Array]:
         result = {}

@@ -16,6 +16,7 @@ from probpipe import (
 )
 from probpipe.core.distribution import PyTreeArrayDistribution
 from probpipe.core.node import WorkflowFunction
+from probpipe import condition_on, log_prob, sample, unnormalized_log_prob
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +100,7 @@ class TestSampling:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         key = jax.random.PRNGKey(0)
-        s = joint.sample(key)
+        s = sample(joint, key=key)
         assert isinstance(s, dict)
         assert set(s.keys()) == {"z", "x"}
         assert s["z"].shape == ()
@@ -111,7 +112,7 @@ class TestSampling:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         key = jax.random.PRNGKey(1)
-        s = joint.sample(key, (10,))
+        s = sample(joint, key=key, sample_shape=(10,))
         assert isinstance(s, dict)
         assert s["z"].shape == (10,)
         assert s["x"].shape == (10,)
@@ -123,7 +124,7 @@ class TestSampling:
             x=lambda z: Normal(loc=z, scale=0.01),  # x ≈ z
         )
         key = jax.random.PRNGKey(3)
-        s = joint.sample(key, (500,))
+        s = sample(joint, key=key, sample_shape=(500,))
         # x should be very close to z
         np.testing.assert_allclose(s["x"], s["z"], atol=0.1)
 
@@ -133,7 +134,7 @@ class TestSampling:
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
         )
-        s = joint.sample(sample_shape=(5,))
+        s = sample(joint, sample_shape=(5,))
         assert isinstance(s, dict)
         assert s["z"].shape == (5,)
         assert s["x"].shape == (5,)
@@ -151,8 +152,8 @@ class TestLogProb:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         key = jax.random.PRNGKey(10)
-        samples = joint.sample(key, (5,))
-        lps = joint.log_prob(samples)
+        samples = sample(joint, key=key, sample_shape=(5,))
+        lps = log_prob(joint, samples)
         assert lps.shape == (5,)
 
     def test_log_prob_finite(self):
@@ -161,8 +162,8 @@ class TestLogProb:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         key = jax.random.PRNGKey(11)
-        samples = joint.sample(key, (10,))
-        lps = joint.log_prob(samples)
+        samples = sample(joint, key=key, sample_shape=(10,))
+        lps = log_prob(joint, samples)
         assert jnp.all(jnp.isfinite(lps))
 
     def test_log_prob_manual(self):
@@ -174,7 +175,7 @@ class TestLogProb:
         z_val = jnp.array(1.0)
         x_val = jnp.array(1.5)
         value = {"z": z_val, "x": x_val}
-        lp = joint.log_prob(value)
+        lp = log_prob(joint, value)
 
         lp_z = Normal(loc=0.0, scale=1.0).log_prob(z_val)
         lp_x_given_z = Normal(loc=z_val, scale=0.5).log_prob(x_val)
@@ -189,7 +190,7 @@ class TestLogProb:
         )
         z_val, x_val, y_val = 0.5, 0.8, 1.2
         value = {"z": jnp.array(z_val), "x": jnp.array(x_val), "y": jnp.array(y_val)}
-        lp = joint.log_prob(value)
+        lp = log_prob(joint, value)
 
         expected = (
             float(Normal(loc=0.0, scale=1.0).log_prob(z_val))
@@ -228,7 +229,7 @@ class TestDistributionView:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         key = jax.random.PRNGKey(20)
-        s = joint["z"].sample(key, (5,))
+        s = sample(joint["z"], key=key, sample_shape=(5,))
         assert s.shape == (5,)
 
 
@@ -243,7 +244,7 @@ class TestConditionOn:
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
         )
-        cond = joint.condition_on(z=jnp.array(2.0))
+        cond = condition_on(joint, z=jnp.array(2.0))
         assert "z" not in cond.components
         assert "x" in cond.components
         assert cond.component_names == ("x",)
@@ -255,9 +256,9 @@ class TestConditionOn:
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
         )
-        cond = joint.condition_on(z=jnp.array(3.0))
+        cond = condition_on(joint, z=jnp.array(3.0))
         key = jax.random.PRNGKey(30)
-        s = cond.sample(key, (50,))
+        s = sample(cond, key=key, sample_shape=(50,))
         # z should not be in s (it's conditioned)
         assert "z" not in s
         # x should be centered around 3.0 (since x = N(z=3, 0.5))
@@ -269,9 +270,9 @@ class TestConditionOn:
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.01),  # x ≈ z
         )
-        cond = joint.condition_on(z=jnp.array(5.0))
+        cond = condition_on(joint, z=jnp.array(5.0))
         key = jax.random.PRNGKey(31)
-        s = cond.sample(key, (100,))
+        s = sample(cond, key=key, sample_shape=(100,))
         assert "z" not in s
         # x should be very close to 5.0
         np.testing.assert_allclose(s["x"], jnp.full((100,), 5.0), atol=0.1)
@@ -281,7 +282,7 @@ class TestConditionOn:
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
         )
-        cond = joint.condition_on(z=jnp.array(0.0))
+        cond = condition_on(joint, z=jnp.array(0.0))
         assert cond.source is not None
         assert cond.source.operation == "condition_on"
 
@@ -291,7 +292,7 @@ class TestConditionOn:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         with pytest.raises(KeyError, match="not found"):
-            joint.condition_on(nonexistent=jnp.array(0.0))
+            condition_on(joint, nonexistent=jnp.array(0.0))
 
     def test_condition_on_non_root_removes_component(self):
         """Conditioning on a non-root removes it from components."""
@@ -299,7 +300,7 @@ class TestConditionOn:
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
         )
-        cond = joint.condition_on(x=jnp.array(1.0))
+        cond = condition_on(joint, x=jnp.array(1.0))
         assert "x" not in cond.components
         assert "z" in cond.components
         assert cond.component_names == ("z",)
@@ -310,9 +311,9 @@ class TestConditionOn:
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
         )
-        cond = joint.condition_on(x=jnp.array(1.0))
+        cond = condition_on(joint, x=jnp.array(1.0))
         with pytest.raises(NotImplementedError, match="unconditioned parent"):
-            cond.sample(sample_shape=(5,))
+            sample(cond, sample_shape=(5,))
 
     def test_condition_on_non_root_with_all_parents_conditioned_is_sampleable(self):
         """If all parents of a conditioned non-root are also conditioned, sampling works."""
@@ -322,9 +323,9 @@ class TestConditionOn:
             y=lambda z, x: Normal(loc=z + x, scale=0.1),
         )
         # Condition on z (root) and x (non-root, parent=z which is conditioned)
-        cond = joint.condition_on(z=jnp.array(1.0), x=jnp.array(2.0))
+        cond = condition_on(joint, z=jnp.array(1.0), x=jnp.array(2.0))
         key = jax.random.PRNGKey(40)
-        s = cond.sample(key, (50,))
+        s = sample(cond, key=key, sample_shape=(50,))
         # z and x should not be in s
         assert "z" not in s
         assert "x" not in s
@@ -338,9 +339,9 @@ class TestConditionOn:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         # Condition on root z — x's conditional p(x|z=2) is normalized
-        cond = joint.condition_on(z=jnp.array(2.0))
+        cond = condition_on(joint, z=jnp.array(2.0))
         value = {"x": jnp.array(1.5)}
-        lp = cond.log_prob(value)
+        lp = log_prob(cond, value)
         assert jnp.isfinite(lp)
         # Should equal log p(x=1.5 | z=2.0) = log N(1.5; 2.0, 0.5)
         expected = float(Normal(loc=2.0, scale=0.5).log_prob(1.5))
@@ -352,10 +353,10 @@ class TestConditionOn:
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
         )
-        cond = joint.condition_on(x=jnp.array(1.0))
+        cond = condition_on(joint, x=jnp.array(1.0))
         value = {"z": jnp.array(0.0)}
         with pytest.raises(NotImplementedError, match="unnormalized_log_prob"):
-            cond.log_prob(value)
+            log_prob(cond, value)
 
     def test_condition_on_non_root_unnormalized_log_prob_works(self):
         """unnormalized_log_prob should work after conditioning on a non-root."""
@@ -363,10 +364,10 @@ class TestConditionOn:
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
         )
-        cond = joint.condition_on(x=jnp.array(1.0))
+        cond = condition_on(joint, x=jnp.array(1.0))
         # Only z is unconditioned; input is dict with just z
         value = {"z": jnp.array(0.0)}
-        lp = cond.unnormalized_log_prob(value)
+        lp = unnormalized_log_prob(cond, value)
         assert jnp.isfinite(lp)
         # Should be log p(z=0) + log p(x=1|z=0) (unnormalized conditional)
         expected = (
@@ -383,14 +384,14 @@ class TestConditionOn:
             y=lambda z, x: Normal(loc=z + x, scale=0.1),
         )
         # First condition on x alone — not sampleable (z unconditioned parent)
-        cond1 = joint.condition_on(x=jnp.array(1.0))
+        cond1 = condition_on(joint, x=jnp.array(1.0))
         assert cond1.component_names == ("z", "y")
         with pytest.raises(NotImplementedError):
-            cond1.sample(sample_shape=(5,))
+            sample(cond1, sample_shape=(5,))
         # Then also condition on z — now sampleable, only y remains
-        cond2 = cond1.condition_on(z=jnp.array(0.0))
+        cond2 = condition_on(cond1, z=jnp.array(0.0))
         assert cond2.component_names == ("y",)
-        s = cond2.sample(sample_shape=(5,))
+        s = sample(cond2, sample_shape=(5,))
         assert isinstance(s, dict)
         assert set(s.keys()) == {"y"}
         assert s["y"].shape == (5,)
@@ -401,7 +402,7 @@ class TestConditionOn:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         with pytest.raises(ValueError, match="Cannot condition on all"):
-            joint.condition_on(z=jnp.array(0.0), x=jnp.array(0.0))
+            condition_on(joint, z=jnp.array(0.0), x=jnp.array(0.0))
 
     def test_dict_for_leaf_raises(self):
         """Passing a dict value for a leaf component should raise TypeError."""
@@ -410,7 +411,7 @@ class TestConditionOn:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         with pytest.raises(TypeError, match="component distribution"):
-            joint.condition_on(z={"sub": jnp.array(0.0)})
+            condition_on(joint, z={"sub": jnp.array(0.0)})
 
 
 # ---------------------------------------------------------------------------
@@ -425,7 +426,7 @@ class TestFlattenUnflatten:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         key = jax.random.PRNGKey(50)
-        s = joint.sample(key, (5,))
+        s = sample(joint, key=key, sample_shape=(5,))
         flat = joint.flatten_value(s)
         assert flat.shape == (5, 2)
         unflat = joint.unflatten_value(flat)

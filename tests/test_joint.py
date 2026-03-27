@@ -18,6 +18,7 @@ from probpipe import (
     FlattenedView,
 )
 from probpipe.core.node import WorkflowFunction
+from probpipe import condition_on, log_prob, mean, sample, variance
 
 
 # ---------------------------------------------------------------------------
@@ -93,46 +94,46 @@ class TestProductDistribution:
 
     def test_sample_returns_dict(self, joint_xy):
         key = jax.random.PRNGKey(0)
-        s = joint_xy.sample(key)
+        s = sample(joint_xy, key=key)
         assert isinstance(s, dict)
         assert set(s.keys()) == {"x", "y"}
 
     def test_sample_shapes_scalar(self, joint_xy):
         key = jax.random.PRNGKey(0)
-        s = joint_xy.sample(key)
+        s = sample(joint_xy, key=key)
         assert s["x"].shape == ()
         assert s["y"].shape == ()
 
     def test_sample_shapes_with_sample_shape(self, joint_xz):
         key = jax.random.PRNGKey(1)
-        s = joint_xz.sample(key, (10,))
+        s = sample(joint_xz, key=key, sample_shape=(10,))
         assert s["x"].shape == (10,)
         assert s["z"].shape == (10, 3)
 
     def test_log_prob_accepts_dict(self, joint_xy, normal_x, normal_y):
         key = jax.random.PRNGKey(4)
-        s = joint_xy.sample(key)
-        lp_joint = joint_xy.log_prob(s)
-        lp_sum = normal_x.log_prob(s["x"]) + normal_y.log_prob(s["y"])
+        s = sample(joint_xy, key=key)
+        lp_joint = log_prob(joint_xy, s)
+        lp_sum = log_prob(normal_x, s["x"]) + log_prob(normal_y, s["y"])
         np.testing.assert_allclose(float(lp_joint), float(lp_sum), atol=1e-5)
 
     def test_log_prob_batch(self, joint_xy):
         key = jax.random.PRNGKey(5)
-        samples = joint_xy.sample(key, (20,))
-        lps = joint_xy.log_prob(samples)
+        samples = sample(joint_xy, key=key, sample_shape=(20,))
+        lps = log_prob(joint_xy, samples)
         assert lps.shape == (20,)
 
     def test_mean_returns_dict(self, joint_xz, normal_x, mvn_z):
-        m = joint_xz.mean()
+        m = mean(joint_xz)
         assert isinstance(m, dict)
-        np.testing.assert_allclose(m["x"], normal_x.mean(), atol=1e-6)
-        np.testing.assert_allclose(m["z"], mvn_z.mean(), atol=1e-6)
+        np.testing.assert_allclose(m["x"], mean(normal_x), atol=1e-6)
+        np.testing.assert_allclose(m["z"], mean(mvn_z), atol=1e-6)
 
     def test_variance_returns_dict(self, joint_xz, normal_x, mvn_z):
-        v = joint_xz.variance()
+        v = variance(joint_xz)
         assert isinstance(v, dict)
-        np.testing.assert_allclose(v["x"], normal_x.variance(), atol=1e-6)
-        np.testing.assert_allclose(v["z"], mvn_z.variance(), atol=1e-6)
+        np.testing.assert_allclose(v["x"], variance(normal_x), atol=1e-6)
+        np.testing.assert_allclose(v["z"], variance(mvn_z), atol=1e-6)
 
     def test_repr_includes_class_and_names(self, joint_xy):
         r = repr(joint_xy)
@@ -155,19 +156,19 @@ class TestFlattenUnflatten:
 
     def test_flatten_value_scalar_components(self, joint_xy):
         key = jax.random.PRNGKey(60)
-        s = joint_xy.sample(key)
+        s = sample(joint_xy, key=key)
         flat = joint_xy.flatten_value(s)
         assert flat.shape == (2,)
 
     def test_flatten_value_mixed_components(self, joint_xz):
         key = jax.random.PRNGKey(61)
-        s = joint_xz.sample(key)
+        s = sample(joint_xz, key=key)
         flat = joint_xz.flatten_value(s)
         assert flat.shape == (4,)
 
     def test_roundtrip_scalar_components(self, joint_xy):
         key = jax.random.PRNGKey(60)
-        s = joint_xy.sample(key, (5,))
+        s = sample(joint_xy, key=key, sample_shape=(5,))
         flat = joint_xy.flatten_value(s)
         recovered = joint_xy.unflatten_value(flat)
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
@@ -175,7 +176,7 @@ class TestFlattenUnflatten:
 
     def test_roundtrip_mixed_components(self, joint_xz):
         key = jax.random.PRNGKey(61)
-        s = joint_xz.sample(key, (3,))
+        s = sample(joint_xz, key=key, sample_shape=(3,))
         flat = joint_xz.flatten_value(s)
         assert flat.shape == (3, 4)
         recovered = joint_xz.unflatten_value(flat)
@@ -184,7 +185,7 @@ class TestFlattenUnflatten:
 
     def test_roundtrip_no_batch_dim(self, joint_xy):
         key = jax.random.PRNGKey(62)
-        s = joint_xy.sample(key)
+        s = sample(joint_xy, key=key)
         flat = joint_xy.flatten_value(s)
         assert flat.shape == (2,)
         recovered = joint_xy.unflatten_value(flat)
@@ -211,21 +212,21 @@ class TestFlattenedViewInterop:
 
     def test_flat_sample_shape(self, joint_xz):
         flat_dist = joint_xz.as_flat_distribution()
-        s = flat_dist.sample(jax.random.PRNGKey(0), (10,))
+        s = sample(flat_dist, key=jax.random.PRNGKey(0), sample_shape=(10,))
         assert s.shape == (10, 4)
 
     def test_flat_log_prob_consistent(self, joint_xy):
         flat_dist = joint_xy.as_flat_distribution()
         key = jax.random.PRNGKey(1)
-        s = joint_xy.sample(key)
+        s = sample(joint_xy, key=key)
         flat_s = joint_xy.flatten_value(s)
-        lp_dict = joint_xy.log_prob(s)
-        lp_flat = flat_dist.log_prob(flat_s)
+        lp_dict = log_prob(joint_xy, s)
+        lp_flat = log_prob(flat_dist, flat_s)
         np.testing.assert_allclose(float(lp_dict), float(lp_flat), atol=1e-5)
 
     def test_unflatten_sample(self, joint_xz):
         flat_dist = joint_xz.as_flat_distribution()
-        flat_s = flat_dist.sample(jax.random.PRNGKey(2))
+        flat_s = sample(flat_dist, key=jax.random.PRNGKey(2))
         restored = flat_dist.unflatten_sample(flat_s)
         assert isinstance(restored, dict)
         assert set(restored.keys()) == {"x", "z"}
@@ -247,25 +248,25 @@ class TestDistributionView:
     def test_sample_correct_shape_scalar(self, joint_xy):
         key = jax.random.PRNGKey(10)
         view = joint_xy["x"]
-        s = view.sample(key)
+        s = sample(view, key=key)
         assert s.shape == ()
 
     def test_sample_correct_shape_mvn(self, joint_xz):
         key = jax.random.PRNGKey(11)
         view = joint_xz["z"]
-        s = view.sample(key, (7,))
+        s = sample(view, key=key, sample_shape=(7,))
         assert s.shape == (7, 3)
 
     def test_log_prob_matches_component(self, joint_xy, normal_x):
         view = joint_xy["x"]
         x_val = jnp.array(1.5)
-        lp_view = view.log_prob(x_val)
-        lp_direct = normal_x.log_prob(x_val)
+        lp_view = log_prob(view, x_val)
+        lp_direct = log_prob(normal_x, x_val)
         np.testing.assert_allclose(float(lp_view), float(lp_direct), atol=1e-6)
 
     def test_mean_matches_component(self, joint_xz, mvn_z):
         view = joint_xz["z"]
-        np.testing.assert_allclose(view.mean(), mvn_z.mean(), atol=1e-6)
+        np.testing.assert_allclose(mean(view), mean(mvn_z), atol=1e-6)
 
     def test_parent_reference(self, joint_xy):
         view = joint_xy["x"]
@@ -343,47 +344,47 @@ class TestFromDistributions:
 class TestConditionOn:
 
     def test_condition_on_removes_conditioned_component(self, joint_xy):
-        cond = joint_xy.condition_on(x=jnp.array(2.0))
+        cond = condition_on(joint_xy, x=jnp.array(2.0))
         assert "x" not in cond.components
         assert "y" in cond.components
         assert cond.component_names == ("y",)
         assert cond.event_size == 1
 
     def test_conditioned_sample_excludes_conditioned(self, joint_xy):
-        cond = joint_xy.condition_on(x=jnp.array(2.0))
+        cond = condition_on(joint_xy, x=jnp.array(2.0))
         key = jax.random.PRNGKey(20)
-        s = cond.sample(key, (10,))
+        s = sample(cond, key=key, sample_shape=(10,))
         assert "x" not in s
         assert "y" in s
 
     def test_unconditioned_component_still_varies(self, joint_xy):
-        cond = joint_xy.condition_on(x=jnp.array(0.0))
+        cond = condition_on(joint_xy, x=jnp.array(0.0))
         key = jax.random.PRNGKey(21)
-        s = cond.sample(key, (100,))
+        s = sample(cond, key=key, sample_shape=(100,))
         # y should have non-trivial variance
         assert jnp.std(s["y"]) > 0.1
 
     def test_log_prob_works_on_conditioned(self, joint_xy):
-        cond = joint_xy.condition_on(x=jnp.array(1.0))
+        cond = condition_on(joint_xy, x=jnp.array(1.0))
         key = jax.random.PRNGKey(22)
-        s = cond.sample(key, (5,))
-        lps = cond.log_prob(s)
+        s = sample(cond, key=key, sample_shape=(5,))
+        lps = log_prob(cond, s)
         assert lps.shape == (5,)
         assert jnp.all(jnp.isfinite(lps))
 
     def test_provenance_attached(self, joint_xy):
-        cond = joint_xy.condition_on(y=jnp.array(0.5))
+        cond = condition_on(joint_xy, y=jnp.array(0.5))
         assert cond.source is not None
         assert cond.source.operation == "condition_on"
         assert "y" in cond.source.metadata["conditioned"]
 
     def test_keyerror_on_unknown_component(self, joint_xy):
         with pytest.raises(KeyError, match="not found"):
-            joint_xy.condition_on(nonexistent=jnp.array(0.0))
+            condition_on(joint_xy, nonexistent=jnp.array(0.0))
 
     def test_raises_on_conditioning_all(self, joint_xy):
         with pytest.raises(ValueError, match="Cannot condition on all"):
-            joint_xy.condition_on(x=jnp.array(0.0), y=jnp.array(0.0))
+            condition_on(joint_xy, x=jnp.array(0.0), y=jnp.array(0.0))
 
 
 # ===========================================================================
@@ -405,8 +406,8 @@ class TestConditionedComponent:
         val = jnp.array(42.0)
         pc = ConditionedComponent(normal_x, val)
         key = jax.random.PRNGKey(30)
-        s1 = pc.sample(key)
-        s2 = pc.sample(jax.random.PRNGKey(31))
+        s1 = sample(pc, key=key)
+        s2 = sample(pc, key=jax.random.PRNGKey(31))
         np.testing.assert_allclose(float(s1), 42.0, atol=1e-6)
         np.testing.assert_allclose(float(s2), 42.0, atol=1e-6)
 
@@ -414,7 +415,7 @@ class TestConditionedComponent:
         val = jnp.array(5.0)
         pc = ConditionedComponent(normal_x, val)
         key = jax.random.PRNGKey(32)
-        s = pc.sample(key, (8,))
+        s = sample(pc, key=key, sample_shape=(8,))
         assert s.shape == (8,)
         np.testing.assert_allclose(s, jnp.full((8,), 5.0), atol=1e-6)
 
@@ -425,19 +426,19 @@ class TestConditionedComponent:
     def test_log_prob_is_constant(self, normal_x):
         val = jnp.array(0.0)
         pc = ConditionedComponent(normal_x, val)
-        lp1 = pc.log_prob(jnp.array(999.0))
-        lp2 = pc.log_prob(jnp.array(-999.0))
+        lp1 = log_prob(pc, jnp.array(999.0))
+        lp2 = log_prob(pc, jnp.array(-999.0))
         # log_prob always evaluates base at the pinned value, ignoring input
         np.testing.assert_allclose(float(lp1), float(lp2), atol=1e-6)
 
     def test_mean_returns_pinned_value(self, normal_x):
         val = jnp.array(7.0)
         pc = ConditionedComponent(normal_x, val)
-        np.testing.assert_allclose(float(pc.mean()), 7.0, atol=1e-6)
+        np.testing.assert_allclose(float(mean(pc)), 7.0, atol=1e-6)
 
     def test_variance_is_zero(self, normal_x):
         pc = ConditionedComponent(normal_x, jnp.array(1.0))
-        np.testing.assert_allclose(float(pc.variance()), 0.0, atol=1e-6)
+        np.testing.assert_allclose(float(variance(pc)), 0.0, atol=1e-6)
 
 
 # ===========================================================================
@@ -448,27 +449,27 @@ class TestComponentLogProb:
 
     def test_component_log_prob_returns_dict(self, joint_xy, normal_x, normal_y):
         key = jax.random.PRNGKey(90)
-        s = joint_xy.sample(key)
+        s = sample(joint_xy, key=key)
         clp = joint_xy.component_log_prob(s)
         assert isinstance(clp, dict)
         assert set(clp.keys()) == {"x", "y"}
 
     def test_component_log_prob_matches_individual(self, joint_xz, normal_x, mvn_z):
         key = jax.random.PRNGKey(91)
-        s = joint_xz.sample(key)
+        s = sample(joint_xz, key=key)
         clp = joint_xz.component_log_prob(s)
         np.testing.assert_allclose(
-            float(clp["x"]), float(normal_x.log_prob(s["x"])), atol=1e-5
+            float(clp["x"]), float(log_prob(normal_x, s["x"])), atol=1e-5
         )
         np.testing.assert_allclose(
-            float(clp["z"]), float(mvn_z.log_prob(s["z"])), atol=1e-5
+            float(clp["z"]), float(log_prob(mvn_z, s["z"])), atol=1e-5
         )
 
     def test_component_log_prob_sums_to_joint(self, joint_xy):
         key = jax.random.PRNGKey(92)
-        s = joint_xy.sample(key)
+        s = sample(joint_xy, key=key)
         clp = joint_xy.component_log_prob(s)
-        joint_lp = joint_xy.log_prob(s)
+        joint_lp = log_prob(joint_xy, s)
         np.testing.assert_allclose(
             float(clp["x"] + clp["y"]), float(joint_lp), atol=1e-5
         )
@@ -619,8 +620,8 @@ class TestPytreeRegistration:
         reconstructed = jax.tree_util.tree_unflatten(aux, children)
         # Verify component distributions survived the roundtrip
         key = jax.random.PRNGKey(50)
-        s_orig = joint.sample(key)
-        s_recon = reconstructed.sample(key)
+        s_orig = sample(joint, key=key)
+        s_recon = sample(reconstructed, key=key)
         np.testing.assert_allclose(s_orig["x"], s_recon["x"], atol=1e-6)
         np.testing.assert_allclose(s_orig["z"], s_recon["z"], atol=1e-6)
 
@@ -647,7 +648,7 @@ class TestPytreeRegistration:
         new_a = Normal(loc=10.0, scale=0.1, name="a")
         new_b = Normal(loc=20.0, scale=0.2, name="b")
         reconstructed = jax.tree_util.tree_unflatten(aux, [new_a, new_b])
-        m = reconstructed.mean()
+        m = mean(reconstructed)
         np.testing.assert_allclose(float(m["a"]), 10.0, atol=1e-5)
         np.testing.assert_allclose(float(m["b"]), 20.0, atol=1e-5)
 
@@ -666,15 +667,15 @@ class TestSingleComponent:
     def test_single_component_sample(self):
         joint = ProductDistribution(a=Normal(loc=0.0, scale=1.0))
         key = jax.random.PRNGKey(70)
-        s = joint.sample(key, (5,))
+        s = sample(joint, key=key, sample_shape=(5,))
         assert s["a"].shape == (5,)
 
     def test_single_component_log_prob(self):
         n = Normal(loc=0.0, scale=1.0)
         joint = ProductDistribution(a=n)
-        s = joint.sample(jax.random.PRNGKey(71), (2,))
-        lps = joint.log_prob(s)
-        expected = jnp.array([float(n.log_prob(s["a"][0])), float(n.log_prob(s["a"][1]))])
+        s = sample(joint, key=jax.random.PRNGKey(71), sample_shape=(2,))
+        lps = log_prob(joint, s)
+        expected = jnp.array([float(log_prob(n, s["a"][0])), float(log_prob(n, s["a"][1]))])
         np.testing.assert_allclose(lps, expected, atol=1e-5)
 
 
@@ -683,12 +684,12 @@ class TestLogProbBatchValues:
 
     def test_batch_log_prob_matches_individual(self, joint_xy, normal_x, normal_y):
         key = jax.random.PRNGKey(80)
-        samples = joint_xy.sample(key, (10,))
-        batch_lps = joint_xy.log_prob(samples)
+        samples = sample(joint_xy, key=key, sample_shape=(10,))
+        batch_lps = log_prob(joint_xy, samples)
 
         for i in range(10):
             s_i = {k: v[i] for k, v in samples.items()}
-            expected = float(normal_x.log_prob(s_i["x"])) + float(normal_y.log_prob(s_i["y"]))
+            expected = float(log_prob(normal_x, s_i["x"])) + float(log_prob(normal_y, s_i["y"]))
             np.testing.assert_allclose(float(batch_lps[i]), expected, atol=1e-5)
 
 
@@ -798,14 +799,14 @@ class TestNestedProductDistribution:
 
     def test_treedef_matches_sample_structure(self, nested_joint):
         key = jax.random.PRNGKey(0)
-        s = nested_joint.sample(key)
+        s = sample(nested_joint, key=key)
         assert jax.tree.structure(s) == nested_joint.treedef
 
     # -- Sampling ----------------------------------------------------------
 
     def test_sample_returns_nested_dict(self, nested_joint):
         key = jax.random.PRNGKey(1)
-        s = nested_joint.sample(key)
+        s = sample(nested_joint, key=key)
         assert isinstance(s, dict)
         assert isinstance(s["physics"], dict)
         assert "force" in s["physics"]
@@ -814,14 +815,14 @@ class TestNestedProductDistribution:
 
     def test_sample_leaf_shapes(self, nested_joint):
         key = jax.random.PRNGKey(2)
-        s = nested_joint.sample(key, (10,))
+        s = sample(nested_joint, key=key, sample_shape=(10,))
         assert s["physics"]["force"].shape == (10,)
         assert s["physics"]["mass"].shape == (10,)
         assert s["observation"].shape == (10,)
 
     def test_sample_single(self, nested_joint):
         key = jax.random.PRNGKey(3)
-        s = nested_joint.sample(key)
+        s = sample(nested_joint, key=key)
         # Each leaf should be a scalar
         assert s["physics"]["force"].shape == ()
         assert s["physics"]["mass"].shape == ()
@@ -831,24 +832,24 @@ class TestNestedProductDistribution:
 
     def test_log_prob_accepts_nested_dict(self, nested_joint):
         key = jax.random.PRNGKey(10)
-        s = nested_joint.sample(key, (5,))
-        lps = nested_joint.log_prob(s)
+        s = sample(nested_joint, key=key, sample_shape=(5,))
+        lps = log_prob(nested_joint, s)
         assert lps.shape == (5,)
         assert jnp.all(jnp.isfinite(lps))
 
     def test_log_prob_equals_sum_of_components(self, nested_joint):
         key = jax.random.PRNGKey(11)
-        s = nested_joint.sample(key)
-        lp_joint = nested_joint.log_prob(s)
+        s = sample(nested_joint, key=key)
+        lp_joint = log_prob(nested_joint, s)
 
         # Manual sum of leaf log-probs
         force_dist = Normal(loc=0.0, scale=1.0)
         mass_dist = Gamma(concentration=2.0, rate=1.0)
         obs_dist = Normal(loc=0.0, scale=0.1)
         lp_manual = (
-            force_dist.log_prob(s["physics"]["force"])
-            + mass_dist.log_prob(s["physics"]["mass"])
-            + obs_dist.log_prob(s["observation"])
+            log_prob(force_dist, s["physics"]["force"])
+            + log_prob(mass_dist, s["physics"]["mass"])
+            + log_prob(obs_dist, s["observation"])
         )
         np.testing.assert_allclose(float(lp_joint), float(lp_manual), atol=1e-5)
 
@@ -856,7 +857,7 @@ class TestNestedProductDistribution:
 
     def test_component_log_prob_nested(self, nested_joint):
         key = jax.random.PRNGKey(12)
-        s = nested_joint.sample(key)
+        s = sample(nested_joint, key=key)
         clp = nested_joint.component_log_prob(s)
         assert isinstance(clp, dict)
         assert isinstance(clp["physics"], dict)
@@ -867,7 +868,7 @@ class TestNestedProductDistribution:
     # -- mean / variance ---------------------------------------------------
 
     def test_mean_nested(self, nested_joint):
-        m = nested_joint.mean()
+        m = mean(nested_joint)
         assert isinstance(m, dict)
         assert isinstance(m["physics"], dict)
         assert m["physics"]["force"].shape == ()
@@ -875,7 +876,7 @@ class TestNestedProductDistribution:
         assert m["observation"].shape == ()
 
     def test_variance_nested(self, nested_joint):
-        v = nested_joint.variance()
+        v = variance(nested_joint)
         assert isinstance(v, dict)
         assert isinstance(v["physics"], dict)
         assert jnp.all(jnp.asarray(jax.tree.leaves(v)) >= 0)
@@ -884,7 +885,7 @@ class TestNestedProductDistribution:
 
     def test_flatten_unflatten_roundtrip(self, nested_joint):
         key = jax.random.PRNGKey(20)
-        s = nested_joint.sample(key, (5,))
+        s = sample(nested_joint, key=key, sample_shape=(5,))
         flat = nested_joint.flatten_value(s)
         assert flat.shape == (5, 3)
         recovered = nested_joint.unflatten_value(flat)
@@ -897,7 +898,7 @@ class TestNestedProductDistribution:
         assert isinstance(flat_dist, FlattenedView)
         assert flat_dist.event_shape == (3,)
         key = jax.random.PRNGKey(21)
-        s = flat_dist.sample(key, (5,))
+        s = sample(flat_dist, key=key, sample_shape=(5,))
         assert s.shape == (5, 3)
 
     # -- __getitem__ with key paths ----------------------------------------
@@ -922,7 +923,7 @@ class TestNestedProductDistribution:
         """Sub-joint from internal node should sample correctly."""
         sub = nested_joint["physics"]
         key = jax.random.PRNGKey(99)
-        s = sub.sample(key, (10,))
+        s = sample(sub, key=key, sample_shape=(10,))
         assert isinstance(s, dict)
         assert set(s.keys()) == {"force", "mass"}
         assert s["force"].shape == (10,)
@@ -934,14 +935,14 @@ class TestNestedProductDistribution:
         """Sub-joint log_prob should work."""
         sub = nested_joint["physics"]
         key = jax.random.PRNGKey(100)
-        s = sub.sample(key)
-        lp = sub.log_prob(s)
+        s = sample(sub, key=key)
+        lp = log_prob(sub, s)
         assert jnp.isfinite(lp)
 
     def test_getitem_internal_node_moments(self, nested_joint):
         """Sub-joint mean/variance should work."""
         sub = nested_joint["physics"]
-        m = sub.mean()
+        m = mean(sub)
         assert isinstance(m, dict)
         assert set(m.keys()) == {"force", "mass"}
 
@@ -967,7 +968,7 @@ class TestNestedProductDistribution:
     def test_view_sample_nested(self, nested_joint):
         key = jax.random.PRNGKey(30)
         view = nested_joint["physics", "mass"]
-        s = view.sample(key, (10,))
+        s = sample(view, key=key, sample_shape=(10,))
         assert s.shape == (10,)
         # Gamma samples should be positive
         assert jnp.all(s > 0)
@@ -992,7 +993,7 @@ class TestNestedProductDistribution:
 
     def test_condition_on_top_level_leaf(self, nested_joint):
         """Condition on a top-level leaf component."""
-        cond = nested_joint.condition_on(observation=jnp.array(0.5))
+        cond = condition_on(nested_joint, observation=jnp.array(0.5))
         assert "observation" not in cond._components
         assert "physics" in cond._components
         assert cond.event_size == 2  # force + mass
@@ -1025,7 +1026,7 @@ class TestNestedProductDistribution:
             physics={"force": jnp.array(1.0)}
         )
         key = jax.random.PRNGKey(50)
-        s = cond.sample(key, (5,))
+        s = sample(cond, key=key, sample_shape=(5,))
         assert "physics" in s
         assert "mass" in s["physics"]
         assert "force" not in s["physics"]
@@ -1039,8 +1040,8 @@ class TestNestedProductDistribution:
             physics={"force": jnp.array(1.0)}
         )
         key = jax.random.PRNGKey(51)
-        s = cond.sample(key)
-        lp = cond.log_prob(s)
+        s = sample(cond, key=key)
+        lp = log_prob(cond, s)
         assert jnp.isfinite(lp)
 
     def test_condition_on_multiple_leaves_across_groups(self, nested_joint):
@@ -1075,7 +1076,7 @@ class TestNestedProductDistribution:
     def test_condition_on_group_with_scalar_raises(self, nested_joint):
         """Conditioning on a dict node with a scalar should raise TypeError."""
         with pytest.raises(TypeError, match="contains component distributions"):
-            nested_joint.condition_on(physics=jnp.array(1.0))
+            condition_on(nested_joint, physics=jnp.array(1.0))
 
     def test_condition_on_leaf_with_dict_raises(self, nested_joint):
         """Passing a dict for a component distribution should raise TypeError."""
@@ -1110,12 +1111,12 @@ class TestNestedProductDistribution:
     def test_condition_on_empty_raises(self, nested_joint):
         """Calling condition_on with no arguments should raise."""
         with pytest.raises(ValueError, match="at least one"):
-            nested_joint.condition_on()
+            condition_on(nested_joint)
 
     def test_condition_on_empty_dict_raises(self, nested_joint):
         """Calling condition_on with an empty dict should raise."""
         with pytest.raises(ValueError, match="at least one"):
-            nested_joint.condition_on({})
+            condition_on(nested_joint, {})
 
     # -- repr --------------------------------------------------------------
 
@@ -1136,8 +1137,8 @@ class TestNestedProductDistribution:
         assert reconstructed.event_size == nested_joint.event_size
         # Verify sample structure matches
         key = jax.random.PRNGKey(40)
-        s1 = nested_joint.sample(key)
-        s2 = reconstructed.sample(key)
+        s1 = sample(nested_joint, key=key)
+        s2 = sample(reconstructed, key=key)
         for l1, l2 in zip(jax.tree.leaves(s1), jax.tree.leaves(s2)):
             np.testing.assert_allclose(l1, l2, atol=1e-6)
 
@@ -1190,7 +1191,7 @@ class TestNestedWithMVN:
 
     def test_sample_and_flatten(self, nested_mvn):
         key = jax.random.PRNGKey(50)
-        s = nested_mvn.sample(key, (5,))
+        s = sample(nested_mvn, key=key, sample_shape=(5,))
         assert s["group"]["position"].shape == (5, 2)
         assert s["group"]["scale"].shape == (5,)
         assert s["label"].shape == (5,)
@@ -1207,5 +1208,5 @@ class TestNestedWithMVN:
         view = nested_mvn["group", "position"]
         assert view.event_shape == (2,)
         key = jax.random.PRNGKey(51)
-        s = view.sample(key, (3,))
+        s = sample(view, key=key, sample_shape=(3,))
         assert s.shape == (3, 2)

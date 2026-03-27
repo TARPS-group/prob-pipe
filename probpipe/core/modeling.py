@@ -21,6 +21,7 @@ from ..custom_types import Array, ArrayLike, PRNGKey
 from .distribution import ArrayDistribution, EmpiricalDistribution, Provenance
 from ..distributions.multivariate import MultivariateNormal
 from .node import AbstractModule, Module, WorkflowFunction, abstractwf, wf
+from .ops import log_prob, mean
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +168,7 @@ class MCMCSampler(ApproximatePosterior):
     num_warmup : int
         Number of warmup (adaptation + burn-in) steps (default 500).
     init : ArrayLike or None
-        Initial chain state.  If *None*, ``prior.mean()`` is tried first,
+        Initial chain state.  If *None*, ``mean(prior)`` is tried first,
         then the column-wise data mean.
     step_size : float
         Initial leapfrog step size (default 0.1).  Adapted during warmup.
@@ -233,7 +234,7 @@ class MCMCSampler(ApproximatePosterior):
 
         # Try prior mean
         try:
-            m = prior.mean()
+            m = mean(prior)
             return jnp.atleast_1d(jnp.asarray(m))
         except (NotImplementedError, Exception):
             pass
@@ -340,7 +341,7 @@ class MCMCSampler(ApproximatePosterior):
 
         # Build unnormalized log-posterior
         def target_log_prob_fn(params):
-            lp = prior.log_prob(params)
+            lp = log_prob(prior, params)
             ll = likelihood.log_likelihood(params=params, data=data_jnp)
             return lp + ll
 
@@ -500,7 +501,7 @@ class RWMH(ApproximatePosterior):
             mu = jnp.asarray(mu, dtype=jnp.float32)
             if mu.shape != (d,):
                 raise ValueError(f"Expected params shape {(d,)}, got {mu.shape}")
-            lp_val = float(jnp.asarray(prior.log_prob(mu)).sum())
+            lp_val = float(jnp.asarray(log_prob(prior, mu)).sum())
             ll_val = float(likelihood.log_likelihood(params=mu, data=data))
             return lp_val + ll_val
 
@@ -512,7 +513,7 @@ class RWMH(ApproximatePosterior):
         else:
             mu_curr = None
             try:
-                m = jnp.asarray(prior.mean(), dtype=jnp.float32)
+                m = jnp.asarray(mean(prior), dtype=jnp.float32)
                 if m.shape == (d,):
                     mu_curr = m
             except (NotImplementedError, Exception):

@@ -397,32 +397,18 @@ class LinearBasisFunction(GaussianRandomFunction):
 
         return f
 
-    def sample(
+    def _sample_batched(
         self,
-        key: PRNGKey | None = None,
-        sample_shape: tuple[int, ...] = (),
+        key: PRNGKey,
+        sample_shape: tuple[int, ...],
     ) -> Callable[[ArrayLike], Array]:
-        """Draw function realization(s) via weight-space sampling.
+        """Draw batched function realizations via weight-space sampling.
 
-        Parameters
-        ----------
-        key : PRNGKey, optional
-            JAX PRNG key.
-        sample_shape : tuple of int
-            Number of independent function draws.
-
-        Returns
-        -------
-        callable
-            Accepts ``X`` with shape ``(*extra_batch, n, *input_shape)``
-            and returns array of shape
-            ``(*sample_shape, *extra_batch, n, *output_shape)``.
+        Returns a single callable that evaluates all draws at once,
+        accepting ``X`` with shape ``(*extra_batch, n, *input_shape)``
+        and returning array of shape
+        ``(*sample_shape, *extra_batch, n, *output_shape)``.
         """
-        if key is None:
-            key = _auto_key()
-        if sample_shape == ():
-            return self._sample(key)
-
         n_samples = prod(sample_shape)
         w_samples = self._weights.sample(key, sample_shape=(n_samples,))  # (n, d_w)
         bias = self._bias
@@ -438,6 +424,18 @@ class LinearBasisFunction(GaussianRandomFunction):
             return result.reshape(*reshape_to, *phi.shape[:-1])
 
         return f
+
+    def sample(
+        self,
+        key: PRNGKey | None = None,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Callable[[ArrayLike], Array]:
+        """Public API — delegates to ``_sample`` / ``_sample_batched``."""
+        if key is None:
+            key = _auto_key()
+        if sample_shape == ():
+            return self._sample(key)
+        return self._sample_batched(key, sample_shape)
 
 
 # ---------------------------------------------------------------------------

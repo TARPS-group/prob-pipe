@@ -21,6 +21,7 @@ from probpipe.distributions import (
     Pareto,
     TruncatedNormal,
 )
+from probpipe import log_prob, mean, sample, variance
 
 
 # ---------------------------------------------------------------------------
@@ -75,18 +76,18 @@ class TestContinuousGeneric:
         assert isinstance(continuous_dist.event_shape, tuple)
 
     def test_sample_shape(self, continuous_dist, key):
-        s = continuous_dist.sample(key, sample_shape=(5,))
+        s = sample(continuous_dist, key=key, sample_shape=(5,))
         assert s.shape == (5,) + continuous_dist.event_shape
 
     def test_log_prob_shape(self, continuous_dist, key):
-        s = continuous_dist.sample(key, sample_shape=(5,))
-        lp = continuous_dist.log_prob(s)
+        s = sample(continuous_dist, key=key, sample_shape=(5,))
+        lp = log_prob(continuous_dist, s)
         assert lp.shape == (5,)
 
     def test_mean_finite(self, continuous_dist):
         if isinstance(continuous_dist, (Cauchy, HalfCauchy)):
             pytest.skip("Cauchy/HalfCauchy have no finite mean")
-        m = continuous_dist.mean()
+        m = mean(continuous_dist)
         assert jnp.all(jnp.isfinite(m))
 
     def test_variance_finite(self, continuous_dist):
@@ -96,7 +97,7 @@ class TestContinuousGeneric:
             # StudentT with df <= 2 has infinite variance
             if float(continuous_dist.df) <= 2.0:
                 pytest.skip("StudentT with df<=2 has no finite variance")
-        v = continuous_dist.variance()
+        v = variance(continuous_dist)
         assert jnp.all(jnp.isfinite(v))
 
     def test_repr(self, continuous_dist):
@@ -122,7 +123,7 @@ class TestContinuousGeneric:
 class TestBeta:
     def test_samples_in_unit_interval(self, key):
         d = Beta(alpha=2.0, beta=5.0)
-        s = d.sample(key, sample_shape=(1000,))
+        s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= 0.0)
         assert jnp.all(s <= 1.0)
 
@@ -130,49 +131,49 @@ class TestBeta:
 class TestGammaDist:
     def test_samples_nonnegative(self, key):
         d = Gamma(concentration=3.0, rate=1.0)
-        s = d.sample(key, sample_shape=(1000,))
+        s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= 0.0)
 
 
 class TestInverseGammaDist:
     def test_samples_nonnegative(self, key):
         d = InverseGamma(concentration=3.0, scale=1.0)
-        s = d.sample(key, sample_shape=(1000,))
+        s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= 0.0)
 
 
 class TestExponentialDist:
     def test_samples_nonnegative(self, key):
         d = Exponential(rate=2.0)
-        s = d.sample(key, sample_shape=(1000,))
+        s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= 0.0)
 
 
 class TestHalfNormalDist:
     def test_samples_nonnegative(self, key):
         d = HalfNormal(scale=1.0)
-        s = d.sample(key, sample_shape=(1000,))
+        s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= 0.0)
 
 
 class TestHalfCauchyDist:
     def test_samples_nonnegative(self, key):
         d = HalfCauchy(loc=0.0, scale=1.0)
-        s = d.sample(key, sample_shape=(1000,))
+        s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= 0.0)
 
 
 class TestParetoDist:
     def test_samples_nonnegative(self, key):
         d = Pareto(concentration=3.0, scale=1.0)
-        s = d.sample(key, sample_shape=(1000,))
+        s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= 0.0)
 
 
 class TestUniformDist:
     def test_samples_in_bounds(self, key):
         d = Uniform(low=0.0, high=1.0)
-        s = d.sample(key, sample_shape=(1000,))
+        s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= 0.0)
         assert jnp.all(s <= 1.0)
 
@@ -180,7 +181,7 @@ class TestUniformDist:
 class TestTruncatedNormalDist:
     def test_samples_in_bounds(self, key):
         d = TruncatedNormal(loc=0.0, scale=1.0, low=-2.0, high=2.0)
-        s = d.sample(key, sample_shape=(1000,))
+        s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= -2.0)
         assert jnp.all(s <= 2.0)
 

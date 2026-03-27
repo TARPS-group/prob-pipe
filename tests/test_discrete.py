@@ -12,6 +12,7 @@ from probpipe.distributions import (
     Categorical,
     NegativeBinomial,
 )
+from probpipe import log_prob, sample
 
 
 # ---------------------------------------------------------------------------
@@ -53,12 +54,12 @@ class TestGeneric:
         assert isinstance(discrete_dist.event_shape, tuple)
 
     def test_sample_shape(self, discrete_dist, key):
-        samples = discrete_dist.sample(key, (5,))
+        samples = sample(discrete_dist, key=key, sample_shape=(5,))
         assert samples.shape[:1] == (5,)
 
     def test_log_prob_shape(self, discrete_dist, key):
-        samples = discrete_dist.sample(key, (5,))
-        lp = discrete_dist.log_prob(samples)
+        samples = sample(discrete_dist, key=key, sample_shape=(5,))
+        lp = log_prob(discrete_dist, samples)
         assert lp.shape == (5,) + discrete_dist.batch_shape
 
     def test_repr(self, discrete_dist):
@@ -81,17 +82,17 @@ class TestGeneric:
 class TestBernoulli:
     def test_samples_zero_or_one(self, key):
         dist = Bernoulli(probs=0.7)
-        samples = dist.sample(key, (1000,))
+        samples = sample(dist, key=key, sample_shape=(1000,))
         assert jnp.all((samples == 0) | (samples == 1))
 
     def test_works_with_probs(self, key):
         dist = Bernoulli(probs=0.7)
-        samples = dist.sample(key, (10,))
+        samples = sample(dist, key=key, sample_shape=(10,))
         assert samples.shape == (10,)
 
     def test_works_with_logits(self, key):
         dist = Bernoulli(logits=0.0)
-        samples = dist.sample(key, (10,))
+        samples = sample(dist, key=key, sample_shape=(10,))
         assert samples.shape == (10,)
 
     def test_error_if_both_probs_and_logits(self):
@@ -102,20 +103,20 @@ class TestBernoulli:
 class TestBinomial:
     def test_samples_nonneg_leq_total_count(self, key):
         dist = Binomial(total_count=10, probs=0.3)
-        samples = dist.sample(key, (1000,))
+        samples = sample(dist, key=key, sample_shape=(1000,))
         assert jnp.all(samples >= 0)
         assert jnp.all(samples <= 10)
 
     def test_samples_are_integers(self, key):
         dist = Binomial(total_count=10, probs=0.3)
-        samples = dist.sample(key, (100,))
+        samples = sample(dist, key=key, sample_shape=(100,))
         assert jnp.allclose(samples, jnp.round(samples))
 
 
 class TestPoisson:
     def test_samples_nonneg_integers(self, key):
         dist = Poisson(rate=5.0)
-        samples = dist.sample(key, (1000,))
+        samples = sample(dist, key=key, sample_shape=(1000,))
         assert jnp.all(samples >= 0)
         assert jnp.allclose(samples, jnp.round(samples))
 
@@ -124,31 +125,31 @@ class TestCategorical:
     def test_samples_are_valid_indices(self, key):
         probs = [0.2, 0.3, 0.5]
         dist = Categorical(probs=probs)
-        samples = dist.sample(key, (1000,))
+        samples = sample(dist, key=key, sample_shape=(1000,))
         assert jnp.all(samples >= 0)
         assert jnp.all(samples < len(probs))
 
     def test_samples_are_integers(self, key):
         dist = Categorical(probs=[0.2, 0.3, 0.5])
-        samples = dist.sample(key, (100,))
+        samples = sample(dist, key=key, sample_shape=(100,))
         assert jnp.allclose(samples, jnp.round(samples))
 
 
 class TestNegativeBinomial:
     def test_samples_nonneg_integers(self, key):
         dist = NegativeBinomial(total_count=5, probs=0.4)
-        samples = dist.sample(key, (1000,))
+        samples = sample(dist, key=key, sample_shape=(1000,))
         assert jnp.all(samples >= 0)
         assert jnp.allclose(samples, jnp.round(samples))
 
     def test_works_with_probs(self, key):
         dist = NegativeBinomial(total_count=5, probs=0.4)
-        samples = dist.sample(key, (10,))
+        samples = sample(dist, key=key, sample_shape=(10,))
         assert samples.shape == (10,)
 
     def test_works_with_logits(self, key):
         dist = NegativeBinomial(total_count=5, logits=0.0)
-        samples = dist.sample(key, (10,))
+        samples = sample(dist, key=key, sample_shape=(10,))
         assert samples.shape == (10,)
 
     def test_error_if_both_probs_and_logits(self):

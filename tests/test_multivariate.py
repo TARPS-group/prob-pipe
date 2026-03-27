@@ -11,6 +11,7 @@ from probpipe.distributions import (
     VonMisesFisher,
 )
 from probpipe.core.distribution import ArrayDistribution
+from probpipe import log_prob, mean, sample
 
 
 # ---------------------------------------------------------------------------
@@ -76,17 +77,17 @@ class TestGeneric:
         assert multivariate_dist.event_shape == expected
 
     def test_sample_shape(self, multivariate_dist, key):
-        samples = multivariate_dist.sample(key, (5,))
+        samples = sample(multivariate_dist, key=key, sample_shape=(5,))
         expected = (5,) + multivariate_dist.event_shape
         assert samples.shape == expected
 
     def test_log_prob_shape(self, multivariate_dist, key):
-        sample = multivariate_dist.sample(key)
-        lp = multivariate_dist.log_prob(sample)
+        s = sample(multivariate_dist, key=key)
+        lp = log_prob(multivariate_dist, s)
         assert lp.shape == ()
 
     def test_mean_finite(self, multivariate_dist):
-        m = multivariate_dist.mean()
+        m = mean(multivariate_dist)
         assert jnp.all(jnp.isfinite(m))
 
     def test_repr(self, multivariate_dist):
@@ -120,26 +121,26 @@ class TestGeneric:
 class TestDirichlet:
     def test_samples_sum_to_one(self, key):
         d = Dirichlet(concentration=[1.0, 2.0, 3.0])
-        samples = d.sample(key, (100,))
+        samples = sample(d, key=key, sample_shape=(100,))
         sums = jnp.sum(samples, axis=-1)
         assert jnp.allclose(sums, 1.0, atol=1e-5)
 
     def test_samples_positive(self, key):
         d = Dirichlet(concentration=[1.0, 2.0, 3.0])
-        samples = d.sample(key, (100,))
+        samples = sample(d, key=key, sample_shape=(100,))
         assert jnp.all(samples > 0)
 
 
 class TestMultinomial:
     def test_samples_nonnegative_integers(self, key):
         d = Multinomial(total_count=10, probs=[0.2, 0.3, 0.5])
-        samples = d.sample(key, (100,))
+        samples = sample(d, key=key, sample_shape=(100,))
         assert jnp.all(samples >= 0)
         assert jnp.allclose(samples, jnp.round(samples))
 
     def test_samples_sum_to_total_count(self, key):
         d = Multinomial(total_count=10, probs=[0.2, 0.3, 0.5])
-        samples = d.sample(key, (100,))
+        samples = sample(d, key=key, sample_shape=(100,))
         sums = jnp.sum(samples, axis=-1)
         assert jnp.allclose(sums, 10.0)
 
@@ -164,13 +165,13 @@ class TestMultinomial:
 class TestWishart:
     def test_accepts_scale_tril(self, key):
         d = Wishart(df=5.0, scale_tril=jnp.eye(3))
-        sample = d.sample(key)
-        assert sample.shape == (3, 3)
+        s = sample(d, key=key)
+        assert s.shape == (3, 3)
 
     def test_accepts_scale(self, key):
         d = Wishart(df=5.0, scale=jnp.eye(3))
-        sample = d.sample(key)
-        assert sample.shape == (3, 3)
+        s = sample(d, key=key)
+        assert s.shape == (3, 3)
 
     def test_error_if_both_given(self):
         with pytest.raises(ValueError, match="exactly one"):
@@ -178,7 +179,7 @@ class TestWishart:
 
     def test_samples_positive_semi_definite(self, key):
         d = Wishart(df=5.0, scale_tril=jnp.eye(3))
-        samples = d.sample(key, (10,))
+        samples = sample(d, key=key, sample_shape=(10,))
         # Diagonal elements of a positive semi-definite matrix are >= 0.
         for i in range(10):
             diag = jnp.diag(samples[i])
@@ -188,6 +189,6 @@ class TestWishart:
 class TestVonMisesFisher:
     def test_samples_unit_norm(self, key):
         d = VonMisesFisher(mean_direction=[1.0, 0.0, 0.0], concentration=5.0)
-        samples = d.sample(key, (100,))
+        samples = sample(d, key=key, sample_shape=(100,))
         norms = jnp.linalg.norm(samples, axis=-1)
         assert jnp.allclose(norms, 1.0, atol=1e-5)

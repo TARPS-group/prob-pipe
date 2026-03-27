@@ -23,6 +23,7 @@ from ..core.distribution import (
     sphere,
 )
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ..core.ops import cov, mean, sample
 
 __all__ = [
     "MultivariateNormal",
@@ -139,10 +140,10 @@ class MultivariateNormal(TFPDistribution):
         num_samples = kwargs.pop("num_samples", 1024)
 
         if isinstance(other, EmpiricalDistribution):
-            loc = other.mean()
-            cov_mat = other.cov()
+            loc = mean(other)
+            cov_mat = cov(other)
         else:
-            samples = other.sample(key, sample_shape=(num_samples,))
+            samples = sample(other, key=key, sample_shape=(num_samples,))
             loc = jnp.mean(samples, axis=0)
             diff = samples - loc
             cov_mat = jnp.einsum("ni,nj->ij", diff, diff) / samples.shape[0]
@@ -226,7 +227,7 @@ class Dirichlet(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
 
-        samples = other.sample(key, sample_shape=(num_samples,))
+        samples = sample(other, key=key, sample_shape=(num_samples,))
         m = jnp.mean(samples, axis=0)
         var = jnp.var(samples, axis=0)
         # Method of moments: concentration_0 = m[0]*(1 - m[0])/var[0] - 1
@@ -361,7 +362,7 @@ class Multinomial(TFPDistribution):
                 "Multinomial from a non-Multinomial distribution."
             )
 
-        samples = other.sample(key, sample_shape=(num_samples,))
+        samples = sample(other, key=key, sample_shape=(num_samples,))
         mean = jnp.mean(samples, axis=0)
         total_count = jnp.asarray(total_count, dtype=jnp.float32)
         probs = mean / total_count
@@ -474,7 +475,7 @@ class Wishart(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
 
-        samples = other.sample(key, sample_shape=(num_samples,))
+        samples = sample(other, key=key, sample_shape=(num_samples,))
         mean_mat = jnp.mean(samples, axis=0)
         # Reasonable default: df = event_dim + 2
         event_dim = mean_mat.shape[-1]
@@ -572,7 +573,7 @@ class VonMisesFisher(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
 
-        samples = other.sample(key, sample_shape=(num_samples,))
+        samples = sample(other, key=key, sample_shape=(num_samples,))
         mean_vector = jnp.mean(samples, axis=0)
         norm = jnp.linalg.norm(mean_vector)
         mean_direction = mean_vector / jnp.maximum(norm, 1e-8)

@@ -15,6 +15,7 @@ from probpipe import (
     MultivariateNormal,
     EmpiricalDistribution,
 )
+from probpipe import log_prob, sample, unnormalized_log_prob
 
 
 # ---------------------------------------------------------------------------
@@ -80,14 +81,14 @@ class TestDistributionBase:
                 return jnp.array(0.0)
         d = StubDist()
         with pytest.raises(NotImplementedError, match="does not support log_prob"):
-            d.log_prob(jnp.array(0.0))
+            log_prob(d, jnp.array(0.0))
 
     def test_unnormalized_log_prob_delegates_to_log_prob(self, scalar_normal):
         """unnormalized_log_prob defaults to log_prob."""
         val = jnp.array(0.5)
         np.testing.assert_allclose(
-            scalar_normal.unnormalized_log_prob(val),
-            scalar_normal.log_prob(val),
+            unnormalized_log_prob(scalar_normal, val),
+            log_prob(scalar_normal, val),
             atol=1e-6,
         )
 
@@ -150,30 +151,30 @@ class TestArrayDistributionPyTreeInterface:
 
 class TestArrayDistFlattenUnflatten:
     def test_flatten_vector_sample(self, vector_mvn, key):
-        sample = vector_mvn.sample(key)
-        flat = vector_mvn.flatten_value(sample)
+        s = sample(vector_mvn, key=key)
+        flat = vector_mvn.flatten_value(s)
         assert flat.shape == (3,)
-        np.testing.assert_allclose(flat, sample, atol=1e-6)
+        np.testing.assert_allclose(flat, s, atol=1e-6)
 
     def test_unflatten_vector_sample(self, vector_mvn, key):
-        sample = vector_mvn.sample(key)
-        flat = vector_mvn.flatten_value(sample)
+        s = sample(vector_mvn, key=key)
+        flat = vector_mvn.flatten_value(s)
         restored = vector_mvn.unflatten_value(flat)
-        np.testing.assert_allclose(restored, sample, atol=1e-6)
+        np.testing.assert_allclose(restored, s, atol=1e-6)
 
     def test_flatten_unflatten_roundtrip_batched(self, vector_mvn, key):
-        samples = vector_mvn.sample(key, sample_shape=(5,))
+        samples = sample(vector_mvn, key=key, sample_shape=(5,))
         flat = vector_mvn.flatten_value(samples)
         assert flat.shape == (5, 3)
         restored = vector_mvn.unflatten_value(flat)
         np.testing.assert_allclose(restored, samples, atol=1e-6)
 
     def test_flatten_unflatten_4d(self, matrix_mvn, key):
-        sample = matrix_mvn.sample(key)
-        flat = matrix_mvn.flatten_value(sample)
+        s = sample(matrix_mvn, key=key)
+        flat = matrix_mvn.flatten_value(s)
         assert flat.shape == (4,)
         restored = matrix_mvn.unflatten_value(flat)
-        np.testing.assert_allclose(restored, sample, atol=1e-6)
+        np.testing.assert_allclose(restored, s, atol=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -196,21 +197,21 @@ class TestFlattenedView:
 
     def test_sample_shape(self, vector_mvn, key):
         flat_dist = vector_mvn.as_flat_distribution()
-        sample = flat_dist.sample(key)
-        assert sample.shape == (3,)
+        s = sample(flat_dist, key=key)
+        assert s.shape == (3,)
 
     def test_sample_batched(self, vector_mvn, key):
         flat_dist = vector_mvn.as_flat_distribution()
-        samples = flat_dist.sample(key, sample_shape=(10,))
+        samples = sample(flat_dist, key=key, sample_shape=(10,))
         assert samples.shape == (10, 3)
 
     def test_log_prob_matches(self, vector_mvn, key):
         flat_dist = vector_mvn.as_flat_distribution()
-        sample = vector_mvn.sample(key)
-        flat_sample = vector_mvn.flatten_value(sample)
+        s = sample(vector_mvn, key=key)
+        flat_sample = vector_mvn.flatten_value(s)
 
-        lp_original = vector_mvn.log_prob(sample)
-        lp_flat = flat_dist.log_prob(flat_sample)
+        lp_original = log_prob(vector_mvn, s)
+        lp_flat = log_prob(flat_dist, flat_sample)
         np.testing.assert_allclose(lp_flat, lp_original, atol=1e-5)
 
     def test_base_distribution(self, vector_mvn):
@@ -219,7 +220,7 @@ class TestFlattenedView:
 
     def test_unflatten_sample(self, vector_mvn, key):
         flat_dist = vector_mvn.as_flat_distribution()
-        flat_sample = flat_dist.sample(key)
+        flat_sample = sample(flat_dist, key=key)
         restored = flat_dist.unflatten_sample(flat_sample)
         np.testing.assert_allclose(
             restored, vector_mvn.unflatten_value(flat_sample), atol=1e-6
@@ -237,11 +238,11 @@ class TestFlattenedView:
 
     def test_log_prob_roundtrip_4d(self, matrix_mvn, key):
         flat_dist = matrix_mvn.as_flat_distribution()
-        sample = matrix_mvn.sample(key)
-        flat_sample = matrix_mvn.flatten_value(sample)
+        s = sample(matrix_mvn, key=key)
+        flat_sample = matrix_mvn.flatten_value(s)
 
-        lp_original = matrix_mvn.log_prob(sample)
-        lp_flat = flat_dist.log_prob(flat_sample)
+        lp_original = log_prob(matrix_mvn, s)
+        lp_flat = log_prob(flat_dist, flat_sample)
         np.testing.assert_allclose(lp_flat, lp_original, atol=1e-5)
 
 
@@ -269,5 +270,5 @@ class TestFlattenedViewEmpirical:
         flat_dist = emp.as_flat_distribution()
         assert flat_dist.event_shape == (5,)
 
-        flat_sample = flat_dist.sample(key)
+        flat_sample = sample(flat_dist, key=key)
         assert flat_sample.shape == (5,)

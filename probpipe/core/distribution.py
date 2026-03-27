@@ -1015,7 +1015,7 @@ class FlattenedView(ArrayDistribution):
     def _log_prob(self, x: ArrayLike) -> Array:
         x = jnp.asarray(x)
         value = self._base.unflatten_value(x)
-        return self._base.log_prob(value)
+        return self._base._log_prob(value)
 
     @property
     def support(self) -> Constraint:

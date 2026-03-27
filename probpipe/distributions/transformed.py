@@ -186,7 +186,7 @@ class TransformedDistribution(ArrayDistribution):
 
     # -- moments (delegate to TFP when available) ---------------------------
 
-    def mean(self) -> Array:
+    def _mean(self) -> Array:
         if self._tfp_transformed is not None:
             return self._tfp_transformed.mean()
         raise NotImplementedError(
@@ -194,13 +194,21 @@ class TransformedDistribution(ArrayDistribution):
             "with a non-TFP base distribution."
         )
 
-    def variance(self) -> Array:
+    def mean(self) -> Array:
+        """Public API — delegates to ``_mean``."""
+        return self._mean()
+
+    def _variance(self) -> Array:
         if self._tfp_transformed is not None:
             return self._tfp_transformed.variance()
         raise NotImplementedError(
             "variance() is not available for TransformedDistribution "
             "with a non-TFP base distribution."
         )
+
+    def variance(self) -> Array:
+        """Public API — delegates to ``_variance``."""
+        return self._variance()
 
     # -- repr ---------------------------------------------------------------
 
