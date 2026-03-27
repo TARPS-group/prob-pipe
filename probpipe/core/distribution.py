@@ -484,6 +484,11 @@ class Distribution(Generic[T], ABC):
             flat_samples,
         )
 
+    # -- orchestration hints (protocol defaults) -----------------------------
+
+    _sampling_cost: str = "low"
+    _preferred_orchestration: str | None = None
+
     # -- log-density (optional) ----------------------------------------------
 
     def log_prob(self, value: T) -> Array:
@@ -497,6 +502,10 @@ class Distribution(Generic[T], ABC):
             f"{type(self).__name__} does not support log_prob"
         )
 
+    # Protocol alias — will become the canonical name in a future PR.
+    def _log_prob(self, value: T) -> Array:
+        return self.log_prob(value)
+
     def unnormalized_log_prob(self, value: T) -> Array:
         """Evaluate the unnormalized log-density at *value*.
 
@@ -506,6 +515,10 @@ class Distribution(Generic[T], ABC):
         ``NotImplementedError`` from ``log_prob`` instead.
         """
         return self.log_prob(value)
+
+    # Protocol alias
+    def _unnormalized_log_prob(self, value: T) -> Array:
+        return self.unnormalized_log_prob(value)
 
     # -- expectations ---------------------------------------------------------
 
@@ -878,6 +891,10 @@ class ArrayDistribution(PyTreeArrayDistribution[Array]):
     def prob(self, x: ArrayLike) -> Array:
         return jnp.exp(self.log_prob(x))
 
+    # Protocol alias
+    def _prob(self, x: ArrayLike) -> Array:
+        return self.prob(x)
+
     @monte_carlo
     def cov(self):
         """Covariance matrix of this distribution.
@@ -1068,7 +1085,14 @@ class TFPDistribution(ArrayDistribution):
     def mean(self, **kwargs) -> Array:
         return self._tfp_dist.mean()
 
+    # Protocol aliases for exact moments
+    def _mean(self) -> Array:
+        return self._tfp_dist.mean()
+
     def variance(self, **kwargs) -> Array:
+        return self._tfp_dist.variance()
+
+    def _variance(self) -> Array:
         return self._tfp_dist.variance()
 
 
@@ -1245,12 +1269,19 @@ class EmpiricalDistribution(ArrayDistribution):
             return jnp.mean(self._samples, axis=0)
         return jnp.einsum("n,n...->...", self.weights, self._samples)
 
+    # Protocol aliases for exact moments
+    def _mean(self) -> Array:
+        return self.mean()
+
     def variance(self, **kwargs) -> Array:
         mu = self.mean()
         diff = self._samples - mu
         if self._is_uniform:
             return jnp.mean(diff**2, axis=0)
         return jnp.einsum("n,n...->...", self.weights, diff**2)
+
+    def _variance(self) -> Array:
+        return self.variance()
 
     def cov(self, **kwargs) -> Array:
         """Weighted sample covariance matrix, shape ``(d, d)``."""
@@ -1261,6 +1292,9 @@ class EmpiricalDistribution(ArrayDistribution):
         if self._is_uniform:
             return jnp.einsum("ni,nj->ij", diff, diff) / self.n
         return jnp.einsum("ni,nj,n->ij", diff, diff, self.weights)
+
+    def _cov(self) -> Array:
+        return self.cov()
 
     def expectation(
         self,
@@ -1395,6 +1429,9 @@ class BootstrapDistribution(ArrayDistribution):
             return jnp.mean(self._evaluations, axis=0)
         return jnp.einsum("n,n...->...", self._weights, self._evaluations)
 
+    # Protocol alias
+    _mean = mean
+
     def variance(self) -> Array:
         """Variance of the sampling distribution (approx Var[f(X)] / n_eff)."""
         mu = self.mean()
@@ -1406,6 +1443,9 @@ class BootstrapDistribution(ArrayDistribution):
         sample_var = jnp.einsum("n,n...->...", self._weights, diff ** 2)
         n_eff = 1.0 / jnp.sum(self._weights ** 2)
         return sample_var / n_eff
+
+    # Protocol alias
+    _variance = variance
 
     def _sample(self, key: PRNGKey) -> Array:
         """Draw a single bootstrap resample of the mean."""

@@ -812,6 +812,10 @@ class JointDistribution(PyTreeArrayDistribution):
         observed_leaves = self._parse_condition_args(observed, kwargs)
         return self._condition_on_impl(observed_leaves)
 
+    # Protocol alias
+    def _condition_on(self, observed=None, /, **kwargs) -> "JointDistribution":
+        return self.condition_on(observed, **kwargs)
+
     def _parse_condition_args(
         self, observed: dict | None, kwargs: dict,
     ) -> dict[KeyPath, ArrayLike]:
