@@ -77,12 +77,17 @@ class SupportsSampling(SupportsExpectation, Protocol):
 class SupportsUnnormalizedLogProb(Protocol):
     """Distribution with an unnormalized log-density.
 
-    Provides ``_unnormalized_log_prob(value)``.  The corresponding
-    ``unnormalized_prob`` is computed as ``exp(unnormalized_log_prob)``
-    by the ops layer — no separate protocol method is needed.
+    Provides ``_unnormalized_log_prob(value)`` and
+    ``_unnormalized_prob(value)`` (computed as ``exp`` of the log form).
     """
 
     def _unnormalized_log_prob(self, value: Any) -> Array: ...
+
+    def _unnormalized_prob(self, value: Any) -> Array:
+        """Default: ``exp(_unnormalized_log_prob(value))``."""
+        import jax.numpy as jnp
+
+        return jnp.exp(self._unnormalized_log_prob(value))
 
 
 @runtime_checkable
@@ -94,11 +99,16 @@ class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
     The base :class:`~probpipe.core.distribution.Distribution` class
     provides ``_unnormalized_log_prob`` defaulting to ``_log_prob``.
 
-    ``prob`` is computed as ``exp(log_prob)`` by the ops layer — no
-    separate protocol method is needed.
+    Also provides ``_prob`` computed as ``exp(_log_prob)``.
     """
 
     def _log_prob(self, value: Any) -> Array: ...
+
+    def _prob(self, value: Any) -> Array:
+        """Default: ``exp(_log_prob(value))``."""
+        import jax.numpy as jnp
+
+        return jnp.exp(self._log_prob(value))
 
 
 # ---------------------------------------------------------------------------

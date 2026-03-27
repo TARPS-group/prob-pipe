@@ -82,13 +82,13 @@ def _log_prob_impl(dist: SupportsLogProb, value: Any) -> Array:
 
 
 def _prob_impl(dist: SupportsLogProb, value: Any) -> Array:
-    """Evaluate the density at *value* (computed as ``exp(log_prob)``)."""
+    """Evaluate the density at *value* (``exp(log_prob)``)."""
     if not isinstance(dist, SupportsLogProb):
         raise TypeError(
             f"{type(dist).__name__} does not support prob "
             f"(missing _log_prob method)"
         )
-    return jnp.exp(dist._log_prob(value))
+    return dist._prob(value)
 
 
 def _unnormalized_log_prob_impl(
@@ -106,13 +106,13 @@ def _unnormalized_log_prob_impl(
 def _unnormalized_prob_impl(
     dist: SupportsUnnormalizedLogProb, value: Any,
 ) -> Array:
-    """Evaluate the unnormalized density at *value* (computed as ``exp(unnormalized_log_prob)``)."""
+    """Evaluate the unnormalized density at *value* (``exp(unnormalized_log_prob)``)."""
     if not isinstance(dist, SupportsUnnormalizedLogProb):
         raise TypeError(
             f"{type(dist).__name__} does not support unnormalized_prob "
             f"(missing _unnormalized_log_prob method)"
         )
-    return jnp.exp(dist._unnormalized_log_prob(value))
+    return dist._unnormalized_prob(value)
 
 
 def _mean_impl(dist: SupportsExpectation) -> Any:

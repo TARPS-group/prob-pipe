@@ -520,6 +520,14 @@ class Distribution(Generic[T], ABC):
     def _unnormalized_log_prob(self, value: T) -> Array:
         return self.unnormalized_log_prob(value)
 
+    # Protocol method — exp of the log form
+    def _unnormalized_prob(self, value: T) -> Array:
+        return jnp.exp(self._unnormalized_log_prob(value))
+
+    # Protocol method — exp of the log form
+    def _prob(self, value: T) -> Array:
+        return jnp.exp(self._log_prob(value))
+
     # -- expectations ---------------------------------------------------------
 
     def expectation(
