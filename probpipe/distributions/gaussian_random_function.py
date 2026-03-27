@@ -20,8 +20,8 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ..distributions.distribution import _auto_key
-from ..utils import prod
+from ..core.distribution import _auto_key
+from .._utils import prod
 from .random_function import ArrayRandomFunction
 
 # Delay import to avoid circular import at module level; these are

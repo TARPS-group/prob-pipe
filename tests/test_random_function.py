@@ -12,7 +12,6 @@ from probpipe import (
     Normal,
     RandomFunction,
     ArrayRandomFunction,
-    EmulatorMixin,
 )
 
 
@@ -210,80 +209,3 @@ class TestArrayRandomFunction:
         assert extra_batch == (2, 4)
         assert n == 10
 
-
-# ---------------------------------------------------------------------------
-# EmulatorMixin tests
-# ---------------------------------------------------------------------------
-
-
-class TestEmulatorMixin:
-    """Tests for the EmulatorMixin."""
-
-    def test_mixin_with_random_function(self):
-        """EmulatorMixin can be composed with ArrayRandomFunction."""
-        class _MyEmulator(_MinimalArrayRF, EmulatorMixin):
-            pass
-
-        em = _MyEmulator(input_shape=(3,))
-        assert isinstance(em, ArrayRandomFunction)
-        assert isinstance(em, EmulatorMixin)
-        assert isinstance(em, Distribution)
-
-    def test_fit_raises_by_default(self):
-        class _MyEmulator(_MinimalArrayRF, EmulatorMixin):
-            pass
-
-        em = _MyEmulator(input_shape=(3,))
-        with pytest.raises(NotImplementedError, match="fit"):
-            em.fit(jnp.ones((10, 3)), jnp.ones(10))
-
-    def test_update_raises_by_default(self):
-        class _MyEmulator(_MinimalArrayRF, EmulatorMixin):
-            pass
-
-        em = _MyEmulator(input_shape=(3,))
-        with pytest.raises(NotImplementedError, match="update"):
-            em.update(jnp.ones((5, 3)), jnp.ones(5))
-
-    def test_training_inputs_raises_by_default(self):
-        class _MyEmulator(_MinimalArrayRF, EmulatorMixin):
-            pass
-
-        em = _MyEmulator(input_shape=(3,))
-        with pytest.raises(NotImplementedError, match="training_inputs"):
-            _ = em.training_inputs
-
-    def test_training_responses_raises_by_default(self):
-        class _MyEmulator(_MinimalArrayRF, EmulatorMixin):
-            pass
-
-        em = _MyEmulator(input_shape=(3,))
-        with pytest.raises(NotImplementedError, match="training_responses"):
-            _ = em.training_responses
-
-    def test_concrete_mixin_implementation(self):
-        """Verify a concrete EmulatorMixin subclass works end-to-end."""
-        class _ConcreteEmulator(_MinimalArrayRF, EmulatorMixin):
-            def __init__(self, input_shape):
-                super().__init__(input_shape=input_shape)
-                self._X = None
-                self._Y = None
-
-            def fit(self, X, Y):
-                self._X = jnp.asarray(X)
-                self._Y = jnp.asarray(Y)
-
-            @property
-            def training_inputs(self):
-                return self._X
-
-            @property
-            def training_responses(self):
-                return self._Y
-
-        em = _ConcreteEmulator(input_shape=(3,))
-        X = jnp.ones((10, 3))
-        Y = jnp.ones(10)
-        em.fit(X, Y)
-        np.testing.assert_array_equal(em.training_inputs, X)
-        np.testing.assert_array_equal(em.training_responses, Y)

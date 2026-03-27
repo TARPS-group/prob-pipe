@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 from ..custom_types import Array, ArrayLike
-from ..array_backend.utils import (
+from .._array_utils import (
     _ensure_real_scalar,
     _ensure_square_matrix
 )

@@ -23,7 +23,7 @@ from ..custom_types import PRNGKey
 
 # Default sample count for moment-matching conversions
 DEFAULT_NUM_SAMPLES = 1024
-from ..distributions.distribution import (
+from ..core.distribution import (
     ArrayDistribution,
     EmpiricalDistribution,
     Provenance,
@@ -45,7 +45,7 @@ def _mm_provenance(source, mean_result=None, var_result=None):
     instances (from MC fallback), they are stored in the metadata so
     users can inspect conversion error.
     """
-    from ..distributions.distribution import BootstrapDistribution
+    from ..core.distribution import BootstrapDistribution
     metadata = {}
     if isinstance(mean_result, BootstrapDistribution):
         metadata["mean_bootstrap"] = mean_result
@@ -56,7 +56,7 @@ def _mm_provenance(source, mean_result=None, var_result=None):
 
 def _point_estimate(x):
     """Extract a plain array from a value that may be a BootstrapDistribution."""
-    from ..distributions.distribution import BootstrapDistribution
+    from ..core.distribution import BootstrapDistribution
     if isinstance(x, BootstrapDistribution):
         return x.mean()
     return x

@@ -12,7 +12,7 @@ from probpipe import (
     EmpiricalDistribution,
     JointDistribution,
 )
-from probpipe.distributions.distribution import PyTreeArrayDistribution
+from probpipe.core.distribution import PyTreeArrayDistribution
 from probpipe.core.node import WorkflowFunction
 
 

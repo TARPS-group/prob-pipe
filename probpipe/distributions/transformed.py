@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.bijectors as tfb
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from .distribution import (
+from ..core.distribution import (
     ArrayDistribution,
     TFPDistribution,
     Constraint,
@@ -147,7 +147,7 @@ class TransformedDistribution(ArrayDistribution):
     ) -> Array:
         """Draw samples, delegating to TFP when available for efficiency."""
         if key is None:
-            from .distribution import _auto_key
+            from ..core.distribution import _auto_key
             key = _auto_key()
         if self._tfp_transformed is not None:
             return self._tfp_transformed.sample(seed=key, sample_shape=sample_shape)

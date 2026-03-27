@@ -13,7 +13,7 @@ from .linear_operator import LinAlgError
 from typing import Any, TypeAlias
 
 from ..custom_types import Array, ArrayLike
-from ..array_backend.utils import _is_array, _ensure_matrix
+from .._array_utils import _is_array, _ensure_matrix
 from .linear_operator import (
     _as_linear_operator, 
     LinOpLike,

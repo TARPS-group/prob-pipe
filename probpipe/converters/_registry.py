@@ -105,7 +105,7 @@ class ConverterRegistry:
         external distribution types (e.g., TFP, scipy.stats) for which
         a registered converter declares support.
         """
-        from ..distributions.distribution import Distribution
+        from ..core.distribution import Distribution
 
         if isinstance(obj, Distribution):
             return True

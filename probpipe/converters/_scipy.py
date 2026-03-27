@@ -10,7 +10,7 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from ..distributions.distribution import (
+from ..core.distribution import (
     ArrayDistribution,
     EmpiricalDistribution,
     Provenance,

@@ -11,7 +11,3 @@
 ::: probpipe.distributions.gaussian_random_function.GaussianRandomFunction
 
 ::: probpipe.distributions.gaussian_random_function.LinearBasisFunction
-
-## Emulator Mixin
-
-::: probpipe.surrogate.emulator_mixin.EmulatorMixin
