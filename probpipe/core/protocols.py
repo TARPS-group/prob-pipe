@@ -38,9 +38,39 @@ Protocol hierarchy
 
 from __future__ import annotations
 
+import functools
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
+import jax.numpy as jnp
+
 from ..custom_types import Array, PRNGKey
+
+
+# ---------------------------------------------------------------------------
+# Decorator for default moment implementations via expectation
+# ---------------------------------------------------------------------------
+
+def compute_expectation(method):
+    """Decorator providing a default moment implementation via ``expectation``.
+
+    The decorated method should return the function ``f`` to pass to
+    ``self.expectation(f, return_dist=False)``.  Any setup (e.g.
+    computing the mean before computing the variance) can be done in
+    the method body before the ``return``.
+
+    Example::
+
+        @compute_expectation
+        def _mean(self):
+            return lambda x: x
+    """
+
+    @functools.wraps(method)
+    def wrapper(self):
+        f = method(self)
+        return self.expectation(f, return_dist=False)
+
+    return wrapper
 
 
 # ---------------------------------------------------------------------------
@@ -87,8 +117,6 @@ class SupportsUnnormalizedLogProb(Protocol):
 
     def _unnormalized_prob(self, value: Any) -> Array:
         """Default: ``exp(_unnormalized_log_prob(value))``."""
-        import jax.numpy as jnp
-
         return jnp.exp(self._unnormalized_log_prob(value))
 
 
@@ -112,14 +140,10 @@ class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
 
     def _unnormalized_prob(self, value: Any) -> Array:
         """Default: ``exp(_log_prob(value))``."""
-        import jax.numpy as jnp
-
         return jnp.exp(self._log_prob(value))
 
     def _prob(self, value: Any) -> Array:
         """Default: ``exp(_log_prob(value))``."""
-        import jax.numpy as jnp
-
         return jnp.exp(self._log_prob(value))
 
 
@@ -129,34 +153,51 @@ class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
 
 @runtime_checkable
 class SupportsMean(SupportsExpectation, Protocol):
-    """Distribution with an exact (non-MC) mean via ``_mean()``.
+    """Distribution with a mean via ``_mean()``.
 
-    Extends :class:`SupportsExpectation` because the ``mean`` op
-    falls back to Monte Carlo via ``expectation`` when a distribution
-    supports expectations but not exact moments.
+    Extends :class:`SupportsExpectation`.  The default implementation
+    computes ``E[x]`` via ``expectation``; subclasses with exact
+    moments should override.
     """
 
-    def _mean(self) -> Any: ...
+    @compute_expectation
+    def _mean(self):
+        return lambda x: x
 
 
 @runtime_checkable
 class SupportsVariance(SupportsExpectation, Protocol):
-    """Distribution with an exact (non-MC) variance via ``_variance()``.
+    """Distribution with a variance via ``_variance()``.
 
-    Extends :class:`SupportsExpectation` for MC fallback.
+    Extends :class:`SupportsExpectation`.  The default implementation
+    computes ``E[(x - mean)^2]`` via ``expectation``; subclasses with
+    exact moments should override.
     """
 
-    def _variance(self) -> Any: ...
+    @compute_expectation
+    def _variance(self):
+        mu = self.expectation(lambda x: x, return_dist=False)
+        return lambda x: (x - mu) ** 2
 
 
 @runtime_checkable
 class SupportsCovariance(SupportsExpectation, Protocol):
-    """Distribution with an exact (non-MC) covariance via ``_cov()``.
+    """Distribution with a covariance via ``_cov()``.
 
-    Extends :class:`SupportsExpectation` for MC fallback.
+    Extends :class:`SupportsExpectation`.  The default implementation
+    computes ``E[(x - mean)(x - mean)^T]`` via ``expectation``;
+    subclasses with exact moments should override.
     """
 
-    def _cov(self) -> Array: ...
+    @compute_expectation
+    def _cov(self):
+        mu = self.expectation(lambda x: x, return_dist=False)
+
+        def _outer_diff(x):
+            d = jnp.ravel(x) - jnp.ravel(mu)
+            return jnp.outer(d, d)
+
+        return _outer_diff
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +226,7 @@ class SupportsNamedComponents(Protocol):
 
 
 __all__ = [
+    "compute_expectation",
     "SupportsExpectation",
     "SupportsSampling",
     "SupportsUnnormalizedLogProb",
