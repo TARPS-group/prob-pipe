@@ -215,6 +215,39 @@ def _condition_on_impl(
     return dist._condition_on(observed, **kwargs)
 
 
+def _from_distribution_impl(
+    source: Any,
+    target_type: type,
+    *,
+    key: Any | None = None,
+    check_support: bool = True,
+    **kwargs: Any,
+) -> Any:
+    """Convert *source* into an instance of *target_type*.
+
+    Delegates to the global converter registry.
+
+    Parameters
+    ----------
+    source : Distribution
+        Source distribution to convert.
+    target_type : type
+        The target distribution class.
+    key : PRNGKey, optional
+        JAX PRNG key for sampling-based conversion.
+    check_support : bool
+        If ``True`` (default), verify the supports are compatible.
+    **kwargs
+        Additional keyword arguments passed to the converter.
+    """
+    from ..converters import converter_registry
+    if key is None:
+        key = _auto_key()
+    return converter_registry.convert(
+        source, target_type, key=key, check_support=check_support, **kwargs
+    )
+
+
 # ---------------------------------------------------------------------------
 # Op registry — single source of truth
 # ---------------------------------------------------------------------------
@@ -231,6 +264,7 @@ _OP_REGISTRY: dict[str, Any] = {
     "cov": _cov_impl,
     "expectation": _expectation_impl,
     "condition_on": _condition_on_impl,
+    "from_distribution": _from_distribution_impl,
 }
 
 

@@ -95,6 +95,13 @@ from ..core.distribution import (
     real,
     _auto_key,
 )
+from ..core.protocols import (
+    SupportsConditioning,
+    SupportsLogProb,
+    SupportsMean,
+    SupportsNamedComponents,
+    SupportsVariance,
+)
 
 __all__ = [
     "JointDistribution",
@@ -212,7 +219,7 @@ def _component_key_paths(components) -> tuple:
 # DistributionView — lightweight reference to a JointDistribution component
 # ---------------------------------------------------------------------------
 
-class DistributionView(ArrayDistribution):
+class DistributionView(ArrayDistribution, SupportsLogProb, SupportsMean, SupportsVariance):
     """A lightweight reference to a leaf component of a :class:`JointDistribution`.
 
     A ``DistributionView`` acts as an ``ArrayDistribution`` for a single
@@ -310,16 +317,8 @@ class DistributionView(ArrayDistribution):
     def _mean(self) -> Array:
         return self._component._mean()
 
-    def mean(self, **kwargs) -> Array:
-        """Public API — delegates to ``_mean``."""
-        return self._mean()
-
     def _variance(self) -> Array:
         return self._component._variance()
-
-    def variance(self, **kwargs) -> Array:
-        """Public API — delegates to ``_variance``."""
-        return self._variance()
 
     @classmethod
     def _from_distribution(cls, other, *, key, **kwargs):
@@ -343,7 +342,7 @@ class DistributionView(ArrayDistribution):
 # ConditionedComponent — a distribution fixed to an observed value
 # ---------------------------------------------------------------------------
 
-class ConditionedComponent(ArrayDistribution):
+class ConditionedComponent(ArrayDistribution, SupportsLogProb, SupportsMean, SupportsVariance):
     """
     A distribution whose value is fixed (observed / conditioned on).
 
@@ -389,16 +388,8 @@ class ConditionedComponent(ArrayDistribution):
     def _mean(self) -> Array:
         return self._value
 
-    def mean(self, **kwargs) -> Array:
-        """Public API — delegates to ``_mean``."""
-        return self._mean()
-
     def _variance(self) -> Array:
         return jnp.zeros(self.event_shape, dtype=jnp.float32)
-
-    def variance(self, **kwargs) -> Array:
-        """Public API — delegates to ``_variance``."""
-        return self._variance()
 
     @classmethod
     def _from_distribution(cls, other, *, key, **kwargs):
@@ -1034,7 +1025,7 @@ class JointDistribution(PyTreeArrayDistribution):
 # ProductDistribution — independent components
 # ---------------------------------------------------------------------------
 
-class ProductDistribution(JointDistribution):
+class ProductDistribution(JointDistribution, SupportsLogProb, SupportsMean, SupportsVariance, SupportsNamedComponents):
     """Joint distribution with **independent** leaf components.
 
     All leaf components are sampled independently.  The joint
@@ -1153,27 +1144,19 @@ class ProductDistribution(JointDistribution):
             total = total + lp
         return total
 
-    def _mean(self, **kwargs):
+    def _mean(self):
         """Per-leaf means (exact for independent components).
 
         Returns a pytree with the same structure as the components.
         """
         return jax.tree.map(lambda d: d._mean(), self._components)
 
-    def mean(self, **kwargs):
-        """Public API — delegates to ``_mean``."""
-        return self._mean(**kwargs)
-
-    def _variance(self, **kwargs):
+    def _variance(self):
         """Per-leaf variances (exact for independent components).
 
         Returns a pytree with the same structure as the components.
         """
         return jax.tree.map(lambda d: d._variance(), self._components)
-
-    def variance(self, **kwargs):
-        """Public API — delegates to ``_variance``."""
-        return self._variance(**kwargs)
 
     # -- Conditioning (full nested support) --------------------------------
 
@@ -1244,7 +1227,7 @@ def _prune_leaves(tree: dict, remove_paths: set[KeyPath], prefix: tuple = ()) ->
 # SequentialJointDistribution — autoregressive dependence
 # ---------------------------------------------------------------------------
 
-class SequentialJointDistribution(JointDistribution):
+class SequentialJointDistribution(JointDistribution, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning, SupportsNamedComponents):
     """
     Joint distribution with autoregressive (sequential) dependence.
 
@@ -1481,7 +1464,7 @@ class SequentialJointDistribution(JointDistribution):
         """
         return self._eval_log_prob(value, components="all")
 
-    def _mean(self, **kwargs) -> dict[str, Array]:
+    def _mean(self) -> dict[str, Array]:
         """Per-component means (approximate — uses prototype components).
 
         For sequential joints, the true marginal mean is not simply the
@@ -1491,17 +1474,9 @@ class SequentialJointDistribution(JointDistribution):
         """
         return {k: v._mean() for k, v in self._proto_components.items()}
 
-    def mean(self, **kwargs) -> dict[str, Array]:
-        """Public API — delegates to ``_mean``."""
-        return self._mean(**kwargs)
-
-    def _variance(self, **kwargs) -> dict[str, Array]:
+    def _variance(self) -> dict[str, Array]:
         """Per-component variances (approximate — uses prototype components)."""
         return {k: v._variance() for k, v in self._proto_components.items()}
-
-    def variance(self, **kwargs) -> dict[str, Array]:
-        """Public API — delegates to ``_variance``."""
-        return self._variance(**kwargs)
 
     def _condition_on_impl(
         self, observed_leaves: dict[KeyPath, ArrayLike],
@@ -1584,7 +1559,7 @@ class SequentialJointDistribution(JointDistribution):
 # JointEmpirical — weighted joint samples
 # ---------------------------------------------------------------------------
 
-class JointEmpirical(JointDistribution):
+class JointEmpirical(JointDistribution, SupportsLogProb, SupportsMean, SupportsVariance, SupportsNamedComponents):
     """
     Joint distribution from weighted joint samples.
 
@@ -1767,7 +1742,7 @@ class JointEmpirical(JointDistribution):
             offset += flat_dim
         return jnp.concatenate(parts)
 
-    def _mean(self, **kwargs) -> dict[str, Array]:
+    def _mean(self) -> dict[str, Array]:
         """Per-component weighted means."""
         result = {}
         for cname, arr in self._joint_samples.items():
@@ -1777,11 +1752,7 @@ class JointEmpirical(JointDistribution):
                 result[cname] = jnp.einsum("n,n...->...", self.weights, arr)
         return result
 
-    def mean(self, **kwargs) -> dict[str, Array]:
-        """Public API — delegates to ``_mean``."""
-        return self._mean(**kwargs)
-
-    def _variance(self, **kwargs) -> dict[str, Array]:
+    def _variance(self) -> dict[str, Array]:
         """Per-component weighted variances."""
         means = self._mean()
         result = {}
@@ -1792,10 +1763,6 @@ class JointEmpirical(JointDistribution):
             else:
                 result[cname] = jnp.einsum("n,n...->...", self.weights, diff**2)
         return result
-
-    def variance(self, **kwargs) -> dict[str, Array]:
-        """Public API — delegates to ``_variance``."""
-        return self._variance(**kwargs)
 
     def _condition_on_impl(
         self, observed_leaves: dict[KeyPath, ArrayLike],
@@ -1852,7 +1819,7 @@ class JointEmpirical(JointDistribution):
 # JointGaussian — analytical joint Gaussian with cross-covariance
 # ---------------------------------------------------------------------------
 
-class JointGaussian(JointDistribution):
+class JointGaussian(JointDistribution, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning, SupportsNamedComponents):
     """
     Joint Gaussian distribution with named components and cross-covariance.
 
@@ -1970,28 +1937,20 @@ class JointGaussian(JointDistribution):
         flat = self.flatten_value(value)
         return full_mvn._log_prob(flat)
 
-    def _mean(self, **kwargs) -> dict[str, Array]:
+    def _mean(self) -> dict[str, Array]:
         result = {}
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = self._mean_vec[sl]
         return result
 
-    def mean(self, **kwargs) -> dict[str, Array]:
-        """Public API — delegates to ``_mean``."""
-        return self._mean(**kwargs)
-
-    def _variance(self, **kwargs) -> dict[str, Array]:
+    def _variance(self) -> dict[str, Array]:
         diag = jnp.diag(self._cov_mat)
         result = {}
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = diag[sl]
         return result
-
-    def variance(self, **kwargs) -> dict[str, Array]:
-        """Public API — delegates to ``_variance``."""
-        return self._variance(**kwargs)
 
     def _condition_on_impl(
         self, observed_leaves: dict[KeyPath, ArrayLike],

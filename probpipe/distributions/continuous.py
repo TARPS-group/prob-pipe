@@ -24,7 +24,6 @@ from ..core.distribution import (
     greater_than,
 )
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ..core.ops import sample
 
 __all__ = [
     "Normal",
@@ -104,7 +103,7 @@ class Normal(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        samples = sample(other, key=key, sample_shape=(num_samples,))
+        samples = other._sample(key, (num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
         result = cls(loc=m, scale=jnp.sqrt(v), name=name or other.name)
@@ -172,7 +171,7 @@ class Beta(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        samples = sample(other, key=key, sample_shape=(num_samples,))
+        samples = other._sample(key, (num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
         # Method of moments
@@ -248,7 +247,7 @@ class Gamma(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        samples = sample(other, key=key, sample_shape=(num_samples,))
+        samples = other._sample(key, (num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
         concentration = m**2 / v
@@ -324,7 +323,7 @@ class InverseGamma(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        samples = sample(other, key=key, sample_shape=(num_samples,))
+        samples = other._sample(key, (num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
         concentration = m**2 / v + 2.0
@@ -386,7 +385,7 @@ class Exponential(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        samples = sample(other, key=key, sample_shape=(num_samples,))
+        samples = other._sample(key, (num_samples,))
         m = jnp.mean(samples)
         rate = 1.0 / m
         result = cls(rate=rate, name=name or other.name)
@@ -454,7 +453,7 @@ class LogNormal(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        samples = sample(other, key=key, sample_shape=(num_samples,))
+        samples = other._sample(key, (num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
         scale = jnp.sqrt(jnp.log(1.0 + v / m**2))
@@ -537,7 +536,7 @@ class StudentT(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        samples = sample(other, key=key, sample_shape=(num_samples,))
+        samples = other._sample(key, (num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
         # var = scale^2 * df/(df-2) for df>2, so scale = sqrt(var * (df-2)/df)
@@ -607,7 +606,7 @@ class Uniform(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        samples = sample(other, key=key, sample_shape=(num_samples,))
+        samples = other._sample(key, (num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
         low = m - jnp.sqrt(3.0 * v)
@@ -677,7 +676,7 @@ class Cauchy(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        samples = sample(other, key=key, sample_shape=(num_samples,))
+        samples = other._sample(key, (num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
         # Rough heuristic: loc=mean, scale=sqrt(var)/2
@@ -746,7 +745,7 @@ class Laplace(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        samples = sample(other, key=key, sample_shape=(num_samples,))
+        samples = other._sample(key, (num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
         result = cls(loc=m, scale=jnp.sqrt(v / 2.0), name=name or other.name)
@@ -806,7 +805,7 @@ class HalfNormal(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        samples = sample(other, key=key, sample_shape=(num_samples,))
+        samples = other._sample(key, (num_samples,))
         v = jnp.var(samples)
         # var = scale^2 * (1 - 2/pi), so scale = sqrt(var / (1 - 2/pi))
         scale = jnp.sqrt(v / (1.0 - 2.0 / jnp.pi))
@@ -876,7 +875,7 @@ class HalfCauchy(TFPDistribution):
             return result
         # HalfCauchy has infinite moments; use sample-based estimation
         num_samples = kwargs.pop("num_samples", 1024)
-        samples = sample(other, key=key, sample_shape=(num_samples,))
+        samples = other._sample(key, (num_samples,))
         loc = jnp.float32(0.0)
         median = jnp.median(samples)
         # For HalfCauchy(0, scale), median = scale. Use median as scale estimate.
@@ -953,7 +952,7 @@ class Pareto(TFPDistribution):
             return result
         # Sample-based MLE for Pareto
         num_samples = kwargs.pop("num_samples", 1024)
-        samples = sample(other, key=key, sample_shape=(num_samples,))
+        samples = other._sample(key, (num_samples,))
         # MLE: scale = min(samples), concentration = n / sum(log(samples/scale))
         scale = jnp.min(samples)
         scale = jnp.maximum(scale, 1e-6)
@@ -1050,7 +1049,7 @@ class TruncatedNormal(TFPDistribution):
             result.with_source(Provenance("from_distribution", parents=(other,)))
             return result
         num_samples = kwargs.pop("num_samples", 1024)
-        samples = sample(other, key=key, sample_shape=(num_samples,))
+        samples = other._sample(key, (num_samples,))
         m = jnp.mean(samples)
         v = jnp.var(samples)
         low = jnp.min(samples)

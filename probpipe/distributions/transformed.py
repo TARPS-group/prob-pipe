@@ -19,6 +19,7 @@ from ..core.distribution import (
     positive,
     unit_interval,
 )
+from ..core.protocols import SupportsLogProb, SupportsMean, SupportsVariance
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = ["TransformedDistribution"]
@@ -33,7 +34,7 @@ _BIJECTOR_SUPPORT_MAP: dict[str, Constraint] = {
 }
 
 
-class TransformedDistribution(ArrayDistribution):
+class TransformedDistribution(ArrayDistribution, SupportsLogProb, SupportsMean, SupportsVariance):
     """
     Distribution formed by applying a TFP bijector to a base distribution.
 
@@ -163,49 +164,20 @@ class TransformedDistribution(ArrayDistribution):
             )
         )
 
-    def _unnormalized_log_prob(self, x: ArrayLike) -> Array:
-        x = jnp.asarray(x)
-        if self._tfp_transformed is not None:
-            return self._tfp_transformed.unnormalized_log_prob(x)
-        raw = self._bijector.inverse(x)
-        return (
-            self._base._unnormalized_log_prob(raw)
-            + self._bijector.inverse_log_det_jacobian(
-                x, event_ndims=len(self.event_shape)
-            )
-        )
-
-    def _prob(self, x: ArrayLike) -> Array:
-        x = jnp.asarray(x)
-        if self._tfp_transformed is not None:
-            return self._tfp_transformed.prob(x)
-        return jnp.exp(self._log_prob(x))
-
-    # -- moments (delegate to TFP when available) ---------------------------
+    # -- moments (delegate to TFP when available, else MC fallback) ----------
 
     def _mean(self) -> Array:
         if self._tfp_transformed is not None:
             return self._tfp_transformed.mean()
-        raise NotImplementedError(
-            "mean() is not available for TransformedDistribution "
-            "with a non-TFP base distribution."
-        )
-
-    def mean(self) -> Array:
-        """Public API — delegates to ``_mean``."""
-        return self._mean()
+        # Fall through to MC via protocol default
+        return self.expectation(lambda x: x, return_dist=False)
 
     def _variance(self) -> Array:
         if self._tfp_transformed is not None:
             return self._tfp_transformed.variance()
-        raise NotImplementedError(
-            "variance() is not available for TransformedDistribution "
-            "with a non-TFP base distribution."
-        )
-
-    def variance(self) -> Array:
-        """Public API — delegates to ``_variance``."""
-        return self._variance()
+        # Fall through to MC via protocol default
+        mu = self._mean()
+        return self.expectation(lambda x: (x - mu) ** 2, return_dist=False)
 
     # -- repr ---------------------------------------------------------------
 

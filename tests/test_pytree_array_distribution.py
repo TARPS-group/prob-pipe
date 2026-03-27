@@ -75,12 +75,12 @@ class TestDistributionBase:
     """Tests for methods defined on Distribution[T] itself."""
 
     def test_log_prob_raises_by_default(self):
-        """Distribution[T].log_prob raises NotImplementedError."""
+        """Distribution[T] without SupportsLogProb raises TypeError."""
         class StubDist(Distribution):
             def _sample_one(self, key):
                 return jnp.array(0.0)
         d = StubDist()
-        with pytest.raises(NotImplementedError, match="does not support log_prob"):
+        with pytest.raises(TypeError, match="does not support log_prob"):
             log_prob(d, jnp.array(0.0))
 
     def test_unnormalized_log_prob_delegates_to_log_prob(self, scalar_normal):

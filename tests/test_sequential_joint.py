@@ -177,8 +177,8 @@ class TestLogProb:
         value = {"z": z_val, "x": x_val}
         lp = log_prob(joint, value)
 
-        lp_z = Normal(loc=0.0, scale=1.0).log_prob(z_val)
-        lp_x_given_z = Normal(loc=z_val, scale=0.5).log_prob(x_val)
+        lp_z = Normal(loc=0.0, scale=1.0)._log_prob(z_val)
+        lp_x_given_z = Normal(loc=z_val, scale=0.5)._log_prob(x_val)
         expected = lp_z + lp_x_given_z
         np.testing.assert_allclose(float(lp), float(expected), atol=1e-5)
 
@@ -193,9 +193,9 @@ class TestLogProb:
         lp = log_prob(joint, value)
 
         expected = (
-            float(Normal(loc=0.0, scale=1.0).log_prob(z_val))
-            + float(Normal(loc=z_val, scale=0.5).log_prob(x_val))
-            + float(Normal(loc=z_val + x_val, scale=0.1).log_prob(y_val))
+            float(Normal(loc=0.0, scale=1.0)._log_prob(z_val))
+            + float(Normal(loc=z_val, scale=0.5)._log_prob(x_val))
+            + float(Normal(loc=z_val + x_val, scale=0.1)._log_prob(y_val))
         )
         np.testing.assert_allclose(float(lp), expected, atol=1e-5)
 
@@ -344,7 +344,7 @@ class TestConditionOn:
         lp = log_prob(cond, value)
         assert jnp.isfinite(lp)
         # Should equal log p(x=1.5 | z=2.0) = log N(1.5; 2.0, 0.5)
-        expected = float(Normal(loc=2.0, scale=0.5).log_prob(1.5))
+        expected = float(Normal(loc=2.0, scale=0.5)._log_prob(1.5))
         np.testing.assert_allclose(float(lp), expected, atol=1e-5)
 
     def test_condition_on_non_root_log_prob_raises(self):
@@ -371,8 +371,8 @@ class TestConditionOn:
         assert jnp.isfinite(lp)
         # Should be log p(z=0) + log p(x=1|z=0) (unnormalized conditional)
         expected = (
-            float(Normal(loc=0.0, scale=1.0).log_prob(0.0))
-            + float(Normal(loc=0.0, scale=0.5).log_prob(1.0))
+            float(Normal(loc=0.0, scale=1.0)._log_prob(0.0))
+            + float(Normal(loc=0.0, scale=0.5)._log_prob(1.0))
         )
         np.testing.assert_allclose(float(lp), expected, atol=1e-5)
 

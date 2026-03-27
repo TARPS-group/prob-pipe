@@ -21,9 +21,14 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, TypeVar
-import functools
 
 from .._utils import prod
+from .protocols import (
+    SupportsCovariance,
+    SupportsLogProb,
+    SupportsMean,
+    SupportsVariance,
+)
 
 import jax
 import jax.numpy as jnp
@@ -61,45 +66,6 @@ def set_return_approx_dist(value: bool) -> None:
     """Set whether approximate expectations return error-tracking distributions."""
     global RETURN_APPROX_DIST
     RETURN_APPROX_DIST = bool(value)
-
-
-# ---------------------------------------------------------------------------
-# @monte_carlo decorator
-# ---------------------------------------------------------------------------
-
-
-def monte_carlo(method):
-    """Decorator for methods that compute expectations via Monte Carlo.
-
-    The decorated method should return a callable ``f`` such that the
-    desired quantity is ``E[f(X)]``.  The decorator adds
-    ``num_evaluations``, ``return_dist``, and ``key`` keyword arguments,
-    delegates to ``self.expectation(f, ...)``, and returns either an
-    ``Array`` or a ``BootstrapDistribution`` depending on settings.
-
-    Example::
-
-        class MyDist(ArrayDistribution):
-            @monte_carlo
-            def mean(self):
-                return lambda x: x
-    """
-
-    @functools.wraps(method)
-    def wrapper(
-        self,
-        *args,
-        key: PRNGKey | None = None,
-        num_evaluations: int | None = None,
-        return_dist: bool | None = None,
-        **kwargs,
-    ):
-        f = method(self, *args, **kwargs)
-        return self.expectation(
-            f, key=key, num_evaluations=num_evaluations, return_dist=return_dist,
-        )
-
-    return wrapper
 
 
 # ---------------------------------------------------------------------------
@@ -480,59 +446,10 @@ class Distribution(Generic[T], ABC):
             flat_samples,
         )
 
-    def sample(
-        self,
-        key: PRNGKey | None = None,
-        sample_shape: tuple[int, ...] = (),
-    ) -> T:
-        """Public API — delegates to ``_sample``."""
-        if key is None:
-            key = _auto_key()
-        return self._sample(key, sample_shape)
-
     # -- orchestration hints (protocol defaults) -----------------------------
 
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
-
-    # -- log-density (optional) ----------------------------------------------
-
-    def _log_prob(self, value: T) -> Array:
-        """Log-density of *value*.  Optional; raises by default.
-
-        Subclasses that define a density should override this method.
-        Takes one value of type T in, returns a scalar (or batch of
-        scalars) out.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support log_prob"
-        )
-
-    def log_prob(self, value: T) -> Array:
-        """Public API — delegates to ``_log_prob``."""
-        return self._log_prob(value)
-
-    def _unnormalized_log_prob(self, value: T) -> Array:
-        """Evaluate the unnormalized log-density at *value*.
-
-        By default this returns ``_log_prob(value)``.  Subclasses that only
-        know the density up to a normalizing constant (e.g., conditioned
-        distributions) should override this method and may raise
-        ``NotImplementedError`` from ``_log_prob`` instead.
-        """
-        return self._log_prob(value)
-
-    def unnormalized_log_prob(self, value: T) -> Array:
-        """Public API — delegates to ``_unnormalized_log_prob``."""
-        return self._unnormalized_log_prob(value)
-
-    # Protocol method — exp of the log form
-    def _unnormalized_prob(self, value: T) -> Array:
-        return jnp.exp(self._unnormalized_log_prob(value))
-
-    # Protocol method — exp of the log form
-    def _prob(self, value: T) -> Array:
-        return jnp.exp(self._log_prob(value))
 
     # -- expectations ---------------------------------------------------------
 
@@ -778,27 +695,6 @@ class PyTreeArrayDistribution(Distribution[T]):
         """
         return FlattenedView(self)
 
-    # -- moments ------------------------------------------------------------
-
-    @monte_carlo
-    def mean(self):
-        """Mean of this distribution.
-
-        Subclasses with exact means (e.g., ``TFPDistribution``) override
-        this.  The default implementation uses ``expectation(lambda x: x)``.
-        """
-        return lambda x: x
-
-    @monte_carlo
-    def variance(self):
-        """Variance of this distribution.
-
-        Subclasses with exact variance (e.g., ``TFPDistribution``)
-        override this.  The default implementation uses ``expectation``.
-        """
-        mu = self.mean(return_dist=False)
-        return lambda x: jax.tree.map(lambda xi, mi: (xi - mi) ** 2, x, mu)
-
     # -- supports (pytree of per-leaf constraints) ---------------------------
 
     @property
@@ -900,29 +796,6 @@ class ArrayDistribution(PyTreeArrayDistribution[Array]):
         batch_dims = flat.shape[:-1]
         return flat.reshape(*batch_dims, *es)
 
-    # -- array-specific convenience methods ----------------------------------
-
-    def _prob(self, x: ArrayLike) -> Array:
-        return jnp.exp(self._log_prob(x))
-
-    def prob(self, x: ArrayLike) -> Array:
-        """Public API — delegates to ``_prob``."""
-        return self._prob(x)
-
-    @monte_carlo
-    def cov(self):
-        """Covariance matrix of this distribution.
-
-        The base implementation falls back to Monte Carlo.
-        """
-        mu = self.mean(return_dist=False)
-
-        def _outer_diff(x):
-            d = x.ravel() - mu.ravel()
-            return jnp.outer(d, d)
-
-        return _outer_diff
-
     # -- support ------------------------------------------------------------
 
     @property
@@ -981,7 +854,7 @@ class ArrayDistribution(PyTreeArrayDistribution[Array]):
 # FlattenedView — wrap a PyTreeArrayDistribution as an ArrayDistribution
 # ---------------------------------------------------------------------------
 
-class FlattenedView(ArrayDistribution):
+class FlattenedView(ArrayDistribution, SupportsLogProb):
     """Wraps a ``PyTreeArrayDistribution`` as a flat ``ArrayDistribution``.
 
     Sampling produces flat vectors of shape ``(event_size,)``, and
@@ -1045,12 +918,16 @@ class FlattenedView(ArrayDistribution):
 # TFPDistribution mixin
 # ---------------------------------------------------------------------------
 
-class TFPDistribution(ArrayDistribution):
+class TFPDistribution(ArrayDistribution, SupportsLogProb, SupportsMean, SupportsVariance):
     """
     Base class for distributions backed by a ``tfd.Distribution`` instance.
 
     Subclasses set ``self._tfp_dist`` in ``__init__``.  Sampling,
     ``log_prob``, ``mean``, and ``variance`` delegate to TFP.
+
+    Inherits from :class:`SupportsLogProb` (provides ``_prob``,
+    ``_unnormalized_log_prob``, ``_unnormalized_prob`` defaults),
+    :class:`SupportsMean`, and :class:`SupportsVariance`.
     """
 
     _tfp_dist: tfd.Distribution
@@ -1086,32 +963,18 @@ class TFPDistribution(ArrayDistribution):
     def _log_prob(self, x: ArrayLike) -> Array:
         return self._tfp_dist.log_prob(jnp.asarray(x))
 
-    def _unnormalized_log_prob(self, x: ArrayLike) -> Array:
-        return self._tfp_dist.unnormalized_log_prob(jnp.asarray(x))
-
-    def _prob(self, x: ArrayLike) -> Array:
-        return self._tfp_dist.prob(jnp.asarray(x))
-
     def _mean(self) -> Array:
         return self._tfp_dist.mean()
 
-    def mean(self, **kwargs) -> Array:
-        """Public API — delegates to ``_mean``."""
-        return self._mean()
-
     def _variance(self) -> Array:
         return self._tfp_dist.variance()
-
-    def variance(self, **kwargs) -> Array:
-        """Public API — delegates to ``_variance``."""
-        return self._variance()
 
 
 # ---------------------------------------------------------------------------
 # EmpiricalDistribution
 # ---------------------------------------------------------------------------
 
-class EmpiricalDistribution(ArrayDistribution):
+class EmpiricalDistribution(ArrayDistribution, SupportsLogProb, SupportsMean, SupportsVariance, SupportsCovariance):
     """
     Weighted empirical distribution over a finite set of samples.
 
@@ -1278,20 +1141,12 @@ class EmpiricalDistribution(ArrayDistribution):
             return jnp.mean(self._samples, axis=0)
         return jnp.einsum("n,n...->...", self.weights, self._samples)
 
-    def mean(self, **kwargs) -> Array:
-        """Public API — delegates to ``_mean``."""
-        return self._mean()
-
     def _variance(self) -> Array:
         mu = self._mean()
         diff = self._samples - mu
         if self._is_uniform:
             return jnp.mean(diff**2, axis=0)
         return jnp.einsum("n,n...->...", self.weights, diff**2)
-
-    def variance(self, **kwargs) -> Array:
-        """Public API — delegates to ``_variance``."""
-        return self._variance()
 
     def _cov(self) -> Array:
         """Weighted sample covariance matrix, shape ``(d, d)``."""
@@ -1302,10 +1157,6 @@ class EmpiricalDistribution(ArrayDistribution):
         if self._is_uniform:
             return jnp.einsum("ni,nj->ij", diff, diff) / self.n
         return jnp.einsum("ni,nj,n->ij", diff, diff, self.weights)
-
-    def cov(self, **kwargs) -> Array:
-        """Public API — delegates to ``_cov``."""
-        return self._cov()
 
     def expectation(
         self,
@@ -1382,7 +1233,7 @@ class EmpiricalDistribution(ArrayDistribution):
 # BootstrapDistribution
 # ---------------------------------------------------------------------------
 
-class BootstrapDistribution(ArrayDistribution):
+class BootstrapDistribution(ArrayDistribution, SupportsLogProb, SupportsMean, SupportsVariance):
     """Distribution over bootstrap-resampled means of a statistic.
 
     Given *n* evaluations ``f(x_1), ..., f(x_n)`` where ``x_i ~ P``,
@@ -1440,10 +1291,6 @@ class BootstrapDistribution(ArrayDistribution):
             return jnp.mean(self._evaluations, axis=0)
         return jnp.einsum("n,n...->...", self._weights, self._evaluations)
 
-    def mean(self) -> Array:
-        """Public API — delegates to ``_mean``."""
-        return self._mean()
-
     def _variance(self) -> Array:
         """Variance of the sampling distribution (approx Var[f(X)] / n_eff)."""
         mu = self._mean()
@@ -1455,10 +1302,6 @@ class BootstrapDistribution(ArrayDistribution):
         sample_var = jnp.einsum("n,n...->...", self._weights, diff ** 2)
         n_eff = 1.0 / jnp.sum(self._weights ** 2)
         return sample_var / n_eff
-
-    def variance(self) -> Array:
-        """Public API — delegates to ``_variance``."""
-        return self._variance()
 
     def _sample_one(self, key: PRNGKey) -> Array:
         """Draw a single bootstrap resample of the mean."""

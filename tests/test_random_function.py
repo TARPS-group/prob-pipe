@@ -94,7 +94,7 @@ class TestRandomFunction:
 
     def test_log_prob_raises(self):
         rf = _MinimalRandomFunction()
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(TypeError):
             log_prob(rf, lambda x: x)
 
     def test_input_shape_raises(self):
