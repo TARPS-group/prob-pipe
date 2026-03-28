@@ -205,21 +205,15 @@ class TestUnconstrainedStanView:
 
 
 class TestStanModelConditionOn:
-    def test_condition_on_falls_back_to_rwmh(self):
-        """When nutpie import fails, falls back to RWMH."""
-        import sys
+    def test_condition_on_calls_cmdstanpy(self):
+        """_condition_on delegates to CmdStanPy for sampling."""
         model = _make_stan_model()
-        # Remove cached module so the import inside _condition_on fails
-        saved = sys.modules.pop("probpipe.inference._nutpie", None)
-        try:
-            with patch.dict("sys.modules", {"probpipe.inference._nutpie": None}):
-                with patch("probpipe.inference._rwmh._rwmh_impl") as mock_rwmh:
-                    mock_rwmh.return_value = MagicMock()
-                    model._condition_on({"y": [1, 2, 3]}, num_results=10)
-                    mock_rwmh.assert_called_once()
-        finally:
-            if saved is not None:
-                sys.modules["probpipe.inference._nutpie"] = saved
+        with patch("probpipe.modeling._stan._cmdstanpy_condition") as mock_cond:
+            mock_cond.return_value = MagicMock()
+            model._condition_on({"y": [1, 2, 3]}, num_results=10)
+            mock_cond.assert_called_once()
+            call_kwargs = mock_cond.call_args
+            assert call_kwargs.kwargs["num_results"] == 10
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,8 @@
-"""StanModel: wraps Stan models as ProbPipe distributions via BridgeStan."""
+"""StanModel: wraps Stan models as ProbPipe distributions via BridgeStan.
+
+Uses BridgeStan for log-probability evaluation and gradients, and
+CmdStanPy for posterior sampling via Stan's native NUTS sampler.
+"""
 
 from __future__ import annotations
 
@@ -20,12 +24,15 @@ __all__ = ["StanModel"]
 
 
 class StanModel(ProbabilisticModel, SupportsLogProb):
-    """Stan model via BridgeStan.
+    """Stan model via BridgeStan and CmdStanPy.
 
-    Provides efficient log-probability evaluation and JAX-compatible
-    gradient computation.  Parameters are in the constrained space by
-    default; use :meth:`as_unconstrained_distribution` for the
-    unconstrained parameterization.
+    Uses BridgeStan for log-probability evaluation and JAX-compatible
+    gradients.  Posterior sampling (via ``condition_on``) uses
+    CmdStanPy's interface to Stan's native NUTS sampler.
+
+    Parameters are in the constrained space by default; use
+    :meth:`as_unconstrained_distribution` for the unconstrained
+    parameterization.
 
     Parameters
     ----------
@@ -157,33 +164,100 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
     # -- Conditioning -------------------------------------------------------
 
     def _condition_on(self, observed: Any, /, **kwargs: Any) -> MCMCApproximateDistribution:
-        """Condition on observed data using MCMC.
-
-        By default uses nutpie if available, otherwise falls back to
-        the RWMH workflow function.
+        """Condition on observed data using Stan's NUTS sampler.
 
         Parameters
         ----------
         observed : dict
             Stan data dictionary with observed values.
         **kwargs
-            MCMC parameters (``num_results``, ``num_warmup``, etc.).
+            Sampling parameters passed to :func:`_cmdstanpy_condition`.
         """
-        # Try nutpie first
-        try:
-            from ..inference._nutpie import _nutpie_sample_impl
-
-            return _nutpie_sample_impl(self, observed, **kwargs)
-        except ImportError:
-            pass
-
-        # Fall back to RWMH
-        from ..inference._rwmh import _rwmh_impl
-
-        return _rwmh_impl(self, **kwargs)
+        return _cmdstanpy_condition(
+            self._stan_file,
+            data={**(self._stan_data or {}), **(observed if isinstance(observed, dict) else {})},
+            model_ref=self,
+            **kwargs,
+        )
 
     def __repr__(self) -> str:
         return f"StanModel(stan_file={self._stan_file!r}, num_params={self._num_params})"
+
+
+# ---------------------------------------------------------------------------
+# CmdStanPy helpers
+# ---------------------------------------------------------------------------
+
+
+def _ensure_cmdstanpy():
+    """Import cmdstanpy or raise a helpful error."""
+    try:
+        import cmdstanpy
+        return cmdstanpy
+    except ImportError as e:
+        raise ImportError(
+            "cmdstanpy is required for Stan sampling. "
+            "Install it with: pip install probpipe[stan]"
+        ) from e
+
+
+def _cmdstanpy_condition(
+    stan_file: str,
+    *,
+    data: dict,
+    model_ref: Any,
+    num_results: int = 1000,
+    num_warmup: int = 1000,
+    num_chains: int = 4,
+    random_seed: int = 0,
+    **kwargs: Any,
+) -> MCMCApproximateDistribution:
+    """Run Stan's NUTS sampler and return an MCMCApproximateDistribution."""
+    cmdstanpy = _ensure_cmdstanpy()
+
+    model = cmdstanpy.CmdStanModel(stan_file=stan_file)
+    fit = model.sample(
+        data=data,
+        chains=num_chains,
+        iter_sampling=num_results,
+        iter_warmup=num_warmup,
+        seed=random_seed,
+        show_console=False,
+        **kwargs,
+    )
+
+    # Extract per-chain draws
+    chains = []
+    for c in range(num_chains):
+        chain_draws = jnp.asarray(
+            fit.draws(concat_chains=False)[c], dtype=jnp.float32,
+        )
+        chains.append(chain_draws)
+
+    diagnostics = MCMCDiagnostics(
+        log_accept_ratio=jnp.zeros(num_results * num_chains),
+        step_size=0.0,
+        is_accepted=None,
+        algorithm="cmdstan_nuts",
+    )
+
+    result = MCMCApproximateDistribution(
+        chains,
+        diagnostics=diagnostics,
+        name="posterior",
+    )
+    result.with_source(
+        Provenance(
+            "cmdstan_sample",
+            parents=(model_ref,),
+            metadata={
+                "num_results": num_results,
+                "num_warmup": num_warmup,
+                "num_chains": num_chains,
+            },
+        )
+    )
+    return result
 
 
 class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):

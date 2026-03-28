@@ -28,7 +28,7 @@ docs = [
   "mkdocstrings[python]",
   "mkdocs-jupyter<0.26",
 ]
-stan = ["bridgestan>=2.0"]
+stan = ["bridgestan>=2.0", "cmdstanpy>=1.2"]
 pymc = ["pymc>=5", "arviz>=0.15"]
 nutpie = ["nutpie>=0.12"]
 dev = [
