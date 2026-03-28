@@ -19,6 +19,7 @@ from probpipe.core.distribution import (
     positive,
     unit_interval,
 )
+from probpipe import log_prob, mean, sample, variance
 
 
 @pytest.fixture
@@ -35,7 +36,7 @@ class TestTFPBase:
     def test_exp_samples_positive(self, key):
         base = Normal(loc=0.0, scale=1.0)
         td = TransformedDistribution(base, tfb.Exp())
-        samples = td.sample(key, (100,))
+        samples = sample(td, key=key, sample_shape=(100,))
         assert jnp.all(samples > 0)
 
     def test_exp_event_shape(self):
@@ -51,33 +52,33 @@ class TestTFPBase:
     def test_exp_sample_shape(self, key):
         base = Normal(loc=0.0, scale=1.0)
         td = TransformedDistribution(base, tfb.Exp())
-        s = td.sample(key, (5,))
+        s = sample(td, key=key, sample_shape=(5,))
         assert s.shape == (5,)
 
     def test_exp_log_prob_shape(self, key):
         base = Normal(loc=0.0, scale=1.0)
         td = TransformedDistribution(base, tfb.Exp())
-        s = td.sample(key, (5,))
-        lp = td.log_prob(s)
+        s = sample(td, key=key, sample_shape=(5,))
+        lp = log_prob(td, s)
         assert lp.shape == (5,)
 
     def test_exp_log_prob_finite(self, key):
         base = Normal(loc=0.0, scale=1.0)
         td = TransformedDistribution(base, tfb.Exp())
-        s = td.sample(key, (10,))
-        lp = td.log_prob(s)
+        s = sample(td, key=key, sample_shape=(10,))
+        lp = log_prob(td, s)
         assert jnp.all(jnp.isfinite(lp))
 
     def test_sigmoid_samples_in_unit_interval(self, key):
         base = Normal(loc=0.0, scale=1.0)
         td = TransformedDistribution(base, tfb.Sigmoid())
-        samples = td.sample(key, (100,))
+        samples = sample(td, key=key, sample_shape=(100,))
         assert jnp.all(samples >= 0) and jnp.all(samples <= 1)
 
     def test_softplus_samples_positive(self, key):
         base = Normal(loc=0.0, scale=1.0)
         td = TransformedDistribution(base, tfb.Softplus())
-        samples = td.sample(key, (100,))
+        samples = sample(td, key=key, sample_shape=(100,))
         assert jnp.all(samples > 0)
 
     def test_multivariate_exp(self, key):
@@ -85,7 +86,7 @@ class TestTFPBase:
             loc=jnp.zeros(3), cov=jnp.eye(3)
         )
         td = TransformedDistribution(base, tfb.Exp())
-        samples = td.sample(key, (10,))
+        samples = sample(td, key=key, sample_shape=(10,))
         assert samples.shape == (10, 3)
         assert jnp.all(samples > 0)
 
@@ -93,14 +94,14 @@ class TestTFPBase:
         """Shift bijector preserves tractable mean."""
         base = Normal(loc=0.0, scale=1.0)
         td = TransformedDistribution(base, tfb.Shift(5.0))
-        m = td.mean()
+        m = mean(td)
         assert jnp.isclose(m, 5.0, atol=0.01)
 
     def test_variance_delegates_to_tfp_when_available(self):
         """Scale bijector has tractable variance."""
         base = Normal(loc=0.0, scale=1.0)
         td = TransformedDistribution(base, tfb.Scale(2.0))
-        v = td.variance()
+        v = variance(td)
         assert jnp.isclose(v, 4.0, atol=0.01)
 
 
@@ -114,24 +115,17 @@ class TestNonTFPBase:
         samples = jax.random.normal(key, (50, 2))
         emp = EmpiricalDistribution(samples)
         td = TransformedDistribution(emp, tfb.Exp())
-        s = td.sample(key, (10,))
+        s = sample(td, key=key, sample_shape=(10,))
         assert s.shape == (10, 2)
         assert jnp.all(s > 0)
 
-    def test_log_prob_on_empirical(self, key):
+    def test_mean_mc_fallback_on_non_tfp(self, key):
+        """Non-TFP base: mean falls back to MC via expectation."""
         samples = jax.random.normal(key, (50, 2))
         emp = EmpiricalDistribution(samples)
         td = TransformedDistribution(emp, tfb.Exp())
-        x = jnp.ones(2)
-        lp = td.log_prob(x)
-        assert jnp.isfinite(lp)
-
-    def test_mean_raises_on_non_tfp(self, key):
-        samples = jax.random.normal(key, (50, 2))
-        emp = EmpiricalDistribution(samples)
-        td = TransformedDistribution(emp, tfb.Exp())
-        with pytest.raises(NotImplementedError):
-            td.mean()
+        m = mean(td)
+        assert jnp.all(jnp.isfinite(m))
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +138,7 @@ class TestChainedBijectors:
         base = Normal(loc=0.0, scale=1.0)
         chain = tfb.Chain([tfb.Exp(), tfb.Shift(1.0), tfb.Scale(2.0)])
         td = TransformedDistribution(base, chain)
-        s = td.sample(key, (10,))
+        s = sample(td, key=key, sample_shape=(10,))
         assert s.shape == (10,)
         # Exp is the outermost bijector → samples should be positive
         assert jnp.all(s > 0)
@@ -153,8 +147,8 @@ class TestChainedBijectors:
         base = Normal(loc=0.0, scale=1.0)
         chain = tfb.Chain([tfb.Exp(), tfb.Shift(1.0), tfb.Scale(2.0)])
         td = TransformedDistribution(base, chain)
-        s = td.sample(key, (5,))
-        lp = td.log_prob(s)
+        s = sample(td, key=key, sample_shape=(5,))
+        lp = log_prob(td, s)
         assert jnp.all(jnp.isfinite(lp))
 
 

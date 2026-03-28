@@ -12,6 +12,7 @@ from probpipe import (
     Bernoulli, Poisson, Categorical,
     EmpiricalDistribution, ArrayDistribution,
     converter_registry, ConversionInfo, ConversionMethod, Converter,
+    from_distribution,
 )
 from probpipe.distributions.continuous import (
     InverseGamma, LogNormal, StudentT, Uniform, Cauchy, Laplace,
@@ -529,36 +530,36 @@ class TestFromDistributionDelegation:
 
     def test_from_distribution_same_class(self):
         n = Normal(loc=2.0, scale=0.5)
-        result = Normal.from_distribution(n)
+        result = from_distribution(n, Normal)
         assert isinstance(result, Normal)
         np.testing.assert_allclose(float(result._loc), 2.0)
 
     def test_from_distribution_cross_family(self):
         g = Gamma(concentration=9.0, rate=1.0)
-        result = Normal.from_distribution(g, num_samples=5000)
+        result = from_distribution(g, Normal, num_samples=5000)
         assert isinstance(result, Normal)
         np.testing.assert_allclose(float(result._loc), 9.0, atol=0.5)
 
     def test_from_distribution_support_check(self):
         n = Normal(loc=0.5, scale=0.1)
         with pytest.raises(ValueError, match="support"):
-            Beta.from_distribution(n)
+            from_distribution(n, Beta)
 
     def test_from_distribution_check_support_false(self):
         n = Normal(loc=0.5, scale=0.1)
-        result = Beta.from_distribution(n, check_support=False)
+        result = from_distribution(n, Beta, check_support=False)
         assert isinstance(result, Beta)
 
     def test_from_distribution_to_empirical(self):
         n = Normal(loc=0.0, scale=1.0)
-        emp = EmpiricalDistribution.from_distribution(n, num_samples=50)
+        emp = from_distribution(n, EmpiricalDistribution, num_samples=50)
         assert isinstance(emp, EmpiricalDistribution)
         assert emp.n == 50
 
     def test_empirical_to_empirical_returns_source(self):
         samples = jnp.array([[1.0], [2.0], [3.0]])
         emp = EmpiricalDistribution(samples, name="orig")
-        emp2 = EmpiricalDistribution.from_distribution(emp)
+        emp2 = from_distribution(emp, EmpiricalDistribution)
         # Same-class: returns source directly
         assert emp2 is emp
 
@@ -587,8 +588,7 @@ class TestBootstrapMetadata:
         emp = EmpiricalDistribution(samples[:, None])
         result = converter_registry.convert(emp, Normal)
         assert result.source is not None
-        # EmpiricalDistribution.mean()/variance() may or may not return
-        # BootstrapDistribution depending on the @monte_carlo decorator;
+        # EmpiricalDistribution._mean()/_variance() return plain arrays;
         # at minimum, provenance should be attached
         assert result.source.operation == "from_distribution"
 

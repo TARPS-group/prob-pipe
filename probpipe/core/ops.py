@@ -23,12 +23,10 @@ import functools
 import inspect
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 
-from .._utils import prod as _prod
 from ..custom_types import Array, PRNGKey
-from .distribution import _auto_key
+from .distribution import Distribution, _auto_key
 from .protocols import (
     SupportsConditioning,
     SupportsCovariance,
@@ -70,19 +68,11 @@ def _sample_impl(
     if not isinstance(dist, SupportsSampling):
         raise TypeError(
             f"{type(dist).__name__} does not support sampling "
-            f"(missing _sample method)"
+            f"(does not implement SupportsSampling)"
         )
     if key is None:
         key = _auto_key()
-    if sample_shape == ():
-        return dist._sample(key)
-    n = _prod(sample_shape)
-    keys = jax.random.split(key, n)
-    flat_samples = jax.vmap(dist._sample)(keys)
-    return jax.tree.map(
-        lambda x: x.reshape(*sample_shape, *x.shape[1:]),
-        flat_samples,
-    )
+    return dist._sample(key, sample_shape)
 
 
 def _log_prob_impl(dist: SupportsLogProb, value: Any) -> Array:
@@ -135,7 +125,10 @@ def _mean_impl(dist: SupportsExpectation) -> Any:
     otherwise falls back to Monte Carlo via :func:`_expectation_impl`.
     """
     if isinstance(dist, SupportsMean):
-        return dist._mean()
+        try:
+            return dist._mean()
+        except NotImplementedError:
+            pass  # fall through to MC
     if isinstance(dist, SupportsExpectation):
         return _expectation_impl(dist, lambda x: x, return_dist=False)
     raise TypeError(
@@ -151,7 +144,10 @@ def _variance_impl(dist: SupportsExpectation) -> Any:
     :func:`_expectation_impl`.
     """
     if isinstance(dist, SupportsVariance):
-        return dist._variance()
+        try:
+            return dist._variance()
+        except NotImplementedError:
+            pass  # fall through to MC
     if isinstance(dist, SupportsExpectation):
         mu = _mean_impl(dist)
         return _expectation_impl(
@@ -163,26 +159,19 @@ def _variance_impl(dist: SupportsExpectation) -> Any:
     )
 
 
-def _cov_impl(dist: SupportsExpectation) -> Array:
+def _cov_impl(dist: SupportsCovariance) -> Array:
     """Compute the covariance matrix.
 
-    Uses exact covariance if available, otherwise MC fallback via
-    :func:`_expectation_impl`.
+    Requires the distribution to implement :class:`SupportsCovariance`.
+    For multivariate distributions, the covariance is returned with
+    respect to the flattened event representation.
     """
-    if isinstance(dist, SupportsCovariance):
-        return dist._cov()
-    if isinstance(dist, SupportsExpectation):
-        mu = _mean_impl(dist)
-
-        def _outer_diff(x):
-            d = jnp.ravel(x) - jnp.ravel(mu)
-            return jnp.outer(d, d)
-
-        return _expectation_impl(dist, _outer_diff, return_dist=False)
-    raise TypeError(
-        f"{type(dist).__name__} does not support covariance "
-        f"(implements neither SupportsCovariance nor SupportsExpectation)"
-    )
+    if not isinstance(dist, SupportsCovariance):
+        raise TypeError(
+            f"{type(dist).__name__} does not support covariance "
+            f"(does not implement SupportsCovariance)"
+        )
+    return dist._cov()
 
 
 def _expectation_impl(
@@ -198,7 +187,7 @@ def _expectation_impl(
         raise TypeError(
             f"{type(dist).__name__} does not support expectation"
         )
-    return dist.expectation(
+    return dist._expectation(
         f, key=key, num_evaluations=num_evaluations, return_dist=return_dist,
     )
 
@@ -207,13 +196,46 @@ def _condition_on_impl(
     dist: SupportsConditioning,
     observed: Any = None,
     **kwargs: Any,
-) -> Any:
+) -> Distribution:
     """Condition a joint distribution on observed values."""
     if not isinstance(dist, SupportsConditioning):
         raise TypeError(
             f"{type(dist).__name__} does not support conditioning"
         )
     return dist._condition_on(observed, **kwargs)
+
+
+def _from_distribution_impl(
+    source: Distribution,
+    target_type: type,
+    *,
+    key: Any | None = None,
+    check_support: bool = True,
+    **kwargs: Any,
+) -> Any:
+    """Convert *source* into an instance of *target_type*.
+
+    Delegates to the global converter registry.
+
+    Parameters
+    ----------
+    source : Distribution
+        Source distribution to convert.
+    target_type : type
+        The target distribution class.
+    key : PRNGKey, optional
+        JAX PRNG key for sampling-based conversion.
+    check_support : bool
+        If ``True`` (default), verify the supports are compatible.
+    **kwargs
+        Additional keyword arguments passed to the converter.
+    """
+    from ..converters import converter_registry
+    if key is None:
+        key = _auto_key()
+    return converter_registry.convert(
+        source, target_type, key=key, check_support=check_support, **kwargs
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +254,7 @@ _OP_REGISTRY: dict[str, Any] = {
     "cov": _cov_impl,
     "expectation": _expectation_impl,
     "condition_on": _condition_on_impl,
+    "from_distribution": _from_distribution_impl,
 }
 
 

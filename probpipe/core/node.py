@@ -557,7 +557,7 @@ class WorkflowFunction(Node):
         # Sample each joint group once, distribute to arguments
         for group in joint_groups.values():
             key, subkey = jax.random.split(key)
-            structured = group["parent"].sample(subkey, (n,))
+            structured = group["parent"]._sample(subkey, (n,))
             for arg_name, key_path in group["mappings"].items():
                 # Walk the (possibly nested) sample pytree to extract the leaf
                 val = structured
@@ -568,7 +568,7 @@ class WorkflowFunction(Node):
         # Sample independent distributions
         for name in independent:
             key, subkey = jax.random.split(key)
-            sampled[name] = values[name].sample(subkey, (n,))
+            sampled[name] = values[name]._sample(subkey, (n,))
 
         return sampled
 

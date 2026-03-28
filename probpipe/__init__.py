@@ -39,7 +39,6 @@ from probpipe.distributions import (
     RETURN_APPROX_DIST,
     set_default_num_evaluations,
     set_return_approx_dist,
-    monte_carlo,
     # Constraints
     Constraint,
     real,
@@ -220,4 +219,5 @@ from probpipe.core.ops import (  # noqa: E402
     cov,
     expectation,
     condition_on,
+    from_distribution,
 )

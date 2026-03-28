@@ -19,6 +19,8 @@ from ..core.distribution import (
     positive,
     unit_interval,
 )
+from ..core.distribution import _mc_expectation
+from ..core.protocols import SupportsLogProb, SupportsMean, SupportsSampling, SupportsVariance
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = ["TransformedDistribution"]
@@ -33,7 +35,7 @@ _BIJECTOR_SUPPORT_MAP: dict[str, Constraint] = {
 }
 
 
-class TransformedDistribution(ArrayDistribution):
+class TransformedDistribution(ArrayDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance):
     """
     Distribution formed by applying a TFP bijector to a base distribution.
 
@@ -79,6 +81,9 @@ class TransformedDistribution(ArrayDistribution):
             parents=(base,),
             metadata={"bijector": type(bijector).__name__},
         ))
+
+    _sampling_cost: str = "low"
+    _preferred_orchestration: str | None = None
 
     # -- convenient accessors -----------------------------------------------
 
@@ -133,73 +138,62 @@ class TransformedDistribution(ArrayDistribution):
 
     # -- sampling & density -------------------------------------------------
 
-    def _sample(self, key: PRNGKey) -> Array:
+    def _sample_one(self, key: PRNGKey) -> Array:
         """Draw a single sample by transforming a base sample."""
         if self._tfp_transformed is not None:
             return self._tfp_transformed.sample(seed=key)
-        raw = self._base.sample(key)
+        raw = self._base._sample(key)
         return self._bijector.forward(raw)
 
-    def sample(
+    def _sample(
         self,
-        key: PRNGKey | None = None,
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         """Draw samples, delegating to TFP when available for efficiency."""
-        if key is None:
-            from ..core.distribution import _auto_key
-            key = _auto_key()
         if self._tfp_transformed is not None:
             return self._tfp_transformed.sample(seed=key, sample_shape=sample_shape)
-        raw = self._base.sample(key, sample_shape)
+        raw = self._base._sample(key, sample_shape)
         return self._bijector.forward(raw)
 
-    def log_prob(self, x: ArrayLike) -> Array:
+    def _log_prob(self, x: ArrayLike) -> Array:
         x = jnp.asarray(x)
         if self._tfp_transformed is not None:
             return self._tfp_transformed.log_prob(x)
         raw = self._bijector.inverse(x)
         return (
-            self._base.log_prob(raw)
+            self._base._log_prob(raw)
             + self._bijector.inverse_log_det_jacobian(
                 x, event_ndims=len(self.event_shape)
             )
         )
 
-    def unnormalized_log_prob(self, x: ArrayLike) -> Array:
-        x = jnp.asarray(x)
-        if self._tfp_transformed is not None:
-            return self._tfp_transformed.unnormalized_log_prob(x)
-        raw = self._bijector.inverse(x)
-        return (
-            self._base.unnormalized_log_prob(raw)
-            + self._bijector.inverse_log_det_jacobian(
-                x, event_ndims=len(self.event_shape)
-            )
-        )
+    # -- moments (delegate to TFP when available, else MC fallback) ----------
 
-    def prob(self, x: ArrayLike) -> Array:
-        x = jnp.asarray(x)
-        if self._tfp_transformed is not None:
-            return self._tfp_transformed.prob(x)
-        return jnp.exp(self.log_prob(x))
-
-    # -- moments (delegate to TFP when available) ---------------------------
-
-    def mean(self) -> Array:
+    def _mean(self) -> Array:
         if self._tfp_transformed is not None:
             return self._tfp_transformed.mean()
-        raise NotImplementedError(
-            "mean() is not available for TransformedDistribution "
-            "with a non-TFP base distribution."
-        )
+        # Fall through to MC estimation
+        return self._expectation(lambda x: x, return_dist=False)
 
-    def variance(self) -> Array:
+    def _variance(self) -> Array:
         if self._tfp_transformed is not None:
             return self._tfp_transformed.variance()
-        raise NotImplementedError(
-            "variance() is not available for TransformedDistribution "
-            "with a non-TFP base distribution."
+        # Fall through to MC estimation
+        mu = self._mean()
+        return self._expectation(lambda x: (x - mu) ** 2, return_dist=False)
+
+    def _expectation(
+        self,
+        f,
+        *,
+        key=None,
+        num_evaluations=None,
+        return_dist=None,
+    ):
+        return _mc_expectation(
+            self, f, key=key, num_evaluations=num_evaluations,
+            return_dist=return_dist,
         )
 
     # -- repr ---------------------------------------------------------------

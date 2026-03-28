@@ -12,7 +12,6 @@ from ..core.distribution import (
     RETURN_APPROX_DIST,
     set_default_num_evaluations,
     set_return_approx_dist,
-    monte_carlo,
     # constraint singletons & factories
     real,
     positive,

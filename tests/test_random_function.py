@@ -13,6 +13,7 @@ from probpipe import (
     RandomFunction,
     ArrayRandomFunction,
 )
+from probpipe import log_prob, sample
 
 
 # ---------------------------------------------------------------------------
@@ -83,18 +84,18 @@ class TestRandomFunction:
 
     def test_sample_raises(self, key):
         rf = _MinimalRandomFunction()
-        with pytest.raises(NotImplementedError, match="does not support sampling"):
-            rf.sample(key)
+        with pytest.raises(TypeError, match="does not support sampling"):
+            sample(rf, key=key)
 
     def test_sample_with_shape_raises(self, key):
         rf = _MinimalRandomFunction()
-        with pytest.raises(NotImplementedError, match="does not support sampling"):
-            rf.sample(key, sample_shape=(5,))
+        with pytest.raises(TypeError, match="does not support sampling"):
+            sample(rf, key=key, sample_shape=(5,))
 
     def test_log_prob_raises(self):
         rf = _MinimalRandomFunction()
-        with pytest.raises(NotImplementedError):
-            rf.log_prob(lambda x: x)
+        with pytest.raises(TypeError):
+            log_prob(rf, lambda x: x)
 
     def test_input_shape_raises(self):
         rf = _MinimalRandomFunction()

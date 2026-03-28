@@ -18,6 +18,8 @@ from probpipe import (
     Provenance,
     provenance_ancestors,
     provenance_dag,
+    condition_on,
+    from_distribution,
 )
 from probpipe.core.node import WorkflowFunction
 
@@ -61,14 +63,14 @@ class TestFromDistributionProvenance:
 
     def test_normal_from_distribution(self):
         src = Beta(alpha=2.0, beta=5.0, name="beta_src")
-        converted = Normal.from_distribution(src)
+        converted = from_distribution(src, Normal)
         assert converted.source is not None
         assert converted.source.operation == "from_distribution"
         assert converted.source.parents == (src,)
 
     def test_empirical_from_distribution(self):
         src = Normal(loc=0.0, scale=1.0, name="norm_src")
-        ed = EmpiricalDistribution.from_distribution(src, n_samples=100)
+        ed = from_distribution(src, EmpiricalDistribution, n_samples=100)
         assert ed.source is not None
         assert ed.source.operation == "from_distribution"
         assert ed.source.parents == (src,)
@@ -113,7 +115,7 @@ class TestConditioningProvenance:
             x=Normal(loc=0.0, scale=1.0),
             y=Normal(loc=1.0, scale=2.0),
         )
-        cond = joint.condition_on(x=jnp.array(0.0))
+        cond = condition_on(joint, x=jnp.array(0.0))
         assert cond.source is not None
         assert cond.source.operation == "condition_on"
         assert cond.source.parents == (joint,)
@@ -124,7 +126,7 @@ class TestConditioningProvenance:
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
         )
-        cond = seq.condition_on(z=jnp.array(1.0))
+        cond = condition_on(seq, z=jnp.array(1.0))
         assert cond.source.operation == "condition_on"
         assert cond.source.parents == (seq,)
 
@@ -132,7 +134,7 @@ class TestConditioningProvenance:
         jg = JointGaussian(
             mean=jnp.zeros(2), cov=jnp.eye(2), x=1, y=1,
         )
-        cond = jg.condition_on(x=jnp.array([0.0]))
+        cond = condition_on(jg, x=jnp.array([0.0]))
         assert cond.source.operation == "condition_on"
         assert "x" in cond.source.metadata["conditioned"]
 
@@ -213,9 +215,9 @@ class TestProvenanceChains:
     def test_two_step_chain(self):
         """from_distribution → condition_on creates a 2-step chain."""
         src = Beta(alpha=2.0, beta=5.0, name="prior")
-        converted = Normal.from_distribution(src, name="approx")
+        converted = from_distribution(src, Normal, name="approx")
         joint = ProductDistribution(x=converted, y=Normal(loc=0.0, scale=1.0))
-        cond = joint.condition_on(x=jnp.array(0.0))
+        cond = condition_on(joint, x=jnp.array(0.0))
 
         # cond's provenance points to joint
         assert cond.source.operation == "condition_on"

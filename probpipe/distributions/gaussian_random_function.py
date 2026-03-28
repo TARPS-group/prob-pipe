@@ -21,6 +21,7 @@ import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..core.distribution import _auto_key
+from ..core.protocols import SupportsSampling
 from .._utils import prod
 from .random_function import ArrayRandomFunction
 
@@ -233,7 +234,7 @@ class GaussianRandomFunction(ArrayRandomFunction):
 # ---------------------------------------------------------------------------
 
 
-class LinearBasisFunction(GaussianRandomFunction):
+class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
     r"""Linear model with fixed Gaussian weights.
 
     Implements the model:
@@ -276,6 +277,9 @@ class LinearBasisFunction(GaussianRandomFunction):
     """
 
     supports_joint_inputs = True
+
+    _sampling_cost: str = "low"
+    _preferred_orchestration: str | None = None
 
     def __init__(
         self,
@@ -378,13 +382,13 @@ class LinearBasisFunction(GaussianRandomFunction):
 
     # -- Function sampling (finite-dimensional) -----------------------------
 
-    def _sample(self, key: PRNGKey) -> Callable[[ArrayLike], Array]:
+    def _sample_one(self, key: PRNGKey) -> Callable[[ArrayLike], Array]:
         """Draw a single function realization via weight-space sampling.
 
         Returns a callable ``f(X) -> Array`` that evaluates the linear
         model at arbitrary inputs using a single weight draw.
         """
-        w = self._weights.sample(key)  # (d_w,)
+        w = self._weights._sample(key)  # (d_w,)
         bias = self._bias
 
         # Capture feature_map in closure for consistency across calls.
@@ -397,34 +401,22 @@ class LinearBasisFunction(GaussianRandomFunction):
 
         return f
 
-    def sample(
+    def _sample(
         self,
-        key: PRNGKey | None = None,
+        key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Callable[[ArrayLike], Array]:
         """Draw function realization(s) via weight-space sampling.
 
-        Parameters
-        ----------
-        key : PRNGKey, optional
-            JAX PRNG key.
-        sample_shape : tuple of int
-            Number of independent function draws.
-
-        Returns
-        -------
-        callable
-            Accepts ``X`` with shape ``(*extra_batch, n, *input_shape)``
-            and returns array of shape
-            ``(*sample_shape, *extra_batch, n, *output_shape)``.
+        When ``sample_shape`` is non-empty, returns a single callable
+        that evaluates all draws at once, accepting ``X`` with shape
+        ``(*extra_batch, n, *input_shape)`` and returning array of shape
+        ``(*sample_shape, *extra_batch, n, *output_shape)``.
         """
-        if key is None:
-            key = _auto_key()
         if sample_shape == ():
-            return self._sample(key)
-
+            return self._sample_one(key)
         n_samples = prod(sample_shape)
-        w_samples = self._weights.sample(key, sample_shape=(n_samples,))  # (n, d_w)
+        w_samples = self._weights._sample(key, sample_shape=(n_samples,))  # (n, d_w)
         bias = self._bias
         feature_map = self._feature_map
         reshape_to = sample_shape

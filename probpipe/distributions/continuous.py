@@ -89,26 +89,6 @@ class Normal(TFPDistribution):
     def _default_support(cls) -> Constraint:
         return real
 
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> Normal:
-        if isinstance(other, Normal):
-            result = cls(loc=other._loc, scale=other._scale, name=name or other.name)
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-        num_samples = kwargs.pop("num_samples", 1024)
-        samples = other.sample(key, sample_shape=(num_samples,))
-        m = jnp.mean(samples)
-        v = jnp.var(samples)
-        result = cls(loc=m, scale=jnp.sqrt(v), name=name or other.name)
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -157,30 +137,6 @@ class Beta(TFPDistribution):
     def _default_support(cls) -> Constraint:
         return unit_interval
 
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> Beta:
-        if isinstance(other, Beta):
-            result = cls(alpha=other._alpha, beta=other._beta, name=name or other.name)
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-        num_samples = kwargs.pop("num_samples", 1024)
-        samples = other.sample(key, sample_shape=(num_samples,))
-        m = jnp.mean(samples)
-        v = jnp.var(samples)
-        # Method of moments
-        common = m * (1.0 - m) / v - 1.0
-        alpha = jnp.maximum(m * common, 0.01)
-        beta = jnp.maximum((1.0 - m) * common, 0.01)
-        result = cls(alpha=alpha, beta=beta, name=name or other.name)
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -229,32 +185,6 @@ class Gamma(TFPDistribution):
     def _default_support(cls) -> Constraint:
         return positive
 
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> Gamma:
-        if isinstance(other, Gamma):
-            result = cls(
-                concentration=other._concentration,
-                rate=other._rate,
-                name=name or other.name,
-            )
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-        num_samples = kwargs.pop("num_samples", 1024)
-        samples = other.sample(key, sample_shape=(num_samples,))
-        m = jnp.mean(samples)
-        v = jnp.var(samples)
-        concentration = m**2 / v
-        rate = m / v
-        result = cls(concentration=concentration, rate=rate, name=name or other.name)
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -305,32 +235,6 @@ class InverseGamma(TFPDistribution):
     def _default_support(cls) -> Constraint:
         return positive
 
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> InverseGamma:
-        if isinstance(other, InverseGamma):
-            result = cls(
-                concentration=other._concentration,
-                scale=other._scale,
-                name=name or other.name,
-            )
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-        num_samples = kwargs.pop("num_samples", 1024)
-        samples = other.sample(key, sample_shape=(num_samples,))
-        m = jnp.mean(samples)
-        v = jnp.var(samples)
-        concentration = m**2 / v + 2.0
-        scale = m * (m**2 / v + 1.0)
-        result = cls(concentration=concentration, scale=scale, name=name or other.name)
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -371,26 +275,6 @@ class Exponential(TFPDistribution):
     def _default_support(cls) -> Constraint:
         return positive
 
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> Exponential:
-        if isinstance(other, Exponential):
-            result = cls(rate=other._rate, name=name or other.name)
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-        num_samples = kwargs.pop("num_samples", 1024)
-        samples = other.sample(key, sample_shape=(num_samples,))
-        m = jnp.mean(samples)
-        rate = 1.0 / m
-        result = cls(rate=rate, name=name or other.name)
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -439,28 +323,6 @@ class LogNormal(TFPDistribution):
     def _default_support(cls) -> Constraint:
         return positive
 
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> LogNormal:
-        if isinstance(other, LogNormal):
-            result = cls(loc=other._loc, scale=other._scale, name=name or other.name)
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-        num_samples = kwargs.pop("num_samples", 1024)
-        samples = other.sample(key, sample_shape=(num_samples,))
-        m = jnp.mean(samples)
-        v = jnp.var(samples)
-        scale = jnp.sqrt(jnp.log(1.0 + v / m**2))
-        loc = jnp.log(m) - scale**2 / 2.0
-        result = cls(loc=loc, scale=scale, name=name or other.name)
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -517,33 +379,6 @@ class StudentT(TFPDistribution):
     def _default_support(cls) -> Constraint:
         return real
 
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> StudentT:
-        if isinstance(other, StudentT):
-            result = cls(
-                df=other._df,
-                loc=other._loc,
-                scale=other._scale,
-                name=name or other.name,
-            )
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-        num_samples = kwargs.pop("num_samples", 1024)
-        samples = other.sample(key, sample_shape=(num_samples,))
-        m = jnp.mean(samples)
-        v = jnp.var(samples)
-        # var = scale^2 * df/(df-2) for df>2, so scale = sqrt(var * (df-2)/df)
-        df = 5.0
-        result = cls(df=df, loc=m, scale=jnp.sqrt(v * (df - 2.0) / df), name=name or other.name)
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -592,28 +427,6 @@ class Uniform(TFPDistribution):
     def _default_support(cls) -> Constraint:
         return real
 
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> Uniform:
-        if isinstance(other, Uniform):
-            result = cls(low=other._low, high=other._high, name=name or other.name)
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-        num_samples = kwargs.pop("num_samples", 1024)
-        samples = other.sample(key, sample_shape=(num_samples,))
-        m = jnp.mean(samples)
-        v = jnp.var(samples)
-        low = m - jnp.sqrt(3.0 * v)
-        high = m + jnp.sqrt(3.0 * v)
-        result = cls(low=low, high=high, name=name or other.name)
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -662,27 +475,6 @@ class Cauchy(TFPDistribution):
     def _default_support(cls) -> Constraint:
         return real
 
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> Cauchy:
-        if isinstance(other, Cauchy):
-            result = cls(loc=other._loc, scale=other._scale, name=name or other.name)
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-        num_samples = kwargs.pop("num_samples", 1024)
-        samples = other.sample(key, sample_shape=(num_samples,))
-        m = jnp.mean(samples)
-        v = jnp.var(samples)
-        # Rough heuristic: loc=mean, scale=sqrt(var)/2
-        result = cls(loc=m, scale=jnp.sqrt(v) / 2.0, name=name or other.name)
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -731,26 +523,6 @@ class Laplace(TFPDistribution):
     def _default_support(cls) -> Constraint:
         return real
 
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> Laplace:
-        if isinstance(other, Laplace):
-            result = cls(loc=other._loc, scale=other._scale, name=name or other.name)
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-        num_samples = kwargs.pop("num_samples", 1024)
-        samples = other.sample(key, sample_shape=(num_samples,))
-        m = jnp.mean(samples)
-        v = jnp.var(samples)
-        result = cls(loc=m, scale=jnp.sqrt(v / 2.0), name=name or other.name)
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -791,27 +563,6 @@ class HalfNormal(TFPDistribution):
     def _default_support(cls) -> Constraint:
         return non_negative
 
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> HalfNormal:
-        if isinstance(other, HalfNormal):
-            result = cls(scale=other._scale, name=name or other.name)
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-        num_samples = kwargs.pop("num_samples", 1024)
-        samples = other.sample(key, sample_shape=(num_samples,))
-        v = jnp.var(samples)
-        # var = scale^2 * (1 - 2/pi), so scale = sqrt(var / (1 - 2/pi))
-        scale = jnp.sqrt(v / (1.0 - 2.0 / jnp.pi))
-        result = cls(scale=scale, name=name or other.name)
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -860,29 +611,6 @@ class HalfCauchy(TFPDistribution):
     def _default_support(cls) -> Constraint:
         return non_negative
 
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> HalfCauchy:
-        if isinstance(other, HalfCauchy):
-            result = cls(loc=other._loc, scale=other._scale, name=name or other.name)
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-        # HalfCauchy has infinite moments; use sample-based estimation
-        num_samples = kwargs.pop("num_samples", 1024)
-        samples = other.sample(key, sample_shape=(num_samples,))
-        loc = jnp.float32(0.0)
-        median = jnp.median(samples)
-        # For HalfCauchy(0, scale), median = scale. Use median as scale estimate.
-        scale = jnp.maximum(median - loc, 0.01)
-        result = cls(loc=loc, scale=scale, name=name or other.name)
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -933,36 +661,6 @@ class Pareto(TFPDistribution):
     def _default_support(cls) -> Constraint:
         return positive
 
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> Pareto:
-        if isinstance(other, Pareto):
-            result = cls(
-                concentration=other._concentration,
-                scale=other._scale,
-                name=name or other.name,
-            )
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-        # Sample-based MLE for Pareto
-        num_samples = kwargs.pop("num_samples", 1024)
-        samples = other.sample(key, sample_shape=(num_samples,))
-        # MLE: scale = min(samples), concentration = n / sum(log(samples/scale))
-        scale = jnp.min(samples)
-        scale = jnp.maximum(scale, 1e-6)
-        concentration = num_samples / jnp.sum(jnp.log(samples / scale))
-        concentration = jnp.maximum(concentration, 0.01)
-        result = cls(
-            concentration=concentration, scale=scale, name=name or other.name
-        )
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -1029,33 +727,3 @@ class TruncatedNormal(TFPDistribution):
     def _default_support(cls) -> Constraint:
         return real
 
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> TruncatedNormal:
-        if isinstance(other, TruncatedNormal):
-            result = cls(
-                loc=other._loc,
-                scale=other._scale,
-                low=other._low,
-                high=other._high,
-                name=name or other.name,
-            )
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-        num_samples = kwargs.pop("num_samples", 1024)
-        samples = other.sample(key, sample_shape=(num_samples,))
-        m = jnp.mean(samples)
-        v = jnp.var(samples)
-        low = jnp.min(samples)
-        high = jnp.max(samples)
-        result = cls(
-            loc=m, scale=jnp.sqrt(v), low=low, high=high, name=name or other.name
-        )
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result

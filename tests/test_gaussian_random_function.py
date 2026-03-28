@@ -18,6 +18,7 @@ from probpipe import (
     GaussianRandomFunction,
     LinearBasisFunction,
 )
+from probpipe import sample
 
 
 # ---------------------------------------------------------------------------
@@ -394,28 +395,28 @@ class TestLinearBasisFunction:
     # -- Function sampling --------------------------------------------------
 
     def test_sample_single(self, key, scalar_lbf):
-        f = scalar_lbf.sample(key)
+        f = sample(scalar_lbf, key=key)
         assert callable(f)
         X = jnp.linspace(-1, 1, 10).reshape(-1, 1)
         y = f(X)
         assert y.shape == (10,)
 
     def test_sample_batched(self, key, scalar_lbf):
-        f = scalar_lbf.sample(key, sample_shape=(7,))
+        f = sample(scalar_lbf, key=key, sample_shape=(7,))
         assert callable(f)
         X = jnp.linspace(-1, 1, 10).reshape(-1, 1)
         y = f(X)
         assert y.shape == (7, 10)
 
     def test_sample_multi_dim_shape(self, key, scalar_lbf):
-        f = scalar_lbf.sample(key, sample_shape=(3, 4))
+        f = sample(scalar_lbf, key=key, sample_shape=(3, 4))
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
         y = f(X)
         assert y.shape == (3, 4, 5)
 
     def test_sample_consistency(self, key, scalar_lbf):
         """Same function realization evaluates consistently."""
-        f = scalar_lbf.sample(key)
+        f = sample(scalar_lbf, key=key)
         X1 = jnp.array([[0.0], [1.0]])
         X2 = jnp.array([[0.0], [2.0]])
         y1 = f(X1)
@@ -425,7 +426,7 @@ class TestLinearBasisFunction:
 
     def test_sample_batched_consistency(self, key, scalar_lbf):
         """Batched realizations: each trajectory is consistent."""
-        f = scalar_lbf.sample(key, sample_shape=(5,))
+        f = sample(scalar_lbf, key=key, sample_shape=(5,))
         X1 = jnp.array([[0.0]])
         X2 = jnp.array([[0.0]])
         y1 = f(X1)  # (5, 1)
@@ -433,13 +434,13 @@ class TestLinearBasisFunction:
         np.testing.assert_allclose(y1, y2, atol=1e-6)
 
     def test_sample_multi_output(self, key, multi_output_lbf):
-        f = multi_output_lbf.sample(key)
+        f = sample(multi_output_lbf, key=key)
         X = jnp.linspace(-1, 1, 8).reshape(-1, 1)
         y = f(X)
         assert y.shape == (8, 2)
 
     def test_sample_batched_multi_output(self, key, multi_output_lbf):
-        f = multi_output_lbf.sample(key, sample_shape=(5,))
+        f = sample(multi_output_lbf, key=key, sample_shape=(5,))
         X = jnp.linspace(-1, 1, 8).reshape(-1, 1)
         y = f(X)
         assert y.shape == (5, 8, 2)
@@ -1373,7 +1374,7 @@ class TestMonteCarlo:
 
     def _sample_outputs(self, lbf, X, key, n_samples):
         """Draw n_samples function realizations and evaluate at X."""
-        f = lbf.sample(key, sample_shape=(n_samples,))
+        f = sample(lbf, key=key, sample_shape=(n_samples,))
         return np.array(f(X))  # (n_samples, n, [*output_shape])
 
     def test_linear_basis_function_moments(self, scalar_correctness_lbf, correctness_X):

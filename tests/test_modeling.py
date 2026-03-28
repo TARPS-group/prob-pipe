@@ -16,6 +16,7 @@ from probpipe.core.modeling import (
     RWMH,
 )
 from probpipe.core.node import AbstractModule, wf
+from probpipe import log_prob, mean, prob
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +297,7 @@ class TestRWMH:
             RWMH(thin=0)
 
     def test_init_from_data_mean(self, prior, likelihood, data):
-        """When prior.mean() fails, should use data mean."""
+        """When mean(prior) fails, should use data mean."""
         sampler = RWMH(n_steps=100, burn_in=10, thin=1, seed=42)
         posterior = sampler(prior=prior, likelihood=likelihood, data=data)
         assert isinstance(posterior, EmpiricalDistribution)
@@ -368,8 +369,8 @@ class TestDistributionCoverageGaps:
         """Line 88: prob() = exp(log_prob())."""
         g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
         x = jnp.ones(2)
-        expected = jnp.exp(g.log_prob(x))
-        actual = g.prob(x)
+        expected = jnp.exp(log_prob(g, x))
+        actual = prob(g, x)
         assert jnp.allclose(actual, expected)
 
     def test_repr_with_batch_shape(self):

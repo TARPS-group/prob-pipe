@@ -22,24 +22,22 @@ Protocol hierarchy
 
 ::
 
-    SupportsExpectation
-        ↑ inherits
-    SupportsSampling          provides default expectation via MC
-
-    SupportsUnnormalizedLogProb
-        ↑ inherits
-    SupportsLogProb           provides _unnormalized_log_prob via _log_prob
+    SupportsSampling          standalone; single _sample protocol method
 
     SupportsExpectation
         ↑ inherits
     SupportsMean, SupportsVariance, SupportsCovariance
+
+    SupportsUnnormalizedLogProb
+        ↑ inherits
+    SupportsLogProb           provides _unnormalized_log_prob via _log_prob
 
 """
 
 from __future__ import annotations
 
 import functools
-from typing import Any, ClassVar, Protocol, runtime_checkable
+from typing import Any, Callable, ClassVar, Protocol, runtime_checkable
 
 import jax.numpy as jnp
 
@@ -68,7 +66,7 @@ def compute_expectation(method):
     @functools.wraps(method)
     def wrapper(self):
         f = method(self)
-        return self.expectation(f, return_dist=False)
+        return self._expectation(f, return_dist=False)
 
     return wrapper
 
@@ -81,24 +79,47 @@ def compute_expectation(method):
 class SupportsExpectation(Protocol):
     """Distribution that can compute ``E[f(X)]``."""
 
-    def expectation(self, f: Any, *, key: Any, num_evaluations: Any,
-                    return_dist: Any) -> Any: ...
+    def _expectation(self, f: Any, *, key: Any, num_evaluations: Any,
+                     return_dist: Any) -> Any: ...
 
 
 @runtime_checkable
-class SupportsSampling(SupportsExpectation, Protocol):
-    """Distribution that can produce samples via ``_sample(key)``.
+class SupportsSampling(Protocol):
+    """Distribution that can produce samples via ``_sample(key, sample_shape)``.
 
-    Extends :class:`SupportsExpectation` because any distribution
-    supporting sampling also supports Monte Carlo expectations.
-    The base :class:`~probpipe.core.distribution.Distribution` class
-    provides a default ``expectation`` implementation via ``sample``.
+    Only requires ``_sample(key, sample_shape)``; concrete classes choose
+    their own implementation strategy (vmap over ``_sample_one``, TFP
+    batched sampling, index resampling, etc.).
+
+    Does NOT extend :class:`SupportsExpectation` — not all samplable
+    distributions support array-valued expectations (e.g., random functions).
+    Classes that support both should inherit both protocols.
     """
 
     _sampling_cost: ClassVar[str]  # "low", "medium", "high"
     _preferred_orchestration: ClassVar[str | None]  # "task", "flow", or None
 
-    def _sample(self, key: PRNGKey) -> Any: ...
+    def _sample(
+        self,
+        key: PRNGKey,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Any:
+        """Draw sample(s) from this distribution.
+
+        Parameters
+        ----------
+        key : PRNGKey
+            JAX PRNG key.
+        sample_shape : tuple of int
+            Shape prefix for independent draws.
+
+        Returns
+        -------
+        Any
+            A single sample when ``sample_shape == ()``, or a batched
+            representation when ``sample_shape`` is non-empty.
+        """
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +197,7 @@ class SupportsVariance(SupportsExpectation, Protocol):
 
     @compute_expectation
     def _variance(self):
-        mu = self.expectation(lambda x: x, return_dist=False)
+        mu = self._expectation(lambda x: x, return_dist=False)
         return lambda x: (x - mu) ** 2
 
 
@@ -191,7 +212,7 @@ class SupportsCovariance(SupportsExpectation, Protocol):
 
     @compute_expectation
     def _cov(self):
-        mu = self.expectation(lambda x: x, return_dist=False)
+        mu = self._expectation(lambda x: x, return_dist=False)
 
         def _outer_diff(x):
             d = jnp.ravel(x) - jnp.ravel(mu)

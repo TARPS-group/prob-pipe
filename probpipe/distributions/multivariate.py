@@ -4,17 +4,11 @@ Multivariate distributions backed by TFP.
 
 from __future__ import annotations
 
-from typing import Any
-
-import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..core.distribution import (
     TFPDistribution,
-    ArrayDistribution,
-    EmpiricalDistribution,
-    Provenance,
     Constraint,
     real,
     positive_definite,
@@ -22,7 +16,7 @@ from ..core.distribution import (
     non_negative_integer,
     sphere,
 )
-from ..custom_types import Array, ArrayLike, PRNGKey
+from ..custom_types import Array, ArrayLike
 
 __all__ = [
     "MultivariateNormal",
@@ -118,43 +112,6 @@ class MultivariateNormal(TFPDistribution):
     def support(self) -> Constraint:
         return real
 
-    # -- conversion ---------------------------------------------------------
-
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> MultivariateNormal:
-        """Fit a multivariate normal by moment-matching samples from *other*.
-
-        Keyword Args
-        -------------
-        num_samples : int
-            Samples drawn for moment-matching (default 1024).
-        """
-        num_samples = kwargs.pop("num_samples", 1024)
-
-        if isinstance(other, EmpiricalDistribution):
-            loc = other.mean()
-            cov_mat = other.cov()
-        else:
-            samples = other.sample(key, sample_shape=(num_samples,))
-            loc = jnp.mean(samples, axis=0)
-            diff = samples - loc
-            cov_mat = jnp.einsum("ni,nj->ij", diff, diff) / samples.shape[0]
-
-        # Ensure PSD via jitter
-        cov_mat = 0.5 * (cov_mat + cov_mat.T)
-        cov_mat = cov_mat + 1e-6 * jnp.eye(cov_mat.shape[0])
-
-        g = cls(loc=loc, cov=cov_mat, name=name or other.name)
-        g.with_source(Provenance("from_distribution", parents=(other,)))
-        return g
-
 
 # ---------------------------------------------------------------------------
 # Dirichlet
@@ -206,38 +163,6 @@ class Dirichlet(TFPDistribution):
     @property
     def support(self) -> Constraint:
         return simplex
-
-    # -- conversion ---------------------------------------------------------
-
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> Dirichlet:
-        """Fit a Dirichlet by method-of-moments from *other*."""
-        num_samples = kwargs.pop("num_samples", 1024)
-
-        if isinstance(other, Dirichlet):
-            result = cls(concentration=other.concentration, name=name or other.name)
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-
-        samples = other.sample(key, sample_shape=(num_samples,))
-        m = jnp.mean(samples, axis=0)
-        var = jnp.var(samples, axis=0)
-        # Method of moments: concentration_0 = m[0]*(1 - m[0])/var[0] - 1
-        concentration_0 = m[0] * (1.0 - m[0]) / (var[0] + 1e-8) - 1.0
-        concentration_0 = jnp.maximum(concentration_0, 0.01)
-        concentration = m * concentration_0
-        concentration = jnp.maximum(concentration, 0.01)
-
-        result = cls(concentration=concentration, name=name or other.name)
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -317,60 +242,6 @@ class Multinomial(TFPDistribution):
     @property
     def support(self) -> Constraint:
         return non_negative_integer
-
-    # -- conversion ---------------------------------------------------------
-
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> Multinomial:
-        """Fit a Multinomial from *other*.
-
-        Keyword Args
-        -------------
-        total_count : int
-            Number of trials. **Required** unless *other* is already a
-            ``Multinomial`` (in which case its ``total_count`` is reused).
-        num_samples : int
-            Samples drawn for moment-matching (default 1024).
-        """
-        num_samples = kwargs.pop("num_samples", 1024)
-        total_count = kwargs.pop("total_count", None)
-
-        if isinstance(other, Multinomial):
-            if total_count is None:
-                total_count = other.total_count
-            probs = other.probs
-            if probs is None:
-                # Convert logits to probs
-                probs = jax.nn.softmax(other.logits)
-            result = cls(
-                total_count=total_count, probs=probs, name=name or other.name
-            )
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-
-        if total_count is None:
-            raise ValueError(
-                "total_count must be provided via kwargs when fitting "
-                "Multinomial from a non-Multinomial distribution."
-            )
-
-        samples = other.sample(key, sample_shape=(num_samples,))
-        mean = jnp.mean(samples, axis=0)
-        total_count = jnp.asarray(total_count, dtype=jnp.float32)
-        probs = mean / total_count
-        # Normalise to ensure valid probabilities
-        probs = probs / jnp.sum(probs)
-
-        result = cls(total_count=total_count, probs=probs, name=name or other.name)
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result
 
 
 # ---------------------------------------------------------------------------
@@ -453,41 +324,6 @@ class Wishart(TFPDistribution):
     def support(self) -> Constraint:
         return positive_definite
 
-    # -- conversion ---------------------------------------------------------
-
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> Wishart:
-        """Fit a Wishart by moment-matching from *other*."""
-        num_samples = kwargs.pop("num_samples", 1024)
-
-        if isinstance(other, Wishart):
-            result = cls(
-                df=other.df, scale_tril=other.scale_tril, name=name or other.name
-            )
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-
-        samples = other.sample(key, sample_shape=(num_samples,))
-        mean_mat = jnp.mean(samples, axis=0)
-        # Reasonable default: df = event_dim + 2
-        event_dim = mean_mat.shape[-1]
-        df = jnp.asarray(event_dim + 2, dtype=jnp.float32)
-        scale_mat = mean_mat / df
-        # Ensure PSD via symmetrisation + jitter
-        scale_mat = 0.5 * (scale_mat + scale_mat.T)
-        scale_mat = scale_mat + 1e-6 * jnp.eye(scale_mat.shape[0])
-
-        result = cls(df=df, scale=scale_mat, name=name or other.name)
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result
-
 
 # ---------------------------------------------------------------------------
 # VonMisesFisher
@@ -549,47 +385,3 @@ class VonMisesFisher(TFPDistribution):
     def support(self) -> Constraint:
         return sphere
 
-    # -- conversion ---------------------------------------------------------
-
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> VonMisesFisher:
-        """Fit a VonMisesFisher from *other* by estimating mean direction and concentration."""
-        num_samples = kwargs.pop("num_samples", 1024)
-
-        if isinstance(other, VonMisesFisher):
-            result = cls(
-                mean_direction=other.mean_direction,
-                concentration=other.concentration,
-                name=name or other.name,
-            )
-            result.with_source(Provenance("from_distribution", parents=(other,)))
-            return result
-
-        samples = other.sample(key, sample_shape=(num_samples,))
-        mean_vector = jnp.mean(samples, axis=0)
-        norm = jnp.linalg.norm(mean_vector)
-        mean_direction = mean_vector / jnp.maximum(norm, 1e-8)
-
-        # Estimate concentration from resultant length
-        # R = |mean_vector| / n (but mean already divides by n, so R = norm)
-        R = norm
-        d = mean_vector.shape[-1]
-        # Approximation: kappa ~ R * (d - R^2) / (1 - R^2)
-        R2 = R ** 2
-        concentration = R * (d - R2) / jnp.maximum(1.0 - R2, 1e-8)
-        concentration = jnp.maximum(concentration, 0.0)
-
-        result = cls(
-            mean_direction=mean_direction,
-            concentration=concentration,
-            name=name or other.name,
-        )
-        result.with_source(Provenance("from_distribution", parents=(other,)))
-        return result
