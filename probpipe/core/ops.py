@@ -197,7 +197,7 @@ def _expectation_impl(
         raise TypeError(
             f"{type(dist).__name__} does not support expectation"
         )
-    return dist.expectation(
+    return dist._expectation(
         f, key=key, num_evaluations=num_evaluations, return_dist=return_dist,
     )
 

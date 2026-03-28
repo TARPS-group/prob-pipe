@@ -22,14 +22,15 @@ but components may also be nested dicts::
     )
 
 The pytree structure of the components determines the structure of
-samples, ``event_shapes``, ``log_prob`` inputs, etc.
+samples, ``event_shapes``, ``_log_prob`` inputs, etc.
 
 **Structural contract:**
 
-*  ``sample()`` returns a pytree with the same structure as the
-   components, but with ``ArrayDistribution`` leaves replaced by
-   arrays of shape ``(*sample_shape, *batch_shape, *leaf_event_shape)``.
-*  ``log_prob()`` accepts a pytree with the same structure.
+*  ``_sample(key, sample_shape)`` returns a pytree with the same
+   structure as the components, but with ``ArrayDistribution`` leaves
+   replaced by arrays of shape
+   ``(*sample_shape, *batch_shape, *leaf_event_shape)``.
+*  ``_log_prob(value)`` accepts a pytree with the same structure.
 *  ``event_shapes`` returns a pytree with the same structure, where
    each leaf is the ``event_shape`` tuple of the corresponding
    component distribution.
@@ -440,18 +441,19 @@ class JointDistribution(PyTreeArrayDistribution):
     When all top-level values are ``ArrayDistribution`` leaves (no
     nesting), the API behaves identically to a flat-dict joint:
     ``component_names`` returns plain strings, ``__getitem__`` accepts
-    a single string, and ``sample()`` returns a flat dict.
+    a single string, and ``_sample()`` returns a flat dict.
 
     **Sample type:**
 
-    ``sample()`` returns a pytree with the same structure as the
-    components, but with ``ArrayDistribution`` leaves replaced by
-    arrays of shape ``(*sample_shape, *batch_shape, *leaf_event_shape)``.
+    ``_sample(key, sample_shape)`` returns a pytree with the same
+    structure as the components, but with ``ArrayDistribution`` leaves
+    replaced by arrays of shape
+    ``(*sample_shape, *batch_shape, *leaf_event_shape)``.
 
     **Log-prob contract:**
 
-    ``log_prob()`` accepts a pytree with the same structure and returns
-    a scalar (or batch-shaped array).  The base class raises
+    ``_log_prob(value)`` accepts a pytree with the same structure and
+    returns a scalar (or batch-shaped array).  The base class raises
     ``NotImplementedError``; subclasses define the factorization.
 
     **Flat-vector interop:**
@@ -1067,7 +1069,7 @@ class ProductDistribution(JointDistribution, SupportsLogProb, SupportsMean, Supp
         ...     x=Normal(loc=0.0, scale=1.0),
         ...     y=Normal(loc=3.0, scale=2.0),
         ... )
-        >>> s = joint.sample(jax.random.PRNGKey(0))
+        >>> s = joint._sample(jax.random.PRNGKey(0))
         >>> s.keys()
         dict_keys(['x', 'y'])
 
@@ -1077,7 +1079,7 @@ class ProductDistribution(JointDistribution, SupportsLogProb, SupportsMean, Supp
         ...     physics={"force": Normal(0, 1), "mass": Gamma(2, 1)},
         ...     observation=Normal(0, 0.1),
         ... )
-        >>> s = joint.sample(jax.random.PRNGKey(0))
+        >>> s = joint._sample(jax.random.PRNGKey(0))
         >>> s["physics"]["force"].shape  # scalar leaf
         ()
     """

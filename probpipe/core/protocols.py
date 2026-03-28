@@ -22,7 +22,7 @@ Protocol hierarchy
 
 ::
 
-    SupportsSampling          standalone; provides default _sample (no expectation)
+    SupportsSampling          standalone; single _sample protocol method
 
     SupportsExpectation
         ↑ inherits
@@ -39,10 +39,8 @@ from __future__ import annotations
 import functools
 from typing import Any, Callable, ClassVar, Protocol, runtime_checkable
 
-import jax
 import jax.numpy as jnp
 
-from .._utils import prod
 from ..custom_types import Array, PRNGKey
 
 
@@ -68,7 +66,7 @@ def compute_expectation(method):
     @functools.wraps(method)
     def wrapper(self):
         f = method(self)
-        return self.expectation(f, return_dist=False)
+        return self._expectation(f, return_dist=False)
 
     return wrapper
 
@@ -81,17 +79,17 @@ def compute_expectation(method):
 class SupportsExpectation(Protocol):
     """Distribution that can compute ``E[f(X)]``."""
 
-    def expectation(self, f: Any, *, key: Any, num_evaluations: Any,
-                    return_dist: Any) -> Any: ...
+    def _expectation(self, f: Any, *, key: Any, num_evaluations: Any,
+                     return_dist: Any) -> Any: ...
 
 
 @runtime_checkable
 class SupportsSampling(Protocol):
     """Distribution that can produce samples via ``_sample(key, sample_shape)``.
 
-    Subclasses must implement ``_sample_one(key)`` to draw a single sample.
-    The default ``_sample(key, sample_shape)`` handles batching via
-    ``jax.vmap``; subclasses may override for efficiency.
+    Only requires ``_sample(key, sample_shape)``; concrete classes choose
+    their own implementation strategy (vmap over ``_sample_one``, TFP
+    batched sampling, index resampling, etc.).
 
     Does NOT extend :class:`SupportsExpectation` — not all samplable
     distributions support array-valued expectations (e.g., random functions).
@@ -100,10 +98,6 @@ class SupportsSampling(Protocol):
 
     _sampling_cost: ClassVar[str]  # "low", "medium", "high"
     _preferred_orchestration: ClassVar[str | None]  # "task", "flow", or None
-
-    def _sample_one(self, key: PRNGKey) -> Any:
-        """Draw a single sample. Subclasses implement this."""
-        ...
 
     def _sample(
         self,
@@ -125,15 +119,7 @@ class SupportsSampling(Protocol):
             A single sample when ``sample_shape == ()``, or a batched
             representation when ``sample_shape`` is non-empty.
         """
-        if sample_shape == ():
-            return self._sample_one(key)
-        n = prod(sample_shape)
-        keys = jax.random.split(key, n)
-        flat_samples = jax.vmap(self._sample_one)(keys)
-        return jax.tree.map(
-            lambda x: x.reshape(*sample_shape, *x.shape[1:]),
-            flat_samples,
-        )
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +197,7 @@ class SupportsVariance(SupportsExpectation, Protocol):
 
     @compute_expectation
     def _variance(self):
-        mu = self.expectation(lambda x: x, return_dist=False)
+        mu = self._expectation(lambda x: x, return_dist=False)
         return lambda x: (x - mu) ** 2
 
 
@@ -226,7 +212,7 @@ class SupportsCovariance(SupportsExpectation, Protocol):
 
     @compute_expectation
     def _cov(self):
-        mu = self.expectation(lambda x: x, return_dist=False)
+        mu = self._expectation(lambda x: x, return_dist=False)
 
         def _outer_diff(x):
             d = jnp.ravel(x) - jnp.ravel(mu)

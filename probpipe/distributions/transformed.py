@@ -19,7 +19,8 @@ from ..core.distribution import (
     positive,
     unit_interval,
 )
-from ..core.protocols import SupportsLogProb, SupportsMean, SupportsVariance
+from ..core.distribution import _mc_expectation
+from ..core.protocols import SupportsLogProb, SupportsMean, SupportsSampling, SupportsVariance
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = ["TransformedDistribution"]
@@ -34,7 +35,7 @@ _BIJECTOR_SUPPORT_MAP: dict[str, Constraint] = {
 }
 
 
-class TransformedDistribution(ArrayDistribution, SupportsLogProb, SupportsMean, SupportsVariance):
+class TransformedDistribution(ArrayDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance):
     """
     Distribution formed by applying a TFP bijector to a base distribution.
 
@@ -80,6 +81,9 @@ class TransformedDistribution(ArrayDistribution, SupportsLogProb, SupportsMean, 
             parents=(base,),
             metadata={"bijector": type(bijector).__name__},
         ))
+
+    _sampling_cost: str = "low"
+    _preferred_orchestration: str | None = None
 
     # -- convenient accessors -----------------------------------------------
 
@@ -169,15 +173,28 @@ class TransformedDistribution(ArrayDistribution, SupportsLogProb, SupportsMean, 
     def _mean(self) -> Array:
         if self._tfp_transformed is not None:
             return self._tfp_transformed.mean()
-        # Fall through to MC via protocol default
-        return self.expectation(lambda x: x, return_dist=False)
+        # Fall through to MC estimation
+        return self._expectation(lambda x: x, return_dist=False)
 
     def _variance(self) -> Array:
         if self._tfp_transformed is not None:
             return self._tfp_transformed.variance()
-        # Fall through to MC via protocol default
+        # Fall through to MC estimation
         mu = self._mean()
-        return self.expectation(lambda x: (x - mu) ** 2, return_dist=False)
+        return self._expectation(lambda x: (x - mu) ** 2, return_dist=False)
+
+    def _expectation(
+        self,
+        f,
+        *,
+        key=None,
+        num_evaluations=None,
+        return_dist=None,
+    ):
+        return _mc_expectation(
+            self, f, key=key, num_evaluations=num_evaluations,
+            return_dist=return_dist,
+        )
 
     # -- repr ---------------------------------------------------------------
 
