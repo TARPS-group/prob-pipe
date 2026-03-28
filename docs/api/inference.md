@@ -1,9 +1,9 @@
 # Inference
 
-::: probpipe.core.modeling.MCMCSampler
+::: probpipe.core._modeling_legacy.MCMCSampler
 
 ::: probpipe.core.modeling.Likelihood
 
 ::: probpipe.core.modeling.IterativeForecaster
 
-::: probpipe.core.modeling.MCMCDiagnostics
+::: probpipe.inference._diagnostics.MCMCDiagnostics

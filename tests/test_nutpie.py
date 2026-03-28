@@ -1,7 +1,4 @@
-"""Tests for the nutpie workflow function.
-
-Tests use mocks so they work regardless of whether nutpie is installed.
-"""
+"""Tests for the nutpie workflow function."""
 
 import jax.numpy as jnp
 import numpy as np
@@ -59,12 +56,11 @@ class TestCompileForNutpie:
 class TestExtractChains:
     def test_scalar_params(self):
         """Extract scalar parameters from mock InferenceData."""
-        # Mock xarray-like structure
         mock_trace = MagicMock()
         mock_posterior = MagicMock()
 
         # Two params, 2 chains, 10 draws each
-        mu_vals = np.random.randn(2, 10)  # (chains, draws)
+        mu_vals = np.random.randn(2, 10)
         sigma_vals = np.random.randn(2, 10)
         mu_var = MagicMock()
         mu_var.values = mu_vals

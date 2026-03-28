@@ -141,10 +141,11 @@ class TestStanModelMocked:
         assert result is model._bs_model
 
     def test_bridgestan_model_with_data(self, model):
-        with patch("bridgestan.StanModel.from_stan_file") as mock_from:
-            mock_from.return_value = MagicMock()
+        mock_bs = MagicMock()
+        mock_bs.StanModel.from_stan_file.return_value = MagicMock()
+        with patch.dict("sys.modules", {"bridgestan": mock_bs}):
             result = model._bridgestan_model(data={"N": 10})
-            mock_from.assert_called_once_with("test.stan", data={"N": 10})
+            mock_bs.StanModel.from_stan_file.assert_called_once_with("test.stan", data={"N": 10})
 
 
 # ---------------------------------------------------------------------------
