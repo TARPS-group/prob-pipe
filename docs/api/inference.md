@@ -10,12 +10,16 @@
 
 ## Probabilistic Models
 
-::: probpipe.modeling._base.ProbabilisticModel
+::: probpipe.modeling.ProbabilisticModel
 
-::: probpipe.modeling._simple.SimpleModel
+::: probpipe.modeling.SimpleModel
 
 ## MCMC
 
-::: probpipe.inference._diagnostics.MCMCDiagnostics
+::: probpipe.inference.MCMCDiagnostics
 
-::: probpipe.inference._mcmc_distribution.MCMCApproximateDistribution
+::: probpipe.inference.MCMCApproximateDistribution
+
+::: probpipe.inference.rwmh
+
+::: probpipe.inference.nutpie_sample

@@ -70,6 +70,8 @@ nav:
     - Random Functions: examples/08_random_functions.ipynb
     - PyTree Distributions: examples/09_pytree_array_distributions.ipynb
   - API Reference:
+    - Operations: api/operations.md
+    - Protocols: api/protocols.md
     - Distributions: api/distributions.md
     - Joint Distributions: api/joint.md
     - Transformations: api/transformed.md
@@ -77,5 +79,5 @@ nav:
     - Inference: api/inference.md
     - Converters: api/converters.md
     - Provenance: api/provenance.md
-    - Emulators: api/emulator.md
+    - Random Functions: api/random_functions.md
     - Constraints: api/constraints.md
