@@ -5,7 +5,6 @@ Covers:
 - EmpiricalDistribution: weighted subsampled expectation
 - FlattenedView: sampling, log_prob, expectation, support
 - TFPDistribution._cov: scalar and multivariate
-- ops._cov_impl MC fallback
 - ops error paths for unsupported protocols
 - SupportsCovariance default implementation
 - TransformedDistribution non-TFP paths
@@ -195,49 +194,6 @@ class TestTFPDistributionCov:
 
 
 # ---------------------------------------------------------------------------
-# ops._cov_impl MC fallback
-# ---------------------------------------------------------------------------
-
-
-class TestCovMCFallback:
-    """Cover the MC fallback path in _cov_impl for distributions
-    that support expectation but not SupportsCovariance."""
-
-    def test_mc_cov_fallback(self):
-        """Distribution with SupportsSampling + SupportsExpectation but not
-        SupportsCovariance should use the MC fallback in _cov_impl."""
-        from probpipe.core.distribution import _mc_expectation, _vmap_sample
-        from probpipe.core.protocols import SupportsSampling, SupportsExpectation
-        from probpipe import ArrayDistribution
-
-        class SamplingOnlyDist(ArrayDistribution, SupportsSampling, SupportsExpectation):
-            _sampling_cost = "low"
-            _preferred_orchestration = None
-
-            @property
-            def event_shape(self):
-                return (2,)
-
-            def _sample_one(self, key):
-                return jax.random.normal(key, (2,))
-
-            def _sample(self, key, sample_shape=()):
-                return _vmap_sample(self, key, sample_shape)
-
-            def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-                return _mc_expectation(
-                    self, f, key=key, num_evaluations=num_evaluations,
-                    return_dist=return_dist,
-                )
-
-        d = SamplingOnlyDist()
-        C = cov(d)
-        assert C.shape == (2, 2)
-        assert jnp.all(jnp.isfinite(C))
-        # Should be approximately identity since samples are standard normal
-        np.testing.assert_allclose(C, jnp.eye(2), atol=0.3)
-
-
 # ---------------------------------------------------------------------------
 # ops error paths
 # ---------------------------------------------------------------------------

@@ -226,7 +226,7 @@ def _mc_expectation(
 
     rd = return_dist if return_dist is not None else RETURN_APPROX_DIST
     if rd:
-        return BootstrapDistribution(evals, name=f"E[f(X)]")
+        return BootstrapDistribution(evals, name="E[f(X)]")
     return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
 
 

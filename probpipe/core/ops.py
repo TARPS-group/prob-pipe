@@ -65,10 +65,10 @@ def _sample_impl(
     sample_shape : tuple of int
         Shape prefix for independent draws.
     """
-    if not hasattr(dist, '_sample'):
+    if not isinstance(dist, SupportsSampling):
         raise TypeError(
             f"{type(dist).__name__} does not support sampling "
-            f"(missing _sample method)"
+            f"(does not implement SupportsSampling)"
         )
     if key is None:
         key = _auto_key()
@@ -159,29 +159,19 @@ def _variance_impl(dist: SupportsExpectation) -> Any:
     )
 
 
-def _cov_impl(dist: SupportsExpectation) -> Array:
+def _cov_impl(dist: SupportsCovariance) -> Array:
     """Compute the covariance matrix.
 
-    Uses exact covariance if available, otherwise MC fallback via
-    :func:`_expectation_impl`.
+    Requires the distribution to implement :class:`SupportsCovariance`.
+    For multivariate distributions, the covariance is returned with
+    respect to the flattened event representation.
     """
-    if isinstance(dist, SupportsCovariance):
-        try:
-            return dist._cov()
-        except NotImplementedError:
-            pass  # fall through to MC
-    if isinstance(dist, SupportsExpectation):
-        mu = _mean_impl(dist)
-
-        def _outer_diff(x):
-            d = jnp.ravel(x) - jnp.ravel(mu)
-            return jnp.outer(d, d)
-
-        return _expectation_impl(dist, _outer_diff, return_dist=False)
-    raise TypeError(
-        f"{type(dist).__name__} does not support covariance "
-        f"(implements neither SupportsCovariance nor SupportsExpectation)"
-    )
+    if not isinstance(dist, SupportsCovariance):
+        raise TypeError(
+            f"{type(dist).__name__} does not support covariance "
+            f"(does not implement SupportsCovariance)"
+        )
+    return dist._cov()
 
 
 def _expectation_impl(
