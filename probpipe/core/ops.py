@@ -65,7 +65,7 @@ def _sample_impl(
     sample_shape : tuple of int
         Shape prefix for independent draws.
     """
-    if not isinstance(dist, SupportsSampling):
+    if not hasattr(dist, '_sample'):
         raise TypeError(
             f"{type(dist).__name__} does not support sampling "
             f"(missing _sample method)"

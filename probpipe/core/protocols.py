@@ -39,10 +39,12 @@ Protocol hierarchy
 from __future__ import annotations
 
 import functools
-from typing import Any, ClassVar, Protocol, runtime_checkable
+from typing import Any, Callable, ClassVar, Protocol, runtime_checkable
 
+import jax
 import jax.numpy as jnp
 
+from .._utils import prod
 from ..custom_types import Array, PRNGKey
 
 
@@ -87,18 +89,94 @@ class SupportsExpectation(Protocol):
 
 @runtime_checkable
 class SupportsSampling(SupportsExpectation, Protocol):
-    """Distribution that can produce samples via ``_sample(key)``.
+    """Distribution that can produce samples via ``_sample(key, sample_shape)``.
 
-    Extends :class:`SupportsExpectation` because any distribution
-    supporting sampling also supports Monte Carlo expectations.
-    The base :class:`~probpipe.core.distribution.Distribution` class
-    provides a default ``expectation`` implementation via ``sample``.
+    Also extends :class:`SupportsExpectation`, providing a default
+    Monte Carlo ``expectation`` implementation.
+
+    Subclasses must implement ``_sample_one(key)`` to draw a single sample.
+    The default ``_sample(key, sample_shape)`` handles batching via
+    ``jax.vmap``; subclasses may override for efficiency.
     """
 
     _sampling_cost: ClassVar[str]  # "low", "medium", "high"
     _preferred_orchestration: ClassVar[str | None]  # "task", "flow", or None
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any: ...
+    def _sample_one(self, key: PRNGKey) -> Any:
+        """Draw a single sample. Subclasses implement this."""
+        ...
+
+    def _sample(
+        self,
+        key: PRNGKey,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Any:
+        """Draw sample(s) from this distribution.
+
+        Parameters
+        ----------
+        key : PRNGKey
+            JAX PRNG key.
+        sample_shape : tuple of int
+            Shape prefix for independent draws.
+
+        Returns
+        -------
+        Any
+            A single sample when ``sample_shape == ()``, or a batched
+            representation when ``sample_shape`` is non-empty.
+        """
+        if sample_shape == ():
+            return self._sample_one(key)
+        n = prod(sample_shape)
+        keys = jax.random.split(key, n)
+        flat_samples = jax.vmap(self._sample_one)(keys)
+        return jax.tree.map(
+            lambda x: x.reshape(*sample_shape, *x.shape[1:]),
+            flat_samples,
+        )
+
+    def expectation(
+        self,
+        f: Callable,
+        *,
+        key: PRNGKey | None = None,
+        num_evaluations: int | None = None,
+        return_dist: bool | None = None,
+    ) -> Any:
+        """Estimate ``E[f(X)]`` where ``X ~ self`` via Monte Carlo.
+
+        Parameters
+        ----------
+        f : callable
+            Function mapping a single sample to an array (or pytree of arrays).
+        key : PRNGKey, optional
+            JAX PRNG key for sampling.  Auto-generated if ``None``.
+        num_evaluations : int, optional
+            Number of samples to draw.  If ``None``, uses
+            ``DEFAULT_NUM_EVALUATIONS``.
+        return_dist : bool, optional
+            If ``True``, return a ``BootstrapDistribution`` capturing
+            estimation uncertainty.  If ``False``, return a plain array.
+            If ``None``, use the global ``RETURN_APPROX_DIST`` setting.
+        """
+        from .distribution import (
+            DEFAULT_NUM_EVALUATIONS,
+            RETURN_APPROX_DIST,
+            BootstrapDistribution,
+            _auto_key,
+        )
+
+        n = num_evaluations if num_evaluations is not None else DEFAULT_NUM_EVALUATIONS
+        if key is None:
+            key = _auto_key()
+        samples = self._sample(key, sample_shape=(n,))
+        evals = jax.vmap(f)(samples)
+
+        rd = return_dist if return_dist is not None else RETURN_APPROX_DIST
+        if rd:
+            return BootstrapDistribution(evals, name=f"E[f(X)]")
+        return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
 
 
 # ---------------------------------------------------------------------------

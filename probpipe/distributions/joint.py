@@ -100,6 +100,7 @@ from ..core.protocols import (
     SupportsLogProb,
     SupportsMean,
     SupportsNamedComponents,
+    SupportsSampling,
     SupportsVariance,
 )
 
@@ -407,7 +408,7 @@ class ConditionedComponent(ArrayDistribution, SupportsLogProb, SupportsMean, Sup
 # JointDistribution — base class for named multi-component distributions
 # ---------------------------------------------------------------------------
 
-class JointDistribution(PyTreeArrayDistribution):
+class JointDistribution(PyTreeArrayDistribution, SupportsSampling):
     """Base class for named multi-component distributions.
 
     A ``JointDistribution`` is a :class:`PyTreeArrayDistribution` whose
@@ -488,6 +489,11 @@ class JointDistribution(PyTreeArrayDistribution):
         whose leaves are ``ArrayDistribution`` instances.
         At least one leaf component is required.
     """
+
+    # -- orchestration hints (SupportsSampling defaults) ---------------------
+
+    _sampling_cost: str = "low"
+    _preferred_orchestration: str | None = None
 
     def __init__(self, *, name: str | None = None, **components):
         if not components:
