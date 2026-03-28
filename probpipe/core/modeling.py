@@ -1,19 +1,17 @@
 """
 Modeling components for ProbPipe.
 
-Provides abstract interfaces for likelihoods, and an iterative
+Provides abstract interfaces for likelihoods and an iterative
 forecasting module.
 
-MCMC sampling has moved to :mod:`probpipe.inference` and
-probabilistic models to :mod:`probpipe.modeling`.
+For MCMC sampling, see :mod:`probpipe.inference`.
+For probabilistic models, see :mod:`probpipe.modeling`.
 """
 
 from __future__ import annotations
 
 import logging
-import warnings
-from abc import ABC
-from typing import Any
+from typing import Any, Callable
 
 import jax.numpy as jnp
 
@@ -27,11 +25,6 @@ __all__ = [
     "Likelihood",
     "GenerativeLikelihood",
     "IterativeForecaster",
-    # Backward-compat re-exports (deprecated)
-    "MCMCDiagnostics",
-    "ApproximatePosterior",
-    "MCMCSampler",
-    "RWMH",
 ]
 
 
@@ -57,49 +50,27 @@ class GenerativeLikelihood(AbstractModule):
 
 
 # ---------------------------------------------------------------------------
-# Approximate posterior base (kept for backward compatibility)
-# ---------------------------------------------------------------------------
-
-
-class ApproximatePosterior(WorkflowFunction, ABC):
-    """Abstract base for posterior approximation methods.
-
-    .. deprecated::
-        Use :class:`~probpipe.modeling.SimpleModel` with
-        :func:`~probpipe.core.ops.condition_on` instead.
-    """
-
-    def __init__(
-        self,
-        *,
-        workflow_kind: str | None = None,
-        name: str = "compute_posterior",
-        **bind: Any,
-    ):
-        super().__init__(
-            func=self._compute_posterior,
-            workflow_kind=workflow_kind,
-            name=name,
-            bind=bind,
-        )
-
-    @abstractwf
-    def _compute_posterior(
-        self,
-        prior: ArrayDistribution,
-        likelihood: Likelihood,
-        data: ArrayLike,
-    ) -> EmpiricalDistribution:
-        ...
-
-
-# ---------------------------------------------------------------------------
 # IterativeForecaster
 # ---------------------------------------------------------------------------
 
 
 class IterativeForecaster(Module):
-    """Iteratively update posterior given new data batches."""
+    """Iteratively update posterior given new data batches.
+
+    Parameters
+    ----------
+    prior : ArrayDistribution
+        Initial prior distribution.
+    likelihood : Likelihood
+        Likelihood module.
+    generative_likelihood : GenerativeLikelihood
+        Module for generating synthetic data from parameters.
+    approx_post : WorkflowFunction
+        A workflow function that takes ``(prior, likelihood, data)``
+        and returns an approximate posterior distribution.
+    workflow_kind : str or None
+        Prefect orchestration mode.
+    """
 
     def __init__(
         self,
@@ -107,7 +78,7 @@ class IterativeForecaster(Module):
         prior: ArrayDistribution,
         likelihood: Likelihood,
         generative_likelihood: GenerativeLikelihood,
-        approx_post: ApproximatePosterior,
+        approx_post: WorkflowFunction,
         workflow_kind: str | None = None,
     ):
         self._curr_posterior: ArrayDistribution = prior
@@ -128,7 +99,7 @@ class IterativeForecaster(Module):
     @wf
     def update(
         self,
-        approx_post: ApproximatePosterior,
+        approx_post: WorkflowFunction,
         likelihood: Likelihood,
         data: ArrayLike,
     ) -> ArrayDistribution:
@@ -137,34 +108,3 @@ class IterativeForecaster(Module):
         )
         self._curr_posterior = post_dist
         return post_dist
-
-
-# ---------------------------------------------------------------------------
-# Backward-compat re-exports from new locations
-# ---------------------------------------------------------------------------
-
-from ..inference._diagnostics import MCMCDiagnostics  # noqa: E402, F401
-
-
-def __getattr__(name: str):
-    if name == "MCMCSampler":
-        warnings.warn(
-            "MCMCSampler is deprecated. Use probpipe.modeling.SimpleModel "
-            "with condition_on() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        # Import the legacy class from a lazy location
-        from ._modeling_legacy import MCMCSampler
-
-        return MCMCSampler
-    if name == "RWMH":
-        warnings.warn(
-            "RWMH is deprecated. Use probpipe.inference.rwmh instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        from ._modeling_legacy import RWMH
-
-        return RWMH
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

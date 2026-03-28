@@ -22,8 +22,7 @@ probpipe/
 │   ├── protocols.py       # @runtime_checkable protocols: SupportsSampling, SupportsLogProb, SupportsMean, etc.
 │   ├── ops.py             # Standalone WorkflowFunction instances: sample, mean, log_prob, condition_on, etc.
 │   ├── node.py            # Node, Module, WorkflowFunction, @wf decorator
-│   ├── modeling.py        # Likelihood, GenerativeLikelihood, IterativeForecaster (legacy re-exports)
-│   ├── _modeling_legacy.py # Legacy MCMCSampler, RWMH (deprecated, backward compat)
+│   ├── modeling.py        # Likelihood, GenerativeLikelihood, IterativeForecaster
 │   └── provenance.py      # Provenance tracking utilities
 ├── distributions/          # Concrete distributions: continuous, discrete, multivariate, joint, transformed
 ├── modeling/               # Probabilistic model wrappers

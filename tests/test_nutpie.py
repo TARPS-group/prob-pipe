@@ -1,5 +1,6 @@
 """Tests for the nutpie workflow function."""
 
+import sys
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -13,33 +14,43 @@ from probpipe.inference._nutpie import (
 from probpipe.inference import MCMCApproximateDistribution
 
 
+@pytest.fixture(autouse=True)
+def mock_nutpie():
+    """Provide a mock nutpie module for all tests in this file."""
+    mock_mod = MagicMock()
+    with patch.dict(sys.modules, {"nutpie": mock_mod}):
+        yield mock_mod
+
+
 # ---------------------------------------------------------------------------
 # _compile_for_nutpie
 # ---------------------------------------------------------------------------
 
 
 class TestCompileForNutpie:
-    def test_bridgestan_path(self):
+    def test_bridgestan_path(self, mock_nutpie):
         """Models with _bridgestan_model use nutpie.compile_stan_model."""
         model = MagicMock()
         model._bridgestan_model.return_value = "bs_model"
+        mock_nutpie.compile_stan_model.return_value = "compiled"
 
-        with patch("nutpie.compile_stan_model", return_value="compiled") as mock:
-            result = _compile_for_nutpie(model, data={"N": 10})
-            mock.assert_called_once_with("bs_model")
-            model._bridgestan_model.assert_called_once_with(data={"N": 10})
-            assert result == "compiled"
+        result = _compile_for_nutpie(model, data={"N": 10})
 
-    def test_pymc_path(self):
+        mock_nutpie.compile_stan_model.assert_called_once_with("bs_model")
+        model._bridgestan_model.assert_called_once_with(data={"N": 10})
+        assert result == "compiled"
+
+    def test_pymc_path(self, mock_nutpie):
         """Models with _pymc_model use nutpie.compile_pymc_model."""
         model = MagicMock(spec=[])  # no _bridgestan_model
         model._pymc_model = MagicMock(return_value="pm_model")
+        mock_nutpie.compile_pymc_model.return_value = "compiled"
 
-        with patch("nutpie.compile_pymc_model", return_value="compiled") as mock:
-            result = _compile_for_nutpie(model, data={"y": [1, 2]})
-            mock.assert_called_once_with("pm_model")
-            model._pymc_model.assert_called_once_with(data={"y": [1, 2]})
-            assert result == "compiled"
+        result = _compile_for_nutpie(model, data={"y": [1, 2]})
+
+        mock_nutpie.compile_pymc_model.assert_called_once_with("pm_model")
+        model._pymc_model.assert_called_once_with(data={"y": [1, 2]})
+        assert result == "compiled"
 
     def test_unsupported_model_raises(self):
         """Models without _bridgestan_model or _pymc_model raise TypeError."""
@@ -109,10 +120,11 @@ class TestExtractChains:
 
 
 class TestNutpieSampleImpl:
-    def test_full_sampling_path(self):
+    def test_full_sampling_path(self, mock_nutpie):
         """End-to-end test with mocked nutpie."""
         model = MagicMock()
         model._bridgestan_model.return_value = "bs_model"
+        mock_nutpie.compile_stan_model.return_value = "compiled"
 
         # Mock trace with posterior
         mock_trace = MagicMock()
@@ -123,17 +135,16 @@ class TestNutpieSampleImpl:
         mock_posterior.data_vars = ["mu"]
         mock_posterior.__getitem__ = lambda self, k: mu_var
         mock_trace.posterior = mock_posterior
+        mock_nutpie.sample.return_value = mock_trace
 
-        with patch("nutpie.compile_stan_model", return_value="compiled"):
-            with patch("nutpie.sample", return_value=mock_trace):
-                result = _nutpie_sample_impl(
-                    model,
-                    data={"N": 10},
-                    num_results=20,
-                    num_warmup=10,
-                    num_chains=2,
-                    random_seed=42,
-                )
+        result = _nutpie_sample_impl(
+            model,
+            data={"N": 10},
+            num_results=20,
+            num_warmup=10,
+            num_chains=2,
+            random_seed=42,
+        )
 
         assert isinstance(result, MCMCApproximateDistribution)
         assert result.num_chains == 2

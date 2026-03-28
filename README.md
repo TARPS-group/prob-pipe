@@ -13,7 +13,7 @@ ProbPipe is a Python framework for building probabilistic pipelines with automat
 - **20+ probability distributions** wrapping TensorFlow Probability with a uniform interface, all fully JAX-differentiable
 - **Automatic uncertainty propagation** through workflow nodes via sample broadcasting
 - **Joint distributions** with independent, autoregressive, and Gaussian conditioning support
-- **Built-in MCMC inference** with NUTS, HMC, and random-walk Metropolis-Hastings
+- **Built-in MCMC inference** with NUTS, HMC, and random-walk Metropolis-Hastings, plus optional Stan and PyMC backends
 - **Provenance tracking** recording full lineage from any result back to its inputs
 - **Prefect orchestration** for distributing pipeline steps across machines
 
@@ -46,6 +46,9 @@ Optional extras:
 ```bash
 pip install .[dev]       # pytest, jupyter, matplotlib, graphviz
 pip install .[prefect]   # Prefect orchestration backend
+pip install .[stan]      # Stan models via BridgeStan
+pip install .[pymc]      # PyMC model integration
+pip install .[nutpie]    # nutpie MCMC sampler
 ```
 
 ## Quick Start
@@ -55,7 +58,7 @@ pip install .[prefect]   # Prefect orchestration backend
 ProbPipe wraps 20+ TensorFlow Probability distributions with a uniform interface. All distributions follow TFP shape semantics (`sample_shape + batch_shape + event_shape`) and are fully JAX-differentiable. Bijector-based transforms create constrained distributions (e.g., log-normal for positive quantities).
 
 ```python
-from probpipe import Normal, TransformedDistribution
+from probpipe import Normal, TransformedDistribution, sample, log_prob
 import jax
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
@@ -67,12 +70,12 @@ log_conc = Normal(loc=2.0, scale=0.3, name='log_concentration')
 concentration = TransformedDistribution(log_conc, tfb.Exp())
 
 # Sample and evaluate
-samples = sensor_noise.sample(jax.random.PRNGKey(0), (1000,))
-samples.shape              # (1000,)
-sensor_noise.log_prob(0.5)  # Array(-0.7257913, dtype=float32)
+samples = sample(sensor_noise, key=jax.random.PRNGKey(0), sample_shape=(1000,))
+samples.shape                  # (1000,)
+log_prob(sensor_noise, 0.5)    # Array(-0.7257913, dtype=float32)
 
 # Fully differentiable: compute the score function
-jax.grad(sensor_noise.log_prob)(0.5)  # Array(-2.0, dtype=float32)
+jax.grad(lambda x: log_prob(sensor_noise, x))(0.5)  # Array(-2.0, dtype=float32)
 ```
 
 ### Workflows and Broadcasting
@@ -80,7 +83,7 @@ jax.grad(sensor_noise.log_prob)(0.5)  # Array(-2.0, dtype=float32)
 When a workflow node receives a distribution where it expects a concrete value, ProbPipe automatically draws samples and evaluates the function for each, returning an `EmpiricalDistribution`. Here, uncertain velocity and time propagate through a distance calculation.
 
 ```python
-from probpipe import Normal, TransformedDistribution, WorkflowFunction
+from probpipe import Normal, TransformedDistribution, WorkflowFunction, mean, variance, expectation
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
 # distance = velocity * time
@@ -98,19 +101,19 @@ result = wf(
     time=time,                             # seconds, non-negative
 )
 # result is an EmpiricalDistribution with 128 samples
-result.mean()      # Array(49.875435, dtype=float32)
-result.variance()  # Array(26.283531, dtype=float32)
+mean(result)       # Array(49.875435, dtype=float32)
+variance(result)   # Array(26.283531, dtype=float32)
 
 # Compute expectations with automatic error tracking
 # On the EmpiricalDistribution, this is exact (weighted sum over samples)
-result.expectation(lambda x: x)  # Array(49.875435, dtype=float32)
+expectation(result, lambda x: x)  # Array(49.875435, dtype=float32)
 
 # On a parametric distribution, Monte Carlo returns a BootstrapDistribution
 # that captures the sampling error
 velocity = Normal(loc=10.0, scale=1.0)
-ex = velocity.expectation(lambda x: x**2, num_evaluations=5000)
-ex.mean()      # ~101.0  -- point estimate of E[V²] = loc² + scale² = 101
-ex.variance()  # ~0.08   -- MC error variance (decreases with more evaluations)
+ex = expectation(velocity, lambda x: x**2, num_evaluations=5000)
+mean(ex)       # ~101.0  -- point estimate of E[V²] = loc² + scale² = 101
+variance(ex)   # ~0.08   -- MC error variance (decreases with more evaluations)
 ```
 
 ### Joint Distributions and Conditioning
@@ -118,7 +121,7 @@ ex.variance()  # ~0.08   -- MC error variance (decreases with more evaluations)
 Build hierarchical models with autoregressive dependence, or fuse multiple noisy observations via exact Gaussian conditioning.
 
 ```python
-from probpipe import Normal, SequentialJointDistribution, JointGaussian
+from probpipe import Normal, SequentialJointDistribution, JointGaussian, condition_on, mean
 import jax.numpy as jnp
 
 # Hierarchical model: population mean height -> individual measurement
@@ -139,20 +142,20 @@ cov = jnp.array([
 jg = JointGaussian(mean=jnp.zeros(3), cov=cov, signal=1, sensors=2)
 
 # Observe sensors read [2.5, 3.0] -> infer the latent signal
-posterior = jg.condition_on(sensors=jnp.array([2.5, 3.0]))
-posterior.mean()        # Array([1.4444445], dtype=float32)
+posterior = condition_on(jg, sensors=jnp.array([2.5, 3.0]))
+mean(posterior)         # Array([1.4444445], dtype=float32)
 posterior.covariance    # Array([[0.44444442]], dtype=float32)
 ```
 
 ### Bayesian Inference
 
-Bayesian linear regression in a few lines. Define a likelihood, pair it with a prior, and sample with NUTS. The sampler automatically falls back to gradient-free Metropolis-Hastings when the likelihood is not JAX-traceable.
+Bayesian linear regression in a few lines. Define a likelihood, pair it with a prior, build a `SimpleModel`, and condition on data. The model automatically selects NUTS when the likelihood is JAX-traceable and falls back to gradient-free Metropolis-Hastings otherwise.
 
 ```python
 import jax
 import jax.numpy as jnp
-from probpipe import MultivariateNormal, wf
-from probpipe.core.modeling import Likelihood, MCMCSampler
+from probpipe import MultivariateNormal, SimpleModel, condition_on, mean, wf
+from probpipe.core.modeling import Likelihood
 
 class LinearRegressionLikelihood(Likelihood):
     @wf
@@ -168,10 +171,10 @@ y = 1.0 + 2.0 * x + 0.3 * jax.random.normal(key, shape=(20,))
 data = jnp.column_stack([x, y])
 
 prior = MultivariateNormal(loc=jnp.zeros(2), cov=10.0 * jnp.eye(2))
-sampler = MCMCSampler(algorithm='nuts', num_results=500, num_warmup=200, seed=0)
-posterior = sampler(prior=prior, likelihood=LinearRegressionLikelihood(), data=data)
-posterior.mean()    # Array([1.0908195, 1.9959916], dtype=float32)  ≈ [1.0, 2.0]
-posterior.source    # Provenance('nuts', parents=[MultivariateNormal])
+model = SimpleModel(prior, LinearRegressionLikelihood())
+posterior = condition_on(model, data, num_results=500, num_warmup=200, random_seed=0)
+mean(posterior)     # Array([1.09, 1.99], dtype=float32)  ≈ [1.0, 2.0]
+posterior.source    # Provenance('nuts', parents=[SimpleModel])
 ```
 
 ### Provenance Tracking
