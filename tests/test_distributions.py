@@ -257,19 +257,6 @@ class TestEmpiricalDistribution:
         eigvals = jnp.linalg.eigvalsh(C)
         assert jnp.all(eigvals >= -1e-8)
 
-    def test_log_prob_finite(self, simple_samples, key):
-        ed = EmpiricalDistribution(simple_samples)
-        lp = log_prob(ed, jnp.array([2.0]))
-        assert jnp.isfinite(lp)
-
-    def test_log_prob_batch(self):
-        samples = jnp.array([[1.0], [2.0], [3.0]])
-        ed = EmpiricalDistribution(samples)
-        x = jnp.array([[1.0], [2.0], [3.0]])
-        lp = log_prob(ed, x)
-        assert lp.shape == (3,)
-        assert jnp.all(jnp.isfinite(lp))
-
     def test_name(self, simple_samples):
         ed = EmpiricalDistribution(simple_samples, name="emp")
         assert ed.name == "emp"
@@ -462,15 +449,22 @@ class TestDistributionABC:
         )
 
     def test_mean_mc_fallback(self):
-        """Subclasses without explicit mean() use MC fallback."""
-        class MinimalDist(ArrayDistribution):
+        """Subclasses without explicit _mean() use MC fallback via expectation."""
+        from probpipe.core.protocols import SupportsSampling, SupportsMean
+        from probpipe.core.distribution import _vmap_sample, _mc_expectation
+
+        class MinimalDist(ArrayDistribution, SupportsSampling, SupportsMean):
+            _sampling_cost = "low"
+            _preferred_orchestration = None
             @property
             def event_shape(self):
                 return (1,)
             def _sample_one(self, key):
                 return jnp.zeros((1,))
-            def log_prob(self, x):
-                return jnp.zeros(())
+            def _sample(self, key, sample_shape=()):
+                return _vmap_sample(self, key, sample_shape)
+            def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
+                return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
         d = MinimalDist()
         # MC fallback returns BootstrapDistribution by default
         result = mean(d)
@@ -478,14 +472,21 @@ class TestDistributionABC:
         assert isinstance(result, BootstrapDistribution) or isinstance(result, jnp.ndarray)
 
     def test_variance_mc_fallback(self):
-        class MinimalDist(ArrayDistribution):
+        from probpipe.core.protocols import SupportsSampling, SupportsVariance
+        from probpipe.core.distribution import _vmap_sample, _mc_expectation
+
+        class MinimalDist(ArrayDistribution, SupportsSampling, SupportsVariance):
+            _sampling_cost = "low"
+            _preferred_orchestration = None
             @property
             def event_shape(self):
                 return (1,)
             def _sample_one(self, key):
                 return jnp.zeros((1,))
-            def log_prob(self, x):
-                return jnp.zeros(())
+            def _sample(self, key, sample_shape=()):
+                return _vmap_sample(self, key, sample_shape)
+            def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
+                return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
         d = MinimalDist()
         result = variance(d)
         from probpipe import BootstrapDistribution

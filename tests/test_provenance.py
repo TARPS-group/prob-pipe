@@ -18,6 +18,7 @@ from probpipe import (
     Provenance,
     provenance_ancestors,
     provenance_dag,
+    condition_on,
     from_distribution,
 )
 from probpipe.core.node import WorkflowFunction
@@ -114,7 +115,7 @@ class TestConditioningProvenance:
             x=Normal(loc=0.0, scale=1.0),
             y=Normal(loc=1.0, scale=2.0),
         )
-        cond = joint.condition_on(x=jnp.array(0.0))
+        cond = condition_on(joint, x=jnp.array(0.0))
         assert cond.source is not None
         assert cond.source.operation == "condition_on"
         assert cond.source.parents == (joint,)
@@ -125,7 +126,7 @@ class TestConditioningProvenance:
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
         )
-        cond = seq.condition_on(z=jnp.array(1.0))
+        cond = condition_on(seq, z=jnp.array(1.0))
         assert cond.source.operation == "condition_on"
         assert cond.source.parents == (seq,)
 
@@ -133,7 +134,7 @@ class TestConditioningProvenance:
         jg = JointGaussian(
             mean=jnp.zeros(2), cov=jnp.eye(2), x=1, y=1,
         )
-        cond = jg.condition_on(x=jnp.array([0.0]))
+        cond = condition_on(jg, x=jnp.array([0.0]))
         assert cond.source.operation == "condition_on"
         assert "x" in cond.source.metadata["conditioned"]
 
@@ -216,7 +217,7 @@ class TestProvenanceChains:
         src = Beta(alpha=2.0, beta=5.0, name="prior")
         converted = from_distribution(src, Normal, name="approx")
         joint = ProductDistribution(x=converted, y=Normal(loc=0.0, scale=1.0))
-        cond = joint.condition_on(x=jnp.array(0.0))
+        cond = condition_on(joint, x=jnp.array(0.0))
 
         # cond's provenance points to joint
         assert cond.source.operation == "condition_on"

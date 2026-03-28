@@ -974,7 +974,7 @@ class TestNestedProductDistribution:
 
     def test_condition_on_all_leaves_in_group(self, nested_joint):
         """Conditioning on all components under a dict removes it."""
-        cond = nested_joint.condition_on(
+        cond = condition_on(nested_joint,
             physics={"force": jnp.array(1.0), "mass": jnp.array(2.0)}
         )
         assert "physics" not in cond._components
@@ -983,7 +983,7 @@ class TestNestedProductDistribution:
 
     def test_condition_on_single_nested_leaf(self, nested_joint):
         """Condition on one component, keeping the sibling."""
-        cond = nested_joint.condition_on(
+        cond = condition_on(nested_joint,
             physics={"force": jnp.array(1.0)}
         )
         # physics dict still exists but only contains mass
@@ -996,7 +996,7 @@ class TestNestedProductDistribution:
 
     def test_condition_on_nested_leaf_sample(self, nested_joint):
         """Samples from conditioned nested joint should exclude conditioned leaf."""
-        cond = nested_joint.condition_on(
+        cond = condition_on(nested_joint,
             physics={"force": jnp.array(1.0)}
         )
         key = jax.random.PRNGKey(50)
@@ -1010,7 +1010,7 @@ class TestNestedProductDistribution:
 
     def test_condition_on_nested_leaf_log_prob(self, nested_joint):
         """Log-prob should work on conditioned nested joint."""
-        cond = nested_joint.condition_on(
+        cond = condition_on(nested_joint,
             physics={"force": jnp.array(1.0)}
         )
         key = jax.random.PRNGKey(51)
@@ -1020,7 +1020,7 @@ class TestNestedProductDistribution:
 
     def test_condition_on_multiple_leaves_across_groups(self, nested_joint):
         """Condition on leaves from different groups simultaneously."""
-        cond = nested_joint.condition_on(
+        cond = condition_on(nested_joint,
             physics={"force": jnp.array(1.0)},
             observation=jnp.array(0.5),
         )
@@ -1032,7 +1032,7 @@ class TestNestedProductDistribution:
 
     def test_condition_on_positional_dict(self, nested_joint):
         """Condition using a positional dict instead of kwargs."""
-        cond = nested_joint.condition_on(
+        cond = condition_on(nested_joint,
             {"physics": {"force": jnp.array(1.0)}}
         )
         assert "physics" in cond._components
@@ -1042,7 +1042,7 @@ class TestNestedProductDistribution:
     def test_condition_on_positional_and_kwargs_exclusive(self, nested_joint):
         """Cannot mix positional dict and kwargs."""
         with pytest.raises(TypeError, match="either a positional dict or keyword"):
-            nested_joint.condition_on(
+            condition_on(nested_joint,
                 {"physics": {"force": jnp.array(1.0)}},
                 observation=jnp.array(0.5),
             )
@@ -1055,28 +1055,28 @@ class TestNestedProductDistribution:
     def test_condition_on_leaf_with_dict_raises(self, nested_joint):
         """Passing a dict for a component distribution should raise TypeError."""
         with pytest.raises(TypeError, match="component distribution"):
-            nested_joint.condition_on(
+            condition_on(nested_joint,
                 observation={"sub": jnp.array(1.0)}
             )
 
     def test_condition_on_unknown_nested_key_raises(self, nested_joint):
         """Unknown key inside a nested dict should raise KeyError."""
         with pytest.raises(KeyError, match="not found"):
-            nested_joint.condition_on(
+            condition_on(nested_joint,
                 physics={"nonexistent": jnp.array(1.0)}
             )
 
     def test_condition_on_all_raises(self, nested_joint):
         """Conditioning on all leaves should raise ValueError."""
         with pytest.raises(ValueError, match="Cannot condition on all"):
-            nested_joint.condition_on(
+            condition_on(nested_joint,
                 physics={"force": jnp.array(1.0), "mass": jnp.array(2.0)},
                 observation=jnp.array(0.5),
             )
 
     def test_condition_on_provenance(self, nested_joint):
         """Conditioned distribution should have provenance."""
-        cond = nested_joint.condition_on(
+        cond = condition_on(nested_joint,
             physics={"force": jnp.array(1.0)}
         )
         assert cond.source is not None

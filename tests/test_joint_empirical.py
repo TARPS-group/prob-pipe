@@ -230,15 +230,6 @@ class TestMoments:
         assert isinstance(v, dict)
         np.testing.assert_allclose(v["x"], 1.0, atol=1e-5)
 
-    def test_log_prob_finite(self):
-        je = JointEmpirical(
-            x=jnp.array([1.0, 2.0, 3.0]),
-            y=jnp.array([4.0, 5.0, 6.0]),
-        )
-        key = jax.random.PRNGKey(20)
-        s = sample(je, key=key)
-        lp = log_prob(je, s)
-        assert jnp.isfinite(lp)
 
 
 # ---------------------------------------------------------------------------

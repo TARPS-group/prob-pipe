@@ -77,11 +77,6 @@ class TestBootstrapDistribution:
         assert bd.event_shape == (3,)
         assert mean(bd).shape == (3,)
 
-    def test_log_prob(self):
-        evals = jnp.array([1.0, 2.0, 3.0])
-        bd = BootstrapDistribution(evals)
-        lp = log_prob(bd, jnp.array(2.0))
-        assert jnp.isfinite(lp)
 
 
 # ---------------------------------------------------------------------------

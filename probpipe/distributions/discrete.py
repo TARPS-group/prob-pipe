@@ -88,7 +88,7 @@ class Bernoulli(TFPDistribution):
 
     # -- expectation (exact over {0, 1}) ------------------------------------
 
-    def expectation(
+    def _expectation(
         self,
         f: Callable,
         *,
@@ -172,7 +172,7 @@ class Binomial(TFPDistribution):
 
     # -- expectation (exact over {0, ..., total_count}) ---------------------
 
-    def expectation(
+    def _expectation(
         self,
         f: Callable,
         *,
@@ -285,7 +285,7 @@ class Categorical(TFPDistribution):
 
     # -- expectation (exact over {0, ..., k-1}) ------------------------------
 
-    def expectation(
+    def _expectation(
         self,
         f: Callable,
         *,

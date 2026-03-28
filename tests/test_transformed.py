@@ -119,14 +119,6 @@ class TestNonTFPBase:
         assert s.shape == (10, 2)
         assert jnp.all(s > 0)
 
-    def test_log_prob_on_empirical(self, key):
-        samples = jax.random.normal(key, (50, 2))
-        emp = EmpiricalDistribution(samples)
-        td = TransformedDistribution(emp, tfb.Exp())
-        x = jnp.ones(2)
-        lp = log_prob(td, x)
-        assert jnp.isfinite(lp)
-
     def test_mean_mc_fallback_on_non_tfp(self, key):
         """Non-TFP base: mean falls back to MC via expectation."""
         samples = jax.random.normal(key, (50, 2))

@@ -26,7 +26,7 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
-from .distribution import _auto_key
+from .distribution import Distribution, _auto_key
 from .protocols import (
     SupportsConditioning,
     SupportsCovariance,
@@ -206,7 +206,7 @@ def _condition_on_impl(
     dist: SupportsConditioning,
     observed: Any = None,
     **kwargs: Any,
-) -> Any:
+) -> Distribution:
     """Condition a joint distribution on observed values."""
     if not isinstance(dist, SupportsConditioning):
         raise TypeError(
@@ -216,7 +216,7 @@ def _condition_on_impl(
 
 
 def _from_distribution_impl(
-    source: Any,
+    source: Distribution,
     target_type: type,
     *,
     key: Any | None = None,

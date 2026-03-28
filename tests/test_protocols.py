@@ -115,8 +115,8 @@ class TestSupportsLogProb:
         dist = dist_cls(**kwargs)
         assert isinstance(dist, SupportsLogProb)
 
-    def test_empirical(self, empirical):
-        assert isinstance(empirical, SupportsLogProb)
+    def test_empirical_not_log_prob(self, empirical):
+        assert not isinstance(empirical, SupportsLogProb)
 
 
 # ---------------------------------------------------------------------------
@@ -126,8 +126,8 @@ class TestSupportsLogProb:
 class TestProtocolHierarchy:
     """Verify that protocol inheritance relationships hold."""
 
-    def test_sampling_implies_expectation(self, normal):
-        """SupportsSampling extends SupportsExpectation."""
+    def test_sampling_and_expectation_independent(self, normal):
+        """SupportsSampling and SupportsExpectation are independent protocols."""
         assert isinstance(normal, SupportsSampling)
         assert isinstance(normal, SupportsExpectation)
 
