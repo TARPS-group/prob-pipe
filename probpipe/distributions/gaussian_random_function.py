@@ -21,6 +21,7 @@ import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..core.distribution import _auto_key
+from ..core.protocols import SupportsSampling
 from .._utils import prod
 from .random_function import ArrayRandomFunction
 
@@ -233,7 +234,7 @@ class GaussianRandomFunction(ArrayRandomFunction):
 # ---------------------------------------------------------------------------
 
 
-class LinearBasisFunction(GaussianRandomFunction):
+class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
     r"""Linear model with fixed Gaussian weights.
 
     Implements the model:
@@ -276,6 +277,9 @@ class LinearBasisFunction(GaussianRandomFunction):
     """
 
     supports_joint_inputs = True
+
+    _sampling_cost: str = "low"
+    _preferred_orchestration: str | None = None
 
     def __init__(
         self,

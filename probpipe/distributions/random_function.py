@@ -30,63 +30,22 @@ Y = TypeVar('Y')
 class RandomFunction(Distribution[Callable[[X], Y]]):
     """A distribution over functions f: X → Y.
 
-    The primary interface is :meth:`__call__`. Calling the random 
+    The primary interface is :meth:`__call__`. Calling the random
     function on a set of inputs returns a distribution representing
     the (joint) distribution over the corresponding function outputs.
     In other words, calling returns the finite-dimensional distributions
-    of the stochastic process. :meth:`log_prob` is typically not 
-    implemented as random functions do not have densities in the 
-    standard sense.    
+    of the stochastic process. Log-densities are typically not available
+    as random functions do not have densities in the standard sense.
 
-    Sampling a random function means sampling an entire functional 
-    trajectory. For infinite-dimensional models (e.g., Gaussian processes), 
+    Sampling a random function means sampling an entire functional
+    trajectory. For infinite-dimensional models (e.g., Gaussian processes),
     drawing an entire function realization may be impossible or require
-    approximation. Therefore :meth:`_sample` and :meth:`sample` raise
-    ``NotImplementedError`` by default.  Finite-dimensional subclasses
-    (where a function is determined by a finite parameter vector) may
-    override both to return callables. Infinite-dimensional subclasses
-    may opt to implement this method using an approximate functional
-    sampling approach.
+    approximation. Finite-dimensional subclasses that support sampling
+    should inherit :class:`SupportsSampling` and implement
+    ``_sample_one`` and ``_sample``.
 
     This class is generic in ``X`` (input type) and ``Y`` (output type).
     """
-
-    # -- Distribution[T] contract -------------------------------------------
-
-    def _sample_one(self, key: PRNGKey) -> Callable:
-        """Draw a single function realization.
-
-        Raises ``NotImplementedError`` by default.  Override in
-        finite-dimensional subclasses where drawing a function reduces
-        to drawing finite parameters, or in infinite-dimensional classes
-        that opt to use an approximate sampling method.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support sampling function "
-            f"realizations. Use __call__(x) to obtain the predictive "
-            f"distribution at specific inputs."
-        )
-
-    def _sample(
-        self,
-        key: PRNGKey,
-        sample_shape: tuple[int, ...] = (),
-    ) -> Callable:
-        """Draw function realization(s).
-
-        The default ``jax.vmap``-based implementation from
-        :class:`Distribution` cannot batch over Python callables.
-        This override raises ``NotImplementedError`` by default.
-
-        Subclasses should override both :meth:`_sample_one` and
-        :meth:`_sample`.  The returned callable should produce outputs
-        with leading ``sample_shape`` dimensions.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support sampling function "
-            f"realizations. Use __call__(x) to obtain the predictive "
-            f"distribution at specific inputs."
-        )
 
     # -- Fundamental interface ----------------------------------------------
 

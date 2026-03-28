@@ -151,8 +151,9 @@ class TestProtocolHierarchy:
         assert isinstance(empirical, SupportsCovariance)
         assert isinstance(empirical, SupportsExpectation)
 
-    def test_sampling_subclass_check(self):
-        assert issubclass(SupportsSampling, SupportsExpectation)
+    def test_sampling_independent_of_expectation(self):
+        """SupportsSampling does NOT extend SupportsExpectation."""
+        assert not issubclass(SupportsSampling, SupportsExpectation)
 
     def test_log_prob_subclass_check(self):
         assert issubclass(SupportsLogProb, SupportsUnnormalizedLogProb)

@@ -84,12 +84,12 @@ class TestRandomFunction:
 
     def test_sample_raises(self, key):
         rf = _MinimalRandomFunction()
-        with pytest.raises(NotImplementedError, match="does not support sampling"):
+        with pytest.raises(TypeError, match="does not support sampling"):
             sample(rf, key=key)
 
     def test_sample_with_shape_raises(self, key):
         rf = _MinimalRandomFunction()
-        with pytest.raises(NotImplementedError, match="does not support sampling"):
+        with pytest.raises(TypeError, match="does not support sampling"):
             sample(rf, key=key, sample_shape=(5,))
 
     def test_log_prob_raises(self):

@@ -22,17 +22,15 @@ Protocol hierarchy
 
 ::
 
-    SupportsExpectation
-        ↑ inherits
-    SupportsSampling          provides default expectation via MC
-
-    SupportsUnnormalizedLogProb
-        ↑ inherits
-    SupportsLogProb           provides _unnormalized_log_prob via _log_prob
+    SupportsSampling          standalone; provides default _sample (no expectation)
 
     SupportsExpectation
         ↑ inherits
     SupportsMean, SupportsVariance, SupportsCovariance
+
+    SupportsUnnormalizedLogProb
+        ↑ inherits
+    SupportsLogProb           provides _unnormalized_log_prob via _log_prob
 
 """
 
@@ -88,15 +86,16 @@ class SupportsExpectation(Protocol):
 
 
 @runtime_checkable
-class SupportsSampling(SupportsExpectation, Protocol):
+class SupportsSampling(Protocol):
     """Distribution that can produce samples via ``_sample(key, sample_shape)``.
-
-    Also extends :class:`SupportsExpectation`, providing a default
-    Monte Carlo ``expectation`` implementation.
 
     Subclasses must implement ``_sample_one(key)`` to draw a single sample.
     The default ``_sample(key, sample_shape)`` handles batching via
     ``jax.vmap``; subclasses may override for efficiency.
+
+    Does NOT extend :class:`SupportsExpectation` — not all samplable
+    distributions support array-valued expectations (e.g., random functions).
+    Classes that support both should inherit both protocols.
     """
 
     _sampling_cost: ClassVar[str]  # "low", "medium", "high"
@@ -135,48 +134,6 @@ class SupportsSampling(SupportsExpectation, Protocol):
             lambda x: x.reshape(*sample_shape, *x.shape[1:]),
             flat_samples,
         )
-
-    def expectation(
-        self,
-        f: Callable,
-        *,
-        key: PRNGKey | None = None,
-        num_evaluations: int | None = None,
-        return_dist: bool | None = None,
-    ) -> Any:
-        """Estimate ``E[f(X)]`` where ``X ~ self`` via Monte Carlo.
-
-        Parameters
-        ----------
-        f : callable
-            Function mapping a single sample to an array (or pytree of arrays).
-        key : PRNGKey, optional
-            JAX PRNG key for sampling.  Auto-generated if ``None``.
-        num_evaluations : int, optional
-            Number of samples to draw.  If ``None``, uses
-            ``DEFAULT_NUM_EVALUATIONS``.
-        return_dist : bool, optional
-            If ``True``, return a ``BootstrapDistribution`` capturing
-            estimation uncertainty.  If ``False``, return a plain array.
-            If ``None``, use the global ``RETURN_APPROX_DIST`` setting.
-        """
-        from .distribution import (
-            DEFAULT_NUM_EVALUATIONS,
-            RETURN_APPROX_DIST,
-            BootstrapDistribution,
-            _auto_key,
-        )
-
-        n = num_evaluations if num_evaluations is not None else DEFAULT_NUM_EVALUATIONS
-        if key is None:
-            key = _auto_key()
-        samples = self._sample(key, sample_shape=(n,))
-        evals = jax.vmap(f)(samples)
-
-        rd = return_dist if return_dist is not None else RETURN_APPROX_DIST
-        if rd:
-            return BootstrapDistribution(evals, name=f"E[f(X)]")
-        return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
 
 
 # ---------------------------------------------------------------------------

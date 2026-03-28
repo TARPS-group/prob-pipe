@@ -25,6 +25,7 @@ from typing import Any, Callable, Generic, TypeVar
 from .._utils import prod
 from .protocols import (
     SupportsCovariance,
+    SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
@@ -256,7 +257,7 @@ class Distribution(Generic[T], ABC):
 # PyTreeArrayDistribution[T] — pytree of arrays with shape semantics
 # ---------------------------------------------------------------------------
 
-class PyTreeArrayDistribution(Distribution[T]):
+class PyTreeArrayDistribution(Distribution[T], SupportsSampling, SupportsExpectation):
     """
     Distribution over a pytree of arrays with TFP-style shape semantics.
 
@@ -264,10 +265,64 @@ class PyTreeArrayDistribution(Distribution[T]):
     Each leaf has its own ``event_shape``. The full shape identity is:
     ``treedef + batch_shape + per-leaf event_shapes``.
 
+    Inherits :class:`SupportsSampling` (all pytree/array distributions
+    are samplable) and :class:`SupportsExpectation` (MC expectation via
+    sampling).
+
     This is the workhorse layer for distributions over structured values
     (e.g., dicts of arrays for joint parameter distributions). Single-array
     distributions use the ``ArrayDistribution`` subclass.
     """
+
+    # -- orchestration hints ------------------------------------------------
+
+    _sampling_cost: str = "low"
+    _preferred_orchestration: str | None = None
+
+    # -- expectation (MC default) -------------------------------------------
+
+    def expectation(
+        self,
+        f: Callable,
+        *,
+        key: PRNGKey | None = None,
+        num_evaluations: int | None = None,
+        return_dist: bool | None = None,
+    ) -> Any:
+        """Estimate ``E[f(X)]`` where ``X ~ self`` via Monte Carlo.
+
+        Parameters
+        ----------
+        f : callable
+            Function mapping a single sample to an array (or pytree of
+            arrays).
+        key : PRNGKey, optional
+            JAX PRNG key for sampling.  Auto-generated if ``None``.
+        num_evaluations : int, optional
+            Number of samples to draw.  If ``None``, uses
+            ``DEFAULT_NUM_EVALUATIONS``.
+        return_dist : bool, optional
+            If ``True``, return a ``BootstrapDistribution`` capturing
+            estimation uncertainty.  If ``False``, return a plain array.
+            If ``None``, use the global ``RETURN_APPROX_DIST`` setting.
+        """
+        n = num_evaluations if num_evaluations is not None else DEFAULT_NUM_EVALUATIONS
+        if key is None:
+            key = _auto_key()
+        samples = self._sample(key, sample_shape=(n,))
+        evals = jax.vmap(f)(samples)
+
+        rd = return_dist if return_dist is not None else RETURN_APPROX_DIST
+        if rd:
+            return BootstrapDistribution(evals, name=f"E[f(X)]")
+        return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
+
+    # -- sampling (abstract) ------------------------------------------------
+
+    @abstractmethod
+    def _sample_one(self, key: PRNGKey) -> T:
+        """Draw a single sample. Subclasses must implement this."""
+        ...
 
     # -- pytree structure ---------------------------------------------------
 
@@ -619,7 +674,7 @@ def _supports_compatible(source: Constraint, target: Constraint) -> bool:
 # ArrayDistribution — distribution over arrays (TFP shape semantics)
 # ---------------------------------------------------------------------------
 
-class ArrayDistribution(PyTreeArrayDistribution[Array], SupportsSampling):
+class ArrayDistribution(PyTreeArrayDistribution[Array]):
     """
     Distribution over a single array with TFP-style shape semantics.
 
