@@ -95,12 +95,16 @@ from ..core.distribution import (
     Constraint,
     real,
     _auto_key,
+    _vmap_sample,
+    _mc_expectation,
 )
 from ..core.protocols import (
     SupportsConditioning,
+    SupportsCovariance,
     SupportsLogProb,
     SupportsMean,
     SupportsNamedComponents,
+    SupportsSampling,
     SupportsVariance,
 )
 
@@ -217,11 +221,166 @@ def _component_key_paths(components) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# Conditioning argument parser (module-level helper)
+# ---------------------------------------------------------------------------
+
+def _collect_observed_leaves(
+    obs_tree: dict,
+    comp_tree: dict,
+    prefix: KeyPath,
+    out: dict[KeyPath, ArrayLike],
+) -> None:
+    """Recursively walk an observed-value tree, validating against the component tree.
+
+    For each leaf (non-dict) value in *obs_tree*, verifies that the
+    corresponding node in *comp_tree* is an ``ArrayDistribution``
+    (not an internal dict node), and records the ``(key_path, value)``
+    pair in *out*.
+
+    Parameters
+    ----------
+    obs_tree : dict
+        The user-provided observed values (possibly nested).
+    comp_tree : dict
+        The corresponding level of the component pytree.
+    prefix : KeyPath
+        Key path accumulated so far.
+    out : dict
+        Accumulator for ``{key_path: value}`` pairs.
+
+    Raises
+    ------
+    KeyError
+        If a key in *obs_tree* is not present in *comp_tree*.
+    TypeError
+        If the user provides a scalar/array for a key that maps to
+        an intermediate dict node (must condition on individual
+        component distributions), or provides a dict for a key that
+        maps to a component distribution.
+    """
+    for key, obs_val in obs_tree.items():
+        path = prefix + (key,)
+        path_str = " > ".join(path)
+
+        # Validate key exists
+        if not isinstance(comp_tree, dict) or key not in comp_tree:
+            available = tuple(comp_tree.keys()) if isinstance(comp_tree, dict) else ()
+            raise KeyError(
+                f"Component key {key!r} not found at level "
+                f"'{' > '.join(prefix)}'. "
+                f"Available keys: {available}"
+            )
+
+        comp_node = comp_tree[key]
+
+        if isinstance(obs_val, dict):
+            # User provided a nested dict — component must also be a dict
+            if isinstance(comp_node, ArrayDistribution):
+                raise TypeError(
+                    f"Key path '{path_str}' resolves to a component "
+                    f"distribution ({type(comp_node).__name__}), but a "
+                    f"dict of values was provided.  Pass a single array "
+                    f"value to condition on this component."
+                )
+            if not isinstance(comp_node, dict):
+                raise TypeError(
+                    f"Key path '{path_str}' resolves to "
+                    f"{type(comp_node).__name__}, which is neither a "
+                    f"component distribution nor a dict."
+                )
+            # Recurse
+            _collect_observed_leaves(obs_val, comp_node, path, out)
+        else:
+            # User provided a value — must be a component distribution
+            if isinstance(comp_node, dict):
+                leaf_names = list(comp_node.keys())
+                raise TypeError(
+                    f"Cannot condition on '{path_str}' with a single "
+                    f"value — it contains component distributions "
+                    f"{leaf_names}.  Provide values for individual "
+                    f"component distributions, e.g.: "
+                    f"condition_on({key}={{'{leaf_names[0]}': ...}})"
+                )
+            if not isinstance(comp_node, ArrayDistribution):
+                raise TypeError(
+                    f"Key path '{path_str}' resolves to "
+                    f"{type(comp_node).__name__}, not a component "
+                    f"distribution."
+                )
+            out[path] = obs_val
+
+
+def _parse_condition_args(
+    joint: JointDistribution,
+    observed: dict | None,
+    kwargs: dict,
+) -> dict[KeyPath, ArrayLike]:
+    """Parse and validate conditioning arguments for a joint distribution.
+
+    Normalizes both calling conventions (positional dict and kwargs)
+    into a flat mapping ``{key_path: observed_value}`` where each
+    key path addresses a leaf ``ArrayDistribution`` in the component
+    pytree.
+
+    Parameters
+    ----------
+    joint : JointDistribution
+        The joint distribution whose components are being conditioned.
+    observed : dict or None
+        Positional dict argument from ``_condition_on``.
+    kwargs : dict
+        Keyword arguments from ``_condition_on``.
+
+    Returns
+    -------
+    dict[KeyPath, ArrayLike]
+        Mapping from leaf key paths to observed values.
+
+    Raises
+    ------
+    TypeError
+        If both ``observed`` and ``kwargs`` are provided, or if a
+        key path resolves to an internal node.
+    KeyError
+        If a key is not found in the component pytree.
+    ValueError
+        If no leaves are specified, or if all leaves are conditioned.
+    """
+    if observed is not None and kwargs:
+        raise TypeError(
+            "condition_on() accepts either a positional dict or keyword "
+            "arguments, not both."
+        )
+    tree = observed if observed is not None else kwargs
+    if not tree:
+        raise ValueError("condition_on() requires at least one observed value.")
+
+    # Walk the provided tree to extract (key_path, value) for each leaf
+    observed_leaves: dict[KeyPath, ArrayLike] = {}
+    _collect_observed_leaves(tree, joint._components, prefix=(), out=observed_leaves)
+
+    # Check we're not conditioning on everything
+    all_leaf_paths = set(
+        p if isinstance(p, tuple) else (p,)
+        for p in _component_key_paths(joint._components)
+    )
+    conditioned_paths = set(observed_leaves.keys())
+    if conditioned_paths >= all_leaf_paths:
+        raise ValueError(
+            "Cannot condition on all component distributions — "
+            "at least one must remain unconditioned."
+        )
+    return observed_leaves
+
+
+# ---------------------------------------------------------------------------
 # DistributionView — lightweight reference to a JointDistribution component
 # ---------------------------------------------------------------------------
 
-class DistributionView(ArrayDistribution, SupportsLogProb, SupportsMean, SupportsVariance):
+class DistributionView(ArrayDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance):
     """A lightweight reference to a leaf component of a :class:`JointDistribution`.
+
+    .. note:: Sampling and expectation are provided via ``SupportsSampling``.
 
     A ``DistributionView`` acts as an ``ArrayDistribution`` for a single
     component distribution (leaf) of a joint distribution's pytree.  It
@@ -256,6 +415,9 @@ class DistributionView(ArrayDistribution, SupportsLogProb, SupportsMean, Support
         A string (for flat access) or tuple of strings (for nested
         access) identifying the leaf component.
     """
+
+    _sampling_cost = "low"
+    _preferred_orchestration = None
 
     def __init__(self, parent: JointDistribution, key_path: str | KeyPath):
         self._key_path: KeyPath = _normalize_key(key_path)
@@ -312,6 +474,9 @@ class DistributionView(ArrayDistribution, SupportsLogProb, SupportsMean, Support
         structured = self._parent._sample(key, sample_shape)
         return _walk_pytree(structured, self._key_path)
 
+    def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
+        return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
+
     def _log_prob(self, x: ArrayLike) -> Array:
         return self._component._log_prob(x)
 
@@ -343,14 +508,17 @@ class DistributionView(ArrayDistribution, SupportsLogProb, SupportsMean, Support
 # ConditionedComponent — a distribution fixed to an observed value
 # ---------------------------------------------------------------------------
 
-class ConditionedComponent(ArrayDistribution, SupportsLogProb, SupportsMean, SupportsVariance):
+class ConditionedComponent(ArrayDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance):
     """
     A distribution whose value is fixed (observed / conditioned on).
 
-    Used internally by :meth:`JointDistribution.condition_on` to replace a
-    component with a constant.  Sampling always returns the conditioned value;
-    ``log_prob`` evaluates the base distribution at the conditioned value.
+    Used internally by conditioning to replace a component with a constant.
+    Sampling always returns the conditioned value; ``log_prob`` evaluates the
+    base distribution at the conditioned value.
     """
+
+    _sampling_cost = "low"
+    _preferred_orchestration = None
 
     def __init__(self, base: ArrayDistribution, value: ArrayLike, *, name: str | None = None):
         self._base = base
@@ -382,6 +550,9 @@ class ConditionedComponent(ArrayDistribution, SupportsLogProb, SupportsMean, Sup
             return self._value
         return jnp.broadcast_to(self._value, sample_shape + self.event_shape)
 
+    def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
+        return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
+
     def _log_prob(self, x: ArrayLike) -> Array:
         # Log-prob is constant: the base distribution evaluated at the pinned value
         return self._base._log_prob(self._value)
@@ -408,7 +579,7 @@ class ConditionedComponent(ArrayDistribution, SupportsLogProb, SupportsMean, Sup
 # JointDistribution — base class for named multi-component distributions
 # ---------------------------------------------------------------------------
 
-class JointDistribution(PyTreeArrayDistribution):
+class JointDistribution(PyTreeArrayDistribution, SupportsNamedComponents):
     """Base class for named multi-component distributions.
 
     A ``JointDistribution`` is a :class:`PyTreeArrayDistribution` whose
@@ -506,33 +677,6 @@ class JointDistribution(PyTreeArrayDistribution):
                 )
         self._components = dict(components)
         self._name = name
-
-    @classmethod
-    def from_distributions(cls, distributions: list[ArrayDistribution], **kwargs):
-        """Construct a flat joint from a list of named distributions.
-
-        Each distribution must have a non-``None`` ``name`` attribute,
-        and names must be unique.  The result is always a flat dict
-        (no nesting).
-
-        Parameters
-        ----------
-        distributions : list[ArrayDistribution]
-            Distributions with unique, non-None ``.name`` attributes.
-        **kwargs
-            Passed to the constructor (e.g., ``name``).
-        """
-        components = {}
-        for dist in distributions:
-            if dist.name is None:
-                raise ValueError(
-                    f"All distributions must have a name; "
-                    f"{type(dist).__name__} has name=None"
-                )
-            if dist.name in components:
-                raise ValueError(f"Duplicate component name: '{dist.name}'")
-            components[dist.name] = dist
-        return cls(**components, **kwargs)
 
     # -- PyTreeArrayDistribution interface ---------------------------------
 
@@ -714,280 +858,6 @@ class JointDistribution(PyTreeArrayDistribution):
             value,
         )
 
-    # -- Conditioning ------------------------------------------------------
-
-    def condition_on(self, observed=None, /, **kwargs) -> "JointDistribution":
-        """Return a new joint distribution with some component distributions
-        fixed to observed values.
-
-        Each component distribution in a ``JointDistribution`` is an
-        ``ArrayDistribution`` leaf in the component pytree.  You
-        condition on one or more of these component distributions by
-        providing their observed values.  The result is a new joint
-        distribution over the remaining (unconditioned) components.
-
-        You cannot condition on an intermediate dict node directly —
-        you must specify values for the individual component
-        distributions it contains.  For example, if ``physics``
-        contains ``force`` and ``mass`` distributions, you condition on
-        them individually::
-
-            joint.condition_on(physics={"force": jnp.array(1.0)})
-
-        **Calling conventions:**
-
-        *Flat kwargs* — condition on one or more top-level components::
-
-            joint.condition_on(x=jnp.array(1.0))
-            joint.condition_on(x=jnp.array(1.0), y=jnp.array(2.0))
-
-        *Nested dict via kwargs* — condition on components inside a
-        nested dict structure by mirroring the component structure::
-
-            joint.condition_on(physics={"force": jnp.array(1.0)})
-
-        *Positional dict* — same as above, passed as a single argument::
-
-            joint.condition_on({"physics": {"force": jnp.array(1.0)}})
-
-        All forms are normalized to a set of ``(key_path, value)`` pairs
-        identifying which component distributions to condition on.
-
-        Parameters
-        ----------
-        observed : dict, optional
-            A (possibly nested) dict whose structure matches a subset of
-            the component pytree.  Each leaf value is the observed array
-            for the corresponding component distribution.  Mutually
-            exclusive with ``**kwargs``.
-        **kwargs
-            Component names mapped to observed values (arrays), or to
-            nested dicts that mirror the component structure to select
-            specific nested components.
-
-        Returns
-        -------
-        JointDistribution
-            A new joint distribution over the remaining (unconditioned)
-            component distributions.  The concrete type depends on the
-            subclass.
-
-        Raises
-        ------
-        TypeError
-            If both ``observed`` and ``**kwargs`` are provided.
-        KeyError
-            If a key does not exist in the component pytree.
-        TypeError
-            If a key path resolves to an intermediate dict node rather
-            than a component distribution.  You must condition on
-            individual component distributions, not on the dict
-            structure that contains them.
-        ValueError
-            If conditioning on all component distributions (nothing
-            would remain).
-
-        Examples
-        --------
-        Flat joint — condition on a single component::
-
-            >>> joint = ProductDistribution(x=Normal(0, 1), y=Normal(0, 1))
-            >>> cond = joint.condition_on(x=jnp.array(2.0))
-            >>> cond.component_names
-            ('y',)
-
-        Nested joint — condition on one component inside a nested dict::
-
-            >>> nested = ProductDistribution(
-            ...     physics={"force": Normal(0, 1), "mass": Gamma(2, 1)},
-            ...     obs=Normal(0, 0.1),
-            ... )
-            >>> cond = nested.condition_on(physics={"force": jnp.array(1.0)})
-            >>> # force is conditioned; mass and obs remain
-            >>> cond.component_names
-            (('observation',), ('physics', 'mass'))
-
-        Nested joint — condition on multiple components::
-
-            >>> cond = nested.condition_on(
-            ...     physics={"force": jnp.array(1.0), "mass": jnp.array(2.0)}
-            ... )
-            >>> # both physics components conditioned → dict pruned
-            >>> cond.component_names
-            ('obs',)
-        """
-        return self._condition_on(observed, **kwargs)
-
-    def _condition_on(self, observed=None, /, **kwargs) -> "JointDistribution":
-        """Protocol implementation — parse args and delegate to subclass."""
-        observed_leaves = self._parse_condition_args(observed, kwargs)
-        return self._condition_on_impl(observed_leaves)
-
-    def _parse_condition_args(
-        self, observed: dict | None, kwargs: dict,
-    ) -> dict[KeyPath, ArrayLike]:
-        """Parse and validate conditioning arguments.
-
-        Normalizes both calling conventions (positional dict and kwargs)
-        into a flat mapping ``{key_path: observed_value}`` where each
-        key path addresses a leaf ``ArrayDistribution`` in the component
-        pytree.
-
-        Parameters
-        ----------
-        observed : dict or None
-            Positional dict argument from ``condition_on``.
-        kwargs : dict
-            Keyword arguments from ``condition_on``.
-
-        Returns
-        -------
-        dict[KeyPath, ArrayLike]
-            Mapping from leaf key paths to observed values.
-
-        Raises
-        ------
-        TypeError
-            If both ``observed`` and ``kwargs`` are provided, or if a
-            key path resolves to an internal node.
-        KeyError
-            If a key is not found in the component pytree.
-        ValueError
-            If no leaves are specified, or if all leaves are conditioned.
-        """
-        if observed is not None and kwargs:
-            raise TypeError(
-                "condition_on() accepts either a positional dict or keyword "
-                "arguments, not both."
-            )
-        tree = observed if observed is not None else kwargs
-        if not tree:
-            raise ValueError("condition_on() requires at least one observed value.")
-
-        # Walk the provided tree to extract (key_path, value) for each leaf
-        observed_leaves: dict[KeyPath, ArrayLike] = {}
-        self._collect_observed_leaves(tree, self._components, prefix=(), out=observed_leaves)
-
-        # Check we're not conditioning on everything
-        all_leaf_paths = set(
-            p if isinstance(p, tuple) else (p,)
-            for p in _component_key_paths(self._components)
-        )
-        conditioned_paths = set(observed_leaves.keys())
-        if conditioned_paths >= all_leaf_paths:
-            raise ValueError(
-                "Cannot condition on all component distributions — "
-                "at least one must remain unconditioned."
-            )
-        return observed_leaves
-
-    @staticmethod
-    def _collect_observed_leaves(
-        obs_tree: dict,
-        comp_tree: dict,
-        prefix: KeyPath,
-        out: dict[KeyPath, ArrayLike],
-    ) -> None:
-        """Recursively walk an observed-value tree, validating against the component tree.
-
-        For each leaf (non-dict) value in *obs_tree*, verifies that the
-        corresponding node in *comp_tree* is an ``ArrayDistribution``
-        (not an internal dict node), and records the ``(key_path, value)``
-        pair in *out*.
-
-        Parameters
-        ----------
-        obs_tree : dict
-            The user-provided observed values (possibly nested).
-        comp_tree : dict
-            The corresponding level of the component pytree.
-        prefix : KeyPath
-            Key path accumulated so far.
-        out : dict
-            Accumulator for ``{key_path: value}`` pairs.
-
-        Raises
-        ------
-        KeyError
-            If a key in *obs_tree* is not present in *comp_tree*.
-        TypeError
-            If the user provides a scalar/array for a key that maps to
-            an intermediate dict node (must condition on individual
-            component distributions), or provides a dict for a key that
-            maps to a component distribution.
-        """
-        for key, obs_val in obs_tree.items():
-            path = prefix + (key,)
-            path_str = " > ".join(path)
-
-            # Validate key exists
-            if not isinstance(comp_tree, dict) or key not in comp_tree:
-                available = tuple(comp_tree.keys()) if isinstance(comp_tree, dict) else ()
-                raise KeyError(
-                    f"Component key {key!r} not found at level "
-                    f"'{' > '.join(prefix)}'. "
-                    f"Available keys: {available}"
-                )
-
-            comp_node = comp_tree[key]
-
-            if isinstance(obs_val, dict):
-                # User provided a nested dict — component must also be a dict
-                if isinstance(comp_node, ArrayDistribution):
-                    raise TypeError(
-                        f"Key path '{path_str}' resolves to a component "
-                        f"distribution ({type(comp_node).__name__}), but a "
-                        f"dict of values was provided.  Pass a single array "
-                        f"value to condition on this component."
-                    )
-                if not isinstance(comp_node, dict):
-                    raise TypeError(
-                        f"Key path '{path_str}' resolves to "
-                        f"{type(comp_node).__name__}, which is neither a "
-                        f"component distribution nor a dict."
-                    )
-                # Recurse
-                JointDistribution._collect_observed_leaves(
-                    obs_val, comp_node, path, out,
-                )
-            else:
-                # User provided a value — must be a component distribution
-                if isinstance(comp_node, dict):
-                    leaf_names = list(comp_node.keys())
-                    raise TypeError(
-                        f"Cannot condition on '{path_str}' with a single "
-                        f"value — it contains component distributions "
-                        f"{leaf_names}.  Provide values for individual "
-                        f"component distributions, e.g.: "
-                        f"condition_on({key}={{'{leaf_names[0]}': ...}})"
-                    )
-                if not isinstance(comp_node, ArrayDistribution):
-                    raise TypeError(
-                        f"Key path '{path_str}' resolves to "
-                        f"{type(comp_node).__name__}, not a component "
-                        f"distribution."
-                    )
-                out[path] = obs_val
-
-    def _condition_on_impl(
-        self, observed_leaves: dict[KeyPath, ArrayLike],
-    ) -> "JointDistribution":
-        """Construct the conditioned distribution.
-
-        Subclasses override this to implement their conditioning logic.
-        The base implementation raises ``NotImplementedError``.
-
-        Parameters
-        ----------
-        observed_leaves : dict[KeyPath, ArrayLike]
-            Validated mapping from leaf key paths to observed values.
-            Every key path is guaranteed to resolve to an
-            ``ArrayDistribution`` leaf in the component pytree.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement condition_on()."
-        )
-
     # -- log_prob (abstract) -----------------------------------------------
 
     def _log_prob(self, value) -> Array:
@@ -1027,7 +897,7 @@ class JointDistribution(PyTreeArrayDistribution):
 # ProductDistribution — independent components
 # ---------------------------------------------------------------------------
 
-class ProductDistribution(JointDistribution, SupportsLogProb, SupportsMean, SupportsVariance, SupportsNamedComponents):
+class ProductDistribution(JointDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning):
     """Joint distribution with **independent** leaf components.
 
     All leaf components are sampled independently.  The joint
@@ -1083,6 +953,9 @@ class ProductDistribution(JointDistribution, SupportsLogProb, SupportsMean, Supp
         >>> s["physics"]["force"].shape  # scalar leaf
         ()
     """
+
+    _sampling_cost = "low"
+    _preferred_orchestration = None
 
     def _sample_one(self, key: PRNGKey):
         leaves = jax.tree.leaves(self._components)
@@ -1160,7 +1033,14 @@ class ProductDistribution(JointDistribution, SupportsLogProb, SupportsMean, Supp
         """
         return jax.tree.map(lambda d: d._variance(), self._components)
 
+    def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
+        return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
+
     # -- Conditioning (full nested support) --------------------------------
+
+    def _condition_on(self, observed=None, /, **kwargs):
+        observed_leaves = _parse_condition_args(self, observed, kwargs)
+        return self._condition_on_impl(observed_leaves)
 
     def _condition_on_impl(
         self, observed_leaves: dict[KeyPath, ArrayLike],
@@ -1229,7 +1109,7 @@ def _prune_leaves(tree: dict, remove_paths: set[KeyPath], prefix: tuple = ()) ->
 # SequentialJointDistribution — autoregressive dependence
 # ---------------------------------------------------------------------------
 
-class SequentialJointDistribution(JointDistribution, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning, SupportsNamedComponents):
+class SequentialJointDistribution(JointDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning):
     """
     Joint distribution with autoregressive (sequential) dependence.
 
@@ -1255,6 +1135,9 @@ class SequentialJointDistribution(JointDistribution, SupportsLogProb, SupportsMe
     **components : Distribution or Callable[..., Distribution]
         Named components in topological (dependency) order.
     """
+
+    _sampling_cost = "medium"
+    _preferred_orchestration = None
 
     def __init__(
         self,
@@ -1480,6 +1363,13 @@ class SequentialJointDistribution(JointDistribution, SupportsLogProb, SupportsMe
         """Per-component variances (approximate — uses prototype components)."""
         return {k: v._variance() for k, v in self._proto_components.items()}
 
+    def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
+        return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
+
+    def _condition_on(self, observed=None, /, **kwargs):
+        observed_leaves = _parse_condition_args(self, observed, kwargs)
+        return self._condition_on_impl(observed_leaves)
+
     def _condition_on_impl(
         self, observed_leaves: dict[KeyPath, ArrayLike],
     ) -> "SequentialJointDistribution":
@@ -1561,7 +1451,7 @@ class SequentialJointDistribution(JointDistribution, SupportsLogProb, SupportsMe
 # JointEmpirical — weighted joint samples
 # ---------------------------------------------------------------------------
 
-class JointEmpirical(JointDistribution, SupportsLogProb, SupportsMean, SupportsVariance, SupportsNamedComponents):
+class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, SupportsVariance, SupportsConditioning):
     """
     Joint distribution from weighted joint samples.
 
@@ -1584,6 +1474,9 @@ class JointEmpirical(JointDistribution, SupportsLogProb, SupportsMean, SupportsV
         Named component sample arrays.  Each must have the same number of
         rows (first dimension = ``n``).
     """
+
+    _sampling_cost = "low"
+    _preferred_orchestration = None
 
     def __init__(
         self,
@@ -1766,6 +1659,13 @@ class JointEmpirical(JointDistribution, SupportsLogProb, SupportsMean, SupportsV
                 result[cname] = jnp.einsum("n,n...->...", self.weights, diff**2)
         return result
 
+    def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
+        return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
+
+    def _condition_on(self, observed=None, /, **kwargs):
+        observed_leaves = _parse_condition_args(self, observed, kwargs)
+        return self._condition_on_impl(observed_leaves)
+
     def _condition_on_impl(
         self, observed_leaves: dict[KeyPath, ArrayLike],
     ) -> "JointEmpirical":
@@ -1821,7 +1721,7 @@ class JointEmpirical(JointDistribution, SupportsLogProb, SupportsMean, SupportsV
 # JointGaussian — analytical joint Gaussian with cross-covariance
 # ---------------------------------------------------------------------------
 
-class JointGaussian(JointDistribution, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning, SupportsNamedComponents):
+class JointGaussian(JointDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsCovariance, SupportsConditioning):
     """
     Joint Gaussian distribution with named components and cross-covariance.
 
@@ -1848,6 +1748,9 @@ class JointGaussian(JointDistribution, SupportsLogProb, SupportsMean, SupportsVa
     ...     yz=3,   # yz is 3-dimensional
     ... )
     """
+
+    _sampling_cost = "low"
+    _preferred_orchestration = None
 
     def __init__(
         self,
@@ -1953,6 +1856,17 @@ class JointGaussian(JointDistribution, SupportsLogProb, SupportsMean, SupportsVa
             sl = self._component_slices[cname]
             result[cname] = diag[sl]
         return result
+
+    def _cov(self) -> Array:
+        """Full covariance matrix."""
+        return self._cov_mat
+
+    def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
+        return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
+
+    def _condition_on(self, observed=None, /, **kwargs):
+        observed_leaves = _parse_condition_args(self, observed, kwargs)
+        return self._condition_on_impl(observed_leaves)
 
     def _condition_on_impl(
         self, observed_leaves: dict[KeyPath, ArrayLike],
