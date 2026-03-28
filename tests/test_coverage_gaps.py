@@ -380,17 +380,17 @@ class TestTransformedNonTFP:
 # ---------------------------------------------------------------------------
 
 
-class TestSupportsCovarianceDefault:
-    """Cover the default _cov in SupportsCovariance protocol."""
+class TestCovarianceRequiresProtocol:
+    """cov op requires SupportsCovariance — no MC fallback."""
 
-    def test_default_cov_via_expectation(self):
-        """A distribution inheriting SupportsCovariance without overriding _cov
-        should use the default (MC-based) implementation."""
+    def test_cov_raises_without_supports_covariance(self):
+        """A distribution with SupportsExpectation but not SupportsCovariance
+        should raise TypeError from the cov op."""
         from probpipe.core.distribution import _mc_expectation, _vmap_sample
-        from probpipe.core.protocols import SupportsSampling, SupportsCovariance
-        from probpipe import ArrayDistribution
+        from probpipe.core.protocols import SupportsSampling, SupportsExpectation
+        from probpipe import ArrayDistribution, cov
 
-        class CovViaMC(ArrayDistribution, SupportsSampling, SupportsCovariance):
+        class NoCovDist(ArrayDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"
             _preferred_orchestration = None
 
@@ -399,7 +399,6 @@ class TestSupportsCovarianceDefault:
                 return (2,)
 
             def _sample_one(self, key):
-                # Standard normal samples
                 return jax.random.normal(key, (2,))
 
             def _sample(self, key, sample_shape=()):
@@ -411,12 +410,9 @@ class TestSupportsCovarianceDefault:
                     return_dist=return_dist,
                 )
 
-        d = CovViaMC()
-        C = d._cov()
-        assert C.shape == (2, 2)
-        assert jnp.all(jnp.isfinite(C))
-        # Should be approximately identity
-        np.testing.assert_allclose(C, jnp.eye(2), atol=0.3)
+        d = NoCovDist()
+        with pytest.raises(TypeError, match="does not support covariance"):
+            cov(d)
 
 
 # ---------------------------------------------------------------------------

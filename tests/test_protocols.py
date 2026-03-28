@@ -136,20 +136,22 @@ class TestProtocolHierarchy:
         assert isinstance(normal, SupportsLogProb)
         assert isinstance(normal, SupportsUnnormalizedLogProb)
 
-    def test_mean_implies_expectation(self, normal):
-        """SupportsMean extends SupportsExpectation."""
+    def test_mean_independent_of_expectation(self):
+        """SupportsMean does NOT extend SupportsExpectation."""
+        assert not issubclass(SupportsMean, SupportsExpectation)
+
+    def test_variance_independent_of_expectation(self):
+        """SupportsVariance does NOT extend SupportsExpectation."""
+        assert not issubclass(SupportsVariance, SupportsExpectation)
+
+    def test_covariance_independent_of_expectation(self):
+        """SupportsCovariance does NOT extend SupportsExpectation."""
+        assert not issubclass(SupportsCovariance, SupportsExpectation)
+
+    def test_concrete_dist_supports_both_mean_and_expectation(self, normal):
+        """Concrete distributions like Normal support both independently."""
         assert isinstance(normal, SupportsMean)
         assert isinstance(normal, SupportsExpectation)
-
-    def test_variance_implies_expectation(self, normal):
-        """SupportsVariance extends SupportsExpectation."""
-        assert isinstance(normal, SupportsVariance)
-        assert isinstance(normal, SupportsExpectation)
-
-    def test_covariance_implies_expectation(self, empirical):
-        """SupportsCovariance extends SupportsExpectation."""
-        assert isinstance(empirical, SupportsCovariance)
-        assert isinstance(empirical, SupportsExpectation)
 
     def test_sampling_independent_of_expectation(self):
         """SupportsSampling does NOT extend SupportsExpectation."""
@@ -157,15 +159,6 @@ class TestProtocolHierarchy:
 
     def test_log_prob_subclass_check(self):
         assert issubclass(SupportsLogProb, SupportsUnnormalizedLogProb)
-
-    def test_mean_subclass_check(self):
-        assert issubclass(SupportsMean, SupportsExpectation)
-
-    def test_variance_subclass_check(self):
-        assert issubclass(SupportsVariance, SupportsExpectation)
-
-    def test_covariance_subclass_check(self):
-        assert issubclass(SupportsCovariance, SupportsExpectation)
 
 
 # ---------------------------------------------------------------------------

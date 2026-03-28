@@ -118,53 +118,36 @@ def _unnormalized_prob_impl(
     return dist._unnormalized_prob(value)
 
 
-def _mean_impl(dist: SupportsExpectation) -> Any:
+def _mean_impl(dist: SupportsMean) -> Any:
     """Compute E[X].
 
-    Uses exact moments if the distribution supports :class:`SupportsMean`,
-    otherwise falls back to Monte Carlo via :func:`_expectation_impl`.
+    Requires the distribution to implement :class:`SupportsMean`.
     """
-    if isinstance(dist, SupportsMean):
-        try:
-            return dist._mean()
-        except NotImplementedError:
-            pass  # fall through to MC
-    if isinstance(dist, SupportsExpectation):
-        return _expectation_impl(dist, lambda x: x, return_dist=False)
-    raise TypeError(
-        f"{type(dist).__name__} does not support mean "
-        f"(implements neither SupportsMean nor SupportsExpectation)"
-    )
+    if not isinstance(dist, SupportsMean):
+        raise TypeError(
+            f"{type(dist).__name__} does not support mean "
+            f"(does not implement SupportsMean)"
+        )
+    return dist._mean()
 
 
-def _variance_impl(dist: SupportsExpectation) -> Any:
+def _variance_impl(dist: SupportsVariance) -> Any:
     """Compute Var[X].
 
-    Uses exact variance if available, otherwise MC fallback via
-    :func:`_expectation_impl`.
+    Requires the distribution to implement :class:`SupportsVariance`.
     """
-    if isinstance(dist, SupportsVariance):
-        try:
-            return dist._variance()
-        except NotImplementedError:
-            pass  # fall through to MC
-    if isinstance(dist, SupportsExpectation):
-        mu = _mean_impl(dist)
-        return _expectation_impl(
-            dist, lambda x: (x - mu) ** 2, return_dist=False,
+    if not isinstance(dist, SupportsVariance):
+        raise TypeError(
+            f"{type(dist).__name__} does not support variance "
+            f"(does not implement SupportsVariance)"
         )
-    raise TypeError(
-        f"{type(dist).__name__} does not support variance "
-        f"(implements neither SupportsVariance nor SupportsExpectation)"
-    )
+    return dist._variance()
 
 
 def _cov_impl(dist: SupportsCovariance) -> Array:
     """Compute the covariance matrix.
 
     Requires the distribution to implement :class:`SupportsCovariance`.
-    For multivariate distributions, the covariance is returned with
-    respect to the flattened event representation.
     """
     if not isinstance(dist, SupportsCovariance):
         raise TypeError(

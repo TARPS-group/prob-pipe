@@ -448,12 +448,12 @@ class TestDistributionABC:
             rtol=1e-5,
         )
 
-    def test_mean_mc_fallback(self):
-        """Subclasses without explicit _mean() use MC fallback via expectation."""
-        from probpipe.core.protocols import SupportsSampling, SupportsMean
+    def test_mean_requires_supports_mean(self):
+        """mean op raises TypeError for distributions without SupportsMean."""
+        from probpipe.core.protocols import SupportsSampling, SupportsExpectation
         from probpipe.core.distribution import _vmap_sample, _mc_expectation
 
-        class MinimalDist(ArrayDistribution, SupportsSampling, SupportsMean):
+        class MinimalDist(ArrayDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"
             _preferred_orchestration = None
             @property
@@ -466,16 +466,15 @@ class TestDistributionABC:
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
                 return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
         d = MinimalDist()
-        # MC fallback returns BootstrapDistribution by default
-        result = mean(d)
-        from probpipe import BootstrapDistribution
-        assert isinstance(result, BootstrapDistribution) or isinstance(result, jnp.ndarray)
+        with pytest.raises(TypeError, match="does not support mean"):
+            mean(d)
 
-    def test_variance_mc_fallback(self):
-        from probpipe.core.protocols import SupportsSampling, SupportsVariance
+    def test_variance_requires_supports_variance(self):
+        """variance op raises TypeError for distributions without SupportsVariance."""
+        from probpipe.core.protocols import SupportsSampling, SupportsExpectation
         from probpipe.core.distribution import _vmap_sample, _mc_expectation
 
-        class MinimalDist(ArrayDistribution, SupportsSampling, SupportsVariance):
+        class MinimalDist(ArrayDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"
             _preferred_orchestration = None
             @property
@@ -488,9 +487,8 @@ class TestDistributionABC:
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
                 return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
         d = MinimalDist()
-        result = variance(d)
-        from probpipe import BootstrapDistribution
-        assert isinstance(result, BootstrapDistribution) or isinstance(result, jnp.ndarray)
+        with pytest.raises(TypeError, match="does not support variance"):
+            variance(d)
 
     def test_from_distribution_raises_for_invalid_input(self):
         with pytest.raises(TypeError):

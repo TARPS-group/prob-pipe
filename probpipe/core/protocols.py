@@ -24,13 +24,22 @@ Protocol hierarchy
 
     SupportsSampling          standalone; single _sample protocol method
 
-    SupportsExpectation
-        ↑ inherits
-    SupportsMean, SupportsVariance, SupportsCovariance
+    SupportsExpectation       standalone; E[f(X)] computation
+
+    SupportsMean              standalone; exact _mean()
+    SupportsVariance          standalone; exact _variance()
+    SupportsCovariance        standalone; exact _cov()
 
     SupportsUnnormalizedLogProb
         ↑ inherits
     SupportsLogProb           provides _unnormalized_log_prob via _log_prob
+
+The moment protocols (SupportsMean, SupportsVariance, SupportsCovariance)
+are independent of SupportsExpectation.  The ops layer falls back to
+MC estimation via SupportsExpectation when the exact protocol is absent.
+Concrete classes that want default MC implementations can use the
+``@compute_expectation`` decorator on their ``_mean``/``_variance``/
+``_cov`` methods — but this is opt-in, not required by the protocol.
 
 """
 
@@ -173,52 +182,42 @@ class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
 # ---------------------------------------------------------------------------
 
 @runtime_checkable
-class SupportsMean(SupportsExpectation, Protocol):
-    """Distribution with a mean via ``_mean()``.
+class SupportsMean(Protocol):
+    """Distribution with an exact mean via ``_mean()``.
 
-    Extends :class:`SupportsExpectation`.  The default implementation
-    computes ``E[x]`` via ``expectation``; subclasses with exact
-    moments should override.
+    Independent of :class:`SupportsExpectation`.  The ops layer falls
+    back to MC estimation via ``SupportsExpectation`` when this protocol
+    is absent.  Concrete classes that want the MC default can apply
+    ``@compute_expectation`` to their ``_mean`` implementation.
     """
 
-    @compute_expectation
-    def _mean(self):
-        return lambda x: x
+    def _mean(self) -> Any: ...
 
 
 @runtime_checkable
-class SupportsVariance(SupportsExpectation, Protocol):
-    """Distribution with a variance via ``_variance()``.
+class SupportsVariance(Protocol):
+    """Distribution with an exact variance via ``_variance()``.
 
-    Extends :class:`SupportsExpectation`.  The default implementation
-    computes ``E[(x - mean)^2]`` via ``expectation``; subclasses with
-    exact moments should override.
+    Independent of :class:`SupportsExpectation`.  The ops layer falls
+    back to MC estimation via ``SupportsExpectation`` when this protocol
+    is absent.  Concrete classes that want the MC default can apply
+    ``@compute_expectation`` to their ``_variance`` implementation.
     """
 
-    @compute_expectation
-    def _variance(self):
-        mu = self._expectation(lambda x: x, return_dist=False)
-        return lambda x: (x - mu) ** 2
+    def _variance(self) -> Any: ...
 
 
 @runtime_checkable
-class SupportsCovariance(SupportsExpectation, Protocol):
-    """Distribution with a covariance via ``_cov()``.
+class SupportsCovariance(Protocol):
+    """Distribution with an exact covariance via ``_cov()``.
 
-    Extends :class:`SupportsExpectation`.  The default implementation
-    computes ``E[(x - mean)(x - mean)^T]`` via ``expectation``;
-    subclasses with exact moments should override.
+    Independent of :class:`SupportsExpectation`.  The ops layer falls
+    back to MC estimation via ``SupportsExpectation`` when this protocol
+    is absent.  Concrete classes that want the MC default can apply
+    ``@compute_expectation`` to their ``_cov`` implementation.
     """
 
-    @compute_expectation
-    def _cov(self):
-        mu = self._expectation(lambda x: x, return_dist=False)
-
-        def _outer_diff(x):
-            d = jnp.ravel(x) - jnp.ravel(mu)
-            return jnp.outer(d, d)
-
-        return _outer_diff
+    def _cov(self) -> Any: ...
 
 
 # ---------------------------------------------------------------------------
