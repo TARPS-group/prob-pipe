@@ -798,7 +798,7 @@ class ArrayDistribution(PyTreeArrayDistribution[Array]):
 # TFPDistribution mixin
 # ---------------------------------------------------------------------------
 
-class TFPDistribution(ArrayDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance):
+class TFPDistribution(ArrayDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsCovariance):
     """
     Base class for distributions backed by a ``tfd.Distribution`` instance.
 
@@ -853,6 +853,11 @@ class TFPDistribution(ArrayDistribution, SupportsSampling, SupportsLogProb, Supp
 
     def _variance(self) -> Array:
         return self._tfp_dist.variance()
+
+    def _cov(self) -> Array:
+        if self.event_shape == () or self.event_shape == (1,):
+            return self._tfp_dist.variance()
+        return self._tfp_dist.covariance()
 
     def _expectation(
         self,
