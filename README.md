@@ -155,7 +155,7 @@ Bayesian linear regression in a few lines. Define a likelihood, pair it with a p
 import jax
 import jax.numpy as jnp
 from probpipe import MultivariateNormal, SimpleModel, condition_on, mean, wf
-from probpipe.core.modeling import Likelihood
+from probpipe.modeling import Likelihood
 
 class LinearRegressionLikelihood(Likelihood):
     @wf

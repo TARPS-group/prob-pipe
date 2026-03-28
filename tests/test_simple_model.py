@@ -25,7 +25,7 @@ from probpipe import (
     mean,
     sample,
 )
-from probpipe.core.modeling import Likelihood as LikelihoodBase
+from probpipe.modeling import Likelihood as LikelihoodBase
 from probpipe.core.node import wf
 from probpipe.distributions.multivariate import MultivariateNormal
 

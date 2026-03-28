@@ -2,11 +2,11 @@
 
 ## Modeling
 
-::: probpipe.core.modeling.Likelihood
+::: probpipe.modeling.Likelihood
 
-::: probpipe.core.modeling.GenerativeLikelihood
+::: probpipe.modeling.GenerativeLikelihood
 
-::: probpipe.core.modeling.IterativeForecaster
+::: probpipe.modeling.IterativeForecaster
 
 ## Probabilistic Models
 

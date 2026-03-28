@@ -1,4 +1,4 @@
-"""Tests for probpipe.core.modeling — Likelihood, IterativeForecaster."""
+"""Tests for probpipe.modeling — Likelihood, IterativeForecaster."""
 
 import numpy as np
 import jax
@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import MultivariateNormal, EmpiricalDistribution, Provenance
-from probpipe.core.modeling import (
+from probpipe.modeling import (
     GenerativeLikelihood,
     IterativeForecaster,
     Likelihood,

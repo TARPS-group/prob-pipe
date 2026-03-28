@@ -50,7 +50,7 @@ class SimpleModel(ProbabilisticModel):
         Prior distribution over model parameters.
     likelihood : callable
         Must have a ``log_likelihood(params, data)`` method (e.g., a
-        :class:`~probpipe.core.modeling.Likelihood` module).
+        :class:`~probpipe.modeling.Likelihood` module).
     data_names : tuple of str or None
         Names of the data components.  Defaults to ``("data",)``.
     name : str or None

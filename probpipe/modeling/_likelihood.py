@@ -1,23 +1,19 @@
-"""
-Modeling components for ProbPipe.
+"""Likelihood interfaces and iterative forecasting.
 
 Provides abstract interfaces for likelihoods and an iterative
 forecasting module.
-
-For MCMC sampling, see :mod:`probpipe.inference`.
-For probabilistic models, see :mod:`probpipe.modeling`.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from typing import Any
 
 import jax.numpy as jnp
 
 from ..custom_types import ArrayLike
-from .distribution import ArrayDistribution, EmpiricalDistribution
-from .node import AbstractModule, Module, WorkflowFunction, abstractwf, wf
+from ..core.distribution import ArrayDistribution, EmpiricalDistribution
+from ..core.node import AbstractModule, Module, WorkflowFunction, abstractwf, wf
 
 logger = logging.getLogger(__name__)
 
