@@ -3,9 +3,9 @@
 Handles conversions between ProbPipe distribution types:
 
 - **Same-class**: returns the source unchanged (no copy, no provenance).
-- **Cross-family**: moment-matches using the source's ``mean()`` and
-  ``variance()`` methods, which delegate to TFP for analytical moments
-  or fall back to Monte Carlo via the ``@monte_carlo`` decorator.
+- **Cross-family**: moment-matches using the source's ``_mean()`` and
+  ``_variance()`` methods, which delegate to TFP for analytical moments
+  or fall back to Monte Carlo via the protocol defaults.
   When MC is used, the resulting ``BootstrapDistribution`` is stored
   in provenance metadata so users can inspect conversion error.
 

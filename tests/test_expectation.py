@@ -1,4 +1,4 @@
-"""Tests for expectation(Distribution), BootstrapDistribution, is_approximate, and @monte_carlo."""
+"""Tests for expectation(Distribution), BootstrapDistribution, and is_approximate."""
 
 import jax
 import jax.numpy as jnp

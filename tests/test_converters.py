@@ -587,8 +587,7 @@ class TestBootstrapMetadata:
         emp = EmpiricalDistribution(samples[:, None])
         result = converter_registry.convert(emp, Normal)
         assert result.source is not None
-        # EmpiricalDistribution.mean()/variance() may or may not return
-        # BootstrapDistribution depending on the @monte_carlo decorator;
+        # EmpiricalDistribution._mean()/_variance() return plain arrays;
         # at minimum, provenance should be attached
         assert result.source.operation == "from_distribution"
 
