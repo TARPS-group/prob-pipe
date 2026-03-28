@@ -98,6 +98,14 @@ from probpipe.distributions import (
 )
 from probpipe.core.node import WorkflowFunction, Module, wf
 from probpipe.core.provenance import provenance_ancestors, provenance_dag
+from probpipe.core.modeling import Likelihood, GenerativeLikelihood, IterativeForecaster
+from probpipe.inference import (
+    MCMCDiagnostics,
+    MCMCApproximateDistribution,
+    rwmh,
+    nutpie_sample,
+)
+from probpipe.modeling import ProbabilisticModel, SimpleModel
 from probpipe.core.protocols import (
     SupportsExpectation,
     SupportsSampling,
@@ -108,6 +116,7 @@ from probpipe.core.protocols import (
     SupportsCovariance,
     SupportsConditioning,
     SupportsNamedComponents,
+    SupportsConditionableComponents,
 )
 from probpipe.converters import (
     converter_registry,
@@ -198,6 +207,18 @@ __all__ = [
     "SupportsCovariance",
     "SupportsConditioning",
     "SupportsNamedComponents",
+    "SupportsConditionableComponents",
+    # Modeling
+    "Likelihood",
+    "GenerativeLikelihood",
+    "IterativeForecaster",
+    "ProbabilisticModel",
+    "SimpleModel",
+    # Inference
+    "MCMCDiagnostics",
+    "MCMCApproximateDistribution",
+    "rwmh",
+    "nutpie_sample",
     # Converters
     "converter_registry",
     "ConversionInfo",
