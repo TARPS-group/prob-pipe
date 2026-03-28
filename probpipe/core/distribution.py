@@ -1090,31 +1090,6 @@ class EmpiricalDistribution(ArrayDistribution, SupportsSampling, SupportsMean, S
             return jnp.mean(f_vals, axis=0)
         return jnp.einsum("n,n...->...", self.weights, f_vals)
 
-    # -- conversion ---------------------------------------------------------
-
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> EmpiricalDistribution:
-        """Create an empirical approximation by sampling from *other*.
-
-        Keyword Args
-        -------------
-        num_samples : int
-            Number of samples to draw (default 1024).
-        name : str | None
-            Name for the result; defaults to ``other.name``.
-        """
-        num_samples = kwargs.pop("num_samples", 1024)
-        samples = other._sample(key, sample_shape=(num_samples,))
-        ed = cls(samples, name=name or other.name)
-        ed.with_source(Provenance("from_distribution", parents=(other,)))
-        return ed
 
 
 # ---------------------------------------------------------------------------

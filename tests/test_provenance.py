@@ -18,6 +18,7 @@ from probpipe import (
     Provenance,
     provenance_ancestors,
     provenance_dag,
+    from_distribution,
 )
 from probpipe.core.node import WorkflowFunction
 
@@ -61,14 +62,14 @@ class TestFromDistributionProvenance:
 
     def test_normal_from_distribution(self):
         src = Beta(alpha=2.0, beta=5.0, name="beta_src")
-        converted = Normal.from_distribution(src)
+        converted = from_distribution(src, Normal)
         assert converted.source is not None
         assert converted.source.operation == "from_distribution"
         assert converted.source.parents == (src,)
 
     def test_empirical_from_distribution(self):
         src = Normal(loc=0.0, scale=1.0, name="norm_src")
-        ed = EmpiricalDistribution.from_distribution(src, n_samples=100)
+        ed = from_distribution(src, EmpiricalDistribution, n_samples=100)
         assert ed.source is not None
         assert ed.source.operation == "from_distribution"
         assert ed.source.parents == (src,)
@@ -213,7 +214,7 @@ class TestProvenanceChains:
     def test_two_step_chain(self):
         """from_distribution → condition_on creates a 2-step chain."""
         src = Beta(alpha=2.0, beta=5.0, name="prior")
-        converted = Normal.from_distribution(src, name="approx")
+        converted = from_distribution(src, Normal, name="approx")
         joint = ProductDistribution(x=converted, y=Normal(loc=0.0, scale=1.0))
         cond = joint.condition_on(x=jnp.array(0.0))
 

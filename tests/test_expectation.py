@@ -18,6 +18,7 @@ from probpipe import (
     Bernoulli,
     Categorical,
     Binomial,
+    from_distribution,
     TransformedDistribution,
     DEFAULT_NUM_EVALUATIONS,
     set_default_num_evaluations,
@@ -381,17 +382,17 @@ class TestIsApproximate:
 
     def test_from_distribution_same_class_exact(self):
         d = Normal(loc=0.0, scale=1.0)
-        d2 = Normal.from_distribution(d)
+        d2 = from_distribution(d, Normal)
         assert not d2.is_approximate
 
     def test_from_distribution_different_class_approximate(self):
         d = Normal(loc=5.0, scale=0.1)
-        d2 = Gamma.from_distribution(d, check_support=False)
+        d2 = from_distribution(d, Gamma, check_support=False)
         assert d2.is_approximate
 
     def test_from_distribution_to_empirical(self):
         d = Normal(loc=0.0, scale=1.0)
-        d2 = EmpiricalDistribution.from_distribution(d)
+        d2 = from_distribution(d, EmpiricalDistribution)
         assert d2.is_approximate
 
 

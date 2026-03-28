@@ -487,12 +487,6 @@ class DistributionView(ArrayDistribution, SupportsSampling, SupportsLogProb, Sup
         return self._component._variance()
 
     @classmethod
-    def _from_distribution(cls, other, *, key, **kwargs):
-        raise NotImplementedError(
-            "Cannot convert to DistributionView; it is a structural reference."
-        )
-
-    @classmethod
     def _default_support(cls) -> Constraint:
         return real
 
@@ -562,10 +556,6 @@ class ConditionedComponent(ArrayDistribution, SupportsSampling, SupportsLogProb,
 
     def _variance(self) -> Array:
         return jnp.zeros(self.event_shape, dtype=jnp.float32)
-
-    @classmethod
-    def _from_distribution(cls, other, *, key, **kwargs):
-        raise NotImplementedError("Cannot convert to ConditionedComponent.")
 
     @classmethod
     def _default_support(cls) -> Constraint:

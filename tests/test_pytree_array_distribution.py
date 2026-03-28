@@ -13,6 +13,7 @@ from probpipe import (
     FlattenedView,
     Normal,
     MultivariateNormal,
+    from_distribution,
     EmpiricalDistribution,
 )
 from probpipe import log_prob, sample, unnormalized_log_prob
@@ -107,7 +108,7 @@ class TestDistributionBase:
     def test_from_distribution_on_base_class(self, scalar_normal):
         """from_distribution is accessible on Distribution[T] base."""
         # Normal inherits from_distribution from Distribution[T]
-        result = Normal.from_distribution(scalar_normal, num_samples=100)
+        result = from_distribution(scalar_normal, Normal, num_samples=100)
         assert isinstance(result, Normal)
 
 

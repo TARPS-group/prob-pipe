@@ -102,32 +102,6 @@ class Bernoulli(TFPDistribution):
         f1 = f(jnp.ones(self.event_shape, dtype=self.dtype))
         return (1 - p) * f0 + p * f1
 
-    # -- conversion ---------------------------------------------------------
-
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> Bernoulli:
-        if isinstance(other, Bernoulli):
-            result = cls(
-                probs=other.probs,
-                logits=other.logits,
-                name=name or other.name,
-            )
-            return result.with_source(
-                Provenance("from_distribution", parents=(other,))
-            )
-        num_samples = kwargs.pop("num_samples", 1024)
-        probs = other._mean()
-        result = cls(probs=probs, name=name or other.name)
-        return result.with_source(
-            Provenance("from_distribution", parents=(other,))
-        )
 
 
 class Binomial(TFPDistribution):
@@ -213,50 +187,6 @@ class Binomial(TFPDistribution):
         f_vals = jax.vmap(f)(support)
         return jnp.einsum("n,n...->...", probs, f_vals)
 
-    # -- conversion ---------------------------------------------------------
-
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> Binomial:
-        """Fit a Binomial from *other*.
-
-        Keyword Args
-        -------------
-        total_count : int
-            Number of trials. **Required** unless *other* is already a
-            ``Binomial`` (in which case its ``total_count`` is reused).
-        num_samples : int
-            Samples drawn for moment-matching (default 1024).
-        """
-        if isinstance(other, Binomial):
-            result = cls(
-                total_count=other.total_count,
-                probs=other.probs,
-                logits=other.logits,
-                name=name or other.name,
-            )
-            return result.with_source(
-                Provenance("from_distribution", parents=(other,))
-            )
-        total_count = kwargs.pop("total_count", None)
-        if total_count is None:
-            raise ValueError(
-                "total_count must be provided as a keyword argument "
-                "when converting a non-Binomial distribution to Binomial."
-            )
-        num_samples = kwargs.pop("num_samples", 1024)
-        total_count = jnp.asarray(total_count, dtype=jnp.float32)
-        probs = other._mean() / total_count
-        result = cls(total_count=total_count, probs=probs, name=name or other.name)
-        return result.with_source(
-            Provenance("from_distribution", parents=(other,))
-        )
 
 
 class Poisson(TFPDistribution):
@@ -297,31 +227,6 @@ class Poisson(TFPDistribution):
     def _default_support(cls) -> Constraint:
         return non_negative_integer
 
-    # -- conversion ---------------------------------------------------------
-
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> Poisson:
-        if isinstance(other, Poisson):
-            result = cls(
-                rate=other.rate,
-                name=name or other.name,
-            )
-            return result.with_source(
-                Provenance("from_distribution", parents=(other,))
-            )
-        num_samples = kwargs.pop("num_samples", 1024)
-        rate = other._mean()
-        result = cls(rate=rate, name=name or other.name)
-        return result.with_source(
-            Provenance("from_distribution", parents=(other,))
-        )
 
 
 class Categorical(TFPDistribution):
@@ -395,37 +300,6 @@ class Categorical(TFPDistribution):
         f_vals = jax.vmap(f)(support)
         return jnp.einsum("n,n...->...", probs, f_vals)
 
-    # -- conversion ---------------------------------------------------------
-
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> Categorical:
-        if isinstance(other, Categorical):
-            result = cls(
-                probs=other.probs,
-                logits=other.logits,
-                name=name or other.name,
-            )
-            return result.with_source(
-                Provenance("from_distribution", parents=(other,))
-            )
-        num_samples = kwargs.pop("num_samples", 1024)
-        samples = other._sample(key, (num_samples,))
-        num_categories = int(jnp.max(samples)) + 1
-        counts = jnp.zeros(num_categories)
-        for i in range(num_categories):
-            counts = counts.at[i].set(jnp.sum(samples == i))
-        probs = counts / jnp.sum(counts)
-        result = cls(probs=probs, name=name or other.name)
-        return result.with_source(
-            Provenance("from_distribution", parents=(other,))
-        )
 
 
 class NegativeBinomial(TFPDistribution):
@@ -494,52 +368,3 @@ class NegativeBinomial(TFPDistribution):
     def _default_support(cls) -> Constraint:
         return non_negative_integer
 
-    # -- conversion ---------------------------------------------------------
-
-    @classmethod
-    def _from_distribution(
-        cls,
-        other: ArrayDistribution,
-        *,
-        key: PRNGKey,
-        name: str | None = None,
-        **kwargs: Any,
-    ) -> NegativeBinomial:
-        """Fit a NegativeBinomial from *other*.
-
-        Keyword Args
-        -------------
-        total_count : int
-            Number of failures. **Required** unless *other* is already a
-            ``NegativeBinomial`` (in which case its ``total_count`` is
-            reused).
-        num_samples : int
-            Samples drawn for moment-matching (default 1024).
-        """
-        if isinstance(other, NegativeBinomial):
-            result = cls(
-                total_count=other.total_count,
-                probs=other.probs,
-                logits=other.logits,
-                name=name or other.name,
-            )
-            return result.with_source(
-                Provenance("from_distribution", parents=(other,))
-            )
-        total_count = kwargs.pop("total_count", None)
-        if total_count is None:
-            raise ValueError(
-                "total_count must be provided as a keyword argument "
-                "when converting a non-NegativeBinomial distribution "
-                "to NegativeBinomial."
-            )
-        num_samples = kwargs.pop("num_samples", 1024)
-        total_count = jnp.asarray(total_count, dtype=jnp.float32)
-        m = other._mean()
-        probs = total_count / (total_count + m)
-        result = cls(
-            total_count=total_count, probs=probs, name=name or other.name
-        )
-        return result.with_source(
-            Provenance("from_distribution", parents=(other,))
-        )

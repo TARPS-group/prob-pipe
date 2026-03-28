@@ -12,7 +12,7 @@ from probpipe import (
     Provenance,
     MultivariateNormal,
 )
-from probpipe import cov, log_prob, mean, prob, sample, variance
+from probpipe import cov, from_distribution, log_prob, mean, prob, sample, variance
 
 
 # ---------------------------------------------------------------------------
@@ -149,10 +149,10 @@ class TestMultivariateNormal:
         assert gaussian.dtype == jnp.float32
 
     def test_from_distribution_empirical(self, gaussian, key):
-        ed = EmpiricalDistribution.from_distribution(
-            gaussian, key=key, num_samples=2000
+        ed = from_distribution(
+            gaussian, EmpiricalDistribution, key=key, num_samples=2000
         )
-        g2 = MultivariateNormal.from_distribution(ed, name="fitted")
+        g2 = from_distribution(ed, MultivariateNormal, name="fitted")
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.2)
         assert g2.name == "fitted"
         assert g2.source is not None
@@ -160,7 +160,7 @@ class TestMultivariateNormal:
 
     def test_from_distribution_gaussian(self, gaussian, key):
         """Moment-match from another MultivariateNormal via sampling."""
-        g2 = MultivariateNormal.from_distribution(gaussian, key=key, num_samples=5000)
+        g2 = from_distribution(gaussian, MultivariateNormal, key=key, num_samples=5000)
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.15)
 
 
@@ -275,8 +275,8 @@ class TestEmpiricalDistribution:
         assert ed.name == "emp"
 
     def test_from_distribution(self, gaussian, key):
-        ed = EmpiricalDistribution.from_distribution(
-            gaussian, key=key, num_samples=50
+        ed = from_distribution(
+            gaussian, EmpiricalDistribution, key=key, num_samples=50
         )
         assert ed.n == 50
         assert ed.event_shape == gaussian.event_shape
@@ -285,14 +285,14 @@ class TestEmpiricalDistribution:
         assert ed.name == gaussian.name
 
     def test_from_distribution_custom_name(self, gaussian, key):
-        ed = EmpiricalDistribution.from_distribution(
-            gaussian, key=key, num_samples=10, name="custom"
+        ed = from_distribution(
+            gaussian, EmpiricalDistribution, key=key, num_samples=10, name="custom"
         )
         assert ed.name == "custom"
 
     def test_from_distribution_default_key(self, gaussian):
         """from_distribution should work without explicit key."""
-        ed = EmpiricalDistribution.from_distribution(gaussian, num_samples=10)
+        ed = from_distribution(gaussian, EmpiricalDistribution, num_samples=10)
         assert ed.n == 10
 
 
@@ -493,7 +493,7 @@ class TestDistributionABC:
 
     def test_from_distribution_raises_for_invalid_input(self):
         with pytest.raises(TypeError):
-            ArrayDistribution.from_distribution(None)
+            from_distribution(None, ArrayDistribution)
 
     def test_source_default_none(self, gaussian):
         g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))

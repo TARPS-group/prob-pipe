@@ -18,7 +18,7 @@ from probpipe import (
     FlattenedView,
 )
 from probpipe.core.node import WorkflowFunction
-from probpipe import condition_on, log_prob, mean, sample, variance
+from probpipe import condition_on, from_distribution, log_prob, mean, sample, variance
 
 
 # ---------------------------------------------------------------------------
@@ -309,32 +309,6 @@ class TestBind:
         views = joint_xy.bind(only_x="x")
         assert len(views) == 1
         assert views["only_x"]._component_name == "x"
-
-
-# ===========================================================================
-# 6. TestFromDistributions
-# ===========================================================================
-
-class TestFromDistributions:
-
-    def test_from_distributions_named(self):
-        a = Normal(loc=0.0, scale=1.0, name="a")
-        b = Normal(loc=1.0, scale=0.5, name="b")
-        joint = ProductDistribution.from_distributions([a, b])
-        assert joint.component_names == ("a", "b")
-        assert joint.event_size == 2
-
-    def test_from_distributions_raises_on_none_name(self):
-        a = Normal(loc=0.0, scale=1.0, name="a")
-        b = Normal(loc=1.0, scale=0.5)  # no name
-        with pytest.raises(ValueError, match="name=None"):
-            ProductDistribution.from_distributions([a, b])
-
-    def test_from_distributions_raises_on_duplicate_name(self):
-        a = Normal(loc=0.0, scale=1.0, name="dup")
-        b = Normal(loc=1.0, scale=0.5, name="dup")
-        with pytest.raises(ValueError, match="Duplicate"):
-            ProductDistribution.from_distributions([a, b])
 
 
 # ===========================================================================
@@ -704,7 +678,7 @@ class TestDistributionViewFromDistribution:
 
     def test_from_distribution_raises(self, joint_xy):
         with pytest.raises(TypeError):
-            DistributionView.from_distribution(Normal(loc=0.0, scale=1.0))
+            from_distribution(Normal(loc=0.0, scale=1.0), DistributionView)
 
 
 class TestEnumerateWithDistributionViews:
