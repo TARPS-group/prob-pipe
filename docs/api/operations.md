@@ -16,8 +16,6 @@ from probpipe import sample, mean, log_prob, condition_on
       show_root_heading: true
       heading_level: 3
       show_root_full_path: false
-      show_name: true
-      name: "sample"
 
 ## Density Evaluation
 
@@ -26,32 +24,24 @@ from probpipe import sample, mean, log_prob, condition_on
       show_root_heading: true
       heading_level: 3
       show_root_full_path: false
-      show_name: true
-      name: "log_prob"
 
 ::: probpipe.core.ops._prob_impl
     options:
       show_root_heading: true
       heading_level: 3
       show_root_full_path: false
-      show_name: true
-      name: "prob"
 
 ::: probpipe.core.ops._unnormalized_log_prob_impl
     options:
       show_root_heading: true
       heading_level: 3
       show_root_full_path: false
-      show_name: true
-      name: "unnormalized_log_prob"
 
 ::: probpipe.core.ops._unnormalized_prob_impl
     options:
       show_root_heading: true
       heading_level: 3
       show_root_full_path: false
-      show_name: true
-      name: "unnormalized_prob"
 
 ## Moments and Expectations
 
@@ -60,32 +50,24 @@ from probpipe import sample, mean, log_prob, condition_on
       show_root_heading: true
       heading_level: 3
       show_root_full_path: false
-      show_name: true
-      name: "mean"
 
 ::: probpipe.core.ops._variance_impl
     options:
       show_root_heading: true
       heading_level: 3
       show_root_full_path: false
-      show_name: true
-      name: "variance"
 
 ::: probpipe.core.ops._cov_impl
     options:
       show_root_heading: true
       heading_level: 3
       show_root_full_path: false
-      show_name: true
-      name: "cov"
 
 ::: probpipe.core.ops._expectation_impl
     options:
       show_root_heading: true
       heading_level: 3
       show_root_full_path: false
-      show_name: true
-      name: "expectation"
 
 ## Conditioning
 
@@ -94,8 +76,6 @@ from probpipe import sample, mean, log_prob, condition_on
       show_root_heading: true
       heading_level: 3
       show_root_full_path: false
-      show_name: true
-      name: "condition_on"
 
 ## Conversion
 
@@ -104,5 +84,3 @@ from probpipe import sample, mean, log_prob, condition_on
       show_root_heading: true
       heading_level: 3
       show_root_full_path: false
-      show_name: true
-      name: "from_distribution"
