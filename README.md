@@ -101,30 +101,43 @@ bootstrap_data = JointBootstrapDistribution(EmpiricalDistribution(data))
 bagged_posterior = condition_on(model, bootstrap_data)
 ```
 
-Because `JointBootstrapDistribution` implements `SupportsSampling`, the `condition_on` workflow function automatically broadcasts: it draws bootstrap datasets and runs MCMC on each, returning a collection of posterior distributions.
+Because `JointBootstrapDistribution` implements `SupportsSampling`, the `condition_on` workflow function automatically broadcasts: it draws bootstrap datasets and runs MCMC on each, returning a `BroadcastDistribution` — a joint distribution over bootstrap datasets (inputs) and their corresponding posteriors (outputs).
 
-We can visualize the bagged posterior by overlaying the individual bootstrap posterior densities:
+Call `marginalize()` to obtain the **bagged posterior**, a mixture distribution that averages over the bootstrap posteriors. The individual bootstrap posteriors are accessible via `.components`:
 
 ```python
 import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde
 import numpy as np
+from probpipe import sample
+
+# The marginal is a mixture over bootstrap posteriors
+bagged = bagged_posterior.marginalize()
+individual_posteriors = bagged.components  # list of per-bootstrap posteriors
 
 fig, axes = plt.subplots(1, 3, figsize=(12, 3.5))
 param_names = [r"$\beta_0$ (intercept)", r"$\beta_1$ (slope 1)", r"$\beta_2$ (slope 2)"]
 true_values = [1.0, 2.0, -0.5]
 
 for j, (ax, name, truth) in enumerate(zip(axes, param_names, true_values)):
-    for post in bagged_posterior[:10]:
+    # Plot individual bootstrap posterior densities
+    for post in individual_posteriors[:10]:
         draws = post.samples[:, j]
         kde = gaussian_kde(np.array(draws))
         xs = np.linspace(float(draws.min()) - 0.3, float(draws.max()) + 0.3, 200)
-        ax.plot(xs, kde(xs), alpha=0.6)
-    ax.axvline(truth, color="black", linestyle="--", label="true value")
+        ax.plot(xs, kde(xs), alpha=0.4, color="steelblue")
+
+    # Plot the bagged posterior (mixture) density
+    bagged_draws = np.array(sample(bagged, sample_shape=(2000,))[:, j])
+    kde_bag = gaussian_kde(bagged_draws)
+    xs = np.linspace(float(bagged_draws.min()) - 0.3, float(bagged_draws.max()) + 0.3, 200)
+    ax.plot(xs, kde_bag(xs), color="black", lw=2, label="bagged posterior")
+
+    ax.axvline(truth, color="red", linestyle="--", label="true value")
     ax.set_xlabel(name)
 axes[0].set_ylabel("Density")
 axes[0].legend()
-fig.suptitle("Bagged Posterior: 10 Bootstrap Posterior Densities")
+fig.suptitle("Bagged Posterior vs. Individual Bootstrap Posteriors")
 fig.tight_layout()
 ```
 
