@@ -169,6 +169,8 @@ mean(predictive)       # Array(2.1497, dtype=float32)
 variance(predictive)   # Array(0.0151, dtype=float32)
 ```
 
+User-defined functions can be written as usual, with ProbPipe managing uncertainty propagation.
+
 ### 6. Provenance tracking
 
 Every distribution records its lineage automatically. Provenance chains enable full reproducibility — you can trace any result back to the data and model that produced it:
