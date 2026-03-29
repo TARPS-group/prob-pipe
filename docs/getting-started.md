@@ -103,11 +103,41 @@ bootstrap_data = JointBootstrapDistribution(EmpiricalDistribution(data), n=int(N
 bootstrap_data.n   # 79
 ```
 
-The plots below show 10 bootstrap posterior densities overlaid for each parameter, and a histogram of posterior means across bootstrap datasets:
+We can visualize the bagged posterior by overlaying the bootstrap posterior densities for each parameter:
+
+```python
+import matplotlib.pyplot as plt
+from scipy.stats import gaussian_kde
+import numpy as np
+
+fig, axes = plt.subplots(1, 3, figsize=(12, 3.5))
+param_names = [r"$\beta_0$ (intercept)", r"$\beta_1$ (slope 1)", r"$\beta_2$ (slope 2)"]
+true_values = [1.0, 2.0, -0.5]
+
+# Draw 10 bootstrap datasets and fit posteriors
+bootstrap_posteriors = [
+    condition_on(model, sample(bootstrap_data, key=jax.random.PRNGKey(i)),
+                 num_results=1000, num_warmup=500, random_seed=i)
+    for i in range(10)
+]
+
+for j, (ax, name, truth) in enumerate(zip(axes, param_names, true_values)):
+    for post in bootstrap_posteriors:
+        draws = post.samples[:, j]
+        kde = gaussian_kde(np.array(draws))
+        xs = np.linspace(float(draws.min()) - 0.3, float(draws.max()) + 0.3, 200)
+        ax.plot(xs, kde(xs), alpha=0.6)
+    ax.axvline(truth, color="black", linestyle="--", label="true value")
+    ax.set_xlabel(name)
+axes[0].set_ylabel("Density")
+axes[0].legend()
+fig.suptitle("Bagged Posterior: 10 Bootstrap Posterior Densities")
+fig.tight_layout()
+```
 
 ![Bagged posterior densities](assets/images/bagged_posterior_densities.png)
 
-![Bagged posterior means](assets/images/bagged_posterior_means.png)
+The bootstrap posterior densities are tightly clustered — the sampling variability (spread across bootstrap replicates) is small compared to the width of each individual posterior. This indicates the standard posterior is already stable and reproducible for this well-specified model. In such cases the bagged posterior is wider than necessary, making it somewhat conservative. This is expected: bagging provides a safety net under misspecification, at the cost of mild overcoverage when the model is correct.
 
 ### 4. Use external samplers
 
