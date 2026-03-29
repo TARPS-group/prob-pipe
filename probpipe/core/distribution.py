@@ -1308,3 +1308,119 @@ class FlattenedView(ArrayDistribution, SupportsSampling, SupportsLogProb):
             f"event_shape={self.event_shape})"
         )
 
+
+# ---------------------------------------------------------------------------
+# JointBootstrapDistribution
+# ---------------------------------------------------------------------------
+
+
+class JointBootstrapDistribution(Distribution[Array], SupportsSampling):
+    """N-fold product of an empirical distribution (bootstrap resampling).
+
+    Each sample from this distribution is a bootstrapped dataset — ``n``
+    observations drawn i.i.d. with replacement from the source data.
+    This provides the sampling distribution over datasets needed for
+    BayesBag (bagged posteriors).
+
+    When the source is an :class:`EmpiricalDistribution`, ``n`` defaults
+    to the number of samples in the empirical distribution.  Otherwise
+    ``n`` must be specified explicitly.
+
+    Parameters
+    ----------
+    source : EmpiricalDistribution or array-like
+        The data to bootstrap from.  If an ``EmpiricalDistribution``,
+        its samples and weights are used directly.  If array-like,
+        it is treated as an equally-weighted dataset where the leading
+        axis is the observation axis.
+    n : int or None
+        Number of observations per bootstrap dataset.  Defaults to the
+        number of samples in ``source`` when ``source`` is an
+        ``EmpiricalDistribution`` or array.
+    name : str or None
+        Distribution name for provenance.
+
+    Examples
+    --------
+    >>> data = EmpiricalDistribution(observed_data)
+    >>> bootstrap = JointBootstrapDistribution(data)
+    >>> # Each sample is a bootstrapped dataset of the same size
+    >>> boot_dataset = sample(bootstrap, key=jax.random.PRNGKey(0))
+    >>> boot_dataset.shape  # (n, *event_shape)
+    """
+
+    _sampling_cost: str = "low"
+    _preferred_orchestration: str | None = None
+
+    def __init__(
+        self,
+        source: EmpiricalDistribution | ArrayLike,
+        *,
+        n: int | None = None,
+        name: str | None = None,
+    ):
+        if isinstance(source, EmpiricalDistribution):
+            self._data = source.samples
+            self._weights = None if source.is_uniform else source.weights
+            default_n = source.n
+        else:
+            self._data = jnp.asarray(source, dtype=jnp.float32)
+            if self._data.ndim == 0:
+                raise ValueError("source must have at least 1 dimension (the observation axis).")
+            self._weights = None
+            default_n = self._data.shape[0]
+
+        if n is None:
+            self._n = default_n
+        else:
+            if n < 1:
+                raise ValueError(f"n must be positive, got {n}")
+            self._n = n
+
+        self._name = name
+        self._source_n = self._data.shape[0]
+        self._event_shape_per_obs = self._data.shape[1:]
+
+    @property
+    def name(self) -> str | None:
+        return self._name
+
+    @property
+    def n(self) -> int:
+        """Number of observations per bootstrap dataset."""
+        return self._n
+
+    def _sample_one(self, key: PRNGKey) -> Array:
+        """Draw a single bootstrapped dataset."""
+        if self._weights is None:
+            idx = jax.random.choice(key, self._source_n, shape=(self._n,), replace=True)
+        else:
+            idx = jax.random.choice(
+                key, self._source_n, shape=(self._n,), replace=True, p=self._weights,
+            )
+        return self._data[idx]
+
+    def _sample(
+        self,
+        key: PRNGKey,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
+        """Draw bootstrap datasets.
+
+        Returns shape ``(*sample_shape, n, *event_shape_per_obs)``.
+        """
+        if sample_shape == ():
+            return self._sample_one(key)
+
+        total = prod(sample_shape)
+        keys = jax.random.split(key, total)
+        results = jax.vmap(self._sample_one)(keys)
+        return results.reshape(*sample_shape, self._n, *self._event_shape_per_obs)
+
+    def __repr__(self) -> str:
+        return (
+            f"JointBootstrapDistribution(n={self._n}, "
+            f"source_n={self._source_n}, "
+            f"obs_shape={self._event_shape_per_obs})"
+        )
+

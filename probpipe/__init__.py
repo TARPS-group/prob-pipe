@@ -35,6 +35,7 @@ from probpipe.distributions import (
     Provenance,
     # Global settings
     BootstrapDistribution,
+    JointBootstrapDistribution,
     DEFAULT_NUM_EVALUATIONS,
     RETURN_APPROX_DIST,
     set_default_num_evaluations,
@@ -133,6 +134,8 @@ __all__ = [
     "FlattenedView",
     "TFPDistribution",
     "EmpiricalDistribution",
+    "BootstrapDistribution",
+    "JointBootstrapDistribution",
     "Provenance",
     # Constraints
     "Constraint",

@@ -8,6 +8,7 @@ from ..core.distribution import (
     EmpiricalDistribution,
     Provenance,
     BootstrapDistribution,
+    JointBootstrapDistribution,
     DEFAULT_NUM_EVALUATIONS,
     RETURN_APPROX_DIST,
     set_default_num_evaluations,
