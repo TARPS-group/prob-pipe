@@ -27,6 +27,7 @@ from typing import Any, Callable, Generic, TypeVar
 from .._utils import prod
 from .protocols import (
     SupportsCovariance,
+    SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
     SupportsNamedComponents,
@@ -1439,6 +1440,7 @@ class JointBootstrapDistribution(Distribution[Array], SupportsSampling):
 class _ArrayMarginal(
     Distribution[T],
     SupportsSampling,
+    SupportsExpectation,
     SupportsMean,
     SupportsVariance,
     SupportsCovariance,
@@ -1526,6 +1528,39 @@ class _ArrayMarginal(
         if self._w is None:
             return jnp.einsum("ni,nj->ij", diff, diff) / self.n
         return jnp.einsum("ni,nj,n->ij", diff, diff, self.weights)
+
+    def _expectation(
+        self,
+        f: Callable,
+        *,
+        key: Any = None,
+        num_evaluations: Any = None,
+        return_dist: Any = None,
+    ) -> Any:
+        """Compute ``E[f(X)]`` exactly over the empirical support."""
+        if num_evaluations is not None and num_evaluations < self.n:
+            if key is None:
+                key = _auto_key()
+            idx = jax.random.choice(key, self.n, shape=(num_evaluations,), replace=False)
+            sub_samples = self._samples[idx]
+            f_vals = jax.vmap(f)(sub_samples)
+            rd = return_dist if return_dist is not None else RETURN_APPROX_DIST
+            if rd:
+                sub_w = None
+                if self._w is not None:
+                    sub_w = self.weights[idx]
+                    sub_w = sub_w / jnp.sum(sub_w)
+                return BootstrapDistribution(f_vals, weights=sub_w)
+            if self._w is None:
+                return jnp.mean(f_vals, axis=0)
+            sub_w = self.weights[idx]
+            sub_w = sub_w / jnp.sum(sub_w)
+            return jnp.einsum("n,n...->...", sub_w, f_vals)
+
+        f_vals = jax.vmap(f)(self._samples)
+        if self._w is None:
+            return jnp.mean(f_vals, axis=0)
+        return jnp.einsum("n,n...->...", self.weights, f_vals)
 
     def __repr__(self):
         return f"MarginalizedBroadcastDistribution(n={self.n}, event_shape={self.event_shape})"

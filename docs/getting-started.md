@@ -163,13 +163,26 @@ predict = WorkflowFunction(func=predict_impl)
 # Posterior uncertainty propagates automatically
 x_new = jnp.array([0.5, -0.3])
 predictive = predict(params=posterior, x_new=x_new)
-
-# predictive is an EmpiricalDistribution over predicted values
-mean(predictive)       # Array(2.1497, dtype=float32)
-variance(predictive)   # Array(0.0151, dtype=float32)
 ```
 
-This works with any function — the science stays clean, and ProbPipe handles the uncertainty bookkeeping.
+The result is a `BroadcastDistribution` – a joint distribution over the broadcast inputs and the function output. This preserves the relationship between inputs and outputs, enabling downstream analysis of input–output correlations. Call `marginalize()` to get the output distribution:
+
+```python
+# Access the output marginal for moment computations
+output = predictive.marginalize()
+mean(output)       # Array(2.1497, dtype=float32)
+variance(output)   # Array(0.0151, dtype=float32)
+
+# The joint also records which input samples produced which outputs
+predictive.input_samples.keys()   # dict_keys(['params'])
+```
+
+This works with any function – the science stays clean, and ProbPipe handles the uncertainty bookkeeping. To skip storing input samples and get just the output distribution (saving memory), pass `marginalize=True`:
+
+```python
+output_only = predict(params=posterior, x_new=x_new, marginalize=True)
+mean(output_only)   # Array(2.1497, dtype=float32)
+```
 
 ### 6. Track provenance
 
@@ -182,7 +195,8 @@ posterior.source
 # Provenance('nuts', parents=[MultivariateNormal])
 
 provenance_ancestors(predictive)
-# [MCMCApproximateDistribution(...), MultivariateNormal(event_shape=(3,))]
+# [MCMCApproximateDistribution(num_chains=1, ..., algorithm=nuts, ...),
+#  MultivariateNormal(event_shape=(3,))]
 ```
 
 ### 7. Differentiate through distributions
@@ -208,7 +222,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 import scipy.stats as ss
 
 # Raw TFP and scipy distributions work directly in workflows
-conc_from_tfp = predict_wf(params=tfd.Normal(loc=0.0, scale=1.0))
+result_from_tfp = predict(params=tfd.Normal(loc=0.0, scale=1.0), x_new=x_new)
 
 # Convert ProbPipe distributions to scipy for use with scipy tools
 from scipy.stats._distn_infrastructure import rv_frozen

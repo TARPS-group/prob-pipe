@@ -164,9 +164,10 @@ predict = WorkflowFunction(func=predict_impl)
 x_new = jnp.array([0.5, -0.3])
 predictive = predict(params=posterior, x_new=x_new)
 
-# predictive is an EmpiricalDistribution over predicted values
-mean(predictive)       # Array(2.1497, dtype=float32)
-variance(predictive)   # Array(0.0151, dtype=float32)
+# predictive is a BroadcastDistribution (joint over inputs and output)
+# Call marginalize() to get the output distribution
+mean(predictive.marginalize())       # Array(2.1497, dtype=float32)
+variance(predictive.marginalize())   # Array(0.0151, dtype=float32)
 ```
 
 ### 6. Provenance tracking
@@ -180,7 +181,8 @@ posterior.source
 # Provenance('nuts', parents=[MultivariateNormal])
 
 provenance_ancestors(predictive)
-# [MCMCApproximateDistribution(...), MultivariateNormal(event_shape=(3,))]
+# [MCMCApproximateDistribution(num_chains=1, ..., algorithm=nuts, ...),
+#  MultivariateNormal(event_shape=(3,))]
 ```
 
 ## Architecture
