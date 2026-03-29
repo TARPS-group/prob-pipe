@@ -103,48 +103,69 @@ bagged_posterior = condition_on(model, bootstrap_data)
 
 Because `JointBootstrapDistribution` implements `SupportsSampling`, the `condition_on` workflow function automatically broadcasts: it draws bootstrap datasets and runs MCMC on each, returning a `BroadcastDistribution` — a joint distribution over bootstrap datasets (inputs) and their corresponding posteriors (outputs).
 
-Call `marginalize()` to obtain the **bagged posterior**, a mixture distribution that averages over the bootstrap posteriors. The individual bootstrap posteriors are accessible via `.components`:
+Call `marginalize()` to obtain the **bagged posterior**, a mixture distribution that averages over the bootstrap posteriors. The individual bootstrap posteriors are accessible via `.components`.
+
+To see why bagging matters, compare the well-specified Gaussian data above with a **misspecified** scenario — heavy-tailed noise that violates the model's Gaussian assumption:
+
+```python
+import numpy as np
+rng = np.random.default_rng(42)
+x_ht = jax.random.normal(jax.random.PRNGKey(99), shape=(N, 2))
+noise_ht = rng.standard_t(df=2, size=N) * 0.3
+y_ht = 1.0 + 2.0 * np.array(x_ht[:, 0]) - 0.5 * np.array(x_ht[:, 1]) + noise_ht
+data_ht = jnp.column_stack([x_ht, jnp.array(y_ht, dtype=jnp.float32)])
+
+bootstrap_ht = JointBootstrapDistribution(EmpiricalDistribution(data_ht))
+bagged_posterior_ht = condition_on(model, bootstrap_ht)
+```
+
+Plotting both cases side by side:
 
 ```python
 import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde
-import numpy as np
 from probpipe import sample
 
-# The marginal is a mixture over bootstrap posteriors
-bagged = bagged_posterior.marginalize()
-individual_posteriors = bagged.components  # list of per-bootstrap posteriors
-
-fig, axes = plt.subplots(1, 3, figsize=(12, 3.5))
 param_names = [r"$\beta_0$ (intercept)", r"$\beta_1$ (slope 1)", r"$\beta_2$ (slope 2)"]
 true_values = [1.0, 2.0, -0.5]
 
-for j, (ax, name, truth) in enumerate(zip(axes, param_names, true_values)):
-    # Plot individual bootstrap posterior densities (thin, light)
-    for i, post in enumerate(individual_posteriors[:10]):
-        draws = post.samples[:, j]
-        kde = gaussian_kde(np.array(draws))
-        xs = np.linspace(float(draws.min()) - 0.3, float(draws.max()) + 0.3, 200)
-        ax.plot(xs, kde(xs), alpha=0.3, lw=0.8, color="steelblue",
-                label="individual posteriors" if i == 0 else None)
+fig, all_axes = plt.subplots(2, 3, figsize=(12, 7))
 
-    # Plot the bagged posterior (mixture) density — thick, distinct color
-    bagged_draws = np.array(sample(bagged, sample_shape=(2000,))[:, j])
-    kde_bag = gaussian_kde(bagged_draws)
-    xs = np.linspace(float(bagged_draws.min()) - 0.3, float(bagged_draws.max()) + 0.3, 200)
-    ax.plot(xs, kde_bag(xs), color="darkorange", lw=2.5, label="bagged posterior")
+for row, (label, bp, axes) in enumerate([
+    ("Well-specified (Gaussian noise)", bagged_posterior, all_axes[0]),
+    ("Misspecified (heavy-tailed noise)", bagged_posterior_ht, all_axes[1]),
+]):
+    bagged = bp.marginalize()
+    individual_posteriors = bagged.components
 
-    ax.axvline(truth, color="black", linestyle="--", lw=1.5, label="true value")
-    ax.set_xlabel(name)
-axes[0].set_ylabel("Density")
-axes[0].legend()
+    for j, (ax, name, truth) in enumerate(zip(axes, param_names, true_values)):
+        for i, post in enumerate(individual_posteriors[:10]):
+            draws = post.samples[:, j]
+            kde = gaussian_kde(np.array(draws))
+            xs = np.linspace(float(draws.min()) - 0.3, float(draws.max()) + 0.3, 200)
+            ax.plot(xs, kde(xs), alpha=0.3, lw=0.8, color="steelblue",
+                    label="individual posteriors" if i == 0 else None)
+
+        bagged_draws = np.array(sample(bagged, sample_shape=(2000,))[:, j])
+        kde_bag = gaussian_kde(bagged_draws)
+        xs = np.linspace(float(bagged_draws.min()) - 0.3, float(bagged_draws.max()) + 0.3, 200)
+        ax.plot(xs, kde_bag(xs), color="darkorange", lw=2.5, label="bagged posterior")
+
+        ax.axvline(truth, color="black", linestyle="--", lw=1.5, label="true value")
+        ax.set_xlabel(name)
+    axes[0].set_ylabel("Density")
+    axes[0].set_title(label, fontsize=10, loc="left")
+    if row == 0:
+        axes[0].legend(fontsize=8)
 fig.suptitle("Bagged Posterior vs. Individual Bootstrap Posteriors")
 fig.tight_layout()
 ```
 
 ![Bagged posterior densities](docs/assets/images/bagged_posterior_densities.png)
 
-The bootstrap posterior densities are tightly clustered — the sampling variability (spread across bootstrap replicates) is small compared to the width of each individual posterior. This indicates the standard posterior is already stable and reproducible for this well-specified model. In such cases the bagged posterior is wider than necessary, making it somewhat conservative. This is expected: bagging provides a safety net under misspecification, at the cost of mild overcoverage when the model is correct.
+**Top row (well-specified):** The bootstrap posteriors are tightly clustered and the bagged posterior nearly coincides with each individual one. Here bagging is mildly conservative — the extra width is small.
+
+**Bottom row (misspecified):** Heavy-tailed noise causes individual posteriors to spread apart (the outlier-sensitive Gaussian likelihood produces different estimates for different bootstrap datasets). The bagged posterior is noticeably wider, correctly reflecting the additional uncertainty from model misspecification.
 
 ### 4. Use an external sampler
 
