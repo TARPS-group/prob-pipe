@@ -49,11 +49,15 @@ mean(posterior)       # Array([1.0558641, 2.061712], dtype=float32)
 predict = WorkflowFunction(func=lambda params, x: params[0] + params[1] * x)
 predictive = predict(params=posterior, x=0.5)
 
-mean(predictive)       # Array(2.087983, dtype=float32)
-variance(predictive)   # Array(0.04383527, dtype=float32)
+# predictive is a BroadcastDistribution holding the joint over inputs and output
+predictive.input_samples.keys()  # dict_keys(['params'])
+
+# marginalize() returns the output distribution
+mean(predictive.marginalize())       # Array(2.087983, dtype=float32)
+variance(predictive.marginalize())   # Array(0.04383527, dtype=float32)
 ```
 
-The result is an `EmpiricalDistribution` -- a first-class distribution object that can be passed into downstream workflow nodes, triggering further uncertainty propagation.
+The result is a `BroadcastDistribution` -- a joint distribution over the broadcast inputs and the function output. Call `marginalize()` to get the output distribution, which supports the same moment protocols as the old `EmpiricalDistribution`. The output marginal can be passed into downstream workflow nodes, triggering further uncertainty propagation.
 
 ## Next Steps
 

@@ -8,6 +8,8 @@
 
 ::: probpipe.EmpiricalDistribution
 
+::: probpipe.BroadcastDistribution
+
 ## Continuous
 
 ::: probpipe.Normal
