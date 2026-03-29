@@ -119,6 +119,8 @@ noise_ht = rng.standard_t(df=2, size=N)
 y_ht = 1.0 + 2.0 * np.array(x_ht[:, 0]) - 0.5 * np.array(x_ht[:, 1]) + noise_ht
 data_ht = jnp.column_stack([x_ht, jnp.array(y_ht, dtype=jnp.float32)])
 
+posterior_ht = condition_on(model, data_ht, num_results=1000, num_warmup=500, random_seed=0)
+
 bootstrap_ht = JointBootstrapDistribution(EmpiricalDistribution(data_ht))
 bagged_posterior_ht = condition_on(model, bootstrap_ht)
 ```
@@ -189,59 +191,75 @@ nutpie_posterior = condition_on_nutpie(stan_mod, {"x": x, "y": y}, num_results=2
 
 ### 5. Propagate posterior uncertainty
 
-When a `WorkflowFunction` receives a distribution where it expects a concrete value, ProbPipe automatically broadcasts over samples. This makes **posterior predictive checks** (PPCs) trivial — wrap a test statistic as a function, pass the posterior, and get the PPC distribution:
+When a `WorkflowFunction` receives a distribution where it expects a concrete value, ProbPipe automatically broadcasts over samples. Start with a reusable prediction function:
 
 ```python
 from probpipe import WorkflowFunction
 import numpy as np
 
-# Observed data from the heavy-tailed example (misspecified model)
+def predict(params, x):
+    return x @ params[1:] + params[0]
+
+predict_wf = WorkflowFunction(func=predict)
+
+# Posterior uncertainty propagates automatically
+x_new = jnp.array([[0.5, -0.3]])
+predictive = predict_wf(params=posterior, x_new=x_new)
+mean(predictive.marginalize())       # posterior predictive mean
+variance(predictive.marginalize())   # posterior predictive variance
+```
+
+The result is a `BroadcastDistribution` — a joint distribution over the broadcast inputs and the function output, preserving their alignment. Call `marginalize()` to get the output distribution. To skip storing input samples (saving memory), pass `marginalize=True`.
+
+This same pattern makes **posterior predictive checks** natural. Separate the pipeline into reusable pieces — simulation and test statistics — with `predict` driving the generative model:
+
+```python
 x_obs, y_obs = np.array(data_ht[:, :-1]), np.array(data_ht[:, -1])
 rng_ppc = np.random.default_rng(123)
 
-def ppc_max_abs_residual(params):
-    """Simulate y_rep ~ N(X@β, I); return max|residual|."""
-    predicted = np.array(x_obs @ params[1:] + params[0])
-    y_rep = predicted + rng_ppc.normal(size=len(x_obs))
-    return float(np.max(np.abs(y_rep - predicted)))
+def simulate_replicate(params):
+    """Draw y_rep from the model: y_rep ~ N(predict(params, x), I)."""
+    return np.array(predict(params, x_obs)) + rng_ppc.normal(size=len(x_obs))
 
-def ppc_residual_kurtosis(params):
-    """Simulate y_rep ~ N(X@β, I); return excess kurtosis."""
-    predicted = np.array(x_obs @ params[1:] + params[0])
-    y_rep = predicted + rng_ppc.normal(size=len(x_obs))
-    residuals = y_rep - predicted
-    s2 = np.var(residuals)
-    return float(np.mean(((residuals - np.mean(residuals))**2 / s2)**2) - 3.0)
+# Test statistics on residuals
+def max_abs_residual(residuals):
+    return float(np.max(np.abs(residuals)))
 
-# Two lines: wrap and broadcast
-check_max = WorkflowFunction(func=ppc_max_abs_residual, n_broadcast_samples=500)
-check_kurt = WorkflowFunction(func=ppc_residual_kurtosis, n_broadcast_samples=500)
+def excess_kurtosis(residuals):
+    centered = residuals - np.mean(residuals)
+    return float(np.mean((centered / np.std(residuals))**4) - 3.0)
 
-ppc_max = check_max(params=posterior_ht).marginalize()
-ppc_kurt = check_kurt(params=posterior_ht).marginalize()
+# Compose: simulate replicate, compute residuals, apply statistic
+def ppc_max_impl(params):
+    y_rep = simulate_replicate(params)
+    return max_abs_residual(y_rep - np.array(predict(params, x_obs)))
+
+def ppc_kurt_impl(params):
+    y_rep = simulate_replicate(params)
+    return excess_kurtosis(y_rep - np.array(predict(params, x_obs)))
+
+ppc_max = WorkflowFunction(func=ppc_max_impl, n_broadcast_samples=500)
+ppc_kurt = WorkflowFunction(func=ppc_kurt_impl, n_broadcast_samples=500)
+
+ppc_max_dist = ppc_max(params=posterior_ht).marginalize()
+ppc_kurt_dist = ppc_kurt(params=posterior_ht).marginalize()
 ```
 
-The result is a `BroadcastDistribution` — call `marginalize()` to get the PPC distribution. Compute the observed statistics and PPC p-values:
+Compare to the observed residual statistics:
 
 ```python
 params_hat = np.array(mean(posterior_ht))
-resid_obs = y_obs - (x_obs @ params_hat[1:] + params_hat[0])
-obs_max = float(np.max(np.abs(resid_obs)))    # 6.18
-obs_kurt = float(np.mean(((resid_obs - np.mean(resid_obs))**2 / np.var(resid_obs))**2) - 3.0)  # 2.70
+resid_obs = y_obs - np.array(predict(params_hat, x_obs))
+obs_max = max_abs_residual(resid_obs)      # 6.18
+obs_kurt = excess_kurtosis(resid_obs)      # 2.70
 
-p_max = float(np.mean(np.array(ppc_max.samples) >= obs_max))    # 0.000
-p_kurt = float(np.mean(np.array(ppc_kurt.samples) >= obs_kurt)) # 0.000
+p_max = float(np.mean(np.array(ppc_max_dist.samples) >= obs_max))    # 0.000
+p_kurt = float(np.mean(np.array(ppc_kurt_dist.samples) >= obs_kurt)) # 0.000
 ```
 
 Both p-values are extreme — the Gaussian model cannot reproduce the large residuals or heavy tails in the observed data:
 
 ![PPC checks](assets/images/ppc_checks.png)
-
-To skip storing input samples and get just the output distribution (saving memory), pass `marginalize=True`:
-
-```python
-ppc_max_only = check_max(params=posterior_ht, marginalize=True)
-```
 
 ### 6. Track provenance
 
