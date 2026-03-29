@@ -120,11 +120,6 @@ class TestSimpleModel:
         s = model._sample(key)
         assert s.shape == (2,)
 
-    def test_mean_delegation(self, model):
-        """SimpleModel mean delegates to prior."""
-        m = model._mean()
-        np.testing.assert_allclose(m, jnp.zeros(2), atol=1e-5)
-
     def test_condition_on(self, model):
         """condition_on returns MCMCApproximateDistribution."""
         data = jnp.array([[1.0, 2.0], [1.5, 2.5], [0.8, 1.8]])
@@ -165,33 +160,6 @@ class TestSimpleModelDynamicProtocol:
 
         with pytest.raises(TypeError, match="does not support log_prob"):
             model._log_prob(jnp.zeros(2))
-
-    def test_mean_requires_supports_mean(self):
-        """mean raises if prior doesn't support it."""
-        from probpipe import ArrayDistribution
-        from probpipe.core.distribution import _vmap_sample
-        from probpipe.core.protocols import SupportsSampling
-
-        class NoMeanDist(ArrayDistribution, SupportsSampling):
-            _sampling_cost = "low"
-            _preferred_orchestration = None
-
-            @property
-            def event_shape(self):
-                return (2,)
-
-            def _sample_one(self, key):
-                return jax.random.normal(key, (2,))
-
-            def _sample(self, key, sample_shape=()):
-                return _vmap_sample(self, key, sample_shape)
-
-        prior = NoMeanDist()
-        lik = GaussianLikelihood()
-        model = SimpleModel(prior, lik)
-
-        with pytest.raises(TypeError, match="does not support mean"):
-            model._mean()
 
     def test_custom_data_names(self):
         """SimpleModel with custom data_names."""

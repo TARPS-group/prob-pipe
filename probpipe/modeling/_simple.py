@@ -2,28 +2,22 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.mcmc as tfp_mcmc
 
-from ..core.distribution import Distribution, EmpiricalDistribution, Provenance
-from ..core.node import WorkflowFunction
+from ..core.distribution import Distribution, Provenance
 from ..core.protocols import (
-    SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
-    SupportsVariance,
 )
 from ..custom_types import Array, ArrayLike
 from ..inference._diagnostics import MCMCDiagnostics
 from ..inference._mcmc_distribution import MCMCApproximateDistribution
 from ._base import ProbabilisticModel
-
-logger = logging.getLogger(__name__)
 
 __all__ = ["SimpleModel"]
 
@@ -38,9 +32,6 @@ class SimpleModel(ProbabilisticModel):
       ``_log_prob`` (prior log-prob + likelihood log-likelihood).
     - If *prior* supports :class:`SupportsSampling`, the model supports
       ``_sample`` (prior predictive sampling).
-    - If *prior* supports :class:`SupportsMean`, the model supports
-      ``_mean``.
-
     Conditioning uses TFP NUTS/HMC when the log-posterior is
     JAX-traceable, and falls back to gradient-free RWMH otherwise.
 
@@ -139,17 +130,6 @@ class SimpleModel(ProbabilisticModel):
                 f"Prior {type(self._prior).__name__} does not support sampling"
             )
         return self._prior._sample(key, sample_shape)
-
-    def _mean(self) -> Any:
-        """Prior mean.
-
-        Available only when the prior supports :class:`SupportsMean`.
-        """
-        if not isinstance(self._prior, SupportsMean):
-            raise TypeError(
-                f"Prior {type(self._prior).__name__} does not support mean"
-            )
-        return self._prior._mean()
 
     # -- Conditioning -------------------------------------------------------
 

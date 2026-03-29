@@ -8,7 +8,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
-from ..core.distribution import EmpiricalDistribution, Provenance
+from ..core.distribution import Provenance
 from ..core.node import WorkflowFunction
 from ..core.protocols import SupportsLogProb, SupportsMean
 from ..custom_types import Array, ArrayLike, PRNGKey
@@ -103,7 +103,7 @@ def _rwmh_impl(
     total_accepts = 0
     total_steps = 0
 
-    for chain_idx in range(num_chains):
+    for _ in range(num_chains):
         key, chain_key = jax.random.split(key)
         mu_curr = jnp.array(init_state)
         logp_curr = float(target_log_prob(mu_curr))

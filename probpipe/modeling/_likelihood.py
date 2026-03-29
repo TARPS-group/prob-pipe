@@ -9,8 +9,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import jax.numpy as jnp
-
 from ..custom_types import ArrayLike
 from ..core.distribution import ArrayDistribution, EmpiricalDistribution
 from ..core.node import AbstractModule, Module, WorkflowFunction, abstractwf, wf
