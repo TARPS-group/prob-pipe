@@ -6,7 +6,7 @@ import jax.numpy as jnp
 
 from ..core.distribution import EmpiricalDistribution
 from ..custom_types import Array
-from ._diagnostics import MCMCDiagnostics
+from ._diagnostics import InferenceDiagnostics
 
 __all__ = ["MCMCApproximateDistribution"]
 
@@ -17,13 +17,13 @@ class MCMCApproximateDistribution(EmpiricalDistribution):
     Wraps one or more MCMC chains as an
     :class:`~probpipe.core.distribution.EmpiricalDistribution` while
     preserving per-chain structure, optional warmup samples, and
-    :class:`MCMCDiagnostics`.
+    :class:`InferenceDiagnostics`.
 
     Parameters
     ----------
     chains : list of Array
         Per-chain sample arrays, each of shape ``(num_draws, *event_shape)``.
-    diagnostics : MCMCDiagnostics or None
+    diagnostics : InferenceDiagnostics or None
         Diagnostics from the MCMC run.
     warmup_samples : list of Array or None
         Per-chain warmup (burn-in) samples, same shapes as *chains*.
@@ -37,7 +37,7 @@ class MCMCApproximateDistribution(EmpiricalDistribution):
         self,
         chains: list[Array],
         *,
-        diagnostics: MCMCDiagnostics | None = None,
+        diagnostics: InferenceDiagnostics | None = None,
         warmup_samples: list[Array] | None = None,
         weights: Array | None = None,
         name: str | None = None,
@@ -75,7 +75,7 @@ class MCMCApproximateDistribution(EmpiricalDistribution):
         return self._chains[0].shape[0]
 
     @property
-    def diagnostics(self) -> MCMCDiagnostics | None:
+    def diagnostics(self) -> InferenceDiagnostics | None:
         """MCMC diagnostics, if available."""
         return self._diagnostics
 

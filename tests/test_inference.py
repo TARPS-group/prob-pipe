@@ -13,14 +13,17 @@ import pytest
 
 from probpipe import (
     MCMCApproximateDistribution,
+    InferenceDiagnostics,
     MCMCDiagnostics,
     Normal,
     mean,
     sample,
     variance,
 )
+from unittest.mock import MagicMock
+
 from probpipe.distributions.multivariate import MultivariateNormal
-from probpipe.inference import rwmh
+from probpipe.inference import rwmh, extract_arviz_diagnostics
 
 
 # ---------------------------------------------------------------------------
@@ -28,127 +31,260 @@ from probpipe.inference import rwmh
 # ---------------------------------------------------------------------------
 
 
-class TestMCMCDiagnostics:
-    """Test diagnostics dataclass properties."""
+class TestInferenceDiagnostics:
+    """Test InferenceDiagnostics dict-like container."""
+
+    def test_alias(self):
+        """MCMCDiagnostics is a backward-compatible alias."""
+        assert MCMCDiagnostics is InferenceDiagnostics
 
     def test_accept_rate_from_is_accepted(self):
-        diag = MCMCDiagnostics(
+        diag = InferenceDiagnostics(
+            algorithm="test",
             log_accept_ratio=jnp.zeros(10),
             step_size=0.1,
             is_accepted=jnp.array([True, True, False, True, True,
                                     False, True, True, True, False]),
-            algorithm="test",
         )
         np.testing.assert_allclose(diag.accept_rate, 0.7, atol=1e-5)
 
     def test_accept_rate_from_log_ratio(self):
         # All accepted (log_accept_ratio = 0 means ratio = 1)
-        diag = MCMCDiagnostics(
+        diag = InferenceDiagnostics(
+            algorithm="test",
             log_accept_ratio=jnp.zeros(10),
             step_size=0.1,
-            algorithm="test",
         )
         np.testing.assert_allclose(diag.accept_rate, 1.0, atol=1e-5)
 
-    def test_accept_rate_numpy_override(self):
-        diag = MCMCDiagnostics(
+    def test_accept_rate_override(self):
+        diag = InferenceDiagnostics(
+            algorithm="test",
             log_accept_ratio=jnp.zeros(10),
             step_size=0.1,
-            algorithm="test",
         )
-        diag._numpy_accept_rate = 0.42
+        diag["_accept_rate_override"] = 0.42
         np.testing.assert_allclose(diag.accept_rate, 0.42)
 
+    def test_accept_rate_nan_when_missing(self):
+        diag = InferenceDiagnostics(algorithm="test")
+        assert jnp.isnan(diag.accept_rate)
+
     def test_final_step_size(self):
-        diag = MCMCDiagnostics(
+        diag = InferenceDiagnostics(
+            algorithm="test",
             log_accept_ratio=jnp.zeros(10),
             step_size=jnp.array([0.1, 0.2, 0.3]),
-            algorithm="test",
         )
         np.testing.assert_allclose(diag.final_step_size, 0.2, atol=1e-5)
 
+    def test_final_step_size_nan_when_missing(self):
+        diag = InferenceDiagnostics(algorithm="test")
+        assert jnp.isnan(diag.final_step_size)
+
     def test_summary(self):
-        diag = MCMCDiagnostics(
+        diag = InferenceDiagnostics(
+            algorithm="nuts",
             log_accept_ratio=jnp.zeros(5),
             step_size=0.1,
-            algorithm="nuts",
         )
         s = diag.summary()
         assert "nuts" in s
         assert "accept_rate" in s
         assert "final_step_size" in s
 
-    # -- dict-style extra diagnostics ----------------------------------------
+    # -- dict-style access ---------------------------------------------------
 
-    def test_extra_getitem_setitem(self):
-        diag = MCMCDiagnostics(
-            log_accept_ratio=jnp.zeros(5),
-            step_size=0.1,
-        )
+    def test_getitem_setitem(self):
+        diag = InferenceDiagnostics(algorithm="test")
         diag["diverging"] = jnp.array([False, True, False, False, True])
         assert "diverging" in diag
         assert diag["diverging"].shape == (5,)
 
-    def test_extra_get_default(self):
-        diag = MCMCDiagnostics(
-            log_accept_ratio=jnp.zeros(3),
-            step_size=0.1,
-        )
+    def test_get_default(self):
+        diag = InferenceDiagnostics(algorithm="test")
         assert diag.get("missing") is None
         assert diag.get("missing", 42) == 42
 
-    def test_extra_keys_values_items(self):
-        diag = MCMCDiagnostics(
-            log_accept_ratio=jnp.zeros(3),
-            step_size=0.1,
-            extra={"a": 1, "b": 2},
-        )
+    def test_keys_values_items(self):
+        diag = InferenceDiagnostics(algorithm="test", a=1, b=2)
         assert set(diag.keys()) == {"a", "b"}
         assert list(diag.values()) == [1, 2]
         assert dict(diag.items()) == {"a": 1, "b": 2}
 
-    def test_extra_iter(self):
-        diag = MCMCDiagnostics(
-            log_accept_ratio=jnp.zeros(3),
-            step_size=0.1,
-            extra={"x": 10, "y": 20},
-        )
+    def test_iter(self):
+        diag = InferenceDiagnostics(algorithm="test", x=10, y=20)
         assert set(diag) == {"x", "y"}
 
-    def test_extra_missing_key_raises(self):
-        diag = MCMCDiagnostics(
-            log_accept_ratio=jnp.zeros(3),
-            step_size=0.1,
-        )
+    def test_len(self):
+        diag = InferenceDiagnostics(algorithm="test", a=1, b=2, c=3)
+        assert len(diag) == 3
+
+    def test_missing_key_raises(self):
+        diag = InferenceDiagnostics(algorithm="test")
         with pytest.raises(KeyError, match="No diagnostic named"):
             diag["nonexistent"]
 
-    def test_extra_in_constructor(self):
-        diag = MCMCDiagnostics(
-            log_accept_ratio=jnp.zeros(3),
-            step_size=0.1,
-            extra={"n_divergences": 5, "tree_depth": jnp.array([3, 4, 5])},
+    def test_kwargs_in_constructor(self):
+        diag = InferenceDiagnostics(
+            algorithm="test",
+            n_divergences=5,
+            tree_depth=jnp.array([3, 4, 5]),
         )
         assert diag["n_divergences"] == 5
         assert diag["tree_depth"].shape == (3,)
 
     def test_summary_includes_extras(self):
-        diag = MCMCDiagnostics(
+        diag = InferenceDiagnostics(
+            algorithm="nuts",
             log_accept_ratio=jnp.zeros(3),
             step_size=0.1,
-            algorithm="nuts",
-            extra={"n_divergences": 2, "tree_depth": jnp.array([3, 4, 5])},
+            n_divergences=2,
+            tree_depth=jnp.array([3, 4, 5]),
         )
         s = diag.summary()
         assert "n_divergences=2" in s
         assert "tree_depth=Array(3,)" in s
 
-    def test_extra_default_empty(self):
-        """Extra dict defaults to empty, not shared across instances."""
-        d1 = MCMCDiagnostics(log_accept_ratio=jnp.zeros(1), step_size=0.1)
-        d2 = MCMCDiagnostics(log_accept_ratio=jnp.zeros(1), step_size=0.1)
+    def test_instances_independent(self):
+        """Separate instances don't share state."""
+        d1 = InferenceDiagnostics(algorithm="test", log_accept_ratio=jnp.zeros(1))
+        d2 = InferenceDiagnostics(algorithm="test", log_accept_ratio=jnp.zeros(1))
         d1["foo"] = 1
         assert "foo" not in d2
+
+    def test_constructor_stores_all_in_dict(self):
+        """All kwargs (including log_accept_ratio, step_size) are in the dict."""
+        diag = InferenceDiagnostics(
+            algorithm="test",
+            log_accept_ratio=jnp.zeros(5),
+            step_size=0.1,
+        )
+        assert "log_accept_ratio" in diag
+        assert "step_size" in diag
+        assert diag["step_size"] == 0.1
+
+    def test_repr(self):
+        diag = InferenceDiagnostics(algorithm="nuts", step_size=0.1)
+        r = repr(diag)
+        assert "InferenceDiagnostics" in r
+        assert "nuts" in r
+
+
+# ---------------------------------------------------------------------------
+# extract_arviz_diagnostics
+# ---------------------------------------------------------------------------
+
+
+def _make_arviz_sample_stats(num_chains=2, num_draws=20, *, fields=None):
+    """Build a mock ArviZ sample_stats with xarray-like .values access."""
+    all_fields = {
+        "acceptance_rate": np.random.uniform(0.5, 1.0, (num_chains, num_draws)),
+        "step_size": np.full((num_chains, num_draws), 0.05),
+        "diverging": np.zeros((num_chains, num_draws), dtype=bool),
+        "tree_depth": np.random.randint(1, 8, (num_chains, num_draws)),
+        "n_steps": np.random.randint(1, 128, (num_chains, num_draws)),
+        "energy": np.random.randn(num_chains, num_draws),
+        "energy_error": np.random.randn(num_chains, num_draws) * 0.01,
+        "lp": np.random.randn(num_chains, num_draws),
+    }
+    if fields is not None:
+        all_fields = {k: v for k, v in all_fields.items() if k in fields}
+
+    stats = MagicMock()
+    stats.__contains__ = lambda self, k: k in all_fields
+    stats.__getitem__ = lambda self, k: MagicMock(values=all_fields[k])
+    return stats
+
+
+class TestExtractArvizDiagnostics:
+    """Test the shared ArviZ diagnostic extraction."""
+
+    def test_full_extraction(self):
+        trace = MagicMock()
+        trace.sample_stats = _make_arviz_sample_stats(num_chains=2, num_draws=10)
+
+        diag = extract_arviz_diagnostics(trace, "test_nuts", 10, 2)
+
+        assert diag.algorithm == "test_nuts"
+        assert diag["log_accept_ratio"].shape == (20,)
+        assert diag["step_size"].shape == (20,)
+        assert 0.0 < diag.accept_rate <= 1.0
+        assert "diverging" in diag
+        assert diag["n_divergences"] == 0
+        assert "tree_depth" in diag
+        assert "n_steps" in diag
+        assert "energy" in diag
+        assert "energy_error" in diag
+        assert "lp" in diag
+
+    def test_no_sample_stats(self):
+        trace = MagicMock(spec=["posterior"])
+
+        diag = extract_arviz_diagnostics(trace, "test", 5, 2)
+
+        assert diag.algorithm == "test"
+        assert diag["log_accept_ratio"].shape == (10,)
+        # Only log_accept_ratio and step_size (fallback)
+        assert "diverging" not in diag
+
+    def test_partial_stats(self):
+        trace = MagicMock()
+        trace.sample_stats = _make_arviz_sample_stats(
+            num_chains=1, num_draws=5,
+            fields={"acceptance_rate", "diverging"},
+        )
+
+        diag = extract_arviz_diagnostics(trace, "partial", 5, 1)
+
+        assert "diverging" in diag
+        assert "tree_depth" not in diag
+        assert "step_size" not in diag  # not in fields
+
+    def test_mean_tree_accept_fallback(self):
+        """PyMC uses 'mean_tree_accept' instead of 'acceptance_rate'."""
+        stats = MagicMock()
+        ar = np.random.uniform(0.7, 1.0, (1, 10))
+        fields = {"mean_tree_accept": ar}
+        stats.__contains__ = lambda self, k: k in fields
+        stats.__getitem__ = lambda self, k: MagicMock(values=fields[k])
+
+        trace = MagicMock()
+        trace.sample_stats = stats
+
+        diag = extract_arviz_diagnostics(trace, "pymc_nuts", 10, 1)
+
+        assert diag["log_accept_ratio"].shape == (10,)
+        assert 0.0 < diag.accept_rate <= 1.0
+
+    def test_step_size_bar_fallback(self):
+        """CmdStanPy may use 'step_size_bar'."""
+        stats = MagicMock()
+        fields = {"step_size_bar": np.full((1, 5), 0.1)}
+        stats.__contains__ = lambda self, k: k in fields
+        stats.__getitem__ = lambda self, k: MagicMock(values=fields[k])
+
+        trace = MagicMock()
+        trace.sample_stats = stats
+
+        diag = extract_arviz_diagnostics(trace, "test", 5, 1)
+
+        np.testing.assert_allclose(diag.final_step_size, 0.1, atol=1e-5)
+
+    def test_divergence_count(self):
+        stats = MagicMock()
+        div = np.zeros((1, 10), dtype=bool)
+        div[0, [1, 4, 7]] = True
+        fields = {"diverging": div}
+        stats.__contains__ = lambda self, k: k in fields
+        stats.__getitem__ = lambda self, k: MagicMock(values=fields[k])
+
+        trace = MagicMock()
+        trace.sample_stats = stats
+
+        diag = extract_arviz_diagnostics(trace, "test", 10, 1)
+
+        assert diag["n_divergences"] == 3
 
 
 # ---------------------------------------------------------------------------
@@ -166,10 +302,10 @@ class TestMCMCApproximateDistribution:
         chain2 = jax.random.normal(jax.random.PRNGKey(1), (50, 2))
         warmup1 = jax.random.normal(jax.random.PRNGKey(2), (10, 2))
         warmup2 = jax.random.normal(jax.random.PRNGKey(3), (10, 2))
-        diag = MCMCDiagnostics(
+        diag = InferenceDiagnostics(
+            algorithm="test",
             log_accept_ratio=jnp.zeros(100),
             step_size=0.1,
-            algorithm="test",
         )
         return MCMCApproximateDistribution(
             [chain1, chain2],

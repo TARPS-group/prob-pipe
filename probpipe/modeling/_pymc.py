@@ -9,7 +9,7 @@ import jax.numpy as jnp
 
 from ..core.distribution import Distribution, Provenance
 from ..custom_types import Array
-from ..inference._diagnostics import MCMCDiagnostics
+from ..inference._diagnostics import extract_arviz_diagnostics
 from ..inference._mcmc_distribution import MCMCApproximateDistribution
 from ._base import ProbabilisticModel
 
@@ -218,11 +218,11 @@ class PyMCModel(ProbabilisticModel):
                 chain_arrays.append(jnp.asarray(vals))
             chains.append(jnp.concatenate(chain_arrays, axis=-1))
 
-        diagnostics = MCMCDiagnostics(
-            log_accept_ratio=jnp.zeros(num_results * num_chains),
-            step_size=0.0,
-            is_accepted=None,
+        diagnostics = extract_arviz_diagnostics(
+            trace,
             algorithm="pymc_nuts",
+            num_results=num_results,
+            num_chains=num_chains,
         )
 
         result = MCMCApproximateDistribution(

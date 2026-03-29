@@ -268,7 +268,7 @@ class TestSimpleModelConditioningPaths:
             "log_accept_ratio": jnp.zeros(5),
         })()
         diag = _extract_diagnostics(trace, "test")
-        assert jnp.isnan(jnp.asarray(diag.step_size))
+        assert jnp.isnan(jnp.asarray(diag["step_size"]))
 
     def test_get_init_state_mean_exception_fallback(self, likelihood):
         """_get_init_state falls back to data mean when _mean() raises."""

@@ -102,6 +102,7 @@ from probpipe.core.node import WorkflowFunction, Module, wf
 from probpipe.core.provenance import provenance_ancestors, provenance_dag
 from probpipe.modeling import Likelihood, GenerativeLikelihood, IterativeForecaster
 from probpipe.inference import (
+    InferenceDiagnostics,
     MCMCDiagnostics,
     MCMCApproximateDistribution,
     rwmh,
@@ -220,6 +221,7 @@ __all__ = [
     "ProbabilisticModel",
     "SimpleModel",
     # Inference
+    "InferenceDiagnostics",
     "MCMCDiagnostics",
     "MCMCApproximateDistribution",
     "rwmh",

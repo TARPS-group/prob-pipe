@@ -75,7 +75,7 @@ The result is an `MCMCApproximateDistribution` — an `EmpiricalDistribution` wi
 
 ```python
 posterior.num_chains       # 1
-posterior.diagnostics      # MCMCDiagnostics(algorithm=nuts, accept_rate=0.954, ...)
+posterior.diagnostics      # InferenceDiagnostics(algorithm=nuts, accept_rate=0.954, ...)
 posterior.draws(chain=0)   # Array of shape (1000, 3)
 ```
 

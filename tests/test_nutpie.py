@@ -12,7 +12,7 @@ from probpipe.inference._nutpie import (
     _extract_nutpie_diagnostics,
     _condition_on_nutpie_impl,
 )
-from probpipe.inference import MCMCApproximateDistribution, MCMCDiagnostics
+from probpipe.inference import MCMCApproximateDistribution, InferenceDiagnostics
 
 
 @pytest.fixture(autouse=True)
@@ -154,8 +154,8 @@ class TestExtractNutpieDiagnostics:
         diag = _extract_nutpie_diagnostics(trace, num_results=10, num_chains=2)
 
         assert diag.algorithm == "nutpie_nuts"
-        assert diag.log_accept_ratio.shape == (20,)
-        assert diag.step_size.shape == (20,)
+        assert diag["log_accept_ratio"].shape == (20,)
+        assert diag["step_size"].shape == (20,)
         assert 0.0 < diag.accept_rate <= 1.0
         # Extra diagnostics
         assert "diverging" in diag
@@ -175,9 +175,8 @@ class TestExtractNutpieDiagnostics:
         diag = _extract_nutpie_diagnostics(trace, num_results=5, num_chains=2)
 
         assert diag.algorithm == "nutpie_nuts"
-        assert diag.log_accept_ratio.shape == (10,)
-        assert float(jnp.sum(diag.log_accept_ratio)) == 0.0
-        assert len(list(diag)) == 0  # no extras
+        assert diag["log_accept_ratio"].shape == (10,)
+        assert float(jnp.sum(diag["log_accept_ratio"])) == 0.0
 
     def test_partial_stats(self):
         """Only available fields are extracted."""
@@ -189,12 +188,11 @@ class TestExtractNutpieDiagnostics:
 
         diag = _extract_nutpie_diagnostics(trace, num_results=5, num_chains=1)
 
-        assert diag.log_accept_ratio.shape == (5,)
+        assert diag["log_accept_ratio"].shape == (5,)
         assert "diverging" in diag
         assert "tree_depth" not in diag
         assert "energy" not in diag
-        # step_size should be zeros since not in stats
-        assert diag.step_size.shape == (0,)
+        assert "step_size" not in diag
 
     def test_divergences_counted(self):
         """n_divergences reflects actual divergent transitions."""
