@@ -103,7 +103,7 @@ bootstrap_data = JointBootstrapDistribution(EmpiricalDistribution(data), n=int(N
 bootstrap_data.n   # 79
 ```
 
-We can visualize the bagged posterior by overlaying the bootstrap posterior densities for each parameter:
+We can visualize the bagged posterior by overlaying the individual bootstrap posterior densities:
 
 ```python
 import matplotlib.pyplot as plt
@@ -114,15 +114,8 @@ fig, axes = plt.subplots(1, 3, figsize=(12, 3.5))
 param_names = [r"$\beta_0$ (intercept)", r"$\beta_1$ (slope 1)", r"$\beta_2$ (slope 2)"]
 true_values = [1.0, 2.0, -0.5]
 
-# Draw 10 bootstrap datasets and fit posteriors
-bootstrap_posteriors = [
-    condition_on(model, sample(bootstrap_data, key=jax.random.PRNGKey(i)),
-                 num_results=1000, num_warmup=500, random_seed=i)
-    for i in range(10)
-]
-
 for j, (ax, name, truth) in enumerate(zip(axes, param_names, true_values)):
-    for post in bootstrap_posteriors:
+    for post in bagged_posterior[:10]:
         draws = post.samples[:, j]
         kde = gaussian_kde(np.array(draws))
         xs = np.linspace(float(draws.min()) - 0.3, float(draws.max()) + 0.3, 200)
@@ -162,14 +155,14 @@ Once you have a posterior, propagate uncertainty through downstream computations
 ```python
 from probpipe import WorkflowFunction
 
-def predict(params, x_new):
+def predict_impl(params, x_new):
     return x_new @ params[1:] + params[0]
 
-predict_wf = WorkflowFunction(func=predict)
+predict = WorkflowFunction(func=predict_impl)
 
 # Posterior uncertainty propagates automatically
 x_new = jnp.array([0.5, -0.3])
-predictive = predict_wf(params=posterior, x_new=x_new)
+predictive = predict(params=posterior, x_new=x_new)
 
 # predictive is an EmpiricalDistribution over predicted values
 mean(predictive)       # Array(2.1497, dtype=float32)

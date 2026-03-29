@@ -46,8 +46,8 @@ posterior = condition_on(model, data)
 mean(posterior)       # Array([1.0558641, 2.061712], dtype=float32)
 
 # 3. Propagate uncertainty through predictions
-predict_wf = WorkflowFunction(func=lambda params, x: params[0] + params[1] * x)
-predictive = predict_wf(params=posterior, x=0.5)
+predict = WorkflowFunction(func=lambda params, x: params[0] + params[1] * x)
+predictive = predict(params=posterior, x=0.5)
 
 mean(predictive)       # Array(2.087983, dtype=float32)
 variance(predictive)   # Array(0.04383527, dtype=float32)
