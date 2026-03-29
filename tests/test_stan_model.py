@@ -221,6 +221,57 @@ class TestStanModelConditionOn:
 # ---------------------------------------------------------------------------
 
 
+class TestCmdStanPyCondition:
+    """Test _cmdstanpy_condition with mocked cmdstanpy."""
+
+    def test_cmdstanpy_condition_returns_mcmc(self):
+        from probpipe.modeling._stan import _cmdstanpy_condition
+        from probpipe.inference import MCMCApproximateDistribution
+
+        model_ref = _make_stan_model()
+
+        # Mock cmdstanpy module
+        mock_cmdstanpy = MagicMock()
+        mock_fit = MagicMock()
+        # draws returns (chains, draws, params) shaped array
+        mock_fit.draws.return_value = np.random.randn(2, 50, 3).astype(np.float32)
+        mock_cmdstanpy.CmdStanModel.return_value.sample.return_value = mock_fit
+
+        with patch.dict("sys.modules", {"cmdstanpy": mock_cmdstanpy}):
+            result = _cmdstanpy_condition(
+                "test.stan",
+                data={"y": [1, 2]},
+                model_ref=model_ref,
+                num_results=50,
+                num_warmup=10,
+                num_chains=2,
+                random_seed=42,
+            )
+            assert isinstance(result, MCMCApproximateDistribution)
+            assert result.diagnostics.algorithm == "cmdstan_nuts"
+            assert result.source is not None
+
+    def test_ensure_cmdstanpy_missing(self):
+        from probpipe.modeling._stan import _ensure_cmdstanpy
+
+        with patch.dict("sys.modules", {"cmdstanpy": None}):
+            with pytest.raises(ImportError, match="pip install probpipe"):
+                _ensure_cmdstanpy()
+
+    def test_ensure_cmdstanpy_present(self):
+        from probpipe.modeling._stan import _ensure_cmdstanpy
+
+        mock_cmdstanpy = MagicMock()
+        with patch.dict("sys.modules", {"cmdstanpy": mock_cmdstanpy}):
+            result = _ensure_cmdstanpy()
+            assert result is mock_cmdstanpy
+
+
+# ---------------------------------------------------------------------------
+# ImportError path
+# ---------------------------------------------------------------------------
+
+
 class TestStanModelImportError:
     def test_missing_bridgestan(self):
         """StanModel raises ImportError with install instructions when bridgestan missing."""
