@@ -455,9 +455,3 @@ if not isinstance(dist, SupportsMean):
         f"it must implement the SupportsMean protocol"
     )
 ```
-
-### 9.4 No unnecessary abstractions
-
-Prefer simple, direct code over premature abstraction. Three similar
-lines are better than a helper used once. Only add error handling at
-system boundaries (user input, external APIs).
