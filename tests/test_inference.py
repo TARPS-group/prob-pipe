@@ -78,6 +78,78 @@ class TestMCMCDiagnostics:
         assert "accept_rate" in s
         assert "final_step_size" in s
 
+    # -- dict-style extra diagnostics ----------------------------------------
+
+    def test_extra_getitem_setitem(self):
+        diag = MCMCDiagnostics(
+            log_accept_ratio=jnp.zeros(5),
+            step_size=0.1,
+        )
+        diag["diverging"] = jnp.array([False, True, False, False, True])
+        assert "diverging" in diag
+        assert diag["diverging"].shape == (5,)
+
+    def test_extra_get_default(self):
+        diag = MCMCDiagnostics(
+            log_accept_ratio=jnp.zeros(3),
+            step_size=0.1,
+        )
+        assert diag.get("missing") is None
+        assert diag.get("missing", 42) == 42
+
+    def test_extra_keys_values_items(self):
+        diag = MCMCDiagnostics(
+            log_accept_ratio=jnp.zeros(3),
+            step_size=0.1,
+            extra={"a": 1, "b": 2},
+        )
+        assert set(diag.keys()) == {"a", "b"}
+        assert list(diag.values()) == [1, 2]
+        assert dict(diag.items()) == {"a": 1, "b": 2}
+
+    def test_extra_iter(self):
+        diag = MCMCDiagnostics(
+            log_accept_ratio=jnp.zeros(3),
+            step_size=0.1,
+            extra={"x": 10, "y": 20},
+        )
+        assert set(diag) == {"x", "y"}
+
+    def test_extra_missing_key_raises(self):
+        diag = MCMCDiagnostics(
+            log_accept_ratio=jnp.zeros(3),
+            step_size=0.1,
+        )
+        with pytest.raises(KeyError, match="No diagnostic named"):
+            diag["nonexistent"]
+
+    def test_extra_in_constructor(self):
+        diag = MCMCDiagnostics(
+            log_accept_ratio=jnp.zeros(3),
+            step_size=0.1,
+            extra={"n_divergences": 5, "tree_depth": jnp.array([3, 4, 5])},
+        )
+        assert diag["n_divergences"] == 5
+        assert diag["tree_depth"].shape == (3,)
+
+    def test_summary_includes_extras(self):
+        diag = MCMCDiagnostics(
+            log_accept_ratio=jnp.zeros(3),
+            step_size=0.1,
+            algorithm="nuts",
+            extra={"n_divergences": 2, "tree_depth": jnp.array([3, 4, 5])},
+        )
+        s = diag.summary()
+        assert "n_divergences=2" in s
+        assert "tree_depth=Array(3,)" in s
+
+    def test_extra_default_empty(self):
+        """Extra dict defaults to empty, not shared across instances."""
+        d1 = MCMCDiagnostics(log_accept_ratio=jnp.zeros(1), step_size=0.1)
+        d2 = MCMCDiagnostics(log_accept_ratio=jnp.zeros(1), step_size=0.1)
+        d1["foo"] = 1
+        assert "foo" not in d2
+
 
 # ---------------------------------------------------------------------------
 # MCMCApproximateDistribution

@@ -9,9 +9,10 @@ from unittest.mock import MagicMock, patch
 from probpipe.inference._nutpie import (
     _compile_for_nutpie,
     _extract_chains,
+    _extract_nutpie_diagnostics,
     _condition_on_nutpie_impl,
 )
-from probpipe.inference import MCMCApproximateDistribution
+from probpipe.inference import MCMCApproximateDistribution, MCMCDiagnostics
 
 
 @pytest.fixture(autouse=True)
@@ -115,6 +116,135 @@ class TestExtractChains:
 
 
 # ---------------------------------------------------------------------------
+# _extract_nutpie_diagnostics
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_sample_stats(
+    num_chains=2, num_draws=20, *, include=None, exclude=None,
+):
+    """Build a mock sample_stats xarray-like object."""
+    all_fields = {
+        "acceptance_rate": np.random.uniform(0.5, 1.0, (num_chains, num_draws)),
+        "step_size": np.full((num_chains, num_draws), 0.05),
+        "diverging": np.zeros((num_chains, num_draws), dtype=bool),
+        "tree_depth": np.random.randint(1, 8, (num_chains, num_draws)),
+        "n_steps": np.random.randint(1, 128, (num_chains, num_draws)),
+        "energy": np.random.randn(num_chains, num_draws),
+        "energy_error": np.random.randn(num_chains, num_draws) * 0.01,
+        "lp": np.random.randn(num_chains, num_draws),
+    }
+    if include is not None:
+        all_fields = {k: v for k, v in all_fields.items() if k in include}
+    if exclude is not None:
+        all_fields = {k: v for k, v in all_fields.items() if k not in exclude}
+
+    stats = MagicMock()
+    stats.__contains__ = lambda self, k: k in all_fields
+    stats.__getitem__ = lambda self, k: MagicMock(values=all_fields[k])
+    return stats
+
+
+class TestExtractNutpieDiagnostics:
+    def test_full_stats(self):
+        """All sample_stats fields are extracted."""
+        trace = MagicMock()
+        trace.sample_stats = _make_mock_sample_stats(num_chains=2, num_draws=10)
+
+        diag = _extract_nutpie_diagnostics(trace, num_results=10, num_chains=2)
+
+        assert diag.algorithm == "nutpie_nuts"
+        assert diag.log_accept_ratio.shape == (20,)
+        assert diag.step_size.shape == (20,)
+        assert 0.0 < diag.accept_rate <= 1.0
+        # Extra diagnostics
+        assert "diverging" in diag
+        assert "n_divergences" in diag
+        assert diag["n_divergences"] == 0
+        assert "tree_depth" in diag
+        assert diag["tree_depth"].shape == (20,)
+        assert "n_steps" in diag
+        assert "energy" in diag
+        assert "energy_error" in diag
+        assert "lp" in diag
+
+    def test_no_sample_stats(self):
+        """Falls back to zeros when sample_stats is missing."""
+        trace = MagicMock(spec=["posterior"])
+
+        diag = _extract_nutpie_diagnostics(trace, num_results=5, num_chains=2)
+
+        assert diag.algorithm == "nutpie_nuts"
+        assert diag.log_accept_ratio.shape == (10,)
+        assert float(jnp.sum(diag.log_accept_ratio)) == 0.0
+        assert len(list(diag)) == 0  # no extras
+
+    def test_partial_stats(self):
+        """Only available fields are extracted."""
+        trace = MagicMock()
+        trace.sample_stats = _make_mock_sample_stats(
+            num_chains=1, num_draws=5,
+            include={"acceptance_rate", "diverging"},
+        )
+
+        diag = _extract_nutpie_diagnostics(trace, num_results=5, num_chains=1)
+
+        assert diag.log_accept_ratio.shape == (5,)
+        assert "diverging" in diag
+        assert "tree_depth" not in diag
+        assert "energy" not in diag
+        # step_size should be zeros since not in stats
+        assert diag.step_size.shape == (0,)
+
+    def test_divergences_counted(self):
+        """n_divergences reflects actual divergent transitions."""
+        trace = MagicMock()
+        stats = _make_mock_sample_stats(num_chains=1, num_draws=10,
+                                        include={"diverging"})
+        # Inject 3 divergences
+        div_arr = np.zeros((1, 10), dtype=bool)
+        div_arr[0, [2, 5, 7]] = True
+        stats.__getitem__ = lambda self, k: MagicMock(values=div_arr)
+        trace.sample_stats = stats
+
+        diag = _extract_nutpie_diagnostics(trace, num_results=10, num_chains=1)
+
+        assert diag["n_divergences"] == 3
+        assert int(jnp.sum(diag["diverging"])) == 3
+
+    def test_summary_includes_extras(self):
+        """summary() includes scalar extras."""
+        trace = MagicMock()
+        trace.sample_stats = _make_mock_sample_stats(num_chains=1, num_draws=5)
+
+        diag = _extract_nutpie_diagnostics(trace, num_results=5, num_chains=1)
+
+        s = diag.summary()
+        assert "n_divergences=0" in s
+        assert "tree_depth=" in s
+
+    def test_dict_access(self):
+        """Dict-style get/set/contains/keys work."""
+        trace = MagicMock()
+        trace.sample_stats = _make_mock_sample_stats(
+            num_chains=1, num_draws=5, include={"acceptance_rate"},
+        )
+
+        diag = _extract_nutpie_diagnostics(trace, num_results=5, num_chains=1)
+
+        # set
+        diag["custom"] = 42
+        assert "custom" in diag
+        assert diag["custom"] == 42
+        assert diag.get("custom") == 42
+        assert diag.get("missing", -1) == -1
+        assert "custom" in list(diag.keys())
+
+        with pytest.raises(KeyError, match="No diagnostic named"):
+            diag["nonexistent"]
+
+
+# ---------------------------------------------------------------------------
 # _condition_on_nutpie_impl
 # ---------------------------------------------------------------------------
 
@@ -126,7 +256,7 @@ class TestNutpieSampleImpl:
         model._bridgestan_model.return_value = "bs_model"
         mock_nutpie.compile_stan_model.return_value = "compiled"
 
-        # Mock trace with posterior
+        # Mock trace with posterior and sample_stats
         mock_trace = MagicMock()
         mock_posterior = MagicMock()
         mu_vals = np.random.randn(2, 20)
@@ -135,6 +265,9 @@ class TestNutpieSampleImpl:
         mock_posterior.data_vars = ["mu"]
         mock_posterior.__getitem__ = lambda self, k: mu_var
         mock_trace.posterior = mock_posterior
+        mock_trace.sample_stats = _make_mock_sample_stats(
+            num_chains=2, num_draws=20,
+        )
         mock_nutpie.sample.return_value = mock_trace
 
         result = _condition_on_nutpie_impl(
@@ -149,6 +282,8 @@ class TestNutpieSampleImpl:
         assert isinstance(result, MCMCApproximateDistribution)
         assert result.num_chains == 2
         assert result.diagnostics.algorithm == "nutpie_nuts"
+        assert 0.0 < result.diagnostics.accept_rate <= 1.0
+        assert "diverging" in result.diagnostics
         assert result.source is not None
         assert result.source.operation == "condition_on_nutpie"
 

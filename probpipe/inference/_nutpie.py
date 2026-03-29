@@ -80,12 +80,7 @@ def _condition_on_nutpie_impl(
     # Extract chains from the InferenceData / trace object
     chains, param_names = _extract_chains(trace, num_chains)
 
-    diagnostics = MCMCDiagnostics(
-        log_accept_ratio=jnp.zeros(num_results * num_chains),
-        step_size=0.0,
-        is_accepted=None,
-        algorithm="nutpie_nuts",
-    )
+    diagnostics = _extract_nutpie_diagnostics(trace, num_results, num_chains)
 
     result = MCMCApproximateDistribution(
         chains,
@@ -155,6 +150,84 @@ def _extract_chains(trace: Any, num_chains: int) -> tuple[list, list]:
     raise TypeError(
         f"Cannot extract chains from nutpie trace of type {type(trace).__name__}"
     )
+
+
+def _extract_nutpie_diagnostics(
+    trace: Any, num_results: int, num_chains: int,
+) -> MCMCDiagnostics:
+    """Extract diagnostics from a nutpie ArviZ InferenceData trace.
+
+    Populates core fields (``log_accept_ratio``, ``step_size``) and
+    stores additional NUTS-specific diagnostics (divergences, tree depth,
+    energy, leapfrog steps, log-posterior) in ``extra``.
+    """
+    extra: dict[str, Any] = {}
+    n_total = num_results * num_chains
+
+    stats = getattr(trace, "sample_stats", None)
+
+    if stats is None:
+        return MCMCDiagnostics(
+            log_accept_ratio=jnp.zeros(n_total),
+            step_size=0.0,
+            algorithm="nutpie_nuts",
+        )
+
+    # -- Core fields ---------------------------------------------------------
+    # acceptance_rate: (chains, draws) → flat array, then log
+    if "acceptance_rate" in stats:
+        accept_rate = jnp.asarray(stats["acceptance_rate"].values).reshape(-1)
+        log_accept_ratio = jnp.log(jnp.clip(accept_rate, 1e-10, 1.0))
+    else:
+        accept_rate = None
+        log_accept_ratio = jnp.zeros(n_total)
+
+    if "step_size" in stats:
+        step_size = jnp.asarray(stats["step_size"].values).reshape(-1)
+    else:
+        step_size = jnp.zeros(0)
+
+    # -- Extra diagnostics ---------------------------------------------------
+    if "diverging" in stats:
+        diverging = jnp.asarray(stats["diverging"].values, dtype=jnp.bool_)
+        extra["diverging"] = diverging.reshape(-1)
+        extra["n_divergences"] = int(jnp.sum(extra["diverging"]))
+
+    if "tree_depth" in stats:
+        extra["tree_depth"] = jnp.asarray(
+            stats["tree_depth"].values
+        ).reshape(-1)
+
+    if "n_steps" in stats:
+        extra["n_steps"] = jnp.asarray(
+            stats["n_steps"].values
+        ).reshape(-1)
+
+    if "energy" in stats:
+        extra["energy"] = jnp.asarray(
+            stats["energy"].values
+        ).reshape(-1)
+
+    if "energy_error" in stats:
+        extra["energy_error"] = jnp.asarray(
+            stats["energy_error"].values
+        ).reshape(-1)
+
+    if "lp" in stats:
+        extra["lp"] = jnp.asarray(stats["lp"].values).reshape(-1)
+
+    diag = MCMCDiagnostics(
+        log_accept_ratio=log_accept_ratio,
+        step_size=step_size,
+        algorithm="nutpie_nuts",
+        extra=extra,
+    )
+
+    # If we got raw acceptance rates, set the override for accuracy
+    if accept_rate is not None:
+        diag._numpy_accept_rate = float(jnp.mean(accept_rate))
+
+    return diag
 
 
 condition_on_nutpie = WorkflowFunction(func=_condition_on_nutpie_impl, name="condition_on_nutpie")
