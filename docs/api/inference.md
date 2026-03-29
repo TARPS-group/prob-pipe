@@ -1,9 +1,25 @@
 # Inference
 
-::: probpipe.core.modeling.MCMCSampler
+## Modeling
 
-::: probpipe.core.modeling.Likelihood
+::: probpipe.modeling.Likelihood
 
-::: probpipe.core.modeling.IterativeForecaster
+::: probpipe.modeling.GenerativeLikelihood
 
-::: probpipe.core.modeling.MCMCDiagnostics
+::: probpipe.modeling.IterativeForecaster
+
+## Probabilistic Models
+
+::: probpipe.modeling.ProbabilisticModel
+
+::: probpipe.modeling.SimpleModel
+
+## MCMC
+
+::: probpipe.inference.MCMCDiagnostics
+
+::: probpipe.inference.MCMCApproximateDistribution
+
+::: probpipe.inference.rwmh
+
+::: probpipe.inference.condition_on_nutpie

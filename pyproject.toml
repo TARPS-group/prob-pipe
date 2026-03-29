@@ -28,10 +28,14 @@ docs = [
   "mkdocstrings[python]",
   "mkdocs-jupyter<0.26",
 ]
+stan = ["bridgestan>=2.0", "cmdstanpy>=1.2"]
+pymc = ["pymc>=5", "arviz>=0.15"]
+nutpie = ["nutpie>=0.12"]
 dev = [
   "probpipe[prefect,viz,docs]",
   "pytest>=7",
   "pytest-cov",
+  "pytest-xdist",
   "ruff",
   "ipykernel",
   "jupyter",
@@ -50,7 +54,7 @@ exclude = ["tests*", "docs*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --cov=probpipe --cov-report=term-missing --cov-fail-under=0"
+addopts = "-n auto --dist worksteal -v --cov=probpipe --cov-report=term-missing --cov-fail-under=0"
 markers = [
     "prefect: marks tests requiring prefect (deselect with '-m \"not prefect\"')",
 ]

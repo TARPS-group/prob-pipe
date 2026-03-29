@@ -13,21 +13,10 @@ ProbPipe is a Python framework for building probabilistic pipelines with automat
 - **20+ probability distributions** wrapping TensorFlow Probability with a uniform interface, all fully JAX-differentiable
 - **Automatic uncertainty propagation** through workflow nodes via sample broadcasting
 - **Joint distributions** with independent, autoregressive, and Gaussian conditioning support
-- **Built-in MCMC inference** with NUTS, HMC, and random-walk Metropolis-Hastings
+- **Built-in MCMC inference** with NUTS, HMC, and random-walk Metropolis-Hastings, plus optional Stan and PyMC backends
+- **Bagged posteriors** for reproducible inference under model misspecification
 - **Provenance tracking** recording full lineage from any result back to its inputs
 - **Prefect orchestration** for distributing pipeline steps across machines
-
-## Philosophy
-
-Scientific discovery and real-world decision-making increasingly depend on complex, end-to-end inferential pipelines that integrate heterogeneous data, fit probabilistic models, propagate uncertainty, and validate predictions. Yet high-quality uncertainty quantification (UQ) is rarely achieved at scale because such pipelines are difficult to construct in a way that is simultaneously flexible, reliable, and scalable. Current workflows are typically assembled in an ad hoc manner, with UQ added only partially – if at all – and with limited statistical validation.
-
-ProbPipe aims to overturn this paradigm. Just as probabilistic programming systems (Stan, PyMC, NumPyro) made Bayesian inference in complex models accessible to non-experts, deep learning frameworks (PyTorch, TensorFlow) enabled rapid model development across domains, and automatic differentiation systems (JAX, Autograd) made gradient-based inference practical at scale, ProbPipe provides general-purpose abstractions for probabilistic **workflows** – making composability, scalability, and reproducibility the default. Its design is driven by five principles:
-
-1. **Reusable inferential components.** Workflows are expressed in terms of modular, swappable statistical or algorithmic units rather than low-level orchestration primitives. Users can change the likelihood model, swap the inference algorithm, or explore a different prior without restructuring the pipeline.
-2. **Interoperability with the Python ecosystem.** ProbPipe is designed to work with existing ML, probabilistic, and orchestration libraries. Modules can serve as thin wrappers around other packages, and automatic conversion among distributional representations (parametric distributions, Monte Carlo samples, amortized posteriors) removes a major source of brittleness in current pipelines.
-3. **End-to-end uncertainty propagation.** Once uncertainty is introduced, it is represented and propagated through all downstream steps. When a workflow node expects a concrete value but receives a distribution, ProbPipe automatically broadcasts over samples – users write deterministic functions and get UQ for free.
-4. **Seamless scalability.** The same pipeline scales in two complementary directions without code changes: *computationally*, by vectorizing operations across samples via JAX, and *operationally*, by distributing workflow steps across machines via Prefect orchestration. Both can be active simultaneously, so a pipeline prototyped on a laptop can move to a cluster with no restructuring.
-5. **Provenance and reproducibility.** Every distribution records how it was created – operation, parents, parameters – enabling full lineage tracing from any result back to its inputs.
 
 ## Installation
 
@@ -46,157 +35,164 @@ Optional extras:
 ```bash
 pip install .[dev]       # pytest, jupyter, matplotlib, graphviz
 pip install .[prefect]   # Prefect orchestration backend
+pip install .[stan]      # Stan models via BridgeStan + CmdStanPy
+pip install .[pymc]      # PyMC model integration
+pip install .[nutpie]    # nutpie MCMC sampler
 ```
 
-## Quick Start
+## Walkthrough: Bayesian Linear Regression
 
-### Distributions
+This walkthrough demonstrates ProbPipe's approach to posterior inference, uncertainty propagation, and reproducible analysis using a Bayesian linear regression example.
 
-ProbPipe wraps 20+ TensorFlow Probability distributions with a uniform interface. All distributions follow TFP shape semantics (`sample_shape + batch_shape + event_shape`) and are fully JAX-differentiable. Bijector-based transforms create constrained distributions (e.g., log-normal for positive quantities).
+### 1. Define the model
 
-```python
-from probpipe import Normal, TransformedDistribution
-import jax
-import tensorflow_probability.substrates.jax.bijectors as tfb
-
-# Model measurement uncertainty: sensor reads temperature with noise
-sensor_noise = Normal(loc=0.0, scale=0.5, name='sensor_noise')
-
-# Log-normal model for positive-valued quantities (e.g., concentrations)
-log_conc = Normal(loc=2.0, scale=0.3, name='log_concentration')
-concentration = TransformedDistribution(log_conc, tfb.Exp())
-
-# Sample and evaluate
-samples = sensor_noise.sample(jax.random.PRNGKey(0), (1000,))
-samples.shape              # (1000,)
-sensor_noise.log_prob(0.5)  # Array(-0.7257913, dtype=float32)
-
-# Fully differentiable: compute the score function
-jax.grad(sensor_noise.log_prob)(0.5)  # Array(-2.0, dtype=float32)
-```
-
-### Workflows and Broadcasting
-
-When a workflow node receives a distribution where it expects a concrete value, ProbPipe automatically draws samples and evaluates the function for each, returning an `EmpiricalDistribution`. Here, uncertain velocity and time propagate through a distance calculation.
-
-```python
-from probpipe import Normal, TransformedDistribution, WorkflowFunction
-import tensorflow_probability.substrates.jax.bijectors as tfb
-
-# distance = velocity * time
-def compute_distance(velocity, time):
-    return velocity * time
-
-wf = WorkflowFunction(func=compute_distance)
-
-# Log-normal time ensures non-negative values
-log_time = Normal(loc=1.6, scale=0.04)          # log-seconds
-time = TransformedDistribution(log_time, tfb.Exp())  # ~ 5.0 seconds
-
-result = wf(
-    velocity=Normal(loc=10.0, scale=1.0),  # m/s, uncertain
-    time=time,                             # seconds, non-negative
-)
-# result is an EmpiricalDistribution with 128 samples
-result.mean()      # Array(49.875435, dtype=float32)
-result.variance()  # Array(26.283531, dtype=float32)
-
-# Compute expectations with automatic error tracking
-# On the EmpiricalDistribution, this is exact (weighted sum over samples)
-result.expectation(lambda x: x)  # Array(49.875435, dtype=float32)
-
-# On a parametric distribution, Monte Carlo returns a BootstrapDistribution
-# that captures the sampling error
-velocity = Normal(loc=10.0, scale=1.0)
-ex = velocity.expectation(lambda x: x**2, num_evaluations=5000)
-ex.mean()      # ~101.0  -- point estimate of E[V²] = loc² + scale² = 101
-ex.variance()  # ~0.08   -- MC error variance (decreases with more evaluations)
-```
-
-### Joint Distributions and Conditioning
-
-Build hierarchical models with autoregressive dependence, or fuse multiple noisy observations via exact Gaussian conditioning.
-
-```python
-from probpipe import Normal, SequentialJointDistribution, JointGaussian
-import jax.numpy as jnp
-
-# Hierarchical model: population mean height -> individual measurement
-hierarchical = SequentialJointDistribution(
-    population_mean=Normal(loc=170.0, scale=10.0),
-    measurement=lambda population_mean: Normal(loc=population_mean, scale=5.0),
-)
-hierarchical.event_shape       # (2,)
-hierarchical.component_names   # ('population_mean', 'measurement')
-
-# Sensor fusion: two noisy sensors measure the same latent signal
-# signal has var=1; sensor1 adds noise var=1; sensor2 adds noise var=4
-cov = jnp.array([
-    [1.0, 1.0, 1.0],
-    [1.0, 2.0, 1.0],
-    [1.0, 1.0, 5.0],
-])
-jg = JointGaussian(mean=jnp.zeros(3), cov=cov, signal=1, sensors=2)
-
-# Observe sensors read [2.5, 3.0] -> infer the latent signal
-posterior = jg.condition_on(sensors=jnp.array([2.5, 3.0]))
-posterior.mean()        # Array([1.4444445], dtype=float32)
-posterior.covariance    # Array([[0.44444442]], dtype=float32)
-```
-
-### Bayesian Inference
-
-Bayesian linear regression in a few lines. Define a likelihood, pair it with a prior, and sample with NUTS. The sampler automatically falls back to gradient-free Metropolis-Hastings when the likelihood is not JAX-traceable.
+ProbPipe models are assembled from a prior distribution and a likelihood. Operations like `sample()`, `log_prob()`, `mean()`, and `condition_on()` are standalone workflow functions — you call `mean(dist)`, not `dist.mean()`.
 
 ```python
 import jax
 import jax.numpy as jnp
-from probpipe import MultivariateNormal, wf
-from probpipe.core.modeling import Likelihood, MCMCSampler
+from probpipe import (
+    MultivariateNormal, SimpleModel, EmpiricalDistribution,
+    JointBootstrapDistribution,
+    condition_on, sample, mean, variance, log_prob,
+)
+from probpipe.modeling import Likelihood
+from probpipe.core.node import wf
 
 class LinearRegressionLikelihood(Likelihood):
     @wf
     def log_likelihood(self, params, data):
-        x, y = data[:, 0], data[:, 1]
-        predicted = params[0] + params[1] * x       # y = w0 + w1*x
+        x, y = data[:, :-1], data[:, -1]
+        predicted = x @ params[1:] + params[0]
         return jnp.sum(-0.5 * (y - predicted) ** 2)
 
-# Synthetic data: y = 1.0 + 2.0*x + noise
-key = jax.random.PRNGKey(42)
-x = jnp.linspace(0, 1, 20)
-y = 1.0 + 2.0 * x + 0.3 * jax.random.normal(key, shape=(20,))
-data = jnp.column_stack([x, y])
-
-prior = MultivariateNormal(loc=jnp.zeros(2), cov=10.0 * jnp.eye(2))
-sampler = MCMCSampler(algorithm='nuts', num_results=500, num_warmup=200, seed=0)
-posterior = sampler(prior=prior, likelihood=LinearRegressionLikelihood(), data=data)
-posterior.mean()    # Array([1.0908195, 1.9959916], dtype=float32)  ≈ [1.0, 2.0]
-posterior.source    # Provenance('nuts', parents=[MultivariateNormal])
+prior = MultivariateNormal(loc=jnp.zeros(3), cov=10.0 * jnp.eye(3))
+model = SimpleModel(prior, LinearRegressionLikelihood())
 ```
 
-### Provenance Tracking
+### 2. Fit the standard posterior
 
-Every distribution records its lineage automatically. Provenance chains can be serialized to JSON or traversed programmatically, enabling full reproducibility.
+Conditioning the model on data runs MCMC (NUTS when gradients are available, gradient-free MH otherwise) and returns an `MCMCApproximateDistribution` — a posterior distribution with chain structure and diagnostics.
 
 ```python
-from probpipe import Normal, TransformedDistribution, provenance_ancestors
-import tensorflow_probability.substrates.jax.bijectors as tfb
+# Synthetic data: y = 1.0 + 2.0*x1 - 0.5*x2 + noise
+key = jax.random.PRNGKey(42)
+N = 100
+x = jax.random.normal(key, shape=(N, 2))
+y = 1.0 + 2.0 * x[:, 0] - 0.5 * x[:, 1] + 0.3 * jax.random.normal(key, shape=(N,))
+data = jnp.column_stack([x, y])
 
-# Model a positive rate parameter via log-transform
-log_rate = Normal(loc=1.0, scale=0.5, name='log_rate')
-rate = TransformedDistribution(log_rate, tfb.Exp())
-
-rate.source
-# Provenance('transform', parents=[log_rate])
-
-rate.source.to_dict()
-# {'operation': 'transform',
-#  'parents': [{'type': 'Normal', 'name': 'log_rate'}],
-#  'metadata': {'bijector': 'Exp'}}
-
-provenance_ancestors(rate)
-# [Normal(name='log_rate', event_shape=())]
+posterior = condition_on(model, data, num_results=1000, num_warmup=500, random_seed=0)
+mean(posterior)       # Array([1.009, 1.943, -0.549], dtype=float32)
+variance(posterior)   # Array([0.0097, 0.0143, 0.0120], dtype=float32)
 ```
+
+### 3. Bagged posteriors for reproducible inference
+
+Under model misspecification, standard Bayesian posteriors can be unreliable — credible sets from replicate datasets may not overlap. The *bagged posterior* ([Huggins & Miller, 2024](https://doi.org/10.1214/24-EJS2237)) averages over posteriors conditioned on bootstrapped datasets, yielding reproducible uncertainty quantification.
+
+ProbPipe makes this natural. `JointBootstrapDistribution` represents the bootstrap sampling distribution over datasets. Broadcasting `condition_on` over bootstrap datasets produces multiple posteriors that can be aggregated:
+
+```python
+# Wrap the observed data as a bootstrap sampling distribution
+bootstrap_data = JointBootstrapDistribution(EmpiricalDistribution(data))
+
+# Each bootstrap sample is a full dataset; condition_on broadcasts over them
+bagged_posterior = condition_on(model, bootstrap_data)
+```
+
+Because `JointBootstrapDistribution` implements `SupportsSampling`, the `condition_on` workflow function automatically broadcasts: it draws bootstrap datasets and runs MCMC on each, returning a collection of posterior distributions.
+
+We can visualize the bagged posterior by overlaying the individual bootstrap posterior densities:
+
+```python
+import matplotlib.pyplot as plt
+from scipy.stats import gaussian_kde
+import numpy as np
+
+fig, axes = plt.subplots(1, 3, figsize=(12, 3.5))
+param_names = [r"$\beta_0$ (intercept)", r"$\beta_1$ (slope 1)", r"$\beta_2$ (slope 2)"]
+true_values = [1.0, 2.0, -0.5]
+
+for j, (ax, name, truth) in enumerate(zip(axes, param_names, true_values)):
+    for post in bagged_posterior[:10]:
+        draws = post.samples[:, j]
+        kde = gaussian_kde(np.array(draws))
+        xs = np.linspace(float(draws.min()) - 0.3, float(draws.max()) + 0.3, 200)
+        ax.plot(xs, kde(xs), alpha=0.6)
+    ax.axvline(truth, color="black", linestyle="--", label="true value")
+    ax.set_xlabel(name)
+axes[0].set_ylabel("Density")
+axes[0].legend()
+fig.suptitle("Bagged Posterior: 10 Bootstrap Posterior Densities")
+fig.tight_layout()
+```
+
+![Bagged posterior densities](docs/assets/images/bagged_posterior_densities.png)
+
+The bootstrap posterior densities are tightly clustered — the sampling variability (spread across bootstrap replicates) is small compared to the width of each individual posterior. This indicates the standard posterior is already stable and reproducible for this well-specified model. In such cases the bagged posterior is wider than necessary, making it somewhat conservative. This is expected: bagging provides a safety net under misspecification, at the cost of mild overcoverage when the model is correct.
+
+### 4. Use an external sampler
+
+ProbPipe supports multiple inference backends. For Stan models, `condition_on` uses CmdStan's NUTS sampler. You can also use nutpie for Stan or PyMC models:
+
+```python
+from probpipe.modeling import StanModel
+from probpipe.inference import condition_on_nutpie
+
+# Stan model: condition_on uses CmdStan's built-in NUTS
+stan_mod = StanModel("my_model.stan", data={"N": N})
+stan_posterior = condition_on(stan_mod, {"x": x, "y": y})
+
+# Or use nutpie (Rust-based NUTS) for the same model
+nutpie_posterior = condition_on_nutpie(stan_mod, {"x": x, "y": y}, num_results=2000)
+```
+
+### 5. Propagate posterior uncertainty
+
+Once you have a posterior (standard or bagged), propagate uncertainty through downstream computations. When a workflow function receives a distribution, ProbPipe automatically broadcasts over samples:
+
+```python
+from probpipe import WorkflowFunction
+
+def predict_impl(params, x_new):
+    return x_new @ params[1:] + params[0]
+
+predict = WorkflowFunction(func=predict_impl)
+
+# Predictions propagate posterior uncertainty automatically
+x_new = jnp.array([0.5, -0.3])
+predictive = predict(params=posterior, x_new=x_new)
+
+# predictive is an EmpiricalDistribution over predicted values
+mean(predictive)       # Array(2.1497, dtype=float32)
+variance(predictive)   # Array(0.0151, dtype=float32)
+```
+
+User-defined functions can be written as usual, with ProbPipe managing uncertainty propagation.
+
+### 6. Provenance tracking
+
+Every distribution records its lineage automatically. Provenance chains enable full reproducibility — you can trace any result back to the data and model that produced it:
+
+```python
+from probpipe import provenance_ancestors
+
+posterior.source
+# Provenance('nuts', parents=[MultivariateNormal])
+
+provenance_ancestors(predictive)
+# [MCMCApproximateDistribution(...), MultivariateNormal(event_shape=(3,))]
+```
+
+## Architecture
+
+ProbPipe's architecture separates the **representational layer** (distributions as immutable data) from the **algorithmic layer** (operations on distributions as workflow functions):
+
+- **Distributions are immutable** — parameters fixed at construction; operations return new distributions.
+- **Operations are workflow functions** — `sample()`, `mean()`, `log_prob()`, `condition_on()` are standalone `WorkflowFunction` instances in `probpipe/core/ops.py`.
+- **Capabilities via protocols** — distributions declare support through `@runtime_checkable` protocols (e.g., `SupportsSampling`, `SupportsLogProb`, `SupportsMean`). Operations check protocols at dispatch time.
+- **Private method convention** — protocols define `_method()` (e.g., `_sample`, `_log_prob`, `_mean`). The public API is via ops: `sample(dist)`, not `dist.sample()`.
 
 ## Contributing
 

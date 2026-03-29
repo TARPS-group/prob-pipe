@@ -1,0 +1,160 @@
+"""Nutpie-backed MCMC sampling workflow function."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import jax.numpy as jnp
+
+from ..core.distribution import Provenance
+from ..core.node import WorkflowFunction
+from ..custom_types import ArrayLike
+from ._diagnostics import MCMCDiagnostics
+from ._mcmc_distribution import MCMCApproximateDistribution
+
+logger = logging.getLogger(__name__)
+
+__all__ = ["condition_on_nutpie"]
+
+
+def _condition_on_nutpie_impl(
+    model: Any,
+    data: ArrayLike | None = None,
+    *,
+    num_results: int = 1000,
+    num_warmup: int = 500,
+    num_chains: int = 4,
+    random_seed: int = 0,
+    **kwargs: Any,
+) -> MCMCApproximateDistribution:
+    """MCMC sampling via nutpie (Rust-based NUTS).
+
+    Accepts a :class:`~probpipe.modeling.StanModel` (via BridgeStan)
+    or a :class:`~probpipe.modeling.PyMCModel`.
+
+    Parameters
+    ----------
+    model : StanModel or PyMCModel
+        Probabilistic model to sample from.
+    data : array-like or None
+        Observed data to condition on.  Passed to the model's
+        conditioning interface.
+    num_results : int
+        Number of post-warmup draws per chain (default 1000).
+    num_warmup : int
+        Number of warmup draws per chain (default 500).
+    num_chains : int
+        Number of independent chains (default 4).
+    random_seed : int
+        Random seed (default 0).
+    **kwargs
+        Additional keyword arguments passed to ``nutpie.sample``.
+
+    Returns
+    -------
+    MCMCApproximateDistribution
+        Posterior samples with chain structure and diagnostics.
+    """
+    try:
+        import nutpie
+    except ImportError as e:
+        raise ImportError(
+            "nutpie is required for condition_on_nutpie. "
+            "Install it with: pip install nutpie"
+        ) from e
+
+    # Determine the compiled model for nutpie
+    compiled = _compile_for_nutpie(model, data)
+
+    # Run sampling
+    trace = nutpie.sample(
+        compiled,
+        draws=num_results,
+        tune=num_warmup,
+        chains=num_chains,
+        seed=random_seed,
+        **kwargs,
+    )
+
+    # Extract chains from the InferenceData / trace object
+    chains, param_names = _extract_chains(trace, num_chains)
+
+    diagnostics = MCMCDiagnostics(
+        log_accept_ratio=jnp.zeros(num_results * num_chains),
+        step_size=0.0,
+        is_accepted=None,
+        algorithm="nutpie_nuts",
+    )
+
+    result = MCMCApproximateDistribution(
+        chains,
+        diagnostics=diagnostics,
+        name="posterior",
+    )
+    result.with_source(
+        Provenance(
+            "condition_on_nutpie",
+            parents=(model,),
+            metadata={
+                "num_results": num_results,
+                "num_warmup": num_warmup,
+                "num_chains": num_chains,
+            },
+        )
+    )
+    return result
+
+
+def _compile_for_nutpie(model: Any, data: Any) -> Any:
+    """Compile a model for nutpie sampling."""
+    # StanModel path: uses BridgeStan
+    if hasattr(model, "_bridgestan_model"):
+        import nutpie
+
+        return nutpie.compile_stan_model(model._bridgestan_model(data=data))
+
+    # PyMCModel path: uses PyMC compilation
+    if hasattr(model, "_pymc_model"):
+        import nutpie
+
+        pm_model = model._pymc_model(data=data)
+        return nutpie.compile_pymc_model(pm_model)
+
+    raise TypeError(
+        f"condition_on_nutpie does not support {type(model).__name__}. "
+        f"Expected a StanModel or PyMCModel."
+    )
+
+
+def _extract_chains(trace: Any, num_chains: int) -> tuple[list, list]:
+    """Extract per-chain sample arrays from a nutpie trace.
+
+    Returns (chains, param_names) where each chain is an array of
+    shape (num_draws, num_params).
+    """
+    # nutpie returns an ArviZ InferenceData object
+    if hasattr(trace, "posterior"):
+        posterior = trace.posterior
+        param_names = list(posterior.data_vars)
+
+        chains = []
+        for c in range(num_chains):
+            chain_arrays = []
+            for name in param_names:
+                vals = posterior[name].values[c]  # (num_draws, *param_shape)
+                if vals.ndim == 1:
+                    vals = vals[:, None]
+                else:
+                    vals = vals.reshape(vals.shape[0], -1)
+                chain_arrays.append(vals)
+            chain_concat = jnp.concatenate(chain_arrays, axis=-1)
+            chains.append(chain_concat)
+        return chains, param_names
+
+    raise TypeError(
+        f"Cannot extract chains from nutpie trace of type {type(trace).__name__}"
+    )
+
+
+condition_on_nutpie = WorkflowFunction(func=_condition_on_nutpie_impl, name="condition_on_nutpie")

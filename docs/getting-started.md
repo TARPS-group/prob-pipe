@@ -17,125 +17,203 @@ Core dependencies: JAX and TensorFlow Probability (nightly).
 ```bash
 pip install .[dev]       # pytest, jupyter, matplotlib, graphviz, docs
 pip install .[prefect]   # Prefect orchestration backend
-pip install .[docs]      # MkDocs documentation tools
+pip install .[stan]      # Stan models via BridgeStan + CmdStanPy
+pip install .[pymc]      # PyMC model integration
+pip install .[nutpie]    # nutpie MCMC sampler
 ```
 
-## Your First Pipeline
+## Walkthrough: Bayesian Linear Regression
 
-We'll build a simple pharmacokinetic model: given an uncertain drug half-life, predict the concentration remaining after a fixed time.
+This walkthrough demonstrates ProbPipe's approach to posterior inference, uncertainty propagation, and reproducible analysis. We'll fit a Bayesian linear regression, compute bagged posteriors for robust uncertainty quantification, and propagate posterior uncertainty through predictions.
 
-### 1. Create a distribution
+### 1. Define the model
 
-ProbPipe wraps 20+ TensorFlow Probability distributions with a uniform interface. All distributions follow TFP shape semantics and are fully JAX-differentiable:
+ProbPipe models are assembled from a prior distribution and a likelihood. Operations like `sample()`, `log_prob()`, `mean()`, and `condition_on()` are standalone workflow functions — you call `mean(dist)`, not `dist.mean()`.
 
 ```python
-from probpipe import Normal
 import jax
+import jax.numpy as jnp
+from probpipe import (
+    MultivariateNormal, SimpleModel, EmpiricalDistribution,
+    JointBootstrapDistribution,
+    condition_on, sample, mean, variance, log_prob,
+)
+from probpipe.modeling import Likelihood
+from probpipe.core.node import wf
 
-half_life = Normal(loc=4.0, scale=0.5, name="half_life")
+class LinearRegressionLikelihood(Likelihood):
+    @wf
+    def log_likelihood(self, params, data):
+        x, y = data[:, :-1], data[:, -1]
+        predicted = x @ params[1:] + params[0]
+        return jnp.sum(-0.5 * (y - predicted) ** 2)
 
-half_life.mean()              # 4.0
-half_life.log_prob(4.0)       # -0.2258 (log-density at the mean)
-
-samples = half_life.sample(jax.random.PRNGKey(0), (1000,))
-samples.shape                 # (1000,)
+prior = MultivariateNormal(loc=jnp.zeros(3), cov=10.0 * jnp.eye(3))
+model = SimpleModel(prior, LinearRegressionLikelihood())
 ```
 
-### 2. Transform it
+The `SimpleModel` dynamically delegates to the prior's protocols: if the prior supports `SupportsLogProb`, the model composes prior log-probability with the likelihood for gradient-based inference. If the prior supports `SupportsSampling`, the model can generate prior predictive samples.
 
-Apply bijectors to create transformed distributions. For example, enforce positivity with an exponential transform:
+### 2. Fit the posterior
+
+Condition the model on data to run MCMC. When the model supports log-probability gradients (as here), `condition_on` uses NUTS. Otherwise it falls back to gradient-free Metropolis-Hastings.
 
 ```python
-from probpipe import TransformedDistribution
-import tensorflow_probability.substrates.jax.bijectors as tfb
+# Synthetic data: y = 1.0 + 2.0*x1 - 0.5*x2 + noise
+key = jax.random.PRNGKey(42)
+N = 100
+x = jax.random.normal(key, shape=(N, 2))
+y = 1.0 + 2.0 * x[:, 0] - 0.5 * x[:, 1] + 0.3 * jax.random.normal(key, shape=(N,))
+data = jnp.column_stack([x, y])
 
-pos_half_life = TransformedDistribution(
-    Normal(loc=1.5, scale=0.3), tfb.Exp(), name="pos_half_life"
-)
-pos_half_life.support         # positive
+posterior = condition_on(model, data, num_results=1000, num_warmup=500, random_seed=0)
+mean(posterior)       # Array([1.009, 1.943, -0.549], dtype=float32)
+variance(posterior)   # Array([0.0097, 0.0143, 0.0120], dtype=float32)
 ```
 
-### 3. Propagate uncertainty through a workflow
+The result is an `MCMCApproximateDistribution` — an `EmpiricalDistribution` with chain structure and diagnostics:
 
-Write the science as a plain function. When ProbPipe sees a distribution where a scalar is expected, it automatically draws samples and returns an `EmpiricalDistribution` over the outputs:
+```python
+posterior.num_chains       # 1
+posterior.diagnostics      # MCMCDiagnostics(algorithm=nuts, accept_rate=0.954, ...)
+posterior.draws(chain=0)   # Array of shape (1000, 3)
+```
+
+### 3. Bagged posteriors for reproducible inference
+
+Under model misspecification, standard Bayesian posteriors can be unreliable — credible sets from replicate datasets may not overlap
+([Huggins & Miller, 2024](https://doi.org/10.1214/24-EJS2237)).
+The *bagged posterior* averages over posteriors conditioned on bootstrapped datasets,
+yielding reproducible uncertainty quantification.
+
+ProbPipe makes this natural. `JointBootstrapDistribution` represents the bootstrap sampling distribution over datasets — each sample is a full bootstrapped dataset drawn i.i.d. with replacement:
+
+```python
+# Wrap the observed data as a bootstrap sampling distribution
+bootstrap_data = JointBootstrapDistribution(EmpiricalDistribution(data))
+
+# Broadcasting condition_on over bootstrap datasets produces bagged posteriors
+bagged_posterior = condition_on(model, bootstrap_data)
+```
+
+By default, `JointBootstrapDistribution` sets the bootstrap dataset size equal to the original dataset size (the standard nonparametric bootstrap). You can customize it — for example, using `n=int(N**0.95)` as recommended for BayesBag model selection:
+
+```python
+bootstrap_data = JointBootstrapDistribution(EmpiricalDistribution(data), n=int(N**0.95))
+bootstrap_data.n   # 79
+```
+
+We can visualize the bagged posterior by overlaying the individual bootstrap posterior densities:
+
+```python
+import matplotlib.pyplot as plt
+from scipy.stats import gaussian_kde
+import numpy as np
+
+fig, axes = plt.subplots(1, 3, figsize=(12, 3.5))
+param_names = [r"$\beta_0$ (intercept)", r"$\beta_1$ (slope 1)", r"$\beta_2$ (slope 2)"]
+true_values = [1.0, 2.0, -0.5]
+
+for j, (ax, name, truth) in enumerate(zip(axes, param_names, true_values)):
+    for post in bagged_posterior[:10]:
+        draws = post.samples[:, j]
+        kde = gaussian_kde(np.array(draws))
+        xs = np.linspace(float(draws.min()) - 0.3, float(draws.max()) + 0.3, 200)
+        ax.plot(xs, kde(xs), alpha=0.6)
+    ax.axvline(truth, color="black", linestyle="--", label="true value")
+    ax.set_xlabel(name)
+axes[0].set_ylabel("Density")
+axes[0].legend()
+fig.suptitle("Bagged Posterior: 10 Bootstrap Posterior Densities")
+fig.tight_layout()
+```
+
+![Bagged posterior densities](assets/images/bagged_posterior_densities.png)
+
+The bootstrap posterior densities are tightly clustered — the sampling variability (spread across bootstrap replicates) is small compared to the width of each individual posterior. This indicates the standard posterior is already stable and reproducible for this well-specified model. In such cases the bagged posterior is wider than necessary, making it somewhat conservative. This is expected: bagging provides a safety net under misspecification, at the cost of mild overcoverage when the model is correct.
+
+### 4. Use external samplers
+
+ProbPipe supports multiple inference backends. Stan models use CmdStan's built-in NUTS sampler for `condition_on`. You can also use nutpie (a Rust-based NUTS implementation) for Stan or PyMC models:
+
+```python
+from probpipe.modeling import StanModel
+from probpipe.inference import condition_on_nutpie
+
+# Stan model — condition_on delegates to CmdStan's NUTS
+stan_mod = StanModel("my_model.stan", data={"N": N})
+stan_posterior = condition_on(stan_mod, {"x": x, "y": y})
+
+# Or use nutpie for potentially faster sampling
+nutpie_posterior = condition_on_nutpie(stan_mod, {"x": x, "y": y}, num_results=2000)
+```
+
+### 5. Propagate posterior uncertainty
+
+Once you have a posterior, propagate uncertainty through downstream computations. When a `WorkflowFunction` receives a distribution where it expects a concrete value, ProbPipe automatically broadcasts over samples:
 
 ```python
 from probpipe import WorkflowFunction
 
-initial_dose = 100.0  # mg (known)
-t = 8.0               # hours (known)
+def predict_impl(params, x_new):
+    return x_new @ params[1:] + params[0]
 
-def concentration(half_life):
-    return initial_dose * (0.5 ** (t / half_life))
+predict = WorkflowFunction(func=predict_impl)
 
-wf = WorkflowFunction(func=concentration)
-conc = wf(half_life=half_life)
+# Posterior uncertainty propagates automatically
+x_new = jnp.array([0.5, -0.3])
+predictive = predict(params=posterior, x_new=x_new)
 
-conc.mean()                   # ~25.0 (expected concentration after 8h)
-conc.source                   # Provenance('broadcast', parents=[half_life])
+# predictive is an EmpiricalDistribution over predicted values
+mean(predictive)       # Array(2.1497, dtype=float32)
+variance(predictive)   # Array(0.0151, dtype=float32)
 ```
 
-### 4. Compute expectations with error tracking
+User-defined functions can be written as usual, with ProbPipe managing uncertainty propagation.
 
-The `expectation(f)` method computes `E[f(X)]`. On empirical distributions (like broadcast results), this is exact. On parametric distributions, it uses Monte Carlo and returns a `BootstrapDistribution` that tracks the sampling error:
+### 6. Track provenance
 
-```python
-# Exact expectation on the broadcast result (EmpiricalDistribution)
-conc.expectation(lambda x: x)     # Array(~25.0) -- exact weighted sum
-
-# MC expectation on the parametric prior, with error tracking
-ex = half_life.expectation(lambda x: 0.5 ** (8.0 / x), num_evaluations=5000)
-ex.mean()       # point estimate of E[conc(half_life)]
-ex.variance()   # MC error variance -- decreases with more evaluations
-```
-
-### 5. Track provenance
-
-Every distribution records its lineage automatically. You can traverse the provenance chain or serialize it to JSON:
+Every distribution records its lineage automatically. Provenance chains enable full reproducibility:
 
 ```python
 from probpipe import provenance_ancestors
 
-provenance_ancestors(conc)    # [Normal(name='half_life', event_shape=())]
-conc.source.to_dict()         # {'operation': 'broadcast',
-                              #  'parents': [{'type': 'Normal', 'name': 'half_life'}],
-                              #  'metadata': {'vectorize': 'jax', ...}}
-```
+posterior.source
+# Provenance('nuts', parents=[MultivariateNormal])
 
-### 6. Interoperate with TFP and scipy
-
-The converter registry handles automatic bidirectional conversion between ProbPipe, raw TFP, and scipy.stats distributions. Workflows accept any recognized distribution type as input:
-
-```python
-from probpipe import converter_registry
-import tensorflow_probability.substrates.jax.distributions as tfd
-import scipy.stats as ss
-
-# Raw TFP and scipy distributions work directly in workflows
-conc_from_tfp = wf(half_life=tfd.Normal(loc=4.0, scale=0.5))
-conc_from_scipy = wf(half_life=ss.norm(loc=4.0, scale=0.5))
-
-# Inspect a conversion before performing it
-info = converter_registry.check(tfd.Normal(loc=4.0, scale=0.5), Normal)
-info.method   # ConversionMethod.EXACT
-info.cost     # 0.01
-
-# Convert ProbPipe distributions to scipy for use with scipy tools
-from scipy.stats._distn_infrastructure import rv_frozen
-sp = converter_registry.convert(half_life, rv_frozen)
-sp.ppf(0.975)  # 95th percentile via scipy
+provenance_ancestors(predictive)
+# [MCMCApproximateDistribution(...), MultivariateNormal(event_shape=(3,))]
 ```
 
 ### 7. Differentiate through distributions
 
-Since everything is built on JAX, you can compute gradients of distribution operations -- useful for sensitivity analysis, MLE, and variational inference:
+Since everything is built on JAX, you can compute gradients of distribution operations — useful for sensitivity analysis, MLE, and variational inference:
 
 ```python
-import jax
+from probpipe import Normal
+
+sensor = Normal(loc=0.0, scale=0.5)
 
 # Score function: d/d(x) log p(x)
-score = jax.grad(half_life.log_prob)(4.0)   # 0.0 (zero at the mean)
-score = jax.grad(half_life.log_prob)(3.0)   # 4.0 (positive below the mean)
+jax.grad(lambda x: log_prob(sensor, x))(0.5)   # Array(-2.0, dtype=float32)
+```
+
+### 8. Interoperate with TFP and scipy
+
+The converter registry handles automatic bidirectional conversion between ProbPipe, raw TFP, and scipy.stats distributions:
+
+```python
+from probpipe import converter_registry, Normal
+import tensorflow_probability.substrates.jax.distributions as tfd
+import scipy.stats as ss
+
+# Raw TFP and scipy distributions work directly in workflows
+conc_from_tfp = predict_wf(params=tfd.Normal(loc=0.0, scale=1.0))
+
+# Convert ProbPipe distributions to scipy for use with scipy tools
+from scipy.stats._distn_infrastructure import rv_frozen
+sp = converter_registry.convert(sensor, rv_frozen)
+sp.ppf(0.975)  # 0.9800 (95th percentile via scipy)
 ```
 
 ## Next Steps

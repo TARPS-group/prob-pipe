@@ -14,36 +14,49 @@ ProbPipe provides general-purpose abstractions for probabilistic *workflows* -- 
 
 ## Quick Example
 
-Suppose you want to estimate total revenue, but both the unit price and customer demand are uncertain. Write the business logic as a plain function, pass distributions for the uncertain inputs, and ProbPipe propagates the uncertainty automatically:
+Fit a Bayesian model, then propagate posterior uncertainty through a prediction function:
 
 ```python
-from probpipe import Normal, WorkflowFunction
+import jax
+import jax.numpy as jnp
+from probpipe import (
+    MultivariateNormal, SimpleModel, WorkflowFunction,
+    condition_on, mean, variance, sample,
+)
+from probpipe.modeling import Likelihood
+from probpipe.core.node import wf
 
-price = Normal(loc=50.0, scale=5.0, name="price")
-demand = Normal(loc=1000.0, scale=100.0, name="demand")
+# 1. Define a model
+class LinearLikelihood(Likelihood):
+    @wf
+    def log_likelihood(self, params, data):
+        x, y = data[:, 0], data[:, 1]
+        return jnp.sum(-0.5 * (y - (params[0] + params[1] * x)) ** 2)
 
-def total_revenue(price, demand):
-    return price * demand
+prior = MultivariateNormal(loc=jnp.zeros(2), cov=10.0 * jnp.eye(2))
+model = SimpleModel(prior, LinearLikelihood())
 
-wf = WorkflowFunction(func=total_revenue)
-revenue = wf(price=price, demand=demand)
+# 2. Fit the posterior
+key = jax.random.PRNGKey(42)
+x_obs = jnp.linspace(0, 1, 20)
+y_obs = 1.0 + 2.0 * x_obs + 0.3 * jax.random.normal(key, shape=(20,))
+data = jnp.column_stack([x_obs, y_obs])
 
-revenue.mean()       # ~50000 (mean revenue in dollars)
-revenue.variance()   # captures joint uncertainty from price and demand
-revenue.source       # Provenance('broadcast', parents=[price, demand])
+posterior = condition_on(model, data)
+mean(posterior)       # Array([1.0558641, 2.061712], dtype=float32)
 
-# Compute expectations with automatic error tracking
-# On EmpiricalDistribution, this is exact; on parametric distributions,
-# Monte Carlo returns a BootstrapDistribution capturing the sampling error
-ex = price.expectation(lambda p: p**2, num_evaluations=5000)
-ex.mean()       # point estimate of E[price²]
-ex.variance()   # MC error variance (decreases with more evaluations)
+# 3. Propagate uncertainty through predictions
+predict = WorkflowFunction(func=lambda params, x: params[0] + params[1] * x)
+predictive = predict(params=posterior, x=0.5)
+
+mean(predictive)       # Array(2.087983, dtype=float32)
+variance(predictive)   # Array(0.04383527, dtype=float32)
 ```
 
 The result is an `EmpiricalDistribution` -- a first-class distribution object that can be passed into downstream workflow nodes, triggering further uncertainty propagation.
 
 ## Next Steps
 
-- [Getting Started](getting-started.md) -- installation and first steps
+- [Getting Started](getting-started.md) -- installation and a complete posterior inference walkthrough
 - [Tutorials](tutorials.md) -- guided notebooks covering distributions, transforms, joint models, and more
 - [API Reference](api/distributions.md) -- full class and function documentation

@@ -138,17 +138,26 @@ class TestMean:
         bd = BootstrapDistribution(evals)
         np.testing.assert_allclose(float(ops.mean(bd)), 3.0)
 
-    def test_mc_fallback_for_non_exact(self):
-        """Distributions without _mean() fall back to expectation()."""
-        from probpipe import TransformedDistribution
-        import tensorflow_probability.substrates.jax.bijectors as tfb
+    def test_raises_without_supports_mean(self):
+        """mean op raises TypeError for distributions without SupportsMean."""
+        from probpipe.core.protocols import SupportsSampling, SupportsExpectation
+        from probpipe.core.distribution import _vmap_sample, _mc_expectation, ArrayDistribution
 
-        base = Normal(loc=0.0, scale=1.0)
-        td = TransformedDistribution(base, tfb.Exp())
-        # TransformedDistribution doesn't define _mean, so should use MC
-        m = ops.mean(td)
-        # E[exp(X)] for X ~ Normal(0, 1) = exp(0.5) ≈ 1.6487
-        np.testing.assert_allclose(float(m), 1.6487, atol=0.2)
+        class NoMeanDist(ArrayDistribution, SupportsSampling, SupportsExpectation):
+            _sampling_cost = "low"
+            _preferred_orchestration = None
+            @property
+            def event_shape(self):
+                return ()
+            def _sample_one(self, key):
+                return jax.random.normal(key)
+            def _sample(self, key, sample_shape=()):
+                return _vmap_sample(self, key, sample_shape)
+            def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
+                return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
+
+        with pytest.raises(TypeError, match="does not support mean"):
+            ops.mean(NoMeanDist())
 
 
 # ---------------------------------------------------------------------------

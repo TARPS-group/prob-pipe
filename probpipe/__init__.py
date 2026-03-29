@@ -35,6 +35,7 @@ from probpipe.distributions import (
     Provenance,
     # Global settings
     BootstrapDistribution,
+    JointBootstrapDistribution,
     DEFAULT_NUM_EVALUATIONS,
     RETURN_APPROX_DIST,
     set_default_num_evaluations,
@@ -98,6 +99,14 @@ from probpipe.distributions import (
 )
 from probpipe.core.node import WorkflowFunction, Module, wf
 from probpipe.core.provenance import provenance_ancestors, provenance_dag
+from probpipe.modeling import Likelihood, GenerativeLikelihood, IterativeForecaster
+from probpipe.inference import (
+    MCMCDiagnostics,
+    MCMCApproximateDistribution,
+    rwmh,
+    condition_on_nutpie,
+)
+from probpipe.modeling import ProbabilisticModel, SimpleModel
 from probpipe.core.protocols import (
     SupportsExpectation,
     SupportsSampling,
@@ -108,6 +117,7 @@ from probpipe.core.protocols import (
     SupportsCovariance,
     SupportsConditioning,
     SupportsNamedComponents,
+    SupportsConditionableComponents,
 )
 from probpipe.converters import (
     converter_registry,
@@ -124,6 +134,8 @@ __all__ = [
     "FlattenedView",
     "TFPDistribution",
     "EmpiricalDistribution",
+    "BootstrapDistribution",
+    "JointBootstrapDistribution",
     "Provenance",
     # Constraints
     "Constraint",
@@ -198,6 +210,18 @@ __all__ = [
     "SupportsCovariance",
     "SupportsConditioning",
     "SupportsNamedComponents",
+    "SupportsConditionableComponents",
+    # Modeling
+    "Likelihood",
+    "GenerativeLikelihood",
+    "IterativeForecaster",
+    "ProbabilisticModel",
+    "SimpleModel",
+    # Inference
+    "MCMCDiagnostics",
+    "MCMCApproximateDistribution",
+    "rwmh",
+    "condition_on_nutpie",
     # Converters
     "converter_registry",
     "ConversionInfo",
