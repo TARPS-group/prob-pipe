@@ -1314,7 +1314,7 @@ class FlattenedView(ArrayDistribution, SupportsSampling, SupportsLogProb):
 # ---------------------------------------------------------------------------
 
 
-class JointBootstrapDistribution(Distribution[Array], SupportsSampling):
+class JointBootstrapDistribution(ArrayDistribution, SupportsSampling):
     """N-fold product of an empirical distribution (bootstrap resampling).
 
     Each sample from this distribution is a bootstrapped dataset — ``n``
@@ -1384,6 +1384,11 @@ class JointBootstrapDistribution(Distribution[Array], SupportsSampling):
     @property
     def name(self) -> str | None:
         return self._name
+
+    @property
+    def event_shape(self) -> tuple[int, ...]:
+        """Shape of a single bootstrap dataset: ``(n, *obs_shape)``."""
+        return (self._n, *self._event_shape_per_obs)
 
     @property
     def n(self) -> int:
