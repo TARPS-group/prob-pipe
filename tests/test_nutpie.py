@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 from probpipe.inference._nutpie import (
     _compile_for_nutpie,
     _extract_chains,
-    _nutpie_sample_impl,
+    _condition_on_nutpie_impl,
 )
 from probpipe.inference import MCMCApproximateDistribution
 
@@ -115,7 +115,7 @@ class TestExtractChains:
 
 
 # ---------------------------------------------------------------------------
-# _nutpie_sample_impl
+# _condition_on_nutpie_impl
 # ---------------------------------------------------------------------------
 
 
@@ -137,7 +137,7 @@ class TestNutpieSampleImpl:
         mock_trace.posterior = mock_posterior
         mock_nutpie.sample.return_value = mock_trace
 
-        result = _nutpie_sample_impl(
+        result = _condition_on_nutpie_impl(
             model,
             data={"N": 10},
             num_results=20,
@@ -150,10 +150,10 @@ class TestNutpieSampleImpl:
         assert result.num_chains == 2
         assert result.diagnostics.algorithm == "nutpie_nuts"
         assert result.source is not None
-        assert result.source.operation == "nutpie_sample"
+        assert result.source.operation == "condition_on_nutpie"
 
     def test_import_error(self):
         """Raises ImportError with install instructions when nutpie missing."""
         with patch.dict("sys.modules", {"nutpie": None}):
             with pytest.raises(ImportError, match="pip install nutpie"):
-                _nutpie_sample_impl(MagicMock(), num_results=10)
+                _condition_on_nutpie_impl(MagicMock(), num_results=10)

@@ -103,20 +103,26 @@ bootstrap_data = JointBootstrapDistribution(EmpiricalDistribution(data), n=int(N
 bootstrap_data.n   # 79
 ```
 
+The plots below show 10 bootstrap posterior densities overlaid for each parameter, and a histogram of posterior means across bootstrap datasets:
+
+![Bagged posterior densities](assets/images/bagged_posterior_densities.png)
+
+![Bagged posterior means](assets/images/bagged_posterior_means.png)
+
 ### 4. Use external samplers
 
 ProbPipe supports multiple inference backends. Stan models use CmdStan's built-in NUTS sampler for `condition_on`. You can also use nutpie (a Rust-based NUTS implementation) for Stan or PyMC models:
 
 ```python
 from probpipe.modeling import StanModel
-from probpipe.inference import nutpie_sample
+from probpipe.inference import condition_on_nutpie
 
 # Stan model — condition_on delegates to CmdStan's NUTS
 stan_mod = StanModel("my_model.stan", data={"N": N})
 stan_posterior = condition_on(stan_mod, {"x": x, "y": y})
 
 # Or use nutpie for potentially faster sampling
-nutpie_posterior = nutpie_sample(stan_mod, {"x": x, "y": y}, num_results=2000)
+nutpie_posterior = condition_on_nutpie(stan_mod, {"x": x, "y": y}, num_results=2000)
 ```
 
 ### 5. Propagate posterior uncertainty

@@ -15,10 +15,10 @@ from ._mcmc_distribution import MCMCApproximateDistribution
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["nutpie_sample"]
+__all__ = ["condition_on_nutpie"]
 
 
-def _nutpie_sample_impl(
+def _condition_on_nutpie_impl(
     model: Any,
     data: ArrayLike | None = None,
     *,
@@ -60,7 +60,7 @@ def _nutpie_sample_impl(
         import nutpie
     except ImportError as e:
         raise ImportError(
-            "nutpie is required for nutpie_sample. "
+            "nutpie is required for condition_on_nutpie. "
             "Install it with: pip install nutpie"
         ) from e
 
@@ -94,7 +94,7 @@ def _nutpie_sample_impl(
     )
     result.with_source(
         Provenance(
-            "nutpie_sample",
+            "condition_on_nutpie",
             parents=(model,),
             metadata={
                 "num_results": num_results,
@@ -122,7 +122,7 @@ def _compile_for_nutpie(model: Any, data: Any) -> Any:
         return nutpie.compile_pymc_model(pm_model)
 
     raise TypeError(
-        f"nutpie_sample does not support {type(model).__name__}. "
+        f"condition_on_nutpie does not support {type(model).__name__}. "
         f"Expected a StanModel or PyMCModel."
     )
 
@@ -157,4 +157,4 @@ def _extract_chains(trace: Any, num_chains: int) -> tuple[list, list]:
     )
 
 
-nutpie_sample = WorkflowFunction(func=_nutpie_sample_impl, name="nutpie_sample")
+condition_on_nutpie = WorkflowFunction(func=_condition_on_nutpie_impl, name="condition_on_nutpie")

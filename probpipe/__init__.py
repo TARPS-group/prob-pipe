@@ -104,7 +104,7 @@ from probpipe.inference import (
     MCMCDiagnostics,
     MCMCApproximateDistribution,
     rwmh,
-    nutpie_sample,
+    condition_on_nutpie,
 )
 from probpipe.modeling import ProbabilisticModel, SimpleModel
 from probpipe.core.protocols import (
@@ -221,7 +221,7 @@ __all__ = [
     "MCMCDiagnostics",
     "MCMCApproximateDistribution",
     "rwmh",
-    "nutpie_sample",
+    "condition_on_nutpie",
     # Converters
     "converter_registry",
     "ConversionInfo",

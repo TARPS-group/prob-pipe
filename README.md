@@ -103,20 +103,26 @@ bagged_posterior = condition_on(model, bootstrap_data)
 
 Because `JointBootstrapDistribution` implements `SupportsSampling`, the `condition_on` workflow function automatically broadcasts: it draws bootstrap datasets and runs MCMC on each, returning a collection of posterior distributions.
 
+The plots below show 10 bootstrap posterior densities overlaid for each parameter, and a histogram of posterior means across bootstrap datasets:
+
+![Bagged posterior densities](docs/assets/images/bagged_posterior_densities.png)
+
+![Bagged posterior means](docs/assets/images/bagged_posterior_means.png)
+
 ### 4. Use an external sampler
 
 ProbPipe supports multiple inference backends. For Stan models, `condition_on` uses CmdStan's NUTS sampler. You can also use nutpie for Stan or PyMC models:
 
 ```python
 from probpipe.modeling import StanModel
-from probpipe.inference import nutpie_sample
+from probpipe.inference import condition_on_nutpie
 
 # Stan model: condition_on uses CmdStan's built-in NUTS
 stan_mod = StanModel("my_model.stan", data={"N": N})
 stan_posterior = condition_on(stan_mod, {"x": x, "y": y})
 
 # Or use nutpie (Rust-based NUTS) for the same model
-nutpie_posterior = nutpie_sample(stan_mod, {"x": x, "y": y}, num_results=2000)
+nutpie_posterior = condition_on_nutpie(stan_mod, {"x": x, "y": y}, num_results=2000)
 ```
 
 ### 5. Propagate posterior uncertainty

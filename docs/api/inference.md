@@ -22,4 +22,4 @@
 
 ::: probpipe.inference.rwmh
 
-::: probpipe.inference.nutpie_sample
+::: probpipe.inference.condition_on_nutpie
