@@ -115,7 +115,7 @@ To see why bagging matters, compare the well-specified Gaussian data above with 
 import numpy as np
 rng = np.random.default_rng(42)
 x_ht = jax.random.normal(jax.random.PRNGKey(99), shape=(N, 2))
-noise_ht = rng.standard_t(df=2, size=N) * 0.3
+noise_ht = rng.standard_t(df=2, size=N)
 y_ht = 1.0 + 2.0 * np.array(x_ht[:, 0]) - 0.5 * np.array(x_ht[:, 1]) + noise_ht
 data_ht = jnp.column_stack([x_ht, jnp.array(y_ht, dtype=jnp.float32)])
 
@@ -189,38 +189,58 @@ nutpie_posterior = condition_on_nutpie(stan_mod, {"x": x, "y": y}, num_results=2
 
 ### 5. Propagate posterior uncertainty
 
-Once you have a posterior, propagate uncertainty through downstream computations. When a `WorkflowFunction` receives a distribution where it expects a concrete value, ProbPipe automatically broadcasts over samples:
+When a `WorkflowFunction` receives a distribution where it expects a concrete value, ProbPipe automatically broadcasts over samples. This makes **posterior predictive checks** (PPCs) trivial — wrap a test statistic as a function, pass the posterior, and get the PPC distribution:
 
 ```python
 from probpipe import WorkflowFunction
+import numpy as np
 
-def predict_impl(params, x_new):
-    return x_new @ params[1:] + params[0]
+# Observed data from the heavy-tailed example (misspecified model)
+x_obs, y_obs = np.array(data_ht[:, :-1]), np.array(data_ht[:, -1])
+rng_ppc = np.random.default_rng(123)
 
-predict = WorkflowFunction(func=predict_impl)
+def ppc_max_abs_residual(params):
+    """Simulate y_rep ~ N(X@β, I); return max|residual|."""
+    predicted = np.array(x_obs @ params[1:] + params[0])
+    y_rep = predicted + rng_ppc.normal(size=len(x_obs))
+    return float(np.max(np.abs(y_rep - predicted)))
 
-# Posterior uncertainty propagates automatically
-x_new = jnp.array([0.5, -0.3])
-predictive = predict(params=posterior, x_new=x_new)
+def ppc_residual_kurtosis(params):
+    """Simulate y_rep ~ N(X@β, I); return excess kurtosis."""
+    predicted = np.array(x_obs @ params[1:] + params[0])
+    y_rep = predicted + rng_ppc.normal(size=len(x_obs))
+    residuals = y_rep - predicted
+    s2 = np.var(residuals)
+    return float(np.mean(((residuals - np.mean(residuals))**2 / s2)**2) - 3.0)
+
+# Two lines: wrap and broadcast
+check_max = WorkflowFunction(func=ppc_max_abs_residual, n_broadcast_samples=500)
+check_kurt = WorkflowFunction(func=ppc_residual_kurtosis, n_broadcast_samples=500)
+
+ppc_max = check_max(params=posterior_ht).marginalize()
+ppc_kurt = check_kurt(params=posterior_ht).marginalize()
 ```
 
-The result is a `BroadcastDistribution` – a joint distribution over the broadcast inputs and the function output. This preserves the relationship between inputs and outputs, enabling downstream analysis of input–output correlations. Call `marginalize()` to get the output distribution:
+The result is a `BroadcastDistribution` — call `marginalize()` to get the PPC distribution. Compute the observed statistics and PPC p-values:
 
 ```python
-# Access the output marginal for moment computations
-output = predictive.marginalize()
-mean(output)       # Array(2.1497, dtype=float32)
-variance(output)   # Array(0.0151, dtype=float32)
+params_hat = np.array(mean(posterior_ht))
+resid_obs = y_obs - (x_obs @ params_hat[1:] + params_hat[0])
+obs_max = float(np.max(np.abs(resid_obs)))    # 6.18
+obs_kurt = float(np.mean(((resid_obs - np.mean(resid_obs))**2 / np.var(resid_obs))**2) - 3.0)  # 2.70
 
-# The joint also records which input samples produced which outputs
-predictive.input_samples.keys()   # dict_keys(['params'])
+p_max = float(np.mean(np.array(ppc_max.samples) >= obs_max))    # 0.000
+p_kurt = float(np.mean(np.array(ppc_kurt.samples) >= obs_kurt)) # 0.000
 ```
 
-This works with any function – the science stays clean, and ProbPipe handles the uncertainty bookkeeping. To skip storing input samples and get just the output distribution (saving memory), pass `marginalize=True`:
+Both p-values are extreme — the Gaussian model cannot reproduce the large residuals or heavy tails in the observed data:
+
+![PPC checks](assets/images/ppc_checks.png)
+
+To skip storing input samples and get just the output distribution (saving memory), pass `marginalize=True`:
 
 ```python
-output_only = predict(params=posterior, x_new=x_new, marginalize=True)
-mean(output_only)   # Array(2.1497, dtype=float32)
+ppc_max_only = check_max(params=posterior_ht, marginalize=True)
 ```
 
 ### 6. Track provenance
