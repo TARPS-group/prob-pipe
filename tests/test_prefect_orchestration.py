@@ -17,7 +17,7 @@ import pytest
 prefect = pytest.importorskip("prefect")
 from prefect.testing.utilities import prefect_test_harness
 
-from probpipe import EmpiricalDistribution, Normal
+from probpipe import BroadcastDistribution, EmpiricalDistribution, Normal
 from probpipe.core.node import WorkflowFunction
 
 
@@ -65,7 +65,7 @@ class TestPrefectTaskLoop:
             seed=0,
         )
         result = wf(x=normal_dist)
-        assert isinstance(result, EmpiricalDistribution)
+        assert isinstance(result, BroadcastDistribution)
         assert result.n == 30
 
     def test_output_values_correct(self, normal_dist):
@@ -92,7 +92,7 @@ class TestPrefectTaskLoop:
         )
         d2 = Normal(loc=2.0, scale=0.3)
         result = wf(x=normal_dist, y=d2)
-        assert isinstance(result, EmpiricalDistribution)
+        assert isinstance(result, BroadcastDistribution)
         assert result.n == 30
 
 
@@ -112,7 +112,7 @@ class TestPrefectFlowLoop:
             seed=10,
         )
         result = wf(x=normal_dist)
-        assert isinstance(result, EmpiricalDistribution)
+        assert isinstance(result, BroadcastDistribution)
         assert result.n == 25
 
     def test_output_values_correct(self, normal_dist):
@@ -146,7 +146,7 @@ class TestPrefectTaskJax:
             seed=20,
         )
         result = wf(x=normal_dist)
-        assert isinstance(result, EmpiricalDistribution)
+        assert isinstance(result, BroadcastDistribution)
         assert result.n == 30
 
     def test_output_values_correct(self, normal_dist):
@@ -179,7 +179,7 @@ class TestPrefectFlowJax:
             seed=30,
         )
         result = wf(x=normal_dist)
-        assert isinstance(result, EmpiricalDistribution)
+        assert isinstance(result, BroadcastDistribution)
         assert result.n == 25
 
     def test_output_values_correct(self, normal_dist):

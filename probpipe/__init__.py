@@ -32,6 +32,7 @@ from probpipe.distributions import (
     FlattenedView,
     TFPDistribution,
     EmpiricalDistribution,
+    BroadcastDistribution,
     Provenance,
     # Global settings
     BootstrapDistribution,
@@ -134,6 +135,7 @@ __all__ = [
     "FlattenedView",
     "TFPDistribution",
     "EmpiricalDistribution",
+    "BroadcastDistribution",
     "BootstrapDistribution",
     "JointBootstrapDistribution",
     "Provenance",

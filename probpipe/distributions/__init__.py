@@ -6,6 +6,7 @@ from ..core.distribution import (
     FlattenedView,
     TFPDistribution,
     EmpiricalDistribution,
+    BroadcastDistribution,
     Provenance,
     BootstrapDistribution,
     JointBootstrapDistribution,
@@ -81,6 +82,7 @@ __all__ = [
     "FlattenedView",
     "TFPDistribution",
     "EmpiricalDistribution",
+    "BroadcastDistribution",
     "Provenance",
     # Constraints
     "Constraint",
