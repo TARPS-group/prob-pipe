@@ -37,16 +37,20 @@ prior = MultivariateNormal(loc=jnp.zeros(2), cov=10.0 * jnp.eye(2))
 model = SimpleModel(prior, LinearLikelihood())
 
 # 2. Fit the posterior
-data = jnp.column_stack([jnp.linspace(0, 1, 20), ...])  # observed (x, y) pairs
+key = jax.random.PRNGKey(42)
+x_obs = jnp.linspace(0, 1, 20)
+y_obs = 1.0 + 2.0 * x_obs + 0.3 * jax.random.normal(key, shape=(20,))
+data = jnp.column_stack([x_obs, y_obs])
+
 posterior = condition_on(model, data)
-mean(posterior)       # ≈ [intercept, slope]
+mean(posterior)       # Array([1.0558641, 2.061712], dtype=float32)
 
 # 3. Propagate uncertainty through predictions
 predict_wf = WorkflowFunction(func=lambda params, x: params[0] + params[1] * x)
 predictive = predict_wf(params=posterior, x=0.5)
 
-mean(predictive)       # point prediction at x=0.5
-variance(predictive)   # posterior predictive uncertainty
+mean(predictive)       # Array(2.087983, dtype=float32)
+variance(predictive)   # Array(0.04383527, dtype=float32)
 ```
 
 The result is an `EmpiricalDistribution` -- a first-class distribution object that can be passed into downstream workflow nodes, triggering further uncertainty propagation.

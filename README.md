@@ -83,8 +83,8 @@ y = 1.0 + 2.0 * x[:, 0] - 0.5 * x[:, 1] + 0.3 * jax.random.normal(key, shape=(N,
 data = jnp.column_stack([x, y])
 
 posterior = condition_on(model, data, num_results=1000, num_warmup=500, random_seed=0)
-mean(posterior)       # ≈ [1.0, 2.0, -0.5]
-variance(posterior)   # per-parameter posterior variances
+mean(posterior)       # Array([1.009, 1.943, -0.549], dtype=float32)
+variance(posterior)   # Array([0.0097, 0.0143, 0.0120], dtype=float32)
 ```
 
 ### 3. Bagged posteriors for reproducible inference
@@ -136,8 +136,8 @@ x_new = jnp.array([0.5, -0.3])
 predictive = predict_wf(params=posterior, x_new=x_new)
 
 # predictive is an EmpiricalDistribution over predicted values
-mean(predictive)       # point prediction
-variance(predictive)   # predictive uncertainty from the posterior
+mean(predictive)       # Array(2.1497, dtype=float32)
+variance(predictive)   # Array(0.0151, dtype=float32)
 ```
 
 ### 6. Provenance tracking
@@ -148,10 +148,10 @@ Every distribution records its lineage automatically. Provenance chains enable f
 from probpipe import provenance_ancestors
 
 posterior.source
-# Provenance('nuts', parents=[SimpleModel], metadata={...})
+# Provenance('nuts', parents=[MultivariateNormal])
 
 provenance_ancestors(predictive)
-# traces back through predict_wf → posterior → model → prior, data
+# [MCMCApproximateDistribution(...), MultivariateNormal(event_shape=(3,))]
 ```
 
 ## Architecture
