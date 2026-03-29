@@ -365,12 +365,10 @@ class SupportsFoo(Protocol):
 
 ### 7.2 Protocol hierarchy
 
-- `SupportsMean`, `SupportsVariance`, and `SupportsCovariance` extend
-  `SupportsExpectation` and provide default implementations via the
-  `@compute_expectation` decorator.
 - `SupportsLogProb` extends `SupportsUnnormalizedLogProb`.
-- All other protocols (`SupportsSampling`, `SupportsConditioning`,
-  `SupportsNamedComponents`) are standalone.
+- All other protocols (`SupportsSampling`, `SupportsMean`,
+  `SupportsVariance`, `SupportsCovariance`, `SupportsExpectation`,
+  `SupportsConditioning`, `SupportsNamedComponents`) are standalone.
 
 ### 7.3 Implementing protocols
 
