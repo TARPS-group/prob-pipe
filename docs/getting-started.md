@@ -124,20 +124,21 @@ param_names = [r"$\beta_0$ (intercept)", r"$\beta_1$ (slope 1)", r"$\beta_2$ (sl
 true_values = [1.0, 2.0, -0.5]
 
 for j, (ax, name, truth) in enumerate(zip(axes, param_names, true_values)):
-    # Plot individual bootstrap posterior densities
-    for post in individual_posteriors[:10]:
+    # Plot individual bootstrap posterior densities (thin, light)
+    for i, post in enumerate(individual_posteriors[:10]):
         draws = post.samples[:, j]
         kde = gaussian_kde(np.array(draws))
         xs = np.linspace(float(draws.min()) - 0.3, float(draws.max()) + 0.3, 200)
-        ax.plot(xs, kde(xs), alpha=0.4, color="steelblue")
+        ax.plot(xs, kde(xs), alpha=0.3, lw=0.8, color="steelblue",
+                label="individual posteriors" if i == 0 else None)
 
-    # Plot the bagged posterior (mixture) density
+    # Plot the bagged posterior (mixture) density — thick, distinct color
     bagged_draws = np.array(sample(bagged, sample_shape=(2000,))[:, j])
     kde_bag = gaussian_kde(bagged_draws)
     xs = np.linspace(float(bagged_draws.min()) - 0.3, float(bagged_draws.max()) + 0.3, 200)
-    ax.plot(xs, kde_bag(xs), color="black", lw=2, label="bagged posterior")
+    ax.plot(xs, kde_bag(xs), color="darkorange", lw=2.5, label="bagged posterior")
 
-    ax.axvline(truth, color="red", linestyle="--", label="true value")
+    ax.axvline(truth, color="black", linestyle="--", lw=1.5, label="true value")
     ax.set_xlabel(name)
 axes[0].set_ylabel("Density")
 axes[0].legend()
