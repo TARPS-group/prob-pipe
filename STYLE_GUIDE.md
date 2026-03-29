@@ -125,7 +125,7 @@ independently, they get separate files.*
 
 Split a module when it exceeds roughly **1000 lines**. When splitting
 a distribution module, group by support domain (e.g., real-line vs
-positive vs bounded) or by frequency of use (common vs specialized).
+positive vs bounded).
 
 ### 2.3 Private vs public modules
 
