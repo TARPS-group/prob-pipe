@@ -21,7 +21,14 @@ except ImportError:
     Digraph = None
 
 from ..custom_types import PRNGKey, Array
-from .distribution import ArrayDistribution, Distribution, EmpiricalDistribution, Provenance
+from .distribution import (
+    ArrayDistribution,
+    BroadcastDistribution,
+    Distribution,
+    EmpiricalDistribution,
+    Provenance,
+    _make_marginal,
+)
 from .protocols import (
     SupportsConditioning,
     SupportsCovariance,
@@ -181,6 +188,7 @@ class WorkflowFunction(Node):
         vectorize: str = "auto",                     # "auto" | "jax" | "loop"
         parallel: bool | int = False,               # True/int for ThreadPoolExecutor, or Prefect .map()
         seed: int = 0,                              # JAX PRNG seed for broadcasting
+        marginalize: bool = False,                   # True → return output marginal only (skip storing inputs)
         **kwargs: Any,                              # convenience bindings (merged into bind)
     ):
         self._func = func
@@ -193,6 +201,7 @@ class WorkflowFunction(Node):
         self._vectorize = vectorize
         self._parallel = parallel
         self._key = jax.random.PRNGKey(seed)
+        self._marginalize = marginalize
         self._resolved_vectorize: str | None = None  # cached auto-detection result
 
         # bind = "construction-time inputs" (defaults/config). kwargs are also treated as bind.
@@ -206,7 +215,7 @@ class WorkflowFunction(Node):
         self._param_names = [p for p in self._sig.parameters if p != "self"]
 
         # Reserved names that would collide with WorkflowFunction call-time overrides
-        _RESERVED = {"n_broadcast_samples", "seed"}
+        _RESERVED = {"n_broadcast_samples", "seed", "marginalize"}
         collision = _RESERVED & set(self._param_names)
         if collision:
             raise ValueError(
@@ -236,6 +245,7 @@ class WorkflowFunction(Node):
     def __call__(self, **call_inputs):
         # Extract reserved call-time overrides (collision already prevented in __init__)
         n_broadcast_samples = call_inputs.pop("n_broadcast_samples", self._n_broadcast_samples)
+        do_marginalize = call_inputs.pop("marginalize", self._marginalize)
 
         if "seed" in call_inputs:
             self._key = jax.random.PRNGKey(call_inputs.pop("seed"))
@@ -245,7 +255,7 @@ class WorkflowFunction(Node):
 
         broadcast_args = self._find_broadcast_args(values)
         if broadcast_args:
-            return self._broadcast(values, broadcast_args, n_broadcast_samples)
+            return self._broadcast(values, broadcast_args, n_broadcast_samples, do_marginalize)
 
         return self._execute_many([values])[0]
 
@@ -438,11 +448,12 @@ class WorkflowFunction(Node):
         values: Dict[str, Any],
         broadcast_args: list[str],
         n_broadcast_samples: int,
-    ) -> EmpiricalDistribution | list:
+        do_marginalize: bool = False,
+    ) -> BroadcastDistribution | Distribution:
         """
         Sample from Distribution arguments and call the function once per sample.
-        Returns an EmpiricalDistribution if results are numeric arrays,
-        otherwise returns a list of results.
+        Returns a ``BroadcastDistribution`` holding the joint over inputs and
+        outputs, or the output marginal when ``do_marginalize`` is True.
 
         Vectorization (``"jax"`` vs ``"loop"``) and orchestration
         (``workflow_kind``) are resolved independently:
@@ -502,23 +513,31 @@ class WorkflowFunction(Node):
             else:
                 result = self._broadcast_sample(values, broadcast_args, n_broadcast_samples)
 
-        # Attach provenance to EmpiricalDistribution results
-        if isinstance(result, EmpiricalDistribution):
-            parents = tuple(
-                values[name] for name in broadcast_args
-                if isinstance(values[name], Distribution)
-            )
-            result.with_source(Provenance(
-                "broadcast",
-                parents=parents,
-                metadata={
-                    "vectorize": vectorize,
-                    "orchestrate": self._workflow_kind or "none",
-                    "n_samples": n_broadcast_samples,
-                    "func": self._name or self._func.__name__,
-                    "broadcast_args": broadcast_args,
-                },
-            ))
+        # Attach provenance
+        parents = tuple(
+            values[name] for name in broadcast_args
+            if isinstance(values[name], Distribution)
+        )
+        provenance = Provenance(
+            "broadcast",
+            parents=parents,
+            metadata={
+                "vectorize": vectorize,
+                "orchestrate": self._workflow_kind or "none",
+                "n_samples": n_broadcast_samples,
+                "func": self._name or self._func.__name__,
+                "broadcast_args": broadcast_args,
+            },
+        )
+
+        if isinstance(result, Distribution):
+            result.with_source(provenance)
+
+        if do_marginalize and isinstance(result, BroadcastDistribution):
+            marginal = result.marginalize()
+            if isinstance(marginal, Distribution):
+                marginal.with_source(provenance)
+            return marginal
 
         return result
 
@@ -577,7 +596,7 @@ class WorkflowFunction(Node):
         values: Dict[str, Any],
         broadcast_args: list[str],
         n_broadcast_samples: int,
-    ) -> EmpiricalDistribution | list:
+    ) -> BroadcastDistribution:
         """
         Vectorised broadcasting via ``jax.vmap``.
 
@@ -619,7 +638,12 @@ class WorkflowFunction(Node):
                 run_vmap = flow(name=f"{self._name}_vmap")(run_vmap)
 
         results = run_vmap()
-        return self._collect_results_jax(results, n_broadcast_samples)
+        return BroadcastDistribution(
+            input_samples=sampled,
+            output_samples=results,
+            weights=None,
+            broadcast_args=broadcast_args,
+        )
 
     def _broadcast_enumerate(
         self,
@@ -628,7 +652,7 @@ class WorkflowFunction(Node):
         sample_args: Dict[str, Distribution],
         product_size: int,
         n_broadcast_samples: int,
-    ) -> EmpiricalDistribution | list:
+    ) -> BroadcastDistribution:
         """
         Enumerate the cartesian product of EmpiricalDistribution samples,
         propagating their weights. When non-empirical distributions are also
@@ -655,6 +679,8 @@ class WorkflowFunction(Node):
         weights = []
         sample_idx = 0
 
+        all_broadcast_args = emp_names + sample_arg_names
+
         for combo in cartesian_product(*(range(d.n) for d in emp_dists)):
             # Compute empirical product weight
             emp_weight = 1.0
@@ -678,14 +704,26 @@ class WorkflowFunction(Node):
                 sample_idx += 1
 
         results = self._execute_many(call_value_list)
-        return self._collect_results(results, total, jnp.array(weights))
+
+        # Assemble input samples aligned with results
+        all_input_samples = {
+            name: jnp.stack([cv[name] for cv in call_value_list])
+            for name in all_broadcast_args
+        }
+
+        return BroadcastDistribution(
+            input_samples=all_input_samples,
+            output_samples=results,
+            weights=jnp.array(weights),
+            broadcast_args=all_broadcast_args,
+        )
 
     def _broadcast_sample(
         self,
         values: Dict[str, Any],
         broadcast_args: list[str],
         n_broadcast_samples: int,
-    ) -> EmpiricalDistribution | list:
+    ) -> BroadcastDistribution:
         """
         Sample n_broadcast_samples from each Distribution argument and call the function
         once per sample (uniform weights).  Handles DistributionView reconnection.
@@ -701,47 +739,13 @@ class WorkflowFunction(Node):
             call_value_list.append(call_values)
 
         results = self._execute_many(call_value_list)
-        return self._collect_results(results, n_broadcast_samples)
 
-    @staticmethod
-    def _collect_results(
-        results: list,
-        n: int,
-        weights: jnp.ndarray | None = None,
-    ) -> EmpiricalDistribution | list:
-        """
-        Stack results into an EmpiricalDistribution if possible,
-        otherwise return a plain list.  Works with both JAX and numpy arrays.
-
-        Stacked shape is ``(n, *event_shape)``.  Scalar results give ``(n,)``
-        with ``event_shape=()``.
-        """
-        try:
-            stacked = jnp.stack([jnp.asarray(r, dtype=jnp.float32) for r in results], axis=0)
-        except (ValueError, TypeError):
-            return results
-
-        # stacked shape: (n,) for scalars, (n, d) for vectors, (n, ...) for higher
-        return EmpiricalDistribution(stacked, weights=weights)
-
-    @staticmethod
-    def _collect_results_jax(
-        results,
-        n: int,
-        weights: jnp.ndarray | None = None,
-    ) -> EmpiricalDistribution | list:
-        """
-        Collect results from ``jax.vmap`` — *results* is a JAX array (or
-        pytree) with leading dimension *n*.
-        """
-        if isinstance(results, jnp.ndarray):
-            return EmpiricalDistribution(results, weights=weights)
-        # If results is a pytree or non-array, return as list
-        try:
-            stacked = jnp.stack(jax.tree.leaves(results), axis=-1)
-            return EmpiricalDistribution(stacked, weights=weights)
-        except Exception:
-            return results
+        return BroadcastDistribution(
+            input_samples=samples_per_arg,
+            output_samples=results,
+            weights=None,
+            broadcast_args=broadcast_args,
+        )
 
     def _execute_many(self, call_value_list: list[Dict[str, Any]]) -> list:
         """
