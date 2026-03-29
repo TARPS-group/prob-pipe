@@ -13,7 +13,6 @@ from probpipe import (
     ConditionedComponent,
     JointDistribution,
     EmpiricalDistribution,
-    BroadcastDistribution,
     ArrayDistribution,
     PyTreeArrayDistribution,
     FlattenedView,
@@ -478,7 +477,7 @@ class TestBroadcastingReconnection:
         )
         wf = self._make_add_workflow("loop")
         result = wf(a=joint["x"], b=joint["y"])
-        assert isinstance(result, BroadcastDistribution)
+        assert hasattr(result, "samples")
         # x ~ N(0,1), y ~ N(10,1) => a+b ~ N(10, sqrt(2))
         mean_val = float(jnp.mean(result.samples))
         assert abs(mean_val - 10.0) < 2.0
@@ -501,7 +500,7 @@ class TestBroadcastingReconnection:
             seed=99,
         )
         result = wf(a=view_x, b=view_x)
-        assert isinstance(result, BroadcastDistribution)
+        assert hasattr(result, "samples")
         # a and b are the same samples, so a - b = 0 for every sample
         np.testing.assert_allclose(
             np.array(result.samples), 0.0, atol=1e-5
@@ -525,7 +524,7 @@ class TestBroadcastingReconnection:
             seed=77,
         )
         result = wf(a=joint["x"], b=joint["y"], c=independent)
-        assert isinstance(result, BroadcastDistribution)
+        assert hasattr(result, "samples")
         # x ~ N(0,1), y ~ N(5,1), c ~ N(100, 0.1) => sum ~ N(105, ...)
         mean_val = float(jnp.mean(result.samples))
         assert abs(mean_val - 105.0) < 3.0
@@ -547,7 +546,7 @@ class TestBroadcastingReconnection:
             seed=55,
         )
         result = wf(a=joint["x"], b=joint["y"])
-        assert isinstance(result, BroadcastDistribution)
+        assert hasattr(result, "samples")
         mean_val = float(jnp.mean(result.samples))
         assert abs(mean_val - 10.0) < 2.0
 
@@ -569,7 +568,7 @@ class TestBroadcastingReconnection:
             seed=88,
         )
         result = wf(a=view_x, b=view_x)
-        assert isinstance(result, BroadcastDistribution)
+        assert hasattr(result, "samples")
         np.testing.assert_allclose(
             np.array(result.samples), 0.0, atol=1e-5
         )
@@ -707,7 +706,7 @@ class TestEnumerateWithDistributionViews:
             seed=123,
         )
         result = wf(a=view_x, b=view_y, c=ed)
-        assert isinstance(result, BroadcastDistribution)
+        assert hasattr(result, "samples")
         assert result.n == 50
 
 
@@ -1134,7 +1133,7 @@ class TestNestedProductDistribution:
             seed=42,
         )
         result = wf(a=view_force, b=view_obs)
-        assert isinstance(result, BroadcastDistribution)
+        assert hasattr(result, "samples")
         assert result.n == 30
 
 

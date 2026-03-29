@@ -188,7 +188,7 @@ class WorkflowFunction(Node):
         vectorize: str = "auto",                     # "auto" | "jax" | "loop"
         parallel: bool | int = False,               # True/int for ThreadPoolExecutor, or Prefect .map()
         seed: int = 0,                              # JAX PRNG seed for broadcasting
-        marginalize: bool = False,                   # True → return output marginal only (skip storing inputs)
+        include_inputs: bool = False,                # True → return BroadcastDistribution (joint over inputs+outputs)
         **kwargs: Any,                              # convenience bindings (merged into bind)
     ):
         self._func = func
@@ -201,7 +201,7 @@ class WorkflowFunction(Node):
         self._vectorize = vectorize
         self._parallel = parallel
         self._key = jax.random.PRNGKey(seed)
-        self._marginalize = marginalize
+        self._include_inputs = include_inputs
         self._resolved_vectorize: str | None = None  # cached auto-detection result
 
         # bind = "construction-time inputs" (defaults/config). kwargs are also treated as bind.
@@ -215,7 +215,7 @@ class WorkflowFunction(Node):
         self._param_names = [p for p in self._sig.parameters if p != "self"]
 
         # Reserved names that would collide with WorkflowFunction call-time overrides
-        _RESERVED = {"n_broadcast_samples", "seed", "marginalize"}
+        _RESERVED = {"n_broadcast_samples", "seed", "include_inputs"}
         collision = _RESERVED & set(self._param_names)
         if collision:
             raise ValueError(
@@ -245,7 +245,7 @@ class WorkflowFunction(Node):
     def __call__(self, **call_inputs):
         # Extract reserved call-time overrides (collision already prevented in __init__)
         n_broadcast_samples = call_inputs.pop("n_broadcast_samples", self._n_broadcast_samples)
-        do_marginalize = call_inputs.pop("marginalize", self._marginalize)
+        do_include_inputs = call_inputs.pop("include_inputs", self._include_inputs)
 
         if "seed" in call_inputs:
             self._key = jax.random.PRNGKey(call_inputs.pop("seed"))
@@ -255,7 +255,7 @@ class WorkflowFunction(Node):
 
         broadcast_args = self._find_broadcast_args(values)
         if broadcast_args:
-            return self._broadcast(values, broadcast_args, n_broadcast_samples, do_marginalize)
+            return self._broadcast(values, broadcast_args, n_broadcast_samples, do_include_inputs)
 
         return self._execute_many([values])[0]
 
@@ -448,12 +448,13 @@ class WorkflowFunction(Node):
         values: Dict[str, Any],
         broadcast_args: list[str],
         n_broadcast_samples: int,
-        do_marginalize: bool = False,
+        do_include_inputs: bool = False,
     ) -> BroadcastDistribution | Distribution:
         """
         Sample from Distribution arguments and call the function once per sample.
-        Returns a ``BroadcastDistribution`` holding the joint over inputs and
-        outputs, or the output marginal when ``do_marginalize`` is True.
+        Returns the output marginal by default, or a ``BroadcastDistribution``
+        holding the joint over inputs and outputs when ``do_include_inputs``
+        is True.
 
         Vectorization (``"jax"`` vs ``"loop"``) and orchestration
         (``workflow_kind``) are resolved independently:
@@ -533,7 +534,11 @@ class WorkflowFunction(Node):
         if isinstance(result, Distribution):
             result.with_source(provenance)
 
-        if do_marginalize and isinstance(result, BroadcastDistribution):
+        if do_include_inputs:
+            return result
+
+        # Default: return the output marginal only
+        if isinstance(result, BroadcastDistribution):
             marginal = result.marginalize()
             if isinstance(marginal, Distribution):
                 marginal.with_source(provenance)

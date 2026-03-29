@@ -10,7 +10,6 @@ from probpipe import (
     MultivariateNormal,
     DistributionView,
     EmpiricalDistribution,
-    BroadcastDistribution,
     JointDistribution,
 )
 from probpipe.core.distribution import PyTreeArrayDistribution
@@ -379,7 +378,7 @@ class TestBroadcasting:
             seed=42,
         )
         result = wf(a=jg["x"], b=jg["y"])
-        assert isinstance(result, BroadcastDistribution)
+        assert hasattr(result, "samples")
         # Both ~ N(0,1) with corr=0.9, so sum ~ N(0, 1+1+2*0.9) = N(0, 2.8)
         assert abs(float(jnp.mean(result.samples))) < 1.5
 

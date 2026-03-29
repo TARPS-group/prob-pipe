@@ -9,7 +9,6 @@ from probpipe import (
     JointEmpirical,
     DistributionView,
     EmpiricalDistribution,
-    BroadcastDistribution,
     JointDistribution,
 )
 from probpipe.core.distribution import PyTreeArrayDistribution
@@ -369,7 +368,7 @@ class TestBroadcasting:
             seed=42,
         )
         result = wf(a=je["x"], b=je["y"])
-        assert isinstance(result, BroadcastDistribution)
+        assert hasattr(result, "samples")
         # Joint resampling means y = 10*x, so a+b = 11*x
         # Mean of x is 2.0, so mean of a+b should be ~22
         mean_val = float(jnp.mean(result.samples))

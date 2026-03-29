@@ -92,15 +92,11 @@ ProbPipe makes this natural. `JointBootstrapDistribution` represents the bootstr
 # Wrap the observed data as a bootstrap sampling distribution
 bootstrap_data = JointBootstrapDistribution(EmpiricalDistribution(data))
 
-# Broadcasting condition_on over bootstrap datasets returns a BroadcastDistribution
+# Broadcasting condition_on over bootstrap datasets returns the bagged posterior
 bagged_posterior = condition_on(model, bootstrap_data)
 ```
 
-The result is a `BroadcastDistribution` — a joint distribution over bootstrap datasets (inputs) and their corresponding posteriors (outputs). Call `marginalize()` to obtain the **bagged posterior**, a mixture distribution that averages over the individual bootstrap posteriors:
-
-```python
-bagged = bagged_posterior.marginalize()  # mixture over bootstrap posteriors
-```
+The result is the **bagged posterior** — a mixture distribution that averages over the individual bootstrap posteriors. The individual posteriors are accessible via `.components`.
 
 By default, `JointBootstrapDistribution` sets the bootstrap dataset size equal to the original dataset size (the standard nonparametric bootstrap). You can customize it — for example, using `n=int(N**0.95)` as recommended for BayesBag model selection:
 
@@ -137,11 +133,10 @@ true_values = [1.0, 2.0, -0.5]
 
 fig, all_axes = plt.subplots(2, 3, figsize=(12, 7))
 
-for row, (label, bp, axes) in enumerate([
+for row, (label, bagged, axes) in enumerate([
     ("Well-specified (Gaussian noise)", bagged_posterior, all_axes[0]),
     ("Misspecified (heavy-tailed noise)", bagged_posterior_ht, all_axes[1]),
 ]):
-    bagged = bp.marginalize()
     individual_posteriors = bagged.components
 
     for j, (ax, name, truth) in enumerate(zip(axes, param_names, true_values)):
@@ -205,11 +200,11 @@ predict_wf = WorkflowFunction(func=predict)
 # Posterior uncertainty propagates automatically
 x_new = jnp.array([[0.5, -0.3]])
 predictive = predict_wf(params=posterior, x_new=x_new)
-mean(predictive.marginalize())       # posterior predictive mean
-variance(predictive.marginalize())   # posterior predictive variance
+mean(predictive)       # posterior predictive mean
+variance(predictive)   # posterior predictive variance
 ```
 
-The result is a `BroadcastDistribution` — a joint distribution over the broadcast inputs and the function output, preserving their alignment. Call `marginalize()` to get the output distribution. To skip storing input samples (saving memory), pass `marginalize=True`.
+Broadcasting returns the output distribution directly. Pass `include_inputs=True` to get a `BroadcastDistribution` that preserves input–output alignment (e.g. for inspecting which input samples produced which outputs).
 
 This same pattern makes **posterior predictive checks** natural. Separate the pipeline into reusable pieces — simulation and test statistics — with `predict` driving the generative model:
 
@@ -241,8 +236,8 @@ def ppc_kurt_impl(params):
 ppc_max = WorkflowFunction(func=ppc_max_impl, n_broadcast_samples=500)
 ppc_kurt = WorkflowFunction(func=ppc_kurt_impl, n_broadcast_samples=500)
 
-ppc_max_dist = ppc_max(params=posterior_ht).marginalize()
-ppc_kurt_dist = ppc_kurt(params=posterior_ht).marginalize()
+ppc_max_dist = ppc_max(params=posterior_ht)
+ppc_kurt_dist = ppc_kurt(params=posterior_ht)
 ```
 
 Compare to the observed residual statistics:

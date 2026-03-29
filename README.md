@@ -101,9 +101,7 @@ bootstrap_data = JointBootstrapDistribution(EmpiricalDistribution(data))
 bagged_posterior = condition_on(model, bootstrap_data)
 ```
 
-Because `JointBootstrapDistribution` implements `SupportsSampling`, the `condition_on` workflow function automatically broadcasts: it draws bootstrap datasets and runs MCMC on each, returning a `BroadcastDistribution` — a joint distribution over bootstrap datasets (inputs) and their corresponding posteriors (outputs).
-
-Call `marginalize()` to obtain the **bagged posterior**, a mixture distribution that averages over the bootstrap posteriors. The individual bootstrap posteriors are accessible via `.components`.
+Because `JointBootstrapDistribution` implements `SupportsSampling`, the `condition_on` workflow function automatically broadcasts: it draws bootstrap datasets and runs MCMC on each, returning the **bagged posterior** — a mixture distribution that averages over the individual bootstrap posteriors. The individual posteriors are accessible via `.components`.
 
 To see why bagging matters, compare the well-specified Gaussian data above with a **misspecified** scenario — heavy-tailed noise that violates the model's Gaussian assumption:
 
@@ -133,11 +131,10 @@ true_values = [1.0, 2.0, -0.5]
 
 fig, all_axes = plt.subplots(2, 3, figsize=(12, 7))
 
-for row, (label, bp, axes) in enumerate([
+for row, (label, bagged, axes) in enumerate([
     ("Well-specified (Gaussian noise)", bagged_posterior, all_axes[0]),
     ("Misspecified (heavy-tailed noise)", bagged_posterior_ht, all_axes[1]),
 ]):
-    bagged = bp.marginalize()
     individual_posteriors = bagged.components
 
     for j, (ax, name, truth) in enumerate(zip(axes, param_names, true_values)):
@@ -201,8 +198,8 @@ predict_wf = WorkflowFunction(func=predict)
 # Posterior uncertainty propagates automatically
 x_new = jnp.array([[0.5, -0.3]])
 predictive = predict_wf(params=posterior, x_new=x_new)
-mean(predictive.marginalize())       # posterior predictive mean
-variance(predictive.marginalize())   # posterior predictive variance
+mean(predictive)       # posterior predictive mean
+variance(predictive)   # posterior predictive variance
 ```
 
 This same pattern makes **posterior predictive checks** natural. Separate the pipeline into reusable pieces — simulation and test statistics — with `predict` driving the generative model:
@@ -235,8 +232,8 @@ def ppc_kurt_impl(params):
 ppc_max = WorkflowFunction(func=ppc_max_impl, n_broadcast_samples=500)
 ppc_kurt = WorkflowFunction(func=ppc_kurt_impl, n_broadcast_samples=500)
 
-ppc_max_dist = ppc_max(params=posterior_ht).marginalize()
-ppc_kurt_dist = ppc_kurt(params=posterior_ht).marginalize()
+ppc_max_dist = ppc_max(params=posterior_ht)
+ppc_kurt_dist = ppc_kurt(params=posterior_ht)
 ```
 
 Compare to the observed residual statistics:

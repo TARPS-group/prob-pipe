@@ -11,7 +11,6 @@ from probpipe import (
     Beta,
     MultivariateNormal,
     EmpiricalDistribution,
-    BroadcastDistribution,
     TransformedDistribution,
     ProductDistribution,
     SequentialJointDistribution,
@@ -155,7 +154,7 @@ class TestBroadcastingProvenance:
         wf = WorkflowFunction(func=identity, vectorize="loop",
                       n_broadcast_samples=20, seed=42)
         result = wf(x=n)
-        assert isinstance(result, BroadcastDistribution)
+        assert hasattr(result, "samples")
         assert result.source is not None
         assert result.source.operation == "broadcast"
         assert result.source.parents == (n,)
@@ -173,7 +172,7 @@ class TestBroadcastingProvenance:
         wf = WorkflowFunction(func=double, vectorize="jax",
                       n_broadcast_samples=20, seed=42)
         result = wf(x=n)
-        assert isinstance(result, BroadcastDistribution)
+        assert hasattr(result, "samples")
         assert result.source is not None
         assert result.source.operation == "broadcast"
         assert result.source.metadata["vectorize"] == "jax"
@@ -202,7 +201,7 @@ class TestBroadcastingProvenance:
         wf = WorkflowFunction(func=add, vectorize="loop",
                       n_broadcast_samples=20, seed=42)
         result = wf(a=ed, b=n)
-        assert isinstance(result, BroadcastDistribution)
+        assert hasattr(result, "samples")
         assert result.source is not None
         assert result.source.operation == "broadcast"
 

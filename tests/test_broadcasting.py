@@ -14,18 +14,19 @@ def key():
 
 
 # ---------------------------------------------------------------------------
-# Basic broadcasting (loop backend)
+# Basic broadcasting (loop backend) — default returns marginal
 # ---------------------------------------------------------------------------
 
 class TestBroadcastingBasic:
-    def test_returns_broadcast_distribution(self):
+    def test_returns_marginal_by_default(self):
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=50, vectorize="loop", seed=0)
         g = Normal(loc=1.0, scale=0.5)
         result = w(x=g)
-        assert isinstance(result, BroadcastDistribution)
+        assert not isinstance(result, BroadcastDistribution)
+        assert hasattr(result, 'samples')
         assert result.n == 50
 
     def test_output_values_correct(self):
@@ -45,19 +46,17 @@ class TestBroadcastingBasic:
         w = WorkflowFunction(func=compute_norm, n_broadcast_samples=20, vectorize="loop", seed=2)
         mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
         result = w(x=mvn)
-        assert isinstance(result, BroadcastDistribution)
-        assert result.n == 20
-        assert result.marginalize().dim == 1
+        assert not isinstance(result, BroadcastDistribution)
+        assert result.dim == 1
 
-    def test_input_samples_available(self):
+    def test_no_input_samples_by_default(self):
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop", seed=0)
         g = Normal(loc=1.0, scale=0.5)
         result = w(x=g)
-        assert "x" in result.input_samples
-        assert result.input_samples["x"].shape[0] == 20
+        assert not hasattr(result, 'input_samples')
 
 
 class TestBroadcastingMultipleArgs:
@@ -120,8 +119,8 @@ class TestReservedParameterNames:
         with pytest.raises(ValueError, match="reserved"):
             WorkflowFunction(func=bad_fn, vectorize="loop")
 
-    def test_marginalize_forbidden(self):
-        def bad_fn(x: jnp.ndarray, marginalize: bool = False) -> jnp.ndarray:
+    def test_include_inputs_forbidden(self):
+        def bad_fn(x: jnp.ndarray, include_inputs: bool = False) -> jnp.ndarray:
             return x
 
         with pytest.raises(ValueError, match="reserved"):
@@ -196,7 +195,7 @@ class TestBroadcastingEnumeration:
         assert result.n == 30
 
     def test_enumeration_input_samples_aligned(self):
-        """Input samples should be aligned with output samples."""
+        """Input samples should be aligned with output samples when include_inputs=True."""
         def identity(x: jnp.ndarray) -> jnp.ndarray:
             return x
 
@@ -204,7 +203,8 @@ class TestBroadcastingEnumeration:
         ed = EmpiricalDistribution(samples)
 
         w = WorkflowFunction(func=identity, n_broadcast_samples=100, vectorize="loop", seed=7)
-        result = w(x=ed)
+        result = w(x=ed, include_inputs=True)
+        assert isinstance(result, BroadcastDistribution)
         assert "x" in result.input_samples
         assert result.input_samples["x"].shape == (3, 1)
         # Output should match input (identity function)
@@ -224,10 +224,10 @@ class TestBroadcastingNonNumeric:
         w = WorkflowFunction(func=describe, n_broadcast_samples=5, vectorize="loop", seed=11)
         g = Normal(loc=0.0, scale=1.0)
         result = w(x=g)
-        assert isinstance(result, BroadcastDistribution)
-        marginal = result.marginalize()
-        assert len(marginal.items) == 5
-        assert all(isinstance(r, str) for r in marginal.items)
+        # Non-numeric results still return a marginal (ListMarginal)
+        assert not isinstance(result, BroadcastDistribution)
+        assert len(result.items) == 5
+        assert all(isinstance(r, str) for r in result.items)
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +242,7 @@ class TestBroadcastingJAX:
         w = WorkflowFunction(func=double_it, n_broadcast_samples=50, vectorize="jax", seed=20)
         g = Normal(loc=1.0, scale=0.5)
         result = w(x=g)
-        assert isinstance(result, BroadcastDistribution)
+        assert not isinstance(result, BroadcastDistribution)
         assert result.n == 50
 
     def test_vmap_values_correct(self):
@@ -283,17 +283,19 @@ class TestBroadcastingJAX:
         mvn = MultivariateNormal(loc=jnp.array([4.0, 6.0]), cov=0.01 * jnp.eye(2))
         result = w(x=mvn)
         assert result.n == 30
-        assert result.marginalize().dim == 2
+        assert result.dim == 2
         mean = jnp.mean(result.samples, axis=0)
         np.testing.assert_allclose(mean, jnp.array([2.0, 3.0]), atol=0.2)
 
     def test_vmap_input_samples(self):
+        """include_inputs=True preserves input–output alignment for vmap."""
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=30, vectorize="jax", seed=20)
         g = Normal(loc=1.0, scale=0.5)
-        result = w(x=g)
+        result = w(x=g, include_inputs=True)
+        assert isinstance(result, BroadcastDistribution)
         assert "x" in result.input_samples
         assert result.input_samples["x"].shape[0] == 30
         # Output should be 2x input
@@ -315,7 +317,7 @@ class TestAutoBackend:
         w = WorkflowFunction(func=pure_jax, n_broadcast_samples=20, vectorize="auto", seed=30)
         g = Normal(loc=0.0, scale=1.0)
         result = w(x=g)
-        assert isinstance(result, BroadcastDistribution)
+        assert not isinstance(result, BroadcastDistribution)
         assert w._resolved_vectorize == "jax"
 
     def test_auto_falls_back_to_loop_for_non_traceable(self):
@@ -327,7 +329,7 @@ class TestAutoBackend:
         w = WorkflowFunction(func=scipy_fn, n_broadcast_samples=20, vectorize="auto", seed=31)
         g = Normal(loc=2.0, scale=0.1)
         result = w(x=g)
-        assert isinstance(result, BroadcastDistribution)
+        assert not isinstance(result, BroadcastDistribution)
         assert w._resolved_vectorize == "loop"
 
 
@@ -364,43 +366,58 @@ class TestSeedManagement:
 
 
 # ---------------------------------------------------------------------------
-# Marginalize argument
+# include_inputs argument
 # ---------------------------------------------------------------------------
 
-class TestMarginalizeArgument:
-    def test_marginalize_at_construction(self):
+class TestIncludeInputsArgument:
+    def test_include_inputs_at_construction(self):
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop", seed=0, marginalize=True)
+        w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop",
+                             seed=0, include_inputs=True)
         g = Normal(loc=1.0, scale=0.5)
         result = w(x=g)
-        assert not isinstance(result, BroadcastDistribution)
-        assert hasattr(result, 'samples')
+        assert isinstance(result, BroadcastDistribution)
+        assert "x" in result.input_samples
         assert result.n == 20
 
-    def test_marginalize_at_call_time(self):
+    def test_include_inputs_at_call_time(self):
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop", seed=0)
         g = Normal(loc=1.0, scale=0.5)
-        result = w(x=g, marginalize=True)
-        assert not isinstance(result, BroadcastDistribution)
-        assert hasattr(result, 'samples')
+        result = w(x=g, include_inputs=True)
+        assert isinstance(result, BroadcastDistribution)
+        assert "x" in result.input_samples
 
-    def test_marginalize_no_input_samples(self):
+    def test_default_no_input_samples(self):
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop", seed=0, marginalize=True)
+        w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop", seed=0)
         g = Normal(loc=1.0, scale=0.5)
         result = w(x=g)
+        assert not isinstance(result, BroadcastDistribution)
         assert not hasattr(result, 'input_samples')
+
+    def test_include_inputs_has_named_components(self):
+        def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
+            return a + b
+
+        w = WorkflowFunction(func=add_them, n_broadcast_samples=20, vectorize="loop", seed=0)
+        g1 = Normal(loc=1.0, scale=0.1)
+        g2 = Normal(loc=2.0, scale=0.1)
+        result = w(a=g1, b=g2, include_inputs=True)
+        assert isinstance(result, BroadcastDistribution)
+        assert "a" in result.component_names
+        assert "b" in result.component_names
+        assert "_output" in result.component_names
 
 
 # ---------------------------------------------------------------------------
-# Named components
+# Named components (require include_inputs=True)
 # ---------------------------------------------------------------------------
 
 class TestNamedComponents:
@@ -411,7 +428,7 @@ class TestNamedComponents:
         w = WorkflowFunction(func=add_them, n_broadcast_samples=20, vectorize="loop", seed=0)
         g1 = Normal(loc=1.0, scale=0.1)
         g2 = Normal(loc=2.0, scale=0.1)
-        result = w(a=g1, b=g2)
+        result = w(a=g1, b=g2, include_inputs=True)
         assert "a" in result.component_names
         assert "b" in result.component_names
         assert "_output" in result.component_names
@@ -422,7 +439,7 @@ class TestNamedComponents:
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop", seed=0)
         g = Normal(loc=1.0, scale=0.5)
-        result = w(x=g)
+        result = w(x=g, include_inputs=True)
         x_marginal = result["x"]
         assert isinstance(x_marginal, EmpiricalDistribution)
         assert x_marginal.n == 20
@@ -433,6 +450,6 @@ class TestNamedComponents:
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop", seed=0)
         g = Normal(loc=1.0, scale=0.5)
-        result = w(x=g)
+        result = w(x=g, include_inputs=True)
         out = result["_output"]
         assert hasattr(out, 'samples')
