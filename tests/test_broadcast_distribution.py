@@ -421,3 +421,230 @@ class TestMarginalize:
             broadcast_args=["x"],
         )
         np.testing.assert_allclose(bd.samples, data, atol=1e-6)
+
+    def test_samples_property_list_output(self):
+        """bd.samples should forward to marginal.items for list outputs."""
+        items = ["a", "b", "c"]
+        bd = BroadcastDistribution(
+            input_samples={"x": jnp.ones((3, 1))},
+            output_samples=items,
+            weights=None,
+            broadcast_args=["x"],
+        )
+        assert bd.samples == items
+
+
+# ---------------------------------------------------------------------------
+# BroadcastDistribution joint sampling with list outputs
+# ---------------------------------------------------------------------------
+
+
+class TestBroadcastDistributionListOutputSampling:
+    def test_joint_sample_list_outputs(self, key):
+        """Resampling with list outputs returns list of items."""
+        items = ["alpha", "beta", "gamma"]
+        bd = BroadcastDistribution(
+            input_samples={"x": jnp.array([[1.0], [2.0], [3.0]])},
+            output_samples=items,
+            weights=None,
+            broadcast_args=["x"],
+        )
+        batch = bd._sample(key, (5,))
+        assert isinstance(batch["_output"], list)
+        assert len(batch["_output"]) == 5
+        assert all(item in items for item in batch["_output"])
+
+    def test_joint_sample_with_weights(self, key):
+        """Weighted joint sampling selects pairs according to weights."""
+        n = 3
+        inputs = {"x": jnp.array([[1.0], [2.0], [3.0]])}
+        outputs = jnp.array([[10.0], [20.0], [30.0]])
+        # Put all weight on the last sample
+        w = jnp.array([0.0, 0.0, 1.0])
+        bd = BroadcastDistribution(
+            input_samples=inputs,
+            output_samples=outputs,
+            weights=w,
+            broadcast_args=["x"],
+        )
+        batch = bd._sample(key, (20,))
+        # All samples should be the third pair
+        np.testing.assert_allclose(batch["x"], jnp.full((20, 1), 3.0), atol=1e-5)
+        np.testing.assert_allclose(batch["_output"], jnp.full((20, 1), 30.0), atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# _ArrayMarginal additional coverage
+# ---------------------------------------------------------------------------
+
+
+class TestArrayMarginalAdditional:
+    def test_repr(self):
+        m = _ArrayMarginal(jnp.ones((10, 3)), None)
+        r = repr(m)
+        assert "MarginalizedBroadcastDistribution" in r
+        assert "n=10" in r
+        assert "event_shape=(3,)" in r
+
+    def test_sample_scalar(self, key):
+        """Single draw (sample_shape=()) returns unbatched array."""
+        samples = jnp.arange(100, dtype=jnp.float32).reshape(-1, 1)
+        m = _ArrayMarginal(samples, None)
+        drawn = m._sample(key, ())
+        assert drawn.shape == (1,)
+
+    def test_sample_weighted_scalar(self, key):
+        """Weighted single draw."""
+        samples = jnp.array([[0.0], [100.0]])
+        w = jnp.array([0.0, 1.0])
+        m = _ArrayMarginal(samples, w)
+        drawn = m._sample(key, ())
+        np.testing.assert_allclose(drawn, jnp.array([100.0]), atol=1e-5)
+
+    def test_sample_weighted_batch(self, key):
+        """Weighted batch draw."""
+        samples = jnp.array([[0.0], [100.0]])
+        w = jnp.array([0.0, 1.0])
+        m = _ArrayMarginal(samples, w)
+        drawn = m._sample(key, (20,))
+        np.testing.assert_allclose(drawn, jnp.full((20, 1), 100.0), atol=1e-5)
+
+    def test_expectation_full(self):
+        """Full expectation over all samples."""
+        samples = jnp.array([[1.0], [2.0], [3.0]])
+        m = _ArrayMarginal(samples, None)
+        result = m._expectation(lambda x: x ** 2)
+        # E[X^2] = (1+4+9)/3 = 14/3
+        np.testing.assert_allclose(result, jnp.array([14.0 / 3]), atol=1e-4)
+
+    def test_expectation_full_weighted(self):
+        """Weighted expectation."""
+        samples = jnp.array([[0.0], [10.0]])
+        w = jnp.array([0.75, 0.25])
+        m = _ArrayMarginal(samples, w)
+        result = m._expectation(lambda x: x)
+        np.testing.assert_allclose(result, jnp.array([2.5]), atol=1e-4)
+
+    def test_expectation_subsampled(self, key):
+        """Subsampled expectation returns BootstrapDistribution by default."""
+        from probpipe.core.distribution import BootstrapDistribution
+
+        samples = jnp.arange(100, dtype=jnp.float32).reshape(-1, 1)
+        m = _ArrayMarginal(samples, None)
+        result = m._expectation(lambda x: x, key=key, num_evaluations=20)
+        assert isinstance(result, BootstrapDistribution)
+
+    def test_expectation_subsampled_no_dist(self, key):
+        """Subsampled expectation with return_dist=False returns array."""
+        samples = jnp.arange(100, dtype=jnp.float32).reshape(-1, 1)
+        m = _ArrayMarginal(samples, None)
+        result = m._expectation(
+            lambda x: x, key=key, num_evaluations=20, return_dist=False
+        )
+        assert isinstance(result, jnp.ndarray)
+
+    def test_expectation_subsampled_weighted(self, key):
+        """Subsampled expectation with weights."""
+        from probpipe.core.distribution import BootstrapDistribution
+
+        n = 50
+        samples = jnp.arange(n, dtype=jnp.float32).reshape(-1, 1)
+        w = jnp.ones(n) / n
+        m = _ArrayMarginal(samples, w)
+        result = m._expectation(lambda x: x, key=key, num_evaluations=10)
+        assert isinstance(result, BootstrapDistribution)
+
+    def test_expectation_subsampled_weighted_no_dist(self, key):
+        """Subsampled weighted expectation with return_dist=False."""
+        n = 50
+        samples = jnp.arange(n, dtype=jnp.float32).reshape(-1, 1)
+        w = jnp.ones(n) / n
+        m = _ArrayMarginal(samples, w)
+        result = m._expectation(
+            lambda x: x, key=key, num_evaluations=10, return_dist=False
+        )
+        assert isinstance(result, jnp.ndarray)
+
+    def test_cov_weighted(self):
+        """Weighted covariance."""
+        samples = jnp.array([[1.0, 2.0], [3.0, 4.0]])
+        w = jnp.array([0.5, 0.5])
+        m = _ArrayMarginal(samples, w)
+        cov = m._cov()
+        assert cov.shape == (2, 2)
+
+    def test_variance_weighted(self):
+        """Weighted variance."""
+        samples = jnp.array([[0.0], [10.0]])
+        w = jnp.array([0.5, 0.5])
+        m = _ArrayMarginal(samples, w)
+        v = m._variance()
+        # Var = 0.5*(0-5)^2 + 0.5*(10-5)^2 = 25
+        np.testing.assert_allclose(v, jnp.array([25.0]), atol=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# _MixtureMarginal repr
+# ---------------------------------------------------------------------------
+
+
+class TestMixtureMarginalAdditional:
+    def test_repr(self):
+        components = [Normal(loc=0.0, scale=1.0), Normal(loc=5.0, scale=1.0)]
+        m = _make_mixture_marginal(components, None)
+        r = repr(m)
+        assert "MarginalizedBroadcastDistribution" in r
+        assert "mixture" in r
+        assert "n=2" in r
+
+    def test_sample_scalar(self, key):
+        """Single draw (sample_shape=()) returns scalar."""
+        components = [Normal(loc=0.0, scale=1.0), Normal(loc=5.0, scale=1.0)]
+        m = _make_mixture_marginal(components, None)
+        drawn = m._sample(key, ())
+        assert drawn.shape == ()
+
+    def test_weights_property(self):
+        components = [Normal(loc=0.0, scale=1.0), Normal(loc=5.0, scale=1.0)]
+        m = _make_mixture_marginal(components, None)
+        np.testing.assert_allclose(m.weights, jnp.array([0.5, 0.5]), atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# _ListMarginal repr and weights
+# ---------------------------------------------------------------------------
+
+
+class TestListMarginalAdditional:
+    def test_repr(self):
+        m = _ListMarginal(["a", "b"], None)
+        r = repr(m)
+        assert "MarginalizedBroadcastDistribution" in r
+        assert "list" in r
+        assert "n=2" in r
+
+    def test_weights_none(self):
+        m = _ListMarginal(["a", "b"], None)
+        assert m.weights is None
+
+    def test_weights_provided(self):
+        w = jnp.array([0.3, 0.7])
+        m = _ListMarginal(["a", "b"], w)
+        np.testing.assert_allclose(m.weights, w, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# _make_marginal edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestMakeMarginalEdgeCases:
+    def test_scalar_output(self):
+        """Single scalar value (e.g., from vmap)."""
+        m = _make_marginal(3.14, None)
+        assert isinstance(m, _ArrayMarginal)
+
+    def test_with_name(self):
+        """Name propagates."""
+        m = _make_marginal(jnp.ones((5, 2)), None, name="test_output")
+        assert m._name == "test_output"

@@ -96,8 +96,30 @@ condition_on_nutpie = WorkflowFunction(
 
 ### 1.7 Reserved parameter names
 
-`WorkflowFunction` reserves the parameter name `seed` internally.
-Use `random_seed` instead when defining functions that accept a PRNG seed.
+`WorkflowFunction` reserves the parameter names `seed`, `n_broadcast_samples`,
+and `include_inputs` internally. Use `random_seed` instead when defining
+functions that accept a PRNG seed.
+
+### 1.8 The `.n` property convention
+
+Finite-sample distribution classes expose an `.n` property (read-only
+`int`) giving the number of stored samples, components, or observations.
+The meaning depends on the class but always answers "how many items does
+this distribution hold?"
+
+| Class | `.n` meaning |
+|-------|-------------|
+| `EmpiricalDistribution` | Number of samples |
+| `JointEmpiricalDistribution` | Number of joint samples |
+| `BootstrapDistribution` | Number of function evaluations |
+| `JointBootstrapDistribution` | Number of observations per bootstrap dataset |
+| `BroadcastDistribution` | Number of input–output pairs |
+| `_ArrayMarginal` | Number of output samples |
+| `_MixtureMarginal` | Number of mixture components |
+| `_ListMarginal` | Number of output items |
+
+When adding a new class that wraps a finite collection of samples or
+components, define `.n` as a `@property` returning `int`.
 
 ---
 

@@ -1763,7 +1763,7 @@ def _make_marginal(
     *,
     output_distributions: list | None = None,
     name: str | None = None,
-) -> _ArrayMarginal | _MixtureMarginal | _ListMarginal:
+) -> MarginalizedBroadcastDistribution:
     """Factory to construct the appropriate marginal subtype."""
     if output_distributions is not None:
         return _make_mixture_marginal(output_distributions, weights, name=name)
@@ -1805,6 +1805,20 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
     Call :meth:`marginalize` to obtain the output-only marginal, which
     supports moment protocols (mean, variance, etc.) when the output
     data permits.
+
+    .. note::
+
+       ``BroadcastDistribution`` does **not** inherit from
+       :class:`~probpipe.distributions.joint.JointDistribution`.
+       ``JointDistribution`` requires all leaves to be
+       ``ArrayDistribution`` instances with TFP shape semantics
+       (``batch_shape``, ``event_shape``), but a broadcast output can be
+       any type — arrays, distributions, strings, etc. — and input
+       samples are plain arrays without distribution metadata.  The two
+       hierarchies serve different roles: ``JointDistribution`` models
+       structured probabilistic variables; ``BroadcastDistribution``
+       records the empirical input–output mapping of a function
+       evaluation.
 
     Parameters
     ----------
@@ -1919,7 +1933,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
 
     # -- marginalization ----------------------------------------------------
 
-    def marginalize(self) -> _ArrayMarginal | _MixtureMarginal | _ListMarginal:
+    def marginalize(self) -> MarginalizedBroadcastDistribution:
         """Return the output marginal distribution.
 
         Lazy — the marginal is constructed on first call and cached.
@@ -1933,7 +1947,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
         return self._marginal_cache
 
     @property
-    def output(self) -> _ArrayMarginal | _MixtureMarginal | _ListMarginal:
+    def output(self) -> MarginalizedBroadcastDistribution:
         """Alias for :meth:`marginalize`."""
         return self.marginalize()
 
