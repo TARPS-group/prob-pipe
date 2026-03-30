@@ -24,8 +24,8 @@ from ..custom_types import PRNGKey
 # Default sample count for moment-matching conversions
 DEFAULT_NUM_SAMPLES = 1024
 from ..core.distribution import (
-    ArrayDistribution,
-    EmpiricalDistribution,
+    ArrayEmpiricalDistribution,
+    Distribution,
     Provenance,
     _auto_key,
     _supports_compatible,
@@ -66,7 +66,7 @@ def _point_estimate(x):
 # Per-target conversion functions
 #
 # Each function has signature:
-#   (source, key, **kwargs) -> ArrayDistribution
+#   (source, key, **kwargs) -> Distribution
 # ---------------------------------------------------------------------------
 
 def _convert_to_normal(source, key, **kw):
@@ -334,7 +334,7 @@ def _convert_to_multivariatenormal(source, key, **kw):
     name = kw.get("name") or source.name
     if isinstance(source, MultivariateNormal):
         return source
-    if isinstance(source, EmpiricalDistribution):
+    if isinstance(source, ArrayEmpiricalDistribution):
         loc = source._mean()
         cov_mat = source._cov()
         r = MultivariateNormal(loc=loc, cov=cov_mat, name=name)
@@ -426,14 +426,14 @@ def _convert_to_vonmisesfisher(source, key, **kw):
 
 
 def _convert_to_empirical(source, key, **kw):
-    """Convert any distribution to EmpiricalDistribution by sampling."""
-    if isinstance(source, EmpiricalDistribution):
+    """Convert any distribution to ArrayEmpiricalDistribution by sampling."""
+    if isinstance(source, ArrayEmpiricalDistribution):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
     if key is None:
         key = _auto_key()
     samples = source._sample(key, (num_samples,))
-    r = EmpiricalDistribution(samples, name=kw.get("name") or source.name)
+    r = ArrayEmpiricalDistribution(samples, name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source))
     return r
 
@@ -469,7 +469,7 @@ def _build_dispatch_table() -> dict[str, callable]:
         "Multinomial": _convert_to_multinomial,
         "Wishart": _convert_to_wishart,
         "VonMisesFisher": _convert_to_vonmisesfisher,
-        "EmpiricalDistribution": _convert_to_empirical,
+        "ArrayEmpiricalDistribution": _convert_to_empirical,
     }
 
 
@@ -495,19 +495,16 @@ class ProbPipeConverter(Converter):
         return self._dispatch
 
     def source_types(self) -> tuple[type, ...]:
-        return (ArrayDistribution, EmpiricalDistribution)
+        return (Distribution,)
 
     def target_types(self) -> tuple[type, ...]:
-        return (ArrayDistribution, EmpiricalDistribution)
+        return (Distribution,)
 
     def _is_source(self, source: Any) -> bool:
-        return isinstance(source, (ArrayDistribution, EmpiricalDistribution))
+        return isinstance(source, Distribution)
 
     def _is_target(self, target_type: type) -> bool:
-        return isinstance(target_type, type) and (
-            issubclass(target_type, ArrayDistribution)
-            or issubclass(target_type, EmpiricalDistribution)
-        )
+        return isinstance(target_type, type) and issubclass(target_type, Distribution)
 
     def check(self, source: Any, target_type: type) -> ConversionInfo:
         if not self._is_source(source):
@@ -549,7 +546,7 @@ class ProbPipeConverter(Converter):
             description=f"Moment-match {type(source).__name__} -> {target_name}{support_note}",
         )
 
-    def convert(self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any) -> ArrayDistribution:
+    def convert(self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any) -> Distribution:
         if key is None:
             key = _auto_key()
         target_name = target_type.__name__

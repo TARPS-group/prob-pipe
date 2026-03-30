@@ -12,7 +12,7 @@ import jax.numpy as jnp
 
 from ..core.distribution import (
     ArrayDistribution,
-    EmpiricalDistribution,
+    ArrayEmpiricalDistribution,
     Provenance,
     _auto_key,
 )
@@ -115,18 +115,18 @@ class ScipyConverter(Converter):
     def source_types(self) -> tuple[type, ...]:
         if not _HAS_SCIPY:
             return ()
-        return (_rv_frozen, ArrayDistribution, EmpiricalDistribution)
+        return (_rv_frozen, ArrayDistribution, ArrayEmpiricalDistribution)
 
     def target_types(self) -> tuple[type, ...]:
         if not _HAS_SCIPY:
             return ()
-        return (ArrayDistribution, EmpiricalDistribution, _rv_frozen)
+        return (ArrayDistribution, ArrayEmpiricalDistribution, _rv_frozen)
 
     @staticmethod
     def _is_probpipe_target(target_type: type) -> bool:
         return isinstance(target_type, type) and (
             issubclass(target_type, ArrayDistribution)
-            or issubclass(target_type, EmpiricalDistribution)
+            or issubclass(target_type, ArrayEmpiricalDistribution)
         )
 
     def check(self, source: Any, target_type: type) -> ConversionInfo:
@@ -189,12 +189,12 @@ class ScipyConverter(Converter):
                 from ._registry import converter_registry
                 return converter_registry.convert(pp_dist, target_type, key=key, **kwargs)
 
-            # Unknown scipy: sample -> EmpiricalDistribution
+            # Unknown scipy: sample -> ArrayEmpiricalDistribution
             n = kwargs.pop("num_samples", 1024)
             samples = jnp.asarray(source.rvs(size=n))
-            emp = EmpiricalDistribution(samples)
+            emp = ArrayEmpiricalDistribution(samples)
             emp.with_source(Provenance("convert_from_scipy", parents=()))
-            if issubclass(target_type, EmpiricalDistribution):
+            if issubclass(target_type, ArrayEmpiricalDistribution):
                 return emp
             from ._registry import converter_registry
             return converter_registry.convert(emp, target_type, key=key, **kwargs)

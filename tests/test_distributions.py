@@ -7,6 +7,7 @@ import pytest
 
 from probpipe import (
     ArrayDistribution,
+    ArrayEmpiricalDistribution,
     TFPDistribution,
     EmpiricalDistribution,
     Provenance,
@@ -150,7 +151,7 @@ class TestMultivariateNormal:
 
     def test_from_distribution_empirical(self, gaussian, key):
         ed = from_distribution(
-            gaussian, EmpiricalDistribution, key=key, num_samples=2000
+            gaussian, ArrayEmpiricalDistribution, key=key, num_samples=2000
         )
         g2 = from_distribution(ed, MultivariateNormal, name="fitted")
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.2)
@@ -263,7 +264,7 @@ class TestEmpiricalDistribution:
 
     def test_from_distribution(self, gaussian, key):
         ed = from_distribution(
-            gaussian, EmpiricalDistribution, key=key, num_samples=50
+            gaussian, ArrayEmpiricalDistribution, key=key, num_samples=50
         )
         assert ed.n == 50
         assert ed.event_shape == gaussian.event_shape
@@ -273,13 +274,13 @@ class TestEmpiricalDistribution:
 
     def test_from_distribution_custom_name(self, gaussian, key):
         ed = from_distribution(
-            gaussian, EmpiricalDistribution, key=key, num_samples=10, name="custom"
+            gaussian, ArrayEmpiricalDistribution, key=key, num_samples=10, name="custom"
         )
         assert ed.name == "custom"
 
     def test_from_distribution_default_key(self, gaussian):
         """from_distribution should work without explicit key."""
-        ed = from_distribution(gaussian, EmpiricalDistribution, num_samples=10)
+        ed = from_distribution(gaussian, ArrayEmpiricalDistribution, num_samples=10)
         assert ed.n == 10
 
 

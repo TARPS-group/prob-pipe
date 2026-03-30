@@ -235,5 +235,5 @@ class TestFromDistribution:
     # -- empirical from anything --
     def test_empirical_from_normal(self, key):
         n = Normal(loc=0.0, scale=1.0)
-        ed = from_distribution(n, EmpiricalDistribution, key=key, num_samples=100)
+        ed = from_distribution(n, ArrayEmpiricalDistribution, key=key, num_samples=100)
         assert ed.n == 100
