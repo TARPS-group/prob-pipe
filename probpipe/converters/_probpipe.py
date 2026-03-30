@@ -495,15 +495,24 @@ class ProbPipeConverter(Converter):
         return self._dispatch
 
     def source_types(self) -> tuple[type, ...]:
-        return (ArrayDistribution,)
+        return (ArrayDistribution, EmpiricalDistribution)
 
     def target_types(self) -> tuple[type, ...]:
-        return (ArrayDistribution,)
+        return (ArrayDistribution, EmpiricalDistribution)
+
+    def _is_source(self, source: Any) -> bool:
+        return isinstance(source, (ArrayDistribution, EmpiricalDistribution))
+
+    def _is_target(self, target_type: type) -> bool:
+        return isinstance(target_type, type) and (
+            issubclass(target_type, ArrayDistribution)
+            or issubclass(target_type, EmpiricalDistribution)
+        )
 
     def check(self, source: Any, target_type: type) -> ConversionInfo:
-        if not isinstance(source, ArrayDistribution):
+        if not self._is_source(source):
             return ConversionInfo(feasible=False)
-        if not (isinstance(target_type, type) and issubclass(target_type, ArrayDistribution)):
+        if not self._is_target(target_type):
             return ConversionInfo(feasible=False)
 
         target_name = target_type.__name__

@@ -11,7 +11,7 @@ Provides:
   - ``ArrayDistribution``           – Single-array specialization (T = Array) with TFP
                                       shape conventions. All standard distributions
                                       (Normal, Gamma, MVN, …) inherit from this.
-  - ``TFPDistribution``             – Mixin that delegates to an internal ``tfd.*`` instance.
+  - ``TFPDistribution``             – Re-exported from ``distributions/_tfp_base``.
   - ``EmpiricalDistribution``       – Weighted set of samples.
   - ``BootstrapDistribution``       – MC error tracking via bootstrap resampling.
   - ``FlattenedView``               – Wraps any ``PyTreeArrayDistribution`` as a flat
@@ -798,91 +798,35 @@ class ArrayDistribution(PyTreeArrayDistribution[Array]):
 
 
 # ---------------------------------------------------------------------------
-# TFPDistribution mixin
+# TFPDistribution – re-exported for backward compatibility
 # ---------------------------------------------------------------------------
+# The implementation lives in ``distributions/_tfp_base.py`` since no
+# ``core/`` module uses it.  Placed here (after all core symbols are
+# defined) to avoid circular-import issues.
 
-class TFPDistribution(ArrayDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsCovariance):
-    """
-    Base class for distributions backed by a ``tfd.Distribution`` instance.
-
-    Subclasses set ``self._tfp_dist`` in ``__init__``.  The private
-    protocol methods ``_sample``, ``_expectation``, ``_log_prob``,
-    ``_mean``, and ``_variance`` all delegate to TFP (or use MC
-    fallback for expectations).
-
-    Inherits from :class:`SupportsSampling`, :class:`SupportsExpectation`,
-    :class:`SupportsLogProb` (provides ``_prob``,
-    ``_unnormalized_log_prob``, ``_unnormalized_prob`` defaults),
-    :class:`SupportsMean`, and :class:`SupportsVariance`.
-    """
-
-    _tfp_dist: tfd.Distribution
-    _sampling_cost: str = "low"
-    _preferred_orchestration: str | None = None
-
-    # -- shape delegation ---------------------------------------------------
-
-    @property
-    def event_shape(self) -> tuple[int, ...]:
-        return tuple(self._tfp_dist.event_shape)
-
-    @property
-    def batch_shape(self) -> tuple[int, ...]:
-        return tuple(self._tfp_dist.batch_shape)
-
-    @property
-    def dtype(self) -> jnp.dtype:
-        return self._tfp_dist.dtype
-
-    # -- sampling & density -------------------------------------------------
-
-    def _sample_one(self, key: PRNGKey) -> Array:
-        """Draw a single sample from the TFP distribution."""
-        return self._tfp_dist.sample(seed=key)
-
-    def _sample(
-        self,
-        key: PRNGKey,
-        sample_shape: tuple[int, ...] = (),
-    ) -> Array:
-        """Draw samples using TFP's efficient batched sampling."""
-        return self._tfp_dist.sample(seed=key, sample_shape=sample_shape)
-
-    def _log_prob(self, x: ArrayLike) -> Array:
-        return self._tfp_dist.log_prob(jnp.asarray(x))
-
-    def _mean(self) -> Array:
-        return self._tfp_dist.mean()
-
-    def _variance(self) -> Array:
-        return self._tfp_dist.variance()
-
-    def _cov(self) -> Array:
-        if self.event_shape == () or self.event_shape == (1,):
-            return self._tfp_dist.variance()
-        return self._tfp_dist.covariance()
-
-    def _expectation(
-        self,
-        f: Callable,
-        *,
-        key: PRNGKey | None = None,
-        num_evaluations: int | None = None,
-        return_dist: bool | None = None,
-    ) -> Any:
-        return _mc_expectation(
-            self, f, key=key, num_evaluations=num_evaluations,
-            return_dist=return_dist,
-        )
+from ..distributions._tfp_base import TFPDistribution  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# EmpiricalDistribution
+# EmpiricalDistribution (generic base)
 # ---------------------------------------------------------------------------
 
-class EmpiricalDistribution(ArrayDistribution, SupportsSampling, SupportsMean, SupportsVariance, SupportsCovariance):
+class EmpiricalDistribution(
+    Distribution[T],
+    SupportsSampling,
+    SupportsExpectation,
+    SupportsMean,
+    SupportsVariance,
+    SupportsCovariance,
+):
     """
     Weighted empirical distribution over a finite set of samples.
+
+    This is the generic base class.  It stores samples as JAX arrays and
+    provides weighted resampling, moments, and expectations.  It does
+    **not** inherit from :class:`ArrayDistribution` — use
+    :class:`ArrayEmpiricalDistribution` when TFP-style shape semantics
+    (``batch_shape``, ``flatten_value``, ``support``, etc.) are required.
 
     Parameters
     ----------
@@ -998,10 +942,6 @@ class EmpiricalDistribution(ArrayDistribution, SupportsSampling, SupportsMean, S
     def dtype(self) -> jnp.dtype:
         return self._samples.dtype
 
-    @property
-    def support(self) -> Constraint:
-        return real  # empirical samples can be any real values
-
     # -- sampling -----------------------------------------------------------
 
     def _sample_one(self, key: PRNGKey) -> Array:
@@ -1097,6 +1037,27 @@ class EmpiricalDistribution(ArrayDistribution, SupportsSampling, SupportsMean, S
         if self._is_uniform:
             return jnp.mean(f_vals, axis=0)
         return jnp.einsum("n,n...->...", self.weights, f_vals)
+
+
+# ---------------------------------------------------------------------------
+# ArrayEmpiricalDistribution
+# ---------------------------------------------------------------------------
+
+class ArrayEmpiricalDistribution(EmpiricalDistribution[Array], ArrayDistribution):
+    """Empirical distribution with full :class:`ArrayDistribution` shape semantics.
+
+    Inherits all functionality from :class:`EmpiricalDistribution` and adds
+    TFP-style shape properties (``batch_shape``, ``flatten_value``,
+    ``unflatten_value``, ``support``, etc.) via :class:`ArrayDistribution`.
+
+    Use this instead of :class:`EmpiricalDistribution` when the distribution
+    must interoperate with :class:`JointDistribution` components or other
+    code that requires :class:`ArrayDistribution` instances.
+    """
+
+    @property
+    def support(self) -> Constraint:
+        return real  # empirical samples can be any real values
 
 
 
@@ -1442,22 +1403,12 @@ class JointBootstrapDistribution(ArrayDistribution, SupportsSampling):
 # ---------------------------------------------------------------------------
 
 
-class _ArrayMarginal(
-    Distribution[T],
-    SupportsSampling,
-    SupportsExpectation,
-    SupportsMean,
-    SupportsVariance,
-    SupportsCovariance,
-):
+class _ArrayMarginal(ArrayEmpiricalDistribution):
     """Output marginal when broadcast outputs are stackable arrays.
 
-    Behaves like :class:`EmpiricalDistribution` — weighted resampling,
-    exact weighted moments.
+    Inherits from :class:`ArrayEmpiricalDistribution` for weighted
+    resampling and exact weighted moments.
     """
-
-    _sampling_cost: str = "low"
-    _preferred_orchestration: str | None = None
 
     def __init__(
         self,
@@ -1466,106 +1417,14 @@ class _ArrayMarginal(
         *,
         name: str | None = None,
     ):
-        self._samples = samples
-        self._w = weights
-        self._name = name
-        self._approximate = True
-
-    # -- properties ---------------------------------------------------------
-
-    @property
-    def n(self) -> int:
-        return self._samples.shape[0]
-
-    @property
-    def samples(self) -> Array:
-        return self._samples
-
-    @property
-    def weights(self) -> Array:
-        if self._w is None:
-            return jnp.ones(self.n, dtype=jnp.float32) / self.n
-        return self._w
-
-    @property
-    def event_shape(self) -> tuple[int, ...]:
-        return self._samples.shape[1:]
-
-    @property
-    def dim(self) -> int:
-        return max(1, prod(self._samples.shape[1:]))
-
-    # -- sampling -----------------------------------------------------------
-
-    def _sample(self, key, sample_shape=()):
-        if sample_shape == ():
-            if self._w is None:
-                idx = jax.random.randint(key, shape=(), minval=0, maxval=self.n)
-            else:
-                idx = jax.random.choice(key, self.n, p=self.weights)
-            return self._samples[idx]
-        n_draws = prod(sample_shape)
-        if self._w is None:
-            indices = jax.random.randint(key, shape=(n_draws,), minval=0, maxval=self.n)
+        # _ArrayMarginal receives pre-normalised weights (or None).
+        # Pass via log_weights to skip the non-negativity / sum validation
+        # in EmpiricalDistribution.__init__.
+        if weights is not None:
+            log_weights = jnp.log(jnp.asarray(weights, dtype=jnp.float32))
+            super().__init__(samples, log_weights=log_weights, name=name)
         else:
-            indices = jax.random.choice(key, self.n, shape=(n_draws,), p=self.weights, replace=True)
-        draws = self._samples[indices]
-        return draws.reshape(sample_shape + self.event_shape)
-
-    # -- moments ------------------------------------------------------------
-
-    def _mean(self):
-        if self._w is None:
-            return jnp.mean(self._samples, axis=0)
-        return jnp.einsum("n,n...->...", self.weights, self._samples)
-
-    def _variance(self):
-        mu = self._mean()
-        diff = self._samples - mu
-        if self._w is None:
-            return jnp.mean(diff ** 2, axis=0)
-        return jnp.einsum("n,n...->...", self.weights, diff ** 2)
-
-    def _cov(self):
-        mu = self._mean()
-        flat = self._samples.reshape(self.n, -1)
-        diff = flat - mu.reshape(-1)
-        if self._w is None:
-            return jnp.einsum("ni,nj->ij", diff, diff) / self.n
-        return jnp.einsum("ni,nj,n->ij", diff, diff, self.weights)
-
-    def _expectation(
-        self,
-        f: Callable,
-        *,
-        key: Any = None,
-        num_evaluations: Any = None,
-        return_dist: Any = None,
-    ) -> Any:
-        """Compute ``E[f(X)]`` exactly over the empirical support."""
-        if num_evaluations is not None and num_evaluations < self.n:
-            if key is None:
-                key = _auto_key()
-            idx = jax.random.choice(key, self.n, shape=(num_evaluations,), replace=False)
-            sub_samples = self._samples[idx]
-            f_vals = jax.vmap(f)(sub_samples)
-            rd = return_dist if return_dist is not None else RETURN_APPROX_DIST
-            if rd:
-                sub_w = None
-                if self._w is not None:
-                    sub_w = self.weights[idx]
-                    sub_w = sub_w / jnp.sum(sub_w)
-                return BootstrapDistribution(f_vals, weights=sub_w)
-            if self._w is None:
-                return jnp.mean(f_vals, axis=0)
-            sub_w = self.weights[idx]
-            sub_w = sub_w / jnp.sum(sub_w)
-            return jnp.einsum("n,n...->...", sub_w, f_vals)
-
-        f_vals = jax.vmap(f)(self._samples)
-        if self._w is None:
-            return jnp.mean(f_vals, axis=0)
-        return jnp.einsum("n,n...->...", self.weights, f_vals)
+            super().__init__(samples, name=name)
 
     def __repr__(self):
         return f"MarginalizedBroadcastDistribution(n={self.n}, event_shape={self.event_shape})"
@@ -1785,8 +1644,9 @@ def _make_marginal(
             return _make_mixture_marginal(output_samples, weights, name=name)
         return _ListMarginal(output_samples, weights, name=name)
 
-    # Single array result (e.g., from vmap)
-    return _ArrayMarginal(jnp.asarray(output_samples, dtype=jnp.float32), weights, name=name)
+    # Single array result (e.g., from vmap); ensure at least 1D for the sample axis
+    arr = jnp.atleast_1d(jnp.asarray(output_samples, dtype=jnp.float32))
+    return _ArrayMarginal(arr, weights, name=name)
 
 
 # ---------------------------------------------------------------------------

@@ -391,7 +391,7 @@ class WorkflowFunction(Node):
             if is_dist_hint:
                 continue
             # Auto-convert external distribution types to ProbPipe
-            if not isinstance(value, ArrayDistribution):
+            if not isinstance(value, Distribution):
                 values[name] = converter_registry.convert(value, ArrayDistribution)
                 value = values[name]
             broadcast.append(name)

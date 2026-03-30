@@ -115,12 +115,19 @@ class ScipyConverter(Converter):
     def source_types(self) -> tuple[type, ...]:
         if not _HAS_SCIPY:
             return ()
-        return (_rv_frozen, ArrayDistribution)
+        return (_rv_frozen, ArrayDistribution, EmpiricalDistribution)
 
     def target_types(self) -> tuple[type, ...]:
         if not _HAS_SCIPY:
             return ()
-        return (ArrayDistribution, _rv_frozen)
+        return (ArrayDistribution, EmpiricalDistribution, _rv_frozen)
+
+    @staticmethod
+    def _is_probpipe_target(target_type: type) -> bool:
+        return isinstance(target_type, type) and (
+            issubclass(target_type, ArrayDistribution)
+            or issubclass(target_type, EmpiricalDistribution)
+        )
 
     def check(self, source: Any, target_type: type) -> ConversionInfo:
         if not _HAS_SCIPY:
@@ -128,7 +135,7 @@ class ScipyConverter(Converter):
 
         # Case 1: scipy -> ProbPipe
         if isinstance(source, _rv_frozen):
-            if isinstance(target_type, type) and issubclass(target_type, ArrayDistribution):
+            if self._is_probpipe_target(target_type):
                 # Find the underlying scipy distribution class
                 dist_cls = type(source.dist)
                 if dist_cls in self._scipy_map:

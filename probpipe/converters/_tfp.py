@@ -113,15 +113,22 @@ class TFPConverter(Converter):
         return self._to_tfp
 
     def source_types(self) -> tuple[type, ...]:
-        return (tfd.Distribution, ArrayDistribution)
+        return (tfd.Distribution, ArrayDistribution, EmpiricalDistribution)
 
     def target_types(self) -> tuple[type, ...]:
-        return (ArrayDistribution, tfd.Distribution)
+        return (ArrayDistribution, EmpiricalDistribution, tfd.Distribution)
+
+    @staticmethod
+    def _is_probpipe_target(target_type: type) -> bool:
+        return isinstance(target_type, type) and (
+            issubclass(target_type, ArrayDistribution)
+            or issubclass(target_type, EmpiricalDistribution)
+        )
 
     def check(self, source: Any, target_type: type) -> ConversionInfo:
         # Case 1: TFP -> ProbPipe
         if isinstance(source, tfd.Distribution) and not isinstance(source, ArrayDistribution):
-            if isinstance(target_type, type) and issubclass(target_type, ArrayDistribution):
+            if self._is_probpipe_target(target_type):
                 src_cls = type(source)
                 if src_cls in self._tfp_map:
                     pp_cls, _ = self._tfp_map[src_cls]
@@ -164,7 +171,7 @@ class TFPConverter(Converter):
     def convert(self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any) -> Any:
         # Case 1: TFP -> ProbPipe
         if isinstance(source, tfd.Distribution) and not isinstance(source, ArrayDistribution):
-            if isinstance(target_type, type) and issubclass(target_type, ArrayDistribution):
+            if self._is_probpipe_target(target_type):
                 src_cls = type(source)
                 if src_cls in self._tfp_map:
                     pp_cls, extractor = self._tfp_map[src_cls]
