@@ -7,7 +7,8 @@ from typing import Any, Callable
 
 import jax.numpy as jnp
 
-from ..core.distribution import Distribution, Provenance
+from ..core.distribution import Distribution
+from ..core.provenance import Provenance
 from ..custom_types import Array
 from ..inference._diagnostics import extract_arviz_diagnostics
 from ..inference._mcmc_distribution import MCMCApproximateDistribution

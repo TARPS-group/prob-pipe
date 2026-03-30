@@ -14,12 +14,14 @@ from ._tfp_base import TFPDistribution
 from ..core.distribution import (
     ArrayDistribution,
     EmpiricalDistribution,
-    Provenance,
+    _auto_key,
+)
+from ..core.provenance import Provenance
+from ..core.constraints import (
     Constraint,
     boolean,
     non_negative_integer,
     integer_interval,
-    _auto_key,
 )
 from ..custom_types import Array, ArrayLike, PRNGKey
 

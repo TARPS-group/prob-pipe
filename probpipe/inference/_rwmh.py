@@ -8,7 +8,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
-from ..core.distribution import Provenance
+from ..core.provenance import Provenance
 from ..core.node import WorkflowFunction
 from ..core.protocols import SupportsLogProb, SupportsMean
 from ..custom_types import Array, ArrayLike, PRNGKey

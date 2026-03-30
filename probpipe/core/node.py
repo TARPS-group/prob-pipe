@@ -26,9 +26,9 @@ from .distribution import (
     BroadcastDistribution,
     Distribution,
     EmpiricalDistribution,
-    Provenance,
     _make_marginal,
 )
+from .provenance import Provenance
 from .protocols import (
     SupportsConditioning,
     SupportsCovariance,

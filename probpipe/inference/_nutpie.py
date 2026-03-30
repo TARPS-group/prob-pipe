@@ -7,7 +7,7 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from ..core.distribution import Provenance
+from ..core.provenance import Provenance
 from ..core.node import WorkflowFunction
 from ..custom_types import ArrayLike
 from ._diagnostics import InferenceDiagnostics, extract_arviz_diagnostics

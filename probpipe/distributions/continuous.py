@@ -14,7 +14,9 @@ from ._tfp_base import TFPDistribution
 from ..core.distribution import (
     ArrayDistribution,
     EmpiricalDistribution,
-    Provenance,
+)
+from ..core.provenance import Provenance
+from ..core.constraints import (
     Constraint,
     real,
     positive,

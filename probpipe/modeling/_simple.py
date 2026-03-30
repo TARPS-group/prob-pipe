@@ -8,7 +8,8 @@ import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.mcmc as tfp_mcmc
 
-from ..core.distribution import Distribution, Provenance
+from ..core.distribution import Distribution
+from ..core.provenance import Provenance
 from ..core.protocols import (
     SupportsLogProb,
     SupportsMean,

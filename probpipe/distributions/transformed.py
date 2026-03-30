@@ -13,8 +13,10 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 from ._tfp_base import TFPDistribution
 from ..core.distribution import (
     ArrayDistribution,
+)
+from ..core.provenance import Provenance
+from ..core.constraints import (
     Constraint,
-    Provenance,
     real,
     positive,
     unit_interval,

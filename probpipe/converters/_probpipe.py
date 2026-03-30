@@ -26,10 +26,10 @@ DEFAULT_NUM_SAMPLES = 1024
 from ..core.distribution import (
     ArrayEmpiricalDistribution,
     Distribution,
-    Provenance,
     _auto_key,
-    _supports_compatible,
 )
+from ..core.provenance import Provenance
+from ..core.constraints import _supports_compatible
 from ._protocol import Converter
 from ._registry import ConversionInfo, ConversionMethod
 

@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ._tfp_base import TFPDistribution
-from ..core.distribution import (
+from ..core.constraints import (
     Constraint,
     real,
     positive_definite,
