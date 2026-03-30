@@ -10,6 +10,7 @@ from probpipe import (
     Distribution,
     PyTreeArrayDistribution,
     ArrayDistribution,
+    ArrayEmpiricalDistribution,
     FlattenedView,
     Normal,
     MultivariateNormal,
@@ -266,7 +267,7 @@ class TestSupports:
 class TestFlattenedViewEmpirical:
     def test_empirical_flatten_roundtrip(self, key):
         samples = jax.random.normal(key, shape=(100, 5))
-        emp = EmpiricalDistribution(samples)
+        emp = ArrayEmpiricalDistribution(samples)
 
         flat_dist = emp.as_flat_distribution()
         assert flat_dist.event_shape == (5,)

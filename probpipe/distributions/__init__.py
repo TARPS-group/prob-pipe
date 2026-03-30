@@ -4,8 +4,8 @@ from ..core.distribution import (
     PyTreeArrayDistribution,
     ArrayDistribution,
     FlattenedView,
-    TFPDistribution,
     EmpiricalDistribution,
+    ArrayEmpiricalDistribution,
     BroadcastDistribution,
     Provenance,
     BootstrapDistribution,
@@ -28,6 +28,7 @@ from ..core.distribution import (
     greater_than,
     integer_interval,
 )
+from ._tfp_base import TFPDistribution
 from .continuous import (
     Normal,
     Beta,
@@ -82,6 +83,7 @@ __all__ = [
     "FlattenedView",
     "TFPDistribution",
     "EmpiricalDistribution",
+    "ArrayEmpiricalDistribution",
     "BroadcastDistribution",
     "Provenance",
     # Constraints

@@ -89,6 +89,7 @@ from .._utils import prod
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..core.distribution import (
     ArrayDistribution,
+    ArrayEmpiricalDistribution,
     PyTreeArrayDistribution,
     EmpiricalDistribution,
     Provenance,
@@ -1526,13 +1527,14 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
 
         self._weights_cache: Array | None = None
 
-        # Build _components as EmpiricalDistribution per component (for shape introspection)
-        comp_dists: dict[str, EmpiricalDistribution] = {}
+        # Build _components as ArrayEmpiricalDistribution per component
+        # (JointDistribution requires ArrayDistribution leaves for shape introspection)
+        comp_dists: dict[str, ArrayEmpiricalDistribution] = {}
         for cname, arr in self._joint_samples.items():
             if self._is_uniform:
-                comp_dists[cname] = EmpiricalDistribution(arr, name=cname)
+                comp_dists[cname] = ArrayEmpiricalDistribution(arr, name=cname)
             else:
-                comp_dists[cname] = EmpiricalDistribution(
+                comp_dists[cname] = ArrayEmpiricalDistribution(
                     arr, log_weights=self._log_weights, name=cname
                 )
         self._components = comp_dists

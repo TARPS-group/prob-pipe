@@ -9,6 +9,7 @@ import pytest
 import probpipe.core.distribution as dist_mod
 from probpipe import (
     ArrayDistribution,
+    ArrayEmpiricalDistribution,
     EmpiricalDistribution,
     BootstrapDistribution,
     Normal,
@@ -387,7 +388,7 @@ class TestIsApproximate:
 
     def test_from_distribution_to_empirical(self):
         d = Normal(loc=0.0, scale=1.0)
-        d2 = from_distribution(d, EmpiricalDistribution)
+        d2 = from_distribution(d, ArrayEmpiricalDistribution)
         assert d2.is_approximate
 
 

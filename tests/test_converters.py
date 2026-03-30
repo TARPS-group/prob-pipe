@@ -10,7 +10,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 from probpipe import (
     Normal, Beta, Gamma, Exponential, MultivariateNormal,
     Bernoulli, Poisson, Categorical,
-    EmpiricalDistribution, ArrayDistribution,
+    ArrayEmpiricalDistribution, EmpiricalDistribution, ArrayDistribution,
     converter_registry, ConversionInfo, ConversionMethod, Converter,
     from_distribution,
 )
@@ -91,8 +91,8 @@ class TestProbPipeConverter:
 
     def test_to_empirical(self):
         n = Normal(loc=0.0, scale=1.0)
-        emp = converter_registry.convert(n, EmpiricalDistribution, num_samples=100)
-        assert isinstance(emp, EmpiricalDistribution)
+        emp = converter_registry.convert(n, ArrayEmpiricalDistribution, num_samples=100)
+        assert isinstance(emp, ArrayEmpiricalDistribution)
         assert emp.n == 100
 
     def test_provenance_attached(self):
@@ -204,8 +204,8 @@ class TestAllCrossFamilyConversions:
 
     def test_wishart_to_empirical(self):
         w = Wishart(df=5.0, scale_tril=jnp.eye(2))
-        result = converter_registry.convert(w, EmpiricalDistribution, num_samples=50)
-        assert isinstance(result, EmpiricalDistribution)
+        result = converter_registry.convert(w, ArrayEmpiricalDistribution, num_samples=50)
+        assert isinstance(result, ArrayEmpiricalDistribution)
         assert result.n == 50
 
     def test_vonmisesfisher_same_class(self):
@@ -216,7 +216,7 @@ class TestAllCrossFamilyConversions:
 
     def test_mvn_from_empirical(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
-        emp = EmpiricalDistribution(samples)
+        emp = ArrayEmpiricalDistribution(samples)
         result = converter_registry.convert(emp, MultivariateNormal)
         assert isinstance(result, MultivariateNormal)
         assert result.loc.shape == (3,)
@@ -279,11 +279,11 @@ class TestTFPConverter:
         assert result.source.operation == "convert_from_tfp"
 
     def test_unknown_tfp_to_empirical(self):
-        """Unknown TFP types fall back to sampling → EmpiricalDistribution."""
+        """Unknown TFP types fall back to sampling → ArrayEmpiricalDistribution."""
         # Use a TFP distribution we haven't mapped
         tfp_dist = tfd.VonMises(loc=0.0, concentration=1.0)
-        result = converter_registry.convert(tfp_dist, EmpiricalDistribution, num_samples=50)
-        assert isinstance(result, EmpiricalDistribution)
+        result = converter_registry.convert(tfp_dist, ArrayEmpiricalDistribution, num_samples=50)
+        assert isinstance(result, ArrayEmpiricalDistribution)
         assert result.n == 50
 
     def test_probpipe_mvn_to_tfp(self):
@@ -464,8 +464,8 @@ class TestScipyConverter:
         """Unknown scipy distribution type falls back to sampling."""
         import scipy.stats as ss
         # Use a scipy distribution we haven't mapped (e.g., chi2)
-        result = converter_registry.convert(ss.chi2(df=3), EmpiricalDistribution, num_samples=100)
-        assert isinstance(result, EmpiricalDistribution)
+        result = converter_registry.convert(ss.chi2(df=3), ArrayEmpiricalDistribution, num_samples=100)
+        assert isinstance(result, ArrayEmpiricalDistribution)
         assert result.n == 100
 
     def test_scipy_check_unknown_type(self):
@@ -552,14 +552,14 @@ class TestFromDistributionDelegation:
 
     def test_from_distribution_to_empirical(self):
         n = Normal(loc=0.0, scale=1.0)
-        emp = from_distribution(n, EmpiricalDistribution, num_samples=50)
-        assert isinstance(emp, EmpiricalDistribution)
+        emp = from_distribution(n, ArrayEmpiricalDistribution, num_samples=50)
+        assert isinstance(emp, ArrayEmpiricalDistribution)
         assert emp.n == 50
 
     def test_empirical_to_empirical_returns_source(self):
         samples = jnp.array([[1.0], [2.0], [3.0]])
-        emp = EmpiricalDistribution(samples, name="orig")
-        emp2 = from_distribution(emp, EmpiricalDistribution)
+        emp = ArrayEmpiricalDistribution(samples, name="orig")
+        emp2 = from_distribution(emp, ArrayEmpiricalDistribution)
         # Same-class: returns source directly
         assert emp2 is emp
 
@@ -583,9 +583,9 @@ class TestBootstrapMetadata:
         assert "var_bootstrap" not in meta
 
     def test_empirical_moments_have_bootstrap(self):
-        """EmpiricalDistribution uses MC for mean/var, producing bootstrap metadata."""
+        """ArrayEmpiricalDistribution uses MC for mean/var, producing bootstrap metadata."""
         samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
-        emp = EmpiricalDistribution(samples[:, None])
+        emp = ArrayEmpiricalDistribution(samples[:, None])
         result = converter_registry.convert(emp, Normal)
         assert result.source is not None
         # EmpiricalDistribution._mean()/_variance() return plain arrays;
