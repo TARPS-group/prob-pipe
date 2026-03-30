@@ -15,9 +15,9 @@ from ..custom_types import PRNGKey
 from ..core.distribution import (
     ArrayDistribution,
     ArrayEmpiricalDistribution,
-    Provenance,
     _auto_key,
 )
+from ..core.provenance import Provenance
 from ._protocol import Converter
 from ._registry import ConversionInfo, ConversionMethod
 

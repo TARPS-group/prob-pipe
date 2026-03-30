@@ -11,7 +11,8 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from ..core.distribution import Distribution, Provenance
+from ..core.distribution import Distribution
+from ..core.provenance import Provenance
 from ..core.protocols import SupportsLogProb
 from ..custom_types import Array, ArrayLike
 from ..inference._diagnostics import InferenceDiagnostics, extract_arviz_diagnostics

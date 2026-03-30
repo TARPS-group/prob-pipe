@@ -92,13 +92,12 @@ from ..core.distribution import (
     ArrayEmpiricalDistribution,
     PyTreeArrayDistribution,
     EmpiricalDistribution,
-    Provenance,
-    Constraint,
-    real,
     _auto_key,
     _vmap_sample,
     _mc_expectation,
 )
+from ..core.provenance import Provenance
+from ..core.constraints import Constraint, real
 from ..core.protocols import (
     SupportsConditioning,
     SupportsCovariance,

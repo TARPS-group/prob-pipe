@@ -1,5 +1,4 @@
 from ..core.distribution import (
-    Constraint,
     Distribution,
     PyTreeArrayDistribution,
     ArrayDistribution,
@@ -7,14 +6,16 @@ from ..core.distribution import (
     EmpiricalDistribution,
     ArrayEmpiricalDistribution,
     BroadcastDistribution,
-    Provenance,
     BootstrapDistribution,
     JointBootstrapDistribution,
     DEFAULT_NUM_EVALUATIONS,
     RETURN_APPROX_DIST,
     set_default_num_evaluations,
     set_return_approx_dist,
-    # constraint singletons & factories
+)
+from ..core.provenance import Provenance
+from ..core.constraints import (
+    Constraint,
     real,
     positive,
     non_negative,
