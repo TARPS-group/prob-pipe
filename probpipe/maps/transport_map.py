@@ -61,7 +61,7 @@ class TransportMap(Generic[T, S], ABC):
         strategy: str | None = None,
         key: PRNGKey | None = None,
         num_samples: int | None = None,
-        include_inputs: bool = False,
+        return_joint: bool = False,
     ) -> Distribution[S]:
         """Push a distribution through this map.
 
@@ -86,9 +86,10 @@ class TransportMap(Generic[T, S], ABC):
             JAX PRNG key for sampling fallback.
         num_samples : int, optional
             Number of samples for sampling fallback.
-        include_inputs : bool
+        return_joint : bool
             If ``True``, return a :class:`BroadcastDistribution` that
-            stores paired (input, output) samples.
+            stores both the exact output marginal (when available) and
+            paired input–output samples as a joint representation.
 
         Returns
         -------
@@ -112,7 +113,7 @@ class TransportMap(Generic[T, S], ABC):
             strategy=strategy,
             key=key,
             num_samples=num_samples,
-            include_inputs=include_inputs,
+            return_joint=return_joint,
         )
 
     def __call__(self, value: T) -> S:

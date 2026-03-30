@@ -201,32 +201,32 @@ class TestPushforwardOp:
         result = pushforward(lambda x: x ** 2, Normal(0, 1), key=key)
         assert isinstance(result, EmpiricalDistribution)
 
-    def test_include_inputs_returns_broadcast_dist(self, key):
-        """include_inputs=True → BroadcastDistribution."""
+    def test_return_joint_returns_broadcast_dist(self, key):
+        """return_joint=True → BroadcastDistribution."""
         import tensorflow_probability.substrates.jax.bijectors as tfb
 
         result = pushforward(
             TFPBijector(tfb.Exp()), Normal(0, 1),
-            include_inputs=True, key=key,
+            return_joint=True, key=key,
         )
         assert isinstance(result, BroadcastDistribution)
 
-    def test_include_inputs_has_exact_marginal(self, key):
-        """Closed-form + include_inputs stores exact output marginal."""
+    def test_return_joint_has_exact_marginal(self, key):
+        """Closed-form + return_joint stores exact output marginal."""
         import tensorflow_probability.substrates.jax.bijectors as tfb
 
         result = pushforward(
             TFPBijector(tfb.Exp()), Normal(0, 1),
-            include_inputs=True, key=key,
+            return_joint=True, key=key,
         )
         assert hasattr(result, "_exact_output_marginal")
         assert isinstance(result._exact_output_marginal, LogNormal)
 
-    def test_sampling_include_inputs(self, key):
-        """Sampling fallback with include_inputs."""
+    def test_sampling_return_joint(self, key):
+        """Sampling fallback with return_joint."""
         result = pushforward(
             lambda x: x ** 2, Normal(0, 1),
-            include_inputs=True, key=key,
+            return_joint=True, key=key,
         )
         assert isinstance(result, BroadcastDistribution)
 

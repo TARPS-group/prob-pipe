@@ -85,7 +85,7 @@ class PushforwardRule(ABC):
         transport_map: Any,
         dist: Any,
         *,
-        include_inputs: bool = False,
+        return_joint: bool = False,
         **kwargs: Any,
     ) -> Distribution:
         """Perform the pushforward.
@@ -224,7 +224,7 @@ class PushforwardRegistry:
         strategy: str | None = None,
         key: PRNGKey | None = None,
         num_samples: int | None = None,
-        include_inputs: bool = False,
+        return_joint: bool = False,
     ) -> Distribution:
         """Dispatch to the best matching rule and execute.
 
@@ -239,7 +239,7 @@ class PushforwardRegistry:
             For sampling fallback.
         num_samples : int, optional
             Number of samples for sampling fallback.
-        include_inputs : bool
+        return_joint : bool
             If ``True``, return a joint distribution over inputs and
             outputs.
 
@@ -266,7 +266,7 @@ class PushforwardRegistry:
                         dist,
                         key=key,
                         num_samples=num_samples,
-                        include_inputs=include_inputs,
+                        return_joint=return_joint,
                     )
                     # Attach provenance if not already set
                     if result.source is None:
@@ -334,7 +334,7 @@ class _BijectorChangeOfVariablesRule(PushforwardRule):
             description="Bijector change-of-variables formula",
         )
 
-    def apply(self, transport_map, dist, *, include_inputs=False, **kwargs):
+    def apply(self, transport_map, dist, *, return_joint=False, **kwargs):
         from .transformed_distribution import BijectorTransformedDistribution
         from ..core.distribution import (
             BroadcastDistribution,
@@ -345,10 +345,10 @@ class _BijectorChangeOfVariablesRule(PushforwardRule):
 
         exact_output = BijectorTransformedDistribution(dist, transport_map)
 
-        if not include_inputs:
+        if not return_joint:
             return exact_output
 
-        # include_inputs=True: sample paired (input, output) for joint,
+        # return_joint=True: sample paired (input, output) for joint,
         # and store exact output marginal reference.
         key = kwargs.get("key")
         num_samples = kwargs.get("num_samples")
@@ -373,7 +373,7 @@ class _BijectorChangeOfVariablesRule(PushforwardRule):
                 metadata={
                     "map": repr(transport_map),
                     "method": "change_of_variables",
-                    "include_inputs": True,
+                    "return_joint": True,
                 },
             )
         )
@@ -404,7 +404,7 @@ class _SamplingFallbackRule(PushforwardRule):
             description="Sampling-based pushforward",
         )
 
-    def apply(self, transport_map, dist, *, include_inputs=False, **kwargs):
+    def apply(self, transport_map, dist, *, return_joint=False, **kwargs):
         from ..core.distribution import (
             EmpiricalDistribution,
             BroadcastDistribution,
@@ -423,7 +423,7 @@ class _SamplingFallbackRule(PushforwardRule):
         samples = dist._sample(key, sample_shape=(n,))
         transformed = jax.vmap(transport_map.forward)(samples)
 
-        if include_inputs:
+        if return_joint:
             result = BroadcastDistribution(
                 input_samples={"input": samples},
                 output_samples=transformed,
@@ -438,7 +438,7 @@ class _SamplingFallbackRule(PushforwardRule):
                         "map": repr(transport_map),
                         "method": "sample",
                         "num_samples": n,
-                        "include_inputs": True,
+                        "return_joint": True,
                     },
                 )
             )
@@ -508,7 +508,7 @@ class _FunctionalRule(PushforwardRule):
             description=self._description,
         )
 
-    def apply(self, transport_map, dist, *, include_inputs=False, **kwargs):
+    def apply(self, transport_map, dist, *, return_joint=False, **kwargs):
         return self._fn(transport_map, dist, **kwargs)
 
     @property

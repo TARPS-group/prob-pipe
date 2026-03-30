@@ -37,7 +37,7 @@ class ExpNormalRule(PushforwardRule):
             )
         return PushforwardInfo(feasible=False)
 
-    def apply(self, transport_map, dist, *, include_inputs=False, **kwargs):
+    def apply(self, transport_map, dist, *, return_joint=False, **kwargs):
         from ..distributions.continuous import LogNormal
         from ..core.distribution import (
             BroadcastDistribution,
@@ -61,10 +61,10 @@ class ExpNormalRule(PushforwardRule):
             )
         )
 
-        if not include_inputs:
+        if not return_joint:
             return result
 
-        # include_inputs=True: sample paired data, store exact marginal
+        # return_joint=True: sample paired data, store exact marginal
         key = kwargs.get("key")
         num_samples = kwargs.get("num_samples")
         if key is None:
@@ -89,7 +89,7 @@ class ExpNormalRule(PushforwardRule):
                     "map": repr(transport_map),
                     "method": "closed_form",
                     "rule": "Exp(Normal) → LogNormal",
-                    "include_inputs": True,
+                    "return_joint": True,
                 },
             )
         )

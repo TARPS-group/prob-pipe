@@ -188,6 +188,53 @@ def _condition_on_impl(
     return dist._condition_on(observed, **kwargs)
 
 
+def _pushforward_impl(
+    f: Any,
+    dist: Distribution,
+    *,
+    strategy: str | None = None,
+    key: PRNGKey | None = None,
+    num_samples: int | None = None,
+    return_joint: bool = False,
+) -> Distribution:
+    """Push a distribution through a deterministic function or transport map.
+
+    Parameters
+    ----------
+    f : callable or TransportMap
+        The function or transport map to push the distribution through.
+    dist : Distribution
+        Input distribution.
+    strategy : str, optional
+        ``"closed_form"``, ``"change_of_variables"``, ``"sampling"``,
+        or ``None`` (auto).
+    key : PRNGKey, optional
+        JAX PRNG key for sampling fallback.
+    num_samples : int, optional
+        Number of samples for sampling fallback.  Defaults to
+        ``WorkflowFunction.DEFAULT_N_BROADCAST_SAMPLES`` (128).
+    return_joint : bool
+        If ``True``, return a :class:`BroadcastDistribution` that stores
+        both the exact output marginal (when available) and the paired
+        input–output samples as a joint representation.  If ``False``
+        (default), return only the output distribution.
+    """
+    from ..maps.transport_map import TransportMap
+    from ..maps.registry import pushforward_registry, _CallableTransportMap
+
+    if not isinstance(f, TransportMap):
+        f = _CallableTransportMap(f)
+
+    return pushforward_registry.apply(
+        f,
+        dist,
+        strategy=strategy,
+        key=key,
+        num_samples=num_samples,
+        return_joint=return_joint,
+    )
+
+
 def _from_distribution_impl(
     source: Distribution,
     target_type: type,
@@ -238,6 +285,7 @@ _OP_REGISTRY: dict[str, Any] = {
     "expectation": _expectation_impl,
     "condition_on": _condition_on_impl,
     "from_distribution": _from_distribution_impl,
+    "pushforward": _pushforward_impl,
 }
 
 
@@ -306,63 +354,3 @@ __all__: list[str] = []
 for _name, _impl in _OP_REGISTRY.items():
     globals()[_name] = _make_op(_name, _impl)
     __all__.append(_name)
-
-
-# ---------------------------------------------------------------------------
-# pushforward — standalone function (not a WorkflowFunction op, because it
-# takes a function + distribution rather than just a distribution, and its
-# ``include_inputs`` parameter conflicts with WorkflowFunction's reserved
-# names).
-# ---------------------------------------------------------------------------
-
-def pushforward(
-    f: Any,
-    dist: Distribution,
-    *,
-    strategy: str | None = None,
-    key: PRNGKey | None = None,
-    num_samples: int | None = None,
-    include_inputs: bool = False,
-) -> Distribution:
-    """Push a distribution through a deterministic function or transport map.
-
-    Parameters
-    ----------
-    f : callable or TransportMap
-        The function or transport map to push the distribution through.
-    dist : Distribution
-        Input distribution.
-    strategy : str, optional
-        ``"closed_form"``, ``"change_of_variables"``, ``"sampling"``,
-        or ``None`` (auto).
-    key : PRNGKey, optional
-        JAX PRNG key for sampling fallback.
-    num_samples : int, optional
-        Number of samples for sampling fallback.  Defaults to
-        ``WorkflowFunction.DEFAULT_N_BROADCAST_SAMPLES`` (128).
-    include_inputs : bool
-        If ``True``, return a :class:`BroadcastDistribution` with paired
-        input-output samples.
-
-    Returns
-    -------
-    Distribution
-        The pushforward distribution.
-    """
-    from ..maps.transport_map import TransportMap
-    from ..maps.registry import pushforward_registry, _CallableTransportMap
-
-    if not isinstance(f, TransportMap):
-        f = _CallableTransportMap(f)
-
-    return pushforward_registry.apply(
-        f,
-        dist,
-        strategy=strategy,
-        key=key,
-        num_samples=num_samples,
-        include_inputs=include_inputs,
-    )
-
-
-__all__.append("pushforward")
