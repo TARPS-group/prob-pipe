@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from ..core.distribution import Provenance
 from ..core.node import WorkflowFunction
 from ..custom_types import ArrayLike
-from ._diagnostics import MCMCDiagnostics
+from ._diagnostics import InferenceDiagnostics, extract_arviz_diagnostics
 from ._mcmc_distribution import MCMCApproximateDistribution
 
 logger = logging.getLogger(__name__)
@@ -80,12 +80,7 @@ def _condition_on_nutpie_impl(
     # Extract chains from the InferenceData / trace object
     chains, param_names = _extract_chains(trace, num_chains)
 
-    diagnostics = MCMCDiagnostics(
-        log_accept_ratio=jnp.zeros(num_results * num_chains),
-        step_size=0.0,
-        is_accepted=None,
-        algorithm="nutpie_nuts",
-    )
+    diagnostics = _extract_nutpie_diagnostics(trace, num_results, num_chains)
 
     result = MCMCApproximateDistribution(
         chains,
@@ -154,6 +149,19 @@ def _extract_chains(trace: Any, num_chains: int) -> tuple[list, list]:
 
     raise TypeError(
         f"Cannot extract chains from nutpie trace of type {type(trace).__name__}"
+    )
+
+
+def _extract_nutpie_diagnostics(
+    trace: Any, num_results: int, num_chains: int,
+) -> InferenceDiagnostics:
+    """Extract diagnostics from a nutpie ArviZ InferenceData trace.
+
+    Delegates to :func:`extract_arviz_diagnostics`.
+    """
+    return extract_arviz_diagnostics(
+        trace, algorithm="nutpie_nuts",
+        num_results=num_results, num_chains=num_chains,
     )
 
 

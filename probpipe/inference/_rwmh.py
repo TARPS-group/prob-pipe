@@ -12,7 +12,7 @@ from ..core.distribution import Provenance
 from ..core.node import WorkflowFunction
 from ..core.protocols import SupportsLogProb, SupportsMean
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ._diagnostics import MCMCDiagnostics
+from ._diagnostics import InferenceDiagnostics
 from ._mcmc_distribution import MCMCApproximateDistribution
 
 logger = logging.getLogger(__name__)
@@ -137,13 +137,12 @@ def _rwmh_impl(
 
     accept_rate = total_accepts / total_steps
 
-    diagnostics = MCMCDiagnostics(
+    diagnostics = InferenceDiagnostics(
+        algorithm="rwmh",
         log_accept_ratio=jnp.zeros(num_results * num_chains),
         step_size=step_size,
-        is_accepted=None,
-        algorithm="rwmh",
     )
-    diagnostics._numpy_accept_rate = accept_rate
+    diagnostics["_accept_rate_override"] = accept_rate
 
     # Only include warmup if we actually have warmup samples
     warmup = warmup_chains if all(w is not None for w in warmup_chains) else None

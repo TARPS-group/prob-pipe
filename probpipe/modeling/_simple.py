@@ -15,7 +15,7 @@ from ..core.protocols import (
     SupportsSampling,
 )
 from ..custom_types import Array, ArrayLike
-from ..inference._diagnostics import MCMCDiagnostics
+from ..inference._diagnostics import InferenceDiagnostics
 from ..inference._mcmc_distribution import MCMCApproximateDistribution
 from ._base import ProbabilisticModel
 
@@ -263,7 +263,7 @@ class SimpleModel(ProbabilisticModel):
         num_chains: int,
         step_size: float,
         random_seed: int,
-    ) -> tuple[list, MCMCDiagnostics]:
+    ) -> tuple[list, InferenceDiagnostics]:
         """Run TFP-backed MCMC chains."""
         # Build kernel
         if algorithm == "nuts":
@@ -319,7 +319,7 @@ class SimpleModel(ProbabilisticModel):
         return f"SimpleModel(prior={prior_name}, likelihood={lik_name})"
 
 
-def _extract_diagnostics(trace: Any, algorithm: str) -> MCMCDiagnostics:
+def _extract_diagnostics(trace: Any, algorithm: str) -> InferenceDiagnostics:
     """Extract diagnostics from TFP trace."""
     results = trace
 
@@ -334,9 +334,10 @@ def _extract_diagnostics(trace: Any, algorithm: str) -> MCMCDiagnostics:
     log_accept_ratio = getattr(results, "log_accept_ratio", jnp.array(jnp.nan))
     is_accepted = getattr(results, "is_accepted", None)
 
-    return MCMCDiagnostics(
-        log_accept_ratio=log_accept_ratio,
-        step_size=step_size,
-        is_accepted=is_accepted,
-        algorithm=algorithm,
-    )
+    kwargs: dict[str, Any] = {
+        "log_accept_ratio": log_accept_ratio,
+        "step_size": step_size,
+    }
+    if is_accepted is not None:
+        kwargs["is_accepted"] = is_accepted
+    return InferenceDiagnostics(algorithm=algorithm, **kwargs)

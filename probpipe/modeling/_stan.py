@@ -14,7 +14,7 @@ import jax.numpy as jnp
 from ..core.distribution import Distribution, Provenance
 from ..core.protocols import SupportsLogProb
 from ..custom_types import Array, ArrayLike
-from ..inference._diagnostics import MCMCDiagnostics
+from ..inference._diagnostics import InferenceDiagnostics, extract_arviz_diagnostics
 from ..inference._mcmc_distribution import MCMCApproximateDistribution
 from ._base import ProbabilisticModel
 
@@ -234,12 +234,7 @@ def _cmdstanpy_condition(
         )
         chains.append(chain_draws)
 
-    diagnostics = MCMCDiagnostics(
-        log_accept_ratio=jnp.zeros(num_results * num_chains),
-        step_size=0.0,
-        is_accepted=None,
-        algorithm="cmdstan_nuts",
-    )
+    diagnostics = _extract_cmdstan_diagnostics(fit, num_results, num_chains)
 
     result = MCMCApproximateDistribution(
         chains,
@@ -258,6 +253,60 @@ def _cmdstanpy_condition(
         )
     )
     return result
+
+
+def _extract_cmdstan_diagnostics(
+    fit: Any, num_results: int, num_chains: int,
+) -> InferenceDiagnostics:
+    """Extract diagnostics from a CmdStanMCMC fit object.
+
+    CmdStanPy exposes sampler diagnostics via ``method_variables()``
+    (CmdStan column names).
+    """
+    kwargs: dict[str, Any] = {}
+    n_total = num_results * num_chains
+    accept_rate = None
+
+    # CmdStanPy exposes sampler diagnostics via method_variables()
+    try:
+        method_vars = fit.method_variables()
+    except Exception:
+        method_vars = {}
+
+    # "accept_stat__" is the acceptance statistic
+    if "accept_stat__" in method_vars:
+        ar = jnp.asarray(method_vars["accept_stat__"]).reshape(-1)
+        accept_rate = ar
+        kwargs["log_accept_ratio"] = jnp.log(jnp.clip(ar, 1e-10, 1.0))
+    else:
+        kwargs["log_accept_ratio"] = jnp.zeros(n_total)
+
+    if "stepsize__" in method_vars:
+        kwargs["step_size"] = jnp.asarray(method_vars["stepsize__"]).reshape(-1)
+
+    if "divergent__" in method_vars:
+        diverging = jnp.asarray(method_vars["divergent__"], dtype=jnp.bool_).reshape(-1)
+        kwargs["diverging"] = diverging
+        kwargs["n_divergences"] = int(jnp.sum(diverging))
+
+    if "treedepth__" in method_vars:
+        kwargs["tree_depth"] = jnp.asarray(method_vars["treedepth__"]).reshape(-1)
+
+    if "n_leapfrog__" in method_vars:
+        kwargs["n_steps"] = jnp.asarray(method_vars["n_leapfrog__"]).reshape(-1)
+
+    if "energy__" in method_vars:
+        kwargs["energy"] = jnp.asarray(method_vars["energy__"]).reshape(-1)
+
+    if "lp__" in method_vars:
+        kwargs["lp"] = jnp.asarray(method_vars["lp__"]).reshape(-1)
+
+    diag = InferenceDiagnostics(algorithm="cmdstan_nuts", **kwargs)
+
+    if accept_rate is not None:
+        diag["_accept_rate_override"] = float(jnp.mean(accept_rate))
+
+    return diag
 
 
 class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):

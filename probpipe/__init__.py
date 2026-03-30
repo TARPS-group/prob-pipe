@@ -32,6 +32,7 @@ from probpipe.distributions import (
     FlattenedView,
     TFPDistribution,
     EmpiricalDistribution,
+    BroadcastDistribution,
     Provenance,
     # Global settings
     BootstrapDistribution,
@@ -101,6 +102,7 @@ from probpipe.core.node import WorkflowFunction, Module, wf
 from probpipe.core.provenance import provenance_ancestors, provenance_dag
 from probpipe.modeling import Likelihood, GenerativeLikelihood, IterativeForecaster
 from probpipe.inference import (
+    InferenceDiagnostics,
     MCMCDiagnostics,
     MCMCApproximateDistribution,
     rwmh,
@@ -134,6 +136,7 @@ __all__ = [
     "FlattenedView",
     "TFPDistribution",
     "EmpiricalDistribution",
+    "BroadcastDistribution",
     "BootstrapDistribution",
     "JointBootstrapDistribution",
     "Provenance",
@@ -218,6 +221,7 @@ __all__ = [
     "ProbabilisticModel",
     "SimpleModel",
     # Inference
+    "InferenceDiagnostics",
     "MCMCDiagnostics",
     "MCMCApproximateDistribution",
     "rwmh",

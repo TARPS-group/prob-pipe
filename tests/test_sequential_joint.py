@@ -456,7 +456,7 @@ class TestBroadcastingReconnection:
             seed=42,
         )
         result = wf(a=joint["z"], b=joint["x"])
-        assert isinstance(result, EmpiricalDistribution)
+        assert hasattr(result, "samples")
         # z and x are jointly sampled, x ≈ z, so a - b ≈ 0
         np.testing.assert_allclose(
             np.array(result.samples), 0.0, atol=0.15
@@ -478,7 +478,7 @@ class TestBroadcastingReconnection:
             seed=55,
         )
         result = wf(a=joint["z"], b=joint["x"])
-        assert isinstance(result, EmpiricalDistribution)
+        assert hasattr(result, "samples")
         np.testing.assert_allclose(
             np.array(result.samples), 0.0, atol=0.15
         )

@@ -49,11 +49,16 @@ mean(posterior)       # Array([1.0558641, 2.061712], dtype=float32)
 predict = WorkflowFunction(func=lambda params, x: params[0] + params[1] * x)
 predictive = predict(params=posterior, x=0.5)
 
+# Broadcasting returns the output distribution directly
 mean(predictive)       # Array(2.087983, dtype=float32)
 variance(predictive)   # Array(0.04383527, dtype=float32)
+
+# Pass include_inputs=True to retain the joint over inputs and output
+joint = predict(params=posterior, x=0.5, include_inputs=True)
+joint.input_samples.keys()  # dict_keys(['params'])
 ```
 
-The result is an `EmpiricalDistribution` -- a first-class distribution object that can be passed into downstream workflow nodes, triggering further uncertainty propagation.
+When a `WorkflowFunction` receives a distribution where it expects a concrete value, it automatically broadcasts over samples and returns the output distribution. Pass `include_inputs=True` to get a `BroadcastDistribution` -- a joint distribution preserving input--output alignment. The output can be passed into downstream workflow nodes, triggering further uncertainty propagation.
 
 ## Next Steps
 

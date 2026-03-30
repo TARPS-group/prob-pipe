@@ -235,6 +235,16 @@ class TestCmdStanPyCondition:
         mock_fit = MagicMock()
         # draws returns (chains, draws, params) shaped array
         mock_fit.draws.return_value = np.random.randn(2, 50, 3).astype(np.float32)
+        # method_variables returns CmdStan diagnostic columns
+        mock_fit.method_variables.return_value = {
+            "accept_stat__": np.random.uniform(0.5, 1.0, (2, 50)),
+            "stepsize__": np.full((2, 50), 0.05),
+            "divergent__": np.zeros((2, 50)),
+            "treedepth__": np.random.randint(1, 8, (2, 50)),
+            "n_leapfrog__": np.random.randint(1, 128, (2, 50)),
+            "energy__": np.random.randn(2, 50),
+            "lp__": np.random.randn(2, 50),
+        }
         mock_cmdstanpy.CmdStanModel.return_value.sample.return_value = mock_fit
 
         with patch.dict("sys.modules", {"cmdstanpy": mock_cmdstanpy}):
@@ -249,7 +259,41 @@ class TestCmdStanPyCondition:
             )
             assert isinstance(result, MCMCApproximateDistribution)
             assert result.diagnostics.algorithm == "cmdstan_nuts"
+            assert 0.0 < result.diagnostics.accept_rate <= 1.0
+            assert "diverging" in result.diagnostics
+            assert "tree_depth" in result.diagnostics
+            assert "n_steps" in result.diagnostics
+            assert "energy" in result.diagnostics
+            assert "lp" in result.diagnostics
+            assert result.diagnostics["n_divergences"] == 0
             assert result.source is not None
+
+    def test_cmdstanpy_condition_no_method_variables(self):
+        """Falls back gracefully when method_variables() raises."""
+        from probpipe.modeling._stan import _cmdstanpy_condition
+        from probpipe.inference import MCMCApproximateDistribution
+
+        model_ref = _make_stan_model()
+
+        mock_cmdstanpy = MagicMock()
+        mock_fit = MagicMock()
+        mock_fit.draws.return_value = np.random.randn(1, 10, 2).astype(np.float32)
+        mock_fit.method_variables.side_effect = RuntimeError("not available")
+        mock_cmdstanpy.CmdStanModel.return_value.sample.return_value = mock_fit
+
+        with patch.dict("sys.modules", {"cmdstanpy": mock_cmdstanpy}):
+            result = _cmdstanpy_condition(
+                "test.stan",
+                data={"y": [1]},
+                model_ref=model_ref,
+                num_results=10,
+                num_chains=1,
+            )
+            assert isinstance(result, MCMCApproximateDistribution)
+            assert result.diagnostics.algorithm == "cmdstan_nuts"
+            # Falls back — only log_accept_ratio (zeros)
+            assert "diverging" not in result.diagnostics
+            assert "tree_depth" not in result.diagnostics
 
     def test_ensure_cmdstanpy_missing(self):
         from probpipe.modeling._stan import _ensure_cmdstanpy

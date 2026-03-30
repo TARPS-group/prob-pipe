@@ -16,7 +16,7 @@
 
 ## MCMC
 
-::: probpipe.inference.MCMCDiagnostics
+::: probpipe.inference.InferenceDiagnostics
 
 ::: probpipe.inference.MCMCApproximateDistribution
 

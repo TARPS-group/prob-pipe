@@ -119,5 +119,7 @@ class TestPyMCModel:
         assert result.num_draws == 20
         assert result.diagnostics is not None
         assert result.diagnostics.algorithm == "pymc_nuts"
+        # Real PyMC trace should populate diagnostics from sample_stats
+        assert 0.0 < result.diagnostics.accept_rate <= 1.0
         assert result.source is not None
         assert result.source.operation == "pymc_sample"
