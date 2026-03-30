@@ -51,7 +51,7 @@ from .discrete import (
     Categorical,
     NegativeBinomial,
 )
-from .transformed import TransformedDistribution
+from ..maps import BijectorTransformedDistribution
 from .joint import (
     JointDistribution,
     ProductDistribution,
@@ -122,7 +122,7 @@ __all__ = [
     "Categorical",
     "NegativeBinomial",
     # Transformed
-    "TransformedDistribution",
+    "BijectorTransformedDistribution",
     # Joint
     "JointDistribution",
     "ProductDistribution",

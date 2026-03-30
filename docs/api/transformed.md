@@ -1,3 +1,3 @@
 # Transformed Distributions
 
-::: probpipe.TransformedDistribution
+::: probpipe.BijectorTransformedDistribution

@@ -13,7 +13,7 @@ from probpipe import (
     MultivariateNormal,
     EmpiricalDistribution,
     BootstrapDistribution,
-    TransformedDistribution,
+    BijectorTransformedDistribution,
     ProductDistribution,
     SequentialJointDistribution,
     JointEmpirical,
