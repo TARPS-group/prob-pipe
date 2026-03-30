@@ -1,4 +1,4 @@
-"""Tests for TransformedDistribution."""
+"""Tests for BijectorTransformedDistribution."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from probpipe.distributions import (
     ArrayDistribution,
-    TransformedDistribution,
+    BijectorTransformedDistribution,
     Normal,
     MultivariateNormal,
     EmpiricalDistribution,
@@ -19,6 +19,7 @@ from probpipe.core.distribution import (
     positive,
     unit_interval,
 )
+from probpipe.maps import TFPBijector
 from probpipe import log_prob, mean, sample, variance
 
 
@@ -35,72 +36,72 @@ def key():
 class TestTFPBase:
     def test_exp_samples_positive(self, key):
         base = Normal(loc=0.0, scale=1.0)
-        td = TransformedDistribution(base, tfb.Exp())
-        samples = sample(td, key=key, sample_shape=(100,))
-        assert jnp.all(samples > 0)
+        td = BijectorTransformedDistribution(base, TFPBijector(tfb.Exp()))
+        s = sample(td, key=key, sample_shape=(100,))
+        assert jnp.all(s > 0)
 
     def test_exp_event_shape(self):
         base = Normal(loc=0.0, scale=1.0)
-        td = TransformedDistribution(base, tfb.Exp())
+        td = BijectorTransformedDistribution(base, TFPBijector(tfb.Exp()))
         assert td.event_shape == ()
 
     def test_exp_batch_shape(self):
         base = Normal(loc=0.0, scale=1.0)
-        td = TransformedDistribution(base, tfb.Exp())
+        td = BijectorTransformedDistribution(base, TFPBijector(tfb.Exp()))
         assert td.batch_shape == ()
 
     def test_exp_sample_shape(self, key):
         base = Normal(loc=0.0, scale=1.0)
-        td = TransformedDistribution(base, tfb.Exp())
+        td = BijectorTransformedDistribution(base, TFPBijector(tfb.Exp()))
         s = sample(td, key=key, sample_shape=(5,))
         assert s.shape == (5,)
 
     def test_exp_log_prob_shape(self, key):
         base = Normal(loc=0.0, scale=1.0)
-        td = TransformedDistribution(base, tfb.Exp())
+        td = BijectorTransformedDistribution(base, TFPBijector(tfb.Exp()))
         s = sample(td, key=key, sample_shape=(5,))
         lp = log_prob(td, s)
         assert lp.shape == (5,)
 
     def test_exp_log_prob_finite(self, key):
         base = Normal(loc=0.0, scale=1.0)
-        td = TransformedDistribution(base, tfb.Exp())
+        td = BijectorTransformedDistribution(base, TFPBijector(tfb.Exp()))
         s = sample(td, key=key, sample_shape=(10,))
         lp = log_prob(td, s)
         assert jnp.all(jnp.isfinite(lp))
 
     def test_sigmoid_samples_in_unit_interval(self, key):
         base = Normal(loc=0.0, scale=1.0)
-        td = TransformedDistribution(base, tfb.Sigmoid())
-        samples = sample(td, key=key, sample_shape=(100,))
-        assert jnp.all(samples >= 0) and jnp.all(samples <= 1)
+        td = BijectorTransformedDistribution(base, TFPBijector(tfb.Sigmoid()))
+        s = sample(td, key=key, sample_shape=(100,))
+        assert jnp.all(s >= 0) and jnp.all(s <= 1)
 
     def test_softplus_samples_positive(self, key):
         base = Normal(loc=0.0, scale=1.0)
-        td = TransformedDistribution(base, tfb.Softplus())
-        samples = sample(td, key=key, sample_shape=(100,))
-        assert jnp.all(samples > 0)
+        td = BijectorTransformedDistribution(base, TFPBijector(tfb.Softplus()))
+        s = sample(td, key=key, sample_shape=(100,))
+        assert jnp.all(s > 0)
 
     def test_multivariate_exp(self, key):
         base = MultivariateNormal(
             loc=jnp.zeros(3), cov=jnp.eye(3)
         )
-        td = TransformedDistribution(base, tfb.Exp())
-        samples = sample(td, key=key, sample_shape=(10,))
-        assert samples.shape == (10, 3)
-        assert jnp.all(samples > 0)
+        td = BijectorTransformedDistribution(base, TFPBijector(tfb.Exp()))
+        s = sample(td, key=key, sample_shape=(10,))
+        assert s.shape == (10, 3)
+        assert jnp.all(s > 0)
 
     def test_mean_delegates_to_tfp_when_available(self):
         """Shift bijector preserves tractable mean."""
         base = Normal(loc=0.0, scale=1.0)
-        td = TransformedDistribution(base, tfb.Shift(5.0))
+        td = BijectorTransformedDistribution(base, TFPBijector(tfb.Shift(5.0)))
         m = mean(td)
         assert jnp.isclose(m, 5.0, atol=0.01)
 
     def test_variance_delegates_to_tfp_when_available(self):
         """Scale bijector has tractable variance."""
         base = Normal(loc=0.0, scale=1.0)
-        td = TransformedDistribution(base, tfb.Scale(2.0))
+        td = BijectorTransformedDistribution(base, TFPBijector(tfb.Scale(2.0)))
         v = variance(td)
         assert jnp.isclose(v, 4.0, atol=0.01)
 
@@ -114,7 +115,7 @@ class TestNonTFPBase:
     def test_exp_on_empirical(self, key):
         samples = jax.random.normal(key, (50, 2))
         emp = EmpiricalDistribution(samples)
-        td = TransformedDistribution(emp, tfb.Exp())
+        td = BijectorTransformedDistribution(emp, TFPBijector(tfb.Exp()))
         s = sample(td, key=key, sample_shape=(10,))
         assert s.shape == (10, 2)
         assert jnp.all(s > 0)
@@ -123,7 +124,7 @@ class TestNonTFPBase:
         """Non-TFP base: mean falls back to MC via expectation."""
         samples = jax.random.normal(key, (50, 2))
         emp = EmpiricalDistribution(samples)
-        td = TransformedDistribution(emp, tfb.Exp())
+        td = BijectorTransformedDistribution(emp, TFPBijector(tfb.Exp()))
         m = mean(td)
         assert jnp.all(jnp.isfinite(m))
 
@@ -136,8 +137,8 @@ class TestNonTFPBase:
 class TestChainedBijectors:
     def test_chain_sample_shape(self, key):
         base = Normal(loc=0.0, scale=1.0)
-        chain = tfb.Chain([tfb.Exp(), tfb.Shift(1.0), tfb.Scale(2.0)])
-        td = TransformedDistribution(base, chain)
+        chain = TFPBijector(tfb.Chain([tfb.Exp(), tfb.Shift(1.0), tfb.Scale(2.0)]))
+        td = BijectorTransformedDistribution(base, chain)
         s = sample(td, key=key, sample_shape=(10,))
         assert s.shape == (10,)
         # Exp is the outermost bijector → samples should be positive
@@ -145,8 +146,8 @@ class TestChainedBijectors:
 
     def test_chain_log_prob_finite(self, key):
         base = Normal(loc=0.0, scale=1.0)
-        chain = tfb.Chain([tfb.Exp(), tfb.Shift(1.0), tfb.Scale(2.0)])
-        td = TransformedDistribution(base, chain)
+        chain = TFPBijector(tfb.Chain([tfb.Exp(), tfb.Shift(1.0), tfb.Scale(2.0)]))
+        td = BijectorTransformedDistribution(base, chain)
         s = sample(td, key=key, sample_shape=(5,))
         lp = log_prob(td, s)
         assert jnp.all(jnp.isfinite(lp))
@@ -159,24 +160,24 @@ class TestChainedBijectors:
 
 class TestSupport:
     def test_exp_support(self):
-        td = TransformedDistribution(Normal(0.0, 1.0), tfb.Exp())
+        td = BijectorTransformedDistribution(Normal(0.0, 1.0), TFPBijector(tfb.Exp()))
         assert td.support == positive
 
     def test_sigmoid_support(self):
-        td = TransformedDistribution(Normal(0.0, 1.0), tfb.Sigmoid())
+        td = BijectorTransformedDistribution(Normal(0.0, 1.0), TFPBijector(tfb.Sigmoid()))
         assert td.support == unit_interval
 
     def test_softplus_support(self):
-        td = TransformedDistribution(Normal(0.0, 1.0), tfb.Softplus())
+        td = BijectorTransformedDistribution(Normal(0.0, 1.0), TFPBijector(tfb.Softplus()))
         assert td.support == positive
 
     def test_chain_support_from_outermost(self):
-        chain = tfb.Chain([tfb.Exp(), tfb.Shift(1.0)])
-        td = TransformedDistribution(Normal(0.0, 1.0), chain)
+        chain = TFPBijector(tfb.Chain([tfb.Exp(), tfb.Shift(1.0)]))
+        td = BijectorTransformedDistribution(Normal(0.0, 1.0), chain)
         assert td.support == positive
 
     def test_unknown_bijector_falls_back_to_real(self):
-        td = TransformedDistribution(Normal(0.0, 1.0), tfb.Shift(1.0))
+        td = BijectorTransformedDistribution(Normal(0.0, 1.0), TFPBijector(tfb.Shift(1.0)))
         assert td.support == real
 
 
@@ -187,24 +188,24 @@ class TestSupport:
 
 class TestNameAndRepr:
     def test_name_default_none(self):
-        td = TransformedDistribution(Normal(0.0, 1.0), tfb.Exp())
+        td = BijectorTransformedDistribution(Normal(0.0, 1.0), TFPBijector(tfb.Exp()))
         assert td.name is None
 
     def test_name_set(self):
-        td = TransformedDistribution(Normal(0.0, 1.0), tfb.Exp(), name="log_normal")
+        td = BijectorTransformedDistribution(Normal(0.0, 1.0), TFPBijector(tfb.Exp()), name="log_normal")
         assert td.name == "log_normal"
 
     def test_repr_contains_class_names(self):
-        td = TransformedDistribution(Normal(0.0, 1.0), tfb.Exp())
+        td = BijectorTransformedDistribution(Normal(0.0, 1.0), TFPBijector(tfb.Exp()))
         r = repr(td)
-        assert "TransformedDistribution" in r
+        assert "BijectorTransformedDistribution" in r
         assert "Normal" in r
         assert "Exp" in r
 
     def test_is_distribution(self):
-        td = TransformedDistribution(Normal(0.0, 1.0), tfb.Exp())
+        td = BijectorTransformedDistribution(Normal(0.0, 1.0), TFPBijector(tfb.Exp()))
         assert isinstance(td, ArrayDistribution)
 
     def test_dtype(self):
-        td = TransformedDistribution(Normal(0.0, 1.0), tfb.Exp())
+        td = BijectorTransformedDistribution(Normal(0.0, 1.0), TFPBijector(tfb.Exp()))
         assert td.dtype == jnp.float32

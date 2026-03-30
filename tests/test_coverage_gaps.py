@@ -7,7 +7,7 @@ Covers:
 - TFPDistribution._cov: scalar and multivariate
 - ops error paths for unsupported protocols
 - SupportsCovariance default implementation
-- TransformedDistribution non-TFP paths
+- BijectorTransformedDistribution non-TFP paths
 """
 
 import jax
@@ -16,11 +16,12 @@ import numpy as np
 import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
+from probpipe.maps import TFPBijector
 from probpipe import (
     BootstrapDistribution,
     EmpiricalDistribution,
     Normal,
-    TransformedDistribution,
+    BijectorTransformedDistribution,
     cov,
     expectation,
     log_prob,
@@ -327,19 +328,19 @@ class TestFlattenedView:
 
 
 # ---------------------------------------------------------------------------
-# TransformedDistribution non-TFP paths
+# BijectorTransformedDistribution non-TFP paths
 # ---------------------------------------------------------------------------
 
 
 class TestTransformedNonTFP:
-    """Cover TransformedDistribution with non-TFP base (EmpiricalDistribution)."""
+    """Cover BijectorTransformedDistribution with non-TFP base (EmpiricalDistribution)."""
 
     @pytest.fixture
     def td(self):
         key = jax.random.PRNGKey(0)
         samples = jax.random.normal(key, (100, 2))
         emp = EmpiricalDistribution(samples)
-        return TransformedDistribution(emp, tfb.Exp())
+        return BijectorTransformedDistribution(emp, TFPBijector(tfb.Exp()))
 
     def test_base_property(self, td):
         assert isinstance(td.base, EmpiricalDistribution)
@@ -372,7 +373,7 @@ class TestTransformedNonTFP:
 
     def test_repr(self, td):
         r = repr(td)
-        assert "TransformedDistribution" in r
+        assert "BijectorTransformedDistribution" in r
 
 
 # ---------------------------------------------------------------------------

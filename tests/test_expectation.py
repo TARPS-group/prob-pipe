@@ -19,12 +19,13 @@ from probpipe import (
     Categorical,
     Binomial,
     from_distribution,
-    TransformedDistribution,
+    BijectorTransformedDistribution,
     DEFAULT_NUM_EVALUATIONS,
     set_default_num_evaluations,
     set_return_approx_dist,
 )
 import tensorflow_probability.substrates.jax.bijectors as tfb
+from probpipe.maps import TFPBijector
 from probpipe import expectation, log_prob, mean, sample, variance
 
 
@@ -368,11 +369,11 @@ class TestIsApproximate:
 
     def test_transformed_propagates(self):
         exact_base = Normal(loc=0.0, scale=1.0)
-        t_exact = TransformedDistribution(exact_base, tfb.Exp())
+        t_exact = BijectorTransformedDistribution(exact_base, TFPBijector(tfb.Exp()))
         assert not t_exact.is_approximate
 
         approx_base = EmpiricalDistribution(jnp.array([1.0, 2.0]))
-        t_approx = TransformedDistribution(approx_base, tfb.Exp())
+        t_approx = BijectorTransformedDistribution(approx_base, TFPBijector(tfb.Exp()))
         assert t_approx.is_approximate
 
     def test_from_distribution_same_class_exact(self):

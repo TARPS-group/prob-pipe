@@ -6,12 +6,13 @@ import numpy as np
 import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
+from probpipe.maps import TFPBijector
 from probpipe import (
     Normal,
     Beta,
     MultivariateNormal,
     EmpiricalDistribution,
-    TransformedDistribution,
+    BijectorTransformedDistribution,
     ProductDistribution,
     SequentialJointDistribution,
     JointGaussian,
@@ -84,23 +85,23 @@ class TestTransformedDistributionProvenance:
 
     def test_transform_provenance_attached(self):
         base = Normal(loc=0.0, scale=1.0, name="base")
-        td = TransformedDistribution(base, tfb.Exp())
+        td = BijectorTransformedDistribution(base, TFPBijector(tfb.Exp()))
         assert td.source is not None
-        assert td.source.operation == "transform"
+        assert td.source.operation == "pushforward"
         assert td.source.parents == (base,)
-        assert td.source.metadata["bijector"] == "Exp"
+        assert td.source.metadata["bijector"] == "TFPBijector(Exp)"
 
     def test_transform_chain_provenance(self):
         base = Normal(loc=0.0, scale=1.0)
         bij = tfb.Chain([tfb.Exp(), tfb.Shift(1.0)])
-        td = TransformedDistribution(base, bij)
-        assert td.source.metadata["bijector"] == "Chain"
+        td = BijectorTransformedDistribution(base, TFPBijector(bij))
+        assert td.source.metadata["bijector"] == "TFPBijector(Chain)"
 
     def test_transform_with_empirical_base(self):
         ed = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
-        td = TransformedDistribution(ed, tfb.Exp())
+        td = BijectorTransformedDistribution(ed, TFPBijector(tfb.Exp()))
         assert td.source is not None
-        assert td.source.operation == "transform"
+        assert td.source.operation == "pushforward"
         assert td.source.parents == (ed,)
 
 
@@ -230,7 +231,7 @@ class TestProvenanceChains:
     def test_transform_then_broadcast(self):
         """transform → broadcast creates a 2-step chain."""
         base = Normal(loc=0.0, scale=1.0, name="base")
-        td = TransformedDistribution(base, tfb.Exp(), name="positive")
+        td = BijectorTransformedDistribution(base, TFPBijector(tfb.Exp()), name="positive")
 
         def log_val(x: float) -> float:
             return jnp.log(x)
@@ -238,11 +239,11 @@ class TestProvenanceChains:
         wf = WorkflowFunction(func=log_val, vectorize="loop",
                       n_broadcast_samples=20, seed=42)
         result = wf(x=td)
-        # result → broadcast → td → transform → base
+        # result → broadcast → td → pushforward → base
         assert result.source.operation == "broadcast"
         parent_td = result.source.parents[0]
         assert parent_td is td
-        assert parent_td.source.operation == "transform"
+        assert parent_td.source.operation == "pushforward"
         assert parent_td.source.parents[0] is base
 
 
@@ -270,16 +271,16 @@ class TestSerialization:
     def test_to_dict_recursive(self):
         """Recursive serialization follows provenance chains."""
         src = Normal(loc=0.0, scale=1.0, name="src")
-        td = TransformedDistribution(src, tfb.Exp(), name="transformed")
+        td = BijectorTransformedDistribution(src, TFPBijector(tfb.Exp()), name="transformed")
         p = Provenance("broadcast", parents=(td,))
         d = p.to_dict(recurse=True)
-        # td has source (transform), which should be serialized
+        # td has source (pushforward), which should be serialized
         assert "source" in d["parents"][0]
-        assert d["parents"][0]["source"]["operation"] == "transform"
+        assert d["parents"][0]["source"]["operation"] == "pushforward"
 
     def test_to_dict_non_recursive(self):
         src = Normal(loc=0.0, scale=1.0, name="src")
-        td = TransformedDistribution(src, tfb.Exp(), name="transformed")
+        td = BijectorTransformedDistribution(src, TFPBijector(tfb.Exp()), name="transformed")
         p = Provenance("broadcast", parents=(td,))
         d = p.to_dict(recurse=False)
         assert "source" not in d["parents"][0]
@@ -322,7 +323,7 @@ class TestProvenanceAncestors:
 
     def test_single_parent(self):
         base = Normal(loc=0.0, scale=1.0, name="base")
-        td = TransformedDistribution(base, tfb.Exp())
+        td = BijectorTransformedDistribution(base, TFPBijector(tfb.Exp()))
         ancestors = provenance_ancestors(td)
         assert len(ancestors) == 1
         assert ancestors[0] is base
@@ -330,7 +331,7 @@ class TestProvenanceAncestors:
     def test_chain_of_ancestors(self):
         """base → transform → broadcast gives 2 ancestors for broadcast result."""
         base = Normal(loc=0.0, scale=1.0, name="base")
-        td = TransformedDistribution(base, tfb.Exp(), name="positive")
+        td = BijectorTransformedDistribution(base, TFPBijector(tfb.Exp()), name="positive")
 
         def identity(x: float) -> float:
             return x
@@ -367,13 +368,13 @@ class TestProvenanceDag:
 
     def test_basic_dag(self):
         base = Normal(loc=0.0, scale=1.0, name="base")
-        td = TransformedDistribution(base, tfb.Exp(), name="positive")
+        td = BijectorTransformedDistribution(base, TFPBijector(tfb.Exp()), name="positive")
         dag = provenance_dag(td)
         # Should have 2 nodes and 1 edge
         assert dag is not None
         source = dag.source
         assert "base" in source
-        assert "positive" in source or "TransformedDistribution" in source
+        assert "positive" in source or "BijectorTransformedDistribution" in source
 
     def test_no_provenance_single_node(self):
         n = Normal(loc=0.0, scale=1.0, name="alone")
@@ -383,7 +384,7 @@ class TestProvenanceDag:
 
     def test_multi_step_dag(self):
         base = Normal(loc=0.0, scale=1.0, name="prior")
-        td = TransformedDistribution(base, tfb.Exp(), name="positive")
+        td = BijectorTransformedDistribution(base, TFPBijector(tfb.Exp()), name="positive")
 
         def identity(x: float) -> float:
             return x
@@ -395,5 +396,5 @@ class TestProvenanceDag:
         source = dag.source
         # Should contain nodes for result, td, and base
         assert "prior" in source
-        assert "transform" in source  # edge label
+        assert "pushforward" in source  # edge label
         assert "broadcast" in source  # edge label

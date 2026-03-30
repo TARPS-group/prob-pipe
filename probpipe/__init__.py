@@ -83,7 +83,7 @@ from probpipe.distributions import (
     Wishart,
     VonMisesFisher,
     # Transformed
-    TransformedDistribution,
+    BijectorTransformedDistribution,
     # Joint
     JointDistribution,
     ProductDistribution,
@@ -97,6 +97,16 @@ from probpipe.distributions import (
     ArrayRandomFunction,
     GaussianRandomFunction,
     LinearBasisFunction,
+)
+from probpipe.maps import (
+    TransportMap,
+    Bijector,
+    TFPBijector,
+    PushforwardRule,
+    PushforwardRegistry,
+    PushforwardMethod,
+    PushforwardInfo,
+    pushforward_registry,
 )
 from probpipe.core.node import WorkflowFunction, Module, wf
 from probpipe.core.provenance import provenance_ancestors, provenance_dag
@@ -182,7 +192,7 @@ __all__ = [
     "Wishart",
     "VonMisesFisher",
     # Transformed
-    "TransformedDistribution",
+    "BijectorTransformedDistribution",
     # Joint
     "JointDistribution",
     "ProductDistribution",
@@ -203,6 +213,15 @@ __all__ = [
     "ArrayRandomFunction",
     "GaussianRandomFunction",
     "LinearBasisFunction",
+    # Transport maps
+    "TransportMap",
+    "Bijector",
+    "TFPBijector",
+    "PushforwardRule",
+    "PushforwardRegistry",
+    "PushforwardMethod",
+    "PushforwardInfo",
+    "pushforward_registry",
     # Protocols
     "SupportsExpectation",
     "SupportsSampling",
@@ -248,4 +267,5 @@ from probpipe.core.ops import (  # noqa: E402
     expectation,
     condition_on,
     from_distribution,
+    pushforward,
 )
