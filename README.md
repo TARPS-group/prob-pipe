@@ -53,7 +53,7 @@ import jax
 import jax.numpy as jnp
 from probpipe import (
     MultivariateNormal, SimpleModel, EmpiricalDistribution,
-    JointBootstrapDistribution,
+    BootstrapReplicateDistribution,
     condition_on, sample, mean, variance, log_prob,
 )
 from probpipe.modeling import Likelihood
@@ -91,17 +91,17 @@ variance(posterior)   # Array([0.0097, 0.0143, 0.0120], dtype=float32)
 
 Under model misspecification, standard Bayesian posteriors can be unreliable — credible sets from replicate datasets may not overlap. The *bagged posterior* ([Huggins & Miller, 2024](https://doi.org/10.1214/24-EJS2237)) averages over posteriors conditioned on bootstrapped datasets, yielding reproducible uncertainty quantification.
 
-ProbPipe makes this natural. `JointBootstrapDistribution` represents the bootstrap sampling distribution over datasets. Broadcasting `condition_on` over bootstrap datasets produces multiple posteriors that can be aggregated:
+ProbPipe makes this natural. `BootstrapReplicateDistribution` represents the bootstrap sampling distribution over datasets. Broadcasting `condition_on` over bootstrap datasets produces multiple posteriors that can be aggregated:
 
 ```python
 # Wrap the observed data as a bootstrap sampling distribution
-bootstrap_data = JointBootstrapDistribution(EmpiricalDistribution(data))
+bootstrap_data = BootstrapReplicateDistribution(EmpiricalDistribution(data))
 
 # Each bootstrap sample is a full dataset; condition_on broadcasts over them
 bagged_posterior = condition_on(model, bootstrap_data)
 ```
 
-Because `JointBootstrapDistribution` implements `SupportsSampling`, the `condition_on` workflow function automatically broadcasts: it draws bootstrap datasets and runs MCMC on each, returning the **bagged posterior** — a mixture distribution that averages over the individual bootstrap posteriors. The individual posteriors are accessible via `.components`.
+Because `BootstrapReplicateDistribution` implements `SupportsSampling`, the `condition_on` workflow function automatically broadcasts: it draws bootstrap datasets and runs MCMC on each, returning the **bagged posterior** — a mixture distribution that averages over the individual bootstrap posteriors. The individual posteriors are accessible via `.components`.
 
 To see why bagging matters, compare the well-specified Gaussian data above with a **misspecified** scenario — heavy-tailed noise that violates the model's Gaussian assumption:
 
@@ -115,7 +115,7 @@ data_ht = jnp.column_stack([x_ht, jnp.array(y_ht, dtype=jnp.float32)])
 
 posterior_ht = condition_on(model, data_ht, num_results=1000, num_warmup=500, random_seed=0)
 
-bootstrap_ht = JointBootstrapDistribution(EmpiricalDistribution(data_ht))
+bootstrap_ht = BootstrapReplicateDistribution(EmpiricalDistribution(data_ht))
 bagged_posterior_ht = condition_on(model, bootstrap_ht)
 ```
 

@@ -10,7 +10,6 @@ from probpipe import (
     Gamma,
     ProductDistribution,
     DistributionView,
-    ConditionedComponent,
     JointDistribution,
     EmpiricalDistribution,
     ArrayDistribution,
@@ -359,60 +358,6 @@ class TestConditionOn:
     def test_raises_on_conditioning_all(self, joint_xy):
         with pytest.raises(ValueError, match="Cannot condition on all"):
             condition_on(joint_xy, x=jnp.array(0.0), y=jnp.array(0.0))
-
-
-# ===========================================================================
-# 8. TestConditionedComponent
-# ===========================================================================
-
-class TestConditionedComponent:
-
-    def test_event_shape_matches_base(self, normal_x):
-        pc = ConditionedComponent(normal_x, jnp.array(1.0))
-        assert pc.event_shape == normal_x.event_shape
-
-    def test_event_shape_mvn(self, mvn_z):
-        val = jnp.array([1.0, 2.0, 3.0])
-        pc = ConditionedComponent(mvn_z, val)
-        assert pc.event_shape == (3,)
-
-    def test_sample_always_returns_pinned(self, normal_x):
-        val = jnp.array(42.0)
-        pc = ConditionedComponent(normal_x, val)
-        key = jax.random.PRNGKey(30)
-        s1 = sample(pc, key=key)
-        s2 = sample(pc, key=jax.random.PRNGKey(31))
-        np.testing.assert_allclose(float(s1), 42.0, atol=1e-6)
-        np.testing.assert_allclose(float(s2), 42.0, atol=1e-6)
-
-    def test_sample_broadcast_shape(self, normal_x):
-        val = jnp.array(5.0)
-        pc = ConditionedComponent(normal_x, val)
-        key = jax.random.PRNGKey(32)
-        s = sample(pc, key=key, sample_shape=(8,))
-        assert s.shape == (8,)
-        np.testing.assert_allclose(s, jnp.full((8,), 5.0), atol=1e-6)
-
-    def test_value_error_shape_mismatch(self, mvn_z):
-        with pytest.raises(ValueError, match="shape"):
-            ConditionedComponent(mvn_z, jnp.array(1.0))  # scalar vs (3,)
-
-    def test_log_prob_is_constant(self, normal_x):
-        val = jnp.array(0.0)
-        pc = ConditionedComponent(normal_x, val)
-        lp1 = log_prob(pc, jnp.array(999.0))
-        lp2 = log_prob(pc, jnp.array(-999.0))
-        # log_prob always evaluates base at the pinned value, ignoring input
-        np.testing.assert_allclose(float(lp1), float(lp2), atol=1e-6)
-
-    def test_mean_returns_pinned_value(self, normal_x):
-        val = jnp.array(7.0)
-        pc = ConditionedComponent(normal_x, val)
-        np.testing.assert_allclose(float(mean(pc)), 7.0, atol=1e-6)
-
-    def test_variance_is_zero(self, normal_x):
-        pc = ConditionedComponent(normal_x, jnp.array(1.0))
-        np.testing.assert_allclose(float(variance(pc)), 0.0, atol=1e-6)
 
 
 # ===========================================================================

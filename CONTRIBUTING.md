@@ -92,24 +92,29 @@ probpipe/
 ├── _array_utils.py          # Array manipulation helpers
 │
 ├── core/                    # Core abstractions (no specialized distributions)
-│   ├── distribution.py      # Distribution[T] base, ArrayDistribution,
-│   │                        #   EmpiricalDistribution, BootstrapDistribution,
-│   │                        #   JointBootstrapDistribution, BroadcastDistribution
-│   ├── protocols.py         # @runtime_checkable protocol definitions
-│   ├── ops.py               # Built-in ops: sample, mean, log_prob, etc.
-│   ├── constraints.py       # Constraint hierarchy (real, positive, etc.)
-│   ├── node.py              # Node, Module, WorkflowFunction, @wf
-│   ├── modeling.py          # Likelihood, GenerativeLikelihood, IterativeForecaster
-│   └── provenance.py        # Provenance tracking
+│   ├── distribution.py        # Re-export facade for all core distribution symbols
+│   ├── _distribution_base.py  # Distribution[T] base, global settings
+│   ├── _array_distributions.py # PyTreeArrayDistribution, ArrayDistribution,
+│   │                          #   BootstrapDistribution, FlattenedView
+│   ├── _empirical.py          # EmpiricalDistribution[T], ArrayEmpiricalDistribution,
+│   │                          #   BootstrapReplicateDistribution[T]
+│   ├── _broadcast_distributions.py # BroadcastDistribution, marginal types
+│   ├── _joint.py              # JointDistribution, ProductDistribution, DistributionView
+│   ├── _random_functions.py   # RandomFunction[X,Y], ArrayRandomFunction
+│   ├── protocols.py           # @runtime_checkable protocol definitions
+│   ├── ops.py                 # Built-in ops: sample, mean, log_prob, etc.
+│   ├── constraints.py         # Constraint hierarchy (real, positive, etc.)
+│   ├── node.py                # Node, Module, WorkflowFunction, @wf
+│   ├── modeling.py            # Likelihood, GenerativeLikelihood, IterativeForecaster
+│   └── provenance.py          # Provenance tracking
 │
 ├── distributions/           # Concrete distribution implementations
 │   ├── continuous.py        # Normal, Gamma, Beta, etc.
 │   ├── discrete.py          # Bernoulli, Poisson, Categorical, etc.
 │   ├── multivariate.py      # MultivariateNormal, Dirichlet, Wishart, etc.
-│   ├── joint.py             # ProductDistribution, SequentialJoint, etc.
+│   ├── joint.py             # SequentialJointDistribution, JointEmpirical, etc.
 │   ├── transformed.py       # TransformedDistribution
-│   ├── random_function.py   # RandomFunction, ArrayRandomFunction
-│   ├── gaussian_random_function.py  # GaussianRandomFunction
+│   ├── gaussian_random_function.py  # GaussianRandomFunction, LinearBasisFunction
 │   └── _tfp_base.py         # TFPDistribution mixin
 │
 ├── modeling/                # Probabilistic model wrappers
@@ -172,7 +177,7 @@ Some distribution families have a generic base and an array-specific
 subclass:
 
 - `EmpiricalDistribution[T]` / `ArrayEmpiricalDistribution`
-- `JointBootstrapDistribution[T]` / `ArrayJointBootstrapDistribution`
+- `BootstrapReplicateDistribution[T]` / `ArrayBootstrapReplicateDistribution`
 
 The generic base carries only type-agnostic features (sampling, expectation).
 The array variant adds `event_shape`, `dim`, `dtype`, `support`, and moment

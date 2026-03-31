@@ -537,12 +537,10 @@ class WorkflowFunction(Node):
         if do_include_inputs:
             return result
 
-        # Default: return the output marginal only
+        # Default: return the output marginal only.
+        # Provenance is propagated automatically by marginalize().
         if isinstance(result, BroadcastDistribution):
-            marginal = result.marginalize()
-            if isinstance(marginal, Distribution):
-                marginal.with_source(provenance)
-            return marginal
+            return result.marginalize()
 
         return result
 

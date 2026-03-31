@@ -287,7 +287,7 @@ class TestExpectationEmpirical:
 
     def test_matches_mean_method(self):
         samples = jnp.array([1.0, 3.0, 5.0, 7.0])
-        d = EmpiricalDistribution(samples)
+        d = ArrayEmpiricalDistribution(samples)
         ex = expectation(d, lambda x: x)
         np.testing.assert_allclose(float(ex), float(mean(d)), atol=1e-6)
 
@@ -340,7 +340,7 @@ class TestMCFallbackMethods:
         np.testing.assert_allclose(float(result), 4.0, atol=1e-6)
 
     def test_empirical_mean_still_exact(self):
-        d = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
+        d = ArrayEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
         result = mean(d)
         assert isinstance(result, jnp.ndarray)
         np.testing.assert_allclose(float(result), 2.0, atol=1e-6)

@@ -35,7 +35,7 @@ import jax
 import jax.numpy as jnp
 from probpipe import (
     MultivariateNormal, SimpleModel, EmpiricalDistribution,
-    JointBootstrapDistribution,
+    BootstrapReplicateDistribution,
     condition_on, sample, mean, variance, log_prob,
 )
 from probpipe.modeling import Likelihood
@@ -86,11 +86,11 @@ Under model misspecification, standard Bayesian posteriors can be unreliable —
 The *bagged posterior* averages over posteriors conditioned on bootstrapped datasets,
 yielding reproducible uncertainty quantification.
 
-ProbPipe makes this natural. `JointBootstrapDistribution` represents the bootstrap sampling distribution over datasets — each sample is a full bootstrapped dataset drawn i.i.d. with replacement:
+ProbPipe makes this natural. `BootstrapReplicateDistribution` represents the bootstrap sampling distribution over datasets — each sample is a full bootstrapped dataset drawn i.i.d. with replacement:
 
 ```python
 # Wrap the observed data as a bootstrap sampling distribution
-bootstrap_data = JointBootstrapDistribution(EmpiricalDistribution(data))
+bootstrap_data = BootstrapReplicateDistribution(EmpiricalDistribution(data))
 
 # Broadcasting condition_on over bootstrap datasets returns the bagged posterior
 bagged_posterior = condition_on(model, bootstrap_data)
@@ -98,10 +98,10 @@ bagged_posterior = condition_on(model, bootstrap_data)
 
 The result is the **bagged posterior** — a mixture distribution that averages over the individual bootstrap posteriors. The individual posteriors are accessible via `.components`.
 
-By default, `JointBootstrapDistribution` sets the bootstrap dataset size equal to the original dataset size (the standard nonparametric bootstrap). You can customize it — for example, using `n=int(N**0.95)` as recommended for BayesBag model selection:
+By default, `BootstrapReplicateDistribution` sets the bootstrap dataset size equal to the original dataset size (the standard nonparametric bootstrap). You can customize it — for example, using `n=int(N**0.95)` as recommended for BayesBag model selection:
 
 ```python
-bootstrap_data = JointBootstrapDistribution(EmpiricalDistribution(data), n=int(N**0.95))
+bootstrap_data = BootstrapReplicateDistribution(EmpiricalDistribution(data), n=int(N**0.95))
 bootstrap_data.n   # 79
 ```
 
@@ -117,7 +117,7 @@ data_ht = jnp.column_stack([x_ht, jnp.array(y_ht, dtype=jnp.float32)])
 
 posterior_ht = condition_on(model, data_ht, num_results=1000, num_warmup=500, random_seed=0)
 
-bootstrap_ht = JointBootstrapDistribution(EmpiricalDistribution(data_ht))
+bootstrap_ht = BootstrapReplicateDistribution(EmpiricalDistribution(data_ht))
 bagged_posterior_ht = condition_on(model, bootstrap_ht)
 ```
 

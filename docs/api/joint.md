@@ -1,15 +1,13 @@
 # Joint Distributions
 
-::: probpipe.JointDistribution
+::: probpipe.core._joint.JointDistribution
 
-::: probpipe.ProductDistribution
+::: probpipe.core._joint.ProductDistribution
 
-::: probpipe.SequentialJointDistribution
+::: probpipe.distributions.joint.SequentialJointDistribution
 
-::: probpipe.JointEmpirical
+::: probpipe.distributions.joint.JointEmpirical
 
-::: probpipe.JointGaussian
+::: probpipe.distributions.joint.JointGaussian
 
-::: probpipe.DistributionView
-
-::: probpipe.ConditionedComponent
+::: probpipe.core._joint.DistributionView

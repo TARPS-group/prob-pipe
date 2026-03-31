@@ -5,14 +5,13 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe.distributions import (
-    ArrayDistribution,
     Bernoulli,
     Binomial,
     Poisson,
     Categorical,
     NegativeBinomial,
 )
-from probpipe import log_prob, sample
+from probpipe import ArrayDistribution, log_prob, sample
 
 
 # ---------------------------------------------------------------------------

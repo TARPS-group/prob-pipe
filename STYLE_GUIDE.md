@@ -79,7 +79,7 @@ condition_on_nutpie = WorkflowFunction(
 ### 1.5 Classes
 
 - **Distribution classes:** CamelCase, descriptive — `Normal`, `MultivariateNormal`,
-  `EmpiricalDistribution`, `JointBootstrapDistribution`.
+  `EmpiricalDistribution`, `BootstrapReplicateDistribution`.
 - **Base / mixin classes:** `Distribution`, `ArrayDistribution`,
   `TFPDistribution`, `ProbabilisticModel`.
 - **Private helper classes:** Leading underscore — `_LinearMapGRF`, `_ShiftedGRF`.
@@ -112,7 +112,7 @@ this distribution hold?"
 | `EmpiricalDistribution` | Number of samples |
 | `JointEmpiricalDistribution` | Number of joint samples |
 | `BootstrapDistribution` | Number of function evaluations |
-| `JointBootstrapDistribution` | Number of observations per bootstrap dataset |
+| `BootstrapReplicateDistribution` | Number of observations per bootstrap dataset |
 | `BroadcastDistribution` | Number of input–output pairs |
 | `_ArrayMarginal` | Number of output samples |
 | `_MixtureMarginal` | Number of mixture components |

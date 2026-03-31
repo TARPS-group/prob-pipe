@@ -12,6 +12,7 @@ from probpipe import (
     Categorical,
     MultivariateNormal,
     EmpiricalDistribution,
+    ArrayEmpiricalDistribution,
     BootstrapDistribution,
     TransformedDistribution,
     ProductDistribution,
@@ -172,10 +173,18 @@ class TestSupportsMean:
         assert isinstance(normal, SupportsMean)
         assert isinstance(normal, SupportsVariance)
 
-    def test_empirical(self, empirical):
-        assert isinstance(empirical, SupportsMean)
-        assert isinstance(empirical, SupportsVariance)
-        assert isinstance(empirical, SupportsCovariance)
+    def test_empirical_generic_no_moments(self, empirical):
+        """Generic EmpiricalDistribution does not support moments."""
+        assert not isinstance(empirical, SupportsMean)
+        assert not isinstance(empirical, SupportsVariance)
+        assert not isinstance(empirical, SupportsCovariance)
+
+    def test_array_empirical(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (100, 2))
+        dist = ArrayEmpiricalDistribution(samples)
+        assert isinstance(dist, SupportsMean)
+        assert isinstance(dist, SupportsVariance)
+        assert isinstance(dist, SupportsCovariance)
 
     def test_bootstrap(self, bootstrap):
         assert isinstance(bootstrap, SupportsMean)

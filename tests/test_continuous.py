@@ -5,7 +5,6 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe.distributions import (
-    ArrayDistribution,
     Normal,
     Beta,
     Gamma,
@@ -21,7 +20,7 @@ from probpipe.distributions import (
     Pareto,
     TruncatedNormal,
 )
-from probpipe import log_prob, mean, sample, variance
+from probpipe import ArrayDistribution, log_prob, mean, sample, variance
 
 
 # ---------------------------------------------------------------------------

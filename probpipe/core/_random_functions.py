@@ -10,16 +10,12 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Callable
-from typing import TypeVar
 
 import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
 from .._utils import prod
-from ..core.distribution import Distribution
-
-X = TypeVar('X')
-Y = TypeVar('Y')
+from ._distribution_base import Distribution
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +23,7 @@ Y = TypeVar('Y')
 # ---------------------------------------------------------------------------
 
 
-class RandomFunction(Distribution[Callable[[X], Y]]):
+class RandomFunction[X, Y](Distribution[Callable[[X], Y]]):
     """A distribution over functions f: X → Y.
 
     The primary interface is :meth:`__call__`. Calling the random
@@ -83,7 +79,7 @@ class ArrayRandomFunction(RandomFunction[Array, Array]):
     """A random function mapping arrays to arrays.
 
     Follows the shape semantics as implemented in ``ArrayDistribution``.
-    Given prediction input ``X`` with shape ``(*extra_batch, n, *input_shape)``, 
+    Given prediction input ``X`` with shape ``(*extra_batch, n, *input_shape)``,
     where ``n`` is the number of input points:
 
     +----------------+-----------------+------------------------+-----------------------------------+

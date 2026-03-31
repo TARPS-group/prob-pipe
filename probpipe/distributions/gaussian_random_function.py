@@ -20,10 +20,10 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ..core.distribution import _auto_key
+from .._utils import _auto_key
 from ..core.protocols import SupportsSampling
 from .._utils import prod
-from .random_function import ArrayRandomFunction
+from ..core._random_functions import ArrayRandomFunction
 
 # Delay import to avoid circular import at module level; these are
 # imported from the *same* package, so we import lazily inside methods
