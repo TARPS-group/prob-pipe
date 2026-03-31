@@ -11,8 +11,9 @@ requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [
   { name = "Jonathan Huggins", email = "huggins@bu.edu" },
-  { name = "Yongho Lim",    email = "ylim2@bu.edu" },
-  { name = "Can Erozer",    email = "caner@bu.edu" },
+  { name = "Andrew Roberts",   email = "arober@bu.edu" },
+  { name = "Yongho Lim",      email = "ylim2@bu.edu" },
+  { name = "Can Erozer",      email = "caner@bu.edu" },
 ]  # See AUTHORS file for full list
 dependencies = [
   "jax>=0.4.35",

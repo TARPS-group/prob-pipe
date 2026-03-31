@@ -278,17 +278,4 @@ ProbPipe's architecture separates the **representational layer** (distributions 
 
 ## Contributing
 
-Contributions are welcome! To get started:
-
-1. Fork and clone the repository:
-   ```bash
-   git clone https://github.com/<your-username>/prob-pipe.git
-   cd prob-pipe
-   pip install -e .[dev]
-   ```
-2. Create a feature branch, make your changes, and ensure tests pass:
-   ```bash
-   git checkout -b my-feature
-   pytest
-   ```
-3. Open a pull request against `main`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, PR workflow, and guidelines.
