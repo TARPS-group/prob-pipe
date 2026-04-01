@@ -8,6 +8,7 @@ import pytest
 from probpipe import (
     Normal,
     MultivariateNormal,
+    ArrayEmpiricalDistribution,
     EmpiricalDistribution,
     BootstrapDistribution,
     ProductDistribution,
@@ -33,7 +34,7 @@ def mvn():
 @pytest.fixture
 def empirical():
     samples = jax.random.normal(jax.random.PRNGKey(0), (200, 2))
-    return EmpiricalDistribution(samples)
+    return ArrayEmpiricalDistribution(samples)
 
 
 @pytest.fixture

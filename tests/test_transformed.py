@@ -8,13 +8,12 @@ import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from probpipe.distributions import (
-    ArrayDistribution,
     TransformedDistribution,
     Normal,
     MultivariateNormal,
-    EmpiricalDistribution,
 )
-from probpipe.core.distribution import (
+from probpipe import ArrayDistribution, EmpiricalDistribution
+from probpipe.core.constraints import (
     real,
     positive,
     unit_interval,

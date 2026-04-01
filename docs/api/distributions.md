@@ -2,13 +2,25 @@
 
 ## Base Classes
 
-::: probpipe.Distribution
+::: probpipe.core._distribution_base.Distribution
 
-::: probpipe.TFPDistribution
+::: probpipe.core._array_distributions.PyTreeArrayDistribution
 
-::: probpipe.EmpiricalDistribution
+::: probpipe.core._array_distributions.ArrayDistribution
 
-::: probpipe.BroadcastDistribution
+::: probpipe.distributions._tfp_base.TFPDistribution
+
+::: probpipe.core._empirical.EmpiricalDistribution
+
+::: probpipe.core._empirical.ArrayEmpiricalDistribution
+
+::: probpipe.core._array_distributions.BootstrapDistribution
+
+::: probpipe.core._empirical.BootstrapReplicateDistribution
+
+::: probpipe.core._empirical.ArrayBootstrapReplicateDistribution
+
+::: probpipe.core._broadcast_distributions.BroadcastDistribution
 
 ## Continuous
 

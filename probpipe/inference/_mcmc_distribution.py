@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 
-from ..core.distribution import EmpiricalDistribution
+from ..core.distribution import ArrayEmpiricalDistribution
 from ..custom_types import Array
 from ._diagnostics import InferenceDiagnostics
 
 __all__ = ["MCMCApproximateDistribution"]
 
 
-class MCMCApproximateDistribution(EmpiricalDistribution):
+class MCMCApproximateDistribution(ArrayEmpiricalDistribution):
     """Empirical distribution from MCMC with chain structure and diagnostics.
 
     Wraps one or more MCMC chains as an

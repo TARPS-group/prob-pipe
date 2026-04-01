@@ -4,16 +4,19 @@ import jax
 import jax.numpy as jnp
 import pytest
 from probpipe import from_distribution
+from probpipe import (
+    ArrayDistribution, ArrayEmpiricalDistribution, EmpiricalDistribution,
+    Provenance,
+)
 from probpipe.distributions import (
-    ArrayDistribution, ArrayEmpiricalDistribution, EmpiricalDistribution, MultivariateNormal,
+    MultivariateNormal,
     Normal, Beta, Gamma, InverseGamma, Exponential, LogNormal,
     StudentT, Uniform, Cauchy, Laplace, HalfNormal, HalfCauchy,
     Pareto, TruncatedNormal,
     Bernoulli, Binomial, Poisson, Categorical, NegativeBinomial,
     Dirichlet, Multinomial, Wishart, VonMisesFisher,
-    Provenance,
 )
-from probpipe.core.distribution import (
+from probpipe.core.constraints import (
     Constraint, real, positive, non_negative, non_negative_integer,
     boolean, unit_interval, simplex, positive_definite, sphere,
     interval, greater_than, integer_interval,
@@ -209,7 +212,7 @@ class TestFromDistribution:
     # -- multivariate --
     def test_mvn_from_empirical(self, key):
         samples = jax.random.normal(key, (100, 3))
-        ed = EmpiricalDistribution(samples)
+        ed = ArrayEmpiricalDistribution(samples)
         mvn = from_distribution(ed, MultivariateNormal)
         assert mvn.dim == 3
 

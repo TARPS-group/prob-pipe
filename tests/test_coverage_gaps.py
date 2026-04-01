@@ -17,6 +17,7 @@ import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from probpipe import (
+    ArrayEmpiricalDistribution,
     BootstrapDistribution,
     EmpiricalDistribution,
     Normal,
@@ -58,7 +59,7 @@ class TestBootstrapDistributionCoverage:
         assert "event_shape=()" in r
 
     def test_support_is_real(self):
-        from probpipe.core.distribution import real
+        from probpipe.core.constraints import real
 
         bd = BootstrapDistribution(jnp.array([1.0, 2.0]))
         assert bd.support is real
@@ -158,12 +159,12 @@ class TestEmpiricalSubsampling:
         assert jnp.isfinite(result)
 
     def test_weighted_cov(self):
-        """Weighted EmpiricalDistribution covariance."""
+        """Weighted ArrayEmpiricalDistribution covariance."""
         key = jax.random.PRNGKey(0)
         samples = jax.random.normal(key, (50, 2))
         weights = jax.random.uniform(jax.random.PRNGKey(1), (50,))
         weights = weights / jnp.sum(weights)
-        ed = EmpiricalDistribution(samples, weights=weights)
+        ed = ArrayEmpiricalDistribution(samples, weights=weights)
         C = cov(ed)
         assert C.shape == (2, 2)
         assert jnp.all(jnp.isfinite(C))
@@ -313,7 +314,7 @@ class TestFlattenedView:
         assert jnp.isfinite(lp)
 
     def test_support(self, joint_dist):
-        from probpipe.core.distribution import real
+        from probpipe.core.constraints import real
 
         flat = joint_dist.as_flat_distribution()
         assert flat.support is real
@@ -338,7 +339,7 @@ class TestTransformedNonTFP:
     def td(self):
         key = jax.random.PRNGKey(0)
         samples = jax.random.normal(key, (100, 2))
-        emp = EmpiricalDistribution(samples)
+        emp = ArrayEmpiricalDistribution(samples)
         return TransformedDistribution(emp, tfb.Exp())
 
     def test_base_property(self, td):

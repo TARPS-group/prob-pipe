@@ -10,7 +10,6 @@ from probpipe import (
     MultivariateNormal,
     SequentialJointDistribution,
     DistributionView,
-    ConditionedComponent,
     EmpiricalDistribution,
     JointDistribution,
 )

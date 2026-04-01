@@ -26,7 +26,8 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
-from .distribution import Distribution, _auto_key
+from .._utils import _auto_key
+from .distribution import Distribution
 from .protocols import (
     SupportsConditioning,
     SupportsCovariance,

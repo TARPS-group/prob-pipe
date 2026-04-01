@@ -24,8 +24,7 @@ _warnings.filterwarnings(
     category=DeprecationWarning,
 )
 
-from probpipe.distributions import (
-    # Base classes
+from probpipe.core.distribution import (
     Distribution,
     PyTreeArrayDistribution,
     ArrayDistribution,
@@ -34,13 +33,22 @@ from probpipe.distributions import (
     EmpiricalDistribution,
     ArrayEmpiricalDistribution,
     BroadcastDistribution,
-    # Global settings
     BootstrapDistribution,
-    JointBootstrapDistribution,
+    BootstrapReplicateDistribution,
+    ArrayBootstrapReplicateDistribution,
     DEFAULT_NUM_EVALUATIONS,
     RETURN_APPROX_DIST,
     set_default_num_evaluations,
     set_return_approx_dist,
+    # Random functions
+    RandomFunction,
+    ArrayRandomFunction,
+    # Joint
+    JointDistribution,
+    ProductDistribution,
+    DistributionView,
+)
+from probpipe.distributions import (
     # Continuous
     Normal,
     Beta,
@@ -70,17 +78,11 @@ from probpipe.distributions import (
     VonMisesFisher,
     # Transformed
     TransformedDistribution,
-    # Joint
-    JointDistribution,
-    ProductDistribution,
+    # Joint (specialized)
     SequentialJointDistribution,
     JointEmpirical,
     JointGaussian,
-    DistributionView,
-    ConditionedComponent,
-    # Random functions
-    RandomFunction,
-    ArrayRandomFunction,
+    # Gaussian random functions
     GaussianRandomFunction,
     LinearBasisFunction,
 )
@@ -140,7 +142,8 @@ __all__ = [
     "ArrayEmpiricalDistribution",
     "BroadcastDistribution",
     "BootstrapDistribution",
-    "JointBootstrapDistribution",
+    "BootstrapReplicateDistribution",
+    "ArrayBootstrapReplicateDistribution",
     "Provenance",
     # Constraints
     "Constraint",
@@ -192,7 +195,6 @@ __all__ = [
     "JointEmpirical",
     "JointGaussian",
     "DistributionView",
-    "ConditionedComponent",
     # WorkflowFunction
     "WorkflowFunction",
     "Module",

@@ -172,13 +172,13 @@ class TestMultivariateNormal:
 
 class TestEmpiricalDistribution:
     def test_uniform_weights(self, simple_samples):
-        ed = EmpiricalDistribution(simple_samples)
+        ed = ArrayEmpiricalDistribution(simple_samples)
         assert ed.n == 3
         assert ed.dim == 1
         np.testing.assert_allclose(ed.weights, jnp.ones(3) / 3)
 
     def test_custom_weights(self, simple_samples, simple_weights):
-        ed = EmpiricalDistribution(simple_samples, simple_weights)
+        ed = ArrayEmpiricalDistribution(simple_samples, simple_weights)
         np.testing.assert_allclose(ed.weights.sum(), 1.0)
         expected_mean = jnp.sum(simple_samples.ravel() * ed.weights)
         np.testing.assert_allclose(mean(ed).ravel(), expected_mean, atol=1e-6)
@@ -202,18 +202,18 @@ class TestEmpiricalDistribution:
             EmpiricalDistribution(simple_samples, jnp.array([0.5, 0.5]))
 
     def test_1d_input_scalar_event(self):
-        ed = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
+        ed = ArrayEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
         assert ed.event_shape == ()
         assert ed.samples.shape == (3,)
 
     def test_multidim_event_shape(self):
         samples = jnp.ones((5, 3))
-        ed = EmpiricalDistribution(samples)
+        ed = ArrayEmpiricalDistribution(samples)
         assert ed.event_shape == (3,)
         assert ed.dim == 3
 
     def test_event_shape(self, simple_samples):
-        ed = EmpiricalDistribution(simple_samples)
+        ed = ArrayEmpiricalDistribution(simple_samples)
         assert ed.event_shape == (1,)
 
     def test_sample_shape(self, simple_samples, key):
@@ -233,19 +233,19 @@ class TestEmpiricalDistribution:
             assert jnp.any(jnp.all(jnp.isclose(simple_samples, val), axis=-1))
 
     def test_mean(self, simple_samples, simple_weights):
-        ed = EmpiricalDistribution(simple_samples, simple_weights)
+        ed = ArrayEmpiricalDistribution(simple_samples, simple_weights)
         expected = jnp.sum(simple_samples.ravel() * ed.weights)
         np.testing.assert_allclose(mean(ed).ravel(), expected, atol=1e-6)
 
     def test_variance(self, simple_samples, simple_weights):
-        ed = EmpiricalDistribution(simple_samples, simple_weights)
+        ed = ArrayEmpiricalDistribution(simple_samples, simple_weights)
         mu = mean(ed)
         expected = jnp.sum(ed.weights * (simple_samples.ravel() - mu.ravel()) ** 2)
         np.testing.assert_allclose(variance(ed).ravel(), expected, atol=1e-6)
 
     def test_cov_matrix(self):
         samples = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
-        ed = EmpiricalDistribution(samples)
+        ed = ArrayEmpiricalDistribution(samples)
         C = cov(ed)
         assert C.shape == (2, 2)
         np.testing.assert_allclose(C, C.T, atol=1e-6)
@@ -253,7 +253,7 @@ class TestEmpiricalDistribution:
     def test_cov_psd(self):
         """Covariance matrix should be positive semi-definite."""
         samples = jnp.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [0.0, 0.0]])
-        ed = EmpiricalDistribution(samples)
+        ed = ArrayEmpiricalDistribution(samples)
         C = cov(ed)
         eigvals = jnp.linalg.eigvalsh(C)
         assert jnp.all(eigvals >= -1e-8)
@@ -336,12 +336,12 @@ class TestEmpiricalLogWeights:
 
     def test_uniform_mean_matches_numpy(self):
         samples = jnp.array([[1.0], [3.0], [5.0]])
-        ed = EmpiricalDistribution(samples)
+        ed = ArrayEmpiricalDistribution(samples)
         np.testing.assert_allclose(mean(ed), jnp.array([3.0]), atol=1e-6)
 
     def test_uniform_variance_matches_numpy(self):
         samples = jnp.array([[1.0], [3.0], [5.0]])
-        ed = EmpiricalDistribution(samples)
+        ed = ArrayEmpiricalDistribution(samples)
         expected_var = jnp.mean((samples - jnp.array([[3.0]])) ** 2, axis=0)
         np.testing.assert_allclose(variance(ed), expected_var, atol=1e-6)
 
@@ -372,14 +372,14 @@ class TestEmpiricalLogWeights:
         """Mean with log_weights should match weights-based mean."""
         samples = jnp.array([[1.0], [2.0], [3.0]])
         weights = jnp.array([0.2, 0.3, 0.5])
-        ed_w = EmpiricalDistribution(samples, weights)
-        ed_lw = EmpiricalDistribution(samples, log_weights=jnp.log(weights))
+        ed_w = ArrayEmpiricalDistribution(samples, weights)
+        ed_lw = ArrayEmpiricalDistribution(samples, log_weights=jnp.log(weights))
         np.testing.assert_allclose(mean(ed_w), mean(ed_lw), atol=1e-5)
 
     def test_uniform_cov(self):
         """Uniform cov should match standard formula."""
         samples = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
-        ed = EmpiricalDistribution(samples)
+        ed = ArrayEmpiricalDistribution(samples)
         mu = jnp.mean(samples, axis=0)
         diff = samples - mu
         expected = diff.T @ diff / 3

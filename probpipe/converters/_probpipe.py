@@ -23,10 +23,10 @@ from ..custom_types import PRNGKey
 
 # Default sample count for moment-matching conversions
 DEFAULT_NUM_SAMPLES = 1024
+from .._utils import _auto_key
 from ..core.distribution import (
     ArrayEmpiricalDistribution,
     Distribution,
-    _auto_key,
 )
 from ..core.provenance import Provenance
 from ..core.constraints import _supports_compatible

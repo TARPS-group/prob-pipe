@@ -10,10 +10,10 @@ from typing import Any
 
 import jax.numpy as jnp
 
+from .._utils import _auto_key
 from ..core.distribution import (
     ArrayDistribution,
     ArrayEmpiricalDistribution,
-    _auto_key,
 )
 from ..core.provenance import Provenance
 from ._protocol import Converter

@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from probpipe import MultivariateNormal, EmpiricalDistribution, Provenance
+from probpipe import MultivariateNormal, EmpiricalDistribution, ArrayEmpiricalDistribution, Provenance
 from probpipe.modeling import (
     GenerativeLikelihood,
     IterativeForecaster,
@@ -159,7 +159,7 @@ class TestDistributionCoverageGaps:
         assert "event_shape" in r
 
     def test_empirical_dtype(self):
-        """EmpiricalDistribution.dtype returns sample dtype."""
+        """ArrayEmpiricalDistribution.dtype returns sample dtype."""
         samples = jnp.array([[1.0, 2.0]], dtype=jnp.float32)
-        ed = EmpiricalDistribution(samples)
+        ed = ArrayEmpiricalDistribution(samples)
         assert ed.dtype == jnp.float32

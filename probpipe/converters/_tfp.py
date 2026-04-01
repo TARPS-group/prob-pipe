@@ -12,10 +12,10 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..custom_types import PRNGKey
+from .._utils import _auto_key
 from ..core.distribution import (
     ArrayDistribution,
     ArrayEmpiricalDistribution,
-    _auto_key,
 )
 from ..core.provenance import Provenance
 from ._protocol import Converter

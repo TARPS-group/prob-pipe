@@ -11,10 +11,10 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ._tfp_base import TFPDistribution
+from .._utils import _auto_key
 from ..core.distribution import (
     ArrayDistribution,
     EmpiricalDistribution,
-    _auto_key,
 )
 from ..core.provenance import Provenance
 from ..core.constraints import (

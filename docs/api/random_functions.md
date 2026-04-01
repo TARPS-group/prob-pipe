@@ -2,9 +2,9 @@
 
 ## Base Classes
 
-::: probpipe.distributions.random_function.RandomFunction
+::: probpipe.core._random_functions.RandomFunction
 
-::: probpipe.distributions.random_function.ArrayRandomFunction
+::: probpipe.core._random_functions.ArrayRandomFunction
 
 ## Gaussian Random Functions
 
