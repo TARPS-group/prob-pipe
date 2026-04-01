@@ -92,7 +92,7 @@ def _prob_impl(dist: SupportsLogProb, value: Any) -> Array:
             f"{type(dist).__name__} does not support prob "
             f"(missing _log_prob method)"
         )
-    return dist._prob(value)
+    return jnp.exp(dist._log_prob(value))
 
 
 def _unnormalized_log_prob_impl(
@@ -116,7 +116,7 @@ def _unnormalized_prob_impl(
             f"{type(dist).__name__} does not support unnormalized_prob "
             f"(missing _unnormalized_log_prob method)"
         )
-    return dist._unnormalized_prob(value)
+    return jnp.exp(dist._unnormalized_log_prob(value))
 
 
 def _mean_impl(dist: SupportsMean) -> Any:
