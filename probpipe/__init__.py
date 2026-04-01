@@ -85,6 +85,8 @@ from probpipe.distributions import (
     # Gaussian random functions
     GaussianRandomFunction,
     LinearBasisFunction,
+    # KDE
+    KDEDistribution,
 )
 from probpipe.core.node import WorkflowFunction, Module, wf
 from probpipe.core.provenance import Provenance, provenance_ancestors, provenance_dag
@@ -207,6 +209,8 @@ __all__ = [
     "ArrayRandomFunction",
     "GaussianRandomFunction",
     "LinearBasisFunction",
+    # KDE
+    "KDEDistribution",
     # Protocols
     "SupportsExpectation",
     "SupportsSampling",

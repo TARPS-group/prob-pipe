@@ -344,8 +344,17 @@ class WorkflowFunction(Node):
         return values
 
     def _convert_distributions(self, values: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Convert distributions based on type hints.
+        """Convert distributions based on type hints.
+
+        Handles two cases:
+
+        1. **Concrete type hints** – if the hint is a ``Distribution``
+           subclass and the value is a recognised distribution that is
+           not already an instance, convert via the registry.
+        2. **Protocol type hints** – if the hint is a
+           ``@runtime_checkable`` protocol (e.g., ``SupportsLogProb``)
+           and the value is a ``Distribution`` that does not satisfy the
+           protocol, convert via protocol-based resolution.
         """
         out = dict(values)
 
@@ -367,6 +376,16 @@ class WorkflowFunction(Node):
                 and not isinstance(value, expected)
             ):
                 out[name] = converter_registry.convert(value, expected)
+            elif (
+                not is_dist_subclass
+                and expected in _DISTRIBUTION_PROTOCOLS
+                and isinstance(value, Distribution)
+                and not isinstance(value, expected)
+            ):
+                try:
+                    out[name] = converter_registry.convert(value, expected)
+                except (TypeError, AttributeError):
+                    pass  # Let the impl function's own check raise
 
         return out
 

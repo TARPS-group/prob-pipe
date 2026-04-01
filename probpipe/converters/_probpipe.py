@@ -438,6 +438,38 @@ def _convert_to_empirical(source, key, **kw):
     return r
 
 
+def _convert_to_kde(source, key, **kw):
+    """Convert any distribution to a KDEDistribution.
+
+    If the source is an ``ArrayEmpiricalDistribution`` (or subclass),
+    the stored samples and weights are reused directly.  Otherwise,
+    samples are drawn from the source.
+    """
+    from ..distributions.kde import KDEDistribution
+
+    if isinstance(source, KDEDistribution):
+        return source
+
+    bandwidth = kw.pop("bandwidth", None)
+    name = kw.get("name") or source.name
+
+    if isinstance(source, ArrayEmpiricalDistribution):
+        weights = source.weights if not source._is_uniform else None
+        r = KDEDistribution(
+            source._samples, weights=weights, bandwidth=bandwidth, name=name,
+        )
+        r.with_source(_mm_provenance(source))
+        return r
+
+    num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
+    if key is None:
+        key = _auto_key()
+    samples = source._sample(key, (num_samples,))
+    r = KDEDistribution(samples, bandwidth=bandwidth, name=name)
+    r.with_source(_mm_provenance(source))
+    return r
+
+
 # ---------------------------------------------------------------------------
 # Dispatch table: target class name -> conversion function
 # ---------------------------------------------------------------------------
@@ -470,6 +502,7 @@ def _build_dispatch_table() -> dict[str, callable]:
         "Wishart": _convert_to_wishart,
         "VonMisesFisher": _convert_to_vonmisesfisher,
         "ArrayEmpiricalDistribution": _convert_to_empirical,
+        "KDEDistribution": _convert_to_kde,
     }
 
 
