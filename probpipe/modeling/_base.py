@@ -11,7 +11,7 @@ from ..core.protocols import SupportsConditionableComponents
 __all__ = ["ProbabilisticModel"]
 
 
-class ProbabilisticModel(Distribution[Any], SupportsConditionableComponents):
+class ProbabilisticModel[T](Distribution[T], SupportsConditionableComponents):
     """Abstract base for probabilistic programming models.
 
     A ``ProbabilisticModel`` is a first-class :class:`Distribution`
