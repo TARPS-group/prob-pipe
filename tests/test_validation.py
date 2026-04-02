@@ -135,3 +135,51 @@ class TestPredictiveCheck:
 
     def test_importable_from_subpackage(self):
         assert callable(pc_direct)
+
+    def test_results_attached_to_distribution(self, prior, likelihood):
+        """predictive_check appends results to distribution.validation_results."""
+        # Start fresh — prior should have no results yet
+        assert len(prior.validation_results) == 0
+
+        predictive_check(
+            prior, likelihood,
+            test_fn=lambda d: float(jnp.mean(d)),
+            n_samples=20, n_replications=10,
+            key=jax.random.PRNGKey(10),
+        )
+        assert len(prior.validation_results) == 1
+        assert "replicated_statistics" in prior.validation_results[0]
+        assert "test_fn_name" in prior.validation_results[0]
+
+    def test_multiple_checks_accumulate(self, prior, likelihood, observed_data):
+        """Multiple predictive_check calls accumulate on the distribution."""
+        n_before = len(prior.validation_results)
+
+        predictive_check(
+            prior, likelihood,
+            test_fn=lambda d: float(jnp.mean(d)),
+            observed_data=observed_data,
+            n_replications=10,
+            key=jax.random.PRNGKey(20),
+        )
+        predictive_check(
+            prior, likelihood,
+            test_fn=lambda d: float(jnp.var(d)),
+            observed_data=observed_data,
+            n_replications=10,
+            key=jax.random.PRNGKey(21),
+        )
+        assert len(prior.validation_results) == n_before + 2
+        assert prior.validation_results[-1]["p_value"] is not None
+
+    def test_test_fn_name_captured(self, prior, likelihood):
+        def my_custom_stat(data):
+            return float(jnp.max(data))
+
+        predictive_check(
+            prior, likelihood,
+            test_fn=my_custom_stat,
+            n_samples=20, n_replications=10,
+            key=jax.random.PRNGKey(30),
+        )
+        assert prior.validation_results[-1]["test_fn_name"] == "my_custom_stat"

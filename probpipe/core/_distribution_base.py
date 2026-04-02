@@ -64,6 +64,20 @@ class Distribution[T](ABC):
         """Whether this distribution is an approximation (e.g., from sampling or MCMC)."""
         return getattr(self, "_approximate", False)
 
+    # -- validation results ---------------------------------------------------
+
+    @property
+    def validation_results(self) -> list[dict]:
+        """Results from :func:`~probpipe.validation.predictive_check` runs.
+
+        Each entry is a dict with at least ``"replicated_statistics"``
+        and ``"test_fn_name"``.  Posterior checks also include
+        ``"observed_statistic"`` and ``"p_value"``.
+        """
+        if not hasattr(self, "_validation_results"):
+            self._validation_results: list[dict] = []
+        return self._validation_results
+
     # -- naming & provenance ------------------------------------------------
 
     @property

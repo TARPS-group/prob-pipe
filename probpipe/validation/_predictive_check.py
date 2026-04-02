@@ -110,12 +110,20 @@ def predictive_check[P, D](
         stats_array, name="replicated_statistics",
     )
 
-    result = {"replicated_statistics": replicated_dist}
+    test_fn_name = getattr(test_fn, "__name__", repr(test_fn))
+    result = {
+        "replicated_statistics": replicated_dist,
+        "test_fn_name": test_fn_name,
+    }
 
     if observed_data is not None:
         obs_stat = float(test_fn(observed_data))
         p_value = float(jnp.mean(stats_array >= obs_stat))
         result["observed_statistic"] = obs_stat
         result["p_value"] = p_value
+
+    # Attach to the distribution for easy access
+    if hasattr(distribution, "validation_results"):
+        distribution.validation_results.append(result)
 
     return result
