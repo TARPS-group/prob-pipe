@@ -31,23 +31,15 @@ def _is_protocol(tp: Any) -> bool:
 
 
 def _resolve_target_for_log_prob(dist: Any) -> type:
-    """Choose Normal or MultivariateNormal based on event dimensionality."""
-    from ..distributions.continuous import Normal
-    from ..distributions.multivariate import MultivariateNormal
+    """Choose KDEDistribution as the default log-prob conversion target.
 
-    try:
-        event_shape = dist.event_shape
-    except AttributeError:
-        try:
-            if dist.dim <= 1:
-                return Normal
-            return MultivariateNormal
-        except AttributeError:
-            return Normal
+    KDE is a more universal choice than moment-matching to
+    Normal/MultivariateNormal because it can capture multimodality,
+    skewness, and other non-Gaussian structure.
+    """
+    from ..distributions.kde import KDEDistribution
 
-    if len(event_shape) == 0 or (len(event_shape) == 1 and event_shape[0] == 1):
-        return Normal
-    return MultivariateNormal
+    return KDEDistribution
 
 
 def _resolve_target_for_sampling(dist: Any) -> type:

@@ -646,24 +646,28 @@ class TestProtocolConversion:
         assert result is n
 
     def test_scalar_empirical_to_supports_log_prob(self):
-        """Scalar ArrayEmpiricalDistribution converts to Normal via SupportsLogProb."""
+        """Scalar ArrayEmpiricalDistribution converts to KDE via SupportsLogProb."""
+        from probpipe.distributions.kde import KDEDistribution
+
         samples = jax.random.normal(jax.random.PRNGKey(0), (300,))
         emp = ArrayEmpiricalDistribution(samples)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, SupportsLogProb)
-        assert isinstance(result, Normal)
+        assert isinstance(result, KDEDistribution)
         np.testing.assert_allclose(float(result._mean()), float(emp._mean()), atol=0.01)
         np.testing.assert_allclose(
             float(result._variance()), float(emp._variance()), atol=0.3,
         )
 
     def test_multivariate_empirical_to_supports_log_prob(self):
-        """Multivariate ArrayEmpiricalDistribution converts to MultivariateNormal."""
+        """Multivariate ArrayEmpiricalDistribution converts to KDE via SupportsLogProb."""
+        from probpipe.distributions.kde import KDEDistribution
+
         samples = jax.random.normal(jax.random.PRNGKey(1), (300, 4))
         emp = ArrayEmpiricalDistribution(samples)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, SupportsLogProb)
-        assert isinstance(result, MultivariateNormal)
+        assert isinstance(result, KDEDistribution)
         np.testing.assert_allclose(
             np.array(result._mean()), np.array(emp._mean()), atol=0.2,
         )
