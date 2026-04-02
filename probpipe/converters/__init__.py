@@ -7,14 +7,7 @@ conversion** – passing a ``@runtime_checkable`` protocol (e.g.,
 ``SupportsLogProb``) as the target to ``converter_registry.convert()``.
 """
 
-from ._registry import (
-    ConverterRegistry,
-    ConversionInfo,
-    ConversionMethod,
-    converter_registry,
-    _resolve_target_for_log_prob,
-    _resolve_target_for_sampling,
-)
+from ._registry import ConverterRegistry, ConversionInfo, ConversionMethod, converter_registry
 from ._protocol import Converter
 
 # -- register built-in converters -------------------------------------------
@@ -33,17 +26,25 @@ try:
 except ImportError:
     pass
 
-# -- register built-in protocol target resolvers ----------------------------
+# -- register protocol converter with built-in resolvers --------------------
 
+from ._protocol_converter import (
+    ProtocolConverter,
+    _resolve_target_for_log_prob,
+    _resolve_target_for_sampling,
+)
 from ..core.protocols import SupportsLogProb, SupportsSampling
 
-converter_registry.register_protocol_target(SupportsLogProb, _resolve_target_for_log_prob)
-converter_registry.register_protocol_target(SupportsSampling, _resolve_target_for_sampling)
+_protocol_converter = ProtocolConverter(converter_registry)
+_protocol_converter.register_protocol_target(SupportsLogProb, _resolve_target_for_log_prob)
+_protocol_converter.register_protocol_target(SupportsSampling, _resolve_target_for_sampling)
+converter_registry.register(_protocol_converter)
 
 __all__ = [
     "ConverterRegistry",
     "ConversionInfo",
     "ConversionMethod",
     "Converter",
+    "ProtocolConverter",
     "converter_registry",
 ]

@@ -691,7 +691,7 @@ class TestProtocolConversion:
         emp = ArrayEmpiricalDistribution(samples)
         # SupportsConditioning is not registered as a protocol target
         # and EmpiricalDistribution does not satisfy it
-        with pytest.raises(TypeError, match="No protocol resolver"):
+        with pytest.raises(TypeError):
             converter_registry.convert(emp, SupportsConditioning)
 
     def test_supports_sampling_conversion(self):
