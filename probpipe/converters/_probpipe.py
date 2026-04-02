@@ -20,18 +20,17 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..custom_types import PRNGKey
-
-# Default sample count for moment-matching conversions
-DEFAULT_NUM_SAMPLES = 1024
 from .._utils import _auto_key
+from ..core.constraints import _supports_compatible
 from ..core.distribution import (
     ArrayEmpiricalDistribution,
     Distribution,
 )
 from ..core.provenance import Provenance
-from ..core.constraints import _supports_compatible
-from ._registry import Converter
-from ._registry import ConversionInfo, ConversionMethod
+from ._registry import ConversionInfo, ConversionMethod, Converter
+
+# Default sample count for moment-matching conversions
+DEFAULT_NUM_SAMPLES = 1024
 
 
 # ---------------------------------------------------------------------------
