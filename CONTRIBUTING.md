@@ -104,7 +104,7 @@ probpipe/
 │   ├── protocols.py           # @runtime_checkable protocol definitions
 │   ├── ops.py                 # Built-in ops: sample, mean, log_prob, etc.
 │   ├── constraints.py         # Constraint hierarchy (real, positive, etc.)
-│   ├── node.py                # Node, Module, WorkflowFunction, @workflow_function, @workflow_method
+│   ├── node.py                # Node, Module, WorkflowFunction, @workflow_function, @workflow_method, @abstract_workflow_method
 │   ├── modeling.py            # Likelihood, GenerativeLikelihood, IncrementalConditioner
 │   └── provenance.py          # Provenance tracking
 │
