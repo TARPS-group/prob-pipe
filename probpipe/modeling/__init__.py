@@ -1,18 +1,18 @@
 """Modeling interfaces for ProbPipe.
 
-Provides abstract likelihood interfaces, iterative forecasting, and
+Provides likelihood protocols, incremental conditioning, and
 concrete probabilistic model classes that wrap external PPL backends
 (Stan, PyMC) as first-class ProbPipe distributions.
 """
 
 from ._base import ProbabilisticModel
-from ._likelihood import GenerativeLikelihood, IterativeForecaster, Likelihood
+from ._likelihood import GenerativeLikelihood, IncrementalConditioner, Likelihood
 from ._simple import SimpleModel
 
 __all__ = [
     "Likelihood",
     "GenerativeLikelihood",
-    "IterativeForecaster",
+    "IncrementalConditioner",
     "ProbabilisticModel",
     "SimpleModel",
 ]

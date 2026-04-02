@@ -105,7 +105,7 @@ probpipe/
 │   ├── ops.py                 # Built-in ops: sample, mean, log_prob, etc.
 │   ├── constraints.py         # Constraint hierarchy (real, positive, etc.)
 │   ├── node.py                # Node, Module, WorkflowFunction, @wf
-│   ├── modeling.py            # Likelihood, GenerativeLikelihood, IterativeForecaster
+│   ├── modeling.py            # Likelihood, GenerativeLikelihood, IncrementalConditioner
 │   └── provenance.py          # Provenance tracking
 │
 ├── distributions/           # Concrete distribution implementations
