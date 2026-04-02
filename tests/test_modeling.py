@@ -1,4 +1,4 @@
-"""Tests for probpipe.modeling — Likelihood, IterativeForecaster."""
+"""Tests for probpipe.modeling — Likelihood protocols, IncrementalConditioner."""
 
 import numpy as np
 import jax
@@ -8,10 +8,10 @@ import pytest
 from probpipe import MultivariateNormal, EmpiricalDistribution, ArrayEmpiricalDistribution, Provenance
 from probpipe.modeling import (
     GenerativeLikelihood,
-    IterativeForecaster,
+    IncrementalConditioner,
     Likelihood,
+    SimpleModel,
 )
-from probpipe.core.node import AbstractModule, WorkflowFunction, wf
 from probpipe import log_prob, mean, prob
 from probpipe.custom_types import ArrayLike
 
@@ -21,19 +21,21 @@ from probpipe.custom_types import ArrayLike
 # ---------------------------------------------------------------------------
 
 
-class MultivariateNormalLikelihood(Likelihood):
+class MultivariateNormalLikelihood:
     """Isotropic MultivariateNormal likelihood — JAX-traceable."""
 
-    @wf
     def log_likelihood(self, params, data):
         residuals = data - params[None, :]
         return -0.5 * jnp.sum(residuals ** 2)
 
 
-class SimpleGenerativeLikelihood(GenerativeLikelihood):
-    """Generate data as params + noise."""
+class SimpleGenerativeLikelihood:
+    """Generate data as params + noise. Satisfies both Likelihood and GenerativeLikelihood."""
 
-    @wf
+    def log_likelihood(self, params, data):
+        residuals = data - params[None, :]
+        return -0.5 * jnp.sum(residuals ** 2)
+
     def generate_data(self, params, n_samples):
         key = jax.random.PRNGKey(0)
         noise = jax.random.normal(key, shape=(n_samples, len(params)))
@@ -41,17 +43,14 @@ class SimpleGenerativeLikelihood(GenerativeLikelihood):
 
 
 # ---------------------------------------------------------------------------
-# Likelihood
+# Likelihood protocols
 # ---------------------------------------------------------------------------
 
 
 class TestLikelihood:
-    def test_is_abstract_module(self):
-        assert issubclass(Likelihood, AbstractModule)
-
-    def test_log_likelihood_is_abstract(self):
-        with pytest.raises(TypeError):
-            Likelihood()
+    def test_is_protocol(self):
+        """Likelihood is a runtime-checkable protocol."""
+        assert isinstance(MultivariateNormalLikelihood(), Likelihood)
 
     def test_concrete_likelihood(self):
         lik = MultivariateNormalLikelihood()
@@ -62,8 +61,12 @@ class TestLikelihood:
 
 
 class TestGenerativeLikelihood:
-    def test_is_abstract_module(self):
-        assert issubclass(GenerativeLikelihood, AbstractModule)
+    def test_is_protocol(self):
+        """GenerativeLikelihood is a runtime-checkable protocol."""
+        gen = SimpleGenerativeLikelihood()
+        assert isinstance(gen, GenerativeLikelihood)
+        # Also satisfies Likelihood
+        assert isinstance(gen, Likelihood)
 
     def test_concrete_generative(self):
         gen = SimpleGenerativeLikelihood()
@@ -73,13 +76,16 @@ class TestGenerativeLikelihood:
 
 
 # ---------------------------------------------------------------------------
-# IterativeForecaster
+# IncrementalConditioner
 # ---------------------------------------------------------------------------
 
 
-def _simple_posterior_fn(prior: MultivariateNormal, likelihood: Likelihood, data: ArrayLike):
-    """A simple posterior approximation for testing."""
-    # Just return an EmpiricalDistribution near the data mean
+def _simple_condition_fn(model, data):
+    """A simple conditioning function for testing.
+
+    Returns an EmpiricalDistribution near the data mean instead of
+    running MCMC.
+    """
     data_mean = jnp.mean(jnp.asarray(data), axis=0)
     key = jax.random.PRNGKey(0)
     noise = jax.random.normal(key, shape=(50, data_mean.shape[0]))
@@ -87,7 +93,7 @@ def _simple_posterior_fn(prior: MultivariateNormal, likelihood: Likelihood, data
     return EmpiricalDistribution(samples)
 
 
-class TestIterativeForecaster:
+class TestIncrementalConditioner:
     @pytest.fixture
     def dim(self):
         return 2
@@ -100,29 +106,29 @@ class TestIterativeForecaster:
     def likelihood(self):
         return MultivariateNormalLikelihood()
 
-    @pytest.fixture
-    def gen_likelihood(self):
-        return SimpleGenerativeLikelihood()
-
-    @pytest.fixture
-    def approx_post(self):
-        return WorkflowFunction(func=_simple_posterior_fn, name="simple_posterior")
-
-    def test_iterative_update(self, prior, likelihood, gen_likelihood, approx_post, dim):
-        forecaster = IterativeForecaster(
+    def test_incremental_update(self, prior, likelihood, dim):
+        conditioner = IncrementalConditioner(
             prior=prior,
             likelihood=likelihood,
-            generative_likelihood=gen_likelihood,
-            approx_post=approx_post,
+            condition_fn=_simple_condition_fn,
         )
-        assert forecaster.curr_posterior is prior
+        assert conditioner.curr_posterior is prior
 
         key = jax.random.PRNGKey(0)
         data = jax.random.normal(key, shape=(10, dim)) + 2.0
-        posterior = forecaster.update(data=data)
+        posterior = conditioner.update(data=data)
 
         assert isinstance(posterior, EmpiricalDistribution)
-        assert forecaster.curr_posterior is posterior
+        assert conditioner.curr_posterior is posterior
+
+    def test_default_condition_fn(self, prior, likelihood):
+        """IncrementalConditioner should work without explicit condition_fn."""
+        conditioner = IncrementalConditioner(
+            prior=prior,
+            likelihood=likelihood,
+        )
+        # Just verify construction works; actual conditioning requires MCMC
+        assert conditioner.curr_posterior is prior
 
 
 # ---------------------------------------------------------------------------
@@ -133,30 +139,45 @@ class TestIterativeForecaster:
 class TestDistributionCoverageGaps:
     """Cover the few uncovered lines in distribution.py."""
 
-    def test_batch_shape_default(self, key):
-        """batch_shape default returns ()."""
-        g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
-        assert g.batch_shape == ()
+    def test_batch_shape_default(self):
+        """ArrayDistribution.batch_shape defaults to ()."""
+        from probpipe.core.distribution import ArrayDistribution
 
-    def test_dtype_default(self, key):
-        """dtype default returns float32."""
-        g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
-        assert g.dtype == jnp.float32
+        class Scalar(ArrayDistribution):
+            @property
+            def event_shape(self):
+                return ()
 
-    def test_prob_method(self, key):
-        """prob() = exp(log_prob())."""
-        g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
-        x = jnp.ones(2)
-        expected = jnp.exp(log_prob(g, x))
-        actual = prob(g, x)
-        assert jnp.allclose(actual, expected)
+        d = Scalar()
+        assert d.batch_shape == ()
+
+    def test_dtype_default(self):
+        """ArrayDistribution.dtype defaults to float32."""
+        from probpipe.core.distribution import ArrayDistribution
+
+        class Scalar(ArrayDistribution):
+            @property
+            def event_shape(self):
+                return ()
+
+        d = Scalar()
+        assert d.dtype == jnp.float32
+
+    def test_prob_method(self):
+        """prob(dist, x) returns exp(log_prob(dist, x))."""
+        from probpipe import Normal
+
+        d = Normal(loc=0.0, scale=1.0)
+        x = jnp.array(0.0)
+        np.testing.assert_allclose(prob(d, x), jnp.exp(log_prob(d, x)), atol=1e-6)
 
     def test_repr_with_batch_shape(self):
-        """repr includes name and event_shape."""
-        g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="test")
-        r = repr(g)
-        assert "test" in r
-        assert "event_shape" in r
+        """ArrayDistribution repr includes batch_shape when non-trivial."""
+        from probpipe import Normal
+
+        d = Normal(loc=jnp.array([0.0, 1.0]), scale=jnp.array([1.0, 1.0]))
+        r = repr(d)
+        assert "batch_shape" in r
 
     def test_empirical_dtype(self):
         """ArrayEmpiricalDistribution.dtype returns sample dtype."""

@@ -6,7 +6,7 @@
 
 ::: probpipe.modeling.GenerativeLikelihood
 
-::: probpipe.modeling.IterativeForecaster
+::: probpipe.modeling.IncrementalConditioner
 
 ## Probabilistic Models
 

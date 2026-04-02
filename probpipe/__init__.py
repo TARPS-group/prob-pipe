@@ -105,7 +105,7 @@ from probpipe.core.constraints import (
     greater_than,
     integer_interval,
 )
-from probpipe.modeling import Likelihood, GenerativeLikelihood, IterativeForecaster
+from probpipe.modeling import Likelihood, GenerativeLikelihood, IncrementalConditioner
 from probpipe.inference import (
     InferenceDiagnostics,
     MCMCDiagnostics,
@@ -225,7 +225,7 @@ __all__ = [
     # Modeling
     "Likelihood",
     "GenerativeLikelihood",
-    "IterativeForecaster",
+    "IncrementalConditioner",
     "ProbabilisticModel",
     "SimpleModel",
     # Inference
