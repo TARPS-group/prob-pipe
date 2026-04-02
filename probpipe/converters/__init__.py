@@ -27,9 +27,12 @@ except ImportError:
 
 # -- register protocol converter with built-in resolvers --------------------
 
-from ._protocol import ProtocolConverter, _make_protocol_converter
+from ._protocol import ProtocolConverter, _resolve_target_for_log_prob
+from ..core.protocols import SupportsLogProb
 
-converter_registry.register(_make_protocol_converter(converter_registry))
+_protocol_converter = ProtocolConverter(converter_registry)
+_protocol_converter.register_protocol_target(SupportsLogProb, _resolve_target_for_log_prob)
+converter_registry.register(_protocol_converter)
 
 __all__ = [
     "ConverterRegistry",

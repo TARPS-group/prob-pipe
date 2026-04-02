@@ -16,7 +16,6 @@ import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from ._tfp_base import TFPDistribution
 from ..core.distribution import ArrayDistribution, _mc_expectation
 from ..core.constraints import Constraint, real
 from ..core.protocols import (
@@ -154,18 +153,10 @@ class KDEDistribution(
     # -- sampling & density ----------------------------------------------------
 
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
-        s = self._tfp_dist.sample(seed=key, sample_shape=sample_shape)
-        if self._scalar:
-            return s  # MixtureSameFamily with 1D Normal already returns scalar-shaped
-        return s
+        return self._tfp_dist.sample(seed=key, sample_shape=sample_shape)
 
     def _log_prob(self, x: ArrayLike) -> Array:
-        x = jnp.asarray(x, dtype=jnp.float32)
-        if self._scalar and x.ndim == 0:
-            return self._tfp_dist.log_prob(x)
-        if self._scalar and x.ndim >= 1 and x.shape[-1:] != (self._d,):
-            return self._tfp_dist.log_prob(x)
-        return self._tfp_dist.log_prob(x)
+        return self._tfp_dist.log_prob(jnp.asarray(x, dtype=jnp.float32))
 
     # -- moments ---------------------------------------------------------------
 

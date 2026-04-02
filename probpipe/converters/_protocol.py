@@ -171,10 +171,3 @@ class ProtocolConverter(Converter):
         return 200
 
 
-def _make_protocol_converter(registry: Any) -> ProtocolConverter:
-    """Create and configure a :class:`ProtocolConverter` with built-in resolvers."""
-    from ..core.protocols import SupportsLogProb
-
-    converter = ProtocolConverter(registry)
-    converter.register_protocol_target(SupportsLogProb, _resolve_target_for_log_prob)
-    return converter
