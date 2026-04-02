@@ -698,13 +698,6 @@ class TestProtocolConversion:
         with pytest.raises(TypeError):
             converter_registry.convert(emp, SupportsConditioning)
 
-    def test_supports_sampling_conversion(self):
-        """SupportsLogProb-only distributions can be converted to SupportsSampling."""
-        # Normal already satisfies SupportsSampling, so this is a no-op
-        n = Normal(loc=0.0, scale=1.0)
-        result = converter_registry.convert(n, SupportsSampling)
-        assert result is n
-
     def test_from_distribution_with_protocol(self):
         """from_distribution() works with protocol targets."""
         samples = jax.random.normal(jax.random.PRNGKey(4), (200,))

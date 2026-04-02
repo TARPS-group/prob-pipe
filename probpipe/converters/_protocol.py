@@ -42,13 +42,6 @@ def _resolve_target_for_log_prob(dist: Any) -> type:
     return KDEDistribution
 
 
-def _resolve_target_for_sampling(dist: Any) -> type:
-    """Choose ArrayEmpiricalDistribution for sampling conversion."""
-    from ..core.distribution import ArrayEmpiricalDistribution
-
-    return ArrayEmpiricalDistribution
-
-
 # ---------------------------------------------------------------------------
 # ProtocolConverter
 # ---------------------------------------------------------------------------
@@ -180,9 +173,8 @@ class ProtocolConverter(Converter):
 
 def _make_protocol_converter(registry: Any) -> ProtocolConverter:
     """Create and configure a :class:`ProtocolConverter` with built-in resolvers."""
-    from ..core.protocols import SupportsLogProb, SupportsSampling
+    from ..core.protocols import SupportsLogProb
 
     converter = ProtocolConverter(registry)
     converter.register_protocol_target(SupportsLogProb, _resolve_target_for_log_prob)
-    converter.register_protocol_target(SupportsSampling, _resolve_target_for_sampling)
     return converter
