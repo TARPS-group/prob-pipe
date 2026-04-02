@@ -20,7 +20,7 @@ Fit a Bayesian model, then propagate posterior uncertainty through a prediction 
 import jax
 import jax.numpy as jnp
 from probpipe import (
-    MultivariateNormal, SimpleModel, WorkflowFunction,
+    MultivariateNormal, SimpleModel, workflow_function,
     condition_on, mean, variance, sample,
 )
 
@@ -43,7 +43,10 @@ posterior = condition_on(model, data)
 mean(posterior)       # Array([1.0558641, 2.061712], dtype=float32)
 
 # 3. Propagate uncertainty through predictions
-predict = WorkflowFunction(func=lambda params, x: params[0] + params[1] * x)
+@workflow_function
+def predict(params, x):
+    return params[0] + params[1] * x
+
 predictive = predict(params=posterior, x=0.5)
 
 # Broadcasting returns the output distribution directly

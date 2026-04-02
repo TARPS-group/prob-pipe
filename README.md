@@ -57,10 +57,7 @@ from probpipe import (
     condition_on, sample, mean, variance, log_prob,
 )
 from probpipe.modeling import Likelihood
-from probpipe.core.node import wf
-
 class LinearRegressionLikelihood(Likelihood):
-    @wf
     def log_likelihood(self, params, data):
         x, y = data[:, :-1], data[:, -1]
         predicted = x @ params[1:] + params[0]
@@ -187,17 +184,16 @@ nutpie_posterior = condition_on_nutpie(stan_mod, {"x": x, "y": y}, num_results=2
 When a `WorkflowFunction` receives a distribution where it expects a concrete value, ProbPipe automatically broadcasts over samples. Start with a reusable prediction function:
 
 ```python
-from probpipe import WorkflowFunction
+from probpipe import workflow_function
 import numpy as np
 
+@workflow_function
 def predict(params, x):
     return x @ params[1:] + params[0]
 
-predict_wf = WorkflowFunction(func=predict)
-
 # Posterior uncertainty propagates automatically
 x_new = jnp.array([[0.5, -0.3]])
-predictive = predict_wf(params=posterior, x_new=x_new)
+predictive = predict(params=posterior, x_new=x_new)
 mean(predictive)       # posterior predictive mean
 variance(predictive)   # posterior predictive variance
 ```
@@ -221,16 +217,15 @@ def excess_kurtosis(residuals):
     return float(np.mean((centered / np.std(residuals))**4) - 3.0)
 
 # Compose: simulate replicate, compute residuals, apply statistic
-def ppc_max_impl(params):
+@workflow_function(n_broadcast_samples=500)
+def ppc_max(params):
     y_rep = simulate_replicate(params)
-    return max_abs_residual(y_rep - np.array(predict(params, x_obs)))
+    return max_abs_residual(y_rep - np.array(predict._func(params, x_obs)))
 
-def ppc_kurt_impl(params):
+@workflow_function(n_broadcast_samples=500)
+def ppc_kurt(params):
     y_rep = simulate_replicate(params)
-    return excess_kurtosis(y_rep - np.array(predict(params, x_obs)))
-
-ppc_max = WorkflowFunction(func=ppc_max_impl, n_broadcast_samples=500)
-ppc_kurt = WorkflowFunction(func=ppc_kurt_impl, n_broadcast_samples=500)
+    return excess_kurtosis(y_rep - np.array(predict._func(params, x_obs)))
 
 ppc_max_dist = ppc_max(params=posterior_ht)
 ppc_kurt_dist = ppc_kurt(params=posterior_ht)
