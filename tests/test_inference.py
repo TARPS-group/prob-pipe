@@ -491,12 +491,17 @@ class TestRWMH:
         assert jnp.linalg.norm(post_mean - data_mean) < 2.0
 
     def test_requires_log_prob(self):
-        """RWMH raises for distributions without SupportsLogProb."""
-        from probpipe import EmpiricalDistribution
+        """RWMH raises for distributions without SupportsLogProb and no conversion path."""
+        from probpipe import ArrayDistribution
 
-        emp = EmpiricalDistribution(jnp.ones((10, 2)))
-        with pytest.raises(TypeError, match="does not support log_prob"):
-            rwmh(dist=emp, num_results=10, num_warmup=5)
+        class NoLogProbNoSample(ArrayDistribution):
+            @property
+            def event_shape(self):
+                return (2,)
+
+        dist = NoLogProbNoSample()
+        with pytest.raises(TypeError):
+            rwmh(dist=dist, num_results=10, num_warmup=5)
 
     def test_custom_init(self):
         """RWMH with custom initial state."""
