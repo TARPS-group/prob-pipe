@@ -168,9 +168,9 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         else:
             # Fall back to RWMH — always pass init_state so RWMH doesn't
             # need to access event_shape (which SimpleModel doesn't have).
-            from ..inference._rwmh import _rwmh_impl
+            from ..inference._rwmh import rwmh as _rwmh
 
-            return _rwmh_impl(
+            return _rwmh._func(
                 self._prior,
                 data,
                 log_prob_fn=lambda params, d: self._likelihood.log_likelihood(

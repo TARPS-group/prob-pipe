@@ -8,7 +8,7 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..core.provenance import Provenance
-from ..core.node import WorkflowFunction
+from ..core.node import workflow_function
 from ..custom_types import ArrayLike
 from ._diagnostics import InferenceDiagnostics, extract_arviz_diagnostics
 from ._mcmc_distribution import MCMCApproximateDistribution
@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 __all__ = ["condition_on_nutpie"]
 
 
-def _condition_on_nutpie_impl(
+@workflow_function
+def condition_on_nutpie(
     model: Any,
     data: ArrayLike | None = None,
     *,
@@ -164,5 +165,3 @@ def _extract_nutpie_diagnostics(
         num_results=num_results, num_chains=num_chains,
     )
 
-
-condition_on_nutpie = WorkflowFunction(func=_condition_on_nutpie_impl, name="condition_on_nutpie")

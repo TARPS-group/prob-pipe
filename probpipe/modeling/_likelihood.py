@@ -11,7 +11,7 @@ from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
 from ..core.distribution import Distribution
-from ..core.node import Module, wf
+from ..core.node import Module, workflow_method
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ class IncrementalConditioner[P, D](Module):
         """The current posterior (initially the prior)."""
         return self._curr_posterior
 
-    @wf
+    @workflow_method
     def update(self, data: D) -> Distribution[P]:
         """Condition on new data, updating the current posterior.
 
