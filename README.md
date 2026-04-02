@@ -72,6 +72,8 @@ y_obs = jax.random.bernoulli(jax.random.PRNGKey(1), prob_true).astype(jnp.float3
 data = jnp.column_stack([x_obs, y_obs])
 
 posterior = condition_on(model, data, num_results=2000, num_warmup=1000, random_seed=0)
+posterior          # MCMCApproximateDistribution(num_chains=1, num_draws=2000, ...)
+mean(posterior)    # Array([-1.38, 1.77], dtype=float32)
 
 # 3. Propagate uncertainty through predictions
 @workflow_function
@@ -80,9 +82,10 @@ def predict_prob(params, x):
 
 x_grid = jnp.linspace(-3, 3, 100)
 predictive = predict_prob(params=posterior, x=x_grid)
+predictive         # EmpiricalDistribution(n=2000) over predicted probabilities
 ```
 
-Broadcasting automatically samples from the posterior and evaluates the prediction function for each draw, returning the full posterior predictive distribution:
+When `predict_prob` receives a distribution for `params`, ProbPipe automatically samples from the posterior and evaluates the function for each draw, returning the full posterior predictive distribution:
 
 ```python
 import matplotlib.pyplot as plt
