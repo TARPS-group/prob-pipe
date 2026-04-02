@@ -24,6 +24,7 @@ _warnings.filterwarnings(
     category=DeprecationWarning,
 )
 
+from probpipe._weights import Weights
 from probpipe.core.distribution import (
     Distribution,
     PyTreeArrayDistribution,
@@ -132,6 +133,8 @@ from probpipe.converters import (
 )
 
 __all__ = [
+    # Weights
+    "Weights",
     # Base classes
     "Distribution",
     "PyTreeArrayDistribution",

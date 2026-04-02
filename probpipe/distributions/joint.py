@@ -86,6 +86,7 @@ import jax.numpy as jnp
 from .._utils import prod, _auto_key
 
 from ..custom_types import Array, ArrayLike, PRNGKey
+from .._weights import Weights, weighted_mean, weighted_variance
 from ..core.distribution import (
     ArrayDistribution,
     ArrayEmpiricalDistribution,
@@ -527,39 +528,20 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
         self._n = n
         self._name = name
 
-        # Handle weights (same logic as EmpiricalDistribution)
-        if weights is not None and log_weights is not None:
-            raise ValueError("Provide either weights or log_weights, not both.")
-
-        if weights is not None:
-            weights = jnp.asarray(weights, dtype=jnp.float32)
-            if weights.shape != (n,):
-                raise ValueError(f"weights shape {weights.shape} != ({n},)")
-            if jnp.any(weights < 0):
-                raise ValueError("weights must be non-negative.")
-            self._log_weights = jnp.log(weights)
-            self._is_uniform = False
-        elif log_weights is not None:
-            log_weights = jnp.asarray(log_weights, dtype=jnp.float32)
-            if log_weights.shape != (n,):
-                raise ValueError(f"log_weights shape {log_weights.shape} != ({n},)")
-            self._log_weights = log_weights
-            self._is_uniform = False
+        if weights is None and log_weights is None:
+            self._w = Weights.uniform(n)
         else:
-            self._log_weights = None
-            self._is_uniform = True
-
-        self._weights_cache: Array | None = None
+            self._w = Weights(n, weights, log_weights=log_weights)
 
         # Build _components as ArrayEmpiricalDistribution per component
         # (JointDistribution requires ArrayDistribution leaves for shape introspection)
         comp_dists: dict[str, ArrayEmpiricalDistribution] = {}
         for cname, arr in self._joint_samples.items():
-            if self._is_uniform:
+            if self._w.is_uniform:
                 comp_dists[cname] = ArrayEmpiricalDistribution(arr, name=cname)
             else:
                 comp_dists[cname] = ArrayEmpiricalDistribution(
-                    arr, log_weights=self._log_weights, name=cname
+                    arr, log_weights=self._w.log_unnormalized, name=cname
                 )
         self._components = comp_dists
 
@@ -570,16 +552,12 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
 
     @property
     def is_uniform(self) -> bool:
-        return self._is_uniform
+        return self._w.is_uniform
 
     @property
     def weights(self) -> Array:
         """Normalised weights, shape ``(n,)``."""
-        if self._is_uniform:
-            return jnp.ones(self._n, dtype=jnp.float32) / self._n
-        if self._weights_cache is None:
-            self._weights_cache = jax.nn.softmax(self._log_weights)
-        return self._weights_cache
+        return self._w.normalized
 
     def _sample_one(self, key: PRNGKey) -> dict[str, Array]:
         return self._sample_joint_rows(key, ())
@@ -596,12 +574,7 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
     ) -> dict[str, Array]:
         """Resample rows jointly, preserving correlation."""
         n_draws = prod(sample_shape)
-        if self._is_uniform:
-            indices = jax.random.randint(key, shape=(n_draws,), minval=0, maxval=self._n)
-        else:
-            indices = jax.random.choice(
-                key, self._n, shape=(n_draws,), p=self.weights, replace=True,
-            )
+        indices = self._w.choice(key, shape=(n_draws,))
         result = {}
         for cname, arr in self._joint_samples.items():
             drawn = arr[indices]
@@ -628,52 +601,30 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
         """Flat mean vector (for internal use by log_prob)."""
         parts = []
         for cname, arr in self._joint_samples.items():
-            if self._is_uniform:
-                m = jnp.mean(arr, axis=0)
-            else:
-                m = jnp.einsum("n,n...->...", self.weights, arr)
-            parts.append(m.reshape(-1))
+            parts.append(self._w.mean(arr).reshape(-1))
         return jnp.concatenate(parts)
 
     def _flat_variance(self) -> Array:
         """Flat variance vector (for internal use by log_prob)."""
-        mu_flat = self._flat_mean()
         parts = []
-        offset = 0
         for cname, arr in self._joint_samples.items():
-            flat_dim = prod(arr.shape[1:])
-            mu_comp = mu_flat[offset:offset + flat_dim]
             arr_flat = arr.reshape(self._n, -1)
-            diff = arr_flat - mu_comp
-            if self._is_uniform:
-                v = jnp.mean(diff**2, axis=0)
-            else:
-                v = jnp.einsum("n,nd->d", self.weights, diff**2)
-            parts.append(v)
-            offset += flat_dim
+            parts.append(self._w.variance(arr_flat))
         return jnp.concatenate(parts)
 
     def _mean(self) -> dict[str, Array]:
         """Per-component weighted means."""
-        result = {}
-        for cname, arr in self._joint_samples.items():
-            if self._is_uniform:
-                result[cname] = jnp.mean(arr, axis=0)
-            else:
-                result[cname] = jnp.einsum("n,n...->...", self.weights, arr)
-        return result
+        return {
+            cname: self._w.mean(arr)
+            for cname, arr in self._joint_samples.items()
+        }
 
     def _variance(self) -> dict[str, Array]:
         """Per-component weighted variances."""
-        means = self._mean()
-        result = {}
-        for cname, arr in self._joint_samples.items():
-            diff = arr - means[cname]
-            if self._is_uniform:
-                result[cname] = jnp.mean(diff**2, axis=0)
-            else:
-                result[cname] = jnp.einsum("n,n...->...", self.weights, diff**2)
-        return result
+        return {
+            cname: self._w.variance(arr)
+            for cname, arr in self._joint_samples.items()
+        }
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
         return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
@@ -718,12 +669,12 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
                 "at least one must remain unconditioned."
             )
 
-        if self._is_uniform:
+        if self._w.is_uniform:
             result = JointEmpirical(**remaining_samples, name=self._name)
         else:
             result = JointEmpirical(
                 **remaining_samples,
-                log_weights=self._log_weights,
+                log_weights=self._w.log_unnormalized,
                 name=self._name,
             )
         result.with_source(Provenance(

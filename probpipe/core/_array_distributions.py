@@ -28,6 +28,7 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
+from .._weights import Weights, weighted_mean, weighted_variance
 from .constraints import (
     Constraint,
     _supports_compatible,
@@ -431,10 +432,10 @@ class BootstrapDistribution(ArrayDistribution, SupportsSampling, SupportsMean, S
         self._n = self._evaluations.shape[0]
 
         if weights is not None:
-            w = jnp.asarray(weights, dtype=jnp.float32)
-            self._weights = w / jnp.sum(w)
+            # BootstrapDistribution accepts pre-normalized weights.
+            self._w = Weights(self._n, weights=weights)
         else:
-            self._weights = None
+            self._w = Weights.uniform(self._n)
 
         self._name = name
         self._approximate = True
@@ -457,32 +458,22 @@ class BootstrapDistribution(ArrayDistribution, SupportsSampling, SupportsMean, S
 
     def _mean(self) -> Array:
         """Point estimate: (weighted) mean of evaluations."""
-        if self._weights is None:
-            return jnp.mean(self._evaluations, axis=0)
-        return jnp.einsum("n,n...->...", self._weights, self._evaluations)
+        return self._w.mean(self._evaluations)
 
     def _variance(self) -> Array:
         """Variance of the sampling distribution (approx Var[f(X)] / n_eff)."""
         mu = self._mean()
-        diff = self._evaluations - mu
-        if self._weights is None:
-            sample_var = jnp.mean(diff ** 2, axis=0)
+        w_arr = None if self._w.is_uniform else self._w.normalized
+        sample_var = weighted_variance(w_arr, self._evaluations, mean=mu)
+        if self._w.is_uniform:
             return sample_var / self._n
-        # Weighted variance / effective sample size
-        sample_var = jnp.einsum("n,n...->...", self._weights, diff ** 2)
-        n_eff = 1.0 / jnp.sum(self._weights ** 2)
+        n_eff = 1.0 / jnp.sum(self._w.normalized ** 2)
         return sample_var / n_eff
 
     def _sample_one(self, key: PRNGKey) -> Array:
         """Draw a single bootstrap resample of the mean."""
-        if self._weights is None:
-            idx = jax.random.choice(key, self._n, shape=(self._n,), replace=True)
-            return jnp.mean(self._evaluations[idx], axis=0)
-        else:
-            idx = jax.random.choice(
-                key, self._n, shape=(self._n,), replace=True, p=self._weights
-            )
-            return jnp.mean(self._evaluations[idx], axis=0)
+        idx = self._w.choice(key, shape=(self._n,))
+        return jnp.mean(self._evaluations[idx], axis=0)
 
     def _sample(
         self,
@@ -494,16 +485,16 @@ class BootstrapDistribution(ArrayDistribution, SupportsSampling, SupportsMean, S
             return self._sample_one(key)
         total = prod(sample_shape)
         keys = jax.random.split(key, total)
+        w_arr = None if self._w.is_uniform else self._w.normalized
 
         def _one_resample(k):
-            if self._weights is None:
+            if w_arr is None:
                 idx = jax.random.choice(k, self._n, shape=(self._n,), replace=True)
-                return jnp.mean(self._evaluations[idx], axis=0)
             else:
                 idx = jax.random.choice(
-                    k, self._n, shape=(self._n,), replace=True, p=self._weights
+                    k, self._n, shape=(self._n,), replace=True, p=w_arr
                 )
-                return jnp.mean(self._evaluations[idx], axis=0)
+            return jnp.mean(self._evaluations[idx], axis=0)
 
         results = jax.vmap(_one_resample)(keys)
         return results.reshape(sample_shape + self.event_shape)

@@ -26,6 +26,7 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array
+from .._weights import Weights, weighted_mean, weighted_choice
 from ._distribution_base import Distribution
 from ._empirical import (
     ArrayEmpiricalDistribution,
@@ -120,7 +121,7 @@ class _MixtureSampling:
     def _sample(self, key, sample_shape=()):
         n_draws = prod(sample_shape) if sample_shape else 1
         key1, key2 = jax.random.split(key)
-        indices = jax.random.choice(key1, self.n, shape=(n_draws,), p=self.weights)
+        indices = weighted_choice(key1, self.n, weights=self.weights, shape=(n_draws,))
         keys = jax.random.split(key2, n_draws)
 
         results = []
@@ -138,7 +139,7 @@ class _MixtureMean:
 
     def _mean(self):
         means = jnp.stack([c._mean() for c in self._components], axis=0)
-        return jnp.einsum("n,n...->...", self.weights, means)
+        return weighted_mean(self.weights, means)
 
 
 class _MixtureVariance:
@@ -147,11 +148,11 @@ class _MixtureVariance:
     def _variance(self):
         means = jnp.stack([c._mean() for c in self._components], axis=0)
         variances = jnp.stack([c._variance() for c in self._components], axis=0)
-        overall_mean = jnp.einsum("n,n...->...", self.weights, means)
+        overall_mean = weighted_mean(self.weights, means)
         # Law of total variance: E[Var(Y|X)] + Var(E[Y|X])
-        e_var = jnp.einsum("n,n...->...", self.weights, variances)
+        e_var = weighted_mean(self.weights, variances)
         diff = means - overall_mean
-        var_e = jnp.einsum("n,n...->...", self.weights, diff ** 2)
+        var_e = weighted_mean(self.weights, diff ** 2)
         return e_var + var_e
 
 
@@ -353,10 +354,14 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
         self._output_samples = output_samples
         self._output_distributions = output_distributions
 
+        # Determine n from first broadcast arg
+        first_key = list(broadcast_args)[0]
+        first_arr = input_samples[first_key]
+        n = first_arr.shape[0] if hasattr(first_arr, 'shape') else len(first_arr)
         if weights is not None:
-            weights = jnp.asarray(weights, dtype=jnp.float32)
-            weights = weights / jnp.sum(weights)
-        self._weights = weights
+            self._w = Weights(n, weights=weights)
+        else:
+            self._w = Weights.uniform(n)
         self._broadcast_args = list(broadcast_args)
         self._name = name
         self._approximate = True
@@ -367,16 +372,12 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
     @property
     def n(self) -> int:
         """Number of input–output pairs."""
-        first_key = self._broadcast_args[0]
-        arr = self._input_samples[first_key]
-        return arr.shape[0] if hasattr(arr, 'shape') else len(arr)
+        return self._w.n
 
     @property
     def weights(self) -> Array:
         """Normalised weights, shape ``(n,)``."""
-        if self._weights is None:
-            return jnp.ones(self.n, dtype=jnp.float32) / self.n
-        return self._weights
+        return self._w.normalized
 
     @property
     def input_samples(self) -> dict[str, Any]:
@@ -400,7 +401,8 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
             return self.marginalize()
         if key in self._input_samples:
             arr = self._input_samples[key]
-            return EmpiricalDistribution(arr, weights=self._weights)
+            w = None if self._w.is_uniform else self._w.normalized
+            return EmpiricalDistribution(arr, weights=w)
         raise KeyError(f"Unknown component {key!r}; available: {self.component_names}")
 
     # -- joint sampling -----------------------------------------------------
@@ -408,10 +410,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
     def _sample(self, key, sample_shape=()):
         """Resample paired input–output tuples."""
         n_draws = prod(sample_shape) if sample_shape else 1
-        if self._weights is None:
-            indices = jax.random.randint(key, shape=(n_draws,), minval=0, maxval=self.n)
-        else:
-            indices = jax.random.choice(key, self.n, shape=(n_draws,), p=self.weights, replace=True)
+        indices = self._w.choice(key, shape=(n_draws,))
 
         result = {}
         for arg_name in self._broadcast_args:
@@ -441,9 +440,10 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
         ``BroadcastDistribution``.
         """
         if self._marginal_cache is None:
+            w_arr = None if self._w.is_uniform else self._w.normalized
             self._marginal_cache = _make_marginal(
                 self._output_samples,
-                self._weights,
+                w_arr,
                 output_distributions=self._output_distributions,
             )
             if self.source is not None and isinstance(self._marginal_cache, Distribution):

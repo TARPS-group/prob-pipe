@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 
-from .._utils import prod
+from .._utils import prod, _is_numeric_array
 from .protocols import (
     SupportsCovariance,
     SupportsExpectation,
@@ -27,6 +27,7 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
+from .._weights import Weights, weighted_mean
 from .constraints import Constraint, real
 from . import _distribution_base as _base
 from .._utils import _auto_key
@@ -51,10 +52,15 @@ class EmpiricalDistribution[T](
 
     This is the generic base class.  It stores samples in a numpy object
     array, supporting arbitrary sample types ``T`` (arrays, pytrees,
-    distributions, callables, etc.).  Use :class:`ArrayEmpiricalDistribution`
-    when TFP-style shape semantics (``batch_shape``, ``event_shape``,
-    ``flatten_value``, ``support``, etc.) are required — it stores samples
-    as a stacked JAX array for efficient vectorised operations.
+    distributions, callables, etc.).
+
+    **Automatic array dispatch:** When *samples* is a numeric JAX or
+    numpy array, ``EmpiricalDistribution(samples, ...)`` automatically
+    returns an :class:`ArrayEmpiricalDistribution` instance, which
+    provides TFP-style shape semantics (``batch_shape``, ``event_shape``,
+    ``flatten_value``, ``support``, etc.) and exact weighted moments.
+    Pass a non-numeric sequence (e.g. a list of objects) to get the
+    generic base class.
 
     Parameters
     ----------
@@ -72,6 +78,11 @@ class EmpiricalDistribution[T](
     name : str, optional
         An optional name for provenance / JointDistribution integration.
     """
+
+    def __new__(cls, samples=None, *args, **kwargs):
+        if cls is EmpiricalDistribution and samples is not None and _is_numeric_array(samples):
+            return object.__new__(ArrayEmpiricalDistribution)
+        return object.__new__(cls)
 
     def __init__(
         self,
@@ -100,41 +111,11 @@ class EmpiricalDistribution[T](
         log_weights: ArrayLike | None = None,
         name: str | None = None,
     ) -> None:
-        """Validate and store weights, name, and flags.
-        """
-        if weights is not None and log_weights is not None:
-            raise ValueError(
-                "Provide either weights or log_weights, not both."
-            )
-
-        if weights is not None:
-            weights = jnp.asarray(weights, dtype=jnp.float32)
-            if weights.shape != (n,):
-                raise ValueError(
-                    f"weights shape {weights.shape} does not match "
-                    f"number of samples {n}."
-                )
-            if jnp.any(weights < 0):
-                raise ValueError("weights must be non-negative.")
-            total = jnp.sum(weights)
-            if total <= 0:
-                raise ValueError("weights must sum to a positive value.")
-            self._log_weights = jnp.log(weights)
-            self._is_uniform = False
-        elif log_weights is not None:
-            log_weights = jnp.asarray(log_weights, dtype=jnp.float32)
-            if log_weights.shape != (n,):
-                raise ValueError(
-                    f"log_weights shape {log_weights.shape} does not match "
-                    f"number of samples {n}."
-                )
-            self._log_weights = log_weights
-            self._is_uniform = False
+        """Validate and store weights, name, and flags."""
+        if weights is None and log_weights is None:
+            self._w = Weights.uniform(n)
         else:
-            self._log_weights = None
-            self._is_uniform = True
-
-        self._weights_cache: Array | None = None
+            self._w = Weights(n, weights, log_weights=log_weights)
         self._name = name
         self._approximate = True
 
@@ -156,32 +137,23 @@ class EmpiricalDistribution[T](
     @property
     def is_uniform(self) -> bool:
         """True when all samples have equal weight."""
-        return self._is_uniform
+        return self._w.is_uniform
 
     @property
     def weights(self) -> Array:
         """Normalised weights, shape ``(n,)``."""
-        if self._is_uniform:
-            return jnp.ones(self.n, dtype=jnp.float32) / self.n
-        if self._weights_cache is None:
-            self._weights_cache = jax.nn.softmax(self._log_weights)
-        return self._weights_cache
+        return self._w.normalized
 
     @property
     def log_weights(self) -> Array | None:
         """Normalised log-weights, shape ``(n,)``.  ``None`` when uniform."""
-        if self._is_uniform:
-            return None
-        return self._log_weights - jax.scipy.special.logsumexp(self._log_weights)
+        return self._w.log_normalized
 
     # -- sampling -----------------------------------------------------------
 
     def _sample_one(self, key: PRNGKey) -> T:
         """Draw a single sample (with replacement according to weights)."""
-        if self._is_uniform:
-            idx = jax.random.randint(key, shape=(), minval=0, maxval=self.n)
-        else:
-            idx = jax.random.choice(key, self.n, p=self.weights)
+        idx = self._w.choice(key)
         return self._samples[idx]
 
     def _sample(
@@ -200,12 +172,7 @@ class EmpiricalDistribution[T](
         if sample_shape == ():
             return self._sample_one(key)
         n_draws = prod(sample_shape)
-        if self._is_uniform:
-            indices = jax.random.randint(key, shape=(n_draws,), minval=0, maxval=self.n)
-        else:
-            indices = jax.random.choice(
-                key, self.n, shape=(n_draws,), p=self.weights, replace=True,
-            )
+        indices = self._w.choice(key, shape=(n_draws,))
         draws = self._samples[indices]
         return draws.reshape(sample_shape + draws.shape[1:])
 
@@ -241,26 +208,18 @@ class EmpiricalDistribution[T](
                 key = _auto_key()
             idx = jax.random.choice(key, self.n, shape=(num_evaluations,), replace=False)
             f_vals = self._eval_f(f, self._samples[idx])
+            sub_w = self._w.subsample(idx)
 
             rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
             if rd:
-                sub_w = None
-                if not self._is_uniform:
-                    sub_w = self.weights[idx]
-                    sub_w = sub_w / jnp.sum(sub_w)
-                return BootstrapDistribution(f_vals, weights=sub_w)
+                w_arr = None if sub_w.is_uniform else sub_w.normalized
+                return BootstrapDistribution(f_vals, weights=w_arr)
 
-            if self._is_uniform:
-                return jnp.mean(f_vals, axis=0)
-            sub_w = self.weights[idx]
-            sub_w = sub_w / jnp.sum(sub_w)
-            return jnp.einsum("n,n...->...", sub_w, f_vals)
+            return sub_w.mean(f_vals)
 
         # Exact: evaluate f on all support points
         f_vals = self._eval_f(f, self._samples)
-        if self._is_uniform:
-            return jnp.mean(f_vals, axis=0)
-        return jnp.einsum("n,n...->...", self.weights, f_vals)
+        return self._w.mean(f_vals)
 
 
 # ---------------------------------------------------------------------------
@@ -284,9 +243,25 @@ class ArrayEmpiricalDistribution(
     ``unflatten_value``, ``support``, etc.) via :class:`ArrayDistribution`,
     plus exact weighted moments (mean, variance, covariance).
 
-    Use this instead of :class:`EmpiricalDistribution` when the distribution
-    must interoperate with :class:`JointDistribution` components or other
-    code that requires :class:`ArrayDistribution` instances.
+    Parameters
+    ----------
+    samples : array-like
+        Sample array.  The leading axis (or axes, if *sample_shape* is
+        given) indexes the support points; trailing axes form the event
+        shape.
+    weights : array-like, shape ``(n,)``, optional
+        Non-negative weights (normalised internally).
+    log_weights : array-like, shape ``(n,)``, optional
+        Log-unnormalised weights.  Mutually exclusive with *weights*.
+    sample_shape : tuple of int, optional
+        Shape of the leading sample dimensions.  When ``None`` (default),
+        the first axis is the single sample axis (``n = samples.shape[0]``)
+        and ``event_shape = samples.shape[1:]``.  When provided,
+        ``n = prod(sample_shape)``, the leading dimensions must match
+        *sample_shape*, and ``event_shape = samples.shape[len(sample_shape):]``.
+        The samples array is reshaped internally to ``(n, *event_shape)``.
+    name : str, optional
+        Distribution name.
     """
 
     def __init__(
@@ -295,12 +270,25 @@ class ArrayEmpiricalDistribution(
         weights: ArrayLike | None = None,
         *,
         log_weights: ArrayLike | None = None,
+        sample_shape: tuple[int, ...] | None = None,
         name: str | None = None,
     ):
         # Store only the JAX array — bypass the generic base's storage.
         self._samples = jnp.asarray(samples, dtype=jnp.float32)
         if self._samples.ndim == 0:
             raise ValueError("samples must have at least 1 dimension (the sample axis).")
+
+        if sample_shape is not None:
+            n_sample_dims = len(sample_shape)
+            if self._samples.shape[:n_sample_dims] != sample_shape:
+                raise ValueError(
+                    f"Leading dimensions {self._samples.shape[:n_sample_dims]} "
+                    f"do not match sample_shape {sample_shape}."
+                )
+            n = prod(sample_shape)
+            event_shape = self._samples.shape[n_sample_dims:]
+            self._samples = self._samples.reshape(n, *event_shape)
+
         self._init_weights(
             self._samples.shape[0], weights, log_weights=log_weights, name=name,
         )
@@ -328,26 +316,14 @@ class ArrayEmpiricalDistribution(
     # -- moments ------------------------------------------------------------
 
     def _mean(self) -> Array:
-        if self._is_uniform:
-            return jnp.mean(self._samples, axis=0)
-        return jnp.einsum("n,n...->...", self.weights, self._samples)
+        return self._w.mean(self._samples)
 
     def _variance(self) -> Array:
-        mu = self._mean()
-        diff = self._samples - mu
-        if self._is_uniform:
-            return jnp.mean(diff**2, axis=0)
-        return jnp.einsum("n,n...->...", self.weights, diff**2)
+        return self._w.variance(self._samples)
 
     def _cov(self) -> Array:
         """Weighted sample covariance matrix, shape ``(d, d)``."""
-        mu = self._mean()
-        # Flatten to 2D: (n, d)
-        flat_samples = self._samples.reshape(self.n, -1)
-        diff = flat_samples - mu.reshape(-1)
-        if self._is_uniform:
-            return jnp.einsum("ni,nj->ij", diff, diff) / self.n
-        return jnp.einsum("ni,nj,n->ij", diff, diff, self.weights)
+        return self._w.covariance(self._samples)
 
 
 # ---------------------------------------------------------------------------
@@ -362,9 +338,13 @@ class BootstrapReplicateDistribution[T](
     """N-fold product of an empirical distribution (bootstrap resampling).
 
     This is the generic base class.  It stores observations in a numpy
-    object array, supporting arbitrary observation types ``T``.  Use
-    :class:`ArrayBootstrapReplicateDistribution` when TFP-style shape semantics
-    (``batch_shape``, ``event_shape``, ``support``, etc.) are required.
+    object array, supporting arbitrary observation types ``T``.
+
+    **Automatic array dispatch:** When *source* is a numeric JAX or
+    numpy array (or an ``EmpiricalDistribution`` backed by numeric
+    arrays), ``BootstrapReplicateDistribution(source, ...)``
+    automatically returns an :class:`ArrayBootstrapReplicateDistribution`
+    instance with TFP-style shape semantics.
 
     Each sample from this distribution is a bootstrapped dataset — ``n``
     observations drawn i.i.d. with replacement from the source data.
@@ -398,6 +378,14 @@ class BootstrapReplicateDistribution[T](
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
 
+    def __new__(cls, source=None, *args, **kwargs):
+        if cls is BootstrapReplicateDistribution and source is not None:
+            if _is_numeric_array(source):
+                return object.__new__(ArrayBootstrapReplicateDistribution)
+            if isinstance(source, EmpiricalDistribution) and _is_numeric_array(source.samples):
+                return object.__new__(ArrayBootstrapReplicateDistribution)
+        return object.__new__(cls)
+
     def __init__(
         self,
         source: EmpiricalDistribution | Sequence | ArrayLike,
@@ -407,8 +395,7 @@ class BootstrapReplicateDistribution[T](
     ):
         if isinstance(source, EmpiricalDistribution):
             self._data = source.samples
-            self._is_uniform = source.is_uniform
-            self._weights = None if source.is_uniform else source.weights
+            self._w = source._w
             default_n = source.n
         elif isinstance(source, (jnp.ndarray, np.ndarray)):
             self._data = source
@@ -416,15 +403,13 @@ class BootstrapReplicateDistribution[T](
                 raise ValueError("source must have at least 1 dimension (the observation axis).")
             if len(self._data) == 0:
                 raise ValueError("source must be a non-empty sequence.")
-            self._is_uniform = True
-            self._weights = None
+            self._w = Weights.uniform(len(self._data))
             default_n = len(self._data)
         else:
             self._data = np.asarray(source, dtype=object)
             if len(self._data) == 0:
                 raise ValueError("source must be a non-empty sequence.")
-            self._is_uniform = True
-            self._weights = None
+            self._w = Weights.uniform(len(self._data))
             default_n = len(self._data)
         self._init_bootstrap_state(default_n, n=n, name=name)
 
@@ -471,23 +456,16 @@ class BootstrapReplicateDistribution[T](
     @property
     def weights(self) -> Array:
         """Normalised weights, shape ``(source_n,)``."""
-        if self._is_uniform:
-            return jnp.ones(self._source_n, dtype=jnp.float32) / self._source_n
-        return self._weights
+        return self._w.normalized
 
     @property
     def is_uniform(self) -> bool:
         """True when all source observations have equal weight."""
-        return self._is_uniform
+        return self._w.is_uniform
 
     def _sample_one(self, key: PRNGKey) -> Any:
         """Draw a single bootstrapped dataset."""
-        if self._weights is None:
-            idx = jax.random.choice(key, self._source_n, shape=(self._n,), replace=True)
-        else:
-            idx = jax.random.choice(
-                key, self._source_n, shape=(self._n,), replace=True, p=self._weights,
-            )
+        idx = self._w.choice(key, shape=(self._n,))
         return self._data[idx]
 
     @property
@@ -583,18 +561,15 @@ class ArrayBootstrapReplicateDistribution(BootstrapReplicateDistribution[Array],
         # Coerce to JAX array, then let the generic base store it.
         if isinstance(source, EmpiricalDistribution):
             jax_data = jnp.asarray(list(source.samples), dtype=jnp.float32)
-            # Reconstruct via the array path so the base stores a JAX array.
             self._data = jax_data
-            self._is_uniform = source.is_uniform
-            self._weights = None if source.is_uniform else source.weights
+            self._w = source._w
             default_n = source.n
         else:
             jax_data = jnp.asarray(source, dtype=jnp.float32)
             if jax_data.ndim == 0:
                 raise ValueError("source must have at least 1 dimension (the observation axis).")
             self._data = jax_data
-            self._is_uniform = True
-            self._weights = None
+            self._w = Weights.uniform(jax_data.shape[0])
             default_n = jax_data.shape[0]
 
         self._event_shape_per_obs = self._data.shape[1:]
