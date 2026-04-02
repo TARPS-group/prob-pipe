@@ -18,11 +18,11 @@ __all__ = ["predictive_check"]
 
 
 @workflow_function
-def predictive_check(
+def predictive_check[P, D](
     distribution: SupportsSampling,
-    generative_likelihood: GenerativeLikelihood,
-    test_fn: Callable,
-    observed_data: Any = None,
+    generative_likelihood: GenerativeLikelihood[P, D],
+    test_fn: Callable[[D], float],
+    observed_data: D | None = None,
     *,
     n_samples: int | None = None,
     n_replications: int = 500,
@@ -42,13 +42,13 @@ def predictive_check(
 
     Parameters
     ----------
-    distribution : SupportsSampling
+    distribution : Distribution[P]
         Prior or posterior to sample parameters from.
-    generative_likelihood : GenerativeLikelihood
-        Must have ``generate_data(params, n_samples) -> data``.
-    test_fn : callable
-        Test statistic: ``data -> scalar``.
-    observed_data : Any, optional
+    generative_likelihood : GenerativeLikelihood[P, D]
+        Must have ``generate_data(params: P, n_samples: int) -> D``.
+    test_fn : Callable[[D], float]
+        Test statistic mapping data to a scalar.
+    observed_data : D or None, optional
         If provided, compute the observed test statistic and p-value.
     n_samples : int, optional
         Number of observations per replicated dataset.  Required if
