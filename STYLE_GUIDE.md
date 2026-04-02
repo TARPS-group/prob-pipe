@@ -306,7 +306,7 @@ Use `TYPE_CHECKING` for imports needed only by type checkers:
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ._protocol import Converter
+    from ._registry import Converter
 ```
 
 ---

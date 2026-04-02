@@ -30,7 +30,7 @@ from ..core.distribution import (
 )
 from ..core.provenance import Provenance
 from ..core.constraints import _supports_compatible
-from ._protocol import Converter
+from ._registry import Converter
 from ._registry import ConversionInfo, ConversionMethod
 
 
