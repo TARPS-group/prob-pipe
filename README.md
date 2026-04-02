@@ -16,8 +16,6 @@ Most workflows for probabilistic inference -- including validation procedures --
 - **Automatic uncertainty propagation** -- `@workflow_function` broadcasting: pass a distribution where a function expects a concrete value and get a distribution back
 - **MCMC inference** -- NUTS/HMC with automatic gradient-free RWMH fallback; diagnostics (acceptance rate, divergences, tree depth) on every run
 - **Multiple backends** -- native TFP, nutpie, Stan (via BridgeStan), and PyMC models, all unified behind `condition_on`
-- **Predictive checking** -- `predictive_check` for prior and posterior predictive checks with test statistics and p-values
-- **Sequential Bayesian updating** -- `IncrementalConditioner` chains posterior updates across data batches
 - **Automatic distribution conversion** -- converter registry for moment-matching and sampling-based conversion between distribution types
 - **JAX-native** -- `vmap`, `jit`, `grad` throughout; TFP substrate for distribution math
 - **Provenance tracking** -- every distribution records its lineage from inputs through operations
