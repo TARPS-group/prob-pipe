@@ -87,22 +87,13 @@ Broadcasting automatically samples from the posterior and evaluates the predicti
 ```python
 import matplotlib.pyplot as plt
 
-pred_samples = np.array(predictive.samples)
-fig, ax = plt.subplots(figsize=(7, 4))
-ax.fill_between(x_grid, np.percentile(pred_samples, 5, axis=0),
-                np.percentile(pred_samples, 95, axis=0),
-                alpha=0.3, color="steelblue", label="90% credible interval")
-ax.plot(x_grid, np.mean(pred_samples, axis=0), color="steelblue", lw=2,
-        label="Posterior mean")
-ax.plot(x_grid, jax.nn.sigmoid(-1.0 + 2.0 * x_grid), "k--", lw=1.5,
-        label="True probability")
-ax.scatter(np.array(x_obs), np.array(y_obs), s=12, alpha=0.4, color="darkorange",
-           zorder=5, label="Observed")
-ax.set_xlabel("x")
-ax.set_ylabel("P(y = 1 | x)")
-ax.legend(fontsize=8)
-ax.set_title("Logistic regression — posterior predictive")
-plt.tight_layout()
+S = np.array(predictive.samples)
+lo, hi = np.percentile(S, [5, 95], axis=0)
+plt.fill_between(x_grid, lo, hi, alpha=0.3, label="90% CI")
+plt.plot(x_grid, S.mean(axis=0), lw=2, label="Posterior mean")
+plt.plot(x_grid, jax.nn.sigmoid(-1.0 + 2.0 * x_grid), "k--", label="True")
+plt.scatter(np.array(x_obs), np.array(y_obs), s=12, alpha=0.4, label="Data")
+plt.xlabel("x"); plt.ylabel("P(y = 1 | x)"); plt.legend(fontsize=8)
 ```
 
 ![Posterior predictive](docs/assets/images/readme_logistic.png)
