@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+import numpy as np
+
 import jax
-import jax.numpy as jnp
 
 from ..core.distribution import ArrayEmpiricalDistribution
 from ..core.node import workflow_function
@@ -94,18 +95,15 @@ def predictive_check[P, D](
     if key is None:
         key = _auto_key()
 
-    # Draw parameter samples
-    param_key, data_key = jax.random.split(key)
-    param_samples = distribution._sample(param_key, (n_replications,))
-
-    # Generate replicated data and compute test statistics
+    # Draw one parameter sample per replication and compute test statistics
     stats = []
     for i in range(n_replications):
-        params_i = jax.tree.map(lambda x: x[i], param_samples)
+        key, subkey = jax.random.split(key)
+        params_i = distribution._sample(subkey, ())
         y_rep = generative_likelihood.generate_data(params_i, n_samples)
         stats.append(float(test_fn(y_rep)))
 
-    stats_array = jnp.array(stats)
+    stats_array = np.array(stats, dtype=np.float64)
     replicated_dist = ArrayEmpiricalDistribution(
         stats_array, name="replicated_statistics",
     )
@@ -118,7 +116,7 @@ def predictive_check[P, D](
 
     if observed_data is not None:
         obs_stat = float(test_fn(observed_data))
-        p_value = float(jnp.mean(stats_array >= obs_stat))
+        p_value = float(np.mean(stats_array >= obs_stat))
         result["observed_statistic"] = obs_stat
         result["p_value"] = p_value
 
