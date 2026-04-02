@@ -220,12 +220,12 @@ def excess_kurtosis(residuals):
 @workflow_function(n_broadcast_samples=500)
 def ppc_max(params):
     y_rep = simulate_replicate(params)
-    return max_abs_residual(y_rep - np.array(predict._func(params, x_obs)))
+    return max_abs_residual(y_rep - np.array(predict(params, x_obs)))
 
 @workflow_function(n_broadcast_samples=500)
 def ppc_kurt(params):
     y_rep = simulate_replicate(params)
-    return excess_kurtosis(y_rep - np.array(predict._func(params, x_obs)))
+    return excess_kurtosis(y_rep - np.array(predict(params, x_obs)))
 
 ppc_max_dist = ppc_max(params=posterior_ht)
 ppc_kurt_dist = ppc_kurt(params=posterior_ht)
