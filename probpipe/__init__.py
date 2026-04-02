@@ -114,6 +114,7 @@ from probpipe.inference import (
     condition_on_nutpie,
 )
 from probpipe.modeling import ProbabilisticModel, SimpleModel
+from probpipe.validation import predictive_check
 from probpipe.core.protocols import (
     SupportsExpectation,
     SupportsSampling,
@@ -236,6 +237,8 @@ __all__ = [
     "MCMCApproximateDistribution",
     "rwmh",
     "condition_on_nutpie",
+    # Validation
+    "predictive_check",
     # Converters
     "converter_registry",
     "ConversionInfo",
