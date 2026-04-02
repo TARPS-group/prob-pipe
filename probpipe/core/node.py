@@ -59,26 +59,63 @@ from ..converters import converter_registry
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["InputFrozenError", "wf", "Node", "abstractwf", "WorkflowFunction", "Module", "AbstractModule"]
+__all__ = [
+    "InputFrozenError",
+    "workflow_method",
+    "abstract_workflow_method",
+    "workflow_function",
+    "Node",
+    "WorkflowFunction",
+    "Module",
+    "AbstractModule",
+]
 
 class InputFrozenError(Exception):
     pass
 
-def abstractwf(func: Callable):
+
+def workflow_method(func: Callable):
+    """Mark a method as a workflow method for :class:`Module` subclasses.
+
+    Methods decorated with ``@workflow_method`` are automatically
+    converted to :class:`WorkflowFunction` instances when the
+    ``Module`` is instantiated.
     """
-    Marks a method as:
-      - a workflow interface (via wf)
-      - abstract (enforced by ABCMeta)
-
-    This allows abstract modules to declare workflow-shaped interfaces
-    without providing implementations.
-    """
-    return abstractmethod(wf(func))
-
-
-def wf(func: Callable):
     func._is_workflow = True
     return func
+
+
+def abstract_workflow_method(func: Callable):
+    """Mark a method as an abstract workflow interface.
+
+    Combines ``@abstractmethod`` with ``@workflow_method`` so that
+    :class:`AbstractModule` subclasses can declare workflow-shaped
+    interfaces without providing implementations.
+    """
+    return abstractmethod(workflow_method(func))
+
+
+def workflow_function(_func=None, /, **kwargs):
+    """Decorator to create a :class:`WorkflowFunction` from a plain function.
+
+    Can be used with or without arguments::
+
+        @workflow_function
+        def my_func(x, y):
+            return x + y
+
+        @workflow_function(n_broadcast_samples=100, vectorize="loop")
+        def my_func(x, y):
+            return x + y
+    """
+    def decorator(func):
+        return WorkflowFunction(func=func, name=func.__name__, **kwargs)
+
+    if _func is not None:
+        # Bare @workflow_function (no parentheses)
+        return decorator(_func)
+    # @workflow_function(...) with arguments
+    return decorator
 
 
 class Node(ABC):
@@ -859,7 +896,7 @@ class Module(Node):
 
     def _build_workflows(self):
         """
-        Replace @wf methods with WorkflowFunction instances.
+        Replace @workflow_method methods with WorkflowFunction instances.
         """
         for attr_name in dir(self):
             attr = getattr(self, attr_name)
@@ -872,14 +909,14 @@ class Module(Node):
             if getattr(func, "__isabstractmethod__", False):
                 continue
 
-            wf = WorkflowFunction(
+            wf_instance = WorkflowFunction(
                 func=func,
                 workflow_kind=self._workflow_kind,
                 name=f"{self.__class__.__name__}.{func.__name__}",
-                module=self,  # <--- this is the key
+                module=self,
             )
 
-            setattr(self, attr_name, wf)
+            setattr(self, attr_name, wf_instance)
 
     def dag(self):
         """Return a Graphviz DAG visualization of this module."""
@@ -966,8 +1003,8 @@ class Module(Node):
         by a concrete workflow with a compatible signature.
 
         This prevents a common failure mode:
-          - base class declares @abstractwf interface
-          - subclass defines a method with same name but forgets @wf
+          - base class declares @abstract_workflow_method interface
+          - subclass defines a method with same name but forgets @workflow_method
           - or implements it with a mismatched signature
         """
         cls = self.__class__
@@ -995,11 +1032,11 @@ class Module(Node):
                         f"{cls.__name__} does not implement abstract workflow '{name}'."
                     )
 
-                # Must be marked as workflow (@wf)
+                # Must be marked as workflow (@workflow_method)
                 if not getattr(impl_attr, "_is_workflow", False):
                     raise TypeError(
                         f"{cls.__name__}.{name} implements an abstract workflow interface "
-                        f"but is not marked with @wf."
+                        f"but is not marked with @workflow_method."
                     )
 
                 # Compare signatures (use unbound function signatures to include 'self')
@@ -1051,7 +1088,7 @@ class Module(Node):
             
 class AbstractModule(Module, ABC):
     """
-    Base class for modules that declare workflow interfaces via @abstractwf.
+    Base class for modules that declare workflow interfaces via @abstract_workflow_method.
 
     ABCMeta will prevent instantiation until all abstract workflows are implemented
     by a concrete subclass.

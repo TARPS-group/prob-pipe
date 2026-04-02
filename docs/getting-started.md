@@ -38,11 +38,7 @@ from probpipe import (
     BootstrapReplicateDistribution,
     condition_on, sample, mean, variance, log_prob,
 )
-from probpipe.modeling import Likelihood
-from probpipe.core.node import wf
-
-class LinearRegressionLikelihood(Likelihood):
-    @wf
+class LinearRegressionLikelihood:
     def log_likelihood(self, params, data):
         x, y = data[:, :-1], data[:, -1]
         predicted = x @ params[1:] + params[0]

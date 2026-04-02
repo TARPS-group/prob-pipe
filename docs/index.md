@@ -23,12 +23,9 @@ from probpipe import (
     MultivariateNormal, SimpleModel, WorkflowFunction,
     condition_on, mean, variance, sample,
 )
-from probpipe.modeling import Likelihood
-from probpipe.core.node import wf
 
 # 1. Define a model
-class LinearLikelihood(Likelihood):
-    @wf
+class LinearLikelihood:
     def log_likelihood(self, params, data):
         x, y = data[:, 0], data[:, 1]
         return jnp.sum(-0.5 * (y - (params[0] + params[1] * x)) ** 2)
