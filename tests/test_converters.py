@@ -620,3 +620,217 @@ class TestEdgeCases:
     def test_check_infeasible_non_type_target(self):
         info = converter_registry.check(Normal(0, 1), "not a type")
         assert not info.feasible
+
+
+# ---------------------------------------------------------------------------
+# Protocol-based conversion
+# ---------------------------------------------------------------------------
+
+from probpipe.core.protocols import (
+    SupportsLogProb,
+    SupportsSampling,
+    SupportsMean,
+    SupportsVariance,
+    SupportsCovariance,
+)
+from probpipe.distributions.kde import KDEDistribution
+
+
+class TestProtocolConversion:
+    """Tests for converting distributions to satisfy a protocol."""
+
+    def test_already_satisfies_returns_same(self):
+        """Distribution that already satisfies the protocol is returned unchanged."""
+        n = Normal(loc=0.0, scale=1.0)
+        result = converter_registry.convert(n, SupportsLogProb)
+        assert result is n
+
+    def test_scalar_empirical_to_supports_log_prob(self):
+        """Scalar ArrayEmpiricalDistribution converts to KDE via SupportsLogProb."""
+        from probpipe.distributions.kde import KDEDistribution
+
+        samples = jax.random.normal(jax.random.PRNGKey(0), (300,))
+        emp = ArrayEmpiricalDistribution(samples)
+        result = converter_registry.convert(emp, SupportsLogProb)
+        assert isinstance(result, SupportsLogProb)
+        assert isinstance(result, KDEDistribution)
+        np.testing.assert_allclose(float(result._mean()), float(emp._mean()), atol=0.01)
+        np.testing.assert_allclose(
+            float(result._variance()), float(emp._variance()), atol=0.3,
+        )
+
+    def test_multivariate_empirical_to_supports_log_prob(self):
+        """Multivariate ArrayEmpiricalDistribution converts to KDE via SupportsLogProb."""
+        from probpipe.distributions.kde import KDEDistribution
+
+        samples = jax.random.normal(jax.random.PRNGKey(1), (300, 4))
+        emp = ArrayEmpiricalDistribution(samples)
+        result = converter_registry.convert(emp, SupportsLogProb)
+        assert isinstance(result, SupportsLogProb)
+        assert isinstance(result, KDEDistribution)
+        np.testing.assert_allclose(
+            np.array(result._mean()), np.array(emp._mean()), atol=0.2,
+        )
+
+    def test_check_protocol_already_satisfied(self):
+        """check() returns EXACT when protocol is already satisfied."""
+        n = Normal(loc=0.0, scale=1.0)
+        info = converter_registry.check(n, SupportsLogProb)
+        assert info.feasible
+        assert info.method == ConversionMethod.EXACT
+
+    def test_check_protocol_needs_conversion(self):
+        """check() returns feasible when conversion is possible."""
+        samples = jax.random.normal(jax.random.PRNGKey(2), (100,))
+        emp = ArrayEmpiricalDistribution(samples)
+        info = converter_registry.check(emp, SupportsLogProb)
+        assert info.feasible
+        assert info.method == ConversionMethod.MOMENT_MATCH
+
+    def test_unregistered_protocol_raises(self):
+        """Unregistered protocol raises TypeError when source doesn't satisfy it."""
+        from probpipe.core.protocols import SupportsConditioning
+
+        samples = jax.random.normal(jax.random.PRNGKey(3), (50,))
+        emp = ArrayEmpiricalDistribution(samples)
+        # SupportsConditioning is not registered as a protocol target
+        # and EmpiricalDistribution does not satisfy it
+        with pytest.raises(TypeError):
+            converter_registry.convert(emp, SupportsConditioning)
+
+    def test_from_distribution_with_protocol(self):
+        """from_distribution() works with protocol targets."""
+        samples = jax.random.normal(jax.random.PRNGKey(4), (200,))
+        emp = ArrayEmpiricalDistribution(samples)
+        result = from_distribution(emp, SupportsLogProb)
+        assert isinstance(result, SupportsLogProb)
+
+    def test_protocol_conversion_preserves_provenance(self):
+        """Protocol-based conversion attaches provenance."""
+        samples = jax.random.normal(jax.random.PRNGKey(5), (200,))
+        emp = ArrayEmpiricalDistribution(samples, name="posterior")
+        result = converter_registry.convert(emp, SupportsLogProb)
+        assert result.source is not None
+        assert emp in result.source.parents
+
+
+# ---------------------------------------------------------------------------
+# KDEDistribution
+# ---------------------------------------------------------------------------
+
+
+class TestKDEDistribution:
+    """Tests for KDEDistribution."""
+
+    def test_scalar_construction(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (100,))
+        kde = KDEDistribution(samples)
+        assert kde.event_shape == ()
+        assert kde.batch_shape == ()
+        assert kde.n == 100
+
+    def test_multivariate_construction(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
+        kde = KDEDistribution(samples)
+        assert kde.event_shape == (3,)
+        assert kde.n == 100
+
+    def test_log_prob_finite(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
+        kde = KDEDistribution(samples)
+        lp = kde._log_prob(0.0)
+        assert jnp.isfinite(lp)
+
+    def test_log_prob_multivariate(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (200, 2))
+        kde = KDEDistribution(samples)
+        lp = kde._log_prob(jnp.zeros(2))
+        assert jnp.isfinite(lp)
+
+    def test_sample_shape_scalar(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (100,))
+        kde = KDEDistribution(samples)
+        s = kde._sample(jax.random.PRNGKey(1), (5,))
+        assert s.shape == (5,)
+
+    def test_sample_shape_multivariate(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
+        kde = KDEDistribution(samples)
+        s = kde._sample(jax.random.PRNGKey(1), (5,))
+        assert s.shape == (5, 3)
+
+    def test_mean_close_to_sample_mean(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (500,))
+        kde = KDEDistribution(samples)
+        np.testing.assert_allclose(
+            float(kde._mean()), float(jnp.mean(samples)), atol=0.01,
+        )
+
+    def test_variance_larger_than_sample_variance(self):
+        """KDE variance = sample variance + bandwidth^2, so should be larger."""
+        samples = jax.random.normal(jax.random.PRNGKey(0), (500,))
+        kde = KDEDistribution(samples)
+        sample_var = float(jnp.var(samples))
+        kde_var = float(kde._variance())
+        assert kde_var > sample_var
+
+    def test_weighted_construction(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (100,))
+        weights = jnp.ones(100)
+        weights = weights.at[0].set(10.0)
+        kde = KDEDistribution(samples, weights=weights)
+        assert kde.n == 100
+        lp = kde._log_prob(0.0)
+        assert jnp.isfinite(lp)
+
+    def test_custom_bandwidth(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (100,))
+        kde = KDEDistribution(samples, bandwidth=0.5)
+        lp = kde._log_prob(0.0)
+        assert jnp.isfinite(lp)
+
+    def test_supports_protocols(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (100,))
+        kde = KDEDistribution(samples)
+        assert isinstance(kde, SupportsLogProb)
+        assert isinstance(kde, SupportsSampling)
+        assert isinstance(kde, SupportsMean)
+        assert isinstance(kde, SupportsVariance)
+        assert isinstance(kde, SupportsCovariance)
+
+    def test_convert_empirical_to_kde(self):
+        """from_distribution(empirical, KDEDistribution) works."""
+        samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
+        emp = ArrayEmpiricalDistribution(samples)
+        kde = converter_registry.convert(emp, KDEDistribution)
+        assert isinstance(kde, KDEDistribution)
+        assert kde.n == 200
+        np.testing.assert_allclose(
+            float(kde._mean()), float(emp._mean()), atol=0.01,
+        )
+
+    def test_convert_normal_to_kde(self):
+        """Converting a parametric distribution to KDE works via sampling."""
+        n = Normal(loc=0.0, scale=1.0)
+        kde = converter_registry.convert(n, KDEDistribution, num_samples=500)
+        assert isinstance(kde, KDEDistribution)
+        assert kde.n == 500
+
+    def test_cov_scalar(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
+        kde = KDEDistribution(samples)
+        cov = kde._cov()
+        assert cov.shape == ()
+
+    def test_cov_multivariate(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (200, 3))
+        kde = KDEDistribution(samples)
+        cov = kde._cov()
+        assert cov.shape == (3, 3)
+
+    def test_repr(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (50,))
+        kde = KDEDistribution(samples, name="test_kde")
+        r = repr(kde)
+        assert "KDEDistribution" in r
+        assert "n=50" in r

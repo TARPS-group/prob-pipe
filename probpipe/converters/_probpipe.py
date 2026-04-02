@@ -20,18 +20,17 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..custom_types import PRNGKey
-
-# Default sample count for moment-matching conversions
-DEFAULT_NUM_SAMPLES = 1024
 from .._utils import _auto_key
+from ..core.constraints import _supports_compatible
 from ..core.distribution import (
     ArrayEmpiricalDistribution,
     Distribution,
 )
 from ..core.provenance import Provenance
-from ..core.constraints import _supports_compatible
-from ._protocol import Converter
-from ._registry import ConversionInfo, ConversionMethod
+from ._registry import ConversionInfo, ConversionMethod, Converter
+
+# Default sample count for moment-matching conversions
+DEFAULT_NUM_SAMPLES = 1024
 
 
 # ---------------------------------------------------------------------------
@@ -438,6 +437,38 @@ def _convert_to_empirical(source, key, **kw):
     return r
 
 
+def _convert_to_kde(source, key, **kw):
+    """Convert any distribution to a KDEDistribution.
+
+    If the source is an ``ArrayEmpiricalDistribution`` (or subclass),
+    the stored samples and weights are reused directly.  Otherwise,
+    samples are drawn from the source.
+    """
+    from ..distributions.kde import KDEDistribution
+
+    if isinstance(source, KDEDistribution):
+        return source
+
+    bandwidth = kw.pop("bandwidth", None)
+    name = kw.get("name") or source.name
+
+    if isinstance(source, ArrayEmpiricalDistribution):
+        weights = source.weights if not source._is_uniform else None
+        r = KDEDistribution(
+            source._samples, weights=weights, bandwidth=bandwidth, name=name,
+        )
+        r.with_source(_mm_provenance(source))
+        return r
+
+    num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
+    if key is None:
+        key = _auto_key()
+    samples = source._sample(key, (num_samples,))
+    r = KDEDistribution(samples, bandwidth=bandwidth, name=name)
+    r.with_source(_mm_provenance(source))
+    return r
+
+
 # ---------------------------------------------------------------------------
 # Dispatch table: target class name -> conversion function
 # ---------------------------------------------------------------------------
@@ -469,7 +500,9 @@ def _build_dispatch_table() -> dict[str, callable]:
         "Multinomial": _convert_to_multinomial,
         "Wishart": _convert_to_wishart,
         "VonMisesFisher": _convert_to_vonmisesfisher,
+        "EmpiricalDistribution": _convert_to_empirical,
         "ArrayEmpiricalDistribution": _convert_to_empirical,
+        "KDEDistribution": _convert_to_kde,
     }
 
 
