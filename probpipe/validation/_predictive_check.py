@@ -13,7 +13,7 @@ from ..core.node import workflow_function
 from ..core.protocols import SupportsSampling
 from ..custom_types import PRNGKey
 from .._utils import _auto_key
-from ..modeling._likelihood import GenerativeLikelihood
+from ..modeling._likelihood import GenerativeLikelihood  # needed for type hint resolution
 
 __all__ = ["predictive_check"]
 
@@ -74,17 +74,6 @@ def predictive_check[P, D](
         - ``"p_value"`` — fraction of replicates where the test
           statistic is at least as extreme as the observed value.
     """
-    if not isinstance(distribution, SupportsSampling):
-        raise TypeError(
-            f"{type(distribution).__name__} does not support sampling "
-            f"(does not implement SupportsSampling)"
-        )
-    if not isinstance(generative_likelihood, GenerativeLikelihood):
-        raise TypeError(
-            f"{type(generative_likelihood).__name__} does not implement "
-            f"GenerativeLikelihood (missing generate_data method)"
-        )
-
     if n_samples is None:
         if observed_data is None:
             raise ValueError(

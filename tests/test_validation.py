@@ -148,26 +148,6 @@ class TestPredictiveCheck:
                 n_replications=10,
             )
 
-    def test_type_error_non_sampling(self, likelihood, observed_data):
-        with pytest.raises(TypeError, match="does not support sampling"):
-            predictive_check(
-                "not_a_distribution", likelihood,
-                test_fn=lambda d: float(jnp.mean(d)),
-                observed_data=observed_data,
-            )
-
-    def test_type_error_non_generative(self, prior, observed_data):
-        class BadLikelihood:
-            def log_likelihood(self, params, data):
-                return 0.0
-
-        with pytest.raises(TypeError, match="GenerativeLikelihood"):
-            predictive_check(
-                prior, BadLikelihood(),
-                test_fn=lambda d: float(jnp.mean(d)),
-                observed_data=observed_data,
-            )
-
     def test_is_workflow_function(self):
         from probpipe.core.node import WorkflowFunction
         assert isinstance(predictive_check, WorkflowFunction)
