@@ -233,6 +233,15 @@ class WorkflowFunction(Node):
         self._hints = get_type_hints(func)
         self._workflow_kind = workflow_kind
         self._name = name or getattr(func, "__name__", self.__class__.__name__)
+
+        # Expose wrapped function's metadata for introspection (help(),
+        # inspect.signature(), IDE tooltips, mkdocstrings).  We skip
+        # __wrapped__ to prevent inspect.unwrap() from bypassing __call__.
+        self.__doc__ = func.__doc__
+        self.__name__ = self._name
+        self.__qualname__ = getattr(func, "__qualname__", self._name)
+        self.__signature__ = self._sig
+        self.__module__ = getattr(func, "__module__", None)
         self._module = module
         self._n_broadcast_samples = n_broadcast_samples if n_broadcast_samples is not None else self.DEFAULT_N_BROADCAST_SAMPLES
         self._vectorize = vectorize
