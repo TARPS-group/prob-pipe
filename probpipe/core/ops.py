@@ -225,7 +225,7 @@ def condition_on(
     from ..inference import inference_method_registry
 
     try:
-        return inference_method_registry.condition(
+        return inference_method_registry.execute(
             dist, observed, method=method, **kwargs
         )
     except (TypeError, KeyError):

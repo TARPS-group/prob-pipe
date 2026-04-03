@@ -31,7 +31,7 @@ class PyMCMCMCMethod(InferenceMethod):
         return MethodInfo(feasible=True, method_name=self.name,
                           description="PyMC MCMC (default NUTS)")
 
-    def condition(self, dist: Any, observed: Any, **kwargs: Any) -> Any:
+    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> Any:
         return dist._condition_on(observed, **kwargs)
 
 
@@ -58,7 +58,7 @@ class PyMCADVIMethod(InferenceMethod):
         return MethodInfo(feasible=True, method_name=self.name,
                           description="PyMC ADVI (variational inference)")
 
-    def condition(self, dist: Any, observed: Any, **kwargs: Any) -> Any:
+    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> Any:
         import pymc as pm
 
         from ..inference._diagnostics import InferenceDiagnostics

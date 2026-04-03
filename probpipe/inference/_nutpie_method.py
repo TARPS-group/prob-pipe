@@ -48,6 +48,6 @@ class NutpieNutsMethod(InferenceMethod):
         return MethodInfo(feasible=True, method_name=self.name,
                           description="Nutpie NUTS (Rust-based)")
 
-    def condition(self, dist: Any, observed: Any, **kwargs: Any) -> Any:
+    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> Any:
         from ._nutpie import condition_on_nutpie
         return condition_on_nutpie._func(dist, observed, **kwargs)

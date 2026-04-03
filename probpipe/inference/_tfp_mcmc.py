@@ -220,7 +220,7 @@ class TFPNutsMethod(InferenceMethod):
         return MethodInfo(feasible=True, method_name=self.name,
                           description="TFP NUTS (gradient-based)")
 
-    def condition(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
+    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
         target = _build_target_log_prob(dist, observed)
         prior = dist._prior if hasattr(dist, "_prior") else dist
         init = _get_init_state(prior, kwargs.get("init"), observed)
@@ -273,7 +273,7 @@ class TFPHmcMethod(InferenceMethod):
         return MethodInfo(feasible=True, method_name=self.name,
                           description="TFP HMC (gradient-based)")
 
-    def condition(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
+    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
         target = _build_target_log_prob(dist, observed)
         prior = dist._prior if hasattr(dist, "_prior") else dist
         init = _get_init_state(prior, kwargs.get("init"), observed)

@@ -31,5 +31,5 @@ class CmdStanNutsMethod(InferenceMethod):
         return MethodInfo(feasible=True, method_name=self.name,
                           description="CmdStan NUTS")
 
-    def condition(self, dist: Any, observed: Any, **kwargs: Any) -> Any:
+    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> Any:
         return dist._condition_on(observed, **kwargs)

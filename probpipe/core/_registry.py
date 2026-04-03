@@ -2,8 +2,8 @@
 
 Provides a reusable base for registries that dispatch operations
 to pluggable methods based on priority and feasibility.  Concrete
-registries (e.g., ``InferenceMethodRegistry``) extend this with
-domain-specific ``check``/``execute`` signatures.
+registries (e.g., ``InferenceMethodRegistry``) add a domain-specific
+alias for ``execute`` (e.g., ``condition``).
 """
 
 from __future__ import annotations
@@ -34,9 +34,8 @@ class Method(ABC):
     """Abstract base for a pluggable method in a registry.
 
     Subclasses declare a unique ``name``, which ``supported_types``
-    they handle (for fast filtering), and a ``priority`` (higher =
-    tried first).  The concrete ``check`` and ``execute`` signatures
-    are defined by each registry's method subclass.
+    they handle (for fast filtering), a ``priority`` (higher =
+    tried first), and implement ``check``/``execute``.
     """
 
     @property
@@ -48,6 +47,16 @@ class Method(ABC):
     @abstractmethod
     def supported_types(self) -> tuple[type, ...]:
         """Types this method can operate on (fast pre-filter)."""
+        ...
+
+    @abstractmethod
+    def check(self, *args: Any, **kwargs: Any) -> MethodInfo:
+        """Probe whether this method is applicable (must be cheap)."""
+        ...
+
+    @abstractmethod
+    def execute(self, *args: Any, **kwargs: Any) -> Any:
+        """Run the method and return the result."""
         ...
 
     @property
@@ -62,10 +71,6 @@ class MethodRegistry[M: Method]:
     Methods are tried in descending priority order.  The first method
     whose ``check()`` returns ``feasible=True`` wins.  Users can also
     select a specific method by name.
-
-    Subclasses should add a domain-specific ``execute``-style method
-    (e.g., ``condition``, ``compute``) that delegates to the matched
-    method.
     """
 
     def __init__(self) -> None:
@@ -101,6 +106,53 @@ class MethodRegistry[M: Method]:
     def list_methods(self) -> list[str]:
         """Return method names in priority order (highest first)."""
         return [m.name for m in self._methods]
+
+    def check(
+        self, *args: Any, method: str | None = None, **kwargs: Any
+    ) -> MethodInfo:
+        """Check feasibility.  Auto-selects or uses the named method."""
+        if method is not None:
+            m = self.get_method(method)
+            return m.check(*args, **kwargs)
+
+        key_type = type(args[0]) if args else object
+        for m in self._find_methods(key_type):
+            info = m.check(*args, **kwargs)
+            if info.feasible:
+                return info
+
+        return MethodInfo(
+            feasible=False,
+            description=f"No applicable method for {key_type.__name__}",
+        )
+
+    def execute(
+        self, *args: Any, method: str | None = None, **kwargs: Any
+    ) -> Any:
+        """Execute using the best (or named) method.
+
+        Raises ``TypeError`` if no method is applicable.
+        Raises ``KeyError`` if *method* is not registered.
+        """
+        if method is not None:
+            m = self.get_method(method)
+            info = m.check(*args, **kwargs)
+            if not info.feasible:
+                raise TypeError(
+                    f"Method {method!r} is not applicable: {info.description}"
+                )
+            return m.execute(*args, **kwargs)
+
+        key_type = type(args[0]) if args else object
+        for m in self._find_methods(key_type):
+            info = m.check(*args, **kwargs)
+            if info.feasible:
+                return m.execute(*args, **kwargs)
+
+        raise TypeError(
+            f"No method registered for {key_type.__name__}. "
+            f"Available: {self.list_methods()}"
+        )
 
     # -- internals ----------------------------------------------------------
 

@@ -48,7 +48,7 @@ class TFPRWMHMethod(InferenceMethod):
         return MethodInfo(feasible=True, method_name=self.name,
                           description="Random-walk MH (gradient-free)")
 
-    def condition(self, dist: Any, observed: Any, **kwargs: Any) -> Any:
+    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> Any:
         from ._rwmh import rwmh as _rwmh
 
         prior = dist._prior if hasattr(dist, "_prior") else dist
