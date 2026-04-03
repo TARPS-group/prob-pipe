@@ -14,7 +14,7 @@ Most workflows for probabilistic inference can be described in terms of **distri
 
 - **Protocol-based distributions** -- capabilities declared via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsMean`, ...), enabling structural subtyping across backends.
 - **Automatic uncertainty propagation** -- `@workflow_function` broadcasting: pass a distribution where a function expects a concrete value and get a distribution back.
-- **Pluggable inference** -- a single `condition_on` interface backed by an **inference registry** that auto-selects the best algorithm (NUTS, HMC, RWMH, and more) across backends (TFP, nutpie, Stan, PyMC). Override with `method="tfp_nuts"` when you want control; get diagnostics on every run.
+- **Pluggable inference** -- a single `condition_on` interface backed by an **inference registry** that auto-selects the best algorithm (No-U-Turn Sampler (NUTS), Hamiltonian Monte Carlo (HMC), random-walk Metropolis–Hastings (RWMH), and more) across backends (TensorFlow Probability (TFP), nutpie, Stan, PyMC). Override with `method="tfp_nuts"` when you want control; get diagnostics on every run.
 - **Automatic distribution conversion** -- converter registry for moment-matching and sampling-based conversion between distribution types.
 - **JAX-native** -- `vmap`, `jit`, `grad` throughout; TFP substrate for distribution math.
 - **Provenance tracking** -- every distribution records its lineage from inputs through operations.
@@ -39,7 +39,7 @@ pip install .[dev]       # pytest, jupyter, matplotlib, graphviz
 pip install .[prefect]   # Prefect orchestration backend
 pip install .[stan]      # Stan models via BridgeStan + CmdStanPy
 pip install .[pymc]      # PyMC model integration
-pip install .[nutpie]    # nutpie MCMC sampler
+pip install .[nutpie]    # nutpie Markov chain Monte Carlo (MCMC) sampler
 ```
 
 ## Quick Example
