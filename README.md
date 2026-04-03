@@ -12,14 +12,14 @@ Most workflows for probabilistic inference can be described in terms of **distri
 
 ## Key Features
 
-- **Protocol-based distributions** -- capabilities declared via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsMean`, ...), enabling structural subtyping across backends
-- **Automatic uncertainty propagation** -- `@workflow_function` broadcasting: pass a distribution where a function expects a concrete value and get a distribution back
-- **MCMC inference** -- NUTS/HMC with automatic gradient-free RWMH fallback; diagnostics (acceptance rate, divergences, tree depth) on every run
-- **Multiple backends** -- native TFP, nutpie, Stan (via BridgeStan), and PyMC models, all unified behind `condition_on`
-- **Automatic distribution conversion** -- converter registry for moment-matching and sampling-based conversion between distribution types
-- **JAX-native** -- `vmap`, `jit`, `grad` throughout; TFP substrate for distribution math
-- **Provenance tracking** -- every distribution records its lineage from inputs through operations
-- **Prefect orchestration** -- distribute pipeline steps across machines without code changes
+- **Protocol-based distributions** -- capabilities declared via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsMean`, ...), enabling structural subtyping across backends.
+- **Automatic uncertainty propagation** -- `@workflow_function` broadcasting: pass a distribution where a function expects a concrete value and get a distribution back.
+- **MCMC inference** -- NUTS/HMC with automatic gradient-free RWMH fallback; diagnostics (acceptance rate, divergences, tree depth) on every run.
+- **Multiple backends** -- native TFP, nutpie, Stan (via BridgeStan), and PyMC models, all unified behind `condition_on`.
+- **Automatic distribution conversion** -- converter registry for moment-matching and sampling-based conversion between distribution types.
+- **JAX-native** -- `vmap`, `jit`, `grad` throughout; TFP substrate for distribution math.
+- **Provenance tracking** -- every distribution records its lineage from inputs through operations.
+- **Prefect orchestration** -- distribute pipeline steps across machines without code changes.
 
 ## Installation
 
