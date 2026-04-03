@@ -42,6 +42,11 @@ class NutpieNutsMethod(InferenceMethod):
         if not isinstance(dist, self._supported):
             return MethodInfo(feasible=False, method_name=self.name,
                               description="Requires StanModel or PyMCModel")
+        try:
+            import nutpie  # noqa: F401
+        except ImportError:
+            return MethodInfo(feasible=False, method_name=self.name,
+                              description="nutpie not installed")
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> Any:

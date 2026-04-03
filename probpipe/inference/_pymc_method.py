@@ -4,16 +4,88 @@ from __future__ import annotations
 
 from typing import Any
 
+import jax.numpy as jnp
+
 from ..core._registry import MethodInfo
-from ._delegating_method import make_delegating_method
+from ..core.provenance import Provenance
+from ._diagnostics import InferenceDiagnostics, extract_arviz_diagnostics
+from ._mcmc_distribution import MCMCApproximateDistribution
 from ._registry import InferenceMethod
 
-# PyMC MCMC is a pure delegator — same pattern as CmdStan.
-PyMCMCMCMethod = make_delegating_method(
-    method_name="pymc_mcmc",
-    model_path="probpipe.modeling._pymc.PyMCModel",
-    method_priority=60,
-)
+
+def _extract_pymc_chains(trace: Any, param_names: list[str], num_chains: int) -> list:
+    """Extract per-chain sample arrays from a PyMC ArviZ trace."""
+    chains = []
+    for c in range(num_chains):
+        chain_arrays = []
+        for name in param_names:
+            vals = trace.posterior[name].values[c]
+            if vals.ndim == 1:
+                vals = vals[:, None]
+            else:
+                vals = vals.reshape(vals.shape[0], -1)
+            chain_arrays.append(jnp.asarray(vals))
+        chains.append(jnp.concatenate(chain_arrays, axis=-1))
+    return chains
+
+
+class PyMCMCMCMethod(InferenceMethod):
+    """PyMC's default MCMC sampler (NUTS) for PyMCModel."""
+
+    def __init__(self) -> None:
+        from ..modeling._pymc import PyMCModel
+        self._model_type = PyMCModel
+
+    @property
+    def name(self) -> str:
+        return "pymc_mcmc"
+
+    def supported_types(self) -> tuple[type, ...]:
+        return (self._model_type,)
+
+    @property
+    def priority(self) -> int:
+        return 60
+
+    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+        if not isinstance(dist, self._model_type):
+            return MethodInfo(feasible=False, method_name=self.name,
+                              description="Requires PyMCModel")
+        return MethodInfo(feasible=True, method_name=self.name)
+
+    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
+        import pymc as pm
+
+        num_results = kwargs.get("num_results", 1000)
+        num_warmup = kwargs.get("num_warmup", 500)
+        num_chains = kwargs.get("num_chains", 4)
+        random_seed = kwargs.get("random_seed", 0)
+
+        model = dist._pymc_model(data=observed)
+        with model:
+            trace = pm.sample(
+                draws=num_results,
+                tune=num_warmup,
+                chains=num_chains,
+                random_seed=random_seed,
+                return_inferencedata=True,
+            )
+
+        chains = _extract_pymc_chains(trace, dist._param_names, num_chains)
+        diagnostics = extract_arviz_diagnostics(
+            trace, algorithm="pymc_nuts",
+            num_results=num_results, num_chains=num_chains,
+        )
+
+        result = MCMCApproximateDistribution(
+            chains, diagnostics=diagnostics, name="posterior",
+        )
+        result.with_source(Provenance(
+            "pymc_mcmc", parents=(dist,),
+            metadata={"num_results": num_results, "num_warmup": num_warmup,
+                      "num_chains": num_chains, "algorithm": "pymc_mcmc"},
+        ))
+        return result
 
 
 class PyMCADVIMethod(InferenceMethod):
@@ -40,13 +112,9 @@ class PyMCADVIMethod(InferenceMethod):
                               description="Requires PyMCModel")
         return MethodInfo(feasible=True, method_name=self.name)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> Any:
+    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
         import pymc as pm
         import numpy as np
-        import jax.numpy as jnp
-
-        from ._diagnostics import InferenceDiagnostics
-        from ._tfp_mcmc import _make_posterior
 
         num_iterations = kwargs.get("num_iterations", 30000)
         num_results = kwargs.get("num_results", 1000)
@@ -66,10 +134,11 @@ class PyMCADVIMethod(InferenceMethod):
         chains = [jnp.asarray(samples, dtype=jnp.float32)]
         algorithm = f"pymc_{vi_method}"
 
+        from ._tfp_mcmc import _make_posterior
         return _make_posterior(
             chains,
             diagnostics=InferenceDiagnostics(algorithm=algorithm),
-            parents=(),
+            parents=(dist,),
             algorithm=algorithm,
             num_iterations=num_iterations,
         )
