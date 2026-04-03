@@ -18,7 +18,7 @@ Using these abstractions, even complex workflows can be written down succinctly.
 
 ### ProbPipe's approach
 
-ProbPipe lets you build pipelines in terms of abstract components while managing the underlying representations and algorithms automatically:
+ProbPipe manages representations and algorithms automatically by default, while giving you control over these choices when you want it:
 
 - **`Distribution`s** are generic and support subsets of capabilities via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsConditioning`, ...). This means external distribution types (TFP, scipy) can participate without inheriting from ProbPipe base classes.
 - **`WorkflowFunction`s** natively handle conversion between distribution representations and automatically compute **pushforward distributions** when functions defined on fixed inputs receive distributions as arguments.
