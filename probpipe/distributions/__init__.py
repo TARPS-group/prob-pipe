@@ -43,6 +43,7 @@ from .gaussian_random_function import (
     GaussianRandomFunction,
     LinearBasisFunction,
 )
+from .kde import KDEDistribution
 
 __all__ = [
     # TFP base
@@ -88,4 +89,6 @@ __all__ = [
     "ArrayRandomFunction",
     "GaussianRandomFunction",
     "LinearBasisFunction",
+    # KDE
+    "KDEDistribution",
 ]

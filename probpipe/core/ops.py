@@ -1,11 +1,10 @@
 """Built-in operations for distribution computation.
 
 Each public function (``sample``, ``mean``, ``log_prob``, …) is a
-lightweight positional-arg wrapper around an internal
-:class:`~probpipe.core.node.WorkflowFunction`.  This means every call
-automatically participates in broadcasting and Prefect orchestration
-when a distribution argument is passed where a concrete value is
-expected.
+:class:`~probpipe.core.node.WorkflowFunction` created via the
+``@workflow_function`` decorator.  This means every call automatically
+participates in broadcasting and Prefect orchestration when a
+distribution argument is passed where a concrete value is expected.
 
 Usage::
 
@@ -19,8 +18,6 @@ Usage::
 
 from __future__ import annotations
 
-import functools
-import inspect
 from typing import Any
 
 import jax.numpy as jnp
@@ -28,6 +25,7 @@ import jax.numpy as jnp
 from ..custom_types import Array, PRNGKey
 from .._utils import _auto_key
 from .distribution import Distribution
+from .node import workflow_function
 from .protocols import (
     SupportsConditioning,
     SupportsCovariance,
@@ -39,17 +37,28 @@ from .protocols import (
     SupportsVariance,
 )
 
+__all__ = [
+    "sample",
+    "log_prob",
+    "prob",
+    "unnormalized_log_prob",
+    "unnormalized_prob",
+    "mean",
+    "variance",
+    "cov",
+    "expectation",
+    "condition_on",
+    "from_distribution",
+]
+
+
 # ---------------------------------------------------------------------------
-# Implementation functions (private)
-#
-# Each function contains the actual protocol-check + delegation logic.
-# They are wrapped by WorkflowFunction instances (for broadcasting /
-# Prefect) and then by lightweight positional-arg adapters that form
-# the public API.
+# Public API — each function is a WorkflowFunction via @workflow_function
 # ---------------------------------------------------------------------------
 
 
-def _sample_impl(
+@workflow_function
+def sample(
     dist: SupportsSampling,
     *,
     key: PRNGKey | None = None,
@@ -76,7 +85,8 @@ def _sample_impl(
     return dist._sample(key, sample_shape)
 
 
-def _log_prob_impl(dist: SupportsLogProb, value: Any) -> Array:
+@workflow_function
+def log_prob(dist: SupportsLogProb, value: Any) -> Array:
     """Evaluate the normalized log-density at *value*."""
     if not isinstance(dist, SupportsLogProb):
         raise TypeError(
@@ -85,7 +95,8 @@ def _log_prob_impl(dist: SupportsLogProb, value: Any) -> Array:
     return dist._log_prob(value)
 
 
-def _prob_impl(dist: SupportsLogProb, value: Any) -> Array:
+@workflow_function
+def prob(dist: SupportsLogProb, value: Any) -> Array:
     """Evaluate the density at *value* (``exp(log_prob)``)."""
     if not isinstance(dist, SupportsLogProb):
         raise TypeError(
@@ -95,7 +106,8 @@ def _prob_impl(dist: SupportsLogProb, value: Any) -> Array:
     return jnp.exp(dist._log_prob(value))
 
 
-def _unnormalized_log_prob_impl(
+@workflow_function
+def unnormalized_log_prob(
     dist: SupportsUnnormalizedLogProb, value: Any,
 ) -> Array:
     """Evaluate the unnormalized log-density at *value*."""
@@ -107,7 +119,8 @@ def _unnormalized_log_prob_impl(
     return dist._unnormalized_log_prob(value)
 
 
-def _unnormalized_prob_impl(
+@workflow_function
+def unnormalized_prob(
     dist: SupportsUnnormalizedLogProb, value: Any,
 ) -> Array:
     """Evaluate the unnormalized density at *value* (``exp(unnormalized_log_prob)``)."""
@@ -119,7 +132,8 @@ def _unnormalized_prob_impl(
     return jnp.exp(dist._unnormalized_log_prob(value))
 
 
-def _mean_impl(dist: SupportsMean) -> Any:
+@workflow_function
+def mean(dist: SupportsMean) -> Any:
     """Compute E[X].
 
     Requires the distribution to implement :class:`SupportsMean`.
@@ -132,7 +146,8 @@ def _mean_impl(dist: SupportsMean) -> Any:
     return dist._mean()
 
 
-def _variance_impl(dist: SupportsVariance) -> Any:
+@workflow_function
+def variance(dist: SupportsVariance) -> Any:
     """Compute Var[X].
 
     Requires the distribution to implement :class:`SupportsVariance`.
@@ -145,7 +160,8 @@ def _variance_impl(dist: SupportsVariance) -> Any:
     return dist._variance()
 
 
-def _cov_impl(dist: SupportsCovariance) -> Array:
+@workflow_function
+def cov(dist: SupportsCovariance) -> Array:
     """Compute the covariance matrix.
 
     Requires the distribution to implement :class:`SupportsCovariance`.
@@ -158,7 +174,8 @@ def _cov_impl(dist: SupportsCovariance) -> Array:
     return dist._cov()
 
 
-def _expectation_impl(
+@workflow_function
+def expectation(
     dist: SupportsExpectation,
     f: Any,
     *,
@@ -176,7 +193,8 @@ def _expectation_impl(
     )
 
 
-def _condition_on_impl(
+@workflow_function
+def condition_on(
     dist: SupportsConditioning,
     observed: Any = None,
     **kwargs: Any,
@@ -189,7 +207,8 @@ def _condition_on_impl(
     return dist._condition_on(observed, **kwargs)
 
 
-def _from_distribution_impl(
+@workflow_function
+def from_distribution(
     source: Distribution,
     target_type: type,
     *,
@@ -220,90 +239,3 @@ def _from_distribution_impl(
     return converter_registry.convert(
         source, target_type, key=key, check_support=check_support, **kwargs
     )
-
-
-# ---------------------------------------------------------------------------
-# Op registry — single source of truth
-# ---------------------------------------------------------------------------
-
-# Maps public name → implementation function.
-_OP_REGISTRY: dict[str, Any] = {
-    "sample": _sample_impl,
-    "log_prob": _log_prob_impl,
-    "prob": _prob_impl,
-    "unnormalized_log_prob": _unnormalized_log_prob_impl,
-    "unnormalized_prob": _unnormalized_prob_impl,
-    "mean": _mean_impl,
-    "variance": _variance_impl,
-    "cov": _cov_impl,
-    "expectation": _expectation_impl,
-    "condition_on": _condition_on_impl,
-    "from_distribution": _from_distribution_impl,
-}
-
-
-# ---------------------------------------------------------------------------
-# WorkflowFunction wrappers (lazy to avoid circular imports)
-# ---------------------------------------------------------------------------
-
-_wf_ops: dict | None = None
-
-
-def _ensure_wf_ops() -> dict:
-    """Lazily create WorkflowFunction instances wrapping the impl functions."""
-    global _wf_ops
-    if _wf_ops is None:
-        from .node import WorkflowFunction
-
-        _wf_ops = {
-            name: WorkflowFunction(func=impl, name=name)
-            for name, impl in _OP_REGISTRY.items()
-        }
-    return _wf_ops
-
-
-# ---------------------------------------------------------------------------
-# Public API — positional-arg wrappers routing through WorkflowFunction
-# ---------------------------------------------------------------------------
-
-def _make_op(name: str, impl):
-    """Build a public wrapper that accepts positional args and routes
-    through the corresponding :class:`WorkflowFunction`.
-
-    The wrapper preserves the implementation's signature, docstring,
-    and type annotations so that IDE tooling and ``help()`` work as
-    expected.
-    """
-    sig = inspect.signature(impl)
-
-    # Detect if the impl has a **kwargs parameter.
-    has_var_keyword = any(
-        p.kind == inspect.Parameter.VAR_KEYWORD
-        for p in sig.parameters.values()
-    )
-
-    @functools.wraps(impl)
-    def wrapper(*args, **kwargs):
-        wf_ops = _ensure_wf_ops()
-        bound = sig.bind(*args, **kwargs)
-        bound.apply_defaults()
-        call_kwargs = dict(bound.arguments)
-        # If the impl has **kwargs, sig.bind nests them under the
-        # parameter name (e.g. "kwargs": {...}).  Unpack so that
-        # WorkflowFunction receives them as top-level keyword args.
-        if has_var_keyword:
-            for p in sig.parameters.values():
-                if p.kind == inspect.Parameter.VAR_KEYWORD and p.name in call_kwargs:
-                    extra = call_kwargs.pop(p.name)
-                    call_kwargs.update(extra)
-        return wf_ops[name](**call_kwargs)
-
-    return wrapper
-
-
-# Generate the public functions and populate __all__.
-__all__: list[str] = []
-
-for _name, _impl in _OP_REGISTRY.items():
-    globals()[_name] = _make_op(_name, _impl)
-    __all__.append(_name)

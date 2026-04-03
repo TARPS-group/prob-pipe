@@ -104,8 +104,8 @@ probpipe/
 │   ├── protocols.py           # @runtime_checkable protocol definitions
 │   ├── ops.py                 # Built-in ops: sample, mean, log_prob, etc.
 │   ├── constraints.py         # Constraint hierarchy (real, positive, etc.)
-│   ├── node.py                # Node, Module, WorkflowFunction, @wf
-│   ├── modeling.py            # Likelihood, GenerativeLikelihood, IterativeForecaster
+│   ├── node.py                # Node, Module, WorkflowFunction, @workflow_function, @workflow_method, @abstract_workflow_method
+│   ├── modeling.py            # Likelihood, GenerativeLikelihood, IncrementalConditioner
 │   └── provenance.py          # Provenance tracking
 │
 ├── distributions/           # Concrete distribution implementations
@@ -131,8 +131,8 @@ probpipe/
 │   └── _nutpie.py           # Nutpie-backed NUTS (optional dep)
 │
 ├── converters/              # Distribution conversion registry
-│   ├── _registry.py         # Converter dispatch
-│   ├── _protocol.py         # Converter protocol
+│   ├── _registry.py         # Converter ABC, registry, and metadata types
+│   ├── _protocol.py         # Protocol-based conversion (SupportsLogProb, etc.)
 │   ├── _probpipe.py         # ProbPipe ↔ ProbPipe conversions
 │   ├── _tfp.py              # TFP conversions
 │   └── _scipy.py            # SciPy conversions
@@ -170,6 +170,24 @@ probpipe/
 | `ArrayDistribution` | Single-array specialization with TFP shape conventions |
 | `WorkflowFunction` | Orchestration-aware function wrapper |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, etc. |
+
+### Converter priority system
+
+The `ConverterRegistry` dispatches conversions by trying registered
+`Converter` subclasses in descending **priority** order. The first
+converter whose `check()` returns `feasible=True` wins. Built-in
+priorities:
+
+| Priority | Converter | Role |
+|----------|-----------|------|
+| 200 | `ProtocolConverter` | Intercepts protocol targets (e.g., `SupportsLogProb`), resolves to a concrete type, and delegates back to the registry |
+| 100 | `ProbPipeConverter` | ProbPipe-to-ProbPipe conversions (same-class passthrough or cross-family moment-matching) |
+| 50 | `TFPConverter` | Bidirectional TFP ↔ ProbPipe conversions |
+| 25 | `ScipyConverter` | Bidirectional scipy.stats ↔ ProbPipe conversions (optional) |
+
+When adding a new converter, choose a priority that reflects its
+specificity – higher priority means it is tried first. Protocol-level
+converters should be above concrete-type converters.
 
 ### Generic vs array-specific pattern
 

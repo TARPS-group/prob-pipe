@@ -16,8 +16,7 @@ from ..core.distribution import (
     ArrayEmpiricalDistribution,
 )
 from ..core.provenance import Provenance
-from ._protocol import Converter
-from ._registry import ConversionInfo, ConversionMethod
+from ._registry import ConversionInfo, ConversionMethod, Converter
 
 try:
     import scipy.stats as _stats

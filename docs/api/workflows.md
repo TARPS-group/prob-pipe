@@ -4,4 +4,8 @@
 
 ::: probpipe.Module
 
-::: probpipe.wf
+::: probpipe.workflow_function
+
+::: probpipe.workflow_method
+
+::: probpipe.abstract_workflow_method
