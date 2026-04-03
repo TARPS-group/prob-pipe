@@ -458,10 +458,7 @@ class BootstrapDistribution(ArrayDistribution, SupportsSampling, SupportsMean, S
     def _variance(self) -> Array:
         """Variance of the sampling distribution (approx Var[f(X)] / n_eff)."""
         sample_var = self._w.variance(self._evaluations)
-        if self._w.is_uniform:
-            return sample_var / self._n
-        n_eff = 1.0 / jnp.sum(self._w.normalized ** 2)
-        return sample_var / n_eff
+        return sample_var / self._w.effective_sample_size
 
     def _sample_one(self, key: PRNGKey) -> Array:
         """Draw a single bootstrap resample of the mean."""

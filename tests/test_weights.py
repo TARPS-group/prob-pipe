@@ -239,6 +239,25 @@ class TestWeightsProperties:
             jax.scipy.special.logsumexp(log_n), 0.0, atol=1e-6
         )
 
+    def test_ess_uniform(self):
+        w = Weights(n=10)
+        npt.assert_allclose(w.effective_sample_size, 10.0)
+
+    def test_ess_nonuniform(self):
+        # All weight on one item → ESS = 1
+        w = Weights(weights=jnp.array([1e-10, 1e-10, 1.0]))
+        assert float(w.effective_sample_size) == pytest.approx(1.0, abs=0.01)
+
+    def test_ess_equal_weights(self):
+        # Equal weights → ESS = n
+        w = Weights(weights=jnp.array([1.0, 1.0, 1.0, 1.0]))
+        npt.assert_allclose(w.effective_sample_size, 4.0, atol=1e-5)
+
+    def test_ess_between_1_and_n(self):
+        w = Weights(weights=jnp.array([1.0, 2.0, 3.0]))
+        ess = float(w.effective_sample_size)
+        assert 1.0 <= ess <= 3.0
+
     def test_log_unnormalized(self):
         log_w = jnp.array([-1.0, 0.0, -1.0])
         w = Weights(log_weights=log_w)

@@ -456,6 +456,35 @@ class Weights:
         """Raw log-unnormalized weights as stored.  ``None`` when uniform."""
         return self._log_weights
 
+    @property
+    def effective_sample_size(self) -> Array:
+        r"""Kish's effective sample size (ESS).
+
+        .. math::
+
+            n_{\mathrm{eff}} = \frac{1}{\sum_i w_i^2}
+
+        where :math:`w_i` are the **normalized** weights.  For uniform
+        weights this equals *n* exactly.
+
+        Computed in log-space for numerical stability:
+
+        .. math::
+
+            n_{\mathrm{eff}}
+            = \exp\!\bigl(-\log \sum_i \exp(2 \log w_i)\bigr)
+            = \exp\!\bigl(-\mathrm{logsumexp}(2\,\log\mathbf{w})\bigr)
+
+        Returns
+        -------
+        Array
+            Scalar effective sample size (``1 <= n_eff <= n``).
+        """
+        if self._is_uniform:
+            return jnp.array(self._n, dtype=jnp.float32)
+        log_norm = normalized_log_weights(self._log_weights)
+        return jnp.exp(-jax.scipy.special.logsumexp(2.0 * log_norm))
+
     # -- JAX array protocol -------------------------------------------------
 
     def __jax_array__(self) -> Array:
