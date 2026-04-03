@@ -215,7 +215,7 @@ def condition_on(
     dist : Distribution
         Distribution or model to condition.
     observed : Any
-        Observed data to condition on.
+        Observed values to condition on.
     method : str or None
         If provided, use only the named inference method.
     **kwargs

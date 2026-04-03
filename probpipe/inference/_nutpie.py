@@ -39,7 +39,7 @@ def condition_on_nutpie(
     model : StanModel or PyMCModel
         Probabilistic model to sample from.
     data : array-like or None
-        Observed data to condition on.  Passed to the model's
+        Observed values to condition on.  Passed to the model's
         conditioning interface.
     num_results : int
         Number of post-warmup draws per chain (default 1000).
