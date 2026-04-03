@@ -105,7 +105,7 @@ from probpipe.core.constraints import (
     greater_than,
     integer_interval,
 )
-from probpipe.modeling import Likelihood, GenerativeLikelihood, IncrementalConditioner
+from probpipe.modeling import GLMLikelihood, Likelihood, GenerativeLikelihood, IncrementalConditioner
 from probpipe.inference import (
     InferenceDiagnostics,
     MCMCDiagnostics,
@@ -226,6 +226,7 @@ __all__ = [
     "SupportsNamedComponents",
     "SupportsConditionableComponents",
     # Modeling
+    "GLMLikelihood",
     "Likelihood",
     "GenerativeLikelihood",
     "IncrementalConditioner",
