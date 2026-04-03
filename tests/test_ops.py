@@ -227,9 +227,10 @@ class TestConditionOn:
         conditioned = ops.condition_on(sjd, x=jnp.array(3.0))
         assert conditioned.component_names == ("y",)
 
-    def test_condition_type_error(self, normal):
+    def test_condition_type_error(self):
+        """Objects with no protocols raise TypeError."""
         with pytest.raises(TypeError, match="does not support conditioning"):
-            ops.condition_on(normal, x=jnp.array(1.0))
+            ops.condition_on("not_a_distribution", jnp.array(1.0))
 
 
 # ---------------------------------------------------------------------------

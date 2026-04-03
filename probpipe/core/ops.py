@@ -197,14 +197,48 @@ def expectation(
 def condition_on(
     dist: SupportsConditioning,
     observed: Any = None,
+    *,
+    method: str | None = None,
     **kwargs: Any,
 ) -> Distribution:
-    """Condition a joint distribution on observed values."""
-    if not isinstance(dist, SupportsConditioning):
-        raise TypeError(
-            f"{type(dist).__name__} does not support conditioning"
+    """Condition a distribution on observed values.
+
+    Dispatches to the inference method registry, which auto-selects the
+    best method based on what the distribution supports.  Pass
+    ``method="tfp_nuts"`` (or any registered name) to override.
+
+    Falls back to ``dist._condition_on()`` if the distribution
+    implements ``SupportsConditioning`` and no registry method matches.
+
+    Parameters
+    ----------
+    dist : Distribution
+        Distribution or model to condition.
+    observed : Any
+        Observed data to condition on.
+    method : str or None
+        If provided, use only the named inference method.
+    **kwargs
+        Passed to the inference method (e.g., ``num_results``,
+        ``num_warmup``, ``random_seed``).
+    """
+    from ..inference import inference_method_registry
+
+    try:
+        return inference_method_registry.condition(
+            dist, observed, method=method, **kwargs
         )
-    return dist._condition_on(observed, **kwargs)
+    except (TypeError, KeyError):
+        pass
+
+    # Fallback: direct protocol dispatch
+    if isinstance(dist, SupportsConditioning):
+        return dist._condition_on(observed, **kwargs)
+
+    raise TypeError(
+        f"{type(dist).__name__} does not support conditioning "
+        f"and no registered inference method can handle it"
+    )
 
 
 @workflow_function
