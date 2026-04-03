@@ -72,6 +72,7 @@ class MethodRegistry[M: Method]:
     def __init__(self) -> None:
         self._methods: list[M] = []
         self._name_index: dict[str, M] = {}
+        self._priority_overrides: dict[str, int] = {}
         self._type_cache: dict[type, list[M]] = {}
 
     # -- registration -------------------------------------------------------
@@ -83,9 +84,45 @@ class MethodRegistry[M: Method]:
                 f"Method name {method.name!r} is already registered"
             )
         self._methods.append(method)
-        self._methods.sort(key=lambda m: m.priority, reverse=True)
+        self._sort_methods()
         self._name_index[method.name] = method
         self._type_cache.clear()
+
+    # -- priority management ------------------------------------------------
+
+    def _effective_priority(self, method: M) -> int:
+        """Return the effective priority (override if set, else default)."""
+        return self._priority_overrides.get(method.name, method.priority)
+
+    def _sort_methods(self) -> None:
+        """Re-sort methods by effective priority and clear caches."""
+        self._methods.sort(key=self._effective_priority, reverse=True)
+        self._type_cache.clear()
+
+    def set_priorities(self, **name_to_priority: int) -> None:
+        """Override the priority of one or more methods.
+
+        Higher priority methods are tried first during auto-selection.
+
+        Parameters
+        ----------
+        **name_to_priority
+            Keyword arguments mapping method names to new priorities.
+            e.g., ``set_priorities(tfp_rwmh=200, tfp_nuts=50)``
+
+        Raises
+        ------
+        KeyError
+            If a method name is not registered.
+        """
+        for name in name_to_priority:
+            if name not in self._name_index:
+                available = ", ".join(sorted(self._name_index)) or "(none)"
+                raise KeyError(
+                    f"No method named {name!r}. Available: {available}"
+                )
+        self._priority_overrides.update(name_to_priority)
+        self._sort_methods()
 
     # -- query --------------------------------------------------------------
 
