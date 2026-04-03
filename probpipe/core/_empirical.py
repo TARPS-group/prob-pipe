@@ -87,9 +87,9 @@ class EmpiricalDistribution[T](
     def __init__(
         self,
         samples: Sequence[T] | ArrayLike,
-        weights: ArrayLike | None = None,
+        weights: ArrayLike | Weights | None = None,
         *,
-        log_weights: ArrayLike | None = None,
+        log_weights: ArrayLike | Weights | None = None,
         name: str | None = None,
     ):
         # If samples are already a JAX or numpy array, store as-is.
@@ -108,7 +108,7 @@ class EmpiricalDistribution[T](
         n: int,
         weights: ArrayLike | Weights | None = None,
         *,
-        log_weights: ArrayLike | None = None,
+        log_weights: ArrayLike | Weights | None = None,
         name: str | None = None,
     ) -> None:
         """Validate and store weights, name, and flags."""
@@ -263,9 +263,9 @@ class ArrayEmpiricalDistribution(
     def __init__(
         self,
         samples: ArrayLike,
-        weights: ArrayLike | None = None,
+        weights: ArrayLike | Weights | None = None,
         *,
-        log_weights: ArrayLike | None = None,
+        log_weights: ArrayLike | Weights | None = None,
         sample_shape: tuple[int, ...] | None = None,
         name: str | None = None,
     ):

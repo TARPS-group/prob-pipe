@@ -498,7 +498,7 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
         self,
         *,
         weights: ArrayLike | Weights | None = None,
-        log_weights: ArrayLike | None = None,
+        log_weights: ArrayLike | Weights | None = None,
         name: str | None = None,
         **samples: ArrayLike,
     ):

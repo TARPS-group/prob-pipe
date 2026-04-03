@@ -8,7 +8,7 @@ import numpy.testing as npt
 
 from probpipe._weights import (
     Weights,
-    validate_and_normalize_log_weights,
+    _validate_to_log_weights,
     normalize_weights,
     normalized_log_weights,
     uniform_weights,
@@ -20,24 +20,24 @@ from probpipe._weights import (
 
 
 # ---------------------------------------------------------------------------
-# validate_and_normalize_log_weights
+# _validate_to_log_weights
 # ---------------------------------------------------------------------------
 
 class TestValidation:
     def test_uniform(self):
-        log_w, is_uniform = validate_and_normalize_log_weights(5)
+        log_w, is_uniform = _validate_to_log_weights(5)
         assert log_w is None
         assert is_uniform is True
 
     def test_from_weights(self):
-        log_w, is_uniform = validate_and_normalize_log_weights(
+        log_w, is_uniform = _validate_to_log_weights(
             3, weights=jnp.array([1.0, 2.0, 1.0])
         )
         assert is_uniform is False
         assert log_w.shape == (3,)
 
     def test_from_log_weights(self):
-        log_w, is_uniform = validate_and_normalize_log_weights(
+        log_w, is_uniform = _validate_to_log_weights(
             3, log_weights=jnp.array([-1.0, 0.0, -1.0])
         )
         assert is_uniform is False
@@ -45,7 +45,7 @@ class TestValidation:
 
     def test_mutual_exclusivity(self):
         with pytest.raises(ValueError, match="either weights or log_weights"):
-            validate_and_normalize_log_weights(
+            _validate_to_log_weights(
                 3,
                 weights=jnp.ones(3),
                 log_weights=jnp.zeros(3),
@@ -53,23 +53,23 @@ class TestValidation:
 
     def test_shape_mismatch(self):
         with pytest.raises(ValueError, match="shape"):
-            validate_and_normalize_log_weights(3, weights=jnp.ones(5))
+            _validate_to_log_weights(3, weights=jnp.ones(5))
 
     def test_negative_weights(self):
         with pytest.raises(ValueError, match="non-negative"):
-            validate_and_normalize_log_weights(
+            _validate_to_log_weights(
                 3, weights=jnp.array([1.0, -1.0, 1.0])
             )
 
     def test_zero_sum_weights(self):
         with pytest.raises(ValueError, match="positive"):
-            validate_and_normalize_log_weights(
+            _validate_to_log_weights(
                 3, weights=jnp.zeros(3)
             )
 
     def test_log_weights_shape_mismatch(self):
         with pytest.raises(ValueError, match="shape"):
-            validate_and_normalize_log_weights(
+            _validate_to_log_weights(
                 3, log_weights=jnp.zeros(5)
             )
 
@@ -167,40 +167,73 @@ class TestWeightedChoice:
 # ---------------------------------------------------------------------------
 
 class TestWeightsConstruction:
-    def test_uniform(self):
-        w = Weights.uniform(5)
+    def test_uniform_via_n(self):
+        w = Weights(n=5)
         assert w.n == 5
         assert w.is_uniform is True
         npt.assert_allclose(w.normalized, jnp.ones(5) / 5)
 
+    def test_uniform_via_factory(self):
+        w = Weights.uniform(5)
+        assert w.n == 5
+        assert w.is_uniform is True
+
     def test_from_weights(self):
-        w = Weights(3, weights=jnp.array([1.0, 2.0, 1.0]))
+        w = Weights(weights=jnp.array([1.0, 2.0, 1.0]))
         assert w.n == 3
         assert w.is_uniform is False
         npt.assert_allclose(jnp.sum(w.normalized), 1.0, atol=1e-6)
 
     def test_from_log_weights(self):
-        w = Weights(3, log_weights=jnp.array([-1.0, 0.0, -1.0]))
+        w = Weights(log_weights=jnp.array([-1.0, 0.0, -1.0]))
         assert w.n == 3
         assert w.is_uniform is False
         npt.assert_allclose(jnp.sum(w.normalized), 1.0, atol=1e-6)
 
     def test_uniform_log_weights_none(self):
-        w = Weights.uniform(5)
+        w = Weights(n=5)
         assert w.log_normalized is None
         assert w.log_unnormalized is None
+
+    def test_n_inferred_from_weights(self):
+        w = Weights(weights=jnp.ones(7))
+        assert w.n == 7
+
+    def test_n_inferred_from_log_weights(self):
+        w = Weights(log_weights=jnp.zeros(4))
+        assert w.n == 4
+
+    def test_exactly_one_required(self):
+        with pytest.raises(ValueError, match="Exactly one"):
+            Weights()  # none provided
+
+    def test_n_and_weights_exclusive(self):
+        with pytest.raises(ValueError, match="Exactly one"):
+            Weights(n=3, weights=jnp.ones(3))
+
+    def test_weights_and_log_weights_exclusive(self):
+        with pytest.raises(ValueError, match="Exactly one"):
+            Weights(weights=jnp.ones(3), log_weights=jnp.zeros(3))
+
+    def test_negative_weights_rejected(self):
+        with pytest.raises(ValueError, match="non-negative"):
+            Weights(weights=jnp.array([1.0, -1.0]))
+
+    def test_zero_sum_rejected(self):
+        with pytest.raises(ValueError, match="positive"):
+            Weights(weights=jnp.zeros(3))
 
 
 class TestWeightsProperties:
     def test_normalized_cached(self):
-        w = Weights(3, weights=jnp.array([1.0, 2.0, 1.0]))
+        w = Weights(weights=jnp.array([1.0, 2.0, 1.0]))
         norm1 = w.normalized
         norm2 = w.normalized
         # Should be the exact same object (cached)
         assert norm1 is norm2
 
     def test_log_normalized(self):
-        w = Weights(3, log_weights=jnp.array([-1.0, 0.0, -1.0]))
+        w = Weights(log_weights=jnp.array([-1.0, 0.0, -1.0]))
         log_n = w.log_normalized
         npt.assert_allclose(
             jax.scipy.special.logsumexp(log_n), 0.0, atol=1e-6
@@ -208,23 +241,23 @@ class TestWeightsProperties:
 
     def test_log_unnormalized(self):
         log_w = jnp.array([-1.0, 0.0, -1.0])
-        w = Weights(3, log_weights=log_w)
+        w = Weights(log_weights=log_w)
         npt.assert_allclose(w.log_unnormalized, log_w)
 
 
 class TestWeightsJaxArrayProtocol:
     def test_jax_array_returns_normalized(self):
-        w = Weights(3, weights=jnp.array([1.0, 2.0, 1.0]))
+        w = Weights(weights=jnp.array([1.0, 2.0, 1.0]))
         arr = w.__jax_array__()
         npt.assert_allclose(arr, w.normalized)
         npt.assert_allclose(jnp.sum(arr), 1.0, atol=1e-6)
 
     def test_jnp_sum(self):
-        w = Weights(3, weights=jnp.array([1.0, 2.0, 1.0]))
+        w = Weights(weights=jnp.array([1.0, 2.0, 1.0]))
         npt.assert_allclose(jnp.sum(w), 1.0, atol=1e-6)
 
     def test_einsum_works(self):
-        w = Weights(3, weights=jnp.array([1.0, 2.0, 1.0]))
+        w = Weights(weights=jnp.array([1.0, 2.0, 1.0]))
         vals = jnp.array([10.0, 20.0, 30.0])
         result = jnp.einsum("n,n->", w, vals)
         expected = jnp.einsum("n,n->", w.normalized, vals)
@@ -233,64 +266,101 @@ class TestWeightsJaxArrayProtocol:
 
 class TestWeightsArrayDuckTyping:
     def test_shape(self):
-        w = Weights(5, weights=jnp.ones(5))
+        w = Weights(weights=jnp.ones(5))
         assert w.shape == (5,)
 
     def test_dtype(self):
-        w = Weights.uniform(5)
+        w = Weights(n=5)
         assert w.dtype == jnp.float32
 
     def test_len(self):
-        w = Weights.uniform(7)
+        w = Weights(n=7)
         assert len(w) == 7
 
 
 class TestWeightsMethods:
     def test_mean(self):
-        w = Weights(3, weights=jnp.array([1.0, 2.0, 1.0]))
+        w = Weights(weights=jnp.array([1.0, 2.0, 1.0]))
         vals = jnp.array([[1.0], [2.0], [3.0]])
         result = w.mean(vals)
         expected = weighted_mean(w.normalized, vals)
         npt.assert_allclose(result, expected)
 
     def test_variance(self):
-        w = Weights.uniform(3)
+        w = Weights(n=3)
         vals = jnp.array([[0.0], [2.0], [4.0]])
         result = w.variance(vals)
         expected = weighted_variance(None, vals)
         npt.assert_allclose(result, expected)
 
     def test_covariance(self):
-        w = Weights.uniform(3)
+        w = Weights(n=3)
         vals = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
         result = w.covariance(vals)
         expected = weighted_covariance(None, vals)
         npt.assert_allclose(result, expected)
 
     def test_choice(self):
-        w = Weights.uniform(10)
+        w = Weights(n=10)
         key = jax.random.PRNGKey(0)
         idx = w.choice(key, shape=(50,))
         assert idx.shape == (50,)
         assert jnp.all(idx >= 0) and jnp.all(idx < 10)
 
     def test_subsample_uniform(self):
-        w = Weights.uniform(10)
+        w = Weights(n=10)
         sub = w.subsample(jnp.array([0, 2, 4]))
         assert sub.n == 3
         assert sub.is_uniform is True
 
     def test_subsample_weighted(self):
-        w = Weights(4, weights=jnp.array([1.0, 2.0, 3.0, 4.0]))
+        w = Weights(weights=jnp.array([1.0, 2.0, 3.0, 4.0]))
         sub = w.subsample(jnp.array([1, 3]))
         assert sub.n == 2
         assert sub.is_uniform is False
         npt.assert_allclose(jnp.sum(sub.normalized), 1.0, atol=1e-6)
 
 
+class TestWeightsCoerce:
+    def test_weights_passthrough(self):
+        w = Weights(weights=jnp.array([1.0, 2.0]))
+        result = Weights._coerce(2, weights=w)
+        assert result is w
+
+    def test_log_weights_passthrough(self):
+        w = Weights(log_weights=jnp.array([-1.0, 0.0]))
+        result = Weights._coerce(2, log_weights=w)
+        assert result is w
+
+    def test_weights_object_and_log_weights_raises(self):
+        w = Weights(weights=jnp.ones(3))
+        with pytest.raises(ValueError, match="either weights or log_weights"):
+            Weights._coerce(3, weights=w, log_weights=jnp.zeros(3))
+
+    def test_raw_weights_array(self):
+        result = Weights._coerce(3, weights=jnp.array([1.0, 2.0, 3.0]))
+        assert isinstance(result, Weights)
+        assert result.n == 3
+        assert not result.is_uniform
+
+    def test_raw_log_weights_array(self):
+        result = Weights._coerce(3, log_weights=jnp.array([-1.0, 0.0, 1.0]))
+        assert isinstance(result, Weights)
+        assert result.n == 3
+
+    def test_both_none_gives_uniform(self):
+        result = Weights._coerce(5)
+        assert result.is_uniform
+        assert result.n == 5
+
+    def test_both_arrays_raises(self):
+        with pytest.raises(ValueError, match="either weights or log_weights"):
+            Weights._coerce(3, weights=jnp.ones(3), log_weights=jnp.zeros(3))
+
+
 class TestWeightsPytree:
     def test_tree_flatten_unflatten(self):
-        w = Weights(3, log_weights=jnp.array([-1.0, 0.0, -1.0]))
+        w = Weights(log_weights=jnp.array([-1.0, 0.0, -1.0]))
         children, aux = w.tree_flatten()
         w2 = Weights.tree_unflatten(aux, children)
         assert w2.n == w.n
@@ -298,19 +368,19 @@ class TestWeightsPytree:
         npt.assert_allclose(w2.normalized, w.normalized)
 
     def test_jax_tree_leaves(self):
-        w = Weights(3, log_weights=jnp.array([-1.0, 0.0, -1.0]))
+        w = Weights(log_weights=jnp.array([-1.0, 0.0, -1.0]))
         leaves = jax.tree.leaves(w)
         assert len(leaves) == 1
         npt.assert_allclose(leaves[0], jnp.array([-1.0, 0.0, -1.0]))
 
     def test_uniform_tree_leaves(self):
-        w = Weights.uniform(5)
+        w = Weights(n=5)
         leaves = jax.tree.leaves(w)
         # Uniform weights have None log_weights, which JAX filters out
         assert len(leaves) == 0
 
     def test_jit_compatible(self):
-        w = Weights(3, weights=jnp.array([1.0, 2.0, 1.0]))
+        w = Weights(weights=jnp.array([1.0, 2.0, 1.0]))
         vals = jnp.array([10.0, 20.0, 30.0])
 
         @jax.jit
@@ -324,12 +394,12 @@ class TestWeightsPytree:
 
 class TestWeightsRepr:
     def test_uniform_repr(self):
-        w = Weights.uniform(5)
+        w = Weights(n=5)
         assert "uniform" in repr(w)
         assert "n=5" in repr(w)
 
     def test_weighted_repr(self):
-        w = Weights(3, weights=jnp.ones(3))
+        w = Weights(weights=jnp.ones(3))
         assert "n=3" in repr(w)
 
 

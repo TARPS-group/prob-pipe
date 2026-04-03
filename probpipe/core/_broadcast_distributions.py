@@ -55,7 +55,7 @@ class _ArrayMarginal(ArrayEmpiricalDistribution):
         samples: Array,
         weights: Array | Weights | None = None,
         *,
-        log_weights: Array | None = None,
+        log_weights: Array | Weights | None = None,
         name: str | None = None,
     ):
         super().__init__(samples, weights=weights, log_weights=log_weights, name=name)
@@ -80,7 +80,7 @@ class _MixtureMarginal[T](Distribution[T]):
         components: list,
         weights: Array | Weights | None = None,
         *,
-        log_weights: Array | None = None,
+        log_weights: Array | Weights | None = None,
         name: str | None = None,
     ):
         n = len(components)
@@ -217,7 +217,7 @@ class _ListMarginal[T](Distribution[T]):
         items: list,
         weights: Array | Weights | None = None,
         *,
-        log_weights: Array | None = None,
+        log_weights: Array | Weights | None = None,
         name: str | None = None,
     ):
         self._items = items
@@ -344,7 +344,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
         output_samples: Any,
         weights: Array | Weights | None = None,
         *,
-        log_weights: Array | None = None,
+        log_weights: Array | Weights | None = None,
         output_distributions: list | None = None,
         broadcast_args: list[str],
         name: str | None = None,

@@ -6,7 +6,6 @@ Provides:
   - ``weighted_variance()``   – Weighted variance over leading axis.
   - ``weighted_covariance()`` – Weighted covariance matrix.
   - ``weighted_choice()``     – Draw weighted random indices.
-  - ``validate_and_normalize_log_weights()`` – Validate raw user input.
 """
 
 from __future__ import annotations
@@ -21,13 +20,13 @@ from .custom_types import Array, ArrayLike, PRNGKey
 # Pure utility functions (internal workhorses)
 # ---------------------------------------------------------------------------
 
-def validate_and_normalize_log_weights(
+def _validate_to_log_weights(
     n: int,
     weights: ArrayLike | None = None,
     *,
     log_weights: ArrayLike | None = None,
 ) -> tuple[Array | None, bool]:
-    """Validate and convert user-supplied weights to log-unnormalized form.
+    """Validate user-supplied weights and convert to log-unnormalized form.
 
     Parameters
     ----------
@@ -221,26 +220,32 @@ class Weights:
 
     Parameters
     ----------
-    n : int
-        Number of items.
+    n : int, optional
+        Number of items.  Required (and only allowed) for uniform
+        weights — i.e. when neither *weights* nor *log_weights* is
+        provided.
     weights : ArrayLike, optional
-        Non-negative weights (normalized internally).  Mutually exclusive
-        with *log_weights*.
+        Non-negative weights (normalized internally).  ``n`` is inferred
+        from ``len(weights)``.  Mutually exclusive with *log_weights*
+        and *n*.
     log_weights : ArrayLike, optional
-        Log-unnormalized weights.  Preferred when weights span many orders
-        of magnitude (e.g. importance sampling).  Mutually exclusive with
-        *weights*.
+        Log-unnormalized weights.  Preferred when weights span many
+        orders of magnitude (e.g. importance sampling).  ``n`` is
+        inferred from ``len(log_weights)``.  Mutually exclusive with
+        *weights* and *n*.
+
+    Exactly one of *n*, *weights*, or *log_weights* must be provided.
 
     Examples
     --------
     Create from raw weights or log-weights:
 
-    >>> w = Weights(3, weights=jnp.array([1.0, 2.0, 1.0]))
-    >>> w = Weights(3, log_weights=jnp.array([-1.0, 0.0, -1.0]))
+    >>> w = Weights(weights=jnp.array([1.0, 2.0, 1.0]))
+    >>> w = Weights(log_weights=jnp.array([-1.0, 0.0, -1.0]))
 
     Create uniform weights:
 
-    >>> w = Weights.uniform(5)
+    >>> w = Weights(n=5)
 
     **Use as a JAX array** — returns normalized weights automatically:
 
@@ -265,6 +270,18 @@ class Weights:
     >>> w.covariance(samples)           # weighted covariance matrix
     >>> w.choice(key, shape=(10,))      # draw 10 weighted random indices
 
+    **Passing to distribution constructors** — all ProbPipe distribution
+    constructors that accept ``weights`` or ``log_weights`` also accept
+    a pre-built ``Weights`` object for either parameter.  When a
+    ``Weights`` object is passed, it is used as-is (no re-validation).
+    The behavior is the same regardless of which parameter it is passed
+    to, since the ``Weights`` object already encapsulates its
+    representation::
+
+        w = Weights(log_weights=log_w)
+        EmpiricalDistribution(samples, weights=w)       # OK
+        EmpiricalDistribution(samples, log_weights=w)   # also OK, same result
+
     **JAX compatibility** — ``Weights`` is registered as a JAX pytree,
     so it works transparently inside ``jax.jit``, ``jax.vmap``, and
     ``jax.grad``.  The log-weights array is the traceable leaf;
@@ -277,20 +294,51 @@ class Weights:
 
     def __init__(
         self,
-        n: int,
-        weights: ArrayLike | None = None,
         *,
+        n: int | None = None,
+        weights: ArrayLike | None = None,
         log_weights: ArrayLike | None = None,
     ):
-        self._n = n
-        self._log_weights, self._is_uniform = validate_and_normalize_log_weights(
-            n, weights, log_weights=log_weights,
-        )
+        provided = (n is not None) + (weights is not None) + (log_weights is not None)
+        if provided != 1:
+            raise ValueError(
+                "Exactly one of n, weights, or log_weights must be provided."
+            )
+
+        if n is not None:
+            # Uniform weights
+            self._n = n
+            self._log_weights = None
+            self._is_uniform = True
+        elif weights is not None:
+            weights = jnp.asarray(weights, dtype=jnp.float32)
+            if weights.ndim != 1 or weights.shape[0] == 0:
+                raise ValueError("weights must be a non-empty 1-D array.")
+            if jnp.any(weights < 0):
+                raise ValueError("weights must be non-negative.")
+            total = jnp.sum(weights)
+            if total <= 0:
+                raise ValueError("weights must sum to a positive value.")
+            self._n = weights.shape[0]
+            self._log_weights = jnp.log(weights)
+            self._is_uniform = False
+        else:  # log_weights is not None
+            log_weights = jnp.asarray(log_weights, dtype=jnp.float32)
+            if log_weights.ndim != 1 or log_weights.shape[0] == 0:
+                raise ValueError("log_weights must be a non-empty 1-D array.")
+            self._n = log_weights.shape[0]
+            self._log_weights = log_weights
+            self._is_uniform = False
+
         self._cache: Array | None = None
 
     @staticmethod
     def uniform(n: int) -> Weights:
-        """Create uniform weights over *n* items."""
+        """Create uniform weights over *n* items.
+
+        Equivalent to ``Weights(n=n)`` but avoids keyword overhead in
+        hot internal paths.
+        """
         w = object.__new__(Weights)
         w._n = n
         w._log_weights = None
@@ -303,24 +351,77 @@ class Weights:
         n: int,
         weights: ArrayLike | Weights | None = None,
         *,
-        log_weights: ArrayLike | None = None,
+        log_weights: ArrayLike | Weights | None = None,
     ) -> Weights:
         """Build a ``Weights`` from flexible input.
 
-        Accepts either an existing ``Weights`` instance (returned as-is),
-        or raw ``weights`` / ``log_weights`` arrays (validated and
-        wrapped).  If neither is provided, returns uniform weights.
+        This is the canonical entry point used by distribution
+        constructors to normalize their ``weights`` / ``log_weights``
+        arguments into a ``Weights`` object in a single line.
 
-        This is the canonical way to initialize ``Weights`` inside
-        distribution constructors, ensuring a consistent API: callers
-        can pass unnormalized weights, log-weights, or a pre-built
-        ``Weights`` object.
+        Parameters
+        ----------
+        n : int
+            Number of items (used only when both *weights* and
+            *log_weights* are ``None``, to create uniform weights).
+        weights : ArrayLike, Weights, or None
+            Unnormalized weight array, a pre-built ``Weights`` object,
+            or ``None``.
+        log_weights : ArrayLike, Weights, or None
+            Log-unnormalized weight array, a pre-built ``Weights``
+            object, or ``None``.
+
+        Returns
+        -------
+        Weights
+
+        Notes
+        -----
+        When a ``Weights`` object is passed (to either parameter), it
+        is returned as-is with no re-validation.  The behavior is
+        identical regardless of which parameter receives the object,
+        since a ``Weights`` instance already encapsulates its internal
+        representation.
+
+        Raises ``ValueError`` if both *weights* and *log_weights* are
+        non-``None``.
         """
+        # Fast path: already a Weights object
         if isinstance(weights, Weights):
+            if log_weights is not None:
+                raise ValueError(
+                    "Provide either weights or log_weights, not both."
+                )
             return weights
-        if weights is None and log_weights is None:
-            return Weights.uniform(n)
-        return Weights(n, weights, log_weights=log_weights)
+        if isinstance(log_weights, Weights):
+            if weights is not None:
+                raise ValueError(
+                    "Provide either weights or log_weights, not both."
+                )
+            return log_weights
+
+        # Raw arrays or None
+        if weights is not None and log_weights is not None:
+            raise ValueError(
+                "Provide either weights or log_weights, not both."
+            )
+        if weights is not None:
+            w = Weights(weights=weights)
+            if w.n != n:
+                raise ValueError(
+                    f"weights length {w.n} does not match "
+                    f"number of items {n}."
+                )
+            return w
+        if log_weights is not None:
+            w = Weights(log_weights=log_weights)
+            if w.n != n:
+                raise ValueError(
+                    f"log_weights length {w.n} does not match "
+                    f"number of items {n}."
+                )
+            return w
+        return Weights.uniform(n)
 
     # -- properties ---------------------------------------------------------
 
@@ -425,7 +526,7 @@ class Weights:
         if self._is_uniform:
             return Weights.uniform(len(indices))
         sub_log = self._log_weights[indices]
-        return Weights(len(indices), log_weights=sub_log)
+        return Weights(log_weights=sub_log)
 
     # -- JAX pytree registration --------------------------------------------
 

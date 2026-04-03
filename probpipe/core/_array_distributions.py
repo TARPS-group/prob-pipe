@@ -424,7 +424,7 @@ class BootstrapDistribution(ArrayDistribution, SupportsSampling, SupportsMean, S
         evaluations: ArrayLike,
         *,
         weights: ArrayLike | Weights | None = None,
-        log_weights: ArrayLike | None = None,
+        log_weights: ArrayLike | Weights | None = None,
         name: str | None = None,
     ):
         self._evaluations = jnp.asarray(evaluations, dtype=jnp.float32)
