@@ -9,10 +9,10 @@ from unittest.mock import MagicMock, patch
 from probpipe.inference._nutpie import (
     _compile_for_nutpie,
     _extract_chains,
-    _extract_nutpie_diagnostics,
     condition_on_nutpie,
 )
 from probpipe.inference import MCMCApproximateDistribution, InferenceDiagnostics
+from probpipe.inference._diagnostics import extract_arviz_diagnostics
 
 
 @pytest.fixture(autouse=True)
@@ -116,7 +116,7 @@ class TestExtractChains:
 
 
 # ---------------------------------------------------------------------------
-# _extract_nutpie_diagnostics
+# extract_arviz_diagnostics (nutpie path)
 # ---------------------------------------------------------------------------
 
 
@@ -145,13 +145,13 @@ def _make_mock_sample_stats(
     return stats
 
 
-class TestExtractNutpieDiagnostics:
+class TestExtractArvizDiagnosticsNutpie:
     def test_full_stats(self):
         """All sample_stats fields are extracted."""
         trace = MagicMock()
         trace.sample_stats = _make_mock_sample_stats(num_chains=2, num_draws=10)
 
-        diag = _extract_nutpie_diagnostics(trace, num_results=10, num_chains=2)
+        diag = extract_arviz_diagnostics(trace, algorithm="nutpie_nuts", num_results=10, num_chains=2)
 
         assert diag.algorithm == "nutpie_nuts"
         assert diag["log_accept_ratio"].shape == (20,)
@@ -172,7 +172,7 @@ class TestExtractNutpieDiagnostics:
         """Falls back to zeros when sample_stats is missing."""
         trace = MagicMock(spec=["posterior"])
 
-        diag = _extract_nutpie_diagnostics(trace, num_results=5, num_chains=2)
+        diag = extract_arviz_diagnostics(trace, algorithm="nutpie_nuts", num_results=5, num_chains=2)
 
         assert diag.algorithm == "nutpie_nuts"
         assert diag["log_accept_ratio"].shape == (10,)
@@ -186,7 +186,7 @@ class TestExtractNutpieDiagnostics:
             include={"acceptance_rate", "diverging"},
         )
 
-        diag = _extract_nutpie_diagnostics(trace, num_results=5, num_chains=1)
+        diag = extract_arviz_diagnostics(trace, algorithm="nutpie_nuts", num_results=5, num_chains=1)
 
         assert diag["log_accept_ratio"].shape == (5,)
         assert "diverging" in diag
@@ -205,7 +205,7 @@ class TestExtractNutpieDiagnostics:
         stats.__getitem__ = lambda self, k: MagicMock(values=div_arr)
         trace.sample_stats = stats
 
-        diag = _extract_nutpie_diagnostics(trace, num_results=10, num_chains=1)
+        diag = extract_arviz_diagnostics(trace, algorithm="nutpie_nuts", num_results=10, num_chains=1)
 
         assert diag["n_divergences"] == 3
         assert int(jnp.sum(diag["diverging"])) == 3
@@ -215,7 +215,7 @@ class TestExtractNutpieDiagnostics:
         trace = MagicMock()
         trace.sample_stats = _make_mock_sample_stats(num_chains=1, num_draws=5)
 
-        diag = _extract_nutpie_diagnostics(trace, num_results=5, num_chains=1)
+        diag = extract_arviz_diagnostics(trace, algorithm="nutpie_nuts", num_results=5, num_chains=1)
 
         s = diag.summary()
         assert "n_divergences=0" in s
@@ -228,7 +228,7 @@ class TestExtractNutpieDiagnostics:
             num_chains=1, num_draws=5, include={"acceptance_rate"},
         )
 
-        diag = _extract_nutpie_diagnostics(trace, num_results=5, num_chains=1)
+        diag = extract_arviz_diagnostics(trace, algorithm="nutpie_nuts", num_results=5, num_chains=1)
 
         # set
         diag["custom"] = 42
@@ -283,7 +283,7 @@ class TestNutpieSampleImpl:
         assert 0.0 < result.diagnostics.accept_rate <= 1.0
         assert "diverging" in result.diagnostics
         assert result.source is not None
-        assert result.source.operation == "condition_on_nutpie"
+        assert result.source.operation == "nutpie_nuts"
 
     def test_import_error(self):
         """Raises ImportError with install instructions when nutpie missing."""

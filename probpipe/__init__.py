@@ -127,7 +127,6 @@ from probpipe.core.protocols import (
     SupportsCovariance,
     SupportsConditioning,
     SupportsNamedComponents,
-    SupportsConditionableComponents,
 )
 from probpipe.converters import (
     converter_registry,
@@ -228,7 +227,6 @@ __all__ = [
     "SupportsCovariance",
     "SupportsConditioning",
     "SupportsNamedComponents",
-    "SupportsConditionableComponents",
     # Modeling
     "GLMLikelihood",
     "Likelihood",

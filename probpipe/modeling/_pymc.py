@@ -120,17 +120,6 @@ class PyMCModel(ProbabilisticModel):
             return key  # placeholder — PyMC doesn't expose sub-distributions easily
         raise KeyError(f"Unknown component: {key!r}")
 
-    # -- SupportsConditionableComponents interface --------------------------
-
-    @property
-    def conditionable_components(self) -> dict[str, bool]:
-        result = {}
-        for name in self._param_names:
-            result[name] = False
-        for name in self._observed_names:
-            result[name] = True
-        return result
-
     # -- ProbabilisticModel interface ---------------------------------------
 
     @property
@@ -172,13 +161,6 @@ class PyMCModel(ProbabilisticModel):
             # If data is an array, pass as first observed variable
             return self._model_fn(**{self._observed_names[0]: data})
         return self._model_fn()
-
-    # -- Conditioning -------------------------------------------------------
-
-    def _condition_on(self, observed: Any, /, **kwargs: Any) -> MCMCApproximateDistribution:
-        """Condition on observed values via the inference method registry."""
-        from ..inference import inference_method_registry
-        return inference_method_registry.execute(self, observed, **kwargs)
 
     def __repr__(self) -> str:
         params = ", ".join(self._param_names)

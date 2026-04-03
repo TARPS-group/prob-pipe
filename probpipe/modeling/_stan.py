@@ -95,13 +95,6 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
             return key  # placeholder — Stan doesn't expose sub-distributions
         raise KeyError(f"Unknown component: {key!r}")
 
-    # -- SupportsConditionableComponents interface --------------------------
-
-    @property
-    def conditionable_components(self) -> dict[str, bool]:
-        # Stan models condition via data passed at construction or conditioning
-        return {"data": True}
-
     # -- ProbabilisticModel interface ---------------------------------------
 
     @property
@@ -159,13 +152,6 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
                 self._stan_file, data=data
             )
         return self._bs_model
-
-    # -- Conditioning -------------------------------------------------------
-
-    def _condition_on(self, observed: Any, /, **kwargs: Any) -> MCMCApproximateDistribution:
-        """Condition on observed values via the inference method registry."""
-        from ..inference import inference_method_registry
-        return inference_method_registry.execute(self, observed, **kwargs)
 
     def __repr__(self) -> str:
         return f"StanModel(stan_file={self._stan_file!r}, num_params={self._num_params})"

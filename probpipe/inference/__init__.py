@@ -41,14 +41,14 @@ inference_method_registry.register(TFPNutsMethod())
 inference_method_registry.register(TFPHmcMethod())
 
 # RWMH (always available)
-from ._rwmh_method import TFPRWMHMethod
+from ._rwmh import TFPRWMHMethod
 
 inference_method_registry.register(TFPRWMHMethod())
 
 # Optional backends — registered only if their dependencies are importable
 
 try:
-    from ._nutpie_method import NutpieNutsMethod
+    from ._nutpie import NutpieNutsMethod
     inference_method_registry.register(NutpieNutsMethod())
 except ImportError:
     pass

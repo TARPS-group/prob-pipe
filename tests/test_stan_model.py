@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 
-from probpipe import SupportsLogProb, SupportsConditionableComponents
+from probpipe import SupportsLogProb, SupportsNamedComponents
 from probpipe.modeling._stan import StanModel, _UnconstrainedStanView
 
 
@@ -49,9 +49,9 @@ class TestStanModelProtocols:
     def test_supports_log_prob(self):
         assert issubclass(StanModel, SupportsLogProb)
 
-    def test_supports_conditionable_components(self):
+    def test_supports_named_components(self):
         model = _make_stan_model()
-        assert isinstance(model, SupportsConditionableComponents)
+        assert isinstance(model, SupportsNamedComponents)
 
 
 # ---------------------------------------------------------------------------
@@ -75,13 +75,6 @@ class TestStanModelMocked:
 
     def test_parameter_names(self, model):
         assert model.parameter_names == ("alpha", "beta", "sigma")
-
-    def test_conditionable_components(self, model):
-        cc = model.conditionable_components
-        assert cc == {"data": True}
-
-    def test_required_observations(self, model):
-        assert model.required_observations == ("data",)
 
     def test_getitem_valid(self, model):
         assert model["alpha"] == "alpha"
@@ -200,17 +193,19 @@ class TestUnconstrainedStanView:
 
 
 # ---------------------------------------------------------------------------
-# StanModel._condition_on
+# StanModel conditioning via registry
 # ---------------------------------------------------------------------------
 
 
 class TestStanModelConditionOn:
     def test_condition_on_delegates_to_registry(self):
-        """_condition_on delegates to the inference registry."""
+        """condition_on routes StanModel through the inference registry."""
+        from probpipe import condition_on
+
         model = _make_stan_model()
         with patch("probpipe.inference._registry.inference_method_registry.execute") as mock_exec:
             mock_exec.return_value = MagicMock()
-            model._condition_on({"y": [1, 2, 3]}, num_results=10)
+            condition_on(model, {"y": [1, 2, 3]}, num_results=10)
             mock_exec.assert_called_once()
 
 

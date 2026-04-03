@@ -9,7 +9,6 @@ import jax.numpy as jnp
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb
 from ..custom_types import Array
-from ..inference._mcmc_distribution import MCMCApproximateDistribution
 from ._base import ProbabilisticModel
 from ._likelihood import Likelihood
 
@@ -85,12 +84,6 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
             f"available: {self.component_names}"
         )
 
-    # -- SupportsConditionableComponents interface --------------------------
-
-    @property
-    def conditionable_components(self) -> dict[str, bool]:
-        return {"parameters": False, "data": True}
-
     # -- ProbabilisticModel interface ---------------------------------------
 
     @property
@@ -111,18 +104,6 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         lp = self._prior._log_prob(params)
         ll = self._likelihood.log_likelihood(params=params, data=data)
         return lp + ll
-
-    # -- Conditioning -------------------------------------------------------
-
-    def _condition_on(self, observed: D, /, **kwargs: Any) -> MCMCApproximateDistribution:
-        """Condition on observed values, returning posterior samples.
-
-        Delegates to the inference method registry, which auto-selects
-        the best method (NUTS if JAX-traceable, RWMH otherwise).
-        Pass ``method="tfp_hmc"`` etc. to override.
-        """
-        from ..inference import inference_method_registry
-        return inference_method_registry.execute(self, observed, **kwargs)
 
     # -- repr ---------------------------------------------------------------
 
