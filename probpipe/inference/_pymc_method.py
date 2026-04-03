@@ -67,6 +67,7 @@ class PyMCMCMCMethod(InferenceMethod):
                 draws=num_results,
                 tune=num_warmup,
                 chains=num_chains,
+                cores=1,  # avoid os.fork() which deadlocks with JAX threads
                 random_seed=random_seed,
                 return_inferencedata=True,
             )
