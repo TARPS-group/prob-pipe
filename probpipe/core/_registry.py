@@ -1,9 +1,7 @@
 """Generic priority-based method registry.
 
 Provides a reusable base for registries that dispatch operations
-to pluggable methods based on priority and feasibility.  Concrete
-registries (e.g., ``InferenceMethodRegistry``) add a domain-specific
-alias for ``execute`` (e.g., ``condition``).
+to pluggable methods based on priority and feasibility.
 """
 
 from __future__ import annotations
