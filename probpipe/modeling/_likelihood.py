@@ -116,9 +116,17 @@ class IncrementalConditioner[P, D](Module):
             The updated posterior distribution.
         """
         from ._simple import SimpleModel
+        from ..core.protocols import SupportsLogProb
+
+        prior = self._curr_posterior
+        # Auto-convert the prior if it doesn't support log_prob
+        # (e.g., MCMCApproximateDistribution → KDEDistribution).
+        if not isinstance(prior, SupportsLogProb):
+            from ..converters import converter_registry
+            prior = converter_registry.convert(prior, SupportsLogProb)
 
         model = SimpleModel(
-            prior=self._curr_posterior,
+            prior=prior,
             likelihood=self._likelihood,
         )
         posterior = self._condition_fn(model, data)
