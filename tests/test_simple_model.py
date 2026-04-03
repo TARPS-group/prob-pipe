@@ -200,11 +200,10 @@ class TestSimpleModelConditioningPaths:
         )
         assert isinstance(result, MCMCApproximateDistribution)
 
-    def test_condition_on_bad_algorithm(self, model, data):
-        with pytest.raises(ValueError, match="algorithm must be"):
-            model._condition_on(
-                data, num_results=30, num_warmup=10, algorithm="bad",
-            )
+    def test_condition_on_bad_method(self, model, data):
+        with pytest.raises(KeyError):
+            from probpipe import condition_on
+            condition_on(model, data, method="nonexistent_method")
 
     def test_condition_on_explicit_init(self, model, data):
         result = model._condition_on(
@@ -232,7 +231,7 @@ class TestSimpleModelConditioningPaths:
         assert isinstance(result, MCMCApproximateDistribution)
 
     def test_extract_diagnostics_step_size_branch(self):
-        from probpipe.modeling._simple import _extract_diagnostics
+        from probpipe.inference._tfp_mcmc import _extract_diagnostics
 
         trace = type("Trace", (), {
             "step_size": jnp.array(0.1),
@@ -242,7 +241,7 @@ class TestSimpleModelConditioningPaths:
         assert diag.algorithm == "nuts"
 
     def test_extract_diagnostics_no_step_size(self):
-        from probpipe.modeling._simple import _extract_diagnostics
+        from probpipe.inference._tfp_mcmc import _extract_diagnostics
 
         trace = type("Trace", (), {
             "log_accept_ratio": jnp.array([-0.5]),
