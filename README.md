@@ -47,23 +47,22 @@ pip install .[nutpie]    # nutpie MCMC sampler
 
 ```python
 import jax, jax.numpy as jnp, numpy as np
-from probpipe import MultivariateNormal, SimpleModel, workflow_function, condition_on, mean
+import tensorflow_probability.substrates.jax.glm as tfp_glm
+from probpipe import (
+    MultivariateNormal, GLMLikelihood, SimpleModel,
+    workflow_function, condition_on, mean,
+)
 
 # 1. Define a logistic regression model (non-conjugate)
-class LogisticLikelihood:
-    def log_likelihood(self, params, data):
-        logits = params[0] + params[1] * data[:, 0]
-        return jnp.sum(data[:, 1] * logits - jnp.log(1 + jnp.exp(logits)))
+x_obs = jax.random.normal(jax.random.PRNGKey(42), shape=(80,))
+y_obs = jax.random.bernoulli(jax.random.PRNGKey(1), jax.nn.sigmoid(-1 + 2 * x_obs)).astype(jnp.float32)
+X = jnp.column_stack([jnp.ones_like(x_obs), x_obs])
 
 prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2))
-model = SimpleModel(prior, LogisticLikelihood())
+model = SimpleModel(prior, GLMLikelihood(tfp_glm.Bernoulli(), X))
 
 # 2. Condition on data -- runs NUTS automatically
-x_obs = jax.random.normal(jax.random.PRNGKey(42), shape=(80,))
-y_obs = jax.random.bernoulli(jax.random.PRNGKey(1), jax.nn.sigmoid(-1 + 2 * x_obs))
-data = jnp.column_stack([x_obs, y_obs])
-
-posterior = condition_on(model, data, num_results=2000, num_warmup=1000, random_seed=0)
+posterior = condition_on(model, y_obs, num_results=2000, num_warmup=1000, random_seed=0)
 posterior       # MCMCApproximateDistribution(num_chains=1, num_draws=2000, ...)
 mean(posterior) # Array([-1.38, 1.77], dtype=float32)
 
