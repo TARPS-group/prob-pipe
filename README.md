@@ -14,8 +14,7 @@ Most workflows for probabilistic inference can be described in terms of **distri
 
 - **Protocol-based distributions** -- capabilities declared via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsMean`, ...), enabling structural subtyping across backends.
 - **Automatic uncertainty propagation** -- `@workflow_function` broadcasting: pass a distribution where a function expects a concrete value and get a distribution back.
-- **MCMC inference** -- NUTS/HMC with automatic gradient-free RWMH fallback; diagnostics (acceptance rate, divergences, tree depth) on every run. Auto-selects the best method via a pluggable **inference registry**, or override with `method="tfp_nuts"`.
-- **Multiple backends** -- native TFP, nutpie, Stan (via BridgeStan), and PyMC models, all unified behind `condition_on`.
+- **Pluggable inference** -- a single `condition_on` interface backed by an **inference registry** that auto-selects the best algorithm (NUTS, HMC, RWMH, and more) across backends (TFP, nutpie, Stan, PyMC). Override with `method="tfp_nuts"` when you want control; get diagnostics on every run.
 - **Automatic distribution conversion** -- converter registry for moment-matching and sampling-based conversion between distribution types.
 - **JAX-native** -- `vmap`, `jit`, `grad` throughout; TFP substrate for distribution math.
 - **Provenance tracking** -- every distribution records its lineage from inputs through operations.
