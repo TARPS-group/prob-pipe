@@ -82,7 +82,7 @@ Broadcasting samples from the posterior and evaluates the function for each draw
 ```python
 import matplotlib.pyplot as plt
 
-S = np.array(predictive.samples)
+S = np.array(predictive.samples)  # (2000, 100) — one curve per posterior draw
 lo, hi = np.percentile(S, [5, 95], axis=0)
 plt.fill_between(x_grid, lo, hi, alpha=0.3, label="90% CI")
 plt.plot(x_grid, S.mean(axis=0), lw=2, label="Posterior mean")
