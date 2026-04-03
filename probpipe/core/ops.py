@@ -203,12 +203,11 @@ def condition_on(
 ) -> Distribution:
     """Condition a distribution on observed values.
 
-    Dispatches to the inference method registry, which auto-selects the
-    best method based on what the distribution supports.  Pass
-    ``method="tfp_nuts"`` (or any registered name) to override.
-
-    Falls back to ``dist._condition_on()`` if the distribution
-    implements ``SupportsConditioning`` and no registry method matches.
+    If the distribution implements ``SupportsConditioning``, its own
+    ``_condition_on`` is used by default.  Pass ``method="tfp_nuts"``
+    (or any registered name) to override with a specific inference
+    method from the registry.  If the distribution does *not* implement
+    ``SupportsConditioning``, the registry is consulted automatically.
 
     Parameters
     ----------
@@ -217,32 +216,27 @@ def condition_on(
     observed : Any
         Observed values to condition on.
     method : str or None
-        If provided, use only the named inference method.
+        If provided, use the named inference method from the registry
+        instead of the distribution's own ``_condition_on``.
     **kwargs
         Passed to the inference method (e.g., ``num_results``,
         ``num_warmup``, ``random_seed``).
     """
-    from ..inference import inference_method_registry
-
-    # If a specific method is requested, use only the registry (no fallback)
+    # Explicit method override → always use the registry
     if method is not None:
+        from ..inference import inference_method_registry
         return inference_method_registry.execute(
             dist, observed, method=method, **kwargs
         )
 
-    # Auto-select: try registry first, fall back to protocol dispatch
-    info = inference_method_registry.check(dist, observed, **kwargs)
-    if info.feasible:
-        return inference_method_registry.execute(
-            dist, observed, **kwargs
-        )
-
+    # Default: use the distribution's own conditioning if available
     if isinstance(dist, SupportsConditioning):
         return dist._condition_on(observed, **kwargs)
 
-    raise TypeError(
-        f"{type(dist).__name__} does not support conditioning "
-        f"and no registered inference method can handle it"
+    # Fallback: try the registry for distributions without _condition_on
+    from ..inference import inference_method_registry
+    return inference_method_registry.execute(
+        dist, observed, **kwargs
     )
 
 

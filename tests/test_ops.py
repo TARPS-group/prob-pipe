@@ -229,7 +229,7 @@ class TestConditionOn:
 
     def test_condition_type_error(self):
         """Objects with no protocols raise TypeError."""
-        with pytest.raises(TypeError, match="does not support conditioning"):
+        with pytest.raises(TypeError):
             ops.condition_on("not_a_distribution", jnp.array(1.0))
 
 
