@@ -8,35 +8,10 @@ The registry auto-selects the best method, or the user overrides via
 
 from __future__ import annotations
 
-from ..core._registry import Method, MethodInfo, MethodRegistry
+from ..core._registry import Method, MethodInfo, MethodRegistry  # noqa: F401 (re-export)
 
+# Re-export Method as InferenceMethod for clarity in type annotations.
+InferenceMethod = Method
 
-class InferenceMethod(Method):
-    """Abstract base for an inference method.
-
-    Subclasses implement ``check`` to probe feasibility (cheap) and
-    ``execute`` to run inference (expensive).
-    """
-    pass
-
-
-class InferenceMethodRegistry(MethodRegistry[InferenceMethod]):
-    """Registry of inference methods for ``condition_on``.
-
-    Methods are tried in descending priority order.  The first method
-    whose ``check()`` returns ``feasible=True`` wins.  Pass
-    ``method="name"`` to select a specific method.
-
-    Examples
-    --------
-    >>> from probpipe.inference import inference_method_registry
-    >>> inference_method_registry.list_methods()
-    ['tfp_nuts', 'tfp_hmc', 'nutpie_nuts', ...]
-    >>> posterior = inference_method_registry.execute(model, data)
-    >>> posterior = inference_method_registry.execute(model, data, method="tfp_rwmh")
-    """
-    pass
-
-
-# Module-level singleton
-inference_method_registry = InferenceMethodRegistry()
+# The singleton registry — plain MethodRegistry, no subclass needed.
+inference_method_registry: MethodRegistry[Method] = MethodRegistry()

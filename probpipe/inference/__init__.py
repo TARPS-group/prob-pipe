@@ -13,7 +13,6 @@ from ._diagnostics import (
 from ._mcmc_distribution import MCMCApproximateDistribution
 from ._registry import (
     InferenceMethod,
-    InferenceMethodRegistry,
     inference_method_registry,
 )
 from ._rwmh import rwmh
@@ -25,7 +24,6 @@ __all__ = [
     "extract_arviz_diagnostics",
     "MCMCApproximateDistribution",
     "InferenceMethod",
-    "InferenceMethodRegistry",
     "inference_method_registry",
     "rwmh",
     "condition_on_nutpie",
