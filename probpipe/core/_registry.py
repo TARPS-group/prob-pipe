@@ -84,9 +84,8 @@ class MethodRegistry[M: Method]:
                 f"Method name {method.name!r} is already registered"
             )
         self._methods.append(method)
-        self._sort_methods()
         self._name_index[method.name] = method
-        self._type_cache.clear()
+        self._sort_methods()
 
     # -- priority management ------------------------------------------------
 

@@ -11,11 +11,9 @@ from ._registry import InferenceMethod
 class NutpieNutsMethod(InferenceMethod):
     """Nutpie-backed NUTS (Rust-based) for Stan and PyMC models."""
 
-    @property
-    def name(self) -> str:
-        return "nutpie_nuts"
-
-    def supported_types(self) -> tuple[type, ...]:
+    def __init__(self) -> None:
+        # Cache supported types at construction (imports already succeeded
+        # if this class was instantiated during __init__.py registration).
         types: list[type] = []
         try:
             from ..modeling._stan import StanModel
@@ -27,26 +25,24 @@ class NutpieNutsMethod(InferenceMethod):
             types.append(PyMCModel)
         except ImportError:
             pass
-        return tuple(types)
+        self._supported = tuple(types)
+
+    @property
+    def name(self) -> str:
+        return "nutpie_nuts"
+
+    def supported_types(self) -> tuple[type, ...]:
+        return self._supported
 
     @property
     def priority(self) -> int:
         return 80
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
-        try:
-            import nutpie  # noqa: F401
-        except ImportError:
-            return MethodInfo(feasible=False, method_name=self.name,
-                              description="nutpie not installed")
-
-        has_stan = hasattr(dist, "_bridgestan_model")
-        has_pymc = hasattr(dist, "_pymc_model")
-        if not (has_stan or has_pymc):
+        if not any(isinstance(dist, t) for t in self._supported):
             return MethodInfo(feasible=False, method_name=self.name,
                               description="Requires StanModel or PyMCModel")
-        return MethodInfo(feasible=True, method_name=self.name,
-                          description="Nutpie NUTS (Rust-based)")
+        return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> Any:
         from ._nutpie import condition_on_nutpie

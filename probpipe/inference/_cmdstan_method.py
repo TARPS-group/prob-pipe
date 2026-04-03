@@ -2,34 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-from ..core._registry import MethodInfo
-from ._registry import InferenceMethod
+from ._delegating_method import make_delegating_method
 
 
-class CmdStanNutsMethod(InferenceMethod):
-    """CmdStanPy-backed NUTS for Stan models."""
-
-    @property
-    def name(self) -> str:
-        return "cmdstan_nuts"
-
-    def supported_types(self) -> tuple[type, ...]:
-        from ..modeling._stan import StanModel
-        return (StanModel,)
-
-    @property
-    def priority(self) -> int:
-        return 70
-
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
-        from ..modeling._stan import StanModel
-        if not isinstance(dist, StanModel):
-            return MethodInfo(feasible=False, method_name=self.name,
-                              description="Requires StanModel")
-        return MethodInfo(feasible=True, method_name=self.name,
-                          description="CmdStan NUTS")
-
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> Any:
-        return dist._condition_on(observed, **kwargs)
+CmdStanNutsMethod = make_delegating_method(
+    method_name="cmdstan_nuts",
+    model_path="probpipe.modeling._stan.StanModel",
+    method_priority=70,
+)
