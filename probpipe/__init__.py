@@ -105,7 +105,7 @@ from probpipe.core.constraints import (
     greater_than,
     integer_interval,
 )
-from probpipe.modeling import Likelihood, GenerativeLikelihood, IncrementalConditioner
+from probpipe.modeling import GLMLikelihood, Likelihood, GenerativeLikelihood, IncrementalConditioner
 from probpipe.inference import (
     InferenceDiagnostics,
     MCMCDiagnostics,
@@ -114,6 +114,7 @@ from probpipe.inference import (
     condition_on_nutpie,
 )
 from probpipe.modeling import ProbabilisticModel, SimpleModel
+from probpipe.validation import predictive_check
 from probpipe.core.protocols import (
     SupportsExpectation,
     SupportsSampling,
@@ -225,6 +226,7 @@ __all__ = [
     "SupportsNamedComponents",
     "SupportsConditionableComponents",
     # Modeling
+    "GLMLikelihood",
     "Likelihood",
     "GenerativeLikelihood",
     "IncrementalConditioner",
@@ -236,6 +238,8 @@ __all__ = [
     "MCMCApproximateDistribution",
     "rwmh",
     "condition_on_nutpie",
+    # Validation
+    "predictive_check",
     # Converters
     "converter_registry",
     "ConversionInfo",
