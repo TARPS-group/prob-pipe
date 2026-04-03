@@ -6,8 +6,9 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from ..custom_types import Array, PRNGKey
+from ..custom_types import Array, ArrayLike, PRNGKey
 from .._utils import _auto_key
 
 __all__ = ["GLMLikelihood"]
@@ -47,8 +48,8 @@ class GLMLikelihood:
 
     def __init__(
         self,
-        family: Any,
-        x: Array,
+        family: tfp_glm.ExponentialFamily,
+        x: ArrayLike,
         *,
         seed: int = 0,
     ):
