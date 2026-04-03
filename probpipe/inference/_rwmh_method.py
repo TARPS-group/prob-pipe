@@ -40,7 +40,7 @@ class TFPRWMHMethod(InferenceMethod):
                               description="Does not support dict-based conditioning")
         try:
             _get_init_state(prior, kwargs.get("init"), observed)
-        except Exception as e:
+        except (ValueError, TypeError) as e:
             return MethodInfo(feasible=False, method_name=self.name,
                               description=str(e))
         return MethodInfo(feasible=True, method_name=self.name)

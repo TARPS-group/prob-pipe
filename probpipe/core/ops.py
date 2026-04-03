@@ -222,9 +222,10 @@ def condition_on(
         Passed to the inference method (e.g., ``num_results``,
         ``num_warmup``, ``random_seed``).
     """
+    from ..inference import inference_method_registry
+
     # Explicit method override → always use the registry
     if method is not None:
-        from ..inference import inference_method_registry
         return inference_method_registry.execute(
             dist, observed, method=method, **kwargs
         )
@@ -234,10 +235,7 @@ def condition_on(
         return dist._condition_on(observed, **kwargs)
 
     # Fallback: try the registry for distributions without _condition_on
-    from ..inference import inference_method_registry
-    return inference_method_registry.execute(
-        dist, observed, **kwargs
-    )
+    return inference_method_registry.execute(dist, observed, **kwargs)
 
 
 @workflow_function

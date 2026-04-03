@@ -46,8 +46,7 @@ class PyMCADVIMethod(InferenceMethod):
         import jax.numpy as jnp
 
         from ._diagnostics import InferenceDiagnostics
-        from ._mcmc_distribution import MCMCApproximateDistribution
-        from ..core.provenance import Provenance
+        from ._tfp_mcmc import _make_posterior
 
         num_iterations = kwargs.get("num_iterations", 30000)
         num_results = kwargs.get("num_results", 1000)
@@ -65,14 +64,12 @@ class PyMCADVIMethod(InferenceMethod):
             axis=1,
         )
         chains = [jnp.asarray(samples, dtype=jnp.float32)]
-
         algorithm = f"pymc_{vi_method}"
-        diagnostics = InferenceDiagnostics(algorithm=algorithm)
-        result = MCMCApproximateDistribution(
-            chains, diagnostics=diagnostics, name="posterior",
+
+        return _make_posterior(
+            chains,
+            diagnostics=InferenceDiagnostics(algorithm=algorithm),
+            parents=(),
+            algorithm=algorithm,
+            num_iterations=num_iterations,
         )
-        result.with_source(Provenance(
-            algorithm, parents=(),
-            metadata={"num_iterations": num_iterations, "algorithm": algorithm},
-        ))
-        return result

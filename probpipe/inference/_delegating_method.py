@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from collections.abc import Callable
 from typing import Any
 
 from ..core._registry import MethodInfo
@@ -46,8 +47,10 @@ def make_delegating_method(
     method_name: str,
     model_path: str,
     method_priority: int,
-) -> type[_DelegatingMethod]:
-    """Create a delegating method class for a model type.
+) -> Callable[[], _DelegatingMethod]:
+    """Create a factory that returns a ``_DelegatingMethod`` instance.
+
+    The model class is imported lazily on first call.
 
     Parameters
     ----------
@@ -58,12 +61,6 @@ def make_delegating_method(
         (e.g., ``"probpipe.modeling._stan.StanModel"``).
     method_priority : int
         Default priority.
-
-    Returns
-    -------
-    type
-        A callable that returns a ``_DelegatingMethod`` instance.
-        The model class is imported lazily on first instantiation.
     """
     module_path, class_name = model_path.rsplit(".", 1)
 

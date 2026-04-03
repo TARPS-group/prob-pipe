@@ -14,6 +14,37 @@ from probpipe.inference import inference_method_registry
 
 
 # ---------------------------------------------------------------------------
+# Shared test helper
+# ---------------------------------------------------------------------------
+
+class FakeMethod(Method):
+    """Configurable stub for registry tests."""
+
+    def __init__(self, n="fake", p=0, feasible=True, result=None):
+        self._name = n
+        self._priority = p
+        self._feasible = feasible
+        self._result = result
+
+    @property
+    def name(self):
+        return self._name
+
+    def supported_types(self):
+        return (object,)
+
+    @property
+    def priority(self):
+        return self._priority
+
+    def check(self, *a, **kw):
+        return MethodInfo(feasible=self._feasible, method_name=self._name)
+
+    def execute(self, *a, **kw):
+        return self._result if self._result is not None else self._name
+
+
+# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
@@ -38,48 +69,21 @@ def data():
 class TestMethodRegistry:
 
     def test_register_and_list(self):
-        class FakeMethod(Method):
-            def __init__(self, n, p):
-                self._name = n
-                self._priority = p
-            @property
-            def name(self): return self._name
-            def supported_types(self): return (object,)
-            @property
-            def priority(self): return self._priority
-            def check(self, *a, **kw): return MethodInfo(feasible=True, method_name=self._name)
-            def execute(self, *a, **kw): return self._name
-
         reg = MethodRegistry()
         reg.register(FakeMethod("low", 10))
         reg.register(FakeMethod("high", 100))
         reg.register(FakeMethod("mid", 50))
-
         assert reg.list_methods() == ["high", "mid", "low"]
 
     def test_duplicate_name_raises(self):
-        class FakeMethod(Method):
-            @property
-            def name(self): return "dup"
-            def supported_types(self): return (object,)
-            def check(self, *a, **kw): return MethodInfo(feasible=True)
-            def execute(self, *a, **kw): return None
-
         reg = MethodRegistry()
-        reg.register(FakeMethod())
+        reg.register(FakeMethod("dup"))
         with pytest.raises(ValueError, match="already registered"):
-            reg.register(FakeMethod())
+            reg.register(FakeMethod("dup"))
 
     def test_get_method(self):
-        class FakeMethod(Method):
-            @property
-            def name(self): return "test"
-            def supported_types(self): return (object,)
-            def check(self, *a, **kw): return MethodInfo(feasible=True)
-            def execute(self, *a, **kw): return "result"
-
         reg = MethodRegistry()
-        m = FakeMethod()
+        m = FakeMethod("test")
         reg.register(m)
         assert reg.get_method("test") is m
 
@@ -89,15 +93,8 @@ class TestMethodRegistry:
             reg.get_method("nonexistent")
 
     def test_execute_by_name(self):
-        class FakeMethod(Method):
-            @property
-            def name(self): return "test"
-            def supported_types(self): return (object,)
-            def check(self, *a, **kw): return MethodInfo(feasible=True)
-            def execute(self, *a, **kw): return 42
-
         reg = MethodRegistry()
-        reg.register(FakeMethod())
+        reg.register(FakeMethod("test", result=42))
         assert reg.execute("anything", method="test") == 42
 
     def test_execute_no_method_raises(self):
@@ -106,18 +103,6 @@ class TestMethodRegistry:
             reg.execute("anything")
 
     def test_set_priorities(self):
-        class FakeMethod(Method):
-            def __init__(self, n, p):
-                self._name = n
-                self._priority = p
-            @property
-            def name(self): return self._name
-            def supported_types(self): return (object,)
-            @property
-            def priority(self): return self._priority
-            def check(self, *a, **kw): return MethodInfo(feasible=True, method_name=self._name)
-            def execute(self, *a, **kw): return self._name
-
         reg = MethodRegistry()
         reg.register(FakeMethod("a", 10))
         reg.register(FakeMethod("b", 100))
@@ -195,11 +180,9 @@ class TestInferenceMethodRegistry:
 
     def test_set_priorities_changes_selection(self, simple_model, data):
         """set_priorities should change which method is auto-selected."""
-        # Make RWMH highest priority
         inference_method_registry.set_priorities(tfp_rwmh=200)
         try:
             info = inference_method_registry.check(simple_model, data)
             assert info.method_name == "tfp_rwmh"
         finally:
-            # Restore original priority
             inference_method_registry.set_priorities(tfp_rwmh=50)

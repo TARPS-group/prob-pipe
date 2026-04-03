@@ -39,7 +39,7 @@ class NutpieNutsMethod(InferenceMethod):
         return 80
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
-        if not any(isinstance(dist, t) for t in self._supported):
+        if not isinstance(dist, self._supported):
             return MethodInfo(feasible=False, method_name=self.name,
                               description="Requires StanModel or PyMCModel")
         return MethodInfo(feasible=True, method_name=self.name)
