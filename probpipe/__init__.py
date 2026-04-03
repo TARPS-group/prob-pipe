@@ -111,6 +111,7 @@ from probpipe.inference import (
     InferenceDiagnostics,
     MCMCDiagnostics,
     MCMCApproximateDistribution,
+    inference_method_registry,
     rwmh,
     condition_on_nutpie,
 )
@@ -239,6 +240,7 @@ __all__ = [
     "InferenceDiagnostics",
     "MCMCDiagnostics",
     "MCMCApproximateDistribution",
+    "inference_method_registry",
     "rwmh",
     "condition_on_nutpie",
     # Validation
