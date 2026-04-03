@@ -8,14 +8,14 @@ from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb
 from ._registry import InferenceMethod
-from ._tfp_mcmc import _build_target_log_prob, _get_init_state, _make_posterior
+from ._tfp_mcmc import _get_init_state, _get_prior
 
 
 class TFPRWMHMethod(InferenceMethod):
     """Gradient-free random-walk Metropolis–Hastings.
 
-    Always feasible when the distribution supports ``SupportsLogProb``
-    (or has a prior that does).  Used as a fallback when gradient-based
+    Feasible when the distribution (or its prior) supports
+    ``SupportsLogProb``.  Used as a fallback when gradient-based
     methods are not applicable.
     """
 
@@ -31,42 +31,35 @@ class TFPRWMHMethod(InferenceMethod):
         return 50
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
-        # Check if we can get a log_prob
-        target_dist = dist._prior if hasattr(dist, "_prior") else dist
-        if not isinstance(target_dist, SupportsLogProb):
+        prior = _get_prior(dist)
+        if not isinstance(prior, SupportsLogProb):
             return MethodInfo(feasible=False, method_name=self.name,
                               description="Requires SupportsLogProb")
-        # RWMH needs array-like data (or None), not dicts
         if observed is not None and isinstance(observed, dict):
             return MethodInfo(feasible=False, method_name=self.name,
-                              description="RWMH does not support dict-based conditioning")
+                              description="Does not support dict-based conditioning")
         try:
-            _get_init_state(target_dist, kwargs.get("init"), observed)
+            _get_init_state(prior, kwargs.get("init"), observed)
         except Exception as e:
             return MethodInfo(feasible=False, method_name=self.name,
                               description=str(e))
-        return MethodInfo(feasible=True, method_name=self.name,
-                          description="Random-walk MH (gradient-free)")
+        return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> Any:
         from ._rwmh import rwmh as _rwmh
 
-        prior = dist._prior if hasattr(dist, "_prior") else dist
-        data = observed
+        prior = _get_prior(dist)
         log_prob_fn = None
-
-        # If dist has a likelihood, pass it as log_prob_fn
         if hasattr(dist, "_likelihood"):
-            log_prob_fn = lambda params, d: dist._likelihood.log_likelihood(
-                params=params, data=d
-            )
+            lik = dist._likelihood
+            log_prob_fn = lambda params, d: lik.log_likelihood(params=params, data=d)
 
         init = kwargs.get("init")
         if init is None:
             init = _get_init_state(prior, None, observed)
 
         return _rwmh._func(
-            prior, data,
+            prior, observed,
             log_prob_fn=log_prob_fn,
             num_results=kwargs.get("num_results", 1000),
             num_warmup=kwargs.get("num_warmup", 500),

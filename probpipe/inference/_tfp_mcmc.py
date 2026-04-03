@@ -185,111 +185,86 @@ def _make_posterior(
 
 
 # ---------------------------------------------------------------------------
+# Helpers for prior extraction
+# ---------------------------------------------------------------------------
+
+def _get_prior(dist: Any) -> Any:
+    """Extract the prior from a model, or return dist itself."""
+    return dist._prior if hasattr(dist, "_prior") else dist
+
+
+# ---------------------------------------------------------------------------
 # Inference methods
 # ---------------------------------------------------------------------------
 
 
-class TFPNutsMethod(InferenceMethod):
+class _TFPGradientMethod(InferenceMethod):
+    """Base for TFP gradient-based MCMC methods (NUTS, HMC).
+
+    Parameterized by algorithm name and priority.  check() is kept
+    cheap — only a protocol check and JAX traceability probe.
+    """
+
+    def __init__(self, algorithm: str, method_name: str, method_priority: int):
+        self._algorithm = algorithm
+        self._method_name = method_name
+        self._method_priority = method_priority
+
+    @property
+    def name(self) -> str:
+        return self._method_name
+
+    def supported_types(self) -> tuple[type, ...]:
+        return (Distribution,)
+
+    @property
+    def priority(self) -> int:
+        return self._method_priority
+
+    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+        if not isinstance(dist, SupportsLogProb):
+            return MethodInfo(feasible=False, method_name=self.name,
+                              description="Requires SupportsLogProb")
+        try:
+            target = _build_target_log_prob(dist, observed)
+            init = _get_init_state(_get_prior(dist), kwargs.get("init"), observed)
+            if not _is_jax_traceable(target, init):
+                return MethodInfo(feasible=False, method_name=self.name,
+                                  description="Log-prob is not JAX-traceable")
+        except Exception as e:
+            return MethodInfo(feasible=False, method_name=self.name,
+                              description=str(e))
+        return MethodInfo(feasible=True, method_name=self.name)
+
+    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
+        target = _build_target_log_prob(dist, observed)
+        prior = _get_prior(dist)
+        init = _get_init_state(prior, kwargs.get("init"), observed)
+
+        num_results = kwargs.get("num_results", 1000)
+        num_warmup = kwargs.get("num_warmup", 500)
+        num_chains = kwargs.get("num_chains", 1)
+
+        chains, diagnostics = _run_tfp_chains(
+            target, init,
+            algorithm=self._algorithm,
+            num_results=num_results,
+            num_warmup=num_warmup,
+            num_chains=num_chains,
+            step_size=kwargs.get("step_size", 0.1),
+            random_seed=kwargs.get("random_seed", 0),
+        )
+        return _make_posterior(
+            chains, diagnostics, parents=(prior,), algorithm=self._algorithm,
+            num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
+        )
+
+
+def TFPNutsMethod() -> _TFPGradientMethod:
     """TFP No-U-Turn Sampler (gradient-based MCMC)."""
-
-    @property
-    def name(self) -> str:
-        return "tfp_nuts"
-
-    def supported_types(self) -> tuple[type, ...]:
-        return (Distribution,)
-
-    @property
-    def priority(self) -> int:
-        return 100
-
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
-        if not isinstance(dist, SupportsLogProb):
-            return MethodInfo(feasible=False, method_name=self.name,
-                              description="Requires SupportsLogProb")
-        try:
-            target = _build_target_log_prob(dist, observed)
-            init = _get_init_state(dist if not hasattr(dist, "_prior") else dist._prior,
-                                   kwargs.get("init"), observed)
-            if not _is_jax_traceable(target, init):
-                return MethodInfo(feasible=False, method_name=self.name,
-                                  description="Log-prob is not JAX-traceable")
-        except Exception as e:
-            return MethodInfo(feasible=False, method_name=self.name,
-                              description=str(e))
-        return MethodInfo(feasible=True, method_name=self.name,
-                          description="TFP NUTS (gradient-based)")
-
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
-        target = _build_target_log_prob(dist, observed)
-        prior = dist._prior if hasattr(dist, "_prior") else dist
-        init = _get_init_state(prior, kwargs.get("init"), observed)
-
-        chains, diagnostics = _run_tfp_chains(
-            target, init,
-            algorithm="nuts",
-            num_results=kwargs.get("num_results", 1000),
-            num_warmup=kwargs.get("num_warmup", 500),
-            num_chains=kwargs.get("num_chains", 1),
-            step_size=kwargs.get("step_size", 0.1),
-            random_seed=kwargs.get("random_seed", 0),
-        )
-        return _make_posterior(
-            chains, diagnostics, parents=(prior,), algorithm="nuts",
-            num_results=kwargs.get("num_results", 1000),
-            num_warmup=kwargs.get("num_warmup", 500),
-            num_chains=kwargs.get("num_chains", 1),
-        )
+    return _TFPGradientMethod("nuts", "tfp_nuts", 100)
 
 
-class TFPHmcMethod(InferenceMethod):
+def TFPHmcMethod() -> _TFPGradientMethod:
     """TFP Hamiltonian Monte Carlo."""
-
-    @property
-    def name(self) -> str:
-        return "tfp_hmc"
-
-    def supported_types(self) -> tuple[type, ...]:
-        return (Distribution,)
-
-    @property
-    def priority(self) -> int:
-        return 90
-
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
-        if not isinstance(dist, SupportsLogProb):
-            return MethodInfo(feasible=False, method_name=self.name,
-                              description="Requires SupportsLogProb")
-        try:
-            target = _build_target_log_prob(dist, observed)
-            init = _get_init_state(dist if not hasattr(dist, "_prior") else dist._prior,
-                                   kwargs.get("init"), observed)
-            if not _is_jax_traceable(target, init):
-                return MethodInfo(feasible=False, method_name=self.name,
-                                  description="Log-prob is not JAX-traceable")
-        except Exception as e:
-            return MethodInfo(feasible=False, method_name=self.name,
-                              description=str(e))
-        return MethodInfo(feasible=True, method_name=self.name,
-                          description="TFP HMC (gradient-based)")
-
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
-        target = _build_target_log_prob(dist, observed)
-        prior = dist._prior if hasattr(dist, "_prior") else dist
-        init = _get_init_state(prior, kwargs.get("init"), observed)
-
-        chains, diagnostics = _run_tfp_chains(
-            target, init,
-            algorithm="hmc",
-            num_results=kwargs.get("num_results", 1000),
-            num_warmup=kwargs.get("num_warmup", 500),
-            num_chains=kwargs.get("num_chains", 1),
-            step_size=kwargs.get("step_size", 0.1),
-            random_seed=kwargs.get("random_seed", 0),
-        )
-        return _make_posterior(
-            chains, diagnostics, parents=(prior,), algorithm="hmc",
-            num_results=kwargs.get("num_results", 1000),
-            num_warmup=kwargs.get("num_warmup", 500),
-            num_chains=kwargs.get("num_chains", 1),
-        )
+    return _TFPGradientMethod("hmc", "tfp_hmc", 90)

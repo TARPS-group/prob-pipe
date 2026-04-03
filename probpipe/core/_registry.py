@@ -26,10 +26,6 @@ class MethodInfo:
     description: str = ""
 
 
-# Sentinel for "no method found"
-_NOT_FEASIBLE = MethodInfo(feasible=False, description="No applicable method found")
-
-
 class Method(ABC):
     """Abstract base for a pluggable method in a registry.
 

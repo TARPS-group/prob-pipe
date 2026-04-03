@@ -224,14 +224,19 @@ def condition_on(
     """
     from ..inference import inference_method_registry
 
-    try:
+    # If a specific method is requested, use only the registry (no fallback)
+    if method is not None:
         return inference_method_registry.execute(
             dist, observed, method=method, **kwargs
         )
-    except (TypeError, KeyError):
-        pass
 
-    # Fallback: direct protocol dispatch
+    # Auto-select: try registry first, fall back to protocol dispatch
+    info = inference_method_registry.check(dist, observed, **kwargs)
+    if info.feasible:
+        return inference_method_registry.execute(
+            dist, observed, **kwargs
+        )
+
     if isinstance(dist, SupportsConditioning):
         return dist._condition_on(observed, **kwargs)
 
