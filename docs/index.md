@@ -13,8 +13,8 @@ Most workflows for probabilistic inference -- including validation procedures --
 
 Using these abstractions, even complex workflows can be written down succinctly. However, *implementing* them requires concrete representations of distributions and algorithms for operations -- each creating its own challenge:
 
-- **Algorithm challenges.** There are usually many possible algorithms for a given operation. A posterior could be approximated using different MCMC algorithms, variational inference methods, or sequential Monte Carlo. These are implemented across many packages and often not designed to be directly compatible.
-- **Representation challenges.** Algorithms often require or output specific distribution representations that are not compatible with other parts of the workflow. For example, MCMC outputs a discrete approximation to a distribution, but many MCMC algorithms require continuous representations of prior distributions.
+- **Algorithmic challenges.** There are usually many possible algorithms for a given operation. A posterior could be approximated using different MCMC algorithms, variational inference methods, or sequential Monte Carlo. These are implemented across many packages and often not designed to be directly compatible.
+- **Representational challenges.** Algorithms often require or output specific distribution representations that are not compatible with other parts of the workflow. For example, MCMC outputs a discrete approximation to a distribution, but many MCMC algorithms require continuous representations of prior distributions.
 
 ### ProbPipe's approach
 
