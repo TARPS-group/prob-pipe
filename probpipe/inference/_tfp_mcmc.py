@@ -122,13 +122,11 @@ def _run_tfp_chains(
     else:
         kernel = inner_kernel
 
-    chains = []
     key = jax.random.PRNGKey(random_seed)
-    last_trace = None
+    chain_keys = jax.random.split(key, num_chains)
 
-    for c in range(num_chains):
-        key, chain_key = jax.random.split(key)
-        samples, trace = tfp_mcmc.sample_chain(
+    def _run_one_chain(chain_key):
+        return tfp_mcmc.sample_chain(
             num_results=num_results,
             current_state=init_state,
             kernel=kernel,
@@ -136,9 +134,13 @@ def _run_tfp_chains(
             seed=chain_key,
             trace_fn=lambda _, kr: kr,
         )
-        chains.append(samples)
-        last_trace = trace
 
+    all_samples, all_traces = jax.vmap(_run_one_chain)(chain_keys)
+    # all_samples: (num_chains, num_results, *event_shape)
+    chains = [all_samples[c] for c in range(num_chains)]
+
+    # Extract diagnostics from the last chain's trace
+    last_trace = jax.tree.map(lambda x: x[-1], all_traces)
     diagnostics = _extract_diagnostics(last_trace, algorithm)
     return chains, diagnostics
 
