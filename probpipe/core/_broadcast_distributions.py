@@ -53,18 +53,12 @@ class _ArrayMarginal(ArrayEmpiricalDistribution):
     def __init__(
         self,
         samples: Array,
-        weights: Array | None,
+        weights: Array | Weights | None = None,
         *,
+        log_weights: Array | None = None,
         name: str | None = None,
     ):
-        # _ArrayMarginal receives pre-normalised weights (or None).
-        # Pass via log_weights to skip the non-negativity / sum validation
-        # in EmpiricalDistribution.__init__.
-        if weights is not None:
-            log_weights = jnp.log(jnp.asarray(weights, dtype=jnp.float32))
-            super().__init__(samples, log_weights=log_weights, name=name)
-        else:
-            super().__init__(samples, name=name)
+        super().__init__(samples, weights=weights, log_weights=log_weights, name=name)
 
     def __repr__(self):
         return f"MarginalizedBroadcastDistribution(n={self.n}, event_shape={self.event_shape})"
@@ -84,13 +78,14 @@ class _MixtureMarginal[T](Distribution[T]):
     def __init__(
         self,
         components: list,
-        weights: Array | None,
+        weights: Array | Weights | None = None,
         *,
+        log_weights: Array | None = None,
         name: str | None = None,
     ):
         n = len(components)
         self._components = components
-        self._w = weights if weights is not None else jnp.ones(n, dtype=jnp.float32) / n
+        self._w = Weights._coerce(n, weights, log_weights=log_weights)
         self._name = name
         self._approximate = True
 
@@ -104,7 +99,7 @@ class _MixtureMarginal[T](Distribution[T]):
 
     @property
     def weights(self) -> Array:
-        return self._w
+        return self._w.normalized
 
     def __repr__(self):
         return f"MarginalizedBroadcastDistribution(mixture, n={self.n})"
@@ -181,7 +176,7 @@ _mixture_class_cache: dict[tuple[type, ...], type] = {}
 
 def _make_mixture_marginal(
     components: list,
-    weights: Array | None,
+    weights: Array | Weights | None = None,
     *,
     name: str | None = None,
 ) -> _MixtureMarginal:
@@ -220,12 +215,13 @@ class _ListMarginal[T](Distribution[T]):
     def __init__(
         self,
         items: list,
-        weights: Array | None,
+        weights: Array | Weights | None = None,
         *,
+        log_weights: Array | None = None,
         name: str | None = None,
     ):
         self._items = items
-        self._w = weights
+        self._w = Weights._coerce(len(items), weights, log_weights=log_weights)
         self._name = name
 
     @property
@@ -238,7 +234,9 @@ class _ListMarginal[T](Distribution[T]):
 
     @property
     def weights(self) -> Array | None:
-        return self._w
+        if self._w.is_uniform:
+            return None
+        return self._w.normalized
 
     def __repr__(self):
         return f"MarginalizedBroadcastDistribution(list, n={self.n})"
@@ -258,7 +256,7 @@ Concrete subtype depends on output kind:
 
 def _make_marginal(
     output_samples: Any,
-    weights: Array | None,
+    weights: Array | Weights | None = None,
     *,
     output_distributions: list | None = None,
     name: str | None = None,
@@ -344,8 +342,9 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
         self,
         input_samples: dict[str, Any],
         output_samples: Any,
-        weights: Array | None,
+        weights: Array | Weights | None = None,
         *,
+        log_weights: Array | None = None,
         output_distributions: list | None = None,
         broadcast_args: list[str],
         name: str | None = None,
@@ -358,10 +357,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
         first_key = list(broadcast_args)[0]
         first_arr = input_samples[first_key]
         n = first_arr.shape[0] if hasattr(first_arr, 'shape') else len(first_arr)
-        if weights is not None:
-            self._w = Weights(n, weights=weights)
-        else:
-            self._w = Weights.uniform(n)
+        self._w = Weights._coerce(n, weights, log_weights=log_weights)
         self._broadcast_args = list(broadcast_args)
         self._name = name
         self._approximate = True
@@ -401,8 +397,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
             return self.marginalize()
         if key in self._input_samples:
             arr = self._input_samples[key]
-            w = None if self._w.is_uniform else self._w.normalized
-            return EmpiricalDistribution(arr, weights=w)
+            return EmpiricalDistribution(arr, weights=self._w)
         raise KeyError(f"Unknown component {key!r}; available: {self.component_names}")
 
     # -- joint sampling -----------------------------------------------------
@@ -440,10 +435,9 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
         ``BroadcastDistribution``.
         """
         if self._marginal_cache is None:
-            w_arr = None if self._w.is_uniform else self._w.normalized
             self._marginal_cache = _make_marginal(
                 self._output_samples,
-                w_arr,
+                self._w,
                 output_distributions=self._output_distributions,
             )
             if self.source is not None and isinstance(self._marginal_cache, Distribution):

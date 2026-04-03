@@ -423,20 +423,15 @@ class BootstrapDistribution(ArrayDistribution, SupportsSampling, SupportsMean, S
         self,
         evaluations: ArrayLike,
         *,
-        weights: ArrayLike | None = None,
+        weights: ArrayLike | Weights | None = None,
+        log_weights: ArrayLike | None = None,
         name: str | None = None,
     ):
         self._evaluations = jnp.asarray(evaluations, dtype=jnp.float32)
         if self._evaluations.ndim == 0:
             raise ValueError("evaluations must have at least 1 dimension.")
         self._n = self._evaluations.shape[0]
-
-        if weights is not None:
-            # BootstrapDistribution accepts pre-normalized weights.
-            self._w = Weights(self._n, weights=weights)
-        else:
-            self._w = Weights.uniform(self._n)
-
+        self._w = Weights._coerce(self._n, weights, log_weights=log_weights)
         self._name = name
         self._approximate = True
 
@@ -462,9 +457,7 @@ class BootstrapDistribution(ArrayDistribution, SupportsSampling, SupportsMean, S
 
     def _variance(self) -> Array:
         """Variance of the sampling distribution (approx Var[f(X)] / n_eff)."""
-        mu = self._mean()
-        w_arr = None if self._w.is_uniform else self._w.normalized
-        sample_var = weighted_variance(w_arr, self._evaluations, mean=mu)
+        sample_var = self._w.variance(self._evaluations)
         if self._w.is_uniform:
             return sample_var / self._n
         n_eff = 1.0 / jnp.sum(self._w.normalized ** 2)
@@ -485,15 +478,9 @@ class BootstrapDistribution(ArrayDistribution, SupportsSampling, SupportsMean, S
             return self._sample_one(key)
         total = prod(sample_shape)
         keys = jax.random.split(key, total)
-        w_arr = None if self._w.is_uniform else self._w.normalized
 
         def _one_resample(k):
-            if w_arr is None:
-                idx = jax.random.choice(k, self._n, shape=(self._n,), replace=True)
-            else:
-                idx = jax.random.choice(
-                    k, self._n, shape=(self._n,), replace=True, p=w_arr
-                )
+            idx = self._w.choice(k, shape=(self._n,))
             return jnp.mean(self._evaluations[idx], axis=0)
 
         results = jax.vmap(_one_resample)(keys)

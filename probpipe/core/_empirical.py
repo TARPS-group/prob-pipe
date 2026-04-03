@@ -106,16 +106,13 @@ class EmpiricalDistribution[T](
     def _init_weights(
         self,
         n: int,
-        weights: ArrayLike | None = None,
+        weights: ArrayLike | Weights | None = None,
         *,
         log_weights: ArrayLike | None = None,
         name: str | None = None,
     ) -> None:
         """Validate and store weights, name, and flags."""
-        if weights is None and log_weights is None:
-            self._w = Weights.uniform(n)
-        else:
-            self._w = Weights(n, weights, log_weights=log_weights)
+        self._w = Weights._coerce(n, weights, log_weights=log_weights)
         self._name = name
         self._approximate = True
 
@@ -212,8 +209,7 @@ class EmpiricalDistribution[T](
 
             rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
             if rd:
-                w_arr = None if sub_w.is_uniform else sub_w.normalized
-                return BootstrapDistribution(f_vals, weights=w_arr)
+                return BootstrapDistribution(f_vals, weights=sub_w)
 
             return sub_w.mean(f_vals)
 

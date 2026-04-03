@@ -497,7 +497,7 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
     def __init__(
         self,
         *,
-        weights: ArrayLike | None = None,
+        weights: ArrayLike | Weights | None = None,
         log_weights: ArrayLike | None = None,
         name: str | None = None,
         **samples: ArrayLike,
@@ -527,22 +527,15 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
         self._joint_samples = converted
         self._n = n
         self._name = name
-
-        if weights is None and log_weights is None:
-            self._w = Weights.uniform(n)
-        else:
-            self._w = Weights(n, weights, log_weights=log_weights)
+        self._w = Weights._coerce(n, weights, log_weights=log_weights)
 
         # Build _components as ArrayEmpiricalDistribution per component
         # (JointDistribution requires ArrayDistribution leaves for shape introspection)
         comp_dists: dict[str, ArrayEmpiricalDistribution] = {}
         for cname, arr in self._joint_samples.items():
-            if self._w.is_uniform:
-                comp_dists[cname] = ArrayEmpiricalDistribution(arr, name=cname)
-            else:
-                comp_dists[cname] = ArrayEmpiricalDistribution(
-                    arr, log_weights=self._w.log_unnormalized, name=cname
-                )
+            comp_dists[cname] = ArrayEmpiricalDistribution(
+                arr, weights=self._w, name=cname,
+            )
         self._components = comp_dists
 
     @property
@@ -669,14 +662,11 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
                 "at least one must remain unconditioned."
             )
 
-        if self._w.is_uniform:
-            result = JointEmpirical(**remaining_samples, name=self._name)
-        else:
-            result = JointEmpirical(
-                **remaining_samples,
-                log_weights=self._w.log_unnormalized,
-                name=self._name,
-            )
+        result = JointEmpirical(
+            **remaining_samples,
+            weights=self._w,
+            name=self._name,
+        )
         result.with_source(Provenance(
             "condition_on", parents=(self,),
             metadata={"conditioned": list(observed_names)},

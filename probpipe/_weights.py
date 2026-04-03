@@ -298,6 +298,30 @@ class Weights:
         w._cache = None
         return w
 
+    @staticmethod
+    def _coerce(
+        n: int,
+        weights: ArrayLike | Weights | None = None,
+        *,
+        log_weights: ArrayLike | None = None,
+    ) -> Weights:
+        """Build a ``Weights`` from flexible input.
+
+        Accepts either an existing ``Weights`` instance (returned as-is),
+        or raw ``weights`` / ``log_weights`` arrays (validated and
+        wrapped).  If neither is provided, returns uniform weights.
+
+        This is the canonical way to initialize ``Weights`` inside
+        distribution constructors, ensuring a consistent API: callers
+        can pass unnormalized weights, log-weights, or a pre-built
+        ``Weights`` object.
+        """
+        if isinstance(weights, Weights):
+            return weights
+        if weights is None and log_weights is None:
+            return Weights.uniform(n)
+        return Weights(n, weights, log_weights=log_weights)
+
     # -- properties ---------------------------------------------------------
 
     @property
