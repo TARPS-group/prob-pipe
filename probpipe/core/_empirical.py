@@ -103,17 +103,6 @@ class EmpiricalDistribution[T](
         n = len(self._samples)
         if n == 0:
             raise ValueError("samples must be a non-empty sequence.")
-        self._init_weights(n, weights, log_weights=log_weights, name=name)
-
-    def _init_weights(
-        self,
-        n: int,
-        weights: ArrayLike | Weights | None = None,
-        *,
-        log_weights: ArrayLike | Weights | None = None,
-        name: str | None = None,
-    ) -> None:
-        """Validate and store weights, name, and flags."""
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._name = name
         self._approximate = True
@@ -290,9 +279,11 @@ class ArrayEmpiricalDistribution(
             event_shape = self._samples.shape[n_sample_dims:]
             self._samples = self._samples.reshape(n, *event_shape)
 
-        self._init_weights(
-            self._samples.shape[0], weights, log_weights=log_weights, name=name,
+        self._w = Weights(
+            n=self._samples.shape[0], weights=weights, log_weights=log_weights,
         )
+        self._name = name
+        self._approximate = True
 
     # -- array-specific properties ------------------------------------------
 
