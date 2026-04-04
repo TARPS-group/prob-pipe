@@ -7,7 +7,8 @@ argument-hint: [pr-number]
 
 # ProbPipe PR Review
 
-Review pull request **$ARGUMENTS** (if no number given, detect the PR for the current branch using `gh pr view`).
+Review pull request **$ARGUMENTS** (if no number given, detect the PR for the
+current branch using `gh pr view`).
 
 ## Instructions
 
@@ -18,7 +19,18 @@ are made.
 
 ## Step 1: Gather context
 
-Fetch the PR metadata and diff:
+### 1a. Read project conventions (do this first)
+
+Read the following files in full. These are the **authoritative source of truth**
+for all naming, style, architecture, and API conventions. Every check you perform
+in Step 2 must be grounded in what these documents say — do not rely on your own
+prior knowledge of ProbPipe conventions, as they may have changed.
+
+- `STYLE_GUIDE.md` — naming, imports, types, protocols, testing, module layout
+- `CONTRIBUTING.md` — architecture overview, design principles, package
+  structure, dependency graph, registry patterns, PR workflow
+
+### 1b. Fetch the PR
 
 ```
 gh pr view $ARGUMENTS --json title,body,baseRefName,headRefName,files
@@ -29,18 +41,44 @@ Identify which files were added, modified, or deleted. Read the full contents of
 every modified and newly added file so you have complete context (not just the
 diff hunks).
 
-Also read these project references — they define the conventions you are checking
-against:
+### 1c. Understand existing abstractions
 
-- `STYLE_GUIDE.md`
-- `CONTRIBUTING.md`
+Before checking for redundant code, familiarize yourself with the abstractions
+already available in the codebase. Scan these areas for classes, utilities, and
+patterns that the PR's code should be using rather than reimplementing:
+
+- `probpipe/__init__.py` — the public API surface
+- `probpipe/core/` — base classes, protocols, ops, registries
+- Any utility modules (`_weights.py`, `_utils.py`, `_array_utils.py`, etc.)
 
 ## Step 2: Run the review checklist
 
 Work through **every** category below. For each, note specific findings with
 file paths and line numbers. If a category has no issues, say so briefly.
 
-### 2.1 Documentation
+### 2.1 ProbPipe philosophy and conventions
+
+Check that the PR adheres to every convention documented in `STYLE_GUIDE.md` and
+`CONTRIBUTING.md`. These include (but are not limited to) — always defer to what
+the docs actually say over this summary:
+
+- **Design principles** — immutability, ops-not-methods, protocol-based dispatch,
+  private method convention, etc. (see CONTRIBUTING.md "Design principles")
+- **Naming** — protocols, ops, implementation functions, classes, modules,
+  reserved parameter names, the `.n` property convention (see STYLE_GUIDE.md)
+- **Imports** — `from __future__ import annotations`, relative internals, import
+  order, optional dependency patterns, `TYPE_CHECKING` guards
+- **Type annotations** — modern Python 3.12+ syntax, project type aliases
+- **Subpackage dependency graph** — no illegal cross-imports (see STYLE_GUIDE.md
+  section 6 and CONTRIBUTING.md)
+- **Registry patterns** — if the PR adds or modifies registry-dispatched
+  behavior, check it follows the documented registry conventions (converter
+  registry, inference method registry, etc.)
+- **Docstrings** — NumPy-style, module docstrings, section separators
+- **`__all__` exports** — updated in `__init__.py` when new public symbols are
+  added
+
+### 2.2 Documentation
 
 - Are new or modified public classes, functions, and modules documented with
   NumPy-style docstrings (`Parameters`, `Returns`, `Raises`)?
@@ -51,60 +89,31 @@ file paths and line numbers. If a category has no issues, say so briefly.
 - If the PR adds user-facing features, are the relevant docs pages in `docs/`
   updated?
 
-### 2.2 Test coverage
+### 2.3 Test coverage
 
 - Does every new public function/class/method have corresponding tests?
 - Are there edge cases that lack test coverage (empty inputs, boundary values,
   error paths)?
 - Have any existing tests become stale — testing behavior that no longer matches
   the implementation?
-- Do tests follow project conventions: `Test*` classes, pytest fixtures,
-  parametrized distribution families, `pytest.importorskip` for optional deps?
-- Is `__all__` updated in `__init__.py` files when new public symbols are added?
+- Do tests follow project conventions (see STYLE_GUIDE.md section 8)?
 
-### 2.3 ProbPipe philosophy
+### 2.4 Duplicate and redundant code
 
-Check that the PR adheres to the core design principles:
+Using the abstractions you identified in Step 1c, check whether the PR
+reimplements logic that already exists. Common patterns to watch for:
 
-- **Immutability** — Distribution parameters are fixed at construction. No
-  mutation of distribution state after `__init__`.
-- **Ops, not methods** — Public operations (`sample`, `mean`, `log_prob`,
-  `condition_on`, etc.) live in `probpipe.core.ops` as `WorkflowFunction`
-  instances. Users call `mean(dist)`, never `dist.mean()` or `dist._mean()`.
-- **Protocol-based dispatch** — Capabilities are declared via `@runtime_checkable`
-  protocols (`SupportsSampling`, `SupportsLogProb`, etc.). Concrete classes
-  implement the underscore methods (`_sample`, `_log_prob`, `_mean`).
-- **Private method convention** — Protocol methods use single underscore prefix.
-  Public API is always through ops.
-- **WorkflowFunction patterns** — Standalone workflow functions follow the
-  `_<name>_impl` + `<name> = WorkflowFunction(...)` pattern.
+- Custom weight handling instead of using existing weight abstractions
+- Manual sampling loops instead of using `WorkflowFunction` broadcasting
+- Bespoke protocol checks instead of `isinstance` with existing protocols
+- Re-implementing ops logic instead of calling the ops
+- Duplicating registry dispatch logic instead of using existing registries
 
-### 2.4 API consistency
+Also flag:
+- Copy-pasted code that should be factored into a shared helper
+- Unnecessary abstractions or over-engineering for what the PR actually needs
 
-- Do new names follow STYLE_GUIDE.md conventions? (`Supports<Cap>` for protocols,
-  `_method` for protocol methods, `snake_case` for ops, CamelCase for classes,
-  `_underscore.py` for private modules.)
-- Are reserved parameter names (`seed`, `n_broadcast_samples`, `include_inputs`)
-  avoided in user-defined functions?
-- Does the `.n` property convention hold for new finite-sample distribution
-  classes?
-- Are imports structured correctly? (`from __future__ import annotations` first,
-  relative internal imports, proper grouping.)
-- Are `__all__` exports updated?
-- Is the subpackage dependency graph respected? (See STYLE_GUIDE.md section 6.)
-
-### 2.5 Duplicate and redundant code
-
-- Does the PR reimplement logic that already exists in ProbPipe's abstractions?
-  Common offenders:
-  - Custom weight handling instead of using the `Weights` class
-  - Manual sampling loops instead of using `WorkflowFunction` broadcasting
-  - Bespoke protocol checks instead of using `isinstance` with existing protocols
-  - Re-implementing ops logic instead of calling the ops
-- Is there copy-pasted code that should be factored into a shared helper?
-- Are there unnecessary abstractions or over-engineering for what the PR needs?
-
-### 2.6 AI artifact comments
+### 2.5 AI artifact comments
 
 Flag any comments that look like AI thinking artifacts rather than intentional
 documentation:
@@ -115,7 +124,7 @@ documentation:
   like AI planning artifacts rather than genuine action items
 - Comments that narrate the development process rather than explain the code
 
-### 2.7 General concerns
+### 2.6 General concerns
 
 - Are there edge cases that could cause runtime errors (e.g., empty arrays,
   shape mismatches, division by zero)?
@@ -124,7 +133,7 @@ documentation:
   large arrays, repeated recompilation)?
 - Are error messages clear and actionable when protocol checks fail?
 
-### 2.8 Code quality
+### 2.7 Code quality
 
 - Can any code be simplified without losing clarity?
 - Are there overly complex expressions that should be broken up?
