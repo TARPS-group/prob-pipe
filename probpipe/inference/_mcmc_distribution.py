@@ -5,7 +5,8 @@ from __future__ import annotations
 import jax.numpy as jnp
 
 from ..core.distribution import ArrayEmpiricalDistribution
-from ..custom_types import Array
+from ..custom_types import Array, ArrayLike
+from .._weights import Weights
 from ._diagnostics import InferenceDiagnostics
 
 __all__ = ["MCMCApproximateDistribution"]
@@ -27,8 +28,9 @@ class MCMCApproximateDistribution(ArrayEmpiricalDistribution):
         Diagnostics from the MCMC run.
     warmup_samples : list of Array or None
         Per-chain warmup (burn-in) samples, same shapes as *chains*.
-    weights : Array or None
+    weights : array-like, :class:`~probpipe.Weights`, or None
         Optional per-sample importance weights (across all chains).
+        A pre-built :class:`~probpipe.Weights` object is also accepted.
     name : str or None
         Distribution name for provenance.
     """
@@ -39,7 +41,7 @@ class MCMCApproximateDistribution(ArrayEmpiricalDistribution):
         *,
         diagnostics: InferenceDiagnostics | None = None,
         warmup_samples: list[Array] | None = None,
-        weights: Array | None = None,
+        weights: ArrayLike | Weights | None = None,
         name: str | None = None,
     ):
         if not chains:

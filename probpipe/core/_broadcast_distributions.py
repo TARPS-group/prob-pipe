@@ -26,6 +26,7 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array
+from .._weights import Weights
 from ._distribution_base import Distribution
 from ._empirical import (
     ArrayEmpiricalDistribution,
@@ -52,18 +53,12 @@ class _ArrayMarginal(ArrayEmpiricalDistribution):
     def __init__(
         self,
         samples: Array,
-        weights: Array | None,
+        weights: Array | Weights | None = None,
         *,
+        log_weights: Array | Weights | None = None,
         name: str | None = None,
     ):
-        # _ArrayMarginal receives pre-normalised weights (or None).
-        # Pass via log_weights to skip the non-negativity / sum validation
-        # in EmpiricalDistribution.__init__.
-        if weights is not None:
-            log_weights = jnp.log(jnp.asarray(weights, dtype=jnp.float32))
-            super().__init__(samples, log_weights=log_weights, name=name)
-        else:
-            super().__init__(samples, name=name)
+        super().__init__(samples, weights=weights, log_weights=log_weights, name=name)
 
     def __repr__(self):
         return f"MarginalizedBroadcastDistribution(n={self.n}, event_shape={self.event_shape})"
@@ -83,13 +78,14 @@ class _MixtureMarginal[T](Distribution[T]):
     def __init__(
         self,
         components: list,
-        weights: Array | None,
+        weights: Array | Weights | None = None,
         *,
+        log_weights: Array | Weights | None = None,
         name: str | None = None,
     ):
         n = len(components)
         self._components = components
-        self._w = weights if weights is not None else jnp.ones(n, dtype=jnp.float32) / n
+        self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._name = name
         self._approximate = True
 
@@ -103,7 +99,7 @@ class _MixtureMarginal[T](Distribution[T]):
 
     @property
     def weights(self) -> Array:
-        return self._w
+        return self._w.normalized
 
     def __repr__(self):
         return f"MarginalizedBroadcastDistribution(mixture, n={self.n})"
@@ -120,7 +116,7 @@ class _MixtureSampling:
     def _sample(self, key, sample_shape=()):
         n_draws = prod(sample_shape) if sample_shape else 1
         key1, key2 = jax.random.split(key)
-        indices = jax.random.choice(key1, self.n, shape=(n_draws,), p=self.weights)
+        indices = self._w.choice(key1, shape=(n_draws,))
         keys = jax.random.split(key2, n_draws)
 
         results = []
@@ -138,7 +134,7 @@ class _MixtureMean:
 
     def _mean(self):
         means = jnp.stack([c._mean() for c in self._components], axis=0)
-        return jnp.einsum("n,n...->...", self.weights, means)
+        return self._w.mean(means)
 
 
 class _MixtureVariance:
@@ -147,11 +143,11 @@ class _MixtureVariance:
     def _variance(self):
         means = jnp.stack([c._mean() for c in self._components], axis=0)
         variances = jnp.stack([c._variance() for c in self._components], axis=0)
-        overall_mean = jnp.einsum("n,n...->...", self.weights, means)
+        overall_mean = self._w.mean(means)
         # Law of total variance: E[Var(Y|X)] + Var(E[Y|X])
-        e_var = jnp.einsum("n,n...->...", self.weights, variances)
+        e_var = self._w.mean(variances)
         diff = means - overall_mean
-        var_e = jnp.einsum("n,n...->...", self.weights, diff ** 2)
+        var_e = self._w.mean(diff ** 2)
         return e_var + var_e
 
 
@@ -159,7 +155,7 @@ class _MixtureLogProb:
     """SupportsLogProb mixin for mixture marginals."""
 
     def _log_prob(self, value):
-        log_w = jnp.log(self.weights)
+        log_w = self._w.log_normalized
         component_lps = jnp.stack(
             [c._log_prob(value) for c in self._components], axis=0
         )
@@ -180,7 +176,7 @@ _mixture_class_cache: dict[tuple[type, ...], type] = {}
 
 def _make_mixture_marginal(
     components: list,
-    weights: Array | None,
+    weights: Array | Weights | None = None,
     *,
     name: str | None = None,
 ) -> _MixtureMarginal:
@@ -219,12 +215,13 @@ class _ListMarginal[T](Distribution[T]):
     def __init__(
         self,
         items: list,
-        weights: Array | None,
+        weights: Array | Weights | None = None,
         *,
+        log_weights: Array | Weights | None = None,
         name: str | None = None,
     ):
         self._items = items
-        self._w = weights
+        self._w = Weights(n=len(items), weights=weights, log_weights=log_weights)
         self._name = name
 
     @property
@@ -236,8 +233,8 @@ class _ListMarginal[T](Distribution[T]):
         return self._items
 
     @property
-    def weights(self) -> Array | None:
-        return self._w
+    def weights(self) -> Array:
+        return self._w.normalized
 
     def __repr__(self):
         return f"MarginalizedBroadcastDistribution(list, n={self.n})"
@@ -257,7 +254,7 @@ Concrete subtype depends on output kind:
 
 def _make_marginal(
     output_samples: Any,
-    weights: Array | None,
+    weights: Array | Weights | None = None,
     *,
     output_distributions: list | None = None,
     name: str | None = None,
@@ -325,8 +322,13 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
         ``{arg_name: (n, *event_shape)}`` for each broadcast argument.
     output_samples : Array or list
         ``(n, *event_shape)`` for array outputs, or a list of length *n*.
-    weights : Array or None
-        ``(n,)`` normalised weights.  ``None`` for uniform.
+    weights : array-like, :class:`~probpipe.Weights`, or None
+        Non-negative weights (normalized internally).  A pre-built
+        :class:`~probpipe.Weights` object is also accepted.  Mutually
+        exclusive with *log_weights*.  ``None`` for uniform.
+    log_weights : array-like, :class:`~probpipe.Weights`, or None
+        Log-unnormalized weights.  A pre-built :class:`~probpipe.Weights`
+        object is also accepted.  Mutually exclusive with *weights*.
     output_distributions : list of Distribution or None
         When each function evaluation returns a ``Distribution``, these
         are the *n* component distributions for the mixture marginal.
@@ -343,8 +345,9 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
         self,
         input_samples: dict[str, Any],
         output_samples: Any,
-        weights: Array | None,
+        weights: Array | Weights | None = None,
         *,
+        log_weights: Array | Weights | None = None,
         output_distributions: list | None = None,
         broadcast_args: list[str],
         name: str | None = None,
@@ -353,10 +356,11 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
         self._output_samples = output_samples
         self._output_distributions = output_distributions
 
-        if weights is not None:
-            weights = jnp.asarray(weights, dtype=jnp.float32)
-            weights = weights / jnp.sum(weights)
-        self._weights = weights
+        # Determine n from first broadcast arg
+        first_key = list(broadcast_args)[0]
+        first_arr = input_samples[first_key]
+        n = first_arr.shape[0] if hasattr(first_arr, 'shape') else len(first_arr)
+        self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._broadcast_args = list(broadcast_args)
         self._name = name
         self._approximate = True
@@ -367,16 +371,12 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
     @property
     def n(self) -> int:
         """Number of input–output pairs."""
-        first_key = self._broadcast_args[0]
-        arr = self._input_samples[first_key]
-        return arr.shape[0] if hasattr(arr, 'shape') else len(arr)
+        return self._w.n
 
     @property
     def weights(self) -> Array:
         """Normalised weights, shape ``(n,)``."""
-        if self._weights is None:
-            return jnp.ones(self.n, dtype=jnp.float32) / self.n
-        return self._weights
+        return self._w.normalized
 
     @property
     def input_samples(self) -> dict[str, Any]:
@@ -400,7 +400,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
             return self.marginalize()
         if key in self._input_samples:
             arr = self._input_samples[key]
-            return EmpiricalDistribution(arr, weights=self._weights)
+            return EmpiricalDistribution(arr, weights=self._w)
         raise KeyError(f"Unknown component {key!r}; available: {self.component_names}")
 
     # -- joint sampling -----------------------------------------------------
@@ -408,10 +408,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
     def _sample(self, key, sample_shape=()):
         """Resample paired input–output tuples."""
         n_draws = prod(sample_shape) if sample_shape else 1
-        if self._weights is None:
-            indices = jax.random.randint(key, shape=(n_draws,), minval=0, maxval=self.n)
-        else:
-            indices = jax.random.choice(key, self.n, shape=(n_draws,), p=self.weights, replace=True)
+        indices = self._w.choice(key, shape=(n_draws,))
 
         result = {}
         for arg_name in self._broadcast_args:
@@ -443,7 +440,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
         if self._marginal_cache is None:
             self._marginal_cache = _make_marginal(
                 self._output_samples,
-                self._weights,
+                self._w,
                 output_distributions=self._output_distributions,
             )
             if self.source is not None and isinstance(self._marginal_cache, Distribution):

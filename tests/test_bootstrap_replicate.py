@@ -77,8 +77,16 @@ class TestProtocol:
         dist = BootstrapReplicateDistribution(jnp.ones((5, 2)))
         assert isinstance(dist, SupportsExpectation)
 
-    def test_generic_is_distribution_not_array(self):
+    def test_generic_numeric_dispatches_to_array(self):
+        # Factory dispatch: numeric arrays → ArrayBootstrapReplicateDistribution
         dist = BootstrapReplicateDistribution(jnp.ones((5, 2)))
+        assert isinstance(dist, Distribution)
+        assert isinstance(dist, ArrayDistribution)
+        assert isinstance(dist, ArrayBootstrapReplicateDistribution)
+
+    def test_generic_object_is_not_array(self):
+        # Non-numeric (object) source stays as base class
+        dist = BootstrapReplicateDistribution(["a", "b", "c"])
         assert isinstance(dist, Distribution)
         assert not isinstance(dist, ArrayDistribution)
 
@@ -210,19 +218,25 @@ class TestProperties:
         dist = BootstrapReplicateDistribution(jnp.ones((5, 2)))
         assert dist._approximate is True
 
-    def test_no_event_shape(self):
-        """Generic BootstrapReplicateDistribution has no event_shape."""
+    def test_numeric_has_event_shape(self):
+        """Numeric arrays dispatch to Array variant with event_shape."""
         dist = BootstrapReplicateDistribution(jnp.ones((5, 2)))
+        assert hasattr(dist, "event_shape")
+        assert dist.event_shape == (5, 2)
+
+    def test_generic_no_event_shape(self):
+        """Non-numeric BootstrapReplicateDistribution has no event_shape."""
+        dist = BootstrapReplicateDistribution(["a", "b", "c"])
         assert not hasattr(dist, "event_shape") or "event_shape" not in type(dist).__dict__
 
-    def test_no_dim(self):
-        """Generic BootstrapReplicateDistribution has no dim."""
-        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)))
+    def test_generic_no_dim(self):
+        """Non-numeric BootstrapReplicateDistribution has no dim."""
+        dist = BootstrapReplicateDistribution(["a", "b", "c"])
         assert not hasattr(dist, "dim") or "dim" not in type(dist).__dict__
 
-    def test_no_dtype(self):
-        """Generic BootstrapReplicateDistribution has no dtype."""
-        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)))
+    def test_generic_no_dtype(self):
+        """Non-numeric BootstrapReplicateDistribution has no dtype."""
+        dist = BootstrapReplicateDistribution(["a", "b", "c"])
         assert not hasattr(dist, "dtype") or "dtype" not in type(dist).__dict__
 
 

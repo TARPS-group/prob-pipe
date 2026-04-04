@@ -173,11 +173,18 @@ class TestSupportsMean:
         assert isinstance(normal, SupportsMean)
         assert isinstance(normal, SupportsVariance)
 
-    def test_empirical_generic_no_moments(self, empirical):
-        """Generic EmpiricalDistribution does not support moments."""
-        assert not isinstance(empirical, SupportsMean)
-        assert not isinstance(empirical, SupportsVariance)
-        assert not isinstance(empirical, SupportsCovariance)
+    def test_empirical_numeric_has_moments(self, empirical):
+        """Numeric EmpiricalDistribution dispatches to Array variant with moments."""
+        assert isinstance(empirical, SupportsMean)
+        assert isinstance(empirical, SupportsVariance)
+        assert isinstance(empirical, SupportsCovariance)
+
+    def test_empirical_generic_no_moments(self):
+        """Non-numeric EmpiricalDistribution does not support moments."""
+        dist = EmpiricalDistribution(["a", "b", "c"])
+        assert not isinstance(dist, SupportsMean)
+        assert not isinstance(dist, SupportsVariance)
+        assert not isinstance(dist, SupportsCovariance)
 
     def test_array_empirical(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 2))

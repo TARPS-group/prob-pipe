@@ -90,6 +90,7 @@ probpipe/
 ├── custom_types.py          # Array, PRNGKey, ArrayLike type aliases
 ├── _utils.py                # Internal utilities
 ├── _array_utils.py          # Array manipulation helpers
+├── _weights.py              # Weights class + weighted operations
 │
 ├── core/                    # Core abstractions (no specialized distributions)
 │   ├── distribution.py        # Re-export facade for all core distribution symbols
@@ -200,6 +201,22 @@ subclass:
 The generic base carries only type-agnostic features (sampling, expectation).
 The array variant adds `event_shape`, `dim`, `dtype`, `support`, and moment
 protocols (`SupportsMean`, `SupportsVariance`, `SupportsCovariance`).
+
+**Automatic factory dispatch:** Constructing a generic base with a numeric
+array automatically returns the array-specific subclass:
+
+```python
+EmpiricalDistribution(jnp.ones((100, 3)))
+# → returns ArrayEmpiricalDistribution
+
+BootstrapReplicateDistribution(jnp.ones((50, 2)))
+# → returns ArrayBootstrapReplicateDistribution
+```
+
+This is implemented via `__new__` on the generic base classes.  Non-numeric
+inputs (e.g. lists of objects, numpy object arrays) remain as the generic
+base class.  Calling the array subclass directly (e.g.
+`ArrayEmpiricalDistribution(...)`) is unaffected by the dispatch.
 
 ---
 

@@ -327,12 +327,11 @@ class TestEmpiricalLogWeights:
         ed = EmpiricalDistribution(simple_samples)
         assert ed.is_uniform
         np.testing.assert_allclose(ed.weights, jnp.ones(3) / 3)
-        assert ed.log_weights is None
+        np.testing.assert_allclose(ed.log_weights, jnp.full(3, -jnp.log(3.0)), atol=1e-6)
 
     def test_weighted_not_uniform(self, simple_samples, simple_weights):
         ed = EmpiricalDistribution(simple_samples, simple_weights)
         assert not ed.is_uniform
-        assert ed.log_weights is not None
 
     def test_uniform_mean_matches_numpy(self):
         samples = jnp.array([[1.0], [3.0], [5.0]])
