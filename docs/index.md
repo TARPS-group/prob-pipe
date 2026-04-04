@@ -2,15 +2,27 @@ ProbPipe is a Python framework for building probabilistic pipelines with automat
 
 ## Why ProbPipe?
 
-Scientific discovery and real-world decision-making increasingly depend on complex, end-to-end inferential pipelines that integrate heterogeneous data, fit probabilistic models, propagate uncertainty, and validate predictions. Yet high-quality uncertainty quantification (UQ) is rarely achieved at scale because such pipelines are difficult to construct in a way that is simultaneously flexible, reliable, and scalable.
+### The challenge
 
-ProbPipe provides general-purpose abstractions for probabilistic *workflows* -- making composability, scalability, and reproducibility the default. Its design is driven by five requirements:
+Most workflows for probabilistic inference -- including validation procedures -- can be described in terms of four **abstract components**:
 
-- **Reusable inferential components.** Workflows are expressed in terms of modular, swappable statistical units rather than low-level orchestration primitives.
-- **Interoperability with the Python ecosystem.** Modules can wrap existing ML and probabilistic libraries, and automatic conversion among distributional representations removes brittleness.
-- **End-to-end uncertainty propagation.** When a workflow node expects a concrete value but receives a distribution, ProbPipe automatically broadcasts over samples -- users write deterministic functions and get UQ for free.
-- **Seamless scalability.** The same pipeline scales computationally (JAX vectorization) and operationally (Prefect orchestration) without code changes.
-- **Provenance and reproducibility.** Every distribution records how it was created, enabling full lineage tracing from any result back to its inputs.
+1. **Distributions** -- priors, posteriors, data products ($\pi, p, q, \nu, \mu, \dots$)
+2. **Fixed inputs** -- data and hyperparameters ($\boldsymbol{X}, \boldsymbol{Y}, \alpha_0, \beta_0, \dots$)
+3. **Operations** that transform distributions, possibly depending on fixed inputs -- conditioning, pushforwards through functions, taking expectations
+4. **Differentiation** with respect to fixed inputs
+
+Using these abstractions, even complex workflows can be written down succinctly. However, *implementing* them requires concrete representations of distributions and algorithms for operations -- each creating its own challenge:
+
+- **Algorithmic challenges.** There are usually many possible algorithms for a given operation. A posterior could be approximated using different MCMC algorithms, variational inference methods, or sequential Monte Carlo. These are implemented across many packages and often not designed to be directly compatible.
+- **Representational challenges.** Algorithms often require or output specific distribution representations that are not compatible with other parts of the workflow. For example, MCMC outputs a discrete approximation to a distribution, but many MCMC algorithms require continuous representations of prior distributions.
+
+### ProbPipe's approach
+
+ProbPipe manages representations and algorithms automatically by default, while giving you control over these choices when you want it:
+
+- **`Distribution`s** are generic and support subsets of capabilities via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsConditioning`, ...). This means external distribution types (TFP, scipy) can participate without inheriting from ProbPipe base classes.
+- **`WorkflowFunction`s** natively handle conversion between distribution representations and automatically compute **pushforward distributions** when functions defined on fixed inputs receive distributions as arguments.
+- **`Module`s** wrap multiple workflow functions with shared state, enabling reusable inferential components.
 
 ## Quick Example
 
@@ -20,15 +32,12 @@ Fit a Bayesian model, then propagate posterior uncertainty through a prediction 
 import jax
 import jax.numpy as jnp
 from probpipe import (
-    MultivariateNormal, SimpleModel, WorkflowFunction,
-    condition_on, mean, variance, sample,
+    MultivariateNormal, SimpleModel, workflow_function,
+    condition_on, mean, variance,
 )
-from probpipe.modeling import Likelihood
-from probpipe.core.node import wf
 
 # 1. Define a model
-class LinearLikelihood(Likelihood):
-    @wf
+class LinearLikelihood:
     def log_likelihood(self, params, data):
         x, y = data[:, 0], data[:, 1]
         return jnp.sum(-0.5 * (y - (params[0] + params[1] * x)) ** 2)
@@ -37,31 +46,22 @@ prior = MultivariateNormal(loc=jnp.zeros(2), cov=10.0 * jnp.eye(2))
 model = SimpleModel(prior, LinearLikelihood())
 
 # 2. Fit the posterior
-key = jax.random.PRNGKey(42)
-x_obs = jnp.linspace(0, 1, 20)
-y_obs = 1.0 + 2.0 * x_obs + 0.3 * jax.random.normal(key, shape=(20,))
-data = jnp.column_stack([x_obs, y_obs])
-
 posterior = condition_on(model, data)
-mean(posterior)       # Array([1.0558641, 2.061712], dtype=float32)
 
 # 3. Propagate uncertainty through predictions
-predict = WorkflowFunction(func=lambda params, x: params[0] + params[1] * x)
+@workflow_function
+def predict(params, x):
+    return params[0] + params[1] * x
+
 predictive = predict(params=posterior, x=0.5)
-
-# Broadcasting returns the output distribution directly
-mean(predictive)       # Array(2.087983, dtype=float32)
-variance(predictive)   # Array(0.04383527, dtype=float32)
-
-# Pass include_inputs=True to retain the joint over inputs and output
-joint = predict(params=posterior, x=0.5, include_inputs=True)
-joint.input_samples.keys()  # dict_keys(['params'])
+mean(predictive)       # posterior predictive mean
+variance(predictive)   # posterior predictive variance
 ```
 
-When a `WorkflowFunction` receives a distribution where it expects a concrete value, it automatically broadcasts over samples and returns the output distribution. Pass `include_inputs=True` to get a `BroadcastDistribution` -- a joint distribution preserving input--output alignment. The output can be passed into downstream workflow nodes, triggering further uncertainty propagation.
+When a `WorkflowFunction` receives a distribution where it expects a concrete value, it automatically broadcasts over samples and returns the output distribution.
 
 ## Next Steps
 
-- [Getting Started](getting-started.md) -- installation and a complete posterior inference walkthrough
-- [Tutorials](tutorials.md) -- guided notebooks covering distributions, transforms, joint models, and more
+- [Getting Started tutorial](tutorials/getting_started.ipynb) -- iterative Bayesian model building following the Bayesian Workflow (Gelman et al., 2020)
+- [Reference Notebooks](reference_notebooks.md) -- in-depth coverage of specific ProbPipe features
 - [API Reference](api/distributions.md) -- full class and function documentation

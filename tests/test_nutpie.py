@@ -10,7 +10,7 @@ from probpipe.inference._nutpie import (
     _compile_for_nutpie,
     _extract_chains,
     _extract_nutpie_diagnostics,
-    _condition_on_nutpie_impl,
+    condition_on_nutpie,
 )
 from probpipe.inference import MCMCApproximateDistribution, InferenceDiagnostics
 
@@ -243,7 +243,7 @@ class TestExtractNutpieDiagnostics:
 
 
 # ---------------------------------------------------------------------------
-# _condition_on_nutpie_impl
+# condition_on_nutpie._func
 # ---------------------------------------------------------------------------
 
 
@@ -268,7 +268,7 @@ class TestNutpieSampleImpl:
         )
         mock_nutpie.sample.return_value = mock_trace
 
-        result = _condition_on_nutpie_impl(
+        result = condition_on_nutpie._func(
             model,
             data={"N": 10},
             num_results=20,
@@ -289,4 +289,4 @@ class TestNutpieSampleImpl:
         """Raises ImportError with install instructions when nutpie missing."""
         with patch.dict("sys.modules", {"nutpie": None}):
             with pytest.raises(ImportError, match="pip install nutpie"):
-                _condition_on_nutpie_impl(MagicMock(), num_results=10)
+                condition_on_nutpie._func(MagicMock(), num_results=10)

@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 
 from ..core.provenance import Provenance
-from ..core.node import WorkflowFunction
+from ..core.node import workflow_function
 from ..core.protocols import SupportsLogProb, SupportsMean
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._diagnostics import InferenceDiagnostics
@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 __all__ = ["rwmh"]
 
 
-def _rwmh_impl(
+@workflow_function
+def rwmh(
     dist: SupportsLogProb,
     data: ArrayLike | None = None,
     *,
@@ -168,5 +169,3 @@ def _rwmh_impl(
     )
     return result
 
-
-rwmh = WorkflowFunction(func=_rwmh_impl, name="rwmh")

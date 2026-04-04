@@ -59,26 +59,63 @@ from ..converters import converter_registry
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["InputFrozenError", "wf", "Node", "abstractwf", "WorkflowFunction", "Module", "AbstractModule"]
+__all__ = [
+    "InputFrozenError",
+    "workflow_method",
+    "abstract_workflow_method",
+    "workflow_function",
+    "Node",
+    "WorkflowFunction",
+    "Module",
+    "AbstractModule",
+]
 
 class InputFrozenError(Exception):
     pass
 
-def abstractwf(func: Callable):
+
+def workflow_method(func: Callable):
+    """Mark a method as a workflow method for :class:`Module` subclasses.
+
+    Methods decorated with ``@workflow_method`` are automatically
+    converted to :class:`WorkflowFunction` instances when the
+    ``Module`` is instantiated.
     """
-    Marks a method as:
-      - a workflow interface (via wf)
-      - abstract (enforced by ABCMeta)
-
-    This allows abstract modules to declare workflow-shaped interfaces
-    without providing implementations.
-    """
-    return abstractmethod(wf(func))
-
-
-def wf(func: Callable):
     func._is_workflow = True
     return func
+
+
+def abstract_workflow_method(func: Callable):
+    """Mark a method as an abstract workflow interface.
+
+    Combines ``@abstractmethod`` with ``@workflow_method`` so that
+    :class:`AbstractModule` subclasses can declare workflow-shaped
+    interfaces without providing implementations.
+    """
+    return abstractmethod(workflow_method(func))
+
+
+def workflow_function(_func=None, /, **kwargs):
+    """Decorator to create a :class:`WorkflowFunction` from a plain function.
+
+    Can be used with or without arguments::
+
+        @workflow_function
+        def my_func(x, y):
+            return x + y
+
+        @workflow_function(n_broadcast_samples=100, vectorize="loop")
+        def my_func(x, y):
+            return x + y
+    """
+    def decorator(func):
+        return WorkflowFunction(func=func, name=func.__name__, **kwargs)
+
+    if _func is not None:
+        # Bare @workflow_function (no parentheses)
+        return decorator(_func)
+    # @workflow_function(...) with arguments
+    return decorator
 
 
 class Node(ABC):
@@ -196,6 +233,15 @@ class WorkflowFunction(Node):
         self._hints = get_type_hints(func)
         self._workflow_kind = workflow_kind
         self._name = name or getattr(func, "__name__", self.__class__.__name__)
+
+        # Expose wrapped function's metadata for introspection (help(),
+        # inspect.signature(), IDE tooltips, mkdocstrings).  We skip
+        # __wrapped__ to prevent inspect.unwrap() from bypassing __call__.
+        self.__doc__ = func.__doc__
+        self.__name__ = self._name
+        self.__qualname__ = getattr(func, "__qualname__", self._name)
+        self.__signature__ = self._sig
+        self.__module__ = getattr(func, "__module__", None)
         self._module = module
         self._n_broadcast_samples = n_broadcast_samples if n_broadcast_samples is not None else self.DEFAULT_N_BROADCAST_SAMPLES
         self._vectorize = vectorize
@@ -213,6 +259,10 @@ class WorkflowFunction(Node):
 
         # Precompute parameter metadata once
         self._param_names = [p for p in self._sig.parameters if p != "self"]
+        self._has_var_keyword = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD
+            for p in self._sig.parameters.values()
+        )
 
         # Reserved names that would collide with WorkflowFunction call-time overrides
         _RESERVED = {"n_broadcast_samples", "seed", "include_inputs"}
@@ -242,7 +292,27 @@ class WorkflowFunction(Node):
             # isinstance(ann, type) but fail in issubclass().
             return False
 
-    def __call__(self, **call_inputs):
+    def __call__(self, *args, **call_inputs):
+        # Bind positional args to parameter names using the wrapped function's
+        # signature so callers can use positional arguments naturally.
+        if args:
+            bound = self._sig.bind_partial(*args)
+            for name, value in bound.arguments.items():
+                if name in call_inputs:
+                    raise TypeError(
+                        f"{self._name}() got multiple values for argument '{name}'"
+                    )
+                call_inputs[name] = value
+
+        # If the wrapped function has a **kwargs parameter, sig.bind nests
+        # the extra keyword args under the parameter name.  Unpack them so
+        # they reach the function as top-level keyword arguments.
+        if self._has_var_keyword:
+            for p in self._sig.parameters.values():
+                if p.kind == inspect.Parameter.VAR_KEYWORD and p.name in call_inputs:
+                    extra = call_inputs.pop(p.name)
+                    call_inputs.update(extra)
+
         # Extract reserved call-time overrides (collision already prevented in __init__)
         n_broadcast_samples = call_inputs.pop("n_broadcast_samples", self._n_broadcast_samples)
         do_include_inputs = call_inputs.pop("include_inputs", self._include_inputs)
@@ -344,8 +414,17 @@ class WorkflowFunction(Node):
         return values
 
     def _convert_distributions(self, values: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Convert distributions based on type hints.
+        """Convert distributions based on type hints.
+
+        Handles two cases:
+
+        1. **Concrete type hints** – if the hint is a ``Distribution``
+           subclass and the value is a recognised distribution that is
+           not already an instance, convert via the registry.
+        2. **Protocol type hints** – if the hint is a
+           ``@runtime_checkable`` protocol (e.g., ``SupportsLogProb``)
+           and the value is a ``Distribution`` that does not satisfy the
+           protocol, convert via protocol-based resolution.
         """
         out = dict(values)
 
@@ -367,6 +446,16 @@ class WorkflowFunction(Node):
                 and not isinstance(value, expected)
             ):
                 out[name] = converter_registry.convert(value, expected)
+            elif (
+                not is_dist_subclass
+                and expected in _DISTRIBUTION_PROTOCOLS
+                and isinstance(value, Distribution)
+                and not isinstance(value, expected)
+            ):
+                try:
+                    out[name] = converter_registry.convert(value, expected)
+                except (TypeError, AttributeError):
+                    pass  # Let the impl function's own check raise
 
         return out
 
@@ -840,7 +929,7 @@ class Module(Node):
 
     def _build_workflows(self):
         """
-        Replace @wf methods with WorkflowFunction instances.
+        Replace @workflow_method methods with WorkflowFunction instances.
         """
         for attr_name in dir(self):
             attr = getattr(self, attr_name)
@@ -853,14 +942,14 @@ class Module(Node):
             if getattr(func, "__isabstractmethod__", False):
                 continue
 
-            wf = WorkflowFunction(
+            wf_instance = WorkflowFunction(
                 func=func,
                 workflow_kind=self._workflow_kind,
                 name=f"{self.__class__.__name__}.{func.__name__}",
-                module=self,  # <--- this is the key
+                module=self,
             )
 
-            setattr(self, attr_name, wf)
+            setattr(self, attr_name, wf_instance)
 
     def dag(self):
         """Return a Graphviz DAG visualization of this module."""
@@ -947,8 +1036,8 @@ class Module(Node):
         by a concrete workflow with a compatible signature.
 
         This prevents a common failure mode:
-          - base class declares @abstractwf interface
-          - subclass defines a method with same name but forgets @wf
+          - base class declares @abstract_workflow_method interface
+          - subclass defines a method with same name but forgets @workflow_method
           - or implements it with a mismatched signature
         """
         cls = self.__class__
@@ -976,11 +1065,11 @@ class Module(Node):
                         f"{cls.__name__} does not implement abstract workflow '{name}'."
                     )
 
-                # Must be marked as workflow (@wf)
+                # Must be marked as workflow (@workflow_method)
                 if not getattr(impl_attr, "_is_workflow", False):
                     raise TypeError(
                         f"{cls.__name__}.{name} implements an abstract workflow interface "
-                        f"but is not marked with @wf."
+                        f"but is not marked with @workflow_method."
                     )
 
                 # Compare signatures (use unbound function signatures to include 'self')
@@ -1032,7 +1121,7 @@ class Module(Node):
             
 class AbstractModule(Module, ABC):
     """
-    Base class for modules that declare workflow interfaces via @abstractwf.
+    Base class for modules that declare workflow interfaces via @abstract_workflow_method.
 
     ABCMeta will prevent instantiation until all abstract workflows are implemented
     by a concrete subclass.

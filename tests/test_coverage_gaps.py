@@ -205,25 +205,16 @@ class TestOpsErrorPaths:
 
     def test_prob_requires_log_prob(self):
         from probpipe import ArrayDistribution
-        from probpipe.core.distribution import _vmap_sample
-        from probpipe.core.protocols import SupportsSampling
 
-        class NoLogProbDist(ArrayDistribution, SupportsSampling):
-            _sampling_cost = "low"
-            _preferred_orchestration = None
+        class NoLogProbNoSampleDist(ArrayDistribution):
+            """Has neither SupportsLogProb nor SupportsSampling."""
 
             @property
             def event_shape(self):
                 return ()
 
-            def _sample_one(self, key):
-                return jnp.float32(0.0)
-
-            def _sample(self, key, sample_shape=()):
-                return _vmap_sample(self, key, sample_shape)
-
-        d = NoLogProbDist()
-        with pytest.raises(TypeError, match="does not support prob"):
+        d = NoLogProbNoSampleDist()
+        with pytest.raises(TypeError):
             prob(d, jnp.float32(0.0))
 
     def test_expectation_requires_protocol(self):

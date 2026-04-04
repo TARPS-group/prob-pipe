@@ -86,8 +86,10 @@ from probpipe.distributions import (
     # Gaussian random functions
     GaussianRandomFunction,
     LinearBasisFunction,
+    # KDE
+    KDEDistribution,
 )
-from probpipe.core.node import WorkflowFunction, Module, wf
+from probpipe.core.node import WorkflowFunction, Module, workflow_function, workflow_method, abstract_workflow_method
 from probpipe.core.provenance import Provenance, provenance_ancestors, provenance_dag
 from probpipe.core.constraints import (
     Constraint,
@@ -104,7 +106,7 @@ from probpipe.core.constraints import (
     greater_than,
     integer_interval,
 )
-from probpipe.modeling import Likelihood, GenerativeLikelihood, IterativeForecaster
+from probpipe.modeling import GLMLikelihood, Likelihood, GenerativeLikelihood, IncrementalConditioner
 from probpipe.inference import (
     InferenceDiagnostics,
     MCMCDiagnostics,
@@ -113,6 +115,7 @@ from probpipe.inference import (
     condition_on_nutpie,
 )
 from probpipe.modeling import ProbabilisticModel, SimpleModel
+from probpipe.validation import predictive_check
 from probpipe.core.protocols import (
     SupportsExpectation,
     SupportsSampling,
@@ -201,7 +204,9 @@ __all__ = [
     # WorkflowFunction
     "WorkflowFunction",
     "Module",
-    "wf",
+    "workflow_function",
+    "workflow_method",
+    "abstract_workflow_method",
     # Provenance
     "provenance_ancestors",
     "provenance_dag",
@@ -210,6 +215,8 @@ __all__ = [
     "ArrayRandomFunction",
     "GaussianRandomFunction",
     "LinearBasisFunction",
+    # KDE
+    "KDEDistribution",
     # Protocols
     "SupportsExpectation",
     "SupportsSampling",
@@ -222,9 +229,10 @@ __all__ = [
     "SupportsNamedComponents",
     "SupportsConditionableComponents",
     # Modeling
+    "GLMLikelihood",
     "Likelihood",
     "GenerativeLikelihood",
-    "IterativeForecaster",
+    "IncrementalConditioner",
     "ProbabilisticModel",
     "SimpleModel",
     # Inference
@@ -233,6 +241,8 @@ __all__ = [
     "MCMCApproximateDistribution",
     "rwmh",
     "condition_on_nutpie",
+    # Validation
+    "predictive_check",
     # Converters
     "converter_registry",
     "ConversionInfo",

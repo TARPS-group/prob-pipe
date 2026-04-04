@@ -1,48 +1,173 @@
-"""Converter protocol for distribution type conversion."""
+"""Protocol-based distribution converter.
+
+Converts a distribution that lacks a required protocol (e.g.,
+``SupportsLogProb``) into one that satisfies it by resolving the
+protocol to a concrete target type and delegating to the registry.
+"""
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Any
 
-from ._registry import ConversionInfo
+from ._registry import ConversionInfo, ConversionMethod, Converter
 
 
-class Converter(ABC):
-    """Base class for distribution converters.
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-    Subclasses declare which types they can convert between via
-    ``source_types()`` and ``target_types()``, provide a cheap
-    ``check()`` probe, and implement ``convert()`` for the actual work.
+def _is_protocol(tp: Any) -> bool:
+    """Return ``True`` if *tp* is a ``@runtime_checkable`` Protocol class.
+
+    Concrete classes that *inherit* from a protocol have
+    ``_is_runtime_protocol`` inherited, so we check that the attribute
+    is defined directly on *tp* (not inherited) via ``__dict__``.
+    """
+    return (
+        "_is_runtime_protocol" in getattr(tp, "__dict__", {})
+        and tp.__dict__["_is_runtime_protocol"]
+    )
+
+
+def _resolve_target_for_log_prob(dist: Any) -> type:
+    """Choose KDEDistribution as the default log-prob conversion target.
+
+    KDE is a more universal choice than moment-matching to
+    Normal/MultivariateNormal because it can capture multimodality,
+    skewness, and other non-Gaussian structure.
+    """
+    from ..distributions.kde import KDEDistribution
+
+    return KDEDistribution
+
+
+# ---------------------------------------------------------------------------
+# ProtocolConverter
+# ---------------------------------------------------------------------------
+
+class ProtocolConverter(Converter):
+    """Converter that resolves ``@runtime_checkable`` protocol targets.
+
+    When the *target_type* passed to :meth:`check` or :meth:`convert`
+    is a protocol (e.g., ``SupportsLogProb``) rather than a concrete
+    distribution class, this converter:
+
+    1. Returns the source unchanged if it already satisfies the protocol.
+    2. Resolves the protocol to a concrete target type via a registered
+       resolver function.
+    3. Delegates the concrete conversion back to the *registry*.
+
+    Resolvers are registered with :meth:`register_protocol_target`.
+
+    Parameters
+    ----------
+    registry : ConverterRegistry
+        The registry instance to delegate concrete conversions to.
     """
 
-    @abstractmethod
+    def __init__(self, registry: Any) -> None:
+        self._registry = registry
+        self._resolvers: dict[type, Callable[[Any], type]] = {}
+
+    def register_protocol_target(
+        self,
+        protocol: type,
+        resolver: Callable[[Any], type],
+    ) -> None:
+        """Register a resolver that maps a protocol to a concrete target type.
+
+        Parameters
+        ----------
+        protocol : type
+            A ``@runtime_checkable`` Protocol class (e.g.,
+            ``SupportsLogProb``).
+        resolver : callable
+            A function ``(source_distribution) -> target_type`` that
+            inspects the source distribution and returns the concrete
+            distribution class to convert to.
+        """
+        self._resolvers[protocol] = resolver
+
+    # -- Converter interface ------------------------------------------------
+
     def source_types(self) -> tuple[type, ...]:
-        """Types this converter can convert FROM."""
-        ...
+        from ..core.distribution import Distribution
 
-    @abstractmethod
+        return (Distribution,)
+
     def target_types(self) -> tuple[type, ...]:
-        """Types this converter can convert TO."""
-        ...
+        return ()  # Targets are protocols, not concrete types
 
-    @abstractmethod
     def check(self, source: Any, target_type: type) -> ConversionInfo:
-        """Inspect feasibility and cost without performing conversion.
+        if not _is_protocol(target_type):
+            return ConversionInfo(feasible=False)
 
-        Must be cheap (no sampling, no heavy computation).
-        """
-        ...
+        if isinstance(source, target_type):
+            return ConversionInfo(
+                feasible=True,
+                method=ConversionMethod.EXACT,
+                estimated_time=0.0,
+                source_type=type(source),
+                target_type=target_type,
+                description=(
+                    f"{type(source).__name__} already satisfies "
+                    f"{target_type.__name__}"
+                ),
+            )
 
-    @abstractmethod
-    def convert(self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any) -> Any:
-        """Perform the actual conversion.
+        resolver = self._resolvers.get(target_type)
+        if resolver is None:
+            return ConversionInfo(
+                feasible=False,
+                source_type=type(source),
+                target_type=target_type,
+                description=(
+                    f"No protocol resolver registered for "
+                    f"{target_type.__name__}"
+                ),
+            )
 
-        Returns an instance of *target_type* (or a compatible subclass).
-        """
-        ...
+        # Resolve and probe the concrete conversion
+        concrete_type = resolver(source)
+        return self._registry.check(source, concrete_type)
+
+    def convert(
+        self,
+        source: Any,
+        target_type: type,
+        *,
+        key: Any | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        if not _is_protocol(target_type):
+            raise TypeError(
+                f"ProtocolConverter only handles protocol targets, "
+                f"got {target_type!r}"
+            )
+
+        if isinstance(source, target_type):
+            return source
+
+        resolver = self._resolvers.get(target_type)
+        if resolver is None:
+            raise TypeError(
+                f"No protocol resolver registered for "
+                f"{target_type.__name__}. "
+                f"{type(source).__name__} does not satisfy "
+                f"{target_type.__name__} and no automatic conversion "
+                f"is available."
+            )
+
+        concrete_type = resolver(source)
+        return self._registry.convert(
+            source, concrete_type, key=key, **kwargs
+        )
 
     @property
     def priority(self) -> int:
-        """Higher priority converters are tried first. Default 0."""
-        return 0
+        # Highest priority so protocol targets are intercepted before
+        # concrete converters (which would reject them).
+        return 200
+
+

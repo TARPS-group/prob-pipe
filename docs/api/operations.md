@@ -11,7 +11,7 @@ from probpipe import sample, mean, log_prob, condition_on
 
 ## Sampling
 
-::: probpipe.core.ops._sample_impl
+::: probpipe.core.ops.sample
     options:
       show_root_heading: true
       heading_level: 3
@@ -19,25 +19,25 @@ from probpipe import sample, mean, log_prob, condition_on
 
 ## Density Evaluation
 
-::: probpipe.core.ops._log_prob_impl
+::: probpipe.core.ops.log_prob
     options:
       show_root_heading: true
       heading_level: 3
       show_root_full_path: false
 
-::: probpipe.core.ops._prob_impl
+::: probpipe.core.ops.prob
     options:
       show_root_heading: true
       heading_level: 3
       show_root_full_path: false
 
-::: probpipe.core.ops._unnormalized_log_prob_impl
+::: probpipe.core.ops.unnormalized_log_prob
     options:
       show_root_heading: true
       heading_level: 3
       show_root_full_path: false
 
-::: probpipe.core.ops._unnormalized_prob_impl
+::: probpipe.core.ops.unnormalized_prob
     options:
       show_root_heading: true
       heading_level: 3
@@ -45,25 +45,25 @@ from probpipe import sample, mean, log_prob, condition_on
 
 ## Moments and Expectations
 
-::: probpipe.core.ops._mean_impl
+::: probpipe.core.ops.mean
     options:
       show_root_heading: true
       heading_level: 3
       show_root_full_path: false
 
-::: probpipe.core.ops._variance_impl
+::: probpipe.core.ops.variance
     options:
       show_root_heading: true
       heading_level: 3
       show_root_full_path: false
 
-::: probpipe.core.ops._cov_impl
+::: probpipe.core.ops.cov
     options:
       show_root_heading: true
       heading_level: 3
       show_root_full_path: false
 
-::: probpipe.core.ops._expectation_impl
+::: probpipe.core.ops.expectation
     options:
       show_root_heading: true
       heading_level: 3
@@ -71,7 +71,7 @@ from probpipe import sample, mean, log_prob, condition_on
 
 ## Conditioning
 
-::: probpipe.core.ops._condition_on_impl
+::: probpipe.core.ops.condition_on
     options:
       show_root_heading: true
       heading_level: 3
@@ -79,7 +79,7 @@ from probpipe import sample, mean, log_prob, condition_on
 
 ## Conversion
 
-::: probpipe.core.ops._from_distribution_impl
+::: probpipe.core.ops.from_distribution
     options:
       show_root_heading: true
       heading_level: 3

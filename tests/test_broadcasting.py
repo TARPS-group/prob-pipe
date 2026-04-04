@@ -49,6 +49,28 @@ class TestBroadcastingBasic:
         assert not isinstance(result, BroadcastDistribution)
         assert result.dim == 1
 
+    def test_positional_args(self):
+        """WorkflowFunction accepts positional arguments."""
+        from probpipe.core.node import workflow_function
+
+        @workflow_function(n_broadcast_samples=30, vectorize="loop", seed=5)
+        def add(x, y):
+            return x + y
+
+        # Both positional
+        result = add(jnp.array(1.0), jnp.array(2.0))
+        np.testing.assert_allclose(float(result), 3.0)
+
+        # Mixed: first positional, second keyword
+        result = add(jnp.array(1.0), y=jnp.array(2.0))
+        np.testing.assert_allclose(float(result), 3.0)
+
+        # Positional with distribution triggers broadcasting
+        g = Normal(loc=0.0, scale=0.1)
+        result = add(g, y=jnp.array(1.0))
+        assert hasattr(result, 'samples')
+        assert result.n == 30
+
     def test_no_input_samples_by_default(self):
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
