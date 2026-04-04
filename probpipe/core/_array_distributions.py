@@ -412,9 +412,14 @@ class BootstrapDistribution(ArrayDistribution, SupportsSampling, SupportsMean, S
     ----------
     evaluations : array-like, shape ``(n, *stat_shape)``
         The individual ``f(x_i)`` values.
-    weights : array-like, shape ``(n,)``, optional
-        Non-negative weights (normalised internally).  When ``None``,
-        uniform weights are used.
+    weights : array-like, :class:`~probpipe.Weights`, or None
+        Non-negative weights (normalized internally).  A pre-built
+        :class:`~probpipe.Weights` object is also accepted.  Mutually
+        exclusive with *log_weights*.  When neither is given, uniform
+        weights are used.
+    log_weights : array-like, :class:`~probpipe.Weights`, or None
+        Log-unnormalized weights.  A pre-built :class:`~probpipe.Weights`
+        object is also accepted.  Mutually exclusive with *weights*.
     name : str, optional
         Distribution name.
     """

@@ -422,6 +422,47 @@ class TestWeightsRepr:
         assert "n=3" in repr(w)
 
 
+class TestWeightsEquality:
+    def test_uniform_equal(self):
+        assert Weights(n=5) == Weights(n=5)
+
+    def test_uniform_different_n(self):
+        assert Weights(n=3) != Weights(n=5)
+
+    def test_weighted_equal(self):
+        arr = jnp.array([1.0, 2.0, 3.0])
+        assert Weights(weights=arr) == Weights(weights=arr)
+
+    def test_weighted_different(self):
+        assert Weights(weights=jnp.array([1.0, 2.0])) != Weights(weights=jnp.array([1.0, 3.0]))
+
+    def test_uniform_vs_weighted(self):
+        assert Weights(n=3) != Weights(weights=jnp.ones(3))
+
+    def test_not_equal_to_non_weights(self):
+        assert Weights(n=3) != "not a Weights"
+        assert Weights(n=3) != 3
+
+    def test_hash_uniform(self):
+        assert hash(Weights(n=5)) == hash(Weights(n=5))
+
+    def test_hash_weighted(self):
+        arr = jnp.array([1.0, 2.0, 3.0])
+        assert hash(Weights(weights=arr)) == hash(Weights(weights=arr))
+
+    def test_hash_usable_in_set(self):
+        w1 = Weights(n=5)
+        w2 = Weights(n=5)
+        w3 = Weights(n=3)
+        s = {w1, w2, w3}
+        assert len(s) == 2
+
+    def test_hash_usable_as_dict_key(self):
+        w = Weights(n=5)
+        d = {w: "value"}
+        assert d[Weights(n=5)] == "value"
+
+
 # ---------------------------------------------------------------------------
 # Factory dispatch tests
 # ---------------------------------------------------------------------------

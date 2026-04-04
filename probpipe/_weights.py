@@ -288,6 +288,23 @@ class Weights:
     ``is_uniform`` and ``n`` are static auxiliary data.  The
     normalization cache is a Python-side optimization that is recomputed
     inside traced contexts.
+
+    Notes
+    -----
+    **Zero weights and ``-inf`` in log-space.** When a weight array
+    contains zeros (e.g. ``[0.0, 1.0, 0.0]``), the internal
+    log-representation stores ``-inf`` for those entries.  All
+    ``Weights`` operations handle this correctly:
+
+    - ``normalized`` produces ``0.0`` for those items (via softmax).
+    - ``log_normalized`` contains ``-inf`` entries (mathematically
+      correct: ``log(0) = -inf``).
+    - ``effective_sample_size`` is unaffected (``logsumexp`` handles
+      ``-inf`` inputs).
+    - ``choice`` never selects zero-weight items.
+
+    Code that consumes ``log_normalized`` directly should be aware
+    that ``-inf`` values may be present.
     """
 
     __slots__ = ("_n", "_log_weights", "_is_uniform", "_cache")
@@ -509,6 +526,23 @@ class Weights:
 
     def __len__(self) -> int:
         return self._n
+
+    # -- equality & hashing -------------------------------------------------
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Weights):
+            return NotImplemented
+        if self._n != other._n or self._is_uniform != other._is_uniform:
+            return False
+        if self._is_uniform:
+            return True
+        return bool(jnp.array_equal(self._log_weights, other._log_weights))
+
+    def __hash__(self) -> int:
+        if self._is_uniform:
+            return hash((self._n, True))
+        # JAX arrays are immutable, so hashing the bytes is safe.
+        return hash((self._n, False, self._log_weights.tobytes()))
 
     # -- weighted operations ------------------------------------------------
 

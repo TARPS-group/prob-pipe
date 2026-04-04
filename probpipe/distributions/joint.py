@@ -480,10 +480,14 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
 
     Parameters
     ----------
-    weights : array-like, shape ``(n,)``, optional
-        Non-negative sample weights (normalised internally).
-    log_weights : array-like, shape ``(n,)``, optional
-        Log-unnormalised weights.  Mutually exclusive with *weights*.
+    weights : array-like, :class:`~probpipe.Weights`, or None
+        Non-negative sample weights (normalized internally).  A pre-built
+        :class:`~probpipe.Weights` object is also accepted.  Mutually
+        exclusive with *log_weights*.
+    log_weights : array-like, :class:`~probpipe.Weights`, or None
+        Log-unnormalized sample weights.  A pre-built
+        :class:`~probpipe.Weights` object is also accepted.  Mutually
+        exclusive with *weights*.
     name : str, optional
         Distribution name.
     **samples : array-like

@@ -67,14 +67,16 @@ class EmpiricalDistribution[T](
     samples : sequence of T
         The support points.  Must be a non-empty sequence (list, tuple,
         or array).
-    weights : array-like, shape ``(n,)``, optional
-        Non-negative weights (normalised internally).  Mutually exclusive
-        with *log_weights*.  When neither is given the distribution is
-        uniform.
-    log_weights : array-like, shape ``(n,)``, optional
-        Log-unnormalised weights.  Preferred when weights span many orders
-        of magnitude (e.g. importance sampling).  Normalised internally via
-        ``jax.nn.softmax``.  Mutually exclusive with *weights*.
+    weights : array-like, :class:`~probpipe.Weights`, or None
+        Non-negative weights (normalized internally).  A pre-built
+        :class:`~probpipe.Weights` object is also accepted and used
+        as-is.  Mutually exclusive with *log_weights*.  When neither is
+        given the distribution is uniform.
+    log_weights : array-like, :class:`~probpipe.Weights`, or None
+        Log-unnormalized weights.  Preferred when weights span many
+        orders of magnitude (e.g. importance sampling).  A pre-built
+        :class:`~probpipe.Weights` object is also accepted and used
+        as-is.  Mutually exclusive with *weights*.
     name : str, optional
         An optional name for provenance / JointDistribution integration.
     """
@@ -245,10 +247,13 @@ class ArrayEmpiricalDistribution(
         Sample array.  The leading axis (or axes, if *sample_shape* is
         given) indexes the support points; trailing axes form the event
         shape.
-    weights : array-like, shape ``(n,)``, optional
-        Non-negative weights (normalised internally).
-    log_weights : array-like, shape ``(n,)``, optional
-        Log-unnormalised weights.  Mutually exclusive with *weights*.
+    weights : array-like, :class:`~probpipe.Weights`, or None
+        Non-negative weights (normalized internally).  A pre-built
+        :class:`~probpipe.Weights` object is also accepted.  Mutually
+        exclusive with *log_weights*.
+    log_weights : array-like, :class:`~probpipe.Weights`, or None
+        Log-unnormalized weights.  A pre-built :class:`~probpipe.Weights`
+        object is also accepted.  Mutually exclusive with *weights*.
     sample_shape : tuple of int, optional
         Shape of the leading sample dimensions.  When ``None`` (default),
         the first axis is the single sample axis (``n = samples.shape[0]``)

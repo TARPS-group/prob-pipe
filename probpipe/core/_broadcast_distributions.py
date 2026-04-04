@@ -26,7 +26,7 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array
-from .._weights import Weights, weighted_mean, weighted_choice
+from .._weights import Weights
 from ._distribution_base import Distribution
 from ._empirical import (
     ArrayEmpiricalDistribution,
@@ -116,7 +116,7 @@ class _MixtureSampling:
     def _sample(self, key, sample_shape=()):
         n_draws = prod(sample_shape) if sample_shape else 1
         key1, key2 = jax.random.split(key)
-        indices = weighted_choice(key1, self.n, weights=self.weights, shape=(n_draws,))
+        indices = self._w.choice(key1, shape=(n_draws,))
         keys = jax.random.split(key2, n_draws)
 
         results = []
@@ -134,7 +134,7 @@ class _MixtureMean:
 
     def _mean(self):
         means = jnp.stack([c._mean() for c in self._components], axis=0)
-        return weighted_mean(self.weights, means)
+        return self._w.mean(means)
 
 
 class _MixtureVariance:
@@ -143,11 +143,11 @@ class _MixtureVariance:
     def _variance(self):
         means = jnp.stack([c._mean() for c in self._components], axis=0)
         variances = jnp.stack([c._variance() for c in self._components], axis=0)
-        overall_mean = weighted_mean(self.weights, means)
+        overall_mean = self._w.mean(means)
         # Law of total variance: E[Var(Y|X)] + Var(E[Y|X])
-        e_var = weighted_mean(self.weights, variances)
+        e_var = self._w.mean(variances)
         diff = means - overall_mean
-        var_e = weighted_mean(self.weights, diff ** 2)
+        var_e = self._w.mean(diff ** 2)
         return e_var + var_e
 
 
@@ -155,7 +155,11 @@ class _MixtureLogProb:
     """SupportsLogProb mixin for mixture marginals."""
 
     def _log_prob(self, value):
-        log_w = jnp.log(self.weights)
+        if self._w.is_uniform:
+            log_w = jnp.full(self.n, -jnp.log(self.n))
+        else:
+            # Use log_softmax for numerical stability (avoids exp then log).
+            log_w = jax.nn.log_softmax(self._w.log_unnormalized)
         component_lps = jnp.stack(
             [c._log_prob(value) for c in self._components], axis=0
         )
@@ -233,9 +237,7 @@ class _ListMarginal[T](Distribution[T]):
         return self._items
 
     @property
-    def weights(self) -> Array | None:
-        if self._w.is_uniform:
-            return None
+    def weights(self) -> Array:
         return self._w.normalized
 
     def __repr__(self):
@@ -324,8 +326,13 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
         ``{arg_name: (n, *event_shape)}`` for each broadcast argument.
     output_samples : Array or list
         ``(n, *event_shape)`` for array outputs, or a list of length *n*.
-    weights : Array or None
-        ``(n,)`` normalised weights.  ``None`` for uniform.
+    weights : array-like, :class:`~probpipe.Weights`, or None
+        Non-negative weights (normalized internally).  A pre-built
+        :class:`~probpipe.Weights` object is also accepted.  Mutually
+        exclusive with *log_weights*.  ``None`` for uniform.
+    log_weights : array-like, :class:`~probpipe.Weights`, or None
+        Log-unnormalized weights.  A pre-built :class:`~probpipe.Weights`
+        object is also accepted.  Mutually exclusive with *weights*.
     output_distributions : list of Distribution or None
         When each function evaluation returns a ``Distribution``, these
         are the *n* component distributions for the mixture marginal.
