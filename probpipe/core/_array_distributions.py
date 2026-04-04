@@ -436,7 +436,7 @@ class BootstrapDistribution(ArrayDistribution, SupportsSampling, SupportsMean, S
         if self._evaluations.ndim == 0:
             raise ValueError("evaluations must have at least 1 dimension.")
         self._n = self._evaluations.shape[0]
-        self._w = Weights._coerce(self._n, weights, log_weights=log_weights)
+        self._w = Weights(n=self._n, weights=weights, log_weights=log_weights)
         self._name = name
         self._approximate = True
 

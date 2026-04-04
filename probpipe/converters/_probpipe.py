@@ -453,9 +453,8 @@ def _convert_to_kde(source, key, **kw):
     name = kw.get("name") or source.name
 
     if isinstance(source, ArrayEmpiricalDistribution):
-        weights = None if source.is_uniform else source.weights
         r = KDEDistribution(
-            source._samples, weights=weights, bandwidth=bandwidth, name=name,
+            source._samples, weights=source._w, bandwidth=bandwidth, name=name,
         )
         r.with_source(_mm_provenance(source))
         return r

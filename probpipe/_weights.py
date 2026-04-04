@@ -221,20 +221,20 @@ class Weights:
     Parameters
     ----------
     n : int, optional
-        Number of items.  Required (and only allowed) for uniform
-        weights — i.e. when neither *weights* nor *log_weights* is
-        provided.
-    weights : ArrayLike, optional
-        Non-negative weights (normalized internally).  ``n`` is inferred
-        from ``len(weights)``.  Mutually exclusive with *log_weights*
-        and *n*.
-    log_weights : ArrayLike, optional
+        Number of items.  When provided alone (without *weights* or
+        *log_weights*), creates uniform weights.  When provided
+        alongside an array, validates that the array length matches.
+    weights : ArrayLike, Weights, or None
+        Non-negative weights.  ``n`` is inferred from ``len(weights)``
+        if not given explicitly.  A pre-built ``Weights`` object is
+        accepted and adopted without re-validation.  Mutually exclusive
+        with *log_weights*.
+    log_weights : ArrayLike, Weights, or None
         Log-unnormalized weights.  Preferred when weights span many
         orders of magnitude (e.g. importance sampling).  ``n`` is
-        inferred from ``len(log_weights)``.  Mutually exclusive with
-        *weights* and *n*.
-
-    Exactly one of *n*, *weights*, or *log_weights* must be provided.
+        inferred from ``len(log_weights)`` if not given explicitly.
+        A pre-built ``Weights`` object is accepted and adopted without
+        re-validation.  Mutually exclusive with *weights*.
 
     Examples
     --------
@@ -265,9 +265,9 @@ class Weights:
 
     **Compute weighted statistics** directly:
 
-    >>> w.mean(samples)                 # weighted mean along leading axis
-    >>> w.variance(samples)             # weighted variance
-    >>> w.covariance(samples)           # weighted covariance matrix
+    >>> w.mean(values)                  # weighted mean along leading axis
+    >>> w.variance(values)              # weighted variance
+    >>> w.covariance(values)            # weighted covariance matrix
     >>> w.choice(key, shape=(10,))      # draw 10 weighted random indices
 
     **Passing to distribution constructors** — all ProbPipe distribution
@@ -313,21 +313,42 @@ class Weights:
         self,
         *,
         n: int | None = None,
-        weights: ArrayLike | None = None,
-        log_weights: ArrayLike | None = None,
+        weights: ArrayLike | Weights | None = None,
+        log_weights: ArrayLike | Weights | None = None,
     ):
-        provided = (n is not None) + (weights is not None) + (log_weights is not None)
-        if provided != 1:
+        # --- Fast path: adopt an existing Weights object ---
+        source = None
+        if isinstance(weights, Weights):
+            if log_weights is not None:
+                raise ValueError(
+                    "Provide either weights or log_weights, not both."
+                )
+            source = weights
+        elif isinstance(log_weights, Weights):
+            if weights is not None:
+                raise ValueError(
+                    "Provide either weights or log_weights, not both."
+                )
+            source = log_weights
+
+        if source is not None:
+            if n is not None and source._n != n:
+                raise ValueError(
+                    f"Weights length {source._n} does not match n={n}."
+                )
+            self._n = source._n
+            self._log_weights = source._log_weights
+            self._is_uniform = source._is_uniform
+            self._cache = source._cache
+            return
+
+        # --- Build from raw inputs ---
+        if weights is not None and log_weights is not None:
             raise ValueError(
-                "Exactly one of n, weights, or log_weights must be provided."
+                "Provide either weights or log_weights, not both."
             )
 
-        if n is not None:
-            # Uniform weights
-            self._n = n
-            self._log_weights = None
-            self._is_uniform = True
-        elif weights is not None:
+        if weights is not None:
             weights = jnp.asarray(weights, dtype=jnp.float32)
             if weights.ndim != 1 or weights.shape[0] == 0:
                 raise ValueError("weights must be a non-empty 1-D array.")
@@ -336,16 +357,34 @@ class Weights:
             total = jnp.sum(weights)
             if total <= 0:
                 raise ValueError("weights must sum to a positive value.")
+            if n is not None and weights.shape[0] != n:
+                raise ValueError(
+                    f"weights length {weights.shape[0]} does not match n={n}."
+                )
             self._n = weights.shape[0]
             self._log_weights = jnp.log(weights)
             self._is_uniform = False
-        else:  # log_weights is not None
+        elif log_weights is not None:
             log_weights = jnp.asarray(log_weights, dtype=jnp.float32)
             if log_weights.ndim != 1 or log_weights.shape[0] == 0:
                 raise ValueError("log_weights must be a non-empty 1-D array.")
+            if n is not None and log_weights.shape[0] != n:
+                raise ValueError(
+                    f"log_weights length {log_weights.shape[0]} does not "
+                    f"match n={n}."
+                )
             self._n = log_weights.shape[0]
             self._log_weights = log_weights
             self._is_uniform = False
+        elif n is not None:
+            self._n = n
+            self._log_weights = None
+            self._is_uniform = True
+        else:
+            raise ValueError(
+                "At least one of n, weights, or log_weights must be "
+                "provided."
+            )
 
         self._cache: Array | None = None
 
@@ -362,83 +401,6 @@ class Weights:
         w._is_uniform = True
         w._cache = None
         return w
-
-    @staticmethod
-    def _coerce(
-        n: int,
-        weights: ArrayLike | Weights | None = None,
-        *,
-        log_weights: ArrayLike | Weights | None = None,
-    ) -> Weights:
-        """Build a ``Weights`` from flexible input.
-
-        This is the canonical entry point used by distribution
-        constructors to normalize their ``weights`` / ``log_weights``
-        arguments into a ``Weights`` object in a single line.
-
-        Parameters
-        ----------
-        n : int
-            Number of items (used only when both *weights* and
-            *log_weights* are ``None``, to create uniform weights).
-        weights : ArrayLike, Weights, or None
-            Unnormalized weight array, a pre-built ``Weights`` object,
-            or ``None``.
-        log_weights : ArrayLike, Weights, or None
-            Log-unnormalized weight array, a pre-built ``Weights``
-            object, or ``None``.
-
-        Returns
-        -------
-        Weights
-
-        Notes
-        -----
-        When a ``Weights`` object is passed (to either parameter), it
-        is returned as-is with no re-validation.  The behavior is
-        identical regardless of which parameter receives the object,
-        since a ``Weights`` instance already encapsulates its internal
-        representation.
-
-        Raises ``ValueError`` if both *weights* and *log_weights* are
-        non-``None``.
-        """
-        # Fast path: already a Weights object
-        if isinstance(weights, Weights):
-            if log_weights is not None:
-                raise ValueError(
-                    "Provide either weights or log_weights, not both."
-                )
-            return weights
-        if isinstance(log_weights, Weights):
-            if weights is not None:
-                raise ValueError(
-                    "Provide either weights or log_weights, not both."
-                )
-            return log_weights
-
-        # Raw arrays or None
-        if weights is not None and log_weights is not None:
-            raise ValueError(
-                "Provide either weights or log_weights, not both."
-            )
-        if weights is not None:
-            w = Weights(weights=weights)
-            if w.n != n:
-                raise ValueError(
-                    f"weights length {w.n} does not match "
-                    f"number of items {n}."
-                )
-            return w
-        if log_weights is not None:
-            w = Weights(log_weights=log_weights)
-            if w.n != n:
-                raise ValueError(
-                    f"log_weights length {w.n} does not match "
-                    f"number of items {n}."
-                )
-            return w
-        return Weights.uniform(n)
 
     # -- properties ---------------------------------------------------------
 

@@ -30,7 +30,7 @@ def _auto_key() -> PRNGKey:
     return key
 
 
-def _is_numeric_array(x) -> bool:
+def _is_numeric_array(x: object) -> bool:
     """Return ``True`` if *x* is a JAX or numpy array with a numeric dtype.
 
     Numpy object arrays (used for generic non-array samples in

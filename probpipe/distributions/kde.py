@@ -71,7 +71,7 @@ class KDEDistribution(TFPDistribution):
         self._name = name
 
         # Weights
-        self._w = Weights._coerce(n, weights, log_weights=log_weights)
+        self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         w = self._w.normalized
 
         # Bandwidth (Silverman's rule default)

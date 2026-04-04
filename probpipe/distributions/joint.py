@@ -531,7 +531,7 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
         self._joint_samples = converted
         self._n = n
         self._name = name
-        self._w = Weights._coerce(n, weights, log_weights=log_weights)
+        self._w = Weights(n=n, weights=weights, log_weights=log_weights)
 
         # Build _components as ArrayEmpiricalDistribution per component
         # (JointDistribution requires ArrayDistribution leaves for shape introspection)

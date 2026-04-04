@@ -203,16 +203,20 @@ class TestWeightsConstruction:
         w = Weights(log_weights=jnp.zeros(4))
         assert w.n == 4
 
-    def test_exactly_one_required(self):
-        with pytest.raises(ValueError, match="Exactly one"):
+    def test_at_least_one_required(self):
+        with pytest.raises(ValueError, match="At least one"):
             Weights()  # none provided
 
-    def test_n_and_weights_exclusive(self):
-        with pytest.raises(ValueError, match="Exactly one"):
-            Weights(n=3, weights=jnp.ones(3))
+    def test_n_with_weights_validates_length(self):
+        # Matching n is OK
+        w = Weights(n=3, weights=jnp.ones(3))
+        assert w.n == 3
+        # Mismatched n raises
+        with pytest.raises(ValueError, match="does not match"):
+            Weights(n=5, weights=jnp.ones(3))
 
     def test_weights_and_log_weights_exclusive(self):
-        with pytest.raises(ValueError, match="Exactly one"):
+        with pytest.raises(ValueError, match="either weights or log_weights"):
             Weights(weights=jnp.ones(3), log_weights=jnp.zeros(3))
 
     def test_negative_weights_rejected(self):
@@ -340,41 +344,47 @@ class TestWeightsMethods:
         npt.assert_allclose(jnp.sum(sub.normalized), 1.0, atol=1e-6)
 
 
-class TestWeightsCoerce:
+class TestWeightsObjectPassthrough:
+    """Test that passing a Weights object to the constructor adopts it."""
+
     def test_weights_passthrough(self):
         w = Weights(weights=jnp.array([1.0, 2.0]))
-        result = Weights._coerce(2, weights=w)
-        assert result is w
+        result = Weights(weights=w)
+        assert result._log_weights is w._log_weights  # same internal state
 
     def test_log_weights_passthrough(self):
         w = Weights(log_weights=jnp.array([-1.0, 0.0]))
-        result = Weights._coerce(2, log_weights=w)
-        assert result is w
+        result = Weights(log_weights=w)
+        assert result._log_weights is w._log_weights
 
     def test_weights_object_and_log_weights_raises(self):
         w = Weights(weights=jnp.ones(3))
         with pytest.raises(ValueError, match="either weights or log_weights"):
-            Weights._coerce(3, weights=w, log_weights=jnp.zeros(3))
+            Weights(weights=w, log_weights=jnp.zeros(3))
 
-    def test_raw_weights_array(self):
-        result = Weights._coerce(3, weights=jnp.array([1.0, 2.0, 3.0]))
-        assert isinstance(result, Weights)
-        assert result.n == 3
-        assert not result.is_uniform
+    def test_n_validation_with_weights_object(self):
+        w = Weights(weights=jnp.array([1.0, 2.0]))
+        # Matching n is fine
+        result = Weights(n=2, weights=w)
+        assert result.n == 2
+        # Mismatched n raises
+        with pytest.raises(ValueError, match="does not match"):
+            Weights(n=5, weights=w)
 
-    def test_raw_log_weights_array(self):
-        result = Weights._coerce(3, log_weights=jnp.array([-1.0, 0.0, 1.0]))
-        assert isinstance(result, Weights)
-        assert result.n == 3
-
-    def test_both_none_gives_uniform(self):
-        result = Weights._coerce(5)
+    def test_n_only_gives_uniform(self):
+        result = Weights(n=5)
         assert result.is_uniform
         assert result.n == 5
 
+    def test_n_with_array_validates_length(self):
+        result = Weights(n=3, weights=jnp.array([1.0, 2.0, 3.0]))
+        assert result.n == 3
+        with pytest.raises(ValueError, match="does not match"):
+            Weights(n=5, weights=jnp.array([1.0, 2.0, 3.0]))
+
     def test_both_arrays_raises(self):
         with pytest.raises(ValueError, match="either weights or log_weights"):
-            Weights._coerce(3, weights=jnp.ones(3), log_weights=jnp.zeros(3))
+            Weights(weights=jnp.ones(3), log_weights=jnp.zeros(3))
 
 
 class TestWeightsPytree:

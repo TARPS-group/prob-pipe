@@ -114,7 +114,7 @@ class EmpiricalDistribution[T](
         name: str | None = None,
     ) -> None:
         """Validate and store weights, name, and flags."""
-        self._w = Weights._coerce(n, weights, log_weights=log_weights)
+        self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._name = name
         self._approximate = True
 
