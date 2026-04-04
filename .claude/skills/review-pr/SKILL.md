@@ -68,7 +68,10 @@ the docs actually say over this summary:
   reserved parameter names, the `.n` property convention (see STYLE_GUIDE.md)
 - **Imports** — `from __future__ import annotations`, relative internals, import
   order, optional dependency patterns, `TYPE_CHECKING` guards
-- **Type annotations** — modern Python 3.12+ syntax, project type aliases
+- **Type annotations** — modern Python 3.12+ syntax, project type aliases.
+  Also check for *missing* type hints: all new or modified public function
+  signatures (parameters and return types) and class attributes should be
+  annotated
 - **Subpackage dependency graph** — no illegal cross-imports (see STYLE_GUIDE.md
   section 6 and CONTRIBUTING.md)
 - **Registry patterns** — if the PR adds or modifies registry-dispatched
