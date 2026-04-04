@@ -78,7 +78,7 @@ class KDEDistribution(TFPDistribution):
         if bandwidth is not None:
             bw = jnp.broadcast_to(jnp.asarray(bandwidth, dtype=jnp.float32), (d,))
         else:
-            std = jnp.sqrt(jnp.average((samples - jnp.average(samples, weights=w, axis=0)) ** 2, weights=w, axis=0))
+            std = jnp.sqrt(self._w.variance(samples))
             # Silverman's rule: n^{-1/(d+4)} * std
             silverman_factor = n ** (-1.0 / (d + 4))
             bw = silverman_factor * jnp.maximum(std, 1e-8)
