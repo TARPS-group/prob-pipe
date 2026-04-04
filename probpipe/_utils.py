@@ -36,7 +36,7 @@ def _is_numeric_array(x: object) -> bool:
     Numpy object arrays (used for generic non-array samples in
     ``EmpiricalDistribution``) return ``False``.
     """
-    if isinstance(x, jnp.ndarray):
+    if isinstance(x, jax.Array):
         return True
     if isinstance(x, np.ndarray):
         return x.dtype != object

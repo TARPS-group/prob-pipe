@@ -15,6 +15,14 @@ import jax.numpy as jnp
 
 from .custom_types import Array, ArrayLike, PRNGKey
 
+__all__ = [
+    "Weights",
+    "weighted_mean",
+    "weighted_variance",
+    "weighted_covariance",
+    "weighted_choice",
+]
+
 
 # ---------------------------------------------------------------------------
 # Pure utility functions (internal workhorses)
@@ -343,48 +351,28 @@ class Weights:
             return
 
         # --- Build from raw inputs ---
-        if weights is not None and log_weights is not None:
-            raise ValueError(
-                "Provide either weights or log_weights, not both."
-            )
+        # Infer n from array length when not given explicitly.
+        if n is None:
+            if weights is not None:
+                weights = jnp.asarray(weights, dtype=jnp.float32)
+                if weights.ndim != 1 or weights.shape[0] == 0:
+                    raise ValueError("weights must be a non-empty 1-D array.")
+                n = weights.shape[0]
+            elif log_weights is not None:
+                log_weights = jnp.asarray(log_weights, dtype=jnp.float32)
+                if log_weights.ndim != 1 or log_weights.shape[0] == 0:
+                    raise ValueError("log_weights must be a non-empty 1-D array.")
+                n = log_weights.shape[0]
+            else:
+                raise ValueError(
+                    "At least one of n, weights, or log_weights must be "
+                    "provided."
+                )
 
-        if weights is not None:
-            weights = jnp.asarray(weights, dtype=jnp.float32)
-            if weights.ndim != 1 or weights.shape[0] == 0:
-                raise ValueError("weights must be a non-empty 1-D array.")
-            if jnp.any(weights < 0):
-                raise ValueError("weights must be non-negative.")
-            total = jnp.sum(weights)
-            if total <= 0:
-                raise ValueError("weights must sum to a positive value.")
-            if n is not None and weights.shape[0] != n:
-                raise ValueError(
-                    f"weights length {weights.shape[0]} does not match n={n}."
-                )
-            self._n = weights.shape[0]
-            self._log_weights = jnp.log(weights)
-            self._is_uniform = False
-        elif log_weights is not None:
-            log_weights = jnp.asarray(log_weights, dtype=jnp.float32)
-            if log_weights.ndim != 1 or log_weights.shape[0] == 0:
-                raise ValueError("log_weights must be a non-empty 1-D array.")
-            if n is not None and log_weights.shape[0] != n:
-                raise ValueError(
-                    f"log_weights length {log_weights.shape[0]} does not "
-                    f"match n={n}."
-                )
-            self._n = log_weights.shape[0]
-            self._log_weights = log_weights
-            self._is_uniform = False
-        elif n is not None:
-            self._n = n
-            self._log_weights = None
-            self._is_uniform = True
-        else:
-            raise ValueError(
-                "At least one of n, weights, or log_weights must be "
-                "provided."
-            )
+        self._log_weights, self._is_uniform = _validate_to_log_weights(
+            n, weights, log_weights=log_weights,
+        )
+        self._n = n
 
         self._cache: Array | None = None
 
