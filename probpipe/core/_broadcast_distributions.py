@@ -155,11 +155,7 @@ class _MixtureLogProb:
     """SupportsLogProb mixin for mixture marginals."""
 
     def _log_prob(self, value):
-        if self._w.is_uniform:
-            log_w = jnp.full(self.n, -jnp.log(self.n))
-        else:
-            # Use log_softmax for numerical stability (avoids exp then log).
-            log_w = jax.nn.log_softmax(self._w.log_unnormalized)
+        log_w = self._w.log_normalized
         component_lps = jnp.stack(
             [c._log_prob(value) for c in self._components], axis=0
         )

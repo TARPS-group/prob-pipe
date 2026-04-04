@@ -190,9 +190,9 @@ class TestWeightsConstruction:
         assert w.is_uniform is False
         npt.assert_allclose(jnp.sum(w.normalized), 1.0, atol=1e-6)
 
-    def test_uniform_log_weights_none(self):
+    def test_uniform_log_weights(self):
         w = Weights(n=5)
-        assert w.log_normalized is None
+        npt.assert_allclose(w.log_normalized, jnp.full(5, -jnp.log(5.0)), atol=1e-6)
         assert w.log_unnormalized is None
 
     def test_n_inferred_from_weights(self):

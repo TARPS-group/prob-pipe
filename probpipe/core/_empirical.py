@@ -133,8 +133,8 @@ class EmpiricalDistribution[T](
         return self._w.normalized
 
     @property
-    def log_weights(self) -> Array | None:
-        """Normalised log-weights, shape ``(n,)``.  ``None`` when uniform."""
+    def log_weights(self) -> Array:
+        """Normalised log-weights, shape ``(n,)``."""
         return self._w.log_normalized
 
     # -- sampling -----------------------------------------------------------

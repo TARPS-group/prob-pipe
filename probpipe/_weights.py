@@ -90,8 +90,12 @@ def normalize_weights(log_weights: Array) -> Array:
 
 
 def normalized_log_weights(log_weights: Array) -> Array:
-    """Normalize log-weights in log-space (subtract logsumexp)."""
-    return log_weights - jax.scipy.special.logsumexp(log_weights)
+    """Normalize log-weights in log-space.
+
+    Uses ``jax.nn.log_softmax`` — a single fused operation that is more
+    numerically stable than the equivalent ``log_weights - logsumexp(log_weights)``.
+    """
+    return jax.nn.log_softmax(log_weights)
 
 
 def uniform_weights(n: int) -> Array:
@@ -267,7 +271,7 @@ class Weights:
     **Access different representations** explicitly when needed:
 
     >>> w.normalized         # Array, shape (n,) — probabilities summing to 1
-    >>> w.log_normalized     # Array | None — log-probabilities (None if uniform)
+    >>> w.log_normalized     # Array — log-probabilities (always an array)
     >>> w.log_unnormalized   # Array | None — raw stored log-weights (None if uniform)
     >>> w.is_uniform         # bool — True when all items are equally weighted
 
@@ -412,10 +416,14 @@ class Weights:
         return self._cache
 
     @property
-    def log_normalized(self) -> Array | None:
-        """Normalized log-weights, shape ``(n,)``.  ``None`` when uniform."""
+    def log_normalized(self) -> Array:
+        """Normalized log-weights, shape ``(n,)``.
+
+        Returns ``-log(n)`` for uniform weights, matching the behavior
+        of :attr:`normalized` which always returns an array.
+        """
         if self._is_uniform:
-            return None
+            return jnp.full(self._n, -jnp.log(self._n))
         return normalized_log_weights(self._log_weights)
 
     @property
@@ -447,10 +455,7 @@ class Weights:
         Array
             Scalar effective sample size (``1 <= n_eff <= n``).
         """
-        if self._is_uniform:
-            return jnp.array(self._n, dtype=jnp.float32)
-        log_norm = normalized_log_weights(self._log_weights)
-        return jnp.exp(-jax.scipy.special.logsumexp(2.0 * log_norm))
+        return jnp.exp(-jax.scipy.special.logsumexp(2.0 * self.log_normalized))
 
     # -- JAX array protocol -------------------------------------------------
 
