@@ -88,6 +88,13 @@ the docs actually say over this summary:
 - Do new modules have a module-level docstring explaining their purpose?
 - If the PR adds user-facing features, are the relevant docs pages in `docs/`
   updated?
+- **Convention docs consistency** — Does the PR introduce changes that affect
+  project-wide conventions (e.g., new abstractions, new patterns, changes to the
+  class hierarchy, new registry types, renamed or removed APIs, new reserved
+  parameter names, new module layout)? If so, are `STYLE_GUIDE.md` and/or
+  `CONTRIBUTING.md` updated to reflect those changes? Flag any case where a PR
+  changes how things are done but leaves the convention docs describing the old
+  way.
 
 ### 2.3 Test coverage
 
