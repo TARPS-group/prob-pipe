@@ -15,6 +15,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 from ._tfp_base import TFPDistribution
 from ..core.constraints import Constraint, real
 from ..custom_types import ArrayLike
+from .._weights import Weights
 
 __all__ = ["KDEDistribution"]
 
@@ -31,9 +32,13 @@ class KDEDistribution(TFPDistribution):
     ----------
     samples : array-like
         Sample matrix of shape ``(n,)`` or ``(n, d)``.
-    weights : array-like or None
-        Non-negative weights of shape ``(n,)``.  Normalised internally.
-        If ``None``, uniform weights are used.
+    weights : array-like, :class:`~probpipe.Weights`, or None
+        Non-negative weights.  A pre-built :class:`~probpipe.Weights`
+        object is also accepted.  Mutually exclusive with
+        *log_weights*.  When neither is given, uniform weights are used.
+    log_weights : array-like, :class:`~probpipe.Weights`, or None
+        Log-unnormalized weights.  A pre-built :class:`~probpipe.Weights`
+        object is also accepted.  Mutually exclusive with *weights*.
     bandwidth : array-like or None
         Per-dimension bandwidth (standard deviation of each Gaussian
         kernel), shape ``(d,)`` or scalar.  If ``None``, Silverman's
@@ -45,8 +50,9 @@ class KDEDistribution(TFPDistribution):
     def __init__(
         self,
         samples: ArrayLike,
-        weights: ArrayLike | None = None,
+        weights: ArrayLike | Weights | None = None,
         *,
+        log_weights: ArrayLike | Weights | None = None,
         bandwidth: ArrayLike | None = None,
         name: str | None = None,
     ):
@@ -65,12 +71,8 @@ class KDEDistribution(TFPDistribution):
         self._name = name
 
         # Weights
-        if weights is not None:
-            w = jnp.asarray(weights, dtype=jnp.float32)
-            w = w / w.sum()
-        else:
-            w = jnp.ones(n, dtype=jnp.float32) / n
-        self._weights = w
+        self._w = Weights._coerce(n, weights, log_weights=log_weights)
+        w = self._w.normalized
 
         # Bandwidth (Silverman's rule default)
         if bandwidth is not None:
