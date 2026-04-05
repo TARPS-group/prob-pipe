@@ -21,7 +21,7 @@ from ._registry import InferenceMethod
 # Helpers (extracted from SimpleModel)
 # ---------------------------------------------------------------------------
 
-def _is_jax_traceable(fn: Any, init_state: jnp.ndarray) -> bool:
+def _is_jax_traceable(fn: Callable, init_state: jnp.ndarray) -> bool:
     """Probe whether *fn* can be traced by JAX."""
     try:
         jax.make_jaxpr(fn)(init_state)
@@ -56,19 +56,25 @@ def _get_init_state(
     )
 
 
+def _is_simple_model(dist: Any) -> bool:
+    """Check if *dist* is a SimpleModel (lazy import to avoid circularity)."""
+    from ..modeling._simple import SimpleModel
+    return isinstance(dist, SimpleModel)
+
+
 def _build_target_log_prob(dist: Any, observed: Any) -> Callable[[jnp.ndarray], Array]:
     """Build a target_log_prob_fn(params) from *dist* and *observed*.
 
     Handles three cases:
 
-    1. **SimpleModel-like** (has ``_prior`` and ``_likelihood``):
+    1. **SimpleModel** (has prior + likelihood):
        ``prior._log_prob(params) + likelihood.log_likelihood(params, data)``
     2. **Bare SupportsLogProb with data**: ``dist._log_prob(params)``
        (data is assumed already folded in, e.g., via closure).
     3. **Joint over (params, data)**: ``dist._log_prob((params, data))``
     """
-    # SimpleModel pattern: separate prior + likelihood
-    if hasattr(dist, "_prior") and hasattr(dist, "_likelihood"):
+    # SimpleModel: separate prior + likelihood
+    if _is_simple_model(dist):
         data = jnp.asarray(observed) if observed is not None else None
 
         def target_log_prob_fn(params):
@@ -89,7 +95,7 @@ def _build_target_log_prob(dist: Any, observed: Any) -> Callable[[jnp.ndarray], 
 
 
 def _run_tfp_chains(
-    target_log_prob_fn: Any,
+    target_log_prob_fn: Callable,
     init_state: jnp.ndarray,
     *,
     algorithm: str,
@@ -175,9 +181,9 @@ def _extract_diagnostics(trace: Any, algorithm: str) -> InferenceDiagnostics:
 # Helpers for prior extraction
 # ---------------------------------------------------------------------------
 
-def _get_prior(dist: Any) -> Any:
+def _get_prior(dist: Distribution) -> Distribution:
     """Extract the prior from a model, or return dist itself."""
-    return dist._prior if hasattr(dist, "_prior") else dist
+    return dist._prior if _is_simple_model(dist) else dist
 
 
 # ---------------------------------------------------------------------------

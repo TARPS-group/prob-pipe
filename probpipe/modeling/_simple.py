@@ -29,9 +29,10 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
     **Log-prob:** ``_log_prob((params, data))`` returns the joint
     log-density: ``prior._log_prob(params) + likelihood.log_likelihood(params, data)``.
 
-    **Conditioning:** ``_condition_on(data)`` delegates to the inference
-    method registry, which auto-selects NUTS (if JAX-traceable) or RWMH
-    (gradient-free fallback).
+    **Conditioning:** Use ``condition_on(model, data)`` — the inference
+    method registry auto-selects NUTS (if JAX-traceable) or RWMH
+    (gradient-free fallback).  ``SimpleModel`` does not implement
+    ``SupportsConditioning`` directly.
 
     Parameters
     ----------

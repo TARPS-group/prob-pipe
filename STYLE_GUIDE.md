@@ -94,13 +94,26 @@ condition_on_nutpie = WorkflowFunction(
   import from `probpipe` or from subpackage `__init__` modules, not from
   private modules.
 
-### 1.7 Reserved parameter names
+### 1.7 Registry method naming
+
+Inference methods registered with the ``MethodRegistry`` follow
+``{backend}_{algorithm}`` naming in ``snake_case``:
+
+```
+tfp_nuts, tfp_hmc, tfp_rwmh, nutpie_nuts, cmdstan_nuts, pymc_nuts, pymc_advi
+```
+
+Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
+``PyMCNutsMethod``.  Factory functions that return parameterized instances
+(e.g., ``TFPNutsMethod() -> _TFPGradientMethod``) use the same naming.
+
+### 1.8 Reserved parameter names
 
 `WorkflowFunction` reserves the parameter names `seed`, `n_broadcast_samples`,
 and `include_inputs` internally. Use `random_seed` instead when defining
 functions that accept a PRNG seed.
 
-### 1.8 The `.n` property convention
+### 1.9 The `.n` property convention
 
 Finite-sample distribution classes expose an `.n` property (read-only
 `int`) giving the number of stored samples, components, or observations.

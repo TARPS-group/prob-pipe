@@ -170,7 +170,13 @@ class TestInferenceMethodRegistry:
             )
 
     def test_bare_log_prob_distribution(self):
-        """A bare SupportsLogProb distribution can be conditioned via registry."""
+        """A bare SupportsLogProb distribution can be conditioned via registry.
+
+        This tests "conditioning on nothing" — the posterior equals the
+        prior since no observed data is provided.  Verifies that the
+        registry can handle a plain distribution (not a model) when an
+        explicit method is requested.
+        """
         prior = Normal(loc=0.0, scale=1.0)
         posterior = condition_on(
             prior, method="tfp_nuts",

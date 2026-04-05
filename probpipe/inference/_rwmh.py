@@ -17,7 +17,7 @@ from ..custom_types import Array, ArrayLike, PRNGKey
 from ._diagnostics import InferenceDiagnostics
 from ._mcmc_distribution import MCMCApproximateDistribution
 from ._registry import InferenceMethod
-from ._tfp_mcmc import _get_init_state, _get_prior
+from ._tfp_mcmc import _get_init_state, _get_prior, _is_simple_model
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +177,7 @@ class TFPRWMHMethod(InferenceMethod):
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
         prior = _get_prior(dist)
         log_prob_fn = None
-        if hasattr(dist, "_likelihood"):
+        if _is_simple_model(dist):
             lik = dist._likelihood
             log_prob_fn = lambda params, d: lik.log_likelihood(params=params, data=d)
 

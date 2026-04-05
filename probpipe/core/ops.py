@@ -203,10 +203,15 @@ def condition_on(
 ) -> Distribution:
     """Condition a distribution on observed values.
 
-    If *dist* implements ``SupportsConditioning``, its own
-    ``_condition_on`` is used by default.  Otherwise the inference
-    method registry selects the best algorithm automatically.  Pass
-    ``method="tfp_nuts"`` (or any registered name) to override.
+    Dispatch priority:
+
+    1. **Explicit override** — ``method="tfp_nuts"`` (or any registered
+       name) routes directly to the named inference method.
+    2. **Exact conditioning** — if *dist* implements
+       ``SupportsConditioning``, its ``_condition_on`` is called for a
+       closed-form result (e.g., conjugate updates, joint marginalization).
+    3. **Registry auto-select** — the inference method registry picks
+       the highest-priority feasible algorithm (NUTS, HMC, RWMH, etc.).
 
     Parameters
     ----------
@@ -218,7 +223,7 @@ def condition_on(
         Observed values to condition on.
     method : str or None
         If provided, use the named inference method from the registry
-        instead of the distribution's own ``_condition_on``.
+        instead of the default dispatch.
     **kwargs
         Passed to the inference method (e.g., ``num_results``,
         ``num_warmup``, ``random_seed``).
@@ -231,11 +236,11 @@ def condition_on(
             dist, observed, method=method, **kwargs
         )
 
-    # Default: use the distribution's own conditioning if available
+    # Exact conditioning (conjugate updates, joint marginalization, etc.)
     if isinstance(dist, SupportsConditioning):
         return dist._condition_on(observed, **kwargs)
 
-    # Fallback: try the registry for distributions without _condition_on
+    # Registry auto-selects the best approximate inference algorithm
     return inference_method_registry.execute(dist, observed, **kwargs)
 
 

@@ -226,7 +226,19 @@ class SupportsCovariance(Protocol):
 
 @runtime_checkable
 class SupportsConditioning(Protocol):
-    """Distribution that supports conditioning on observed values."""
+    """Distribution that supports exact (closed-form) conditioning.
+
+    Reserved for distributions where ``_condition_on`` computes an
+    **exact** posterior — e.g., conjugate updates or joint distribution
+    marginalization.  When ``condition_on(dist, observed)`` is called
+    and *dist* implements this protocol, the exact path is used
+    directly; otherwise the inference method registry selects an
+    approximate algorithm (NUTS, RWMH, etc.).
+
+    Probabilistic models that require MCMC or variational inference
+    should **not** implement this protocol — let the registry handle
+    algorithm selection instead.
+    """
 
     def _condition_on(self, observed: Any, /, **kwargs: Any) -> Any: ...
 

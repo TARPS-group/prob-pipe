@@ -5,6 +5,8 @@ chain-structured empirical distributions, diagnostics, and the
 inference method registry for ``condition_on`` dispatch.
 """
 
+from __future__ import annotations
+
 from ._diagnostics import (
     InferenceDiagnostics,
     MCMCDiagnostics,
@@ -15,6 +17,7 @@ from ._registry import (
     InferenceMethod,
     inference_method_registry,
 )
+from ..core._registry import Method, MethodInfo, MethodRegistry
 from ._rwmh import rwmh
 from ._nutpie import condition_on_nutpie
 
@@ -23,6 +26,9 @@ __all__ = [
     "MCMCDiagnostics",
     "extract_arviz_diagnostics",
     "MCMCApproximateDistribution",
+    "Method",
+    "MethodInfo",
+    "MethodRegistry",
     "InferenceMethod",
     "inference_method_registry",
     "rwmh",
