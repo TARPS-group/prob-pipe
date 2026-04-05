@@ -149,8 +149,8 @@ Each file should contain **one independent concern**. Use judgment:
 - **Substantial classes** with distinct logic or backends (e.g.,
   `SimpleModel` vs `StanModel`, `RWMH` vs nutpie) get their own file.
 - **Small utility types** tightly coupled to one consumer belong in
-  that consumer's file (e.g., `InferenceDiagnostics` in
-  `_diagnostics.py`).
+  that consumer's file (e.g., `make_posterior` in
+  `_mcmc_distribution.py`).
 
 The test: *if two classes are always modified together or one only exists
 to serve the other, they belong in the same file. If they can evolve

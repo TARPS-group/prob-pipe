@@ -1,8 +1,8 @@
 """Inference algorithms for ProbPipe.
 
 Provides MCMC sampling (gradient-free RWMH and nutpie-backed NUTS),
-chain-structured empirical distributions, diagnostics, and the
-inference method registry for ``condition_on`` dispatch.
+chain-structured empirical distributions, and the inference method
+registry for ``condition_on`` dispatch.
 """
 
 from __future__ import annotations

@@ -116,5 +116,3 @@ class TestPyMCModel:
         assert hasattr(result.inference_data, "sample_stats")
         assert result.source is not None
         assert result.source.operation == "pymc_nuts"
-        assert result.inference_data is not None
-        assert hasattr(result.inference_data, "posterior")
