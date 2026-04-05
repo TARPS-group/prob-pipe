@@ -294,12 +294,10 @@ class Weights:
         EmpiricalDistribution(samples, weights=w)       # OK
         EmpiricalDistribution(samples, log_weights=w)   # also OK, same result
 
-    **JAX compatibility** — ``Weights`` is registered as a JAX pytree,
-    so it works transparently inside ``jax.jit``, ``jax.vmap``, and
-    ``jax.grad``.  The log-weights array is the traceable leaf;
-    ``is_uniform`` and ``n`` are static auxiliary data.  The
-    normalization cache is a Python-side optimization that is recomputed
-    inside traced contexts.
+    **JAX compatibility** — ``Weights`` implements ``__jax_array__``,
+    so it converts to its normalized weight vector automatically when
+    passed to JAX operations (``jnp.sum``, ``jnp.einsum``, ``jax.jit``
+    boundaries, etc.).
 
     Notes
     -----
@@ -546,26 +544,6 @@ class Weights:
         sub_log = self._log_weights[indices]
         return Weights(log_weights=sub_log)
 
-    # -- JAX pytree registration --------------------------------------------
-
-    def tree_flatten(self):
-        """Flatten for JAX pytree: leaves are the traceable arrays."""
-        children = (self._log_weights,)
-        aux = (self._n, self._is_uniform)
-        return children, aux
-
-    @classmethod
-    def tree_unflatten(cls, aux, children):
-        """Unflatten from JAX pytree."""
-        (log_weights,) = children
-        n, is_uniform = aux
-        w = object.__new__(cls)
-        w._n = n
-        w._log_weights = log_weights
-        w._is_uniform = is_uniform
-        w._cache = None
-        return w
-
     # -- repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
@@ -574,8 +552,3 @@ class Weights:
         return f"Weights(n={self._n})"
 
 
-jax.tree_util.register_pytree_node(
-    Weights,
-    lambda w: w.tree_flatten(),
-    lambda aux, children: Weights.tree_unflatten(aux, children),
-)
