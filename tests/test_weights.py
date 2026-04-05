@@ -387,8 +387,18 @@ class TestWeightsObjectPassthrough:
             Weights(weights=jnp.ones(3), log_weights=jnp.zeros(3))
 
 
-class TestWeightsJaxCompat:
-    """Weights works inside JAX ops via __jax_array__."""
+class TestWeightsPytree:
+    def test_tree_flatten_produces_normalized_array(self):
+        w = Weights(weights=jnp.array([1.0, 2.0, 1.0]))
+        leaves = jax.tree.leaves(w)
+        assert len(leaves) == 1
+        npt.assert_allclose(leaves[0], w.normalized, atol=1e-6)
+
+    def test_uniform_tree_leaves(self):
+        w = Weights(n=5)
+        leaves = jax.tree.leaves(w)
+        assert len(leaves) == 1
+        npt.assert_allclose(leaves[0], jnp.ones(5) / 5, atol=1e-6)
 
     def test_jit_compatible(self):
         w = Weights(weights=jnp.array([1.0, 2.0, 1.0]))

@@ -294,10 +294,10 @@ class Weights:
         EmpiricalDistribution(samples, weights=w)       # OK
         EmpiricalDistribution(samples, log_weights=w)   # also OK, same result
 
-    **JAX compatibility** — ``Weights`` implements ``__jax_array__``,
-    so it converts to its normalized weight vector automatically when
-    passed to JAX operations (``jnp.sum``, ``jnp.einsum``, ``jax.jit``
-    boundaries, etc.).
+    **JAX compatibility** — ``Weights`` is registered as a JAX pytree
+    whose single leaf is the **normalized** weight array, so it works
+    transparently inside ``jax.jit``, ``jax.vmap``, ``jnp.sum``,
+    ``jnp.einsum``, and other JAX operations.
 
     Notes
     -----
@@ -544,11 +544,44 @@ class Weights:
         sub_log = self._log_weights[indices]
         return Weights(log_weights=sub_log)
 
+    # -- JAX pytree registration --------------------------------------------
+
+    def tree_flatten(self):
+        """Flatten for JAX pytree.
+
+        The single leaf is the **normalized** weight array so that JAX
+        operations (``jnp.sum``, ``jnp.einsum``, etc.) receive a plain
+        array when unpacking the pytree.
+        """
+        return (self.normalized,), (self._n, self._is_uniform)
+
+    @classmethod
+    def tree_unflatten(cls, aux, children):
+        """Unflatten from JAX pytree."""
+        (normalized,) = children
+        n, is_uniform = aux
+        w = object.__new__(cls)
+        w._n = n
+        w._is_uniform = is_uniform
+        if is_uniform:
+            w._log_weights = None
+        else:
+            w._log_weights = jnp.log(jnp.clip(normalized, 1e-45))
+        w._cache = normalized
+        return w
+
     # -- repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
         if self._is_uniform:
             return f"Weights(n={self._n}, uniform)"
         return f"Weights(n={self._n})"
+
+
+jax.tree_util.register_pytree_node(
+    Weights,
+    lambda w: w.tree_flatten(),
+    lambda aux, children: Weights.tree_unflatten(aux, children),
+)
 
 
