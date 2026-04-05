@@ -66,8 +66,8 @@ except ImportError:
     pass
 
 try:
-    from ._pymc_method import PyMCMCMCMethod, PyMCADVIMethod
-    inference_method_registry.register(PyMCMCMCMethod())
+    from ._pymc_method import PyMCNutsMethod, PyMCADVIMethod
+    inference_method_registry.register(PyMCNutsMethod())
     inference_method_registry.register(PyMCADVIMethod())
 except ImportError:
     pass

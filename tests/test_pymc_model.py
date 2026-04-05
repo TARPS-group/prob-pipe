@@ -115,4 +115,6 @@ class TestPyMCModel:
         # Real PyMC trace should populate diagnostics from sample_stats
         assert 0.0 < result.diagnostics.accept_rate <= 1.0
         assert result.source is not None
-        assert result.source.operation == "pymc_mcmc"
+        assert result.source.operation == "pymc_nuts"
+        assert result.inference_data is not None
+        assert hasattr(result.inference_data, "posterior")

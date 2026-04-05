@@ -195,7 +195,7 @@ Built-in methods:
 | 90 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable) |
 | 80 | `nutpie_nuts` | nutpie | `StanModel`, `PyMCModel` |
 | 70 | `cmdstan_nuts` | CmdStanPy | `StanModel` |
-| 60 | `pymc_mcmc` | PyMC | `PyMCModel` |
+| 60 | `pymc_nuts` | PyMC | `PyMCModel` |
 | 50 | `tfp_rwmh` | TFP | Any `SupportsLogProb` |
 | 35 | `pymc_advi` | PyMC | `PyMCModel` |
 

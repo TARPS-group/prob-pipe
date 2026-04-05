@@ -388,6 +388,19 @@ class TestMCMCApproximateDistribution:
         r = repr(dist)
         assert "MCMCApproximateDistribution" in r
 
+    def test_inference_data_default_none(self):
+        chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
+        dist = MCMCApproximateDistribution([chain])
+        assert dist.inference_data is None
+
+    def test_inference_data_stored(self):
+        chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
+        sentinel = {"posterior": "mock_inference_data"}
+        dist = MCMCApproximateDistribution(
+            [chain], inference_data=sentinel,
+        )
+        assert dist.inference_data is sentinel
+
 
 # ---------------------------------------------------------------------------
 # rwmh workflow function
@@ -411,6 +424,7 @@ class TestRWMH:
         assert result.num_draws == 100
         assert result.num_chains == 1
         assert result.event_shape == (2,)
+        assert result.inference_data is None
 
     def test_multi_chain(self):
         """RWMH with multiple chains."""

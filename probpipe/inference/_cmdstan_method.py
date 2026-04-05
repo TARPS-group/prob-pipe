@@ -127,7 +127,8 @@ class CmdStanNutsMethod(InferenceMethod):
 
         diagnostics = _extract_cmdstan_diagnostics(fit, num_results, num_chains)
         result = MCMCApproximateDistribution(
-            chains, diagnostics=diagnostics, name="posterior",
+            chains, diagnostics=diagnostics, inference_data=fit,
+            name="posterior",
         )
         result.with_source(Provenance(
             "cmdstan_nuts", parents=(dist,),

@@ -29,8 +29,8 @@ def _extract_pymc_chains(trace: Any, param_names: list[str], num_chains: int) ->
     return chains
 
 
-class PyMCMCMCMethod(InferenceMethod):
-    """PyMC's default MCMC sampler (NUTS) for PyMCModel."""
+class PyMCNutsMethod(InferenceMethod):
+    """PyMC NUTS sampler for PyMCModel."""
 
     def __init__(self) -> None:
         from ..modeling._pymc import PyMCModel
@@ -38,7 +38,7 @@ class PyMCMCMCMethod(InferenceMethod):
 
     @property
     def name(self) -> str:
-        return "pymc_mcmc"
+        return "pymc_nuts"
 
     def supported_types(self) -> tuple[type, ...]:
         return (self._model_type,)
@@ -79,12 +79,13 @@ class PyMCMCMCMethod(InferenceMethod):
         )
 
         result = MCMCApproximateDistribution(
-            chains, diagnostics=diagnostics, name="posterior",
+            chains, diagnostics=diagnostics, inference_data=trace,
+            name="posterior",
         )
         result.with_source(Provenance(
-            "pymc_mcmc", parents=(dist,),
+            "pymc_nuts", parents=(dist,),
             metadata={"num_results": num_results, "num_warmup": num_warmup,
-                      "num_chains": num_chains, "algorithm": "pymc_mcmc"},
+                      "num_chains": num_chains, "algorithm": "pymc_nuts"},
         ))
         return result
 

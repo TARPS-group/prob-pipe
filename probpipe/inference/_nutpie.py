@@ -62,7 +62,8 @@ def condition_on_nutpie(
     )
 
     result = MCMCApproximateDistribution(
-        chains, diagnostics=diagnostics, name="posterior",
+        chains, diagnostics=diagnostics, inference_data=trace,
+        name="posterior",
     )
     result.with_source(Provenance(
         "nutpie_nuts", parents=(model,),
