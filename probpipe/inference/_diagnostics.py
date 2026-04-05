@@ -8,7 +8,7 @@ import jax.numpy as jnp
 
 from ..custom_types import Array
 
-__all__ = ["InferenceDiagnostics", "MCMCDiagnostics", "extract_arviz_diagnostics"]
+__all__ = ["InferenceDiagnostics", "extract_arviz_diagnostics"]
 
 
 class InferenceDiagnostics:
@@ -144,9 +144,6 @@ class InferenceDiagnostics:
     def __repr__(self) -> str:
         return f"InferenceDiagnostics({self.summary()})"
 
-
-# Backward-compatible alias
-MCMCDiagnostics = InferenceDiagnostics
 
 
 def extract_arviz_diagnostics(

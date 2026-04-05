@@ -14,7 +14,6 @@ import pytest
 from probpipe import (
     MCMCApproximateDistribution,
     InferenceDiagnostics,
-    MCMCDiagnostics,
     Normal,
     mean,
     sample,
@@ -27,16 +26,12 @@ from probpipe.inference import rwmh, extract_arviz_diagnostics
 
 
 # ---------------------------------------------------------------------------
-# MCMCDiagnostics
+# InferenceDiagnostics
 # ---------------------------------------------------------------------------
 
 
 class TestInferenceDiagnostics:
     """Test InferenceDiagnostics dict-like container."""
-
-    def test_alias(self):
-        """MCMCDiagnostics is a backward-compatible alias."""
-        assert MCMCDiagnostics is InferenceDiagnostics
 
     def test_accept_rate_from_is_accepted(self):
         diag = InferenceDiagnostics(

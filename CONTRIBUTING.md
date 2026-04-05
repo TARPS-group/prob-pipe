@@ -127,7 +127,7 @@ probpipe/
 │
 ├── inference/               # Inference algorithms
 │   ├── _mcmc_distribution.py  # MCMCApproximateDistribution
-│   ├── _diagnostics.py      # MCMCDiagnostics
+│   ├── _diagnostics.py      # InferenceDiagnostics
 │   ├── _rwmh.py             # Random-walk Metropolis-Hastings
 │   └── _nutpie.py           # Nutpie-backed NUTS (optional dep)
 │
