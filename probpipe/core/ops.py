@@ -195,7 +195,7 @@ def expectation(
 
 @workflow_function
 def condition_on(
-    dist: SupportsConditioning,
+    dist: Distribution,
     observed: Any = None,
     *,
     method: str | None = None,
@@ -203,16 +203,17 @@ def condition_on(
 ) -> Distribution:
     """Condition a distribution on observed values.
 
-    If the distribution implements ``SupportsConditioning``, its own
-    ``_condition_on`` is used by default.  Pass ``method="tfp_nuts"``
-    (or any registered name) to override with a specific inference
-    method from the registry.  If the distribution does *not* implement
-    ``SupportsConditioning``, the registry is consulted automatically.
+    If *dist* implements ``SupportsConditioning``, its own
+    ``_condition_on`` is used by default.  Otherwise the inference
+    method registry selects the best algorithm automatically.  Pass
+    ``method="tfp_nuts"`` (or any registered name) to override.
 
     Parameters
     ----------
     dist : Distribution
-        Distribution or model to condition.
+        Distribution or model to condition.  Need not implement
+        ``SupportsConditioning`` — the registry provides inference
+        methods for common model types.
     observed : Any
         Observed values to condition on.
     method : str or None

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from ..core._registry import Method, MethodInfo, MethodRegistry  # noqa: F401 (re-export)
 
+__all__ = ["InferenceMethod", "inference_method_registry"]
+
 # Re-export Method as InferenceMethod for clarity in type annotations.
 InferenceMethod = Method
 

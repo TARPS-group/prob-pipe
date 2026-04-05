@@ -49,6 +49,7 @@ inference_method_registry.set_priorities(tfp_rwmh=200, tfp_nuts=50)
 | `cmdstan_nuts` | 70 | StanModel + cmdstanpy | CmdStan |
 | `pymc_mcmc` | 60 | PyMCModel + pymc | PyMC |
 | `tfp_rwmh` | 50 | `SupportsLogProb` | TFP |
+| `pymc_advi` | 35 | PyMCModel + pymc | PyMC |
 
 ::: probpipe.core._registry.MethodRegistry
     options:

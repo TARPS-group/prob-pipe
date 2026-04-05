@@ -170,7 +170,34 @@ probpipe/
 | `Distribution[T]` | Generic base parameterized by value type |
 | `ArrayDistribution` | Single-array specialization with TFP shape conventions |
 | `WorkflowFunction` | Orchestration-aware function wrapper |
-| Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, etc. |
+| Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc. |
+| `MethodRegistry` | Generic priority-based dispatch; used by the inference method registry |
+| `ProbabilisticModel` | Base for models (extends `Distribution` + `SupportsNamedComponents`) |
+
+### Inference method registry
+
+`condition_on` dispatches inference via a pluggable **inference method
+registry** (`inference_method_registry`).  Each method declares
+`supported_types`, a `priority`, and `check()`/`execute()` methods.
+The registry tries methods in descending priority order; the first
+whose `check()` returns `feasible=True` wins.
+
+Models no longer implement `_condition_on` directly — conditioning is
+handled entirely by registered methods.  The removed protocol
+`SupportsConditionableComponents` is no longer part of the public API;
+use `SupportsNamedComponents` and the inference registry instead.
+
+Built-in methods:
+
+| Priority | Name | Backend | Applies to |
+|----------|------|---------|------------|
+| 100 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable) |
+| 90 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable) |
+| 80 | `nutpie_nuts` | nutpie | `StanModel`, `PyMCModel` |
+| 70 | `cmdstan_nuts` | CmdStanPy | `StanModel` |
+| 60 | `pymc_mcmc` | PyMC | `PyMCModel` |
+| 50 | `tfp_rwmh` | TFP | Any `SupportsLogProb` |
+| 35 | `pymc_advi` | PyMC | `PyMCModel` |
 
 ### Converter priority system
 

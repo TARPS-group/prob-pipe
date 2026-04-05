@@ -135,8 +135,8 @@ class PyMCADVIMethod(InferenceMethod):
         chains = [jnp.asarray(samples, dtype=jnp.float32)]
         algorithm = f"pymc_{vi_method}"
 
-        from ._tfp_mcmc import _make_posterior
-        return _make_posterior(
+        from ._mcmc_distribution import make_posterior
+        return make_posterior(
             chains,
             diagnostics=InferenceDiagnostics(algorithm=algorithm),
             parents=(dist,),

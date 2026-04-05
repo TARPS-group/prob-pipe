@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 
-from ..core.distribution import ArrayEmpiricalDistribution
+from typing import Any
+
+from ..core.distribution import ArrayEmpiricalDistribution, Distribution
+from ..core.provenance import Provenance
 from ..custom_types import Array, ArrayLike
 from .._weights import Weights
 from ._diagnostics import InferenceDiagnostics
 
-__all__ = ["MCMCApproximateDistribution"]
+__all__ = ["MCMCApproximateDistribution", "make_posterior"]
 
 
 class MCMCApproximateDistribution(ArrayEmpiricalDistribution):
@@ -136,3 +139,20 @@ class MCMCApproximateDistribution(ArrayEmpiricalDistribution):
             f"event_shape={self.event_shape}"
             f"{diag})"
         )
+
+
+def make_posterior(
+    chains: list[Array],
+    diagnostics: InferenceDiagnostics,
+    parents: tuple[Distribution, ...],
+    algorithm: str,
+    **meta: Any,
+) -> MCMCApproximateDistribution:
+    """Wrap chains + diagnostics into an MCMCApproximateDistribution with provenance."""
+    result = MCMCApproximateDistribution(
+        chains, diagnostics=diagnostics, name="posterior",
+    )
+    result.with_source(
+        Provenance(algorithm, parents=parents, metadata={"algorithm": algorithm, **meta})
+    )
+    return result

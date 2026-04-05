@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
@@ -11,10 +11,9 @@ import tensorflow_probability.substrates.jax.mcmc as tfp_mcmc
 from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb, SupportsMean
-from ..core.provenance import Provenance
 from ..custom_types import Array, ArrayLike
 from ._diagnostics import InferenceDiagnostics
-from ._mcmc_distribution import MCMCApproximateDistribution
+from ._mcmc_distribution import MCMCApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
 
@@ -48,13 +47,16 @@ def _get_init_state(
     if data is not None:
         return jnp.atleast_1d(jnp.mean(jnp.asarray(data), axis=0))
 
+    if hasattr(dist, "event_shape"):
+        return jnp.zeros(dist.event_shape, dtype=jnp.float32)
+
     raise ValueError(
         "Cannot determine initial state: provide init=, "
         "a distribution with SupportsMean, or observed data."
     )
 
 
-def _build_target_log_prob(dist: Any, observed: Any) -> Any:
+def _build_target_log_prob(dist: Any, observed: Any) -> Callable[[jnp.ndarray], Array]:
     """Build a target_log_prob_fn(params) from *dist* and *observed*.
 
     Handles three cases:
@@ -169,23 +171,6 @@ def _extract_diagnostics(trace: Any, algorithm: str) -> InferenceDiagnostics:
     return InferenceDiagnostics(algorithm=algorithm, **kwargs)
 
 
-def _make_posterior(
-    chains: list,
-    diagnostics: InferenceDiagnostics,
-    parents: tuple,
-    algorithm: str,
-    **meta: Any,
-) -> MCMCApproximateDistribution:
-    """Wrap chains + diagnostics into an MCMCApproximateDistribution with provenance."""
-    result = MCMCApproximateDistribution(
-        chains, diagnostics=diagnostics, name="posterior",
-    )
-    result.with_source(
-        Provenance(algorithm, parents=parents, metadata={"algorithm": algorithm, **meta})
-    )
-    return result
-
-
 # ---------------------------------------------------------------------------
 # Helpers for prior extraction
 # ---------------------------------------------------------------------------
@@ -224,6 +209,9 @@ class _TFPGradientMethod(InferenceMethod):
         return self._method_priority
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+        # Intentionally probes JAX traceability (via jax.make_jaxpr) to avoid
+        # selecting a gradient-based method that would fail at execute() time.
+        # The cost is ~one JAX trace, cached by JAX on subsequent calls.
         if not isinstance(dist, SupportsLogProb):
             return MethodInfo(feasible=False, method_name=self.name,
                               description="Requires SupportsLogProb")
@@ -256,7 +244,7 @@ class _TFPGradientMethod(InferenceMethod):
             step_size=kwargs.get("step_size", 0.1),
             random_seed=kwargs.get("random_seed", 0),
         )
-        return _make_posterior(
+        return make_posterior(
             chains, diagnostics, parents=(prior,), algorithm=self._algorithm,
             num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         )

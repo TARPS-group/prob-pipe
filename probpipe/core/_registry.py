@@ -10,6 +10,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
+__all__ = ["Method", "MethodInfo", "MethodRegistry"]
+
 
 @dataclass(frozen=True)
 class MethodInfo:
@@ -187,7 +189,13 @@ class MethodRegistry[M: Method]:
     # -- internals ----------------------------------------------------------
 
     def _find_methods(self, key_type: type) -> list[M]:
-        """Return methods whose ``supported_types`` match *key_type* (cached)."""
+        """Return methods whose ``supported_types`` match *key_type* (cached).
+
+        Uses ``issubclass`` rather than ``isinstance`` because we are
+        comparing *types*, not instances.  ``supported_types()`` must
+        return concrete classes (not protocols with non-method members),
+        since ``issubclass`` does not work reliably with such protocols.
+        """
         if key_type not in self._type_cache:
             self._type_cache[key_type] = [
                 m for m in self._methods

@@ -12,7 +12,7 @@ from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
 from ..core.provenance import Provenance
 from ..core.node import workflow_function
-from ..core.protocols import SupportsLogProb, SupportsMean
+from ..core.protocols import SupportsLogProb
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._diagnostics import InferenceDiagnostics
 from ._mcmc_distribution import MCMCApproximateDistribution
@@ -76,15 +76,7 @@ def rwmh(
         def target_log_prob(params):
             return dist._log_prob(params)
 
-    if init is not None:
-        init_state = jnp.atleast_1d(jnp.asarray(init, dtype=jnp.float32))
-    elif isinstance(dist, SupportsMean):
-        try:
-            init_state = jnp.atleast_1d(jnp.asarray(dist._mean(), dtype=jnp.float32))
-        except Exception:
-            init_state = jnp.zeros(dist.event_shape, dtype=jnp.float32)
-    else:
-        init_state = jnp.zeros(dist.event_shape, dtype=jnp.float32)
+    init_state = _get_init_state(dist, init, data)
 
     d = init_state.shape[0]
     key = jax.random.PRNGKey(random_seed)
