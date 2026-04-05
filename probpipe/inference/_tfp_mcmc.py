@@ -1,24 +1,25 @@
-"""TFP-backed inference methods: NUTS, HMC, and mean-field VI."""
+"""TFP-backed inference methods: NUTS and HMC."""
 
 from __future__ import annotations
 
 from typing import Any, Callable
 
+import arviz as az
 import jax
 import jax.numpy as jnp
+import numpy as np
 import tensorflow_probability.substrates.jax.mcmc as tfp_mcmc
 
 from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb, SupportsMean
 from ..custom_types import Array, ArrayLike
-from ._diagnostics import InferenceDiagnostics
 from ._mcmc_distribution import MCMCApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
 
 # ---------------------------------------------------------------------------
-# Helpers (extracted from SimpleModel)
+# Helpers
 # ---------------------------------------------------------------------------
 
 def _is_jax_traceable(fn: Callable, init_state: jnp.ndarray) -> bool:
@@ -104,8 +105,12 @@ def _run_tfp_chains(
     num_chains: int,
     step_size: float,
     random_seed: int,
-) -> tuple[list, InferenceDiagnostics]:
-    """Run TFP-backed MCMC chains."""
+) -> tuple[list[Array], dict[str, Any]]:
+    """Run TFP-backed MCMC chains.
+
+    Returns (chains, sample_stats_dict) where sample_stats_dict contains
+    arrays shaped (num_chains, num_results) for building InferenceData.
+    """
     if algorithm == "nuts":
         inner_kernel = tfp_mcmc.NoUTurnSampler(
             target_log_prob_fn=target_log_prob_fn,
@@ -147,34 +152,48 @@ def _run_tfp_chains(
     # all_samples: (num_chains, num_results, *event_shape)
     chains = [all_samples[c] for c in range(num_chains)]
 
-    # Extract diagnostics from the last chain's trace
-    last_trace = jax.tree.map(lambda x: x[-1], all_traces)
-    diagnostics = _extract_diagnostics(last_trace, algorithm)
-    return chains, diagnostics
+    # Extract sample_stats from traces for InferenceData
+    sample_stats = _extract_sample_stats(all_traces, num_chains)
+    return chains, sample_stats
 
 
-def _extract_diagnostics(trace: Any, algorithm: str) -> InferenceDiagnostics:
-    """Extract diagnostics from a TFP trace."""
-    results = trace
+def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, Any]:
+    """Extract sample stats arrays from TFP traces.
+
+    Returns dict of numpy arrays shaped (num_chains, num_draws).
+    """
+    results = traces
+    stats: dict[str, Any] = {}
 
     if hasattr(results, "new_step_size"):
-        step_size = results.new_step_size
+        stats["step_size"] = np.asarray(results.new_step_size)
         results = results.inner_results
     elif hasattr(results, "step_size"):
-        step_size = results.step_size
-    else:
-        step_size = jnp.nan
+        stats["step_size"] = np.asarray(results.step_size)
 
-    log_accept_ratio = getattr(results, "log_accept_ratio", jnp.array(jnp.nan))
+    log_ar = getattr(results, "log_accept_ratio", None)
+    if log_ar is not None:
+        ar = np.asarray(jnp.exp(jnp.minimum(log_ar, 0.0)))
+        stats["acceptance_rate"] = ar
+
     is_accepted = getattr(results, "is_accepted", None)
-
-    kwargs: dict[str, Any] = {
-        "log_accept_ratio": log_accept_ratio,
-        "step_size": step_size,
-    }
     if is_accepted is not None:
-        kwargs["is_accepted"] = is_accepted
-    return InferenceDiagnostics(algorithm=algorithm, **kwargs)
+        stats["is_accepted"] = np.asarray(is_accepted)
+
+    return stats
+
+
+def _build_tfp_inference_data(
+    chains: list[Array],
+    sample_stats: dict[str, Any],
+) -> az.InferenceData:
+    """Build an ArviZ InferenceData from TFP chains and sample stats."""
+    # Stack chains: (num_chains, num_draws, *event_shape)
+    posterior_array = np.stack([np.asarray(c) for c in chains], axis=0)
+    return az.from_dict(
+        posterior={"params": posterior_array},
+        sample_stats=sample_stats if sample_stats else None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -192,11 +211,7 @@ def _get_prior(dist: Distribution) -> Distribution:
 
 
 class _TFPGradientMethod(InferenceMethod):
-    """Base for TFP gradient-based MCMC methods (NUTS, HMC).
-
-    Parameterized by algorithm name and priority.  check() is kept
-    cheap — only a protocol check and JAX traceability probe.
-    """
+    """Base for TFP gradient-based MCMC methods (NUTS, HMC)."""
 
     def __init__(self, algorithm: str, method_name: str, method_priority: int):
         self._algorithm = algorithm
@@ -241,7 +256,7 @@ class _TFPGradientMethod(InferenceMethod):
         num_warmup = kwargs.get("num_warmup", 500)
         num_chains = kwargs.get("num_chains", 1)
 
-        chains, diagnostics = _run_tfp_chains(
+        chains, sample_stats = _run_tfp_chains(
             target, init,
             algorithm=self._algorithm,
             num_results=num_results,
@@ -250,8 +265,10 @@ class _TFPGradientMethod(InferenceMethod):
             step_size=kwargs.get("step_size", 0.1),
             random_seed=kwargs.get("random_seed", 0),
         )
+        inference_data = _build_tfp_inference_data(chains, sample_stats)
         return make_posterior(
-            chains, diagnostics, parents=(prior,), algorithm=self._algorithm,
+            chains, parents=(prior,), algorithm=self._method_name,
+            inference_data=inference_data,
             num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         )
 

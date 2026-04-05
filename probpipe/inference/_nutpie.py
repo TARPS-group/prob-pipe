@@ -11,7 +11,6 @@ from ..core._registry import MethodInfo
 from ..core.provenance import Provenance
 from ..core.node import workflow_function
 from ..custom_types import ArrayLike
-from ._diagnostics import InferenceDiagnostics, extract_arviz_diagnostics
 from ._mcmc_distribution import MCMCApproximateDistribution
 from ._registry import InferenceMethod
 
@@ -56,13 +55,9 @@ def condition_on_nutpie(
     )
 
     chains, param_names = _extract_chains(trace, num_chains)
-    diagnostics = extract_arviz_diagnostics(
-        trace, algorithm="nutpie_nuts",
-        num_results=num_results, num_chains=num_chains,
-    )
 
     result = MCMCApproximateDistribution(
-        chains, diagnostics=diagnostics, inference_data=trace,
+        chains, algorithm="nutpie_nuts", inference_data=trace,
         name="posterior",
     )
     result.with_source(Provenance(

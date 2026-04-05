@@ -68,8 +68,6 @@ inference_method_registry.set_priorities(tfp_rwmh=200, tfp_nuts=50)
 
 ## MCMC
 
-::: probpipe.inference.InferenceDiagnostics
-
 ::: probpipe.inference.MCMCApproximateDistribution
 
 ::: probpipe.inference.rwmh

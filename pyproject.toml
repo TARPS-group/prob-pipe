@@ -19,6 +19,7 @@ dependencies = [
   "jax>=0.9.0",
   "jaxlib>=0.9.0",
   "tfp-nightly==0.26.0.dev20260315",
+  "arviz-base",
 ]
 
 [project.optional-dependencies]

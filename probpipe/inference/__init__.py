@@ -6,11 +6,6 @@ inference method registry for ``condition_on`` dispatch.
 """
 
 from __future__ import annotations
-
-from ._diagnostics import (
-    InferenceDiagnostics,
-    extract_arviz_diagnostics,
-)
 from ._mcmc_distribution import MCMCApproximateDistribution
 from ._registry import (
     InferenceMethod,
@@ -21,8 +16,6 @@ from ._rwmh import rwmh
 from ._nutpie import condition_on_nutpie
 
 __all__ = [
-    "InferenceDiagnostics",
-    "extract_arviz_diagnostics",
     "MCMCApproximateDistribution",
     "Method",
     "MethodInfo",

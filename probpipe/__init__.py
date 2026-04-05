@@ -108,7 +108,6 @@ from probpipe.core.constraints import (
 )
 from probpipe.modeling import GLMLikelihood, Likelihood, GenerativeLikelihood, IncrementalConditioner
 from probpipe.inference import (
-    InferenceDiagnostics,
     MCMCApproximateDistribution,
     inference_method_registry,
     rwmh,
@@ -234,7 +233,6 @@ __all__ = [
     "ProbabilisticModel",
     "SimpleModel",
     # Inference
-    "InferenceDiagnostics",
     "MCMCApproximateDistribution",
     "inference_method_registry",
     "rwmh",

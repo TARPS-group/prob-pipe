@@ -1,4 +1,4 @@
-"""PyMC inference methods for the registry: MCMC and ADVI."""
+"""PyMC inference methods for the registry: NUTS and ADVI."""
 
 from __future__ import annotations
 
@@ -8,8 +8,7 @@ import jax.numpy as jnp
 
 from ..core._registry import MethodInfo
 from ..core.provenance import Provenance
-from ._diagnostics import InferenceDiagnostics, extract_arviz_diagnostics
-from ._mcmc_distribution import MCMCApproximateDistribution
+from ._mcmc_distribution import MCMCApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
 
@@ -73,13 +72,9 @@ class PyMCNutsMethod(InferenceMethod):
             )
 
         chains = _extract_pymc_chains(trace, dist._param_names, num_chains)
-        diagnostics = extract_arviz_diagnostics(
-            trace, algorithm="pymc_nuts",
-            num_results=num_results, num_chains=num_chains,
-        )
 
         result = MCMCApproximateDistribution(
-            chains, diagnostics=diagnostics, inference_data=trace,
+            chains, algorithm="pymc_nuts", inference_data=trace,
             name="posterior",
         )
         result.with_source(Provenance(
@@ -136,11 +131,8 @@ class PyMCADVIMethod(InferenceMethod):
         chains = [jnp.asarray(samples, dtype=jnp.float32)]
         algorithm = f"pymc_{vi_method}"
 
-        from ._mcmc_distribution import make_posterior
         return make_posterior(
-            chains,
-            diagnostics=InferenceDiagnostics(algorithm=algorithm),
-            parents=(dist,),
-            algorithm=algorithm,
+            chains, parents=(dist,), algorithm=algorithm,
+            inference_data=trace,
             num_iterations=num_iterations,
         )

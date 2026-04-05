@@ -217,42 +217,6 @@ class TestStanModelConditionOn:
 class TestCmdStanInferenceMethod:
     """Test CmdStan inference via the registry method."""
 
-    def test_extract_diagnostics(self):
-        from probpipe.inference._cmdstan_method import _extract_cmdstan_diagnostics
-
-        mock_fit = MagicMock()
-        mock_fit.method_variables.return_value = {
-            "accept_stat__": np.random.uniform(0.5, 1.0, (2, 50)),
-            "stepsize__": np.full((2, 50), 0.05),
-            "divergent__": np.zeros((2, 50)),
-            "treedepth__": np.random.randint(1, 8, (2, 50)),
-            "n_leapfrog__": np.random.randint(1, 128, (2, 50)),
-            "energy__": np.random.randn(2, 50),
-            "lp__": np.random.randn(2, 50),
-        }
-
-        diag = _extract_cmdstan_diagnostics(mock_fit, 50, 2)
-        assert diag.algorithm == "cmdstan_nuts"
-        assert 0.0 < diag.accept_rate <= 1.0
-        assert "diverging" in diag
-        assert "tree_depth" in diag
-        assert "n_steps" in diag
-        assert "energy" in diag
-        assert "lp" in diag
-        assert diag["n_divergences"] == 0
-
-    def test_extract_diagnostics_no_method_variables(self):
-        """Falls back gracefully when method_variables() raises."""
-        from probpipe.inference._cmdstan_method import _extract_cmdstan_diagnostics
-
-        mock_fit = MagicMock()
-        mock_fit.method_variables.side_effect = RuntimeError("not available")
-
-        diag = _extract_cmdstan_diagnostics(mock_fit, 10, 1)
-        assert diag.algorithm == "cmdstan_nuts"
-        assert "diverging" not in diag
-        assert "tree_depth" not in diag
-
     def test_ensure_cmdstanpy_missing(self):
         from probpipe.inference._cmdstan_method import _ensure_cmdstanpy
 

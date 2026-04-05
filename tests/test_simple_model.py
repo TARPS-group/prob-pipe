@@ -215,21 +215,14 @@ class TestSimpleModelConditioningPaths:
         )
         assert isinstance(result, MCMCApproximateDistribution)
 
-    def test_extract_diagnostics_step_size_branch(self):
-        from probpipe.inference._tfp_mcmc import _extract_diagnostics
-
-        trace = type("Trace", (), {
-            "step_size": jnp.array(0.1),
-            "log_accept_ratio": jnp.array([-0.5]),
-        })()
-        diag = _extract_diagnostics(trace, "nuts")
-        assert diag.algorithm == "nuts"
-
-    def test_extract_diagnostics_no_step_size(self):
-        from probpipe.inference._tfp_mcmc import _extract_diagnostics
-
-        trace = type("Trace", (), {
-            "log_accept_ratio": jnp.array([-0.5]),
-        })()
-        diag = _extract_diagnostics(trace, "nuts")
-        assert jnp.isnan(diag.final_step_size)
+    def test_inference_data_produced(self):
+        """TFP NUTS produces InferenceData with posterior and sample_stats."""
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
+        model = SimpleModel(prior, GaussianLikelihood())
+        data = jnp.array([[1.0, 2.0], [1.5, 2.5]])
+        result = condition_on(
+            model, data, num_results=30, num_warmup=10, random_seed=42,
+        )
+        assert result.inference_data is not None
+        assert hasattr(result.inference_data, "posterior")
+        assert hasattr(result.inference_data, "sample_stats")
