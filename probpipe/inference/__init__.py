@@ -1,17 +1,11 @@
 """Inference algorithms for ProbPipe.
 
 Provides MCMC sampling (gradient-free RWMH and nutpie-backed NUTS),
-chain-structured empirical distributions, diagnostics, and the
-inference method registry for ``condition_on`` dispatch.
+chain-structured empirical distributions, and the inference method
+registry for ``condition_on`` dispatch.
 """
 
 from __future__ import annotations
-
-from ._diagnostics import (
-    InferenceDiagnostics,
-    MCMCDiagnostics,
-    extract_arviz_diagnostics,
-)
 from ._mcmc_distribution import MCMCApproximateDistribution
 from ._registry import (
     InferenceMethod,
@@ -22,9 +16,6 @@ from ._rwmh import rwmh
 from ._nutpie import condition_on_nutpie
 
 __all__ = [
-    "InferenceDiagnostics",
-    "MCMCDiagnostics",
-    "extract_arviz_diagnostics",
     "MCMCApproximateDistribution",
     "Method",
     "MethodInfo",
@@ -66,8 +57,8 @@ except ImportError:
     pass
 
 try:
-    from ._pymc_method import PyMCMCMCMethod, PyMCADVIMethod
-    inference_method_registry.register(PyMCMCMCMethod())
+    from ._pymc_method import PyMCNutsMethod, PyMCADVIMethod
+    inference_method_registry.register(PyMCNutsMethod())
     inference_method_registry.register(PyMCADVIMethod())
 except ImportError:
     pass

@@ -5,17 +5,17 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import arviz as az
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
-from ..core.provenance import Provenance
 from ..core.node import workflow_function
 from ..core.protocols import SupportsLogProb
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ._diagnostics import InferenceDiagnostics
-from ._mcmc_distribution import MCMCApproximateDistribution
+from ._mcmc_distribution import MCMCApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 from ._tfp_mcmc import _get_init_state, _get_prior, _is_simple_model
 
@@ -61,6 +61,7 @@ def rwmh(
     Returns
     -------
     MCMCApproximateDistribution
+        Posterior samples with chain structure and ArviZ InferenceData.
     """
     if not isinstance(dist, SupportsLogProb):
         raise TypeError(
@@ -119,26 +120,25 @@ def rwmh(
         total_steps += chain_total
 
     accept_rate = total_accepts / total_steps
-
-    diagnostics = InferenceDiagnostics(
-        algorithm="rwmh",
-        log_accept_ratio=jnp.zeros(num_results * num_chains),
-        step_size=step_size,
-    )
-    diagnostics["_accept_rate_override"] = accept_rate
-
     warmup = warmup_chains if all(w is not None for w in warmup_chains) else None
 
-    result = MCMCApproximateDistribution(
-        chains, diagnostics=diagnostics, warmup_samples=warmup, name="posterior",
+    # Build InferenceData
+    posterior_array = np.stack([np.asarray(c) for c in chains], axis=0)
+    accept_array = np.full((num_chains, num_results), accept_rate)
+    inference_data = az.from_dict(
+        posterior={"params": posterior_array},
+        sample_stats={
+            "acceptance_rate": accept_array,
+            "step_size": np.full((num_chains, num_results), step_size),
+        },
     )
-    result.with_source(Provenance(
-        "rwmh", parents=(dist,),
-        metadata={"num_results": num_results, "num_warmup": num_warmup,
-                  "num_chains": num_chains, "step_size": step_size,
-                  "accept_rate": accept_rate},
-    ))
-    return result
+
+    return make_posterior(
+        chains, parents=(dist,), algorithm="rwmh",
+        inference_data=inference_data, warmup_samples=warmup,
+        num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
+        step_size=step_size, accept_rate=accept_rate,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -147,11 +147,7 @@ def rwmh(
 
 
 class TFPRWMHMethod(InferenceMethod):
-    """Registry method for gradient-free RWMH.
-
-    Feasible when the distribution (or its prior) supports
-    ``SupportsLogProb``.
-    """
+    """Registry method for gradient-free RWMH."""
 
     @property
     def name(self) -> str:

@@ -1,39 +1,46 @@
-"""MCMC-aware empirical distribution with chain structure and diagnostics."""
+"""MCMC-aware empirical distribution with chain structure and ArviZ InferenceData."""
 
 from __future__ import annotations
 
-import jax.numpy as jnp
-
 from typing import Any
+
+import jax.numpy as jnp
 
 from ..core.distribution import ArrayEmpiricalDistribution, Distribution
 from ..core.provenance import Provenance
 from ..custom_types import Array, ArrayLike
 from .._weights import Weights
-from ._diagnostics import InferenceDiagnostics
 
 __all__ = ["MCMCApproximateDistribution", "make_posterior"]
 
 
 class MCMCApproximateDistribution(ArrayEmpiricalDistribution):
-    """Empirical distribution from MCMC with chain structure and diagnostics.
+    """Empirical distribution from MCMC with chain structure and ArviZ InferenceData.
 
     Wraps one or more MCMC chains as an
     :class:`~probpipe.core.distribution.EmpiricalDistribution` while
-    preserving per-chain structure, optional warmup samples, and
-    :class:`InferenceDiagnostics`.
+    preserving per-chain structure, optional warmup samples, and an
+    ArviZ ``InferenceData`` object for downstream diagnostics.
 
     Parameters
     ----------
     chains : list of Array
         Per-chain sample arrays, each of shape ``(num_draws, *event_shape)``.
-    diagnostics : InferenceDiagnostics or None
-        Diagnostics from the MCMC run.
+    algorithm : str
+        Name of the inference algorithm (e.g. ``"tfp_nuts"``, ``"rwmh"``).
+    inference_data : InferenceData or None
+        ArviZ ``InferenceData`` object from the inference run.  Contains
+        ``posterior``, ``sample_stats``, and other groups depending on
+        the backend.  Use ArviZ functions for diagnostics::
+
+            import arviz as az
+            az.summary(posterior.inference_data)
+            az.plot_trace(posterior.inference_data)
+
     warmup_samples : list of Array or None
         Per-chain warmup (burn-in) samples, same shapes as *chains*.
     weights : array-like, :class:`~probpipe.Weights`, or None
         Optional per-sample importance weights (across all chains).
-        A pre-built :class:`~probpipe.Weights` object is also accepted.
     name : str or None
         Distribution name for provenance.
     """
@@ -42,7 +49,8 @@ class MCMCApproximateDistribution(ArrayEmpiricalDistribution):
         self,
         chains: list[Array],
         *,
-        diagnostics: InferenceDiagnostics | None = None,
+        algorithm: str = "unknown",
+        inference_data: Any | None = None,
         warmup_samples: list[Array] | None = None,
         weights: ArrayLike | Weights | None = None,
         name: str | None = None,
@@ -56,7 +64,8 @@ class MCMCApproximateDistribution(ArrayEmpiricalDistribution):
             if warmup_samples is not None
             else None
         )
-        self._diagnostics = diagnostics
+        self._algorithm = algorithm
+        self._inference_data = inference_data
 
         # Concatenate all chains for the parent EmpiricalDistribution
         all_samples = jnp.concatenate(self._chains, axis=0)
@@ -80,9 +89,19 @@ class MCMCApproximateDistribution(ArrayEmpiricalDistribution):
         return self._chains[0].shape[0]
 
     @property
-    def diagnostics(self) -> InferenceDiagnostics | None:
-        """MCMC diagnostics, if available."""
-        return self._diagnostics
+    def algorithm(self) -> str:
+        """Name of the inference algorithm."""
+        return self._algorithm
+
+    @property
+    def inference_data(self) -> Any | None:
+        """ArviZ InferenceData, if available.
+
+        Contains ``posterior``, ``sample_stats``, and other groups
+        depending on the backend.  ``None`` only when inference was
+        interrupted or the backend could not produce one.
+        """
+        return self._inference_data
 
     @property
     def warmup_samples(self) -> list[Array] | None:
@@ -129,28 +148,49 @@ class MCMCApproximateDistribution(ArrayEmpiricalDistribution):
         return jnp.concatenate(parts, axis=0)
 
     def __repr__(self) -> str:
-        diag = ""
-        if self._diagnostics is not None:
-            diag = f", {self._diagnostics.summary()}"
         return (
             f"MCMCApproximateDistribution("
+            f"algorithm={self._algorithm!r}, "
             f"num_chains={self.num_chains}, "
             f"num_draws={self.num_draws}, "
-            f"event_shape={self.event_shape}"
-            f"{diag})"
+            f"event_shape={self.event_shape})"
         )
 
 
 def make_posterior(
     chains: list[Array],
-    diagnostics: InferenceDiagnostics,
     parents: tuple[Distribution, ...],
     algorithm: str,
+    *,
+    inference_data: Any | None = None,
+    warmup_samples: list[Array] | None = None,
     **meta: Any,
 ) -> MCMCApproximateDistribution:
-    """Wrap chains + diagnostics into an MCMCApproximateDistribution with provenance."""
+    """Wrap chains into an MCMCApproximateDistribution with provenance.
+
+    Parameters
+    ----------
+    chains : list of Array
+        Per-chain sample arrays, each shaped ``(num_draws, *event_shape)``.
+    parents : tuple of Distribution
+        Parent distributions for provenance tracking.
+    algorithm : str
+        Inference algorithm name (e.g. ``"tfp_nuts"``, ``"rwmh"``).
+    inference_data : InferenceData or None
+        ArviZ ``InferenceData`` from the inference run.
+    warmup_samples : list of Array or None
+        Per-chain warmup samples, same shapes as *chains*.
+    **meta
+        Additional metadata stored in provenance.
+
+    Returns
+    -------
+    MCMCApproximateDistribution
+        Posterior with chain structure, InferenceData, and provenance.
+    """
     result = MCMCApproximateDistribution(
-        chains, diagnostics=diagnostics, name="posterior",
+        chains, algorithm=algorithm, inference_data=inference_data,
+        warmup_samples=warmup_samples, name="posterior",
     )
     result.with_source(
         Provenance(algorithm, parents=parents, metadata={"algorithm": algorithm, **meta})

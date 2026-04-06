@@ -126,8 +126,7 @@ probpipe/
 │   └── _likelihood.py       # Likelihood helpers
 │
 ├── inference/               # Inference algorithms
-│   ├── _mcmc_distribution.py  # MCMCApproximateDistribution
-│   ├── _diagnostics.py      # MCMCDiagnostics
+│   ├── _mcmc_distribution.py  # MCMCApproximateDistribution + make_posterior
 │   ├── _rwmh.py             # Random-walk Metropolis-Hastings
 │   └── _nutpie.py           # Nutpie-backed NUTS (optional dep)
 │
@@ -195,7 +194,7 @@ Built-in methods:
 | 90 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable) |
 | 80 | `nutpie_nuts` | nutpie | `StanModel`, `PyMCModel` |
 | 70 | `cmdstan_nuts` | CmdStanPy | `StanModel` |
-| 60 | `pymc_mcmc` | PyMC | `PyMCModel` |
+| 60 | `pymc_nuts` | PyMC | `PyMCModel` |
 | 50 | `tfp_rwmh` | TFP | Any `SupportsLogProb` |
 | 35 | `pymc_advi` | PyMC | `PyMCModel` |
 

@@ -8,11 +8,9 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..core._registry import MethodInfo
-from ..core.provenance import Provenance
 from ..core.node import workflow_function
 from ..custom_types import ArrayLike
-from ._diagnostics import InferenceDiagnostics, extract_arviz_diagnostics
-from ._mcmc_distribution import MCMCApproximateDistribution
+from ._mcmc_distribution import MCMCApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
 logger = logging.getLogger(__name__)
@@ -56,20 +54,12 @@ def condition_on_nutpie(
     )
 
     chains, param_names = _extract_chains(trace, num_chains)
-    diagnostics = extract_arviz_diagnostics(
-        trace, algorithm="nutpie_nuts",
-        num_results=num_results, num_chains=num_chains,
-    )
 
-    result = MCMCApproximateDistribution(
-        chains, diagnostics=diagnostics, name="posterior",
+    return make_posterior(
+        chains, parents=(model,), algorithm="nutpie_nuts",
+        inference_data=trace,
+        num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
     )
-    result.with_source(Provenance(
-        "nutpie_nuts", parents=(model,),
-        metadata={"num_results": num_results, "num_warmup": num_warmup,
-                  "num_chains": num_chains},
-    ))
-    return result
 
 
 # ---------------------------------------------------------------------------
