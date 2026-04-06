@@ -241,11 +241,17 @@ def with_approximation(
     target_type: type,
     **convert_kwargs: Any,
 ) -> WorkflowFunction:
-    """Wrap a step function to approximate its output after each step.
+    """Wrap a step function to convert its output after each step.
 
     After calling *step_fn*, converts the resulting distribution to
-    *target_type* via ``from_distribution``.  The pre-conversion
-    distribution is stored in ``info["pre_approximation"]``.
+    *target_type* using ProbPipe's standard ``from_distribution``
+    operation (which dispatches through the converter registry).
+    The pre-conversion distribution is stored in
+    ``info["pre_approximation"]``.
+
+    This is useful when the step function produces samples (e.g.,
+    MCMC output) but the next iteration needs a parametric
+    distribution as input.
 
     The returned wrapper is a :class:`WorkflowFunction`, so it appears
     as a node in the ProbPipe workflow DAG.
@@ -256,6 +262,7 @@ def with_approximation(
         The underlying step function.
     target_type : type
         Distribution type to convert to (e.g., ``MultivariateNormal``).
+        Can also be a protocol (e.g., ``SupportsLogProb``).
     **convert_kwargs
         Extra keyword arguments passed to ``from_distribution``.
 

@@ -8,12 +8,12 @@ convenience module for sequential Bayesian updating.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
 from ..core.distribution import Distribution
 from ..core.node import Module, WorkflowFunction, workflow_method
-from ..core.transition import StepResult, TransitionTrace, iterate
+from ..core.transition import StepResult
 
 logger = logging.getLogger(__name__)
 
@@ -63,14 +63,17 @@ class ConditioningStep(WorkflowFunction):
     """One step of incremental Bayesian conditioning.
 
     Builds a :class:`~probpipe.modeling.SimpleModel` from the current
-    distribution and a likelihood, then conditions on observed data.
-    Directly callable as a step function for use with
-    :func:`~probpipe.core.transition.iterate`.
+    distribution and a likelihood, then conditions on observed data
+    using ProbPipe's standard ``condition_on`` dispatch (which selects
+    NUTS, HMC, or another backend via the inference method registry).
 
     If the current distribution does not support
     :class:`~probpipe.core.protocols.SupportsLogProb`, it is
-    automatically converted (e.g., MCMC samples → KDE) via the
-    converter registry.
+    automatically converted (e.g., MCMC samples → KDE) via ProbPipe's
+    converter registry before building the model.
+
+    Directly callable as a step function for use with
+    :func:`~probpipe.core.transition.iterate`.
 
     Parameters
     ----------
@@ -78,7 +81,9 @@ class ConditioningStep(WorkflowFunction):
         Likelihood object.
     condition_fn : callable or None
         ``(model, data, **kw) -> Distribution[P]``.  Defaults to
-        the global ``condition_on`` operation.
+        the global ``condition_on`` operation, which dispatches through
+        the inference method registry.  Override to use a custom
+        conditioning strategy.
     **condition_kwargs
         Extra keyword arguments forwarded to *condition_fn* on every
         call (e.g., ``method="tfp_nuts"``, ``num_results=2000``).
@@ -87,8 +92,12 @@ class ConditioningStep(WorkflowFunction):
     --------
     ::
 
-        step = ConditioningStep(likelihood, method="tfp_nuts")
+        # Uses condition_on dispatch (NUTS by default):
+        step = ConditioningStep(likelihood)
         trace = iterate(step, prior, data_batches)
+
+        # Force a specific inference method:
+        step = ConditioningStep(likelihood, method="tfp_nuts", num_results=2000)
     """
 
     def __init__(
@@ -141,12 +150,15 @@ class ConditioningStep(WorkflowFunction):
 
 
 class IncrementalConditioner[P, D](Module):
-    """Sequential Bayesian updating: condition on data batches.
+    """Convenience wrapper for single-batch Bayesian conditioning.
 
-    Convenience wrapper around :class:`ConditioningStep` and
-    :func:`~probpipe.core.transition.iterate`.  For more control
-    (e.g., composing with :func:`~probpipe.core.transition.with_approximation`),
-    use ``ConditioningStep`` and ``iterate`` directly.
+    Pairs a prior with a :class:`ConditioningStep` and exposes
+    :meth:`update` for conditioning on one data batch at a time.
+
+    For **multi-batch** sequential updating, use the :attr:`step`
+    property with :func:`~probpipe.core.transition.iterate`::
+
+        trace = iterate(conditioner.step, prior, data_batches)
 
     Parameters
     ----------
@@ -155,9 +167,9 @@ class IncrementalConditioner[P, D](Module):
     likelihood : Likelihood[P, D]
         Likelihood object.
     condition_fn : callable or None
-        A callable with signature ``(model, data, **kw) -> Distribution[P]``
-        that conditions the model on observed data.  Defaults to the
-        global ``condition_on`` operation.
+        Conditioning callable; defaults to the global ``condition_on``
+        operation (which dispatches through the inference method
+        registry).
     **condition_kwargs
         Extra keyword arguments forwarded to *condition_fn* on every
         call (e.g., ``method="tfp_nuts"``, ``num_results=2000``).
@@ -167,9 +179,14 @@ class IncrementalConditioner[P, D](Module):
     ::
 
         conditioner = IncrementalConditioner(prior, likelihood)
-        trace = conditioner.update(data_batches=[batch1, batch2, batch3])
+
+        # Single-batch update:
+        result = conditioner.update(data=batch1)
+        result.distribution  # the posterior
+
+        # Multi-batch via iterate:
+        trace = iterate(conditioner.step, prior, [batch1, batch2, batch3])
         trace.final          # final posterior
-        trace.distributions  # full trajectory
     """
 
     def __init__(
@@ -187,18 +204,23 @@ class IncrementalConditioner[P, D](Module):
             **condition_kwargs,
         )
 
+    @property
+    def step(self) -> ConditioningStep:
+        """The underlying step function, usable with ``iterate``."""
+        return self._step
+
     @workflow_method
-    def update(self, data_batches: Iterable[D]) -> TransitionTrace[P]:
-        """Condition on all data batches, returning the full trajectory.
+    def update(self, data: D) -> StepResult[P]:
+        """Condition the prior on a single data batch.
 
         Parameters
         ----------
-        data_batches : Iterable[D]
-            Sequence of data batches to condition on.
+        data : D
+            Observed data to condition on.
 
         Returns
         -------
-        TransitionTrace[P]
-            Trajectory including the initial prior and each posterior.
+        StepResult[P]
+            The posterior distribution and any auxiliary info.
         """
-        return iterate(self._step, self._prior, data_batches)
+        return self._step(self._prior, data)

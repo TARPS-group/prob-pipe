@@ -447,8 +447,8 @@ class TestConditioningStep:
 
 
 class TestIncrementalConditioner:
-    def test_update_returns_trace(self):
-        """IncrementalConditioner.update returns a TransitionTrace."""
+    def test_update_single_batch(self):
+        """update() conditions on a single data batch and returns StepResult."""
         class SimpleLikelihood:
             def log_likelihood(self, params, data):
                 return -0.5 * jnp.sum((data - params) ** 2)
@@ -457,11 +457,28 @@ class TestIncrementalConditioner:
         conditioner = IncrementalConditioner(
             prior, SimpleLikelihood(), condition_fn=_mock_condition_fn,
         )
+        data = jnp.ones((10, 2)) * 2.0
+        result = conditioner.update(data=data)
+        assert isinstance(result, StepResult)
+        assert isinstance(result.distribution, EmpiricalDistribution)
+
+    def test_step_property(self):
+        """step property exposes the ConditioningStep for use with iterate."""
+        class SimpleLikelihood:
+            def log_likelihood(self, params, data):
+                return -0.5 * jnp.sum((data - params) ** 2)
+
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0)
+        conditioner = IncrementalConditioner(
+            prior, SimpleLikelihood(), condition_fn=_mock_condition_fn,
+        )
+        assert isinstance(conditioner.step, ConditioningStep)
+
+        # Use .step with iterate for multi-batch
         batches = [jnp.ones((10, 2)) * i for i in [1.0, 2.0]]
-        trace = conditioner.update(data_batches=batches)
-        assert isinstance(trace, TransitionTrace)
+        trace = iterate(conditioner.step, prior, batches)
         assert len(trace) == 2
-        assert trace.distributions[0] is prior
+        assert all(isinstance(r.distribution, EmpiricalDistribution) for r in trace)
 
 
 # ---------------------------------------------------------------------------
