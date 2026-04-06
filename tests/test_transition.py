@@ -16,6 +16,7 @@ from probpipe import (
     ConditioningStep,
     IncrementalConditioner,
 )
+from probpipe.core.node import WorkflowFunction
 from probpipe.core.transition import DistributionTransition
 
 
@@ -79,7 +80,7 @@ class TestStepResult:
 
 class TestTransitionTrace:
     def test_empty_trace(self, initial):
-        trace = TransitionTrace(initial=initial, results=[])
+        trace = TransitionTrace(initial=initial, results=())
         assert len(trace) == 0
         assert trace.final is initial
         assert trace.distributions == [initial]
@@ -88,56 +89,78 @@ class TestTransitionTrace:
     def test_single_step(self, initial):
         new_dist = EmpiricalDistribution(jnp.ones((50, 2)))
         result = StepResult(distribution=new_dist, info={"a": 1})
-        trace = TransitionTrace(initial=initial, results=[result])
+        trace = TransitionTrace(initial=initial, results=(result,))
         assert len(trace) == 1
         assert trace.final is new_dist
         assert trace.distributions == [initial, new_dist]
         assert trace.infos == [{"a": 1}]
 
     def test_multi_step(self, initial):
-        results = []
-        for i in range(3):
-            d = EmpiricalDistribution(jnp.full((50, 2), float(i)))
-            results.append(StepResult(distribution=d, info={"step": i}))
+        results = tuple(
+            StepResult(distribution=EmpiricalDistribution(jnp.full((50, 2), float(i))), info={"step": i})
+            for i in range(3)
+        )
         trace = TransitionTrace(initial=initial, results=results)
         assert len(trace) == 3
         assert trace.final is results[-1].distribution
         assert len(trace.distributions) == 4  # initial + 3 steps
 
     def test_info_values(self, initial):
-        results = [
+        results = tuple(
             StepResult(
                 distribution=EmpiricalDistribution(jnp.zeros((10, 2))),
                 info={"ess": float(i * 10)},
             )
             for i in range(3)
-        ]
+        )
         trace = TransitionTrace(initial=initial, results=results)
         assert trace.info_values("ess") == [0.0, 10.0, 20.0]
 
     def test_info_values_missing_key(self, initial):
-        results = [
+        results = (
             StepResult(
                 distribution=EmpiricalDistribution(jnp.zeros((10, 2))),
                 info={},
-            )
-        ]
+            ),
+        )
         trace = TransitionTrace(initial=initial, results=results)
         with pytest.raises(KeyError):
             trace.info_values("missing")
 
     def test_getitem(self, initial):
-        results = [
+        results = tuple(
             StepResult(
                 distribution=EmpiricalDistribution(jnp.full((10, 2), float(i))),
                 info={"i": i},
             )
             for i in range(3)
-        ]
+        )
         trace = TransitionTrace(initial=initial, results=results)
         assert trace[0].info["i"] == 0
         assert trace[2].info["i"] == 2
         assert trace[-1].info["i"] == 2
+
+    def test_iter(self, initial):
+        """TransitionTrace supports iteration over results."""
+        results = tuple(
+            StepResult(
+                distribution=EmpiricalDistribution(jnp.full((10, 2), float(i))),
+                info={"i": i},
+            )
+            for i in range(3)
+        )
+        trace = TransitionTrace(initial=initial, results=results)
+        collected = list(trace)
+        assert len(collected) == 3
+        assert all(isinstance(r, StepResult) for r in collected)
+        assert collected[0].info["i"] == 0
+        assert collected[2].info["i"] == 2
+
+    def test_frozen(self, initial):
+        """TransitionTrace is immutable."""
+        trace = TransitionTrace(initial=initial, results=())
+        with pytest.raises(AttributeError):
+            trace.initial = initial
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +263,14 @@ class TestIterate:
 
 
 class TestWithApproximation:
+    def test_returns_workflow_function(self):
+        """with_approximation returns a WorkflowFunction."""
+        step = with_approximation(trivial_step, MultivariateNormal)
+        assert isinstance(step, WorkflowFunction)
+        assert "with_approximation" in step._name
+        assert "trivial_step" in step._name
+        assert "MultivariateNormal" in step._name
+
     def test_converts_output(self, initial):
         """Output is converted to target type."""
         step = with_approximation(trivial_step, MultivariateNormal)
@@ -279,8 +310,15 @@ class TestWithApproximation:
 
 
 class TestWithResampling:
+    def test_returns_workflow_function(self):
+        """with_resampling returns a WorkflowFunction."""
+        step = with_resampling(trivial_step, ess_threshold=0.5)
+        assert isinstance(step, WorkflowFunction)
+        assert "with_resampling" in step._name
+        assert "trivial_step" in step._name
+
     def test_no_resample_uniform(self):
-        """Uniform weights → no resampling (ESS = N)."""
+        """Uniform weights -> no resampling (ESS = N)."""
         initial = EmpiricalDistribution(jnp.zeros((100, 2)))
         step = with_resampling(trivial_step, ess_threshold=0.5)
         trace = iterate(step_fn=step, initial=initial, inputs=[1.0])
@@ -288,7 +326,7 @@ class TestWithResampling:
         assert trace[0].info["ess_ratio"] == pytest.approx(1.0, abs=0.01)
 
     def test_resample_degenerate(self):
-        """Highly non-uniform weights → resampling triggered."""
+        """Highly non-uniform weights -> resampling triggered."""
         n = 100
         # Create degenerate weights: almost all weight on one particle
         log_w = jnp.full(n, -100.0).at[0].set(0.0)
@@ -305,7 +343,7 @@ class TestWithResampling:
         assert trace[0].info["ess_ratio"] < 0.5
         # Resampled distribution should have uniform weights
         resampled = trace[0].distribution
-        assert resampled._w.is_uniform
+        assert resampled.is_uniform
 
     def test_resample_provenance(self):
         """Resampled distribution gets 'resample' provenance."""
@@ -335,6 +373,27 @@ class TestWithResampling:
         # No resampling keys in info (not an EmpiricalDistribution)
         assert "resampled" not in trace[0].info
 
+    def test_deterministic_seed(self):
+        """Resampling is deterministic across repeated calls with same seed."""
+        n = 100
+        log_w = jnp.full(n, -100.0).at[0].set(0.0)
+        samples = jnp.arange(n * 2, dtype=jnp.float32).reshape(n, 2)
+
+        def weighted_step(dist, inp):
+            return EmpiricalDistribution(samples, log_weights=log_w)
+
+        initial = EmpiricalDistribution(jnp.zeros((n, 2)))
+
+        # Run twice with the same seed — results should match
+        step1 = with_resampling(weighted_step, ess_threshold=0.5, seed=42)
+        trace1 = iterate(step_fn=step1, initial=initial, inputs=[0.0, 0.0])
+
+        step2 = with_resampling(weighted_step, ess_threshold=0.5, seed=42)
+        trace2 = iterate(step_fn=step2, initial=initial, inputs=[0.0, 0.0])
+
+        assert jnp.allclose(trace1[0].distribution.samples, trace2[0].distribution.samples)
+        assert jnp.allclose(trace1[1].distribution.samples, trace2[1].distribution.samples)
+
 
 # ---------------------------------------------------------------------------
 # Category 4: Integration — ConditioningStep + IncrementalConditioner
@@ -353,8 +412,6 @@ def _mock_condition_fn(model, data):
 class TestConditioningStep:
     def test_construction(self):
         """ConditioningStep is callable and a WorkflowFunction."""
-        from probpipe.core.node import WorkflowFunction
-
         class SimpleLikelihood:
             def log_likelihood(self, params, data):
                 return -0.5 * jnp.sum((data - params) ** 2)
