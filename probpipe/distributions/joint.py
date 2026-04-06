@@ -94,8 +94,12 @@ from ..core.distribution import (
     _mc_expectation,
 )
 from ..core._joint import (
+    # Generic bases (re-exported for consumers of this module)
     JointDistribution,
     ProductDistribution,
+    # JAX-backed bases used by the concrete types below
+    JointArrayDistribution,
+    ProductArrayDistribution,
     DistributionView,
     KeyPath,
     _normalize_key,
@@ -116,15 +120,20 @@ from ..core.protocols import (
 )
 
 __all__ = [
+    # Re-exported generic bases from core (no JAX requirement)
     "JointDistribution",
     "ProductDistribution",
+    "DistributionView",
+    # JAX-backed base (re-exported from core)
+    "JointArrayDistribution",
+    "ProductArrayDistribution",
+    # JAX-backed concrete types defined here
     "SequentialJointDistribution",
     "JointEmpirical",
     "JointGaussian",
-    "DistributionView",
 ]
 
-class SequentialJointDistribution(JointDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning):
+class SequentialJointDistribution(JointArrayDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning):
     """
     Joint distribution with autoregressive (sequential) dependence.
 
@@ -466,7 +475,7 @@ class SequentialJointDistribution(JointDistribution, SupportsSampling, SupportsL
 # JointEmpirical — weighted joint samples
 # ---------------------------------------------------------------------------
 
-class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, SupportsVariance, SupportsConditioning):
+class JointEmpirical(JointArrayDistribution, SupportsSampling, SupportsMean, SupportsVariance, SupportsConditioning):
     """
     Joint distribution from weighted joint samples.
 
@@ -608,7 +617,10 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
             if sample_shape:
                 result[cname] = drawn.reshape(sample_shape + arr.shape[1:])
             else:
-                result[cname] = drawn.squeeze(axis=0)
+                # sample_shape=() means n_draws=1; remove the leading particle axis.
+                # drawn has shape (1, *event_dims); index rather than squeeze so
+                # this is safe even when event_dims is itself length-1.
+                result[cname] = drawn[0]
         return result
 
     def _log_prob(self, value: dict[str, ArrayLike]) -> Array:
@@ -737,7 +749,7 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
 # JointGaussian — analytical joint Gaussian with cross-covariance
 # ---------------------------------------------------------------------------
 
-class JointGaussian(JointDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsCovariance, SupportsConditioning):
+class JointGaussian(JointArrayDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsCovariance, SupportsConditioning):
     """
     Joint Gaussian distribution with named components and cross-covariance.
 
@@ -947,10 +959,17 @@ class JointGaussian(JointDistribution, SupportsSampling, SupportsLogProb, Suppor
         Sigma_uo = self._cov_mat[jnp.ix_(u_idx, o_idx)]
         Sigma_oo = self._cov_mat[jnp.ix_(o_idx, o_idx)]
 
-        # Gaussian conditioning: mu_u|o = mu_u + Sigma_uo @ Sigma_oo^{-1} @ (o - mu_o)
-        Sigma_oo_inv = jnp.linalg.inv(Sigma_oo)
-        cond_mean = mu_u + Sigma_uo @ Sigma_oo_inv @ (o_vals - mu_o)
-        cond_cov = Sigma_uu - Sigma_uo @ Sigma_oo_inv @ Sigma_uo.T
+        # Numerically stable Gaussian conditioning via solve instead of inv:
+        #   mu_u|o  = mu_u + Sigma_uo @ Sigma_oo^{-1} @ (o - mu_o)
+        #   cov_u|o = Sigma_uu - Sigma_uo @ Sigma_oo^{-1} @ Sigma_uo.T
+        #
+        # Rewrite x = Sigma_oo^{-1} @ (o - mu_o) as solve(Sigma_oo, o - mu_o),
+        # and K = Sigma_oo^{-1} @ Sigma_uo.T as solve(Sigma_oo, Sigma_uo.T).
+        innovation = o_vals - mu_o
+        x = jnp.linalg.solve(Sigma_oo, innovation)            # (|o|,)
+        K = jnp.linalg.solve(Sigma_oo, Sigma_uo.T)           # (|o|, |u|)
+        cond_mean = mu_u + Sigma_uo @ x
+        cond_cov = Sigma_uu - Sigma_uo @ K
         # Symmetrise for numerical stability
         cond_cov = (cond_cov + cond_cov.T) / 2
 
@@ -980,7 +999,7 @@ class JointGaussian(JointDistribution, SupportsSampling, SupportsLogProb, Suppor
 # ---------------------------------------------------------------------------
 
 def _product_flatten(dist):
-    """Flatten a ProductDistribution for JAX pytree registration.
+    """Flatten a ProductArrayDistribution for JAX pytree registration.
 
     Stores the leaf ArrayDistributions as children and the component
     pytree structure (treedef) + name as auxiliary data.  This handles
@@ -993,18 +1012,14 @@ def _product_flatten(dist):
 
 
 def _product_unflatten(aux, children):
-    """Unflatten a ProductDistribution from JAX pytree data.
-
-    Reconstructs the component pytree from the stored treedef and
-    then passes it to the constructor as keyword arguments.
-    """
+    """Unflatten a ProductArrayDistribution from JAX pytree data."""
     comp_treedef, name = aux
     components = jax.tree.unflatten(comp_treedef, children)
-    return ProductDistribution(**components, name=name)
+    return ProductArrayDistribution(**components, name=name)
 
 
 jax.tree_util.register_pytree_node(
-    ProductDistribution,
+    ProductArrayDistribution,
     _product_flatten,
     _product_unflatten,
 )

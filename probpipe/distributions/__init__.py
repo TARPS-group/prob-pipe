@@ -24,12 +24,16 @@ from .discrete import (
 )
 from .transformed import TransformedDistribution
 from .joint import (
+    # Generic bases (no JAX requirement on component types)
     JointDistribution,
     ProductDistribution,
+    DistributionView,
+    # JAX-backed base and concrete types
+    JointArrayDistribution,
+    ProductArrayDistribution,
     SequentialJointDistribution,
     JointEmpirical,
     JointGaussian,
-    DistributionView,
 )
 from .multivariate import (
     MultivariateNormal,
@@ -71,13 +75,16 @@ __all__ = [
     "NegativeBinomial",
     # Transformed
     "TransformedDistribution",
-    # Joint
+    # Joint — generic (no JAX requirement)
     "JointDistribution",
     "ProductDistribution",
+    "DistributionView",
+    # Joint — JAX-backed
+    "JointArrayDistribution",
+    "ProductArrayDistribution",
     "SequentialJointDistribution",
     "JointEmpirical",
     "JointGaussian",
-    "DistributionView",
     # Multivariate
     "MultivariateNormal",
     "Dirichlet",

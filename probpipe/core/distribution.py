@@ -65,8 +65,13 @@ from ._broadcast_distributions import (
 
 # -- _joint -----------------------------------------------------------------
 from ._joint import (
+    # Generic bases (no JAX requirement on component types)
     JointDistribution,
     ProductDistribution,
+    # JAX-backed implementations
+    JointArrayDistribution,
+    ProductArrayDistribution,
+    # Component accessor
     DistributionView,
 )
 
@@ -103,9 +108,12 @@ __all__ = [
     # Joint bootstrap
     "BootstrapReplicateDistribution",
     "ArrayBootstrapReplicateDistribution",
-    # Joint
+    # Joint — generic (no JAX requirement)
     "JointDistribution",
     "ProductDistribution",
+    # Joint — JAX-backed
+    "JointArrayDistribution",
+    "ProductArrayDistribution",
     "DistributionView",
     # Random functions
     "RandomFunction",
