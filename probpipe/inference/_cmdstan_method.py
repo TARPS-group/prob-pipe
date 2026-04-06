@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import arviz as az
 import jax.numpy as jnp
 
 from ..core._registry import MethodInfo
-from ..core.provenance import Provenance
-from ._mcmc_distribution import MCMCApproximateDistribution
+from ._mcmc_distribution import MCMCApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
 
@@ -49,8 +49,6 @@ class CmdStanNutsMethod(InferenceMethod):
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
-        import arviz as az
-
         cmdstanpy = _ensure_cmdstanpy()
 
         num_results = kwargs.get("num_results", 1000)
@@ -82,13 +80,8 @@ class CmdStanNutsMethod(InferenceMethod):
 
         inference_data = az.from_cmdstanpy(fit)
 
-        result = MCMCApproximateDistribution(
-            chains, algorithm="cmdstan_nuts", inference_data=inference_data,
-            name="posterior",
+        return make_posterior(
+            chains, parents=(dist,), algorithm="cmdstan_nuts",
+            inference_data=inference_data,
+            num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         )
-        result.with_source(Provenance(
-            "cmdstan_nuts", parents=(dist,),
-            metadata={"num_results": num_results, "num_warmup": num_warmup,
-                      "num_chains": num_chains, "algorithm": "cmdstan_nuts"},
-        ))
-        return result

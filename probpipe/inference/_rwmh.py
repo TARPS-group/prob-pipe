@@ -12,11 +12,10 @@ import numpy as np
 
 from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
-from ..core.provenance import Provenance
 from ..core.node import workflow_function
 from ..core.protocols import SupportsLogProb
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ._mcmc_distribution import MCMCApproximateDistribution
+from ._mcmc_distribution import MCMCApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 from ._tfp_mcmc import _get_init_state, _get_prior, _is_simple_model
 
@@ -62,6 +61,7 @@ def rwmh(
     Returns
     -------
     MCMCApproximateDistribution
+        Posterior samples with chain structure and ArviZ InferenceData.
     """
     if not isinstance(dist, SupportsLogProb):
         raise TypeError(
@@ -133,17 +133,12 @@ def rwmh(
         },
     )
 
-    result = MCMCApproximateDistribution(
-        chains, algorithm="rwmh", inference_data=inference_data,
-        warmup_samples=warmup, name="posterior",
+    return make_posterior(
+        chains, parents=(dist,), algorithm="rwmh",
+        inference_data=inference_data, warmup_samples=warmup,
+        num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
+        step_size=step_size, accept_rate=accept_rate,
     )
-    result.with_source(Provenance(
-        "rwmh", parents=(dist,),
-        metadata={"num_results": num_results, "num_warmup": num_warmup,
-                  "num_chains": num_chains, "step_size": step_size,
-                  "accept_rate": accept_rate, "algorithm": "rwmh"},
-    ))
-    return result
 
 
 # ---------------------------------------------------------------------------

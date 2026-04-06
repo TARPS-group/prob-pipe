@@ -7,7 +7,6 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..core._registry import MethodInfo
-from ..core.provenance import Provenance
 from ._mcmc_distribution import MCMCApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
@@ -73,16 +72,11 @@ class PyMCNutsMethod(InferenceMethod):
 
         chains = _extract_pymc_chains(trace, dist._param_names, num_chains)
 
-        result = MCMCApproximateDistribution(
-            chains, algorithm="pymc_nuts", inference_data=trace,
-            name="posterior",
+        return make_posterior(
+            chains, parents=(dist,), algorithm="pymc_nuts",
+            inference_data=trace,
+            num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         )
-        result.with_source(Provenance(
-            "pymc_nuts", parents=(dist,),
-            metadata={"num_results": num_results, "num_warmup": num_warmup,
-                      "num_chains": num_chains, "algorithm": "pymc_nuts"},
-        ))
-        return result
 
 
 class PyMCADVIMethod(InferenceMethod):

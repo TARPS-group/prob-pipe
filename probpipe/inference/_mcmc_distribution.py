@@ -163,12 +163,13 @@ def make_posterior(
     algorithm: str,
     *,
     inference_data: Any | None = None,
+    warmup_samples: list[Array] | None = None,
     **meta: Any,
 ) -> MCMCApproximateDistribution:
     """Wrap chains into an MCMCApproximateDistribution with provenance."""
     result = MCMCApproximateDistribution(
         chains, algorithm=algorithm, inference_data=inference_data,
-        name="posterior",
+        warmup_samples=warmup_samples, name="posterior",
     )
     result.with_source(
         Provenance(algorithm, parents=parents, metadata={"algorithm": algorithm, **meta})

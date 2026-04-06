@@ -148,7 +148,7 @@ Each file should contain **one independent concern**. Use judgment:
   `multivariate.py`).
 - **Substantial classes** with distinct logic or backends (e.g.,
   `SimpleModel` vs `StanModel`, `RWMH` vs nutpie) get their own file.
-- **Small utility types** tightly coupled to one consumer belong in
+- **Small helpers** tightly coupled to one consumer belong in
   that consumer's file (e.g., `make_posterior` in
   `_mcmc_distribution.py`).
 
