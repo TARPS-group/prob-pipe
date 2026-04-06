@@ -11,9 +11,8 @@ from probpipe import (
     StepResult,
     TransitionTrace,
     iterate,
-    with_approximation,
+    with_conversion,
     with_resampling,
-    ConditioningStep,
     IncrementalConditioner,
 )
 from probpipe.core.node import WorkflowFunction
@@ -262,35 +261,35 @@ class TestIterate:
 # ---------------------------------------------------------------------------
 
 
-class TestWithApproximation:
+class TestWithConversion:
     def test_returns_workflow_function(self):
-        """with_approximation returns a WorkflowFunction."""
-        step = with_approximation(trivial_step, MultivariateNormal)
+        """with_conversion returns a WorkflowFunction."""
+        step = with_conversion(trivial_step, MultivariateNormal)
         assert isinstance(step, WorkflowFunction)
-        assert "with_approximation" in step._name
+        assert "with_conversion" in step._name
         assert "trivial_step" in step._name
         assert "MultivariateNormal" in step._name
 
     def test_converts_output(self, initial):
         """Output is converted to target type."""
-        step = with_approximation(trivial_step, MultivariateNormal)
+        step = with_conversion(trivial_step, MultivariateNormal)
         trace = iterate(step_fn=step, initial=initial, inputs=[1.0])
         assert isinstance(trace.final, MultivariateNormal)
 
-    def test_preserves_pre_approximation(self, initial):
+    def test_preserves_pre_conversion(self, initial):
         """Pre-conversion distribution is stored in info."""
-        step = with_approximation(trivial_step, MultivariateNormal)
+        step = with_conversion(trivial_step, MultivariateNormal)
         trace = iterate(step_fn=step, initial=initial, inputs=[1.0])
-        pre = trace[0].info["pre_approximation"]
+        pre = trace[0].info["pre_conversion"]
         assert isinstance(pre, EmpiricalDistribution)
 
     def test_preserves_inner_info(self, initial):
         """Info from the inner step function is preserved."""
         data = [jnp.ones((10, 2))]
-        step = with_approximation(info_step, MultivariateNormal)
+        step = with_conversion(info_step, MultivariateNormal)
         trace = iterate(step_fn=step, initial=initial, inputs=data)
         assert "data_mean" in trace[0].info
-        assert "pre_approximation" in trace[0].info
+        assert "pre_conversion" in trace[0].info
 
     def test_multi_step_stays_parametric(self):
         """Each step produces a parametric distribution usable as next prior."""
@@ -303,7 +302,7 @@ class TestWithApproximation:
             return EmpiricalDistribution(samples)
 
         initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
-        step = with_approximation(parametric_step, MultivariateNormal)
+        step = with_conversion(parametric_step, MultivariateNormal)
         trace = iterate(step_fn=step, initial=initial, inputs=[1.0, 2.0, 3.0])
         for i in range(3):
             assert isinstance(trace[i].distribution, MultivariateNormal)
@@ -396,12 +395,12 @@ class TestWithResampling:
 
 
 # ---------------------------------------------------------------------------
-# Category 4: Integration — ConditioningStep + IncrementalConditioner
+# Category 4: Integration — IncrementalConditioner
 # ---------------------------------------------------------------------------
 
 
-def _mock_condition_fn(model, data):
-    """Mock conditioning: return EmpiricalDistribution near data mean."""
+def _mock_condition_fn(model, data, **kwargs):
+    """Conditioning function for testing: return EmpiricalDistribution near data mean."""
     data_mean = jnp.mean(jnp.asarray(data), axis=0)
     key = jax.random.PRNGKey(0)
     noise = jax.random.normal(key, shape=(50, data_mean.shape[0]))
@@ -409,72 +408,60 @@ def _mock_condition_fn(model, data):
     return EmpiricalDistribution(samples)
 
 
-class TestConditioningStep:
-    def test_construction(self):
-        """ConditioningStep is callable and a WorkflowFunction."""
-        class SimpleLikelihood:
-            def log_likelihood(self, params, data):
-                return -0.5 * jnp.sum((data - params) ** 2)
-
-        step = ConditioningStep(SimpleLikelihood(), condition_fn=_mock_condition_fn)
-        assert isinstance(step, WorkflowFunction)
-
-    def test_step_returns_step_result(self):
-        """Calling the step returns a StepResult."""
-        class SimpleLikelihood:
-            def log_likelihood(self, params, data):
-                return -0.5 * jnp.sum((data - params) ** 2)
-
-        step = ConditioningStep(SimpleLikelihood(), condition_fn=_mock_condition_fn)
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0)
-        data = jnp.ones((10, 2)) * 3.0
-        result = step(prior, data)
-        assert isinstance(result, StepResult)
-        assert isinstance(result.distribution, EmpiricalDistribution)
-
-    def test_iterate_with_conditioning_step(self):
-        """ConditioningStep works with iterate over multiple batches."""
-        class SimpleLikelihood:
-            def log_likelihood(self, params, data):
-                return -0.5 * jnp.sum((data - params) ** 2)
-
-        step = ConditioningStep(SimpleLikelihood(), condition_fn=_mock_condition_fn)
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0)
-        batches = [jnp.ones((10, 2)) * i for i in [1.0, 2.0, 3.0]]
-        trace = iterate(step, prior, batches)
-        assert len(trace) == 3
-        assert all(isinstance(r.distribution, EmpiricalDistribution) for r in trace.results)
+class _SimpleLikelihood:
+    def log_likelihood(self, params, data):
+        return -0.5 * jnp.sum((data - params) ** 2)
 
 
 class TestIncrementalConditioner:
     def test_update_single_batch(self):
-        """update() conditions on a single data batch and returns StepResult."""
-        class SimpleLikelihood:
-            def log_likelihood(self, params, data):
-                return -0.5 * jnp.sum((data - params) ** 2)
-
+        """update() conditions on a single data batch, updates state."""
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0)
         conditioner = IncrementalConditioner(
-            prior, SimpleLikelihood(), condition_fn=_mock_condition_fn,
+            prior, _SimpleLikelihood(), condition_fn=_mock_condition_fn,
         )
+        assert conditioner.curr_posterior is prior
+
         data = jnp.ones((10, 2)) * 2.0
-        result = conditioner.update(data=data)
-        assert isinstance(result, StepResult)
-        assert isinstance(result.distribution, EmpiricalDistribution)
+        posterior = conditioner.update(data=data)
+
+        assert isinstance(posterior, EmpiricalDistribution)
+        assert conditioner.curr_posterior is posterior
+
+    def test_update_successive(self):
+        """Successive update() calls chain posteriors."""
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0)
+        conditioner = IncrementalConditioner(
+            prior, _SimpleLikelihood(), condition_fn=_mock_condition_fn,
+        )
+        post1 = conditioner.update(data=jnp.ones((10, 2)))
+        post2 = conditioner.update(data=jnp.ones((10, 2)) * 2.0)
+        assert conditioner.curr_posterior is post2
+        assert post1 is not post2
+
+    def test_update_all(self):
+        """update_all() iterates over batches and updates state."""
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0)
+        conditioner = IncrementalConditioner(
+            prior, _SimpleLikelihood(), condition_fn=_mock_condition_fn,
+        )
+        batches = [jnp.ones((10, 2)) * i for i in [1.0, 2.0, 3.0]]
+        trace = conditioner.update_all(data_batches=batches)
+
+        assert isinstance(trace, TransitionTrace)
+        assert len(trace) == 3
+        assert trace.distributions[0] is prior
+        assert conditioner.curr_posterior is trace.final
 
     def test_step_property(self):
-        """step property exposes the ConditioningStep for use with iterate."""
-        class SimpleLikelihood:
-            def log_likelihood(self, params, data):
-                return -0.5 * jnp.sum((data - params) ** 2)
-
+        """step property exposes the step function for use with iterate."""
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0)
         conditioner = IncrementalConditioner(
-            prior, SimpleLikelihood(), condition_fn=_mock_condition_fn,
+            prior, _SimpleLikelihood(), condition_fn=_mock_condition_fn,
         )
-        assert isinstance(conditioner.step, ConditioningStep)
+        assert isinstance(conditioner.step, WorkflowFunction)
 
-        # Use .step with iterate for multi-batch
+        # Use .step with iterate for functional composition
         batches = [jnp.ones((10, 2)) * i for i in [1.0, 2.0]]
         trace = iterate(conditioner.step, prior, batches)
         assert len(trace) == 2

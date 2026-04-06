@@ -33,7 +33,7 @@ __all__ = [
     "TransitionTrace",
     "DistributionTransition",
     "iterate",
-    "with_approximation",
+    "with_conversion",
     "with_resampling",
 ]
 
@@ -143,7 +143,7 @@ class DistributionTransition[T, S](Protocol):
 # ---------------------------------------------------------------------------
 
 
-def _normalize_step_result(result: Any, step_context: int | str) -> StepResult:
+def _as_step_result(result: Any, step_context: int | str) -> StepResult:
     """Wrap a bare Distribution return in StepResult; validate type."""
     if isinstance(result, StepResult):
         return result
@@ -211,7 +211,7 @@ def iterate(
 
     for i, inp in enumerate(inputs):
         raw = step_fn(current, inp)
-        result = _normalize_step_result(raw, f"at index {i}")
+        result = _as_step_result(raw, f"at index {i}")
         _maybe_attach_provenance(result, current, i)
         results.append(result)
         current = result.distribution
@@ -236,7 +236,7 @@ def _step_fn_name(step_fn: Callable) -> str:
     return getattr(step_fn, "__name__", type(step_fn).__name__)
 
 
-def with_approximation(
+def with_conversion(
     step_fn: Callable,
     target_type: type,
     **convert_kwargs: Any,
@@ -247,7 +247,7 @@ def with_approximation(
     *target_type* using ProbPipe's standard ``from_distribution``
     operation (which dispatches through the converter registry).
     The pre-conversion distribution is stored in
-    ``info["pre_approximation"]``.
+    ``info["pre_conversion"]``.
 
     This is useful when the step function produces samples (e.g.,
     MCMC output) but the next iteration needs a parametric
@@ -273,21 +273,21 @@ def with_approximation(
     """
     inner_name = _step_fn_name(step_fn)
 
-    def _with_approximation_impl(dist: Distribution, inp: Any) -> StepResult:
+    def _with_conversion_impl(dist: Distribution, inp: Any) -> StepResult:
         from .ops import from_distribution
 
         raw = step_fn(dist, inp)
-        result = _normalize_step_result(
-            raw, f"(inside with_approximation wrapping {inner_name})"
+        result = _as_step_result(
+            raw, f"(inside with_conversion wrapping {inner_name})"
         )
         pre = result.distribution
-        approximated = from_distribution(pre, target_type, **convert_kwargs)
-        info = {**result.info, "pre_approximation": pre}
-        return StepResult(distribution=approximated, info=info)
+        converted = from_distribution(pre, target_type, **convert_kwargs)
+        info = {**result.info, "pre_conversion": pre}
+        return StepResult(distribution=converted, info=info)
 
     return WorkflowFunction(
-        func=_with_approximation_impl,
-        name=f"with_approximation({inner_name}, {target_type.__name__})",
+        func=_with_conversion_impl,
+        name=f"with_conversion({inner_name}, {target_type.__name__})",
     )
 
 
@@ -343,7 +343,7 @@ def with_resampling(
         from .distribution import EmpiricalDistribution
 
         raw = step_fn(dist, inp)
-        result = _normalize_step_result(
+        result = _as_step_result(
             raw, f"(inside with_resampling wrapping {inner_name})"
         )
         out_dist = result.distribution

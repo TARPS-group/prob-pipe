@@ -106,33 +106,20 @@ class TestIncrementalConditioner:
     def likelihood(self):
         return MultivariateNormalLikelihood()
 
-    def test_single_batch_update(self, prior, likelihood, dim):
-        from probpipe.core.transition import StepResult
-
+    def test_incremental_update(self, prior, likelihood, dim):
         conditioner = IncrementalConditioner(
             prior=prior,
             likelihood=likelihood,
             condition_fn=_simple_condition_fn,
         )
+        assert conditioner.curr_posterior is prior
 
         key = jax.random.PRNGKey(0)
         data = jax.random.normal(key, shape=(10, dim)) + 2.0
-        result = conditioner.update(data=data)
+        posterior = conditioner.update(data=data)
 
-        assert isinstance(result, StepResult)
-        assert isinstance(result.distribution, EmpiricalDistribution)
-
-    def test_step_property(self, prior, likelihood):
-        """step property exposes the ConditioningStep for iterate."""
-        from probpipe.core.transition import iterate
-        from probpipe.modeling._likelihood import ConditioningStep
-
-        conditioner = IncrementalConditioner(
-            prior=prior,
-            likelihood=likelihood,
-            condition_fn=_simple_condition_fn,
-        )
-        assert isinstance(conditioner.step, ConditioningStep)
+        assert isinstance(posterior, EmpiricalDistribution)
+        assert conditioner.curr_posterior is posterior
 
     def test_default_condition_fn(self, prior, likelihood):
         """IncrementalConditioner should work without explicit condition_fn."""
@@ -141,7 +128,7 @@ class TestIncrementalConditioner:
             likelihood=likelihood,
         )
         # Just verify construction works; actual conditioning requires MCMC
-        assert conditioner._prior is prior
+        assert conditioner.curr_posterior is prior
 
 
 # ---------------------------------------------------------------------------
