@@ -107,19 +107,23 @@ class TestIncrementalConditioner:
         return MultivariateNormalLikelihood()
 
     def test_incremental_update(self, prior, likelihood, dim):
+        from probpipe.core.transition import TransitionTrace
+
         conditioner = IncrementalConditioner(
             prior=prior,
             likelihood=likelihood,
             condition_fn=_simple_condition_fn,
         )
-        assert conditioner.curr_posterior is prior
 
         key = jax.random.PRNGKey(0)
-        data = jax.random.normal(key, shape=(10, dim)) + 2.0
-        posterior = conditioner.update(data=data)
+        data1 = jax.random.normal(key, shape=(10, dim)) + 2.0
+        data2 = jax.random.normal(jax.random.PRNGKey(1), shape=(10, dim)) + 3.0
+        trace = conditioner.update(data_batches=[data1, data2])
 
-        assert isinstance(posterior, EmpiricalDistribution)
-        assert conditioner.curr_posterior is posterior
+        assert isinstance(trace, TransitionTrace)
+        assert len(trace) == 2
+        assert trace.distributions[0] is prior
+        assert isinstance(trace.final, EmpiricalDistribution)
 
     def test_default_condition_fn(self, prior, likelihood):
         """IncrementalConditioner should work without explicit condition_fn."""
@@ -128,7 +132,7 @@ class TestIncrementalConditioner:
             likelihood=likelihood,
         )
         # Just verify construction works; actual conditioning requires MCMC
-        assert conditioner.curr_posterior is prior
+        assert conditioner._prior is prior
 
 
 # ---------------------------------------------------------------------------
