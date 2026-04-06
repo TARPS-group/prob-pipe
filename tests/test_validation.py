@@ -4,10 +4,16 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from probpipe import Normal, MultivariateNormal, predictive_check
+from probpipe import Normal, MultivariateNormal, GLMLikelihood, predictive_check
 from probpipe.core.distribution import EmpiricalDistribution
 from probpipe.validation import predictive_check as pc_direct
+from probpipe.validation._predictive_check import (
+    _predictive_check_batched,
+    _predictive_check_loop,
+    _supports_key_arg,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -285,3 +291,84 @@ class TestPredictiveCheckNonJax:
             key=jax.random.PRNGKey(3),
         )
         assert result["replicated_statistics"].n == 20
+
+
+# ---------------------------------------------------------------------------
+# Tests — batched fast path
+# ---------------------------------------------------------------------------
+
+class TestPredictiveCheckBatched:
+    """Tests for the vectorized (batched) predictive check path."""
+
+    @pytest.fixture
+    def glm_setup(self):
+        x = jnp.linspace(-1, 1, 20)
+        X = jnp.column_stack([jnp.ones_like(x), x])
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        lik = GLMLikelihood(tfp_glm.Poisson(), X)
+        return prior, lik
+
+    def test_supports_key_arg_glm(self, glm_setup):
+        _, lik = glm_setup
+        assert _supports_key_arg(lik)
+
+    def test_supports_key_arg_plain(self, likelihood):
+        """PoissonLikelihood (no key arg) → False."""
+        assert not _supports_key_arg(likelihood)
+
+    def test_batched_path_used_for_glm(self, glm_setup):
+        """GLMLikelihood triggers the batched path and produces correct results."""
+        prior, lik = glm_setup
+        result = predictive_check(
+            prior, lik,
+            test_fn=lambda d: jnp.mean(d),
+            n_samples=20,
+            n_replications=50,
+            key=jax.random.PRNGKey(42),
+        )
+        assert result["replicated_statistics"].n == 50
+
+    def test_batched_posterior_check(self, glm_setup):
+        """Batched path works with observed data and returns a p-value."""
+        prior, lik = glm_setup
+        observed = jnp.ones(20, dtype=jnp.float32) * 2
+        result = predictive_check(
+            prior, lik,
+            test_fn=lambda d: jnp.mean(d),
+            observed_data=observed,
+            n_replications=100,
+            key=jax.random.PRNGKey(7),
+        )
+        assert "p_value" in result
+        assert 0.0 <= result["p_value"] <= 1.0
+
+    def test_vmap_fallback(self, glm_setup):
+        """When test_fn is not vmap-able, the batched path falls back to a loop."""
+        prior, lik = glm_setup
+
+        def non_vmapable(d):
+            # Python control flow that breaks vmap tracing
+            val = float(jnp.mean(d))
+            if val > 0:
+                return val
+            return -val
+
+        result = predictive_check(
+            prior, lik,
+            test_fn=non_vmapable,
+            n_samples=20,
+            n_replications=30,
+            key=jax.random.PRNGKey(99),
+        )
+        assert result["replicated_statistics"].n == 30
+
+    def test_loop_path_for_plain_likelihood(self, prior, likelihood):
+        """PoissonLikelihood (no key arg) uses the loop path."""
+        result = predictive_check(
+            prior, likelihood,
+            test_fn=lambda d: float(jnp.mean(d)),
+            n_samples=20,
+            n_replications=30,
+            key=jax.random.PRNGKey(5),
+        )
+        assert result["replicated_statistics"].n == 30

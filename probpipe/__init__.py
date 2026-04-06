@@ -111,6 +111,7 @@ from probpipe.inference import (
     InferenceDiagnostics,
     MCMCDiagnostics,
     MCMCApproximateDistribution,
+    inference_method_registry,
     rwmh,
     condition_on_nutpie,
 )
@@ -126,7 +127,6 @@ from probpipe.core.protocols import (
     SupportsCovariance,
     SupportsConditioning,
     SupportsNamedComponents,
-    SupportsConditionableComponents,
 )
 from probpipe.converters import (
     converter_registry,
@@ -227,7 +227,6 @@ __all__ = [
     "SupportsCovariance",
     "SupportsConditioning",
     "SupportsNamedComponents",
-    "SupportsConditionableComponents",
     # Modeling
     "GLMLikelihood",
     "Likelihood",
@@ -239,6 +238,7 @@ __all__ = [
     "InferenceDiagnostics",
     "MCMCDiagnostics",
     "MCMCApproximateDistribution",
+    "inference_method_registry",
     "rwmh",
     "condition_on_nutpie",
     # Validation

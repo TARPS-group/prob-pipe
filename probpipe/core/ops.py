@@ -195,16 +195,53 @@ def expectation(
 
 @workflow_function
 def condition_on(
-    dist: SupportsConditioning,
+    dist: Distribution,
     observed: Any = None,
+    *,
+    method: str | None = None,
     **kwargs: Any,
 ) -> Distribution:
-    """Condition a joint distribution on observed values."""
-    if not isinstance(dist, SupportsConditioning):
-        raise TypeError(
-            f"{type(dist).__name__} does not support conditioning"
+    """Condition a distribution on observed values.
+
+    Dispatch priority:
+
+    1. **Explicit override** — ``method="tfp_nuts"`` (or any registered
+       name) routes directly to the named inference method.
+    2. **Exact conditioning** — if *dist* implements
+       ``SupportsConditioning``, its ``_condition_on`` is called for a
+       closed-form result (e.g., conjugate updates, joint marginalization).
+    3. **Registry auto-select** — the inference method registry picks
+       the highest-priority feasible algorithm (NUTS, HMC, RWMH, etc.).
+
+    Parameters
+    ----------
+    dist : Distribution
+        Distribution or model to condition.  Need not implement
+        ``SupportsConditioning`` — the registry provides inference
+        methods for common model types.
+    observed : Any
+        Observed values to condition on.
+    method : str or None
+        If provided, use the named inference method from the registry
+        instead of the default dispatch.
+    **kwargs
+        Passed to the inference method (e.g., ``num_results``,
+        ``num_warmup``, ``random_seed``).
+    """
+    from ..inference import inference_method_registry
+
+    # Explicit method override → always use the registry
+    if method is not None:
+        return inference_method_registry.execute(
+            dist, observed, method=method, **kwargs
         )
-    return dist._condition_on(observed, **kwargs)
+
+    # Exact conditioning (conjugate updates, joint marginalization, etc.)
+    if isinstance(dist, SupportsConditioning):
+        return dist._condition_on(observed, **kwargs)
+
+    # Registry auto-selects the best approximate inference algorithm
+    return inference_method_registry.execute(dist, observed, **kwargs)
 
 
 @workflow_function

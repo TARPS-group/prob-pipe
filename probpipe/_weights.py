@@ -294,12 +294,10 @@ class Weights:
         EmpiricalDistribution(samples, weights=w)       # OK
         EmpiricalDistribution(samples, log_weights=w)   # also OK, same result
 
-    **JAX compatibility** — ``Weights`` is registered as a JAX pytree,
-    so it works transparently inside ``jax.jit``, ``jax.vmap``, and
-    ``jax.grad``.  The log-weights array is the traceable leaf;
-    ``is_uniform`` and ``n`` are static auxiliary data.  The
-    normalization cache is a Python-side optimization that is recomputed
-    inside traced contexts.
+    **JAX compatibility** — ``Weights`` is registered as a JAX pytree
+    whose single leaf is the **normalized** weight array, so it works
+    transparently inside ``jax.jit``, ``jax.vmap``, ``jnp.sum``,
+    ``jnp.einsum``, and other JAX operations.
 
     Notes
     -----
@@ -549,21 +547,27 @@ class Weights:
     # -- JAX pytree registration --------------------------------------------
 
     def tree_flatten(self):
-        """Flatten for JAX pytree: leaves are the traceable arrays."""
-        children = (self._log_weights,)
-        aux = (self._n, self._is_uniform)
-        return children, aux
+        """Flatten for JAX pytree.
+
+        The single leaf is the **normalized** weight array so that JAX
+        operations (``jnp.sum``, ``jnp.einsum``, etc.) receive a plain
+        array when unpacking the pytree.
+        """
+        return (self.normalized,), (self._n, self._is_uniform)
 
     @classmethod
     def tree_unflatten(cls, aux, children):
         """Unflatten from JAX pytree."""
-        (log_weights,) = children
+        (normalized,) = children
         n, is_uniform = aux
         w = object.__new__(cls)
         w._n = n
-        w._log_weights = log_weights
         w._is_uniform = is_uniform
-        w._cache = None
+        if is_uniform:
+            w._log_weights = None
+        else:
+            w._log_weights = jnp.log(jnp.clip(normalized, 1e-45))
+        w._cache = normalized
         return w
 
     # -- repr ---------------------------------------------------------------
@@ -579,3 +583,5 @@ jax.tree_util.register_pytree_node(
     lambda w: w.tree_flatten(),
     lambda aux, children: Weights.tree_unflatten(aux, children),
 )
+
+
