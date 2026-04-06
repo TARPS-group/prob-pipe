@@ -15,7 +15,7 @@ __all__ = ["MCMCApproximateDistribution", "make_posterior"]
 
 
 class MCMCApproximateDistribution(ArrayEmpiricalDistribution):
-    """Empirical distribution from MCMC with chain structure and diagnostics.
+    """Empirical distribution from MCMC with chain structure and ArviZ InferenceData.
 
     Wraps one or more MCMC chains as an
     :class:`~probpipe.core.distribution.EmpiricalDistribution` while
@@ -166,7 +166,28 @@ def make_posterior(
     warmup_samples: list[Array] | None = None,
     **meta: Any,
 ) -> MCMCApproximateDistribution:
-    """Wrap chains into an MCMCApproximateDistribution with provenance."""
+    """Wrap chains into an MCMCApproximateDistribution with provenance.
+
+    Parameters
+    ----------
+    chains : list of Array
+        Per-chain sample arrays, each shaped ``(num_draws, *event_shape)``.
+    parents : tuple of Distribution
+        Parent distributions for provenance tracking.
+    algorithm : str
+        Inference algorithm name (e.g. ``"tfp_nuts"``, ``"rwmh"``).
+    inference_data : InferenceData or None
+        ArviZ ``InferenceData`` from the inference run.
+    warmup_samples : list of Array or None
+        Per-chain warmup samples, same shapes as *chains*.
+    **meta
+        Additional metadata stored in provenance.
+
+    Returns
+    -------
+    MCMCApproximateDistribution
+        Posterior with chain structure, InferenceData, and provenance.
+    """
     result = MCMCApproximateDistribution(
         chains, algorithm=algorithm, inference_data=inference_data,
         warmup_samples=warmup_samples, name="posterior",
