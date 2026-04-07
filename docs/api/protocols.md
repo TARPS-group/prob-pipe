@@ -36,5 +36,3 @@ to distinguish the primitive implementation from the public
 ## Named Components
 
 ::: probpipe.core.protocols.SupportsNamedComponents
-
-::: probpipe.core.protocols.SupportsConditionableComponents

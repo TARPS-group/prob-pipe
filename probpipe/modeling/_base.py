@@ -6,23 +6,21 @@ from abc import abstractmethod
 from typing import Any
 
 from ..core.distribution import Distribution
-from ..core.protocols import SupportsConditionableComponents
+from ..core.protocols import SupportsNamedComponents
 
 __all__ = ["ProbabilisticModel"]
 
 
-class ProbabilisticModel[T](Distribution[T], SupportsConditionableComponents):
+class ProbabilisticModel[T](Distribution[T], SupportsNamedComponents):
     """Abstract base for probabilistic programming models.
 
     A ``ProbabilisticModel`` is a first-class :class:`Distribution`
-    that also supports named components and conditioning.  Subclasses
-    declare their parameter and data components, implement
-    ``_condition_on``, and optionally provide ``_log_prob``,
+    that also supports named components.  Subclasses declare their
+    parameter and data components and optionally provide ``_log_prob``,
     ``_sample``, etc.
 
-    Inherits :class:`SupportsConditionableComponents`, which provides
-    :class:`SupportsNamedComponents` and :class:`SupportsConditioning`
-    for free.
+    Conditioning is handled by the inference method registry — call
+    ``condition_on(model, data)`` rather than ``model._condition_on()``.
     """
 
     # -- SupportsNamedComponents interface ----------------------------------
@@ -36,28 +34,6 @@ class ProbabilisticModel[T](Distribution[T], SupportsConditionableComponents):
     @abstractmethod
     def __getitem__(self, key: str) -> Any:
         """Access a component by name."""
-        ...
-
-    # -- SupportsConditionableComponents interface --------------------------
-
-    @property
-    @abstractmethod
-    def conditionable_components(self) -> dict[str, bool]:
-        """Map component name -> whether conditioning is required (True) or optional (False)."""
-        ...
-
-    @property
-    def required_observations(self) -> tuple[str, ...]:
-        """Component names that must be conditioned on."""
-        return tuple(
-            k for k, required in self.conditionable_components.items() if required
-        )
-
-    # -- SupportsConditioning interface -------------------------------------
-
-    @abstractmethod
-    def _condition_on(self, observed: Any, /, **kwargs: Any) -> Any:
-        """Condition the model on observed data, returning a posterior distribution."""
         ...
 
     # -- Convenience --------------------------------------------------------

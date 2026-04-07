@@ -13,14 +13,14 @@ Most workflows for probabilistic inference -- including validation procedures --
 
 Using these abstractions, even complex workflows can be written down succinctly. However, *implementing* them requires concrete representations of distributions and algorithms for operations -- each creating its own challenge:
 
-- **Algorithmic challenges.** There are usually many possible algorithms for a given operation. A posterior could be approximated using different MCMC algorithms, variational inference methods, or sequential Monte Carlo. These are implemented across many packages and often not designed to be directly compatible.
+- **Algorithmic challenges.** There are usually many possible algorithms for a given operation. A posterior could be approximated using different Markov chain Monte Carlo (MCMC) algorithms, variational inference methods, or sequential Monte Carlo. These are implemented across many packages and often not designed to be directly compatible.
 - **Representational challenges.** Algorithms often require or output specific distribution representations that are not compatible with other parts of the workflow. For example, MCMC outputs a discrete approximation to a distribution, but many MCMC algorithms require continuous representations of prior distributions.
 
 ### ProbPipe's approach
 
 ProbPipe manages representations and algorithms automatically by default, while giving you control over these choices when you want it:
 
-- **`Distribution`s** are generic and support subsets of capabilities via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsConditioning`, ...). This means external distribution types (TFP, scipy) can participate without inheriting from ProbPipe base classes.
+- **`Distribution`s** are generic and support subsets of capabilities via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsConditioning`, ...). This means external distribution types (TensorFlow Probability (TFP), scipy) can participate without inheriting from ProbPipe base classes.
 - **`WorkflowFunction`s** natively handle conversion between distribution representations and automatically compute **pushforward distributions** when functions defined on fixed inputs receive distributions as arguments.
 - **`Module`s** wrap multiple workflow functions with shared state, enabling reusable inferential components.
 

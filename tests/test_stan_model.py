@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 
-from probpipe import SupportsLogProb, SupportsConditionableComponents
+from probpipe import SupportsLogProb, SupportsNamedComponents
 from probpipe.modeling._stan import StanModel, _UnconstrainedStanView
 
 
@@ -49,9 +49,9 @@ class TestStanModelProtocols:
     def test_supports_log_prob(self):
         assert issubclass(StanModel, SupportsLogProb)
 
-    def test_supports_conditionable_components(self):
+    def test_supports_named_components(self):
         model = _make_stan_model()
-        assert isinstance(model, SupportsConditionableComponents)
+        assert isinstance(model, SupportsNamedComponents)
 
 
 # ---------------------------------------------------------------------------
@@ -75,13 +75,6 @@ class TestStanModelMocked:
 
     def test_parameter_names(self, model):
         assert model.parameter_names == ("alpha", "beta", "sigma")
-
-    def test_conditionable_components(self, model):
-        cc = model.conditionable_components
-        assert cc == {"data": True}
-
-    def test_required_observations(self, model):
-        assert model.required_observations == ("data",)
 
     def test_getitem_valid(self, model):
         assert model["alpha"] == "alpha"
@@ -200,110 +193,39 @@ class TestUnconstrainedStanView:
 
 
 # ---------------------------------------------------------------------------
-# StanModel._condition_on
+# StanModel conditioning via registry
 # ---------------------------------------------------------------------------
 
 
 class TestStanModelConditionOn:
-    def test_condition_on_calls_cmdstanpy(self):
-        """_condition_on delegates to CmdStanPy for sampling."""
+    def test_condition_on_delegates_to_registry(self):
+        """condition_on routes StanModel through the inference registry."""
+        from probpipe import condition_on
+
         model = _make_stan_model()
-        with patch("probpipe.modeling._stan._cmdstanpy_condition") as mock_cond:
-            mock_cond.return_value = MagicMock()
-            model._condition_on({"y": [1, 2, 3]}, num_results=10)
-            mock_cond.assert_called_once()
-            call_kwargs = mock_cond.call_args
-            assert call_kwargs.kwargs["num_results"] == 10
+        with patch("probpipe.inference._registry.inference_method_registry.execute") as mock_exec:
+            mock_exec.return_value = MagicMock()
+            condition_on(model, {"y": [1, 2, 3]}, num_results=10)
+            mock_exec.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
-# ImportError path
+# CmdStan inference method tests
 # ---------------------------------------------------------------------------
 
 
-class TestCmdStanPyCondition:
-    """Test _cmdstanpy_condition with mocked cmdstanpy."""
-
-    def test_cmdstanpy_condition_returns_mcmc(self):
-        from probpipe.modeling._stan import _cmdstanpy_condition
-        from probpipe.inference import MCMCApproximateDistribution
-
-        model_ref = _make_stan_model()
-
-        # Mock cmdstanpy module
-        mock_cmdstanpy = MagicMock()
-        mock_fit = MagicMock()
-        # draws returns (chains, draws, params) shaped array
-        mock_fit.draws.return_value = np.random.randn(2, 50, 3).astype(np.float32)
-        # method_variables returns CmdStan diagnostic columns
-        mock_fit.method_variables.return_value = {
-            "accept_stat__": np.random.uniform(0.5, 1.0, (2, 50)),
-            "stepsize__": np.full((2, 50), 0.05),
-            "divergent__": np.zeros((2, 50)),
-            "treedepth__": np.random.randint(1, 8, (2, 50)),
-            "n_leapfrog__": np.random.randint(1, 128, (2, 50)),
-            "energy__": np.random.randn(2, 50),
-            "lp__": np.random.randn(2, 50),
-        }
-        mock_cmdstanpy.CmdStanModel.return_value.sample.return_value = mock_fit
-
-        with patch.dict("sys.modules", {"cmdstanpy": mock_cmdstanpy}):
-            result = _cmdstanpy_condition(
-                "test.stan",
-                data={"y": [1, 2]},
-                model_ref=model_ref,
-                num_results=50,
-                num_warmup=10,
-                num_chains=2,
-                random_seed=42,
-            )
-            assert isinstance(result, MCMCApproximateDistribution)
-            assert result.diagnostics.algorithm == "cmdstan_nuts"
-            assert 0.0 < result.diagnostics.accept_rate <= 1.0
-            assert "diverging" in result.diagnostics
-            assert "tree_depth" in result.diagnostics
-            assert "n_steps" in result.diagnostics
-            assert "energy" in result.diagnostics
-            assert "lp" in result.diagnostics
-            assert result.diagnostics["n_divergences"] == 0
-            assert result.source is not None
-
-    def test_cmdstanpy_condition_no_method_variables(self):
-        """Falls back gracefully when method_variables() raises."""
-        from probpipe.modeling._stan import _cmdstanpy_condition
-        from probpipe.inference import MCMCApproximateDistribution
-
-        model_ref = _make_stan_model()
-
-        mock_cmdstanpy = MagicMock()
-        mock_fit = MagicMock()
-        mock_fit.draws.return_value = np.random.randn(1, 10, 2).astype(np.float32)
-        mock_fit.method_variables.side_effect = RuntimeError("not available")
-        mock_cmdstanpy.CmdStanModel.return_value.sample.return_value = mock_fit
-
-        with patch.dict("sys.modules", {"cmdstanpy": mock_cmdstanpy}):
-            result = _cmdstanpy_condition(
-                "test.stan",
-                data={"y": [1]},
-                model_ref=model_ref,
-                num_results=10,
-                num_chains=1,
-            )
-            assert isinstance(result, MCMCApproximateDistribution)
-            assert result.diagnostics.algorithm == "cmdstan_nuts"
-            # Falls back — only log_accept_ratio (zeros)
-            assert "diverging" not in result.diagnostics
-            assert "tree_depth" not in result.diagnostics
+class TestCmdStanInferenceMethod:
+    """Test CmdStan inference via the registry method."""
 
     def test_ensure_cmdstanpy_missing(self):
-        from probpipe.modeling._stan import _ensure_cmdstanpy
+        from probpipe.inference._cmdstan_method import _ensure_cmdstanpy
 
         with patch.dict("sys.modules", {"cmdstanpy": None}):
             with pytest.raises(ImportError, match="pip install probpipe"):
                 _ensure_cmdstanpy()
 
     def test_ensure_cmdstanpy_present(self):
-        from probpipe.modeling._stan import _ensure_cmdstanpy
+        from probpipe.inference._cmdstan_method import _ensure_cmdstanpy
 
         mock_cmdstanpy = MagicMock()
         with patch.dict("sys.modules", {"cmdstanpy": mock_cmdstanpy}):

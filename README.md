@@ -4,22 +4,25 @@
 [![codecov](https://codecov.io/gh/TARPS-group/prob-pipe/branch/main/graph/badge.svg)](https://codecov.io/gh/TARPS-group/prob-pipe)
 [![docs](https://img.shields.io/badge/docs-tarps--group.github.io%2Fprob--pipe-blue)](https://tarps-group.github.io/prob-pipe/)
 
-ProbPipe is a Python framework for building probabilistic pipelines with automated uncertainty quantification. Its core organizing principle is **distributions in, distributions out**: every node in a pipeline can consume and emit probability distributions, enabling principled uncertainty propagation across the entire workflow.
+ProbPipe is a Python framework for building scalable probabilistic pipelines with automated uncertainty quantification. Its core organizing principle is **distributions in, distributions out**: every node in a pipeline can consume and emit probability distributions, enabling principled uncertainty propagation across the entire workflow.
 
-Most workflows for probabilistic inference can be described in terms of **distributions**, **fixed inputs**, **operations** that transform distributions, and **differentiation** with respect to fixed inputs. Implementing these workflows, however, is harder than describing them. There are **algorithmic challenges**: many possible algorithms exist for the same operation, spread across incompatible packages. And there are **representational challenges**: algorithms require or output specific distribution formats that may not be compatible with other parts of the workflow. ProbPipe manages representations and algorithms automatically by default, while giving you control over these choices when you want it.
+Most workflows for probabilistic inference can be described in terms of **distributions**, **fixed inputs**, **operations** that transform distributions, and **differentiation** with respect to fixed inputs. Implementing these workflows, however, is harder than describing them:
+1. **Algorithmic challenges**: There are many possible algorithms for common operations, with varying trade-offs that need to be explored in a problem-specific manner. ProbPipe provides a unified framework for comparing and using such algorithms (e.g., for posterior inference) with reasonable defaults. 
+2. **Representational challenges**: Algorithms require -- and output -- specific distribution formats that are not always with other parts of the workflow. ProbPipe manages representations and algorithms automatically, while still allowing the user to override the defaults when necessary.
 
-**[Documentation](https://tarps-group.github.io/prob-pipe/)** | **[Getting Started](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** | **[API Reference](https://tarps-group.github.io/prob-pipe/api/distributions/)**
+**[Documentation](https://tarps-group.github.io/prob-pipe/)** | **[Getting Started Tutorial](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** | **[API Reference](https://tarps-group.github.io/prob-pipe/)**
 
 ## Key Features
 
-- **Protocol-based distributions** -- capabilities declared via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsMean`, ...), enabling structural subtyping across backends.
-- **Automatic uncertainty propagation** -- `@workflow_function` broadcasting: pass a distribution where a function expects a concrete value and get a distribution back.
-- **MCMC inference** -- NUTS/HMC with automatic gradient-free RWMH fallback; diagnostics (acceptance rate, divergences, tree depth) on every run.
-- **Multiple backends** -- native TFP, nutpie, Stan (via BridgeStan), and PyMC models, all unified behind `condition_on`.
-- **Automatic distribution conversion** -- converter registry for moment-matching and sampling-based conversion between distribution types.
-- **JAX-native** -- `vmap`, `jit`, `grad` throughout; TFP substrate for distribution math.
-- **Provenance tracking** -- every distribution records its lineage from inputs through operations.
-- **Prefect orchestration** -- distribute pipeline steps across machines without code changes.
+- **Protocol-based distributions** -- A distribution's capabilities are declared via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsMean`, ...), enabling structural subtyping across representations.
+- **Automatic uncertainty propagation** -- With `@workflow_function` broadcasting, a user can pass a distribution where a function expects a concrete value, progating that uncertainty into the function's output. This works whether the function's output is a fixed value or a distribution. 
+- **Pluggable inference** -- A single `condition_on` interface is backed by an inference registry that auto-selects the best-available algorithm (e.g., No-U-Turn Sampler (NUTS), Hamiltonian Monte Carlo (HMC), automatic differention variational inference (ADVI), and more), taking into acount a distribution's compatiability with available backends (e.g., TensorFlow Probability (TFP), nutpie, Stan, PyMC). A user can override with `method=` when they want control, and get inference diagnostics attached to the output distribution. 
+- **Automatic distribution conversion** -- A converter registry conversion between distribution types, using a similar registry-backed approach to `condition_on`,  
+- **JAX-native** -- Workflows and Array-based distributions are compatible with JAX (`vmap`, `jit`, `grad`, etc.), include always-on support for TFP distributions and inference methods. 
+- **Provenance tracking** -- Every distribution records its lineage through operations, ensuring traceability of the workflow. 
+- **Prefect orchestration** -- Enable prefect to distribute pipeline steps across machines without code changes.
+
+
 
 ## Installation
 
@@ -40,7 +43,7 @@ pip install .[dev]       # pytest, jupyter, matplotlib, graphviz
 pip install .[prefect]   # Prefect orchestration backend
 pip install .[stan]      # Stan models via BridgeStan + CmdStanPy
 pip install .[pymc]      # PyMC model integration
-pip install .[nutpie]    # nutpie MCMC sampler
+pip install .[nutpie]    # nutpie Markov chain Monte Carlo (MCMC) sampler
 ```
 
 ## Quick Example
@@ -94,8 +97,8 @@ plt.xlabel("x"); plt.ylabel("P(y = 1 | x)"); plt.legend(fontsize=8)
 
 ## Next Steps
 
-- **[Getting Started tutorial](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** -- iterative Bayesian model building with ProbPipe
-- **[API Reference](https://tarps-group.github.io/prob-pipe/api/distributions/)** -- full class and function documentation
+- **[Getting Started Tutorial](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** -- iterative Bayesian model building with ProbPipe
+- **[API Reference](https://tarps-group.github.io//)** -- full class and function documentation
 
 ## Contributing
 

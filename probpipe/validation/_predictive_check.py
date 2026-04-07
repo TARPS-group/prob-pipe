@@ -7,6 +7,7 @@ from typing import Any, Callable
 import numpy as np
 
 import jax
+import jax.numpy as jnp
 
 from ..core.distribution import ArrayEmpiricalDistribution
 from ..core.node import workflow_function
@@ -41,12 +42,20 @@ def predictive_check[P, D](
     prior predictive check — useful for understanding the implications
     of the prior.
 
+    When ``generate_data`` accepts a ``key`` keyword argument, all
+    replications are generated in a single vectorized call (by passing
+    a batch of parameter vectors), giving a large speedup.  The test
+    function is then applied via ``jax.vmap`` when possible, with an
+    automatic fallback to a Python loop.
+
     Parameters
     ----------
     distribution : Distribution[P]
         Prior or posterior to sample parameters from.
     generative_likelihood : GenerativeLikelihood[P, D]
         Must have ``generate_data(params: P, n_samples: int) -> D``.
+        If ``generate_data`` also accepts a ``key`` keyword, the
+        vectorized fast path is used.
     test_fn : Callable[[D], float]
         Test statistic mapping data to a scalar.
     observed_data : D or None, optional
@@ -84,15 +93,18 @@ def predictive_check[P, D](
     if key is None:
         key = _auto_key()
 
-    # Draw one parameter sample per replication and compute test statistics
-    stats = []
-    for i in range(n_replications):
-        key, subkey = jax.random.split(key)
-        params_i = distribution._sample(subkey, ())
-        y_rep = generative_likelihood.generate_data(params_i, n_samples)
-        stats.append(float(test_fn(y_rep)))
+    # -- Fast path: batched generation + vmap test_fn -----------------------
+    if _supports_key_arg(generative_likelihood):
+        stats_array = _predictive_check_batched(
+            distribution, generative_likelihood, test_fn,
+            n_samples, n_replications, key,
+        )
+    else:
+        stats_array = _predictive_check_loop(
+            distribution, generative_likelihood, test_fn,
+            n_samples, n_replications, key,
+        )
 
-    stats_array = np.array(stats, dtype=np.float64)
     replicated_dist = ArrayEmpiricalDistribution(
         stats_array, name="replicated_statistics",
     )
@@ -114,3 +126,63 @@ def predictive_check[P, D](
         distribution.validation_results.append(result)
 
     return result
+
+
+def _supports_key_arg(generative_likelihood: Any) -> bool:
+    """Check whether generate_data accepts a ``key`` keyword argument."""
+    import inspect
+
+    try:
+        sig = inspect.signature(generative_likelihood.generate_data)
+        return "key" in sig.parameters
+    except (ValueError, TypeError):
+        return False
+
+
+def _predictive_check_batched(
+    distribution: SupportsSampling,
+    generative_likelihood: Any,
+    test_fn: Callable,
+    n_samples: int,
+    n_replications: int,
+    key: PRNGKey,
+) -> np.ndarray:
+    """Vectorized predictive check using batched data generation."""
+    key_params, key_data = jax.random.split(key)
+
+    # Draw all parameter samples at once: (n_replications, *event_shape)
+    params_batch = distribution._sample(key_params, (n_replications,))
+
+    # Generate all replicated datasets in one call
+    y_rep_batch = generative_likelihood.generate_data(
+        params_batch, n_samples, key=key_data,
+    )
+
+    # Apply test_fn to each replicate — try vmap, fall back to loop
+    try:
+        stats = jax.vmap(test_fn)(y_rep_batch)
+        return np.asarray(stats, dtype=np.float64)
+    except Exception:
+        # test_fn may not be JAX-traceable (e.g., uses Python control flow)
+        return np.array(
+            [float(test_fn(y_rep_batch[i])) for i in range(n_replications)],
+            dtype=np.float64,
+        )
+
+
+def _predictive_check_loop(
+    distribution: SupportsSampling,
+    generative_likelihood: Any,
+    test_fn: Callable,
+    n_samples: int,
+    n_replications: int,
+    key: PRNGKey,
+) -> np.ndarray:
+    """Fallback: sequential predictive check in a Python loop."""
+    stats = []
+    for i in range(n_replications):
+        key, subkey = jax.random.split(key)
+        params_i = distribution._sample(subkey, ())
+        y_rep = generative_likelihood.generate_data(params_i, n_samples)
+        stats.append(float(test_fn(y_rep)))
+    return np.array(stats, dtype=np.float64)

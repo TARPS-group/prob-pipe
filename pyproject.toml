@@ -16,9 +16,10 @@ authors = [
   { name = "Can Erozer",      email = "caner@bu.edu" },
 ]  # See AUTHORS file for full list
 dependencies = [
-  "jax>=0.4.35",
-  "jaxlib>=0.4.35",
+  "jax>=0.9.0",
+  "jaxlib>=0.9.0",
   "tfp-nightly==0.26.0.dev20260315",
+  "arviz-base",
 ]
 
 [project.optional-dependencies]

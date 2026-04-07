@@ -623,9 +623,9 @@ class TestListMarginalAdditional:
         assert "list" in r
         assert "n=2" in r
 
-    def test_weights_none(self):
+    def test_weights_uniform(self):
         m = _ListMarginal(["a", "b"], None)
-        assert m.weights is None
+        np.testing.assert_allclose(m.weights, jnp.array([0.5, 0.5]))
 
     def test_weights_provided(self):
         w = jnp.array([0.3, 0.7])

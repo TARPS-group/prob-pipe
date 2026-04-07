@@ -1,4 +1,7 @@
-"""PyMCModel: wraps PyMC models as ProbPipe distributions."""
+"""PyMCModel: wraps PyMC models as ProbPipe distributions.
+
+Inference is handled by registered methods in ``probpipe.inference``.
+"""
 
 from __future__ import annotations
 
@@ -8,9 +11,7 @@ from typing import Any, Callable
 import jax.numpy as jnp
 
 from ..core.distribution import Distribution
-from ..core.provenance import Provenance
 from ..custom_types import Array
-from ..inference._diagnostics import extract_arviz_diagnostics
 from ..inference._mcmc_distribution import MCMCApproximateDistribution
 from ._base import ProbabilisticModel
 
@@ -119,17 +120,6 @@ class PyMCModel(ProbabilisticModel):
             return key  # placeholder — PyMC doesn't expose sub-distributions easily
         raise KeyError(f"Unknown component: {key!r}")
 
-    # -- SupportsConditionableComponents interface --------------------------
-
-    @property
-    def conditionable_components(self) -> dict[str, bool]:
-        result = {}
-        for name in self._param_names:
-            result[name] = False
-        for name in self._observed_names:
-            result[name] = True
-        return result
-
     # -- ProbabilisticModel interface ---------------------------------------
 
     @property
@@ -171,78 +161,6 @@ class PyMCModel(ProbabilisticModel):
             # If data is an array, pass as first observed variable
             return self._model_fn(**{self._observed_names[0]: data})
         return self._model_fn()
-
-    # -- Conditioning -------------------------------------------------------
-
-    def _condition_on(self, observed: Any, /, **kwargs: Any) -> MCMCApproximateDistribution:
-        """Condition on observed data using PyMC's sampler.
-
-        Parameters
-        ----------
-        observed : dict or array-like
-            Observed data.  If a dict, keys should match observed variable
-            names.  If an array, assigned to the first observed variable.
-        **kwargs
-            Sampling parameters: ``num_results`` (default 1000),
-            ``num_warmup`` (default 500), ``num_chains`` (default 4),
-            ``random_seed`` (default 0).
-        """
-        import pymc as pm
-
-        num_results = kwargs.get("num_results", 1000)
-        num_warmup = kwargs.get("num_warmup", 500)
-        num_chains = kwargs.get("num_chains", 4)
-        random_seed = kwargs.get("random_seed", 0)
-
-        # Build conditioned model
-        model = self._pymc_model(data=observed)
-
-        with model:
-            trace = pm.sample(
-                draws=num_results,
-                tune=num_warmup,
-                chains=num_chains,
-                random_seed=random_seed,
-                return_inferencedata=True,
-            )
-
-        # Extract chains
-        chains = []
-        for c in range(num_chains):
-            chain_arrays = []
-            for name in self._param_names:
-                vals = trace.posterior[name].values[c]
-                if vals.ndim == 1:
-                    vals = vals[:, None]
-                else:
-                    vals = vals.reshape(vals.shape[0], -1)
-                chain_arrays.append(jnp.asarray(vals))
-            chains.append(jnp.concatenate(chain_arrays, axis=-1))
-
-        diagnostics = extract_arviz_diagnostics(
-            trace,
-            algorithm="pymc_nuts",
-            num_results=num_results,
-            num_chains=num_chains,
-        )
-
-        result = MCMCApproximateDistribution(
-            chains,
-            diagnostics=diagnostics,
-            name="posterior",
-        )
-        result.with_source(
-            Provenance(
-                "pymc_sample",
-                parents=(self,),
-                metadata={
-                    "num_results": num_results,
-                    "num_warmup": num_warmup,
-                    "num_chains": num_chains,
-                },
-            )
-        )
-        return result
 
     def __repr__(self) -> str:
         params = ", ".join(self._param_names)
