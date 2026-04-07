@@ -139,15 +139,10 @@ class SupportsSampling(Protocol):
 class SupportsUnnormalizedLogProb(Protocol):
     """Distribution with an unnormalized log-density.
 
-    Provides ``_unnormalized_log_prob(value)`` and
-    ``_unnormalized_prob(value)`` (computed as ``exp`` of the log form).
+    Provides ``_unnormalized_log_prob(value)``.
     """
 
     def _unnormalized_log_prob(self, value: Any) -> Array: ...
-
-    def _unnormalized_prob(self, value: Any) -> Array:
-        """Default: ``exp(_unnormalized_log_prob(value))``."""
-        return jnp.exp(self._unnormalized_log_prob(value))
 
 
 @runtime_checkable
@@ -159,7 +154,6 @@ class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
     The base :class:`~probpipe.core.distribution.Distribution` class
     provides ``_unnormalized_log_prob`` defaulting to ``_log_prob``.
 
-    Also provides ``_prob`` computed as ``exp(_log_prob)``.
     """
 
     def _log_prob(self, value: Any) -> Array: ...
@@ -167,14 +161,6 @@ class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
     def _unnormalized_log_prob(self, value: Any) -> Array:
         """Default: delegates to ``_log_prob``."""
         return self._log_prob(value)
-
-    def _unnormalized_prob(self, value: Any) -> Array:
-        """Default: ``exp(_log_prob(value))``."""
-        return jnp.exp(self._log_prob(value))
-
-    def _prob(self, value: Any) -> Array:
-        """Default: ``exp(_log_prob(value))``."""
-        return jnp.exp(self._log_prob(value))
 
 
 # ---------------------------------------------------------------------------
