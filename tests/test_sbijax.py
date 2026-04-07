@@ -169,6 +169,64 @@ class TestTrainSBI:
         with pytest.raises(ValueError, match="Unknown SBI method"):
             train_sbi._func(prior_2d, simulator_2d, method="invalid")
 
+    def test_scalar_prior_is_wrapped(self):
+        """Scalar priors (event_shape=()) must be wrapped via tfd.Sample.
+
+        Exercises the ``adapt_prior`` branch that wraps scalar TFP
+        distributions, and verifies NPE training + conditioning works
+        on a 1D problem end-to-end.
+        """
+        from probpipe import mean
+        scalar_prior = Normal(loc=0.0, scale=1.0)
+
+        class Scalar1DSimulator:
+            def generate_data(self, params, n_samples, *, key=None):
+                if key is None:
+                    key = jax.random.PRNGKey(0)
+                noise = jax.random.normal(
+                    key, shape=(n_samples,) + jnp.atleast_1d(params).shape,
+                )
+                return jnp.atleast_1d(params) + 0.1 * noise
+
+        trained = train_sbi._func(
+            scalar_prior, Scalar1DSimulator(),
+            method="npe",
+            n_simulations=2000,
+            n_iter=300,
+            batch_size=128,
+            n_samples=1000,
+            random_seed=1,
+        )
+        obs = jnp.array([1.3])
+        posterior = condition_on._func(trained, obs)
+        # Tight likelihood → posterior mean near observation.
+        post_mean = float(np.asarray(mean(posterior)).item())
+        np.testing.assert_allclose(post_mean, float(obs[0]), atol=0.3)
+
+    def test_repr(self, _trained_npe_smoke):
+        r = repr(_trained_npe_smoke)
+        assert "TrainedSBIModel" in r
+        assert "sbijax_npe" in r
+
+    def test_network_factory_override(self, prior_2d, simulator_2d):
+        """Custom network_factory is invoked with the parameter dimensionality."""
+        from sbijax.nn import make_maf
+        captured = {}
+
+        def factory(ndim):
+            captured["ndim"] = ndim
+            return make_maf(ndim)
+
+        train_sbi._func(
+            prior_2d, simulator_2d,
+            method="npe",
+            network_factory=factory,
+            n_simulations=100,
+            n_iter=2,
+            batch_size=32,
+        )
+        assert captured["ndim"] == 2
+
     def test_rejects_non_tfp_prior(self, simulator_2d):
         class NonTFPPrior:
             # Satisfies SupportsSampling structurally but has no _tfp_dist.
