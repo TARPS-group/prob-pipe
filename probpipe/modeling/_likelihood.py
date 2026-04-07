@@ -47,18 +47,21 @@ class GenerativeLikelihood[P, D](Protocol):
     Generic in ``P`` (parameter type) and ``D`` (data type).
     Any class that defines ``generate_data(params, n_samples, *, key) -> D``
     satisfies this protocol.
-
-    Parameters
-    ----------
-    params : P
-        Model parameters.
-    n_samples : int
-        Number of data points to generate.
-    key : PRNGKey or None
-        JAX PRNG key for reproducible generation.
     """
 
-    def generate_data(self, params: P, n_samples: int, *, key: PRNGKey | None = None) -> D: ...
+    def generate_data(self, params: P, n_samples: int, *, key: PRNGKey | None = None) -> D:
+        """Generate ``n_samples`` synthetic data points from ``params``.
+
+        Parameters
+        ----------
+        params : P
+            Model parameters.
+        n_samples : int
+            Number of data points to generate.
+        key : PRNGKey or None
+            JAX PRNG key for reproducible generation.
+        """
+        ...
 
 
 # ---------------------------------------------------------------------------
