@@ -66,7 +66,7 @@ model = SimpleModel(prior, GLMLikelihood(tfp_glm.Bernoulli(), X))
 
 # 2. Condition on data -- runs NUTS automatically
 posterior = condition_on(model, y_obs, num_results=2000, num_warmup=1000, random_seed=0)
-posterior       # MCMCApproximateDistribution(num_chains=1, num_draws=2000, ...)
+posterior       # ApproximateDistribution(num_chains=1, num_draws=2000, ...)
 mean(posterior) # Array([-1.38, 1.77], dtype=float32)
 
 # 3. Propagate uncertainty -- pass a distribution where a value is expected

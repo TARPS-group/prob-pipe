@@ -9,6 +9,7 @@ from ._base import ProbabilisticModel
 from ._glm import GLMLikelihood
 from ._likelihood import GenerativeLikelihood, IncrementalConditioner, Likelihood
 from ._simple import SimpleModel
+from ._simple_generative import SimpleGenerativeModel
 
 __all__ = [
     "GLMLikelihood",
@@ -17,6 +18,7 @@ __all__ = [
     "IncrementalConditioner",
     "ProbabilisticModel",
     "SimpleModel",
+    "SimpleGenerativeModel",
 ]
 
 # Optional backends — available when their dependencies are installed.

@@ -53,7 +53,7 @@ def predictive_check[P, D](
     distribution : Distribution[P]
         Prior or posterior to sample parameters from.
     generative_likelihood : GenerativeLikelihood[P, D]
-        Must have ``generate_data(params: P, n_samples: int) -> D``.
+        Must have ``generate_data(params: P, n_samples: int, *, key: PRNGKey | None = None) -> D``.
         If ``generate_data`` also accepts a ``key`` keyword, the
         vectorized fast path is used.
     test_fn : Callable[[D], float]

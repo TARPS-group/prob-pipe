@@ -6,7 +6,7 @@ registry for ``condition_on`` dispatch.
 """
 
 from __future__ import annotations
-from ._mcmc_distribution import MCMCApproximateDistribution
+from ._mcmc_distribution import ApproximateDistribution
 from ._registry import (
     InferenceMethod,
     inference_method_registry,
@@ -16,7 +16,7 @@ from ._rwmh import rwmh
 from ._nutpie import condition_on_nutpie
 
 __all__ = [
-    "MCMCApproximateDistribution",
+    "ApproximateDistribution",
     "Method",
     "MethodInfo",
     "MethodRegistry",
@@ -24,6 +24,7 @@ __all__ = [
     "inference_method_registry",
     "rwmh",
     "condition_on_nutpie",
+    "train_sbi",
 ]
 
 
@@ -62,3 +63,11 @@ try:
     inference_method_registry.register(PyMCADVIMethod())
 except ImportError:
     pass
+
+try:
+    from ._sbijax_methods import SbiSMCABCMethod
+    inference_method_registry.register(SbiSMCABCMethod())
+except ImportError:
+    pass
+
+from ._sbijax_train import train_sbi

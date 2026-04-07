@@ -8,7 +8,7 @@ import arviz as az
 import jax.numpy as jnp
 
 from ..core._registry import MethodInfo
-from ._mcmc_distribution import MCMCApproximateDistribution, make_posterior
+from ._mcmc_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
 
@@ -48,7 +48,7 @@ class CmdStanNutsMethod(InferenceMethod):
                               description="Requires StanModel")
         return MethodInfo(feasible=True, method_name=self.name)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
+    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         cmdstanpy = _ensure_cmdstanpy()
 
         num_results = kwargs.get("num_results", 1000)

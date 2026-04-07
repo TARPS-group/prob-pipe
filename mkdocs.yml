@@ -64,6 +64,7 @@ nav:
   - Home: index.md
   - Tutorials:
     - Getting Started: tutorials/getting_started.ipynb
+    - Simulation-Based Inference: tutorials/simulation_based_inference.ipynb
   - Reference Notebooks:
     - Overview: reference_notebooks.md
     - Distributions: examples/01_distributions.ipynb

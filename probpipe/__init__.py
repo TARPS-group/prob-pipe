@@ -108,12 +108,13 @@ from probpipe.core.constraints import (
 )
 from probpipe.modeling import GLMLikelihood, Likelihood, GenerativeLikelihood, IncrementalConditioner
 from probpipe.inference import (
-    MCMCApproximateDistribution,
+    ApproximateDistribution,
     inference_method_registry,
     rwmh,
     condition_on_nutpie,
+    train_sbi,
 )
-from probpipe.modeling import ProbabilisticModel, SimpleModel
+from probpipe.modeling import ProbabilisticModel, SimpleModel, SimpleGenerativeModel
 from probpipe.validation import predictive_check
 from probpipe.core.protocols import (
     SupportsExpectation,
@@ -232,11 +233,13 @@ __all__ = [
     "IncrementalConditioner",
     "ProbabilisticModel",
     "SimpleModel",
+    "SimpleGenerativeModel",
     # Inference
-    "MCMCApproximateDistribution",
+    "ApproximateDistribution",
     "inference_method_registry",
     "rwmh",
     "condition_on_nutpie",
+    "train_sbi",
     # Validation
     "predictive_check",
     # Converters

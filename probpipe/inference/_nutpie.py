@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from ..core._registry import MethodInfo
 from ..core.node import workflow_function
 from ..custom_types import ArrayLike
-from ._mcmc_distribution import MCMCApproximateDistribution, make_posterior
+from ._mcmc_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ def condition_on_nutpie(
     num_chains: int = 4,
     random_seed: int = 0,
     **kwargs: Any,
-) -> MCMCApproximateDistribution:
+) -> ApproximateDistribution:
     """MCMC sampling via nutpie (Rust-based NUTS).
 
     Accepts a :class:`~probpipe.modeling.StanModel` or
@@ -149,5 +149,5 @@ class NutpieNutsMethod(InferenceMethod):
                               description="nutpie not installed")
         return MethodInfo(feasible=True, method_name=self.name)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
+    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         return condition_on_nutpie._func(dist, observed, **kwargs)

@@ -1,7 +1,7 @@
 """Tests for the probpipe.inference package.
 
 Covers:
-- MCMCApproximateDistribution: chain access, warmup, inference_data, draws
+- ApproximateDistribution: chain access, warmup, inference_data, draws
 - rwmh workflow function: basic sampling with SupportsLogProb
 """
 
@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    MCMCApproximateDistribution,
+    ApproximateDistribution,
     Normal,
     mean,
     sample,
@@ -24,11 +24,11 @@ from probpipe.inference import rwmh
 
 
 # ---------------------------------------------------------------------------
-# MCMCApproximateDistribution
+# ApproximateDistribution
 # ---------------------------------------------------------------------------
 
 
-class TestMCMCApproximateDistribution:
+class TestApproximateDistribution:
     """Test chain-structured empirical distribution."""
 
     @pytest.fixture
@@ -38,7 +38,7 @@ class TestMCMCApproximateDistribution:
         chain2 = jax.random.normal(jax.random.PRNGKey(1), (50, 2))
         warmup1 = jax.random.normal(jax.random.PRNGKey(2), (10, 2))
         warmup2 = jax.random.normal(jax.random.PRNGKey(3), (10, 2))
-        return MCMCApproximateDistribution(
+        return ApproximateDistribution(
             [chain1, chain2],
             algorithm="test",
             warmup_samples=[warmup1, warmup2],
@@ -47,7 +47,7 @@ class TestMCMCApproximateDistribution:
 
     def test_empty_chains_raises(self):
         with pytest.raises(ValueError, match="at least one chain"):
-            MCMCApproximateDistribution([])
+            ApproximateDistribution([])
 
     def test_num_chains(self, two_chain_dist):
         assert two_chain_dist.num_chains == 2
@@ -100,28 +100,28 @@ class TestMCMCApproximateDistribution:
 
     def test_repr(self, two_chain_dist):
         r = repr(two_chain_dist)
-        assert "MCMCApproximateDistribution" in r
+        assert "ApproximateDistribution" in r
         assert "num_chains=2" in r
         assert "num_draws=50" in r
         assert "test" in r
 
     def test_without_warmup(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = MCMCApproximateDistribution([chain])
+        dist = ApproximateDistribution([chain])
         assert dist.warmup_samples is None
         assert dist.num_chains == 1
         assert dist.num_draws == 20
 
     def test_inference_data_default_none(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = MCMCApproximateDistribution([chain])
+        dist = ApproximateDistribution([chain])
         assert dist.inference_data is None
 
     def test_inference_data_stored(self):
         import arviz as az
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        idata = az.from_dict(posterior={"params": np.random.randn(1, 20, 3)})
-        dist = MCMCApproximateDistribution(
+        idata = az.from_dict({"posterior": {"params": np.random.randn(1, 20, 3)}})
+        dist = ApproximateDistribution(
             [chain], inference_data=idata,
         )
         assert dist.inference_data is idata
@@ -129,7 +129,7 @@ class TestMCMCApproximateDistribution:
 
     def test_algorithm_default(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = MCMCApproximateDistribution([chain])
+        dist = ApproximateDistribution([chain])
         assert dist.algorithm == "unknown"
 
 
@@ -151,7 +151,7 @@ class TestRWMH:
             step_size=0.5,
             random_seed=42,
         )
-        assert isinstance(result, MCMCApproximateDistribution)
+        assert isinstance(result, ApproximateDistribution)
         assert result.num_draws == 100
         assert result.num_chains == 1
         assert result.event_shape == (2,)
@@ -230,7 +230,7 @@ class TestRWMH:
             step_size=0.3,
             random_seed=42,
         )
-        assert isinstance(result, MCMCApproximateDistribution)
+        assert isinstance(result, ApproximateDistribution)
         # Posterior mean should be pulled toward data mean
         post_mean = jnp.mean(result.draws(), axis=0)
         data_mean = jnp.mean(data, axis=0)
@@ -260,7 +260,7 @@ class TestRWMH:
             init=jnp.array([5.0, 5.0]),
             random_seed=42,
         )
-        assert isinstance(result, MCMCApproximateDistribution)
+        assert isinstance(result, ApproximateDistribution)
 
     def test_zero_warmup(self):
         """RWMH with num_warmup=0 stores no warmup samples."""
@@ -305,7 +305,7 @@ class TestRWMH:
             step_size=0.5,
             random_seed=42,
         )
-        assert isinstance(result, MCMCApproximateDistribution)
+        assert isinstance(result, ApproximateDistribution)
 
     def test_mean_exception_fallback(self):
         """RWMH falls back to zeros init when _mean() raises."""
@@ -340,4 +340,4 @@ class TestRWMH:
             step_size=0.5,
             random_seed=42,
         )
-        assert isinstance(result, MCMCApproximateDistribution)
+        assert isinstance(result, ApproximateDistribution)

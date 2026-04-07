@@ -12,6 +12,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from ..core.distribution import Distribution
 from ..core.node import Module, workflow_method
+from ..custom_types import PRNGKey
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +45,20 @@ class GenerativeLikelihood[P, D](Protocol):
     """Protocol for generating synthetic data given parameters.
 
     Generic in ``P`` (parameter type) and ``D`` (data type).
-    Any class that defines ``generate_data(params, n_samples) -> D``
+    Any class that defines ``generate_data(params, n_samples, *, key) -> D``
     satisfies this protocol.
+
+    Parameters
+    ----------
+    params : P
+        Model parameters.
+    n_samples : int
+        Number of data points to generate.
+    key : PRNGKey or None
+        JAX PRNG key for reproducible generation.
     """
 
-    def generate_data(self, params: P, n_samples: int) -> D: ...
+    def generate_data(self, params: P, n_samples: int, *, key: PRNGKey | None = None) -> D: ...
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +130,7 @@ class IncrementalConditioner[P, D](Module):
 
         prior = self._curr_posterior
         # Auto-convert the prior if it doesn't support log_prob
-        # (e.g., MCMCApproximateDistribution → KDEDistribution).
+        # (e.g., ApproximateDistribution → KDEDistribution).
         if not isinstance(prior, SupportsLogProb):
             from ..converters import converter_registry
             prior = converter_registry.convert(prior, SupportsLogProb)

@@ -36,8 +36,9 @@ class SimpleGenerativeLikelihood:
         residuals = data - params[None, :]
         return -0.5 * jnp.sum(residuals ** 2)
 
-    def generate_data(self, params, n_samples):
-        key = jax.random.PRNGKey(0)
+    def generate_data(self, params, n_samples, *, key=None):
+        if key is None:
+            key = jax.random.PRNGKey(0)
         noise = jax.random.normal(key, shape=(n_samples, len(params)))
         return params[None, :] + noise
 

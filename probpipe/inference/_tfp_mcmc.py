@@ -14,7 +14,7 @@ from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb, SupportsMean
 from ..custom_types import Array, ArrayLike
-from ._mcmc_distribution import MCMCApproximateDistribution, make_posterior
+from ._mcmc_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
 
@@ -186,14 +186,14 @@ def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, Any]:
 def _build_tfp_inference_data(
     chains: list[Array],
     sample_stats: dict[str, Any],
-) -> az.InferenceData:
-    """Build an ArviZ InferenceData from TFP chains and sample stats."""
+):
+    """Build an ArviZ ``DataTree`` from TFP chains and sample stats."""
     # Stack chains: (num_chains, num_draws, *event_shape)
     posterior_array = np.stack([np.asarray(c) for c in chains], axis=0)
-    return az.from_dict(
-        posterior={"params": posterior_array},
-        sample_stats=sample_stats if sample_stats else None,
-    )
+    groups: dict[str, Any] = {"posterior": {"params": posterior_array}}
+    if sample_stats:
+        groups["sample_stats"] = sample_stats
+    return az.from_dict(groups)
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +247,7 @@ class _TFPGradientMethod(InferenceMethod):
                               description=str(e))
         return MethodInfo(feasible=True, method_name=self.name)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
+    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         target = _build_target_log_prob(dist, observed)
         prior = _get_prior(dist)
         init = _get_init_state(prior, kwargs.get("init"), observed)
