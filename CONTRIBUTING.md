@@ -130,8 +130,9 @@ probpipe/
 │   ├── _mcmc_distribution.py  # ApproximateDistribution + make_posterior
 │   ├── _rwmh.py             # Random-walk Metropolis-Hastings
 │   ├── _nutpie.py           # Nutpie-backed NUTS (optional dep)
-│   └── _sbijax_*.py         # sbijax-backed SBI: train_sbi (NPE/NLE) +
-│                            #   SbiSMCABCMethod (registry) (optional dep)
+│   └── _sbijax.py           # sbijax-backed SBI: sbi_learn_conditional
+│                            #   (NPE/FMPE/CMPE), sbi_learn_likelihood
+│                            #   (NLE/NRE), SbiSMCABCMethod (optional dep)
 │
 ├── converters/              # Distribution conversion registry
 │   ├── _registry.py         # Converter ABC, registry, and metadata types

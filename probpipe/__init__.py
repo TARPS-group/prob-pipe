@@ -112,7 +112,8 @@ from probpipe.inference import (
     inference_method_registry,
     rwmh,
     condition_on_nutpie,
-    train_sbi,
+    sbi_learn_conditional,
+    sbi_learn_likelihood,
 )
 from probpipe.modeling import ProbabilisticModel, SimpleModel, SimpleGenerativeModel
 from probpipe.validation import predictive_check
@@ -239,7 +240,8 @@ __all__ = [
     "inference_method_registry",
     "rwmh",
     "condition_on_nutpie",
-    "train_sbi",
+    "sbi_learn_conditional",
+    "sbi_learn_likelihood",
     # Validation
     "predictive_check",
     # Converters

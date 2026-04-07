@@ -24,8 +24,9 @@ __all__ = [
     "inference_method_registry",
     "rwmh",
     "condition_on_nutpie",
-    "train_sbi",
-    "TrainedSBIModel",
+    "sbi_learn_conditional",
+    "sbi_learn_likelihood",
+    "DirectSamplerSBIModel",
 ]
 
 
@@ -66,10 +67,14 @@ except ImportError:
     pass
 
 try:
-    from ._sbijax_methods import SbiSMCABCMethod
-    from ._sbijax_train import train_sbi
-    from ._sbijax_distribution import TrainedSBIModel
+    from ._sbijax import (
+        SbiSMCABCMethod,
+        sbi_learn_conditional,
+        sbi_learn_likelihood,
+        DirectSamplerSBIModel,
+    )
     inference_method_registry.register(SbiSMCABCMethod())
 except ImportError:
-    train_sbi = None  # type: ignore[assignment]
-    TrainedSBIModel = None  # type: ignore[assignment,misc]
+    sbi_learn_conditional = None  # type: ignore[assignment]
+    sbi_learn_likelihood = None  # type: ignore[assignment]
+    DirectSamplerSBIModel = None  # type: ignore[assignment,misc]

@@ -15,18 +15,23 @@ from probpipe import (
     SimpleGenerativeModel,
     SimpleModel,
     condition_on,
-    train_sbi,
+    sbi_learn_conditional,
+    sbi_learn_likelihood,
 )
 from probpipe.core.distribution import Distribution
 from probpipe.core.protocols import SupportsConditioning, SupportsSampling
 from probpipe.distributions.multivariate import MultivariateNormal
 from probpipe.inference import (
     ApproximateDistribution,
-    TrainedSBIModel,
+    DirectSamplerSBIModel,
     inference_method_registry,
 )
-from probpipe.inference._sbijax_adapters import adapt_prior, adapt_simulator
-from probpipe.inference._sbijax_methods import SbiSMCABCMethod
+from probpipe.inference._sbijax import (
+    PARAM_KEY,
+    SbiSMCABCMethod,
+    _adapt_prior as adapt_prior,
+    _adapt_simulator as adapt_simulator,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +74,7 @@ def _trained_npe_smoke():
     """Tiny, fast NPE training — for smoke tests only (no correctness checks)."""
     prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
     simulator = GaussianSimulator2D()
-    return train_sbi._func(
+    return sbi_learn_conditional._func(
         prior, simulator,
         method="npe",
         n_simulations=200,
@@ -81,11 +86,26 @@ def _trained_npe_smoke():
 
 
 @pytest.fixture(scope="module")
+def _trained_nle_correct():
+    """Properly trained NLE — used to assert likelihood/posterior correctness."""
+    prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+    simulator = GaussianSimulator2D()
+    return sbi_learn_likelihood._func(
+        prior, simulator,
+        method="nle",
+        n_simulations=2000,
+        n_iter=300,
+        batch_size=128,
+        random_seed=0,
+    )
+
+
+@pytest.fixture(scope="module")
 def _trained_npe_correct():
     """Properly trained NPE — slower, used to assert posterior correctness."""
     prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
     simulator = GaussianSimulator2D()
-    return train_sbi._func(
+    return sbi_learn_conditional._func(
         prior, simulator,
         method="npe",
         n_simulations=2000,
@@ -97,20 +117,24 @@ def _trained_npe_correct():
 
 
 # ---------------------------------------------------------------------------
-# Amortized NPE via train_sbi
+# Amortized NPE via sbi_learn_conditional
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.sbi
 class TestTrainSBI:
-    """train_sbi workflow function: construction, protocols, correctness."""
+    """sbi_learn_* workflow functions: construction, protocols, correctness."""
 
     def test_returns_trained_model_and_is_distribution(self, _trained_npe_smoke):
         trained = _trained_npe_smoke
-        assert isinstance(trained, TrainedSBIModel)
+        assert isinstance(trained, DirectSamplerSBIModel)
         assert isinstance(trained, Distribution)
         assert isinstance(trained, SupportsConditioning)
-        assert trained.name == "TrainedSBIModel(sbijax_npe)"
+        assert trained.name == "DirectSamplerSBIModel(sbijax_npe)"
+        # repr should include the type and the algorithm tag.
+        r = repr(trained)
+        assert "DirectSamplerSBIModel" in r
+        assert "sbijax_npe" in r
 
     def test_condition_on_n_samples_override(self, _trained_npe_smoke, observed_2d):
         """Smoke-level dispatch: output type, algorithm tag, and n_samples override."""
@@ -151,22 +175,94 @@ class TestTrainSBI:
         np.testing.assert_allclose(mean_b, obs_b, atol=0.3)
         assert np.linalg.norm(mean_a - mean_b) > 1.0
 
-    def test_nle_method(self, prior_2d, simulator_2d, observed_2d):
-        trained = train_sbi._func(
+    def test_nle_returns_simple_model(self, _trained_nle_correct):
+        """NLE returns a SimpleModel with a working neural likelihood."""
+        trained = _trained_nle_correct
+        assert isinstance(trained, SimpleModel)
+
+    def test_nle_likelihood_peaks_at_truth(self, _trained_nle_correct):
+        """Neural likelihood log p(y|theta) should be maximized near theta=y.
+
+        For ``y = theta + 0.1*noise`` the true MLE is ``theta=y``; a well-
+        trained NLE network must reflect this, otherwise the posterior
+        track is broken.
+        """
+        trained = _trained_nle_correct
+        likelihood = trained._likelihood
+        obs = jnp.array([1.0, -0.5])
+        # log p(y|theta) at the truth vs at far-away points.
+        ll_truth = likelihood.log_likelihood(obs, obs)
+        ll_far_a = likelihood.log_likelihood(jnp.array([3.0, 3.0]), obs)
+        ll_far_b = likelihood.log_likelihood(jnp.array([-2.0, 2.0]), obs)
+        assert ll_truth > ll_far_a
+        assert ll_truth > ll_far_b
+
+    def test_nle_posterior_recovery_via_registry(
+        self, _trained_nle_correct, prior_2d
+    ):
+        """NLE → SimpleModel → registry MCMC must recover the truth.
+
+        End-to-end check of the MCMC-required track: ``condition_on``
+        dispatches through the standard inference registry (NUTS here)
+        on the SimpleModel returned by ``sbi_learn_likelihood``, and the resulting
+        posterior mean should be close to the observation since the
+        likelihood is tight (noise=0.1) and the prior is standard normal.
+        """
+        from probpipe import mean
+
+        obs = jnp.array([1.0, -0.5])
+        posterior = condition_on._func(
+            _trained_nle_correct, obs, method="tfp_nuts",
+            n_samples=500, n_warmup=500, n_chains=2, random_seed=0,
+        )
+        assert isinstance(posterior, ApproximateDistribution)
+        post_mean = np.asarray(mean(posterior))
+        np.testing.assert_allclose(post_mean, np.asarray(obs), atol=0.3)
+
+    def test_nle_return_likelihood_only(self, prior_2d, simulator_2d):
+        """``return_likelihood_only=True`` returns just the trained Likelihood.
+
+        The returned object must satisfy the Likelihood protocol and be
+        usable as the likelihood of a fresh SimpleModel built with a
+        different prior — proving the prior is not baked into the
+        learned likelihood.
+        """
+        from probpipe.modeling._likelihood import Likelihood
+
+        likelihood = sbi_learn_likelihood._func(
             prior_2d, simulator_2d,
             method="nle",
             n_simulations=200,
             n_iter=5,
             batch_size=32,
-            n_samples=100,
+            return_likelihood_only=True,
         )
-        posterior = condition_on._func(trained, observed_2d)
-        assert isinstance(posterior, ApproximateDistribution)
-        assert posterior.algorithm == "sbijax_nle"
+        assert isinstance(likelihood, Likelihood)
+        # Not a SimpleModel — just the bare likelihood.
+        assert not isinstance(likelihood, SimpleModel)
+
+        # Compose with a different prior and verify joint log_prob is finite
+        # and depends on the parameters.
+        alt_prior = MultivariateNormal(
+            loc=jnp.ones(2), cov=2.0 * jnp.eye(2)
+        )
+        model = SimpleModel(alt_prior, likelihood)
+        obs = jnp.array([0.5, -0.3])
+        lp_a = model._log_prob((jnp.zeros(2), obs))
+        lp_b = model._log_prob((jnp.array([1.5, -1.5]), obs))
+        assert jnp.isfinite(lp_a) and jnp.isfinite(lp_b)
+        assert not jnp.allclose(lp_a, lp_b)
 
     def test_invalid_method(self, prior_2d, simulator_2d):
-        with pytest.raises(ValueError, match="Unknown SBI method"):
-            train_sbi._func(prior_2d, simulator_2d, method="invalid")
+        with pytest.raises(ValueError, match="Unknown conditional SBI method"):
+            sbi_learn_conditional._func(prior_2d, simulator_2d, method="invalid")
+        with pytest.raises(ValueError, match="Unknown likelihood SBI method"):
+            sbi_learn_likelihood._func(prior_2d, simulator_2d, method="invalid")
+        # Cross-track methods should also be rejected.
+        with pytest.raises(ValueError, match="Unknown conditional SBI method"):
+            sbi_learn_conditional._func(prior_2d, simulator_2d, method="nle")
+        with pytest.raises(ValueError, match="Unknown likelihood SBI method"):
+            sbi_learn_likelihood._func(prior_2d, simulator_2d, method="npe")
 
     def test_scalar_prior_is_wrapped(self):
         """Scalar priors (event_shape=()) must be wrapped via tfd.Sample.
@@ -187,7 +283,7 @@ class TestTrainSBI:
                 )
                 return jnp.atleast_1d(params) + 0.1 * noise
 
-        trained = train_sbi._func(
+        trained = sbi_learn_conditional._func(
             scalar_prior, Scalar1DSimulator(),
             method="npe",
             n_simulations=2000,
@@ -202,11 +298,6 @@ class TestTrainSBI:
         post_mean = float(np.asarray(mean(posterior)).item())
         np.testing.assert_allclose(post_mean, float(obs[0]), atol=0.3)
 
-    def test_repr(self, _trained_npe_smoke):
-        r = repr(_trained_npe_smoke)
-        assert "TrainedSBIModel" in r
-        assert "sbijax_npe" in r
-
     def test_network_factory_override(self, prior_2d, simulator_2d):
         """Custom network_factory is invoked with the parameter dimensionality."""
         from sbijax.nn import make_maf
@@ -216,7 +307,7 @@ class TestTrainSBI:
             captured["ndim"] = ndim
             return make_maf(ndim)
 
-        train_sbi._func(
+        sbi_learn_conditional._func(
             prior_2d, simulator_2d,
             method="npe",
             network_factory=factory,
@@ -236,7 +327,13 @@ class TestTrainSBI:
                 return jnp.zeros(sample_shape + (2,))
 
         with pytest.raises(TypeError, match="TFP-backed"):
-            train_sbi._func(NonTFPPrior(), simulator_2d, n_simulations=10, n_iter=1)
+            sbi_learn_conditional._func(
+                NonTFPPrior(), simulator_2d, n_simulations=10, n_iter=1
+            )
+        with pytest.raises(TypeError, match="TFP-backed"):
+            sbi_learn_likelihood._func(
+                NonTFPPrior(), simulator_2d, n_simulations=10, n_iter=1
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +448,7 @@ class TestAdapters:
         sim_fn = adapt_simulator(simulator_2d)
         key = jax.random.PRNGKey(0)
         params = jnp.stack([jnp.zeros(2), jnp.ones(2), 2 * jnp.ones(2)])
-        out = np.asarray(sim_fn(key, {"theta": params}))
+        out = np.asarray(sim_fn(key, {PARAM_KEY: params}))
 
         # Shape: (n_particles, 2)
         assert out.shape == (3, 2)
@@ -377,7 +474,7 @@ class TestAdapters:
 def test_sbijax_import_preserves_rcparams():
     """Importing the sbijax adapters must not flip matplotlib rcParams."""
     import matplotlib as mpl
-    import probpipe.inference._sbijax_adapters  # noqa: F401
+    import probpipe.inference._sbijax  # noqa: F401
     # sbijax's stylesheet touches these; all should be at matplotlib defaults.
     assert mpl.rcParams["text.usetex"] is False
     assert "cmr10" not in str(mpl.rcParams.get("font.family", ""))
