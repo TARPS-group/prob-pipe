@@ -112,18 +112,17 @@ class TestTrainSBI:
         assert isinstance(trained, SupportsConditioning)
         assert trained.name == "TrainedSBIModel(sbijax_npe)"
 
-    def test_condition_on_produces_approximate_dist(
-        self, _trained_npe_smoke, observed_2d
-    ):
-        posterior = condition_on._func(_trained_npe_smoke, observed_2d)
-        assert isinstance(posterior, ApproximateDistribution)
-        assert posterior.algorithm == "sbijax_npe"
-
     def test_condition_on_n_samples_override(self, _trained_npe_smoke, observed_2d):
+        """Smoke-level dispatch: output type, algorithm tag, and n_samples override."""
         posterior = condition_on._func(
             _trained_npe_smoke, observed_2d, n_samples=321,
         )
-        assert np.asarray(posterior.draws()).shape[0] == 321
+        assert isinstance(posterior, ApproximateDistribution)
+        assert posterior.algorithm == "sbijax_npe"
+        draws = np.asarray(posterior.draws())
+        assert draws.shape[0] == 321
+        # Draws should lie in the parameter space (2D vectors).
+        assert draws.shape[-1] == 2
 
     def test_posterior_correctness(self, _trained_npe_correct):
         """Well-trained NPE must recover posteriors near each observation."""
@@ -250,6 +249,7 @@ class TestSMCABC:
     """Non-amortized SMCABC via the inference method registry."""
 
     def test_smcabc_via_method_override(self, generative_model_2d, observed_2d):
+        """Registry-level explicit method override: type, tag, and draw shape."""
         result = inference_method_registry.execute(
             generative_model_2d, observed_2d,
             method="sbijax_smcabc",
@@ -259,6 +259,10 @@ class TestSMCABC:
         )
         assert isinstance(result, ApproximateDistribution)
         assert result.algorithm == "sbijax_smcabc"
+        draws = np.asarray(result.draws())
+        # Each particle is a 2D parameter vector; we asked for 100 particles.
+        assert draws.shape[-1] == 2
+        assert draws.shape[0] >= 100
 
     def test_smcabc_via_condition_on_dispatch(
         self, generative_model_2d, observed_2d
@@ -335,16 +339,33 @@ class TestAdapters:
         with pytest.raises(TypeError, match="TFP-backed"):
             adapt_prior(NotTFP())
 
-    def test_adapt_simulator_independent_draws(self, prior_2d, simulator_2d):
-        """vmapped simulator should produce distinct draws per particle."""
+    def test_adapt_simulator_matches_simulator_semantics(
+        self, prior_2d, simulator_2d
+    ):
+        """Adapted simulator should implement y = params + 0.1 * noise per particle.
+
+        Verifies (a) distinct per-particle output, (b) output shape matches
+        the number of particles × event size, and (c) each particle's output
+        is within a few noise standard deviations of its own parameter.
+        """
         sim_fn = adapt_simulator(simulator_2d)
         key = jax.random.PRNGKey(0)
         params = jnp.stack([jnp.zeros(2), jnp.ones(2), 2 * jnp.ones(2)])
-        out = sim_fn(key, {"theta": params})
-        # Three particles → three distinct outputs.
-        assert out.shape[0] == 3
-        assert not jnp.allclose(out[0], out[1])
-        assert not jnp.allclose(out[1], out[2])
+        out = np.asarray(sim_fn(key, {"theta": params}))
+
+        # Shape: (n_particles, 2)
+        assert out.shape == (3, 2)
+        # Independence: distinct per-particle draws.
+        assert not np.allclose(out[0], out[1])
+        assert not np.allclose(out[1], out[2])
+        # Semantics: y_i ≈ params_i with noise std 0.1 — each output within
+        # ~6σ of its own parameter with huge margin (deterministic given key).
+        for i in range(3):
+            assert np.linalg.norm(out[i] - np.asarray(params[i])) < 1.0
+        # Particle i's output should be closest to params_i, not other params.
+        for i in range(3):
+            dists = [np.linalg.norm(out[i] - np.asarray(params[j])) for j in range(3)]
+            assert np.argmin(dists) == i
 
 
 # ---------------------------------------------------------------------------
