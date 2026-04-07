@@ -107,9 +107,6 @@ from probpipe.core.constraints import (
     integer_interval,
 )
 from probpipe.core.transition import (
-    StepResult,
-    TransitionTrace,
-    DistributionTransition,
     iterate,
     with_conversion,
     with_resampling,
@@ -234,9 +231,6 @@ __all__ = [
     "SupportsConditioning",
     "SupportsNamedComponents",
     # Transition / iteration
-    "StepResult",
-    "TransitionTrace",
-    "DistributionTransition",
     "iterate",
     "with_conversion",
     "with_resampling",

@@ -7,12 +7,12 @@ step function, and a stateful module for sequential Bayesian updating.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from ..core.distribution import Distribution
 from ..core.node import Module, WorkflowFunction
-from ..core.transition import StepResult, TransitionTrace, iterate
+from ..core.transition import iterate
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ class _ConditioningStep(WorkflowFunction):
         self,
         dist: Distribution,
         data: Any,
-    ) -> StepResult:
+    ) -> Distribution:
         from ._simple import SimpleModel
         from ..core.protocols import SupportsLogProb
 
@@ -121,8 +121,7 @@ class _ConditioningStep(WorkflowFunction):
             prior = converter_registry.convert(prior, SupportsLogProb)
 
         model = SimpleModel(prior=prior, likelihood=self._likelihood)
-        posterior = self._condition_fn(model, data, **self._condition_kwargs)
-        return StepResult(distribution=posterior)
+        return self._condition_fn(model, data, **self._condition_kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -168,12 +167,12 @@ class IncrementalConditioner[P, D](Module):
         posterior2 = conditioner.update(data=batch2)
         conditioner.curr_posterior  # is posterior2
 
-        # Multi-batch update (stateful, returns trace):
-        trace = conditioner.update_all(data_batches=[batch3, batch4])
-        conditioner.curr_posterior  # is trace.final
+        # Multi-batch update (stateful, returns sequence):
+        dists = conditioner.update_all(data_batches=[batch3, batch4])
+        conditioner.curr_posterior  # is dists[-1]
 
         # Functional escape hatch (for combinators):
-        trace = iterate(conditioner.step, prior, all_batches)
+        dists = iterate(conditioner.step, prior, all_batches)
     """
 
     def __init__(
@@ -216,11 +215,11 @@ class IncrementalConditioner[P, D](Module):
         Distribution[P]
             The updated posterior distribution.
         """
-        result = self._step(self._curr_posterior, data)
-        self._curr_posterior = result.distribution
-        return result.distribution
+        posterior = self._step(self._curr_posterior, data)
+        self._curr_posterior = posterior
+        return posterior
 
-    def update_all(self, data_batches: Iterable[D]) -> TransitionTrace[P]:
+    def update_all(self, data_batches: Iterable[D]) -> list[Distribution[P]]:
         """Condition on multiple data batches sequentially.
 
         Calls ``iterate(self.step, self.curr_posterior, data_batches)``
@@ -233,9 +232,9 @@ class IncrementalConditioner[P, D](Module):
 
         Returns
         -------
-        TransitionTrace[P]
-            Trajectory including the starting posterior and each step.
+        list[Distribution[P]]
+            Sequence ``[starting_posterior, post_1, post_2, ...]``.
         """
-        trace = iterate(self._step, self._curr_posterior, data_batches)
-        self._curr_posterior = trace.final
-        return trace
+        dists = iterate(self._step, self._curr_posterior, data_batches)
+        self._curr_posterior = dists[-1]
+        return dists

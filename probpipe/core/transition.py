@@ -1,37 +1,32 @@
 """Iterative distribution transformation abstractions.
 
-Provides core types and utilities for algorithms that transform a
-distribution over a sequence of steps — incremental conditioning,
-tempering/annealing, filtering, active learning, etc.
+Provides utilities for algorithms that transform a distribution over a
+sequence of steps — incremental conditioning, tempering/annealing,
+filtering, active learning, etc.
 
 The central pattern is a **fold over distributions**: starting from an
 initial distribution, a step function is applied repeatedly with
-successive inputs, producing a trajectory of distributions.
+successive inputs, producing a sequence of distributions.
 
 Core API::
 
-    from probpipe import iterate, StepResult, TransitionTrace
+    from probpipe import iterate, with_conversion, with_resampling
 
-    trace = iterate(step_fn, initial_dist, inputs)
-    trace.final          # final distribution
-    trace.distributions  # full trajectory (including initial)
-    trace.infos          # per-step auxiliary info dicts
+    dists = iterate(step_fn, initial_dist, inputs)
+    dists[-1]   # final distribution
+    dists[0]    # initial distribution
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator
-from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from collections.abc import Callable, Iterable, Sequence
+from typing import Any
 
 from .distribution import Distribution
 from .node import WorkflowFunction, workflow_function
 from .provenance import Provenance
 
 __all__ = [
-    "StepResult",
-    "TransitionTrace",
-    "DistributionTransition",
     "iterate",
     "with_conversion",
     "with_resampling",
@@ -39,138 +34,8 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Core types
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class StepResult[T]:
-    """Result of one transition step.
-
-    Pairs a distribution with an optional info dict carrying auxiliary
-    data such as diagnostics, ESS, or log-normalizing constants.
-    """
-
-    distribution: Distribution[T]
-    info: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class TransitionTrace[T]:
-    """Trajectory of distributions produced by iterating a transition.
-
-    Stores the initial distribution and a list of :class:`StepResult`
-    objects, one per step.  Provides convenient accessors for the full
-    sequence of distributions, the final distribution, and per-step
-    auxiliary info.
-
-    Supports iteration (``for result in trace:``) and indexing
-    (``trace[i]``).
-    """
-
-    initial: Distribution[T]
-    results: tuple[StepResult[T], ...]
-
-    # -- Accessors ----------------------------------------------------------
-
-    @property
-    def distributions(self) -> list[Distribution[T]]:
-        """All distributions in the trajectory, including the initial.
-
-        Length is ``len(self) + 1``.
-        """
-        return [self.initial] + [r.distribution for r in self.results]
-
-    @property
-    def final(self) -> Distribution[T]:
-        """The last distribution in the trajectory.
-
-        Returns the initial distribution if no steps were taken.
-        """
-        if self.results:
-            return self.results[-1].distribution
-        return self.initial
-
-    @property
-    def infos(self) -> list[dict[str, Any]]:
-        """Per-step info dicts (one per step, excludes initial)."""
-        return [r.info for r in self.results]
-
-    def info_values(self, key: str) -> list[Any]:
-        """Extract a single key from each step's info dict.
-
-        Raises :class:`KeyError` if any step is missing the key.
-        """
-        return [r.info[key] for r in self.results]
-
-    # -- Container protocol -------------------------------------------------
-
-    def __len__(self) -> int:
-        """Number of steps (not counting the initial distribution)."""
-        return len(self.results)
-
-    def __getitem__(self, index: int) -> StepResult[T]:
-        """Index into the results list."""
-        return self.results[index]
-
-    def __iter__(self) -> Iterator[StepResult[T]]:
-        """Iterate over step results."""
-        return iter(self.results)
-
-
-# ---------------------------------------------------------------------------
-# Protocol
-# ---------------------------------------------------------------------------
-
-
-@runtime_checkable
-class DistributionTransition[T, S](Protocol):
-    """Protocol for a single step of an iterative distribution transformation.
-
-    Any callable with signature
-    ``(Distribution[T], S) -> Distribution[T] | StepResult[T]``
-    satisfies this protocol.  The protocol exists for documentation and
-    optional type-checking; :func:`iterate` accepts any matching callable.
-    """
-
-    def __call__(
-        self, dist: Distribution[T], input: S, /
-    ) -> Distribution[T] | StepResult[T]: ...
-
-
-# ---------------------------------------------------------------------------
 # iterate — the fold WorkflowFunction
 # ---------------------------------------------------------------------------
-
-
-def _as_step_result(result: Any, step_context: int | str) -> StepResult:
-    """Wrap a bare Distribution return in StepResult; validate type."""
-    if isinstance(result, StepResult):
-        return result
-    if isinstance(result, Distribution):
-        return StepResult(distribution=result)
-    raise TypeError(
-        f"Step function {step_context} returned "
-        f"{type(result).__name__}, expected Distribution or StepResult."
-    )
-
-
-def _maybe_attach_provenance(
-    result: StepResult, prev_dist: Distribution, step_index: int
-) -> None:
-    """Attach provenance to the result distribution if not already set."""
-    dist = result.distribution
-    if dist.source is None:
-        try:
-            dist.with_source(
-                Provenance(
-                    "iterate",
-                    parents=(prev_dist,),
-                    metadata={"step": step_index},
-                )
-            )
-        except RuntimeError:
-            pass  # write-once guard; should not happen if source is None
 
 
 @workflow_function
@@ -180,17 +45,22 @@ def iterate(
     inputs: Iterable,
     *,
     callback: Callable | None = None,
-) -> TransitionTrace:
-    """Fold a step function over inputs, accumulating a distribution trajectory.
+) -> list[Distribution]:
+    """Fold a step function over inputs, accumulating a distribution sequence.
 
     Starting from *initial*, applies ``step_fn(dist, inp)`` for each
-    element of *inputs*, collecting the results into a
-    :class:`TransitionTrace`.
+    element of *inputs*, collecting the resulting distributions into a
+    list.  The returned list includes the initial distribution at
+    index 0.
+
+    Provenance is automatically attached to each output distribution
+    (linking it to the previous distribution) unless the step function
+    has already set provenance.
 
     Parameters
     ----------
     step_fn : callable
-        ``(Distribution[T], S) -> Distribution[T] | StepResult[T]``.
+        ``(Distribution[T], S) -> Distribution[T]``.
         Any callable matching this signature — plain functions,
         :class:`WorkflowFunction` instances, or bound methods.
     initial : Distribution[T]
@@ -198,30 +68,48 @@ def iterate(
     inputs : Iterable[S]
         Sequence of inputs to pass to the step function.
     callback : callable or None
-        Called as ``callback(i, step_result)`` after each step.
+        Called as ``callback(i, dist)`` after each step, where *i* is
+        the step index and *dist* is the newly produced distribution.
         If it returns exactly ``False``, iteration stops early.
 
     Returns
     -------
-    TransitionTrace[T]
-        The full trajectory including initial and all step results.
+    list[Distribution[T]]
+        The full sequence: ``[initial, dist_1, dist_2, ...]``.
     """
-    results: list[StepResult] = []
+    dists: list[Distribution] = [initial]
     current = initial
 
     for i, inp in enumerate(inputs):
-        raw = step_fn(current, inp)
-        result = _as_step_result(raw, f"at index {i}")
-        _maybe_attach_provenance(result, current, i)
-        results.append(result)
-        current = result.distribution
+        result = step_fn(current, inp)
+        if not isinstance(result, Distribution):
+            raise TypeError(
+                f"Step function at index {i} returned "
+                f"{type(result).__name__}, expected Distribution."
+            )
+
+        # Auto-attach provenance if not already set
+        if result.source is None:
+            try:
+                result.with_source(
+                    Provenance(
+                        "iterate",
+                        parents=(current,),
+                        metadata={"step": i},
+                    )
+                )
+            except RuntimeError:
+                pass  # write-once guard
+
+        dists.append(result)
+        current = result
 
         if callback is not None:
             cont = callback(i, result)
             if cont is False:
                 break
 
-    return TransitionTrace(initial=initial, results=tuple(results))
+    return dists
 
 
 # ---------------------------------------------------------------------------
@@ -246,8 +134,8 @@ def with_conversion(
     After calling *step_fn*, converts the resulting distribution to
     *target_type* using ProbPipe's standard ``from_distribution``
     operation (which dispatches through the converter registry).
-    The pre-conversion distribution is stored in
-    ``info["pre_conversion"]``.
+    The pre-conversion distribution is accessible via the converted
+    distribution's provenance parents (set by the converter).
 
     This is useful when the step function produces samples (e.g.,
     MCMC output) but the next iteration needs a parametric
@@ -273,17 +161,11 @@ def with_conversion(
     """
     inner_name = _step_fn_name(step_fn)
 
-    def _with_conversion_impl(dist: Distribution, inp: Any) -> StepResult:
+    def _with_conversion_impl(dist: Distribution, inp: Any) -> Distribution:
         from .ops import from_distribution
 
-        raw = step_fn(dist, inp)
-        result = _as_step_result(
-            raw, f"(inside with_conversion wrapping {inner_name})"
-        )
-        pre = result.distribution
-        converted = from_distribution(pre, target_type, **convert_kwargs)
-        info = {**result.info, "pre_conversion": pre}
-        return StepResult(distribution=converted, info=info)
+        result = step_fn(dist, inp)
+        return from_distribution(result, target_type, **convert_kwargs)
 
     return WorkflowFunction(
         func=_with_conversion_impl,
@@ -304,8 +186,10 @@ def with_resampling(
     ``ESS / N < ess_threshold``, performs multinomial resampling to
     produce equally-weighted particles.
 
-    Records ``"ess"``, ``"ess_ratio"``, and ``"resampled"`` in the
-    step info dict.
+    The pre-resampling ESS is stored in provenance metadata of the
+    resampled distribution (``dist.source.metadata["ess"]``) since
+    this information would otherwise be lost after resampling to
+    uniform weights.
 
     The returned wrapper is a :class:`WorkflowFunction`, so it appears
     as a node in the ProbPipe workflow DAG.
@@ -338,26 +222,18 @@ def with_resampling(
     inner_name = _step_fn_name(step_fn)
     call_count = 0
 
-    def _with_resampling_impl(dist: Distribution, inp: Any) -> StepResult:
+    def _with_resampling_impl(dist: Distribution, inp: Any) -> Distribution:
         nonlocal call_count
         from .distribution import EmpiricalDistribution
 
-        raw = step_fn(dist, inp)
-        result = _as_step_result(
-            raw, f"(inside with_resampling wrapping {inner_name})"
-        )
-        out_dist = result.distribution
-        info = dict(result.info)
+        out_dist = step_fn(dist, inp)
 
         if isinstance(out_dist, EmpiricalDistribution):
             n = out_dist.n
             ess = float(out_dist.effective_sample_size)
             ess_ratio = ess / n
-            info["ess"] = ess
-            info["ess_ratio"] = ess_ratio
 
             if ess_ratio < ess_threshold:
-                # Multinomial resampling to uniform weights
                 key = jax.random.PRNGKey(seed + call_count)
                 call_count += 1
                 indices = out_dist._w.choice(key, shape=(n,))
@@ -370,14 +246,9 @@ def with_resampling(
                         metadata={"ess": ess, "ess_ratio": ess_ratio},
                     )
                 )
-                info["resampled"] = True
-                return StepResult(distribution=resampled, info=info)
-            else:
-                info["resampled"] = False
-                return StepResult(distribution=out_dist, info=info)
+                return resampled
 
-        # Not an EmpiricalDistribution — pass through unchanged
-        return StepResult(distribution=out_dist, info=info)
+        return out_dist
 
     return WorkflowFunction(
         func=_with_resampling_impl,
