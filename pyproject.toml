@@ -16,8 +16,10 @@ authors = [
   { name = "Can Erozer",      email = "caner@bu.edu" },
 ]  # See AUTHORS file for full list
 dependencies = [
-  "jax>=0.9.0",
-  "jaxlib>=0.9.0",
+  # sbijax 0.3.6 (latest) pins jaxlib==0.8.1, so we cap below 0.9 to keep
+  # the [sbi] extra installable.  Bump back to >=0.9 once sbijax catches up.
+  "jax>=0.8.1,<0.9",
+  "jaxlib>=0.8.1,<0.9",
   "tfp-nightly==0.26.0.dev20260315",
   "arviz>=1.0",
 ]
