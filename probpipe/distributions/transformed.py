@@ -72,6 +72,7 @@ class TransformedDistribution(ArrayDistribution, SupportsSampling, SupportsLogPr
             self._tfp_transformed = tfd.TransformedDistribution(
                 distribution=base._tfp_dist,
                 bijector=bijector,
+                name=name or "TransformedDistribution",
             )
         else:
             self._tfp_transformed = None
@@ -139,13 +140,6 @@ class TransformedDistribution(ArrayDistribution, SupportsSampling, SupportsLogPr
         return real
 
     # -- sampling & density -------------------------------------------------
-
-    def _sample_one(self, key: PRNGKey) -> Array:
-        """Draw a single sample by transforming a base sample."""
-        if self._tfp_transformed is not None:
-            return self._tfp_transformed.sample(seed=key)
-        raw = self._base._sample(key)
-        return self._bijector.forward(raw)
 
     def _sample(
         self,
