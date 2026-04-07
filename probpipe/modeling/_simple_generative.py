@@ -54,6 +54,11 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]]):
                 f"SimpleGenerativeModel requires a prior that supports SupportsSampling, "
                 f"got {type(prior).__name__}"
             )
+        if not isinstance(likelihood, GenerativeLikelihood):
+            raise TypeError(
+                f"SimpleGenerativeModel requires a GenerativeLikelihood, "
+                f"got {type(likelihood).__name__}"
+            )
         self._prior = prior
         self._likelihood = likelihood
         self._name_str = name

@@ -5,6 +5,7 @@ These tests require sbijax to be installed: pip install probpipe[sbi]
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 sbijax = pytest.importorskip("sbijax")
@@ -12,13 +13,20 @@ sbijax = pytest.importorskip("sbijax")
 from probpipe import (
     Normal,
     SimpleGenerativeModel,
+    SimpleModel,
     condition_on,
     train_sbi,
 )
+from probpipe.core.distribution import Distribution
+from probpipe.core.protocols import SupportsConditioning, SupportsSampling
 from probpipe.distributions.multivariate import MultivariateNormal
-from probpipe.core.protocols import SupportsConditioning
-from probpipe.inference import ApproximateDistribution
-from probpipe.inference._sbijax_distribution import TrainedSBIModel
+from probpipe.inference import (
+    ApproximateDistribution,
+    TrainedSBIModel,
+    inference_method_registry,
+)
+from probpipe.inference._sbijax_adapters import adapt_prior, adapt_simulator
+from probpipe.inference._sbijax_methods import SbiSMCABCMethod
 
 
 # ---------------------------------------------------------------------------
@@ -26,38 +34,8 @@ from probpipe.inference._sbijax_distribution import TrainedSBIModel
 # ---------------------------------------------------------------------------
 
 
-class GaussianSimulator:
-    """Simple: y = theta + noise."""
-
-    def generate_data(self, params, n_samples, *, key=None):
-        if key is None:
-            key = jax.random.PRNGKey(0)
-        noise = jax.random.normal(key, shape=(n_samples,) + jnp.atleast_1d(params).shape)
-        return jnp.atleast_1d(params) + 0.1 * noise
-
-
-@pytest.fixture
-def prior():
-    return Normal(loc=0.0, scale=1.0)
-
-
-@pytest.fixture
-def simulator():
-    return GaussianSimulator()
-
-
-@pytest.fixture
-def generative_model(prior, simulator):
-    return SimpleGenerativeModel(prior, simulator)
-
-
-@pytest.fixture
-def observed():
-    return jnp.array([0.5])
-
-
 class GaussianSimulator2D:
-    """2D: y = theta + noise."""
+    """2D Gaussian simulator: y = theta + 0.1 * noise."""
 
     def generate_data(self, params, n_samples, *, key=None):
         if key is None:
@@ -86,6 +64,38 @@ def observed_2d():
     return jnp.array([0.5, -0.3])
 
 
+@pytest.fixture(scope="module")
+def _trained_npe_smoke():
+    """Tiny, fast NPE training — for smoke tests only (no correctness checks)."""
+    prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+    simulator = GaussianSimulator2D()
+    return train_sbi._func(
+        prior, simulator,
+        method="npe",
+        n_simulations=200,
+        n_iter=5,
+        batch_size=32,
+        n_samples=100,
+        random_seed=42,
+    )
+
+
+@pytest.fixture(scope="module")
+def _trained_npe_correct():
+    """Properly trained NPE — slower, used to assert posterior correctness."""
+    prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+    simulator = GaussianSimulator2D()
+    return train_sbi._func(
+        prior, simulator,
+        method="npe",
+        n_simulations=2000,
+        n_iter=300,
+        batch_size=128,
+        n_samples=2000,
+        random_seed=0,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Amortized NPE via train_sbi
 # ---------------------------------------------------------------------------
@@ -93,61 +103,83 @@ def observed_2d():
 
 @pytest.mark.sbi
 class TestTrainSBI:
-    def test_returns_trained_model(self, prior, simulator):
-        trained = train_sbi._func(
-            prior, simulator,
-            method="npe",
-            n_simulations=200,
-            n_iter=5,
-            batch_size=32,
-            random_seed=42,
-        )
+    """train_sbi workflow function: construction, protocols, correctness."""
+
+    def test_returns_trained_model_and_is_distribution(self, _trained_npe_smoke):
+        trained = _trained_npe_smoke
         assert isinstance(trained, TrainedSBIModel)
-
-    def test_supports_conditioning(self, prior, simulator):
-        trained = train_sbi._func(
-            prior, simulator,
-            method="npe",
-            n_simulations=200,
-            n_iter=5,
-            batch_size=32,
-        )
+        assert isinstance(trained, Distribution)
         assert isinstance(trained, SupportsConditioning)
+        assert trained.name == "TrainedSBIModel(sbijax_npe)"
 
-    def test_condition_on_produces_approximate_dist(self, prior, simulator, observed):
-        trained = train_sbi._func(
-            prior, simulator,
-            method="npe",
-            n_simulations=200,
-            n_iter=5,
-            batch_size=32,
-            n_samples=100,
-        )
-        posterior = condition_on._func(trained, observed)
+    def test_condition_on_produces_approximate_dist(
+        self, _trained_npe_smoke, observed_2d
+    ):
+        posterior = condition_on._func(_trained_npe_smoke, observed_2d)
         assert isinstance(posterior, ApproximateDistribution)
         assert posterior.algorithm == "sbijax_npe"
 
-    def test_nle_method(self, prior, simulator, observed):
+    def test_condition_on_n_samples_override(self, _trained_npe_smoke, observed_2d):
+        posterior = condition_on._func(
+            _trained_npe_smoke, observed_2d, n_samples=321,
+        )
+        assert np.asarray(posterior.draws()).shape[0] == 321
+
+    def test_posterior_correctness(self, _trained_npe_correct):
+        """Well-trained NPE must recover posteriors near each observation."""
+        from probpipe import mean
+
+        obs = jnp.array([1.2, -0.8])
+        posterior = condition_on._func(_trained_npe_correct, obs)
+        post_mean = np.asarray(mean(posterior))
+        # Likelihood is tight (noise=0.1), prior is standard; posterior mean
+        # should be very close to observation.
+        np.testing.assert_allclose(post_mean, obs, atol=0.3)
+
+    def test_amortization_different_observations(self, _trained_npe_correct):
+        """Same trained model conditioned on different obs → different posteriors."""
+        from probpipe import mean
+
+        obs_a = jnp.array([1.5, 0.2])
+        obs_b = jnp.array([-0.9, 1.1])
+        post_a = condition_on._func(_trained_npe_correct, obs_a)
+        post_b = condition_on._func(_trained_npe_correct, obs_b)
+
+        mean_a = np.asarray(mean(post_a))
+        mean_b = np.asarray(mean(post_b))
+        # Each near its own observation, far from the other.
+        np.testing.assert_allclose(mean_a, obs_a, atol=0.3)
+        np.testing.assert_allclose(mean_b, obs_b, atol=0.3)
+        assert np.linalg.norm(mean_a - mean_b) > 1.0
+
+    def test_nle_method(self, prior_2d, simulator_2d, observed_2d):
         trained = train_sbi._func(
-            prior, simulator,
+            prior_2d, simulator_2d,
             method="nle",
             n_simulations=200,
             n_iter=5,
             batch_size=32,
             n_samples=100,
         )
-        posterior = condition_on._func(trained, observed)
+        posterior = condition_on._func(trained, observed_2d)
         assert isinstance(posterior, ApproximateDistribution)
         assert posterior.algorithm == "sbijax_nle"
 
-    def test_invalid_method(self, prior, simulator):
+    def test_invalid_method(self, prior_2d, simulator_2d):
         with pytest.raises(ValueError, match="Unknown SBI method"):
-            train_sbi._func(
-                prior, simulator,
-                method="invalid",
-                n_simulations=100,
-                n_iter=5,
-            )
+            train_sbi._func(prior_2d, simulator_2d, method="invalid")
+
+    def test_rejects_non_tfp_prior(self, simulator_2d):
+        class NonTFPPrior:
+            # Satisfies SupportsSampling structurally but has no _tfp_dist.
+            _sampling_cost = "low"
+            _preferred_orchestration = None
+
+            def _sample(self, key, sample_shape=()):
+                return jnp.zeros(sample_shape + (2,))
+
+        with pytest.raises(TypeError, match="TFP-backed"):
+            train_sbi._func(NonTFPPrior(), simulator_2d, n_simulations=10, n_iter=1)
 
 
 # ---------------------------------------------------------------------------
@@ -157,9 +189,9 @@ class TestTrainSBI:
 
 @pytest.mark.sbi
 class TestSMCABC:
-    def test_smcabc_via_method_override(self, generative_model_2d, observed_2d):
-        from probpipe.inference import inference_method_registry
+    """Non-amortized SMCABC via the inference method registry."""
 
+    def test_smcabc_via_method_override(self, generative_model_2d, observed_2d):
         result = inference_method_registry.execute(
             generative_model_2d, observed_2d,
             method="sbijax_smcabc",
@@ -170,22 +202,103 @@ class TestSMCABC:
         assert isinstance(result, ApproximateDistribution)
         assert result.algorithm == "sbijax_smcabc"
 
-    def test_smcabc_check_feasibility(self, generative_model_2d, observed_2d):
-        from probpipe.inference._sbijax_methods import SbiSMCABCMethod
+    def test_smcabc_via_condition_on_dispatch(
+        self, generative_model_2d, observed_2d
+    ):
+        """condition_on auto-dispatches to SMCABC for a generative model."""
+        from probpipe import mean
 
+        result = condition_on._func(
+            generative_model_2d, observed_2d,
+            method="sbijax_smcabc",
+            n_rounds=3,
+            n_particles=200,
+            random_seed=42,
+        )
+        assert isinstance(result, ApproximateDistribution)
+        assert result.algorithm == "sbijax_smcabc"
+        # Posterior mean should be in the vicinity of the observation —
+        # regression guard against the 1D _chol_factor workaround breaking.
+        post_mean = np.asarray(mean(result))
+        assert np.linalg.norm(post_mean - np.asarray(observed_2d)) < 1.0
+
+    def test_smcabc_check_feasibility(self, generative_model_2d, observed_2d):
         method = SbiSMCABCMethod()
         info = method.check(generative_model_2d, observed_2d)
         assert info.feasible
+        assert info.method_name == "sbijax_smcabc"
 
-    def test_smcabc_rejects_non_generative_model(self, observed):
-        from probpipe import SimpleModel
-        from probpipe.inference._sbijax_methods import SbiSMCABCMethod
+    def test_smcabc_method_registered(self, generative_model_2d, observed_2d):
+        """SbiSMCABCMethod must be actually registered in the global registry."""
+        assert "sbijax_smcabc" in inference_method_registry.list_methods()
+        # Auto-dispatch on a SimpleGenerativeModel should resolve to SMCABC.
+        info = inference_method_registry.check(generative_model_2d, observed_2d)
+        assert info.feasible
+        assert info.method_name == "sbijax_smcabc"
 
+    def test_smcabc_rejects_non_generative_model(self):
         class DummyLik:
             def log_likelihood(self, params, data):
                 return 0.0
 
         model = SimpleModel(Normal(0.0, 1.0), DummyLik())
         method = SbiSMCABCMethod()
-        info = method.check(model, observed)
+        info = method.check(model, None)
         assert not info.feasible
+
+    def test_smcabc_rejects_non_tfp_prior(self, simulator_2d):
+        class NonTFPPrior:
+            _sampling_cost = "low"
+            _preferred_orchestration = None
+
+            def _sample(self, key, sample_shape=()):
+                return jnp.zeros(sample_shape + (2,))
+
+        model = SimpleGenerativeModel(NonTFPPrior(), simulator_2d)
+        method = SbiSMCABCMethod()
+        info = method.check(model, jnp.array([0.0, 0.0]))
+        assert not info.feasible
+        assert "TFP" in info.description
+
+
+# ---------------------------------------------------------------------------
+# Adapter unit tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.sbi
+class TestAdapters:
+    """Unit tests for sbijax adapter helpers."""
+
+    def test_adapt_prior_rejects_non_tfp(self):
+        class NotTFP:
+            pass
+
+        with pytest.raises(TypeError, match="TFP-backed"):
+            adapt_prior(NotTFP())
+
+    def test_adapt_simulator_independent_draws(self, prior_2d, simulator_2d):
+        """vmapped simulator should produce distinct draws per particle."""
+        sim_fn = adapt_simulator(simulator_2d)
+        key = jax.random.PRNGKey(0)
+        params = jnp.stack([jnp.zeros(2), jnp.ones(2), 2 * jnp.ones(2)])
+        out = sim_fn(key, {"theta": params})
+        # Three particles → three distinct outputs.
+        assert out.shape[0] == 3
+        assert not jnp.allclose(out[0], out[1])
+        assert not jnp.allclose(out[1], out[2])
+
+
+# ---------------------------------------------------------------------------
+# Side-effect / robustness tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.sbi
+def test_sbijax_import_preserves_rcparams():
+    """Importing the sbijax adapters must not flip matplotlib rcParams."""
+    import matplotlib as mpl
+    import probpipe.inference._sbijax_adapters  # noqa: F401
+    # sbijax's stylesheet touches these; all should be at matplotlib defaults.
+    assert mpl.rcParams["text.usetex"] is False
+    assert "cmr10" not in str(mpl.rcParams.get("font.family", ""))

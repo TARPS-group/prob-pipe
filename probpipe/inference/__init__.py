@@ -25,6 +25,7 @@ __all__ = [
     "rwmh",
     "condition_on_nutpie",
     "train_sbi",
+    "TrainedSBIModel",
 ]
 
 
@@ -66,8 +67,9 @@ except ImportError:
 
 try:
     from ._sbijax_methods import SbiSMCABCMethod
+    from ._sbijax_train import train_sbi
+    from ._sbijax_distribution import TrainedSBIModel
     inference_method_registry.register(SbiSMCABCMethod())
 except ImportError:
-    pass
-
-from ._sbijax_train import train_sbi
+    train_sbi = None  # type: ignore[assignment]
+    TrainedSBIModel = None  # type: ignore[assignment,misc]

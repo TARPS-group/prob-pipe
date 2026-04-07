@@ -11,33 +11,39 @@ import jax.numpy as jnp
 from ..custom_types import Array, PRNGKey
 from ..modeling._likelihood import GenerativeLikelihood
 
+# sbijax's ``__init__`` calls ``matplotlib.style.use`` with a stylesheet that
+# sets ``text.usetex: True``, which breaks plotting on systems without LaTeX.
+# Snapshot and restore rcParams around the import so the side effect is
+# contained to this single module-load. All other modules can then ``import
+# sbijax`` directly.
+import matplotlib as _mpl
+
+_saved_rcparams = dict(_mpl.rcParams)
+import sbijax  # noqa: E402, F401
+_mpl.rcParams.update(_saved_rcparams)
+del _saved_rcparams, _mpl
+
 __all__: list[str] = []
 
 PARAM_KEY = "theta"
 """Key used for the parameter dimension in sbijax prior/posterior dicts."""
 
 
-def import_sbijax() -> Any:
-    """Import sbijax, undoing its global matplotlib style side effect.
-
-    sbijax's ``__init__`` calls ``matplotlib.style.use`` with a stylesheet that
-    sets ``text.usetex: True``, which breaks plotting on systems without
-    a LaTeX installation. We restore the rcParams that the style touched.
-    """
-    import matplotlib as mpl
-    saved = dict(mpl.rcParams)
-    import sbijax  # noqa: F401
-    mpl.rcParams.update(saved)
-    return sbijax
-
-
 def is_tfp_backed(dist: Any) -> bool:
-    """Check whether a distribution has an underlying TFP distribution."""
+    """Check whether a distribution exposes the underlying TFP distribution.
+
+    Matches the convention used by ProbPipe's TFP-backed distributions,
+    which expose ``_tfp_dist``.
+    """
     return hasattr(dist, "_tfp_dist")
 
 
 def coerce_observable(observed: Any) -> Array:
-    """Coerce observed data to a JAX array with at least one dimension."""
+    """Coerce observed data to a JAX array with at least one dimension.
+
+    sbijax sampling APIs reject Python scalars / 0-d arrays — they expect
+    the observable to carry an explicit data axis.
+    """
     return jnp.atleast_1d(jnp.asarray(observed))
 
 
@@ -103,7 +109,7 @@ def adapt_simulator(
     """
 
     def _single_sim(seed: PRNGKey, params: Array) -> Array:
-        return jnp.atleast_1d(simulator.generate_data(params, 1, key=seed).squeeze(0))
+        return jnp.atleast_1d(simulator.generate_data(params, 1, key=seed)[0])
 
     def simulator_fn(seed: PRNGKey, theta: dict) -> Array:
         params = theta[PARAM_KEY]
@@ -114,22 +120,30 @@ def adapt_simulator(
 
 
 def default_summary_fn(data: Array) -> Array:
-    """Identity summary statistics — pass data through unchanged."""
+    """Identity summary statistics — pass data through unchanged.
+
+    Placeholder default for SMCABC; for non-trivial problems users should
+    pass a problem-specific ``summary_fn`` via ``condition_on`` kwargs.
+    """
     return jnp.atleast_2d(data)
 
 
 def default_distance_fn(s1: Array, s2: Array) -> Array:
-    """Euclidean distance between summary statistics."""
+    """Euclidean distance between summary statistics.
+
+    Placeholder default for SMCABC; users may override via
+    ``condition_on`` kwargs.
+    """
     return jnp.sqrt(jnp.sum((s1 - s2) ** 2, axis=-1))
 
 
 def extract_chains(posterior_idata: Any, param_key: str = PARAM_KEY) -> list[Array]:
-    """Extract posterior samples from ArviZ InferenceData as a list of chain arrays.
+    """Extract posterior samples from an ArviZ DataTree as a list of chain arrays.
 
     Parameters
     ----------
-    posterior_idata : InferenceData
-        ArviZ ``InferenceData`` returned by sbijax's ``sample_posterior``.
+    posterior_idata : DataTree
+        ArviZ ``DataTree`` returned by sbijax's ``sample_posterior``.
     param_key : str
         Key under the posterior group to extract.
 

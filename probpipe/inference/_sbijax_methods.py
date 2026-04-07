@@ -10,6 +10,7 @@ import jax.numpy as jnp
 from ..core._registry import MethodInfo
 from ._mcmc_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
+# Importing _sbijax_adapters also imports sbijax (with rcParams workaround).
 from ._sbijax_adapters import (
     adapt_prior,
     adapt_simulator,
@@ -17,9 +18,9 @@ from ._sbijax_adapters import (
     default_distance_fn,
     default_summary_fn,
     extract_chains,
-    import_sbijax,
     is_tfp_backed,
 )
+import sbijax
 
 __all__: list[str] = []
 
@@ -56,14 +57,6 @@ class SbiSMCABCMethod(InferenceMethod):
                 method_name=self.name,
                 description="Requires SimpleGenerativeModel",
             )
-        try:
-            import sbijax  # noqa: F401
-        except ImportError:
-            return MethodInfo(
-                feasible=False,
-                method_name=self.name,
-                description="sbijax not installed",
-            )
         if not is_tfp_backed(dist["parameters"]):
             return MethodInfo(
                 feasible=False,
@@ -75,7 +68,7 @@ class SbiSMCABCMethod(InferenceMethod):
     def execute(
         self, dist: Any, observed: Any, **kwargs: Any
     ) -> ApproximateDistribution:
-        sbijax = import_sbijax()
+        import inspect
 
         prior_fn = adapt_prior(dist["parameters"])
         simulator_fn = adapt_simulator(dist["data"])
@@ -91,8 +84,6 @@ class SbiSMCABCMethod(InferenceMethod):
         # Workaround for sbijax bug: _chol_factor returns a scalar when
         # parameters are 1D because jnp.cov reduces (1, n) to ().
         # Patch to ensure the covariance is always at least 2D.
-        _orig_chol_factor = sbi_model._chol_factor
-
         def _patched_chol_factor(particles, cov_scale):
             from jax.flatten_util import ravel_pytree
             flat = jax.vmap(lambda x: ravel_pytree(x)[0])(particles)
@@ -103,11 +94,10 @@ class SbiSMCABCMethod(InferenceMethod):
 
         observable = coerce_observable(observed)
 
-        # SMCABC sampling parameters
-        smcabc_kwargs = {}
-        for k in ("n_rounds", "n_particles", "eps_step", "ess_min", "cov_scale"):
-            if k in kwargs:
-                smcabc_kwargs[k] = kwargs[k]
+        # Forward only kwargs sample_posterior actually accepts.
+        sig = inspect.signature(sbi_model.sample_posterior)
+        accepted = set(sig.parameters) - {"rng_key", "observable", "self"}
+        smcabc_kwargs = {k: v for k, v in kwargs.items() if k in accepted}
 
         posterior_idata, _ = sbi_model.sample_posterior(
             key, observable=observable, **smcabc_kwargs,

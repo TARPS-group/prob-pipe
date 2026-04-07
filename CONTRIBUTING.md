@@ -121,14 +121,17 @@ probpipe/
 ├── modeling/                # Probabilistic model wrappers
 │   ├── _base.py             # ProbabilisticModel base class
 │   ├── _simple.py           # SimpleModel (prior + likelihood)
+│   ├── _simple_generative.py  # SimpleGenerativeModel (prior + simulator, for SBI/ABC)
 │   ├── _stan.py             # StanModel (BridgeStan, optional dep)
 │   ├── _pymc.py             # PyMCModel (PyMC, optional dep)
-│   └── _likelihood.py       # Likelihood helpers
+│   └── _likelihood.py       # Likelihood + GenerativeLikelihood protocols
 │
 ├── inference/               # Inference algorithms
 │   ├── _mcmc_distribution.py  # ApproximateDistribution + make_posterior
 │   ├── _rwmh.py             # Random-walk Metropolis-Hastings
-│   └── _nutpie.py           # Nutpie-backed NUTS (optional dep)
+│   ├── _nutpie.py           # Nutpie-backed NUTS (optional dep)
+│   └── _sbijax_*.py         # sbijax-backed SBI: train_sbi (NPE/NLE) +
+│                            #   SbiSMCABCMethod (registry) (optional dep)
 │
 ├── converters/              # Distribution conversion registry
 │   ├── _registry.py         # Converter ABC, registry, and metadata types

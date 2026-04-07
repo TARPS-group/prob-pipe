@@ -34,8 +34,10 @@ def model(prior, simulator):
 
 
 class TestConstruction:
-    def test_basic(self, model):
-        assert model is not None
+    """SimpleGenerativeModel construction and input validation."""
+
+    def test_default_name_is_none(self, model):
+        assert model.name is None
 
     def test_with_name(self, prior, simulator):
         m = SimpleGenerativeModel(prior, simulator, name="test_model")
@@ -47,6 +49,14 @@ class TestConstruction:
 
         with pytest.raises(TypeError, match="SupportsSampling"):
             SimpleGenerativeModel(BadPrior(), simulator)
+
+    def test_rejects_non_generative_likelihood(self, prior):
+        class BadLikelihood:
+            def log_likelihood(self, params, data):
+                return 0.0
+
+        with pytest.raises(TypeError, match="GenerativeLikelihood"):
+            SimpleGenerativeModel(prior, BadLikelihood())
 
 
 class TestProtocols:

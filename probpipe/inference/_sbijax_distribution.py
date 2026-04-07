@@ -54,10 +54,7 @@ class TrainedSBIModel(Distribution, SupportsConditioning):
         self._algorithm = algorithm
         self._n_samples = n_samples
         self._random_seed = random_seed
-
-    @property
-    def name(self) -> str | None:
-        return f"TrainedSBIModel({self._algorithm})"
+        self._name = f"TrainedSBIModel({algorithm})"
 
     def _condition_on(self, observed: Any, /, **kwargs: Any) -> ApproximateDistribution:
         """Sample posterior using the trained amortized model.
@@ -72,7 +69,8 @@ class TrainedSBIModel(Distribution, SupportsConditioning):
         Returns
         -------
         ApproximateDistribution
-            Posterior samples with chain structure and InferenceData.
+            Posterior samples with chain structure and an attached
+            ArviZ ``DataTree`` of inference data.
         """
         n_samples = kwargs.get("n_samples", self._n_samples)
         random_seed = kwargs.get("random_seed", self._random_seed)

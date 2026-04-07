@@ -12,8 +12,10 @@ from ..core.distribution import Distribution
 from ..core.node import workflow_function
 from ..core.protocols import SupportsSampling
 from ..modeling._likelihood import GenerativeLikelihood
-from ._sbijax_adapters import adapt_prior, adapt_simulator, import_sbijax
+from ._sbijax_adapters import adapt_prior, adapt_simulator, is_tfp_backed
 from ._sbijax_distribution import TrainedSBIModel
+import sbijax
+from sbijax.nn import make_maf
 
 __all__ = ["train_sbi"]
 
@@ -70,8 +72,10 @@ def train_sbi(
     TrainedSBIModel
         Trained model wrapping the sbijax estimator and fitted parameters.
     """
-    sbijax = import_sbijax()
-    from sbijax.nn import make_maf
+    if not is_tfp_backed(prior):
+        raise TypeError(
+            f"train_sbi requires a TFP-backed prior, got {type(prior).__name__}"
+        )
 
     prior_fn = adapt_prior(prior)
     simulator_fn = adapt_simulator(simulator)
