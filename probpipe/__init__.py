@@ -24,6 +24,7 @@ _warnings.filterwarnings(
     category=DeprecationWarning,
 )
 
+from probpipe._weights import Weights
 from probpipe.core.distribution import (
     Distribution,
     PyTreeArrayDistribution,
@@ -107,9 +108,8 @@ from probpipe.core.constraints import (
 )
 from probpipe.modeling import GLMLikelihood, Likelihood, GenerativeLikelihood, IncrementalConditioner
 from probpipe.inference import (
-    InferenceDiagnostics,
-    MCMCDiagnostics,
     MCMCApproximateDistribution,
+    inference_method_registry,
     rwmh,
     condition_on_nutpie,
 )
@@ -125,7 +125,6 @@ from probpipe.core.protocols import (
     SupportsCovariance,
     SupportsConditioning,
     SupportsNamedComponents,
-    SupportsConditionableComponents,
 )
 from probpipe.converters import (
     converter_registry,
@@ -135,6 +134,8 @@ from probpipe.converters import (
 )
 
 __all__ = [
+    # Weights
+    "Weights",
     # Base classes
     "Distribution",
     "PyTreeArrayDistribution",
@@ -224,7 +225,6 @@ __all__ = [
     "SupportsCovariance",
     "SupportsConditioning",
     "SupportsNamedComponents",
-    "SupportsConditionableComponents",
     # Modeling
     "GLMLikelihood",
     "Likelihood",
@@ -233,9 +233,8 @@ __all__ = [
     "ProbabilisticModel",
     "SimpleModel",
     # Inference
-    "InferenceDiagnostics",
-    "MCMCDiagnostics",
     "MCMCApproximateDistribution",
+    "inference_method_registry",
     "rwmh",
     "condition_on_nutpie",
     # Validation

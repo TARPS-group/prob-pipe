@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 import jax
+import jax.numpy as jnp
 
 from .custom_types import PRNGKey
 
@@ -25,6 +28,19 @@ def _auto_key() -> PRNGKey:
     key = jax.random.PRNGKey(_AUTO_KEY_COUNTER)
     _AUTO_KEY_COUNTER += 1
     return key
+
+
+def _is_numeric_array(x: object) -> bool:
+    """Return ``True`` if *x* is a JAX or numpy array with a numeric dtype.
+
+    Numpy object arrays (used for generic non-array samples in
+    ``EmpiricalDistribution``) return ``False``.
+    """
+    if isinstance(x, jax.Array):
+        return True
+    if isinstance(x, np.ndarray):
+        return x.dtype != object
+    return False
 
 
 def prod(shape: tuple[int, ...]) -> int:

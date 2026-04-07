@@ -90,6 +90,7 @@ probpipe/
 ├── custom_types.py          # Array, PRNGKey, ArrayLike type aliases
 ├── _utils.py                # Internal utilities
 ├── _array_utils.py          # Array manipulation helpers
+├── _weights.py              # Weights class + weighted operations
 │
 ├── core/                    # Core abstractions (no specialized distributions)
 │   ├── distribution.py        # Re-export facade for all core distribution symbols
@@ -125,8 +126,7 @@ probpipe/
 │   └── _likelihood.py       # Likelihood helpers
 │
 ├── inference/               # Inference algorithms
-│   ├── _mcmc_distribution.py  # MCMCApproximateDistribution
-│   ├── _diagnostics.py      # MCMCDiagnostics
+│   ├── _mcmc_distribution.py  # MCMCApproximateDistribution + make_posterior
 │   ├── _rwmh.py             # Random-walk Metropolis-Hastings
 │   └── _nutpie.py           # Nutpie-backed NUTS (optional dep)
 │
@@ -169,7 +169,34 @@ probpipe/
 | `Distribution[T]` | Generic base parameterized by value type |
 | `ArrayDistribution` | Single-array specialization with TFP shape conventions |
 | `WorkflowFunction` | Orchestration-aware function wrapper |
-| Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, etc. |
+| Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc. |
+| `MethodRegistry` | Generic priority-based dispatch; used by the inference method registry |
+| `ProbabilisticModel` | Base for models (extends `Distribution` + `SupportsNamedComponents`) |
+
+### Inference method registry
+
+`condition_on` dispatches inference via a pluggable **inference method
+registry** (`inference_method_registry`).  Each method declares
+`supported_types`, a `priority`, and `check()`/`execute()` methods.
+The registry tries methods in descending priority order; the first
+whose `check()` returns `feasible=True` wins.
+
+Models no longer implement `_condition_on` directly — conditioning is
+handled entirely by registered methods.  The removed protocol
+`SupportsConditionableComponents` is no longer part of the public API;
+use `SupportsNamedComponents` and the inference registry instead.
+
+Built-in methods:
+
+| Priority | Name | Backend | Applies to |
+|----------|------|---------|------------|
+| 100 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable) |
+| 90 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable) |
+| 80 | `nutpie_nuts` | nutpie | `StanModel`, `PyMCModel` |
+| 70 | `cmdstan_nuts` | CmdStanPy | `StanModel` |
+| 60 | `pymc_nuts` | PyMC | `PyMCModel` |
+| 50 | `tfp_rwmh` | TFP | Any `SupportsLogProb` |
+| 35 | `pymc_advi` | PyMC | `PyMCModel` |
 
 ### Converter priority system
 
@@ -200,6 +227,22 @@ subclass:
 The generic base carries only type-agnostic features (sampling, expectation).
 The array variant adds `event_shape`, `dim`, `dtype`, `support`, and moment
 protocols (`SupportsMean`, `SupportsVariance`, `SupportsCovariance`).
+
+**Automatic factory dispatch:** Constructing a generic base with a numeric
+array automatically returns the array-specific subclass:
+
+```python
+EmpiricalDistribution(jnp.ones((100, 3)))
+# → returns ArrayEmpiricalDistribution
+
+BootstrapReplicateDistribution(jnp.ones((50, 2)))
+# → returns ArrayBootstrapReplicateDistribution
+```
+
+This is implemented via `__new__` on the generic base classes.  Non-numeric
+inputs (e.g. lists of objects, numpy object arrays) remain as the generic
+base class.  Calling the array subclass directly (e.g.
+`ArrayEmpiricalDistribution(...)`) is unaffected by the dispatch.
 
 ---
 

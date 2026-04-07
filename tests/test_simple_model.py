@@ -6,7 +6,6 @@ Covers:
 - SupportsLogProb always satisfied (prior must support it)
 - No event_shape, no _sample
 - Named components: "parameters" and "data"
-- conditionable_components / required_observations
 - condition_on → MCMCApproximateDistribution
 """
 
@@ -19,7 +18,6 @@ from probpipe import (
     Likelihood,
     MCMCApproximateDistribution,
     SimpleModel,
-    SupportsConditionableComponents,
     SupportsLogProb,
     SupportsNamedComponents,
     SupportsSampling,
@@ -94,22 +92,8 @@ class TestSimpleModel:
     def test_parameter_names(self, model):
         assert model.parameter_names == ("parameters",)
 
-    def test_conditionable_components(self, model):
-        cc = model.conditionable_components
-        assert isinstance(cc, dict)
-        assert cc["data"] is True
-        assert cc["parameters"] is False
-
-    def test_required_observations(self, model):
-        ro = model.required_observations
-        assert "data" in ro
-        assert "parameters" not in ro
-
     def test_supports_named_components(self, model):
         assert isinstance(model, SupportsNamedComponents)
-
-    def test_supports_conditionable_components(self, model):
-        assert isinstance(model, SupportsConditionableComponents)
 
     def test_getitem_parameters(self, model, prior):
         assert model["parameters"] is prior
@@ -143,7 +127,8 @@ class TestSimpleModel:
     def test_condition_on(self, model):
         """condition_on returns MCMCApproximateDistribution."""
         data = jnp.array([[1.0, 2.0], [1.5, 2.5], [0.8, 1.8]])
-        result = model._condition_on(
+        result = condition_on(
+            model,
             data,
             num_results=50,
             num_warmup=20,
@@ -187,28 +172,27 @@ class TestSimpleModelConditioningPaths:
         return jnp.array([[1.0, 2.0], [1.5, 2.5], [0.8, 1.8]])
 
     def test_condition_on_hmc(self, model, data):
-        result = model._condition_on(
-            data, num_results=30, num_warmup=10, step_size=0.3,
-            random_seed=42, algorithm="hmc",
+        result = condition_on(
+            model, data, num_results=30, num_warmup=10, step_size=0.3,
+            random_seed=42, method="tfp_hmc",
         )
         assert isinstance(result, MCMCApproximateDistribution)
 
     def test_condition_on_zero_warmup(self, model, data):
-        result = model._condition_on(
-            data, num_results=30, num_warmup=0, step_size=0.3,
+        result = condition_on(
+            model, data, num_results=30, num_warmup=0, step_size=0.3,
             random_seed=42,
         )
         assert isinstance(result, MCMCApproximateDistribution)
 
-    def test_condition_on_bad_algorithm(self, model, data):
-        with pytest.raises(ValueError, match="algorithm must be"):
-            model._condition_on(
-                data, num_results=30, num_warmup=10, algorithm="bad",
-            )
+    def test_condition_on_bad_method(self, model, data):
+        with pytest.raises(KeyError):
+            from probpipe import condition_on
+            condition_on(model, data, method="nonexistent_method")
 
     def test_condition_on_explicit_init(self, model, data):
-        result = model._condition_on(
-            data, num_results=30, num_warmup=10, step_size=0.3,
+        result = condition_on(
+            model, data, num_results=30, num_warmup=10, step_size=0.3,
             random_seed=42, init=jnp.ones(2),
         )
         assert isinstance(result, MCMCApproximateDistribution)
@@ -226,26 +210,19 @@ class TestSimpleModelConditioningPaths:
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
         model = SimpleModel(prior, NonTraceableLikelihood())
         data = jnp.array([[1.0, 2.0], [1.5, 2.5]])
-        result = model._condition_on(
-            data, num_results=30, num_warmup=10, step_size=0.3, random_seed=42,
+        result = condition_on(
+            model, data, num_results=30, num_warmup=10, step_size=0.3, random_seed=42,
         )
         assert isinstance(result, MCMCApproximateDistribution)
 
-    def test_extract_diagnostics_step_size_branch(self):
-        from probpipe.modeling._simple import _extract_diagnostics
-
-        trace = type("Trace", (), {
-            "step_size": jnp.array(0.1),
-            "log_accept_ratio": jnp.array([-0.5]),
-        })()
-        diag = _extract_diagnostics(trace, "nuts")
-        assert diag.algorithm == "nuts"
-
-    def test_extract_diagnostics_no_step_size(self):
-        from probpipe.modeling._simple import _extract_diagnostics
-
-        trace = type("Trace", (), {
-            "log_accept_ratio": jnp.array([-0.5]),
-        })()
-        diag = _extract_diagnostics(trace, "nuts")
-        assert jnp.isnan(diag.final_step_size)
+    def test_inference_data_produced(self):
+        """TFP NUTS produces InferenceData with posterior and sample_stats."""
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
+        model = SimpleModel(prior, GaussianLikelihood())
+        data = jnp.array([[1.0, 2.0], [1.5, 2.5]])
+        result = condition_on(
+            model, data, num_results=30, num_warmup=10, random_seed=42,
+        )
+        assert result.inference_data is not None
+        assert hasattr(result.inference_data, "posterior")
+        assert hasattr(result.inference_data, "sample_stats")

@@ -212,7 +212,19 @@ class SupportsCovariance(Protocol):
 
 @runtime_checkable
 class SupportsConditioning(Protocol):
-    """Distribution that supports conditioning on observed values."""
+    """Distribution that supports exact (closed-form) conditioning.
+
+    Reserved for distributions where ``_condition_on`` computes an
+    **exact** posterior — e.g., conjugate updates or joint distribution
+    marginalization.  When ``condition_on(dist, observed)`` is called
+    and *dist* implements this protocol, the exact path is used
+    directly; otherwise the inference method registry selects an
+    approximate algorithm (NUTS, RWMH, etc.).
+
+    Probabilistic models that require MCMC or variational inference
+    should **not** implement this protocol — let the registry handle
+    algorithm selection instead.
+    """
 
     def _condition_on(self, observed: Any, /, **kwargs: Any) -> Any: ...
 
@@ -231,35 +243,6 @@ class SupportsNamedComponents(Protocol):
     def __getitem__(self, key: Any) -> Any: ...
 
 
-# ---------------------------------------------------------------------------
-# Conditionable components (probabilistic models)
-# ---------------------------------------------------------------------------
-
-@runtime_checkable
-class SupportsConditionableComponents(SupportsNamedComponents, SupportsConditioning, Protocol):
-    """Model with named components, some of which can/must be conditioned on.
-
-    Combines :class:`SupportsNamedComponents` (component access) with
-    :class:`SupportsConditioning` (conditioning via ``_condition_on``).
-    Adds metadata about which components accept or require observed data.
-    """
-
-    @property
-    def conditionable_components(self) -> dict[str, bool]:
-        """Map component name to whether conditioning is required.
-
-        Returns a dict where keys are component names and values indicate
-        whether conditioning on that component is required (``True``) or
-        optional (``False``).
-        """
-        ...
-
-    @property
-    def required_observations(self) -> tuple[str, ...]:
-        """Component names that must be conditioned on."""
-        ...
-
-
 __all__ = [
     "compute_expectation",
     "SupportsExpectation",
@@ -271,5 +254,4 @@ __all__ = [
     "SupportsCovariance",
     "SupportsConditioning",
     "SupportsNamedComponents",
-    "SupportsConditionableComponents",
 ]

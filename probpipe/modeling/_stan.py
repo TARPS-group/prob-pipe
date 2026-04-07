@@ -1,7 +1,7 @@
 """StanModel: wraps Stan models as ProbPipe distributions via BridgeStan.
 
-Uses BridgeStan for log-probability evaluation and gradients, and
-CmdStanPy for posterior sampling via Stan's native NUTS sampler.
+Uses BridgeStan for log-probability evaluation and gradients.
+Inference is handled by registered methods in ``probpipe.inference``.
 """
 
 from __future__ import annotations
@@ -12,10 +12,8 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..core.distribution import Distribution
-from ..core.provenance import Provenance
 from ..core.protocols import SupportsLogProb
 from ..custom_types import Array, ArrayLike
-from ..inference._diagnostics import InferenceDiagnostics, extract_arviz_diagnostics
 from ..inference._mcmc_distribution import MCMCApproximateDistribution
 from ._base import ProbabilisticModel
 
@@ -97,13 +95,6 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
             return key  # placeholder — Stan doesn't expose sub-distributions
         raise KeyError(f"Unknown component: {key!r}")
 
-    # -- SupportsConditionableComponents interface --------------------------
-
-    @property
-    def conditionable_components(self) -> dict[str, bool]:
-        # Stan models condition via data passed at construction or conditioning
-        return {"data": True}
-
     # -- ProbabilisticModel interface ---------------------------------------
 
     @property
@@ -162,152 +153,8 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
             )
         return self._bs_model
 
-    # -- Conditioning -------------------------------------------------------
-
-    def _condition_on(self, observed: Any, /, **kwargs: Any) -> MCMCApproximateDistribution:
-        """Condition on observed data using Stan's NUTS sampler.
-
-        Parameters
-        ----------
-        observed : dict
-            Stan data dictionary with observed values.
-        **kwargs
-            Sampling parameters passed to :func:`_cmdstanpy_condition`.
-        """
-        return _cmdstanpy_condition(
-            self._stan_file,
-            data={**(self._stan_data or {}), **(observed if isinstance(observed, dict) else {})},
-            model_ref=self,
-            **kwargs,
-        )
-
     def __repr__(self) -> str:
         return f"StanModel(stan_file={self._stan_file!r}, num_params={self._num_params})"
-
-
-# ---------------------------------------------------------------------------
-# CmdStanPy helpers
-# ---------------------------------------------------------------------------
-
-
-def _ensure_cmdstanpy():
-    """Import cmdstanpy or raise a helpful error."""
-    try:
-        import cmdstanpy
-        return cmdstanpy
-    except ImportError as e:
-        raise ImportError(
-            "cmdstanpy is required for Stan sampling. "
-            "Install it with: pip install probpipe[stan]"
-        ) from e
-
-
-def _cmdstanpy_condition(
-    stan_file: str,
-    *,
-    data: dict,
-    model_ref: Any,
-    num_results: int = 1000,
-    num_warmup: int = 1000,
-    num_chains: int = 4,
-    random_seed: int = 0,
-    **kwargs: Any,
-) -> MCMCApproximateDistribution:
-    """Run Stan's NUTS sampler and return an MCMCApproximateDistribution."""
-    cmdstanpy = _ensure_cmdstanpy()
-
-    model = cmdstanpy.CmdStanModel(stan_file=stan_file)
-    fit = model.sample(
-        data=data,
-        chains=num_chains,
-        iter_sampling=num_results,
-        iter_warmup=num_warmup,
-        seed=random_seed,
-        show_console=False,
-        **kwargs,
-    )
-
-    # Extract per-chain draws
-    chains = []
-    for c in range(num_chains):
-        chain_draws = jnp.asarray(
-            fit.draws(concat_chains=False)[c], dtype=jnp.float32,
-        )
-        chains.append(chain_draws)
-
-    diagnostics = _extract_cmdstan_diagnostics(fit, num_results, num_chains)
-
-    result = MCMCApproximateDistribution(
-        chains,
-        diagnostics=diagnostics,
-        name="posterior",
-    )
-    result.with_source(
-        Provenance(
-            "cmdstan_sample",
-            parents=(model_ref,),
-            metadata={
-                "num_results": num_results,
-                "num_warmup": num_warmup,
-                "num_chains": num_chains,
-            },
-        )
-    )
-    return result
-
-
-def _extract_cmdstan_diagnostics(
-    fit: Any, num_results: int, num_chains: int,
-) -> InferenceDiagnostics:
-    """Extract diagnostics from a CmdStanMCMC fit object.
-
-    CmdStanPy exposes sampler diagnostics via ``method_variables()``
-    (CmdStan column names).
-    """
-    kwargs: dict[str, Any] = {}
-    n_total = num_results * num_chains
-    accept_rate = None
-
-    # CmdStanPy exposes sampler diagnostics via method_variables()
-    try:
-        method_vars = fit.method_variables()
-    except Exception:
-        method_vars = {}
-
-    # "accept_stat__" is the acceptance statistic
-    if "accept_stat__" in method_vars:
-        ar = jnp.asarray(method_vars["accept_stat__"]).reshape(-1)
-        accept_rate = ar
-        kwargs["log_accept_ratio"] = jnp.log(jnp.clip(ar, 1e-10, 1.0))
-    else:
-        kwargs["log_accept_ratio"] = jnp.zeros(n_total)
-
-    if "stepsize__" in method_vars:
-        kwargs["step_size"] = jnp.asarray(method_vars["stepsize__"]).reshape(-1)
-
-    if "divergent__" in method_vars:
-        diverging = jnp.asarray(method_vars["divergent__"], dtype=jnp.bool_).reshape(-1)
-        kwargs["diverging"] = diverging
-        kwargs["n_divergences"] = int(jnp.sum(diverging))
-
-    if "treedepth__" in method_vars:
-        kwargs["tree_depth"] = jnp.asarray(method_vars["treedepth__"]).reshape(-1)
-
-    if "n_leapfrog__" in method_vars:
-        kwargs["n_steps"] = jnp.asarray(method_vars["n_leapfrog__"]).reshape(-1)
-
-    if "energy__" in method_vars:
-        kwargs["energy"] = jnp.asarray(method_vars["energy__"]).reshape(-1)
-
-    if "lp__" in method_vars:
-        kwargs["lp"] = jnp.asarray(method_vars["lp__"]).reshape(-1)
-
-    diag = InferenceDiagnostics(algorithm="cmdstan_nuts", **kwargs)
-
-    if accept_rate is not None:
-        diag["_accept_rate_override"] = float(jnp.mean(accept_rate))
-
-    return diag
 
 
 class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):

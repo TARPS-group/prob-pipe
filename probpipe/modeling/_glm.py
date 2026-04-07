@@ -65,9 +65,34 @@ class GLMLikelihood:
         eta = self._x @ params
         return jnp.sum(self.family.log_prob(data, eta))
 
-    def generate_data(self, params: Array, n_samples: int) -> Array:
-        """Generate synthetic data from the GLM."""
-        self._key, subkey = jax.random.split(self._key)
-        eta = self._x[:n_samples] @ params
+    def generate_data(
+        self,
+        params: Array,
+        n_samples: int,
+        *,
+        key: PRNGKey | None = None,
+    ) -> Array:
+        """Generate synthetic data from the GLM.
+
+        Supports arbitrary leading batch dimensions on *params*:
+        if ``params`` has shape ``(*batch, p)``, the output has shape
+        ``(*batch, n_samples)``.  This lets callers vectorize predictive
+        checks without a Python loop.
+
+        Parameters
+        ----------
+        params : Array
+            Parameter vector of shape ``(p,)`` or a batch of vectors
+            with shape ``(*batch, p)``.
+        n_samples : int
+            Number of observations to generate (per batch element).
+        key : PRNGKey, optional
+            JAX PRNG key.  If ``None``, uses (and advances) the
+            internal key set at construction.
+        """
+        if key is None:
+            self._key, key = jax.random.split(self._key)
+        # params @ X[:n].T works for (p,) → (n,) and (*batch, p) → (*batch, n)
+        eta = params @ self._x[:n_samples].T
         dist = self.family.as_distribution(eta)
-        return dist.sample(seed=subkey)
+        return dist.sample(seed=key)

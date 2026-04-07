@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 from unittest.mock import MagicMock, patch
 
-from probpipe import SupportsConditionableComponents, MCMCApproximateDistribution
+from probpipe import SupportsNamedComponents, MCMCApproximateDistribution
 from probpipe.modeling import PyMCModel
 
 
@@ -46,18 +46,8 @@ class TestPyMCModel:
         assert "sigma" in names
         assert "y" in names
 
-    def test_conditionable_components(self, model):
-        cc = model.conditionable_components
-        assert cc["mu"] is False  # parameter, optional
-        assert cc["sigma"] is False
-        assert cc["y"] is True  # observed, required
-
-    def test_required_observations(self, model):
-        ro = model.required_observations
-        assert "y" in ro
-
-    def test_supports_conditionable_components(self, model):
-        assert isinstance(model, SupportsConditionableComponents)
+    def test_supports_named_components(self, model):
+        assert isinstance(model, SupportsNamedComponents)
 
     def test_repr(self, model):
         r = repr(model)
@@ -106,8 +96,11 @@ class TestPyMCModel:
 
     def test_condition_on(self, model):
         """condition_on runs PyMC sampling and returns MCMCApproximateDistribution."""
+        from probpipe import condition_on
+
         data = np.random.randn(50)
-        result = model._condition_on(
+        result = condition_on(
+            model,
             {"y": data},
             num_results=20,
             num_warmup=10,
@@ -117,9 +110,9 @@ class TestPyMCModel:
         assert isinstance(result, MCMCApproximateDistribution)
         assert result.num_chains == 1
         assert result.num_draws == 20
-        assert result.diagnostics is not None
-        assert result.diagnostics.algorithm == "pymc_nuts"
-        # Real PyMC trace should populate diagnostics from sample_stats
-        assert 0.0 < result.diagnostics.accept_rate <= 1.0
+        assert result.algorithm == "pymc_nuts"
+        assert result.inference_data is not None
+        assert hasattr(result.inference_data, "posterior")
+        assert hasattr(result.inference_data, "sample_stats")
         assert result.source is not None
-        assert result.source.operation == "pymc_sample"
+        assert result.source.operation == "pymc_nuts"
