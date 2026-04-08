@@ -20,7 +20,7 @@ dependencies = [
   # the [sbi] extra installable.  Bump back to >=0.9 once sbijax catches up.
   "jax>=0.8.1,<0.9",
   "jaxlib>=0.8.1,<0.9",
-  "tfp-nightly==0.26.0.dev20260315",
+  "tfp-nightly>=0.26.0.dev20260318",
   "arviz>=1.0",
 ]
 
