@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from ..core._registry import MethodInfo
 from ..core.node import workflow_function
 from ..custom_types import ArrayLike
-from ._mcmc_distribution import ApproximateDistribution, make_posterior
+from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
 logger = logging.getLogger(__name__)

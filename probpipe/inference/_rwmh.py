@@ -15,7 +15,7 @@ from ..core.distribution import Distribution
 from ..core.node import workflow_function
 from ..core.protocols import SupportsLogProb
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ._mcmc_distribution import ApproximateDistribution, make_posterior
+from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 from ._tfp_mcmc import _get_init_state, _get_prior, _is_simple_model
 

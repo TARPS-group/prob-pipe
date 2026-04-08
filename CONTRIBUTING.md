@@ -128,7 +128,7 @@ probpipe/
 │                            #   ConditioningStep, IncrementalConditioner
 │
 ├── inference/               # Inference algorithms
-│   ├── _mcmc_distribution.py  # ApproximateDistribution + make_posterior
+│   ├── _approximate_distribution.py  # ApproximateDistribution + make_posterior
 │   ├── _rwmh.py             # Random-walk Metropolis-Hastings
 │   ├── _nutpie.py           # Nutpie-backed NUTS (optional dep)
 │   └── _sbijax.py           # sbijax-backed SBI: sbi_learn_conditional

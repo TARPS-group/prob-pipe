@@ -7,7 +7,7 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..core._registry import MethodInfo
-from ._mcmc_distribution import ApproximateDistribution, make_posterior
+from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
 

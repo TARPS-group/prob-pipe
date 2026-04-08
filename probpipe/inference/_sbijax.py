@@ -45,7 +45,7 @@ from ..core.protocols import SupportsConditioning
 from ..custom_types import Array, PRNGKey
 from ..modeling._likelihood import GenerativeLikelihood, Likelihood
 from ..modeling._simple import SimpleModel
-from ._mcmc_distribution import ApproximateDistribution, make_posterior
+from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
 # sbijax's ``__init__`` calls ``matplotlib.style.use`` with a stylesheet

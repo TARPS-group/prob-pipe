@@ -6,7 +6,7 @@ registry for ``condition_on`` dispatch.
 """
 
 from __future__ import annotations
-from ._mcmc_distribution import ApproximateDistribution
+from ._approximate_distribution import ApproximateDistribution
 from ._registry import (
     InferenceMethod,
     inference_method_registry,
