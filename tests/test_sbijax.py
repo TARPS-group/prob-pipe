@@ -49,6 +49,33 @@ class GaussianSimulator2D:
         return params + 0.1 * noise
 
 
+class Gaussian2To5Simulator:
+    """2D params, 5D observations: y = A @ theta + 0.1 * noise.
+
+    Used by tests where ``data_dim != theta_dim`` is required to detect
+    any code path that conflates the two dimensions (e.g. passing the
+    parameter dimensionality to a network factory that should receive
+    the observation dimensionality, or vice-versa).
+    """
+
+    _A = jnp.array(
+        [
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+            [1.0, -1.0],
+            [0.5, 0.5],
+        ]
+    )
+
+    def generate_data(self, params, n_samples, *, key=None):
+        if key is None:
+            key = jax.random.PRNGKey(0)
+        mean = self._A @ jnp.asarray(params)  # shape (5,)
+        noise = jax.random.normal(key, shape=(n_samples, 5))
+        return mean + 0.1 * noise
+
+
 @pytest.fixture
 def prior_2d():
     return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
@@ -57,6 +84,11 @@ def prior_2d():
 @pytest.fixture
 def simulator_2d():
     return GaussianSimulator2D()
+
+
+@pytest.fixture
+def simulator_2to5():
+    return Gaussian2To5Simulator()
 
 
 @pytest.fixture
@@ -298,8 +330,16 @@ class TestTrainSBI:
         post_mean = float(np.asarray(mean(posterior)).item())
         np.testing.assert_allclose(post_mean, float(obs[0]), atol=0.3)
 
-    def test_network_factory_override(self, prior_2d, simulator_2d):
-        """Custom network_factory is invoked with the parameter dimensionality."""
+    def test_conditional_network_factory_receives_theta_dim(
+        self, prior_2d, simulator_2to5
+    ):
+        """NPE factory must receive the parameter dim, not the data dim.
+
+        Uses a simulator with ``data_dim=5 != theta_dim=2`` so that any
+        confusion between the two dimensionalities would show up as the
+        wrong captured value.  NPE models ``p(theta|y)``, so the flow's
+        ``n_dimension`` is the parameter dimension (2).
+        """
         from sbijax.nn import make_maf
         captured = {}
 
@@ -308,14 +348,123 @@ class TestTrainSBI:
             return make_maf(ndim)
 
         sbi_learn_conditional._func(
-            prior_2d, simulator_2d,
+            prior_2d, simulator_2to5,
             method="npe",
             network_factory=factory,
             n_simulations=100,
             n_iter=2,
             batch_size=32,
         )
-        assert captured["ndim"] == 2
+        assert captured["ndim"] == 2  # theta dim, not data dim (5)
+
+    def test_nle_network_factory_receives_data_dim(
+        self, prior_2d, simulator_2to5
+    ):
+        """NLE factory must receive the DATA dim, not the parameter dim.
+
+        Regression test: before the fix, ``_train`` always passed the
+        prior dim to the network factory, so NLE built a flow with the
+        wrong ``n_dimension`` and crashed at the first ``model.init``.
+        NLE models ``p(y|theta)``, so the flow's ``n_dimension`` is the
+        observation dimension (5 here, not the prior dim 2).
+        """
+        from sbijax.nn import make_maf
+        captured = {}
+
+        def factory(ndim):
+            captured["ndim"] = ndim
+            return make_maf(ndim)
+
+        sbi_learn_likelihood._func(
+            prior_2d, simulator_2to5,
+            method="nle",
+            network_factory=factory,
+            n_simulations=100,
+            n_iter=2,
+            batch_size=32,
+        )
+        assert captured["ndim"] == 5  # data dim, not theta dim (2)
+
+    def test_nle_end_to_end_with_mismatched_dims(
+        self, prior_2d, simulator_2to5
+    ):
+        """NLE train + likelihood eval works when data_dim != theta_dim.
+
+        End-to-end regression test: before the fix, this call crashed at
+        ``model.init`` with a dot-product shape mismatch because the
+        MAF was built with the wrong ``n_dimension``.  Also verifies
+        that the trained ``_NLELikelihood`` evaluates on 5D observations
+        with 2D parameters and returns a finite log-probability.
+        """
+        trained = sbi_learn_likelihood._func(
+            prior_2d, simulator_2to5,
+            method="nle",
+            n_simulations=200,
+            n_iter=5,
+            batch_size=32,
+        )
+        assert isinstance(trained, SimpleModel)
+
+        theta = jnp.array([0.5, -0.3])
+        obs = simulator_2to5.generate_data(
+            theta, 1, key=jax.random.PRNGKey(42)
+        )[0]
+        assert obs.shape == (5,)
+        ll = trained._likelihood.log_likelihood(theta, obs)
+        assert jnp.isfinite(ll)
+
+    def test_nre_network_factory_called_with_no_args(
+        self, prior_2d, simulator_2d
+    ):
+        """NRE factory must be called with no positional arguments.
+
+        Regression test: NRE uses an MLP classifier whose default
+        factory (``make_mlp``) takes zero arguments.  Before the fix,
+        ``_train`` unconditionally passed an int dim to the factory,
+        which would have broken any attempt to use a signature-correct
+        MLP factory here.
+        """
+        from sbijax.nn import make_mlp
+        captured = {"called": False, "args": None, "kwargs": None}
+
+        def factory(*args, **kwargs):
+            captured["called"] = True
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return make_mlp()
+
+        sbi_learn_likelihood._func(
+            prior_2d, simulator_2d,
+            method="nre",
+            network_factory=factory,
+            n_simulations=100,
+            n_iter=2,
+            batch_size=32,
+        )
+        assert captured["called"]
+        assert captured["args"] == ()
+        assert captured["kwargs"] == {}
+
+    def test_nre_trains_with_default_network(self, prior_2d, simulator_2d):
+        """NRE training succeeds with its default ``make_mlp`` factory.
+
+        Regression test: the builder table previously paired NRE with
+        ``make_maf`` (the NLE flow), which is the wrong network type
+        and crashed at init.  A bare ``sbi_learn_likelihood`` call with
+        ``method='nre'`` must succeed end-to-end with no overrides.
+        """
+        trained = sbi_learn_likelihood._func(
+            prior_2d, simulator_2d,
+            method="nre",
+            n_simulations=200,
+            n_iter=5,
+            batch_size=32,
+        )
+        assert isinstance(trained, SimpleModel)
+        ll = trained._likelihood.log_likelihood(
+            jnp.array([0.5, -0.3]), jnp.array([0.5, -0.3])
+        )
+        assert jnp.isfinite(ll)
 
     def test_rejects_non_tfp_prior(self, simulator_2d):
         class NonTFPPrior:

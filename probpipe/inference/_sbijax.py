@@ -56,7 +56,7 @@ import matplotlib as _mpl
 
 _saved_rcparams = dict(_mpl.rcParams)
 import sbijax  # noqa: E402
-from sbijax.nn import make_maf, make_cnf, make_cm  # noqa: E402
+from sbijax.nn import make_cm, make_cnf, make_maf, make_mlp  # noqa: E402
 
 _mpl.rcParams.update(_saved_rcparams)
 del _saved_rcparams, _mpl
@@ -158,15 +158,24 @@ def _prior_ndim(prior: Distribution) -> int:
 # ---------------------------------------------------------------------------
 
 
-_DIRECT_SAMPLER_BUILDERS: dict[str, tuple[Callable[..., Any], Callable[[int], Any]]] = {
-    "npe": (sbijax.NPE, make_maf),
-    "fmpe": (sbijax.FMPE, make_cnf),
-    "cmpe": (sbijax.CMPE, make_cm),
+# Each entry is (sbi_class, default_network_factory, ndim_source) where
+# ndim_source is one of:
+#   "theta" — factory called with the parameter dimension (NPE/FMPE/CMPE)
+#   "data"  — factory called with the observation dimension (NLE)
+#   "none"  — factory called with no arguments (NRE → MLP classifier)
+_DIRECT_SAMPLER_BUILDERS: dict[
+    str, tuple[Callable[..., Any], Callable[..., Any], str]
+] = {
+    "npe": (sbijax.NPE, make_maf, "theta"),
+    "fmpe": (sbijax.FMPE, make_cnf, "theta"),
+    "cmpe": (sbijax.CMPE, make_cm, "theta"),
 }
 
-_MCMC_SBI_BUILDERS: dict[str, tuple[Callable[..., Any], Callable[[int], Any]]] = {
-    "nle": (sbijax.NLE, make_maf),
-    "nre": (sbijax.NRE, make_maf),
+_MCMC_SBI_BUILDERS: dict[
+    str, tuple[Callable[..., Any], Callable[..., Any], str]
+] = {
+    "nle": (sbijax.NLE, make_maf, "data"),
+    "nre": (sbijax.NRE, make_mlp, "none"),
 }
 
 
@@ -294,16 +303,28 @@ ConditionalSBIMethod = Literal["npe", "fmpe", "cmpe"]
 LikelihoodSBIMethod = Literal["nle", "nre"]
 
 
+def _probe_data_ndim(
+    prior: Distribution, simulator: GenerativeLikelihood, key: PRNGKey
+) -> int:
+    """Probe the flat observation dimensionality via one simulator call."""
+    probe_params = prior._tfp_dist.sample(seed=key)
+    probe_data = simulator.generate_data(
+        jnp.asarray(probe_params), 1, key=key
+    )[0]
+    return int(jnp.size(probe_data))
+
+
 def _train(
     prior: Distribution,
     simulator: GenerativeLikelihood,
     *,
     builder: Callable[..., Any],
-    default_net: Callable[[int], Any],
+    default_net: Callable[..., Any],
+    ndim_source: str,
     n_simulations: int,
     n_iter: int,
     batch_size: int,
-    network_factory: Callable[[int], Any] | None,
+    network_factory: Callable[..., Any] | None,
     random_seed: int,
     fit_kwargs: dict[str, Any],
 ) -> tuple[Any, Any]:
@@ -314,12 +335,19 @@ def _train(
             f"got {type(prior).__name__}"
         )
     fns = (_adapt_prior(prior), _adapt_simulator(simulator))
-    ndim = _prior_ndim(prior)
-    network = (network_factory or default_net)(ndim)
+    factory = network_factory or default_net
+    key = jax.random.PRNGKey(random_seed)
+    key_probe, key_sim, key_fit = jax.random.split(key, 3)
+    if ndim_source == "theta":
+        network = factory(_prior_ndim(prior))
+    elif ndim_source == "data":
+        network = factory(_probe_data_ndim(prior, simulator, key_probe))
+    elif ndim_source == "none":
+        network = factory()
+    else:
+        raise ValueError(f"Unknown ndim_source: {ndim_source!r}")
     sbi_model = builder(fns, network)
 
-    key = jax.random.PRNGKey(random_seed)
-    key_sim, key_fit = jax.random.split(key)
     data, _ = sbi_model.simulate_data(key_sim, n_simulations=n_simulations)
     params, _ = sbi_model.fit(
         key_fit,
@@ -340,7 +368,7 @@ def sbi_learn_conditional(
     n_simulations: int = 10_000,
     n_iter: int = 1000,
     batch_size: int = 128,
-    network_factory: Callable[[int], Any] | None = None,
+    network_factory: Callable[..., Any] | None = None,
     n_samples: int = 4000,
     random_seed: int = 0,
     **fit_kwargs: Any,
@@ -370,8 +398,9 @@ def sbi_learn_conditional(
     batch_size : int
         Training batch size.
     network_factory : callable or None
-        Factory ``ndim -> network``.  If ``None``, a method-appropriate
-        sbijax default is used.
+        Factory that returns an sbijax network.  Called with the
+        parameter dimension for NPE/FMPE/CMPE.  If ``None``, a
+        method-appropriate sbijax default is used.
     n_samples : int
         Default number of posterior samples per ``condition_on`` call.
     random_seed : int
@@ -385,11 +414,11 @@ def sbi_learn_conditional(
             f"Unknown conditional SBI method: {method!r}. "
             f"Supported: {sorted(_DIRECT_SAMPLER_BUILDERS)}."
         )
-    builder, default_net = _DIRECT_SAMPLER_BUILDERS[method_lower]
+    builder, default_net, ndim_source = _DIRECT_SAMPLER_BUILDERS[method_lower]
 
     sbi_model, params = _train(
         prior, simulator,
-        builder=builder, default_net=default_net,
+        builder=builder, default_net=default_net, ndim_source=ndim_source,
         n_simulations=n_simulations, n_iter=n_iter, batch_size=batch_size,
         network_factory=network_factory, random_seed=random_seed,
         fit_kwargs=fit_kwargs,
@@ -414,7 +443,7 @@ def sbi_learn_likelihood(
     n_simulations: int = 10_000,
     n_iter: int = 1000,
     batch_size: int = 128,
-    network_factory: Callable[[int], Any] | None = None,
+    network_factory: Callable[..., Any] | None = None,
     random_seed: int = 0,
     return_likelihood_only: bool = False,
     **fit_kwargs: Any,
@@ -447,8 +476,9 @@ def sbi_learn_likelihood(
     batch_size : int
         Training batch size.
     network_factory : callable or None
-        Factory ``ndim -> network``.  If ``None``, a method-appropriate
-        sbijax default is used.
+        Factory that returns an sbijax network.  Called with the
+        observation (data) dimension for NLE, and with no arguments for
+        NRE.  If ``None``, a method-appropriate sbijax default is used.
     random_seed : int
         Base random seed for simulation and training.
     return_likelihood_only : bool
@@ -469,11 +499,11 @@ def sbi_learn_likelihood(
             f"Unknown likelihood SBI method: {method!r}. "
             f"Supported: {sorted(_MCMC_SBI_BUILDERS)}."
         )
-    builder, default_net = _MCMC_SBI_BUILDERS[method_lower]
+    builder, default_net, ndim_source = _MCMC_SBI_BUILDERS[method_lower]
 
     sbi_model, params = _train(
         prior, simulator,
-        builder=builder, default_net=default_net,
+        builder=builder, default_net=default_net, ndim_source=ndim_source,
         n_simulations=n_simulations, n_iter=n_iter, batch_size=batch_size,
         network_factory=network_factory, random_seed=random_seed,
         fit_kwargs=fit_kwargs,
