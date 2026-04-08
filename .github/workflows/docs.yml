@@ -7,12 +7,18 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
+  deployments: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
 
 jobs:
-  docs:
+  build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -30,6 +36,36 @@ jobs:
       - name: Build docs
         run: mkdocs build --strict
 
-      - name: Deploy to GitHub Pages
+      - name: Upload Pages artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: mkdocs gh-deploy --force
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Prune old gh-pages deployments
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Keep the newest deployment; mark older ones inactive and delete.
+          ids=$(gh api \
+            "repos/${{ github.repository }}/deployments?environment=github-pages&per_page=100" \
+            --jq '.[1:] | .[].id')
+          for id in $ids; do
+            gh api -X POST \
+              "repos/${{ github.repository }}/deployments/$id/statuses" \
+              -f state=inactive >/dev/null
+            gh api -X DELETE \
+              "repos/${{ github.repository }}/deployments/$id"
+          done

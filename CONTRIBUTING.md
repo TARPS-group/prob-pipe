@@ -106,7 +106,7 @@ probpipe/
 │   ├── ops.py                 # Built-in ops: sample, mean, log_prob, etc.
 │   ├── constraints.py         # Constraint hierarchy (real, positive, etc.)
 │   ├── node.py                # Node, Module, WorkflowFunction, @workflow_function, @workflow_method, @abstract_workflow_method
-│   ├── modeling.py            # Likelihood, GenerativeLikelihood, IncrementalConditioner
+│   ├── transition.py          # StepResult, TransitionTrace, iterate, combinators
 │   └── provenance.py          # Provenance tracking
 │
 ├── distributions/           # Concrete distribution implementations
@@ -124,7 +124,8 @@ probpipe/
 │   ├── _simple_generative.py  # SimpleGenerativeModel (prior + simulator, for SBI/ABC)
 │   ├── _stan.py             # StanModel (BridgeStan, optional dep)
 │   ├── _pymc.py             # PyMCModel (PyMC, optional dep)
-│   └── _likelihood.py       # Likelihood + GenerativeLikelihood protocols
+│   └── _likelihood.py       # Likelihood + GenerativeLikelihood protocols,
+│                            #   ConditioningStep, IncrementalConditioner
 │
 ├── inference/               # Inference algorithms
 │   ├── _mcmc_distribution.py  # ApproximateDistribution + make_posterior
