@@ -57,7 +57,7 @@ class GenerativeLikelihood[P, D](Protocol):
 # ---------------------------------------------------------------------------
 
 
-class _ConditioningStep(WorkflowFunction):
+class _ConditioningStep[P, D](WorkflowFunction):
     """One step of incremental Bayesian conditioning.
 
     Builds a :class:`~probpipe.modeling.SimpleModel` from the current
@@ -85,9 +85,9 @@ class _ConditioningStep(WorkflowFunction):
 
     def __init__(
         self,
-        likelihood: Likelihood,
+        likelihood: Likelihood[P, D],
         *,
-        condition_fn: Callable | None = None,
+        condition_fn: Callable[..., Distribution[P]] | None = None,
         workflow_kind: str | None = None,
         **condition_kwargs: Any,
     ):
@@ -180,13 +180,13 @@ class IncrementalConditioner[P, D](Module):
         prior: Distribution[P],
         likelihood: Likelihood[P, D],
         *,
-        condition_fn: Callable | None = None,
+        condition_fn: Callable[..., Distribution[P]] | None = None,
         **condition_kwargs: Any,
     ):
         self._prior = prior
         self._likelihood = likelihood
         self._curr_posterior: Distribution[P] = prior
-        self._step = _ConditioningStep(
+        self._step: _ConditioningStep[P, D] = _ConditioningStep(
             likelihood,
             condition_fn=condition_fn,
             **condition_kwargs,
@@ -198,7 +198,7 @@ class IncrementalConditioner[P, D](Module):
         return self._curr_posterior
 
     @property
-    def step(self) -> _ConditioningStep:
+    def step(self) -> _ConditioningStep[P, D]:
         """The underlying step function, for use with ``iterate``."""
         return self._step
 

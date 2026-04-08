@@ -19,7 +19,7 @@ Core API::
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from .distribution import Distribution
@@ -39,13 +39,13 @@ __all__ = [
 
 
 @workflow_function
-def iterate(
-    step_fn: Callable,
-    initial: Distribution,
-    inputs: Iterable,
+def iterate[T, S](
+    step_fn: Callable[[Distribution[T], S], Distribution[T]],
+    initial: Distribution[T],
+    inputs: Iterable[S],
     *,
-    callback: Callable | None = None,
-) -> list[Distribution]:
+    callback: Callable[[int, Distribution[T]], Any] | None = None,
+) -> list[Distribution[T]]:
     """Fold a step function over inputs, accumulating a distribution sequence.
 
     Starting from *initial*, applies ``step_fn(dist, inp)`` for each
@@ -77,7 +77,7 @@ def iterate(
     list[Distribution[T]]
         The full sequence: ``[initial, dist_1, dist_2, ...]``.
     """
-    dists: list[Distribution] = [initial]
+    dists: list[Distribution[T]] = [initial]
     current = initial
 
     for i, inp in enumerate(inputs):
