@@ -471,8 +471,15 @@ class WorkflowFunction(Node):
             # Check if the type hint indicates a distribution/protocol parameter.
             # If so, the caller expects a distribution object — don't broadcast.
             expected = self._hints.get(name)
+            # Unwrap parameterized generics (e.g. Distribution[T]) to their origin
+            origin = getattr(expected, "__origin__", None)
+            expected_type = origin if isinstance(origin, type) else expected
             try:
-                is_dist_hint = expected is not None and isinstance(expected, type) and issubclass(expected, Distribution)
+                is_dist_hint = (
+                    expected_type is not None
+                    and isinstance(expected_type, type)
+                    and issubclass(expected_type, Distribution)
+                )
             except TypeError:
                 is_dist_hint = False
             if not is_dist_hint and expected in _DISTRIBUTION_PROTOCOLS:

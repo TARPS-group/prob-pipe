@@ -106,6 +106,11 @@ from probpipe.core.constraints import (
     greater_than,
     integer_interval,
 )
+from probpipe.core.transition import (
+    iterate,
+    with_conversion,
+    with_resampling,
+)
 from probpipe.modeling import GLMLikelihood, Likelihood, GenerativeLikelihood, IncrementalConditioner
 from probpipe.inference import (
     MCMCApproximateDistribution,
@@ -225,6 +230,10 @@ __all__ = [
     "SupportsCovariance",
     "SupportsConditioning",
     "SupportsNamedComponents",
+    # Transition / iteration
+    "iterate",
+    "with_conversion",
+    "with_resampling",
     # Modeling
     "GLMLikelihood",
     "Likelihood",

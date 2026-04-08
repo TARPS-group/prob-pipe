@@ -1,17 +1,18 @@
 """Likelihood protocols and incremental conditioning.
 
-Provides protocol interfaces for likelihoods and an incremental
-conditioner for iteratively updating posteriors with new data.
+Provides protocol interfaces for likelihoods, a private conditioning
+step function, and a stateful module for sequential Bayesian updating.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from ..core.distribution import Distribution
-from ..core.node import Module, workflow_method
+from ..core.node import Module, WorkflowFunction
+from ..core.transition import iterate
 
 logger = logging.getLogger(__name__)
 
@@ -52,18 +53,94 @@ class GenerativeLikelihood[P, D](Protocol):
 
 
 # ---------------------------------------------------------------------------
-# IncrementalConditioner
+# _ConditioningStep — private WorkflowFunction for IncrementalConditioner
+# ---------------------------------------------------------------------------
+
+
+class _ConditioningStep[P, D](WorkflowFunction):
+    """One step of incremental Bayesian conditioning.
+
+    Builds a :class:`~probpipe.modeling.SimpleModel` from the current
+    distribution and a likelihood, then conditions on observed data
+    using ProbPipe's standard ``condition_on`` dispatch.
+
+    If the current distribution does not support
+    :class:`~probpipe.core.protocols.SupportsLogProb`, it is
+    automatically converted (e.g., MCMC samples -> KDE) via ProbPipe's
+    converter registry before building the model.
+
+    Parameters
+    ----------
+    likelihood : Likelihood[P, D]
+        Likelihood object.
+    condition_fn : callable or None
+        ``(model, data, **kw) -> Distribution[P]``.  Defaults to
+        the global ``condition_on`` operation, which dispatches through
+        the inference method registry.  Override to use a custom
+        conditioning strategy.
+    **condition_kwargs
+        Extra keyword arguments forwarded to *condition_fn* on every
+        call (e.g., ``method="tfp_nuts"``, ``num_results=2000``).
+    """
+
+    def __init__(
+        self,
+        likelihood: Likelihood[P, D],
+        *,
+        condition_fn: Callable[..., Distribution[P]] | None = None,
+        workflow_kind: str | None = None,
+        **condition_kwargs: Any,
+    ):
+        if condition_fn is None:
+            from ..core.ops import condition_on
+
+            condition_fn = condition_on
+
+        self._likelihood = likelihood
+        self._condition_fn = condition_fn
+        self._condition_kwargs = condition_kwargs
+
+        super().__init__(
+            func=self._step_impl,
+            name="conditioning_step",
+            workflow_kind=workflow_kind,
+        )
+
+    def _step_impl(
+        self,
+        dist: Distribution,
+        data: Any,
+    ) -> Distribution:
+        from ._simple import SimpleModel
+        from ..core.protocols import SupportsLogProb
+
+        prior = dist
+        if not isinstance(prior, SupportsLogProb):
+            from ..converters import converter_registry
+
+            prior = converter_registry.convert(prior, SupportsLogProb)
+
+        model = SimpleModel(prior=prior, likelihood=self._likelihood)
+        return self._condition_fn(model, data, **self._condition_kwargs)
+
+
+# ---------------------------------------------------------------------------
+# IncrementalConditioner — stateful convenience Module
 # ---------------------------------------------------------------------------
 
 
 class IncrementalConditioner[P, D](Module):
-    """Iteratively update a posterior by conditioning on successive data batches.
+    """Iteratively update a posterior by conditioning on data batches.
 
-    Takes a prior ``Distribution[P]`` and ``Likelihood[P, D]``, builds a
-    :class:`~probpipe.modeling.SimpleModel` internally, and uses
-    ``condition_on`` (or a custom conditioning callable) to update the
-    posterior each time new data arrives.  The current posterior becomes
-    the prior for the next update.
+    Maintains a *current posterior* (initially the prior) and provides
+    :meth:`update` for single-batch conditioning and
+    :meth:`update_all` for multi-batch iteration.  Both methods update
+    the internal state so that subsequent calls continue from the
+    latest posterior.
+
+    The :attr:`step` property exposes the underlying step function
+    for direct use with :func:`~probpipe.core.transition.iterate`
+    and combinators.
 
     Parameters
     ----------
@@ -72,9 +149,30 @@ class IncrementalConditioner[P, D](Module):
     likelihood : Likelihood[P, D]
         Likelihood object.
     condition_fn : callable or None
-        A callable with signature ``(model, data) -> Distribution[P]``
-        that conditions the model on observed data.  Defaults to the
-        global ``condition_on`` operation.
+        Conditioning callable; defaults to the global ``condition_on``
+        operation (which dispatches through the inference method
+        registry).
+    **condition_kwargs
+        Extra keyword arguments forwarded to *condition_fn* on every
+        call (e.g., ``method="tfp_nuts"``, ``num_results=2000``).
+
+    Examples
+    --------
+    ::
+
+        conditioner = IncrementalConditioner(prior, likelihood)
+
+        # Single-batch update (stateful):
+        posterior1 = conditioner.update(data=batch1)
+        posterior2 = conditioner.update(data=batch2)
+        conditioner.curr_posterior  # is posterior2
+
+        # Multi-batch update (stateful, returns sequence):
+        dists = conditioner.update_all(data_batches=[batch3, batch4])
+        conditioner.curr_posterior  # is dists[-1]
+
+        # Functional escape hatch (for combinators):
+        dists = iterate(conditioner.step, prior, all_batches)
     """
 
     def __init__(
@@ -82,28 +180,30 @@ class IncrementalConditioner[P, D](Module):
         prior: Distribution[P],
         likelihood: Likelihood[P, D],
         *,
-        condition_fn: Callable | None = None,
+        condition_fn: Callable[..., Distribution[P]] | None = None,
+        **condition_kwargs: Any,
     ):
         self._prior = prior
         self._likelihood = likelihood
         self._curr_posterior: Distribution[P] = prior
-        if condition_fn is None:
-            from ..core.ops import condition_on
-            self._condition_fn = condition_on
-        else:
-            self._condition_fn = condition_fn
+        self._step: _ConditioningStep[P, D] = _ConditioningStep(
+            likelihood,
+            condition_fn=condition_fn,
+            **condition_kwargs,
+        )
 
     @property
     def curr_posterior(self) -> Distribution[P]:
         """The current posterior (initially the prior)."""
         return self._curr_posterior
 
-    @workflow_method
+    @property
+    def step(self) -> _ConditioningStep[P, D]:
+        """The underlying step function, for use with ``iterate``."""
+        return self._step
+
     def update(self, data: D) -> Distribution[P]:
         """Condition on new data, updating the current posterior.
-
-        Constructs a :class:`~probpipe.modeling.SimpleModel` using the
-        current posterior as prior, then conditions on the provided data.
 
         Parameters
         ----------
@@ -115,20 +215,26 @@ class IncrementalConditioner[P, D](Module):
         Distribution[P]
             The updated posterior distribution.
         """
-        from ._simple import SimpleModel
-        from ..core.protocols import SupportsLogProb
-
-        prior = self._curr_posterior
-        # Auto-convert the prior if it doesn't support log_prob
-        # (e.g., MCMCApproximateDistribution → KDEDistribution).
-        if not isinstance(prior, SupportsLogProb):
-            from ..converters import converter_registry
-            prior = converter_registry.convert(prior, SupportsLogProb)
-
-        model = SimpleModel(
-            prior=prior,
-            likelihood=self._likelihood,
-        )
-        posterior = self._condition_fn(model, data)
+        posterior = self._step(self._curr_posterior, data)
         self._curr_posterior = posterior
         return posterior
+
+    def update_all(self, data_batches: Iterable[D]) -> list[Distribution[P]]:
+        """Condition on multiple data batches sequentially.
+
+        Calls ``iterate(self.step, self.curr_posterior, data_batches)``
+        and updates the internal state to the final posterior.
+
+        Parameters
+        ----------
+        data_batches : Iterable[D]
+            Sequence of data batches to condition on.
+
+        Returns
+        -------
+        list[Distribution[P]]
+            Sequence ``[starting_posterior, post_1, post_2, ...]``.
+        """
+        dists = iterate(self._step, self._curr_posterior, data_batches)
+        self._curr_posterior = dists[-1]
+        return dists
