@@ -11,7 +11,7 @@ from probpipe.inference._nutpie import (
     _extract_chains,
     condition_on_nutpie,
 )
-from probpipe.inference import MCMCApproximateDistribution
+from probpipe.inference import ApproximateDistribution
 
 
 @pytest.fixture(autouse=True)
@@ -146,7 +146,7 @@ class TestNutpieSampleImpl:
             random_seed=42,
         )
 
-        assert isinstance(result, MCMCApproximateDistribution)
+        assert isinstance(result, ApproximateDistribution)
         assert result.num_chains == 2
         assert result.algorithm == "nutpie_nuts"
         assert result.inference_data is mock_trace

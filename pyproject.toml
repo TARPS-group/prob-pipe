@@ -16,10 +16,12 @@ authors = [
   { name = "Can Erozer",      email = "caner@bu.edu" },
 ]  # See AUTHORS file for full list
 dependencies = [
-  "jax>=0.9.0",
-  "jaxlib>=0.9.0",
-  "tfp-nightly==0.26.0.dev20260315",
-  "arviz-base",
+  # sbijax 0.3.6 (latest) pins jaxlib==0.8.1, so we cap below 0.9 to keep
+  # the [sbi] extra installable.  Bump back to >=0.9 once sbijax catches up.
+  "jax>=0.8.1,<0.9",
+  "jaxlib>=0.8.1,<0.9",
+  "tfp-nightly>=0.26.0.dev20260318",
+  "arviz>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -31,8 +33,9 @@ docs = [
   "mkdocs-jupyter<0.26",
 ]
 stan = ["bridgestan>=2.0", "cmdstanpy>=1.2"]
-pymc = ["pymc>=5", "arviz>=0.15"]
+pymc = ["pymc>=5"]
 nutpie = ["nutpie>=0.12"]
+sbi = ["sbijax>=0.3.6"]
 dev = [
   "probpipe[prefect,viz,docs]",
   "pytest>=7",
@@ -59,6 +62,7 @@ testpaths = ["tests"]
 addopts = "-n auto --dist worksteal -v --cov=probpipe --cov-report=term-missing --cov-fail-under=0"
 markers = [
     "prefect: marks tests requiring prefect (deselect with '-m \"not prefect\"')",
+    "sbi: marks tests requiring sbijax (deselect with '-m \"not sbi\"')",
 ]
 
 [tool.ruff]

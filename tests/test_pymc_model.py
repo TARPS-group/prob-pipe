@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 from unittest.mock import MagicMock, patch
 
-from probpipe import SupportsNamedComponents, MCMCApproximateDistribution
+from probpipe import SupportsNamedComponents, ApproximateDistribution
 from probpipe.modeling import PyMCModel
 
 
@@ -95,7 +95,7 @@ class TestPyMCModel:
         assert len(m.observed_RVs) > 0
 
     def test_condition_on(self, model):
-        """condition_on runs PyMC sampling and returns MCMCApproximateDistribution."""
+        """condition_on runs PyMC sampling and returns ApproximateDistribution."""
         from probpipe import condition_on
 
         data = np.random.randn(50)
@@ -107,7 +107,7 @@ class TestPyMCModel:
             num_chains=1,
             random_seed=42,
         )
-        assert isinstance(result, MCMCApproximateDistribution)
+        assert isinstance(result, ApproximateDistribution)
         assert result.num_chains == 1
         assert result.num_draws == 20
         assert result.algorithm == "pymc_nuts"

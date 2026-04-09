@@ -102,7 +102,7 @@ class TestIncrementalConditionerAutoConvert:
     def test_auto_convert_to_kde(self):
         """update() should work without a custom condition_fn."""
         from probpipe.modeling import IncrementalConditioner
-        from probpipe.inference import MCMCApproximateDistribution
+        from probpipe.inference import ApproximateDistribution
         from probpipe.core.protocols import SupportsLogProb
 
         X = np.column_stack([np.ones(20), np.linspace(-1, 1, 20)]).astype(np.float32)
@@ -111,9 +111,9 @@ class TestIncrementalConditionerAutoConvert:
         model = SimpleModel(prior, lik)
         data = jnp.ones(20, dtype=jnp.float32)
 
-        # Get an MCMCApproximateDistribution (does NOT support SupportsLogProb)
+        # Get an ApproximateDistribution (does NOT support SupportsLogProb)
         post = condition_on(model, data, num_results=100, num_warmup=50, random_seed=0)
-        assert isinstance(post, MCMCApproximateDistribution)
+        assert isinstance(post, ApproximateDistribution)
         assert not isinstance(post, SupportsLogProb)
 
         # IncrementalConditioner should auto-convert when using post as prior

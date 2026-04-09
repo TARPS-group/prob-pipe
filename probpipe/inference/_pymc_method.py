@@ -7,7 +7,7 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..core._registry import MethodInfo
-from ._mcmc_distribution import MCMCApproximateDistribution, make_posterior
+from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
 
@@ -51,7 +51,7 @@ class PyMCNutsMethod(InferenceMethod):
                               description="Requires PyMCModel")
         return MethodInfo(feasible=True, method_name=self.name)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
+    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         import pymc as pm
 
         num_results = kwargs.get("num_results", 1000)
@@ -103,7 +103,7 @@ class PyMCADVIMethod(InferenceMethod):
                               description="Requires PyMCModel")
         return MethodInfo(feasible=True, method_name=self.name)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
+    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         import pymc as pm
         import numpy as np
 

@@ -150,7 +150,7 @@ Each file should contain **one independent concern**. Use judgment:
   `SimpleModel` vs `StanModel`, `RWMH` vs nutpie) get their own file.
 - **Small helpers** tightly coupled to one consumer belong in
   that consumer's file (e.g., `make_posterior` in
-  `_mcmc_distribution.py`).
+  `_approximate_distribution.py`).
 
 The test: *if two classes are always modified together or one only exists
 to serve the other, they belong in the same file. If they can evolve
