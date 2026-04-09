@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import arviz as az
+
+if TYPE_CHECKING:
+    from xarray import DataTree
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -109,7 +112,7 @@ def _run_tfp_chains(
     """Run TFP-backed MCMC chains.
 
     Returns (chains, sample_stats_dict) where sample_stats_dict contains
-    arrays shaped (num_chains, num_results) for building InferenceData.
+    arrays shaped (num_chains, num_results) for building DataTree.
     """
     if algorithm == "nuts":
         inner_kernel = tfp_mcmc.NoUTurnSampler(
@@ -152,7 +155,7 @@ def _run_tfp_chains(
     # all_samples: (num_chains, num_results, *event_shape)
     chains = [all_samples[c] for c in range(num_chains)]
 
-    # Extract sample_stats from traces for InferenceData
+    # Extract sample_stats from traces for DataTree
     sample_stats = _extract_sample_stats(all_traces, num_chains)
     return chains, sample_stats
 
@@ -186,7 +189,7 @@ def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, Any]:
 def _build_tfp_inference_data(
     chains: list[Array],
     sample_stats: dict[str, Any],
-):
+) -> DataTree:
     """Build an ArviZ ``DataTree`` from TFP chains and sample stats."""
     # Stack chains: (num_chains, num_draws, *event_shape)
     posterior_array = np.stack([np.asarray(c) for c in chains], axis=0)

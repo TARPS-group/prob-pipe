@@ -75,6 +75,21 @@ try:
     )
     inference_method_registry.register(SbiSMCABCMethod())
 except ImportError:
-    sbi_learn_conditional = None  # type: ignore[assignment]
-    sbi_learn_likelihood = None  # type: ignore[assignment]
-    DirectSamplerSBIModel = None  # type: ignore[assignment,misc]
+
+    _SBI_INSTALL_MSG = (
+        "SBI features require sbijax: pip install probpipe[sbi]"
+    )
+
+    def sbi_learn_conditional(*args, **kwargs):  # type: ignore[misc]
+        """Placeholder that raises when sbijax is not installed."""
+        raise ImportError(_SBI_INSTALL_MSG)
+
+    def sbi_learn_likelihood(*args, **kwargs):  # type: ignore[misc]
+        """Placeholder that raises when sbijax is not installed."""
+        raise ImportError(_SBI_INSTALL_MSG)
+
+    class DirectSamplerSBIModel:  # type: ignore[no-redef]
+        """Placeholder that raises when sbijax is not installed."""
+
+        def __init__(self, *args, **kwargs):
+            raise ImportError(_SBI_INSTALL_MSG)
