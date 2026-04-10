@@ -9,7 +9,7 @@ always returns a new array.
 from __future__ import annotations
 
 import jax.numpy as jnp
-from typing import Any, Tuple
+from typing import Any
 
 from .custom_types import Array, ArrayLike
 
@@ -190,7 +190,7 @@ def _ensure_square_matrix(x: ArrayLike, n: int | None = None, *, copy: bool = Tr
 # Batch arrays
 # ------------------------------------------------------------------------------
 
-def _ensure_batch_array(x: ArrayLike, value_shape: Tuple[int, ...] | None = None,
+def _ensure_batch_array(x: ArrayLike, value_shape: tuple[int, ...] | None = None,
                         *, copy: bool = True) -> Array:
     """Ensure `x` has a leading batch axis and optionally enforce value shape.
 
