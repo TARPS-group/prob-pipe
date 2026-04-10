@@ -23,6 +23,8 @@ from unittest.mock import MagicMock
 
 from probpipe.distributions.multivariate import MultivariateNormal
 from probpipe.inference import rwmh
+from probpipe.inference._approximate_distribution import make_posterior
+from probpipe.inference._tfp_mcmc import _build_mcmc_datatree
 
 
 # ---------------------------------------------------------------------------
@@ -35,16 +37,16 @@ class TestApproximateDistribution:
 
     @pytest.fixture
     def two_chain_dist(self):
-        """Two chains, 50 draws each, 2D event."""
+        """Two chains, 50 draws each, 2D event, built via make_posterior."""
         chain1 = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
         chain2 = jax.random.normal(jax.random.PRNGKey(1), (50, 2))
         warmup1 = jax.random.normal(jax.random.PRNGKey(2), (10, 2))
         warmup2 = jax.random.normal(jax.random.PRNGKey(3), (10, 2))
-        return ApproximateDistribution(
-            [chain1, chain2],
-            algorithm="test",
-            warmup_samples=[warmup1, warmup2],
-            name="test_posterior",
+        chains = [chain1, chain2]
+        auxiliary = _build_mcmc_datatree(chains, warmup_chains=[warmup1, warmup2])
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        return make_posterior(
+            chains, parents=(prior,), algorithm="test", auxiliary=auxiliary,
         )
 
     def test_empty_chains_raises(self):
@@ -63,13 +65,22 @@ class TestApproximateDistribution:
     def test_total_samples(self, two_chain_dist):
         assert two_chain_dist.n == 100  # 50 * 2 chains
 
-    def test_algorithm(self, two_chain_dist):
+    def test_algorithm_from_provenance(self, two_chain_dist):
         assert two_chain_dist.algorithm == "test"
+        assert two_chain_dist.source.metadata["algorithm"] == "test"
 
-    def test_warmup_samples(self, two_chain_dist):
-        assert two_chain_dist.warmup_samples is not None
-        assert len(two_chain_dist.warmup_samples) == 2
-        assert two_chain_dist.warmup_samples[0].shape == (10, 2)
+    def test_auxiliary_is_datatree(self, two_chain_dist):
+        assert two_chain_dist.auxiliary is not None
+        assert hasattr(two_chain_dist.auxiliary, "children")
+
+    def test_inference_data_alias(self, two_chain_dist):
+        assert two_chain_dist.inference_data is two_chain_dist.auxiliary
+
+    def test_warmup_from_auxiliary(self, two_chain_dist):
+        warmup = two_chain_dist.warmup_samples
+        assert warmup is not None
+        assert len(warmup) == 2
+        assert warmup[0].shape == (10, 2)
 
     def test_draws_single_chain(self, two_chain_dist):
         d = two_chain_dist.draws(chain=0)
@@ -81,11 +92,11 @@ class TestApproximateDistribution:
 
     def test_draws_with_warmup(self, two_chain_dist):
         d = two_chain_dist.draws(chain=0, include_warmup=True)
-        assert d.shape == (60, 2)  # 10 warmup + 50 draws
+        assert d.shape == (60, 2)
 
     def test_draws_all_with_warmup(self, two_chain_dist):
         d = two_chain_dist.draws(include_warmup=True)
-        assert d.shape == (120, 2)  # (10 + 50) * 2
+        assert d.shape == (120, 2)
 
     def test_mean_and_variance(self, two_chain_dist):
         m = mean(two_chain_dist)
@@ -119,8 +130,10 @@ class TestApproximateDistributionValuesTemplate:
     def posterior_with_template(self, template):
         # 3 scalar params → flat draw vectors of size 3
         chain = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
-        return ApproximateDistribution(
-            [chain], algorithm="test", values_template=template,
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
+        return make_posterior(
+            [chain], parents=(prior,), algorithm="test",
+            values_template=template,
         )
 
     def test_draws_returns_values(self, posterior_with_template):
@@ -152,7 +165,8 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_without_template_returns_array(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 3))
-        post = ApproximateDistribution([chain], algorithm="test")
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
+        post = make_posterior([chain], parents=(prior,), algorithm="test")
         draws = post.draws()
         assert isinstance(draws, jnp.ndarray)
         assert draws.shape == (50, 3)
@@ -168,8 +182,10 @@ class TestApproximateDistributionValuesTemplate:
         )
         flat_size = 3 + 4  # 3 + 2*2
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, flat_size))
-        post = ApproximateDistribution(
-            [chain], algorithm="test", values_template=template,
+        prior = MultivariateNormal(loc=jnp.zeros(flat_size), cov=jnp.eye(flat_size))
+        post = make_posterior(
+            [chain], parents=(prior,), algorithm="test",
+            values_template=template,
         )
         draws = post.draws()
         assert draws.mean.shape == (20, 3)
@@ -182,22 +198,21 @@ class TestApproximateDistributionValuesTemplate:
         assert dist.num_chains == 1
         assert dist.num_draws == 20
 
-    def test_inference_data_default_none(self):
+    def test_bare_dist_no_auxiliary(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = ApproximateDistribution([chain])
+        assert dist.auxiliary is None
         assert dist.inference_data is None
 
-    def test_inference_data_stored(self):
-        import arviz as az
+    def test_auxiliary_has_posterior_group(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        idata = az.from_dict({"posterior": {"params": np.random.randn(1, 20, 3)}})
-        dist = ApproximateDistribution(
-            [chain], inference_data=idata,
-        )
-        assert dist.inference_data is idata
-        assert hasattr(dist.inference_data, "posterior")
+        auxiliary = _build_mcmc_datatree([chain])
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
+        post = make_posterior([chain], parents=(prior,), algorithm="test",
+                             auxiliary=auxiliary)
+        assert "posterior" in post.auxiliary.children
 
-    def test_algorithm_default(self):
+    def test_algorithm_default_without_auxiliary(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = ApproximateDistribution([chain])
         assert dist.algorithm == "unknown"

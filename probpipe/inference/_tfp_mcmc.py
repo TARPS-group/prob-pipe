@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from typing import Any, Callable
 
-import arviz as az
 
-if TYPE_CHECKING:
-    from xarray import DataTree
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -156,7 +153,6 @@ def _run_tfp_chains(
     # all_samples: (num_chains, num_results, *event_shape)
     chains = [all_samples[c] for c in range(num_chains)]
 
-    # Extract sample_stats from traces for DataTree
     sample_stats = _extract_sample_stats(all_traces, num_chains)
     return chains, sample_stats
 
@@ -187,17 +183,46 @@ def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, Any]:
     return stats
 
 
-def _build_tfp_inference_data(
+# ---------------------------------------------------------------------------
+# Auxiliary DataTree builder (MCMC-specific)
+# ---------------------------------------------------------------------------
+
+
+def _build_mcmc_datatree(
     chains: list[Array],
-    sample_stats: dict[str, Any],
-) -> DataTree:
-    """Build an ArviZ ``DataTree`` from TFP chains and sample stats."""
-    # Stack chains: (num_chains, num_draws, *event_shape)
-    posterior_array = np.stack([np.asarray(c) for c in chains], axis=0)
-    groups: dict[str, Any] = {"posterior": {"params": posterior_array}}
+    sample_stats: dict[str, Any] | None = None,
+    warmup_chains: list[Array] | None = None,
+):
+    """Build an arviz-convention DataTree from MCMC chains + diagnostics.
+
+    Groups: ``posterior``, ``sample_stats`` (if provided), ``warmup``
+    (if provided).
+    """
+    import arviz as az
+    import xarray as xr
+
+    def _stack(chain_list):
+        return np.stack([np.asarray(c) for c in chain_list], axis=0)
+
+    groups: dict[str, Any] = {"posterior": {"params": _stack(chains)}}
     if sample_stats:
         groups["sample_stats"] = sample_stats
-    return az.from_dict(groups)
+    dt = az.from_dict(groups)
+
+    if warmup_chains is not None and all(w is not None for w in warmup_chains):
+        warmup_array = _stack(warmup_chains)
+        n_chains, n_warmup = warmup_array.shape[:2]
+        event_dims = [f"params_dim_{i}" for i in range(warmup_array.ndim - 2)]
+        dims = ["chain", "draw"] + event_dims
+        warmup_ds = xr.Dataset({
+            "params": xr.DataArray(
+                warmup_array, dims=dims,
+                coords={"chain": np.arange(n_chains), "draw": np.arange(n_warmup)},
+            ),
+        })
+        dt["warmup"] = xr.DataTree(dataset=warmup_ds)
+
+    return dt
 
 
 # ---------------------------------------------------------------------------
@@ -287,10 +312,10 @@ class _TFPGradientMethod(InferenceMethod):
             step_size=kwargs.get("step_size", 0.1),
             random_seed=kwargs.get("random_seed", 0),
         )
-        inference_data = _build_tfp_inference_data(chains, sample_stats)
+        auxiliary = _build_mcmc_datatree(chains, sample_stats)
         return make_posterior(
             chains, parents=(prior,), algorithm=self._method_name,
-            inference_data=inference_data, values_template=values_template,
+            auxiliary=auxiliary, values_template=values_template,
             num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         )
 

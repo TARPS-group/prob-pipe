@@ -78,6 +78,31 @@ class Distribution[T](ABC):
             self._validation_results: list[dict] = []
         return self._validation_results
 
+    # -- values template ----------------------------------------------------
+
+    @property
+    def values_template(self) -> Any | None:
+        """A :class:`~probpipe.core.values.Values` describing the named
+        structure of samples from this distribution, or ``None``.
+
+        Set automatically from the ``name`` kwarg for named distributions
+        and from component structure for joint distributions.
+        """
+        return getattr(self, "_values_template", None)
+
+    # -- auxiliary information ----------------------------------------------
+
+    @property
+    def auxiliary(self) -> Any | None:
+        """An xarray ``DataTree`` of auxiliary information (diagnostics,
+        sample statistics, algorithm metadata), or ``None``.
+
+        Populated by inference methods.  Follows ArviZ group conventions
+        (``posterior``, ``sample_stats``, ``warmup``, etc.) with metadata
+        stored as DataTree attributes.
+        """
+        return getattr(self, "_auxiliary", None)
+
     # -- naming & provenance ------------------------------------------------
 
     @property

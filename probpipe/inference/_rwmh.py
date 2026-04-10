@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import arviz as az
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -17,7 +16,7 @@ from ..core.protocols import SupportsLogProb
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
-from ._tfp_mcmc import _extract_values_template, _get_init_state, _get_prior, _is_simple_model
+from ._tfp_mcmc import _build_mcmc_datatree, _extract_values_template, _get_init_state, _get_prior, _is_simple_model
 
 logger = logging.getLogger(__name__)
 
@@ -122,22 +121,16 @@ def rwmh(
     accept_rate = total_accepts / total_steps
     warmup = warmup_chains if all(w is not None for w in warmup_chains) else None
 
-    # Build InferenceData
-    posterior_array = np.stack([np.asarray(c) for c in chains], axis=0)
-    accept_array = np.full((num_chains, num_results), accept_rate)
-    inference_data = az.from_dict({
-        "posterior": {"params": posterior_array},
-        "sample_stats": {
-            "acceptance_rate": accept_array,
-            "step_size": np.full((num_chains, num_results), step_size),
-        },
-    })
+    sample_stats = {
+        "acceptance_rate": np.full((num_chains, num_results), accept_rate),
+        "step_size": np.full((num_chains, num_results), step_size),
+    }
+    auxiliary = _build_mcmc_datatree(chains, sample_stats, warmup)
 
     values_template = _extract_values_template(dist)
     return make_posterior(
         chains, parents=(dist,), algorithm="rwmh",
-        inference_data=inference_data, warmup_samples=warmup,
-        values_template=values_template,
+        auxiliary=auxiliary, values_template=values_template,
         num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         step_size=step_size, accept_rate=accept_rate,
     )

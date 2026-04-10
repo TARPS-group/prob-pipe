@@ -82,6 +82,6 @@ class CmdStanNutsMethod(InferenceMethod):
 
         return make_posterior(
             chains, parents=(dist,), algorithm="cmdstan_nuts",
-            inference_data=inference_data,
+            auxiliary=inference_data,
             num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         )
