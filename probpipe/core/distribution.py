@@ -76,9 +76,6 @@ from ._random_functions import (
     ArrayRandomFunction,
 )
 
-# -- TFPDistribution (lives in distributions/ subpackage) -------------------
-from ..distributions._tfp_base import TFPDistribution  # noqa: E402
-
 __all__ = [
     # Base
     "Distribution",
@@ -95,8 +92,6 @@ __all__ = [
     "ArrayDistribution",
     "BootstrapDistribution",
     "FlattenedView",
-    # TFP
-    "TFPDistribution",
     # Empirical
     "EmpiricalDistribution",
     "ArrayEmpiricalDistribution",

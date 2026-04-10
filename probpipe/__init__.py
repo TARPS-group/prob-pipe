@@ -30,7 +30,6 @@ from probpipe.core.distribution import (
     PyTreeArrayDistribution,
     ArrayDistribution,
     FlattenedView,
-    TFPDistribution,
     EmpiricalDistribution,
     ArrayEmpiricalDistribution,
     BroadcastDistribution,
@@ -50,6 +49,8 @@ from probpipe.core.distribution import (
     DistributionView,
 )
 from probpipe.distributions import (
+    # TFP base
+    TFPDistribution,
     # Continuous
     Normal,
     Beta,
