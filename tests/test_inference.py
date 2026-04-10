@@ -213,28 +213,44 @@ class TestRWMH:
         assert result.source is not None
         assert result.source.operation == "rwmh"
 
-    def test_with_log_prob_fn(self):
-        """RWMH with external log_prob_fn and data."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
+    def test_with_log_prob_fn_normal_normal_conjugate(self):
+        """RWMH posterior must recover the analytical Normal-Normal conjugate.
+
+        Prior: params ~ N(0, sigma_p^2 I).
+        Likelihood: y_i ~ N(params, sigma_y^2 I), i.i.d.
+        Closed-form posterior:
+            mean = (sigma_y^2 * 0 + n * sigma_p^2 * y_bar) / (sigma_y^2 + n * sigma_p^2)
+            var  = (sigma_p^2 * sigma_y^2) / (sigma_y^2 + n * sigma_p^2)
+        """
+        sigma_p = np.sqrt(10.0)  # prior std
+        sigma_y = 1.0            # likelihood std
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=sigma_p ** 2 * jnp.eye(2))
         data = jnp.array([[1.0, 2.0], [1.5, 2.5], [0.8, 1.8]])
+        n = data.shape[0]
 
         def log_lik(params, data):
-            return -0.5 * jnp.sum((data - params) ** 2)
+            return -0.5 / sigma_y ** 2 * jnp.sum((data - params) ** 2)
 
         result = rwmh(
             dist=prior,
             data=data,
             log_prob_fn=log_lik,
-            num_results=100,
-            num_warmup=50,
+            num_results=8000,
+            num_warmup=2000,
             step_size=0.3,
             random_seed=42,
         )
         assert isinstance(result, ApproximateDistribution)
-        # Posterior mean should be pulled toward data mean
-        post_mean = jnp.mean(result.draws(), axis=0)
-        data_mean = jnp.mean(data, axis=0)
-        assert jnp.linalg.norm(post_mean - data_mean) < 2.0
+
+        # Analytical posterior.
+        y_bar = np.asarray(jnp.mean(data, axis=0))
+        denom = sigma_y ** 2 + n * sigma_p ** 2
+        analytical_mean = (n * sigma_p ** 2 / denom) * y_bar
+        analytical_var = (sigma_p ** 2 * sigma_y ** 2) / denom
+
+        draws = np.asarray(result.draws()).reshape(-1, 2)
+        np.testing.assert_allclose(draws.mean(0), analytical_mean, atol=0.08)
+        np.testing.assert_allclose(draws.var(0, ddof=1), [analytical_var] * 2, atol=0.1)
 
     def test_requires_log_prob(self):
         """RWMH raises for distributions without SupportsLogProb and no conversion path."""

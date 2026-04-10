@@ -324,11 +324,12 @@ class TestConditionOn:
         cov = jnp.array([[1.0, 0.9], [0.9, 1.0]])
         jg = JointGaussian(mean=jnp.zeros(2), cov=cov, x=1, y=1)
         cond = condition_on(jg, x=jnp.array([3.0]))
-        # mu_y|x=3 = 0 + 0.9 * 1 * 3 = 2.7
+        # mu_y|x=3 = 0 + 0.9 * 1 * 3 = 2.7; var_y|x = 1 - 0.9^2 = 0.19
+        # sd / sqrt(5000) ~ 0.006
         key = jax.random.PRNGKey(20)
-        s = sample(cond, key=key, sample_shape=(1000,))
+        s = sample(cond, key=key, sample_shape=(5000,))
         assert isinstance(s, dict)
-        np.testing.assert_allclose(float(jnp.mean(s["y"])), 2.7, atol=0.2)
+        np.testing.assert_allclose(float(jnp.mean(s["y"])), 2.7, atol=0.03)
 
     def test_dict_for_leaf_raises(self):
         """Passing a dict value for a leaf component should raise TypeError."""

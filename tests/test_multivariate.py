@@ -2,7 +2,9 @@
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
+import scipy.stats
 
 from probpipe.distributions import (
     Dirichlet,
@@ -11,7 +13,7 @@ from probpipe.distributions import (
     VonMisesFisher,
 )
 from probpipe.core.distribution import ArrayDistribution
-from probpipe import log_prob, mean, sample
+from probpipe import cov, log_prob, mean, sample, variance
 
 
 # ---------------------------------------------------------------------------
@@ -192,3 +194,114 @@ class TestVonMisesFisher:
         samples = sample(d, key=key, sample_shape=(100,))
         norms = jnp.linalg.norm(samples, axis=-1)
         assert jnp.allclose(norms, 1.0, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Numerical baselines — validate mean/variance/cov against analytical formulas
+# ---------------------------------------------------------------------------
+
+
+class TestMultivariateMoments:
+    """Analytical mean/variance/cov must match closed-form identities."""
+
+    # -- Dirichlet ---------------------------------------------------------
+
+    def test_dirichlet_mean(self):
+        """Dirichlet mean: α_i / α_0 where α_0 = Σα."""
+        alpha = np.array([1.0, 2.0, 3.0])
+        d = Dirichlet(concentration=alpha)
+        np.testing.assert_allclose(mean(d), alpha / alpha.sum(), rtol=1e-6)
+
+    def test_dirichlet_variance(self):
+        """Dirichlet variance: α_i(α_0 - α_i) / (α_0² (α_0 + 1))."""
+        alpha = np.array([1.0, 2.0, 3.0])
+        alpha_0 = alpha.sum()
+        d = Dirichlet(concentration=alpha)
+        expected = alpha * (alpha_0 - alpha) / (alpha_0 ** 2 * (alpha_0 + 1))
+        np.testing.assert_allclose(variance(d), expected, rtol=1e-6)
+
+    def test_dirichlet_cov_matches_scipy(self):
+        """Full covariance vs scipy.stats.dirichlet."""
+        alpha = np.array([1.0, 2.0, 3.0])
+        d = Dirichlet(concentration=alpha)
+        np.testing.assert_allclose(cov(d), scipy.stats.dirichlet(alpha).cov(), rtol=1e-5)
+
+    def test_dirichlet_sample_mean_and_cov(self, key):
+        """50k-sample mean and cov must match analytical values."""
+        alpha = np.array([1.0, 2.0, 3.0])
+        d = Dirichlet(concentration=alpha)
+        draws = np.asarray(sample(d, key=key, sample_shape=(50_000,)))
+        np.testing.assert_allclose(draws.mean(0), np.asarray(mean(d)), atol=0.005)
+        np.testing.assert_allclose(np.cov(draws, rowvar=False), np.asarray(cov(d)), atol=0.002)
+
+    def test_dirichlet_marginal_ks(self, key):
+        """Each Dirichlet marginal X_i ~ Beta(α_i, α_0 - α_i)."""
+        alpha = np.array([1.0, 2.0, 3.0])
+        alpha_0 = alpha.sum()
+        d = Dirichlet(concentration=alpha)
+        draws = np.asarray(sample(d, key=key, sample_shape=(50_000,)))
+        for i in range(3):
+            scipy_marginal = scipy.stats.beta(alpha[i], alpha_0 - alpha[i])
+            _, p = scipy.stats.kstest(draws[:, i], scipy_marginal.cdf)
+            assert p > 0.001, f"KS failed for marginal {i}: p={p:.4e}"
+
+    # -- Multinomial -------------------------------------------------------
+
+    def test_multinomial_mean(self):
+        """Multinomial mean: n * p."""
+        probs = np.array([0.2, 0.3, 0.5])
+        d = Multinomial(total_count=10, probs=probs)
+        np.testing.assert_allclose(mean(d), 10 * probs, rtol=1e-6)
+
+    def test_multinomial_variance(self):
+        """Multinomial variance (diagonal): n * p_i * (1 - p_i)."""
+        probs = np.array([0.2, 0.3, 0.5])
+        d = Multinomial(total_count=10, probs=probs)
+        np.testing.assert_allclose(variance(d), 10 * probs * (1 - probs), rtol=1e-6)
+
+    def test_multinomial_cov_matches_scipy(self):
+        """Full covariance: n*diag(p) - n*pp'."""
+        probs = np.array([0.2, 0.3, 0.5])
+        d = Multinomial(total_count=10, probs=probs)
+        expected = 10 * (np.diag(probs) - np.outer(probs, probs))
+        np.testing.assert_allclose(cov(d), expected, rtol=1e-6)
+
+    def test_multinomial_sample_mean_and_cov(self, key):
+        """50k-sample mean and cov must match analytical values."""
+        probs = np.array([0.2, 0.3, 0.5])
+        d = Multinomial(total_count=10, probs=probs)
+        draws = np.asarray(sample(d, key=key, sample_shape=(50_000,)))
+        np.testing.assert_allclose(draws.mean(0), np.asarray(mean(d)), atol=0.05)
+        expected_cov = 10 * (np.diag(probs) - np.outer(probs, probs))
+        np.testing.assert_allclose(np.cov(draws, rowvar=False), expected_cov, atol=0.1)
+
+    # -- Wishart -----------------------------------------------------------
+
+    def test_wishart_mean_matches_analytical(self):
+        """Wishart mean: df * S where S = L L'."""
+        d = Wishart(df=5.0, scale_tril=jnp.eye(3))
+        np.testing.assert_allclose(mean(d), 5.0 * np.eye(3), rtol=1e-5)
+
+    def test_wishart_sample_mean(self, key):
+        """50k-sample mean of Wishart(5, I) must match 5*I."""
+        d = Wishart(df=5.0, scale_tril=jnp.eye(3))
+        draws = np.asarray(sample(d, key=key, sample_shape=(50_000,)))
+        np.testing.assert_allclose(draws.mean(0), 5.0 * np.eye(3), atol=0.05)
+
+    # -- Von Mises-Fisher --------------------------------------------------
+
+    def test_vonmisesfisher_mean_direction(self):
+        """VMF mean direction must be parallel to the mean_direction parameter."""
+        direction = np.array([1.0, 0.0, 0.0])
+        d = VonMisesFisher(mean_direction=direction.tolist(), concentration=5.0)
+        m = np.asarray(mean(d))
+        np.testing.assert_allclose(m / np.linalg.norm(m), direction, atol=1e-5)
+
+    def test_vonmisesfisher_sample_mean_direction(self, key):
+        """50k-sample mean direction must be parallel to mean_direction."""
+        direction = np.array([1.0, 0.0, 0.0])
+        d = VonMisesFisher(mean_direction=direction.tolist(), concentration=10.0)
+        draws = np.asarray(sample(d, key=key, sample_shape=(50_000,)))
+        sample_mean = draws.mean(0)
+        sample_dir = sample_mean / np.linalg.norm(sample_mean)
+        np.testing.assert_allclose(sample_dir, direction, atol=0.01)

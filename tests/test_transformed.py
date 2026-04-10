@@ -90,18 +90,18 @@ class TestTFPBase:
         assert jnp.all(samples > 0)
 
     def test_mean_delegates_to_tfp_when_available(self):
-        """Shift bijector preserves tractable mean."""
+        """Shift bijector preserves tractable mean exactly."""
         base = Normal(loc=0.0, scale=1.0)
         td = TransformedDistribution(base, tfb.Shift(5.0))
-        m = mean(td)
-        assert jnp.isclose(m, 5.0, atol=0.01)
+        # Analytical identity: Shift(c) on N(0,1) has mean c exactly.
+        assert jnp.isclose(mean(td), 5.0, atol=1e-6)
 
     def test_variance_delegates_to_tfp_when_available(self):
-        """Scale bijector has tractable variance."""
+        """Scale bijector has tractable variance exactly."""
         base = Normal(loc=0.0, scale=1.0)
         td = TransformedDistribution(base, tfb.Scale(2.0))
-        v = variance(td)
-        assert jnp.isclose(v, 4.0, atol=0.01)
+        # Analytical identity: Scale(s) on N(0,1) has variance s^2 exactly.
+        assert jnp.isclose(variance(td), 4.0, atol=1e-6)
 
 
 # ---------------------------------------------------------------------------

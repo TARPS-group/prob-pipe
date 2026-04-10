@@ -55,17 +55,21 @@ class TestPyMCModel:
         assert "mu" in r
         assert "sigma" in r
 
-    def test_getitem(self, model):
+    def test_getitem_returns_name_placeholder(self, model):
+        """PyMCModel['mu'] returns the name — PyMC doesn't expose
+        sub-distributions, so __getitem__ only validates the key. See the
+        comment in PyMCModel.__getitem__.
+        """
         assert model["mu"] == "mu"
+        assert model["sigma"] == "sigma"
 
-    def test_getitem_unknown(self, model):
+    def test_getitem_unknown_key_raises(self, model):
         with pytest.raises(KeyError):
             model["nonexistent"]
 
-    def test_event_shape(self, model):
-        es = model.event_shape
-        assert isinstance(es, tuple)
-        assert es[0] == 2  # mu (scalar) + sigma (scalar)
+    def test_event_shape_values(self, model):
+        """mu (scalar) + sigma (scalar) -> event_shape == (2,)."""
+        assert model.event_shape == (2,)
 
     def test_sample_scalar(self, model):
         import jax

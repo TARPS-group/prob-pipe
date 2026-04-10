@@ -27,6 +27,7 @@ from probpipe import (
 )
 import tensorflow_probability.substrates.jax.bijectors as tfb
 from probpipe import expectation, log_prob, mean, sample, variance
+from probpipe.core.protocols import SupportsExpectation, compute_expectation
 
 
 # ---------------------------------------------------------------------------
@@ -421,3 +422,64 @@ class TestGlobalDefaults:
             assert isinstance(result, jnp.ndarray)
         finally:
             dist_mod.RETURN_APPROX_DIST = old
+
+
+# ---------------------------------------------------------------------------
+# @compute_expectation decorator — dispatches _mean/_variance via _expectation
+# ---------------------------------------------------------------------------
+
+
+class _MCNormalDist(SupportsExpectation):
+    """Minimal distribution whose _expectation draws Monte Carlo samples."""
+
+    _sampling_cost = "low"
+    _preferred_orchestration = None
+
+    def __init__(self, loc: float, scale: float, n_samples: int = 4000):
+        self.loc = loc
+        self.scale = scale
+        self.n_samples = n_samples
+
+    def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=False):
+        if key is None:
+            key = jax.random.PRNGKey(0)
+        n = num_evaluations or self.n_samples
+        draws = self.loc + self.scale * jax.random.normal(key, (n,))
+        return jnp.mean(jax.vmap(f)(draws))
+
+    @compute_expectation
+    def _mean(self):
+        return lambda x: x
+
+    @compute_expectation
+    def _second_moment(self):
+        return lambda x: x ** 2
+
+
+class TestComputeExpectationDecorator:
+    """The decorator must dispatch through _expectation and return the MC mean."""
+
+    def test_mean_matches_analytical(self):
+        d = _MCNormalDist(loc=2.0, scale=0.5)
+        # True mean = 2.0.  4000 MC samples give sigma/sqrt(n) ~ 0.008.
+        np.testing.assert_allclose(d._mean(), 2.0, atol=0.05)
+
+    def test_second_moment_matches_analytical(self):
+        d = _MCNormalDist(loc=0.0, scale=1.0)
+        # E[X^2] = loc^2 + scale^2 = 1 for standard normal.
+        np.testing.assert_allclose(d._second_moment(), 1.0, atol=0.1)
+
+    def test_dispatches_to_expectation(self):
+        """The decorator must call _expectation, not bypass it."""
+        calls: list[str] = []
+
+        class Tracked(_MCNormalDist):
+            def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=False):
+                calls.append("called")
+                return super()._expectation(
+                    f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
+                )
+
+        d = Tracked(loc=0.0, scale=1.0)
+        _ = d._mean()
+        assert calls == ["called"]
