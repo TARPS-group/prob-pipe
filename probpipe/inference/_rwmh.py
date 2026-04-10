@@ -17,7 +17,7 @@ from ..core.protocols import SupportsLogProb
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
-from ._tfp_mcmc import _get_init_state, _get_prior, _is_simple_model
+from ._tfp_mcmc import _extract_values_template, _get_init_state, _get_prior, _is_simple_model
 
 logger = logging.getLogger(__name__)
 
@@ -133,9 +133,11 @@ def rwmh(
         },
     })
 
+    values_template = _extract_values_template(dist)
     return make_posterior(
         chains, parents=(dist,), algorithm="rwmh",
         inference_data=inference_data, warmup_samples=warmup,
+        values_template=values_template,
         num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         step_size=step_size, accept_rate=accept_rate,
     )

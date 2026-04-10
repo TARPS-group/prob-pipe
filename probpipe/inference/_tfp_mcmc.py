@@ -17,6 +17,7 @@ from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb, SupportsMean
 from ..custom_types import Array, ArrayLike
+from ..core.values import Values
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
@@ -208,6 +209,23 @@ def _get_prior(dist: Distribution) -> Distribution:
     return dist._prior if _is_simple_model(dist) else dist
 
 
+def _extract_values_template(prior: Distribution) -> Values | None:
+    """Try to build a Values template from a prior's mean.
+
+    Returns ``None`` if the prior does not support mean or its mean is not
+    a ``Values`` object.  In that case, posterior draws remain raw arrays.
+    """
+    if not isinstance(prior, SupportsMean):
+        return None
+    try:
+        m = prior._mean()
+    except Exception:
+        return None
+    if isinstance(m, Values):
+        return m
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Inference methods
 # ---------------------------------------------------------------------------
@@ -254,6 +272,7 @@ class _TFPGradientMethod(InferenceMethod):
         target = _build_target_log_prob(dist, observed)
         prior = _get_prior(dist)
         init = _get_init_state(prior, kwargs.get("init"), observed)
+        values_template = _extract_values_template(prior)
 
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 500)
@@ -271,7 +290,7 @@ class _TFPGradientMethod(InferenceMethod):
         inference_data = _build_tfp_inference_data(chains, sample_stats)
         return make_posterior(
             chains, parents=(prior,), algorithm=self._method_name,
-            inference_data=inference_data,
+            inference_data=inference_data, values_template=values_template,
             num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         )
 

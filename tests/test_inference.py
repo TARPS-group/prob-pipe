@@ -2,6 +2,7 @@
 
 Covers:
 - ApproximateDistribution: chain access, warmup, inference_data, draws
+- ApproximateDistribution with Values template: named draws
 - rwmh workflow function: basic sampling with SupportsLogProb
 """
 
@@ -13,6 +14,7 @@ import pytest
 from probpipe import (
     ApproximateDistribution,
     Normal,
+    Values,
     mean,
     sample,
     variance,
@@ -104,6 +106,74 @@ class TestApproximateDistribution:
         assert "num_chains=2" in r
         assert "num_draws=50" in r
         assert "test" in r
+
+
+class TestApproximateDistributionValuesTemplate:
+    """draws() returns named Values when a values_template is provided."""
+
+    @pytest.fixture
+    def template(self):
+        return Values(r=jnp.array(0.0), K=jnp.array(0.0), phi=jnp.array(0.0))
+
+    @pytest.fixture
+    def posterior_with_template(self, template):
+        # 3 scalar params → flat draw vectors of size 3
+        chain = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
+        return ApproximateDistribution(
+            [chain], algorithm="test", values_template=template,
+        )
+
+    def test_draws_returns_values(self, posterior_with_template):
+        draws = posterior_with_template.draws()
+        assert isinstance(draws, Values)
+
+    def test_draws_has_correct_fields(self, posterior_with_template):
+        draws = posterior_with_template.draws()
+        assert draws.fields() == ("K", "phi", "r")
+
+    def test_draws_field_shapes(self, posterior_with_template):
+        draws = posterior_with_template.draws()
+        assert draws.r.shape == (100,)
+        assert draws.K.shape == (100,)
+        assert draws.phi.shape == (100,)
+
+    def test_draws_values_match_raw(self, posterior_with_template):
+        """Named draws must contain the same data as raw flat draws."""
+        raw = posterior_with_template.draws()
+        # Reconstruct flat from named
+        flat = jnp.stack([raw.K, raw.phi, raw.r], axis=-1)  # sorted order
+        chain = posterior_with_template.chains[0]
+        np.testing.assert_allclose(flat, chain, atol=1e-6)
+
+    def test_draws_single_chain_returns_values(self, posterior_with_template):
+        draws = posterior_with_template.draws(chain=0)
+        assert isinstance(draws, Values)
+        assert draws.r.shape == (100,)
+
+    def test_without_template_returns_array(self):
+        chain = jax.random.normal(jax.random.PRNGKey(0), (50, 3))
+        post = ApproximateDistribution([chain], algorithm="test")
+        draws = post.draws()
+        assert isinstance(draws, jnp.ndarray)
+        assert draws.shape == (50, 3)
+
+    def test_values_template_property(self, posterior_with_template, template):
+        assert posterior_with_template.values_template is template
+
+    def test_array_shaped_fields(self):
+        """Template with non-scalar fields unflattens correctly."""
+        template = Values(
+            mean=jnp.zeros(3),
+            cov=jnp.zeros((2, 2)),
+        )
+        flat_size = 3 + 4  # 3 + 2*2
+        chain = jax.random.normal(jax.random.PRNGKey(0), (20, flat_size))
+        post = ApproximateDistribution(
+            [chain], algorithm="test", values_template=template,
+        )
+        draws = post.draws()
+        assert draws.mean.shape == (20, 3)
+        assert draws.cov.shape == (20, 2, 2)
 
     def test_without_warmup(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
