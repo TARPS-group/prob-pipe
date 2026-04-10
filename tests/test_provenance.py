@@ -363,25 +363,38 @@ class TestProvenanceAncestors:
 # 9. provenance_dag
 # ===========================================================================
 
+def _count_dag_entries(dot) -> tuple[int, int]:
+    """Count (nodes, edges) in a graphviz Digraph via its body list."""
+    nodes = sum(1 for line in dot.body if "->" not in line and " [" in line)
+    edges = sum(1 for line in dot.body if "->" in line)
+    return nodes, edges
+
+
 class TestProvenanceDag:
 
-    def test_basic_dag(self):
+    def test_basic_dag_has_correct_node_and_edge_count(self):
         base = Normal(loc=0.0, scale=1.0, name="base")
         td = TransformedDistribution(base, tfb.Exp(), name="positive")
         dag = provenance_dag(td)
-        # Should have 2 nodes and 1 edge
-        assert dag is not None
-        source = dag.source
-        assert "base" in source
-        assert "positive" in source or "TransformedDistribution" in source
+        # Two distributions -> 2 nodes, 1 transform edge.
+        num_nodes, num_edges = _count_dag_entries(dag)
+        assert num_nodes == 2
+        assert num_edges == 1
+        # Cross-check: structural ancestor set must agree.
+        ancestors = provenance_ancestors(td)
+        assert len(ancestors) == 1
+        assert ancestors[0] is base
 
     def test_no_provenance_single_node(self):
         n = Normal(loc=0.0, scale=1.0, name="alone")
         dag = provenance_dag(n)
-        source = dag.source
-        assert "alone" in source
+        # Single distribution with no parents -> 1 node, 0 edges.
+        num_nodes, num_edges = _count_dag_entries(dag)
+        assert num_nodes == 1
+        assert num_edges == 0
+        assert provenance_ancestors(n) == []
 
-    def test_multi_step_dag(self):
+    def test_multi_step_dag_structure(self):
         base = Normal(loc=0.0, scale=1.0, name="prior")
         td = TransformedDistribution(base, tfb.Exp(), name="positive")
 
@@ -392,8 +405,11 @@ class TestProvenanceDag:
                       n_broadcast_samples=10, seed=42)
         result = wf(x=td)
         dag = provenance_dag(result)
-        source = dag.source
-        # Should contain nodes for result, td, and base
-        assert "prior" in source
-        assert "transform" in source  # edge label
-        assert "broadcast" in source  # edge label
+        # result <- td <- base : 3 nodes, 2 edges.
+        num_nodes, num_edges = _count_dag_entries(dag)
+        assert num_nodes == 3
+        assert num_edges == 2
+        # Ancestor chain must contain base (root).
+        ancestors = provenance_ancestors(result)
+        assert base in ancestors
+        assert td in ancestors

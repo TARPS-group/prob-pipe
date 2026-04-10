@@ -413,6 +413,25 @@ class TestTrainSBI:
         ll = trained._likelihood.log_likelihood(theta, obs)
         assert jnp.isfinite(ll)
 
+    def test_nle_fails_if_factory_builds_wrong_ndim(
+        self, prior_2d, simulator_2to5
+    ):
+        """NLE with a network sized to theta_dim instead of data_dim must fail."""
+        from sbijax.nn import make_maf
+
+        def buggy_factory(ndim):
+            return make_maf(2)  # theta_dim, not the correct data_dim (5)
+
+        with pytest.raises(Exception):  # noqa: B017 — jax shape error
+            sbi_learn_likelihood._func(
+                prior_2d, simulator_2to5,
+                method="nle",
+                network_factory=buggy_factory,
+                n_simulations=200,
+                n_iter=5,
+                batch_size=32,
+            )
+
     def test_nre_network_factory_called_with_no_args(
         self, prior_2d, simulator_2d
     ):

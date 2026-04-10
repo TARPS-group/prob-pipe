@@ -153,15 +153,17 @@ class TestSampling:
         assert s["b"].shape == (5,)
 
     def test_weighted_sampling(self):
-        """Heavily weighted sample should appear most often."""
+        """Weighted sample mean must match E[X] = 0*0.01 + 100*0.99 = 99."""
         je = JointEmpirical(
             x=jnp.array([0.0, 100.0]),
             weights=jnp.array([0.01, 0.99]),
         )
         key = jax.random.PRNGKey(5)
-        s = sample(je, key=key, sample_shape=(200,))
-        # Most samples should be close to 100
-        assert float(jnp.mean(s["x"])) > 90.0
+        s = sample(je, key=key, sample_shape=(50_000,))
+        # MC std ~ sqrt(0.01*0.99*100^2) / sqrt(50_000) ~ 0.044
+        np.testing.assert_allclose(
+            float(jnp.mean(s["x"])), 99.0, atol=0.15,
+        )
 
 
 # ---------------------------------------------------------------------------

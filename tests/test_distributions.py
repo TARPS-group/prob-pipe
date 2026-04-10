@@ -116,19 +116,40 @@ class TestMultivariateNormal:
         assert lp.shape == ()
         assert jnp.isfinite(lp)
 
-    def test_log_prob_matches_prob(self, gaussian, key):
+    def test_log_prob_matches_scipy(self, gaussian, loc, cov_matrix, key):
+        """log_prob and prob must match scipy.stats.multivariate_normal."""
+        import scipy.stats
+        scipy_mvn = scipy.stats.multivariate_normal(
+            mean=np.asarray(loc), cov=np.asarray(cov_matrix)
+        )
         s = sample(gaussian, key=key, sample_shape=(5,))
+        s_np = np.asarray(s)
         np.testing.assert_allclose(
-            jnp.exp(log_prob(gaussian, s)),
-            prob(gaussian, s),
-            rtol=1e-5,
+            log_prob(gaussian, s), scipy_mvn.logpdf(s_np), rtol=1e-5
+        )
+        np.testing.assert_allclose(
+            prob(gaussian, s), scipy_mvn.pdf(s_np), rtol=1e-5
         )
 
-    def test_mean_and_variance(self, gaussian, loc, cov_matrix):
-        np.testing.assert_allclose(mean(gaussian), loc, atol=1e-6)
+    def test_mean_and_cov(self, gaussian, loc, cov_matrix, key):
+        """Sample mean and cov from 50k draws must match analytical values."""
+        import scipy.stats
+        draws = np.asarray(sample(gaussian, key=key, sample_shape=(50_000,)))
+        np.testing.assert_allclose(draws.mean(0), np.asarray(loc), atol=0.02)
         np.testing.assert_allclose(
-            variance(gaussian), jnp.diag(cov_matrix), atol=1e-5
+            np.cov(draws, rowvar=False), np.asarray(cov_matrix), atol=0.05,
         )
+
+    def test_marginal_ks(self, gaussian, loc, cov_matrix, key):
+        """Each MVN marginal X_i ~ N(loc_i, cov_ii): KS test on 50k samples."""
+        import scipy.stats
+        draws = np.asarray(sample(gaussian, key=key, sample_shape=(50_000,)))
+        for i in range(draws.shape[1]):
+            marginal = scipy.stats.norm(
+                loc=float(loc[i]), scale=float(jnp.sqrt(cov_matrix[i, i]))
+            )
+            _, p = scipy.stats.kstest(draws[:, i], marginal.cdf)
+            assert p > 0.001, f"KS failed for marginal {i}: p={p:.4e}"
 
     def test_cov_property(self, gaussian, cov_matrix):
         np.testing.assert_allclose(gaussian.cov, cov_matrix, atol=1e-5)
@@ -525,9 +546,6 @@ class TestTFPDistribution:
         assert isinstance(gaussian, TFPDistribution)
         assert isinstance(gaussian, ArrayDistribution)
 
-    def test_tfp_dist_accessible(self, gaussian):
-        assert hasattr(gaussian, "_tfp_dist")
-
     def test_dtype(self, gaussian):
         assert gaussian.dtype == jnp.float32
 
@@ -566,3 +584,42 @@ class TestShapeSemantics:
         ed = EmpiricalDistribution(samples)
         s = sample(ed, key=key, sample_shape=(10,))
         assert s.shape == (10, 3)
+
+
+# ---------------------------------------------------------------------------
+# ArrayDistribution / TFPDistribution coverage gaps
+# ---------------------------------------------------------------------------
+
+
+class TestDistributionCoverageGaps:
+    """Cover otherwise-uncovered defaults and helpers in core.distribution."""
+
+    def test_batch_shape_default(self):
+        """ArrayDistribution.batch_shape defaults to ()."""
+        class Scalar(ArrayDistribution):
+            @property
+            def event_shape(self):
+                return ()
+
+        assert Scalar().batch_shape == ()
+
+    def test_dtype_default(self):
+        """ArrayDistribution.dtype defaults to float32."""
+        class Scalar(ArrayDistribution):
+            @property
+            def event_shape(self):
+                return ()
+
+        assert Scalar().dtype == jnp.float32
+
+    def test_repr_with_batch_shape(self):
+        """TFPDistribution repr includes batch_shape when non-trivial."""
+        from probpipe import Normal
+
+        d = Normal(loc=jnp.array([0.0, 1.0]), scale=jnp.array([1.0, 1.0]))
+        assert "batch_shape" in repr(d)
+
+    def test_array_empirical_dtype(self):
+        """ArrayEmpiricalDistribution.dtype returns sample dtype."""
+        samples = jnp.array([[1.0, 2.0]], dtype=jnp.float32)
+        assert ArrayEmpiricalDistribution(samples).dtype == jnp.float32

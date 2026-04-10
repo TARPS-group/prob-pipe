@@ -4,6 +4,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import scipy.stats
 
 from probpipe import (
     Normal,
@@ -92,11 +93,12 @@ class TestLogProb:
 # ---------------------------------------------------------------------------
 
 class TestProb:
-    def test_prob_equals_exp_log_prob(self, normal):
+    def test_prob_matches_scipy(self, normal):
+        """prob(Normal, x) must match scipy.stats.norm.pdf — independent baseline."""
         x = jnp.array(2.0)
         p = ops.prob(normal, x)
-        lp = ops.log_prob(normal, x)
-        np.testing.assert_allclose(float(p), float(jnp.exp(lp)), atol=1e-6)
+        expected = scipy.stats.norm.pdf(float(x), loc=2.0, scale=0.5)
+        np.testing.assert_allclose(float(p), expected, rtol=1e-5)
 
 
 # ---------------------------------------------------------------------------

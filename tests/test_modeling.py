@@ -1,19 +1,39 @@
-"""Tests for probpipe.modeling — Likelihood protocols, IncrementalConditioner."""
+"""Tests for probpipe.modeling — Likelihood protocols, IncrementalConditioner, lazy imports."""
 
 import numpy as np
 import jax
 import jax.numpy as jnp
 import pytest
 
-from probpipe import MultivariateNormal, EmpiricalDistribution, ArrayEmpiricalDistribution, Provenance
+from probpipe import MultivariateNormal, EmpiricalDistribution
 from probpipe.modeling import (
     GenerativeLikelihood,
     IncrementalConditioner,
     Likelihood,
     SimpleModel,
 )
-from probpipe import log_prob, mean, prob
-from probpipe.custom_types import ArrayLike
+
+
+# ---------------------------------------------------------------------------
+# Lazy imports — probpipe.modeling.__getattr__ branches
+# ---------------------------------------------------------------------------
+
+
+class TestLazyImports:
+    """Exercise the lazy-import fallback in probpipe/modeling/__init__.py."""
+
+    def test_stanmodel_lazy_load(self):
+        from probpipe.modeling import StanModel
+        assert StanModel is not None
+
+    def test_pymcmodel_lazy_load(self):
+        from probpipe.modeling import PyMCModel
+        assert PyMCModel is not None
+
+    def test_unknown_attr_raises(self):
+        import probpipe.modeling as mod
+        with pytest.raises(AttributeError, match="has no attribute"):
+            mod.NonExistent
 
 
 # ---------------------------------------------------------------------------
@@ -123,65 +143,61 @@ class TestIncrementalConditioner:
         assert conditioner.curr_posterior is posterior
 
     def test_default_condition_fn(self, prior, likelihood):
-        """IncrementalConditioner should work without explicit condition_fn."""
+        """update() with the default condition_fn returns a new posterior."""
         conditioner = IncrementalConditioner(
             prior=prior,
             likelihood=likelihood,
+            method="tfp_nuts",
+            num_results=50,
+            num_warmup=25,
+            num_chains=1,
+            random_seed=0,
         )
-        # Just verify construction works; actual conditioning requires MCMC
         assert conditioner.curr_posterior is prior
 
+        data = jax.random.normal(jax.random.PRNGKey(1), shape=(5, 2)) + 2.0
+        posterior = conditioner.update(data=data)
+        assert posterior is not prior
+        assert conditioner.curr_posterior is posterior
 
-# ---------------------------------------------------------------------------
-# Distribution coverage gaps
-# ---------------------------------------------------------------------------
+    def test_update_all_chains_batches(self, prior, likelihood, dim):
+        """update_all must condition on each batch in turn and return the chain."""
+        conditioner = IncrementalConditioner(
+            prior=prior,
+            likelihood=likelihood,
+            condition_fn=_simple_condition_fn,
+        )
+        key = jax.random.PRNGKey(0)
+        batches = [
+            jax.random.normal(key, shape=(4, dim)) + 1.0,
+            jax.random.normal(jax.random.PRNGKey(1), shape=(4, dim)) + 2.0,
+            jax.random.normal(jax.random.PRNGKey(2), shape=(4, dim)) + 3.0,
+        ]
+        dists = conditioner.update_all(data_batches=batches)
+        # iterate returns the starting distribution followed by one posterior
+        # per batch, so 3 batches -> 4 entries in the chain.
+        assert len(dists) == len(batches) + 1
+        assert dists[0] is prior
+        for d in dists[1:]:
+            assert isinstance(d, EmpiricalDistribution)
+        # Conditioner state must track the final posterior.
+        assert conditioner.curr_posterior is dists[-1]
 
+    def test_step_property_exposes_conditioning_step(self, prior, likelihood):
+        """The ``step`` property must return the underlying _ConditioningStep."""
+        from probpipe.modeling._likelihood import _ConditioningStep
 
-class TestDistributionCoverageGaps:
-    """Cover the few uncovered lines in distribution.py."""
-
-    def test_batch_shape_default(self):
-        """ArrayDistribution.batch_shape defaults to ()."""
-        from probpipe.core.distribution import ArrayDistribution
-
-        class Scalar(ArrayDistribution):
-            @property
-            def event_shape(self):
-                return ()
-
-        d = Scalar()
-        assert d.batch_shape == ()
-
-    def test_dtype_default(self):
-        """ArrayDistribution.dtype defaults to float32."""
-        from probpipe.core.distribution import ArrayDistribution
-
-        class Scalar(ArrayDistribution):
-            @property
-            def event_shape(self):
-                return ()
-
-        d = Scalar()
-        assert d.dtype == jnp.float32
-
-    def test_prob_method(self):
-        """prob(dist, x) returns exp(log_prob(dist, x))."""
-        from probpipe import Normal
-
-        d = Normal(loc=0.0, scale=1.0)
-        x = jnp.array(0.0)
-        np.testing.assert_allclose(prob(d, x), jnp.exp(log_prob(d, x)), atol=1e-6)
-
-    def test_repr_with_batch_shape(self):
-        """ArrayDistribution repr includes batch_shape when non-trivial."""
-        from probpipe import Normal
-
-        d = Normal(loc=jnp.array([0.0, 1.0]), scale=jnp.array([1.0, 1.0]))
-        r = repr(d)
-        assert "batch_shape" in r
-
-    def test_empirical_dtype(self):
-        """ArrayEmpiricalDistribution.dtype returns sample dtype."""
-        samples = jnp.array([[1.0, 2.0]], dtype=jnp.float32)
-        ed = ArrayEmpiricalDistribution(samples)
-        assert ed.dtype == jnp.float32
+        conditioner = IncrementalConditioner(
+            prior=prior,
+            likelihood=likelihood,
+            condition_fn=_simple_condition_fn,
+        )
+        step = conditioner.step
+        assert isinstance(step, _ConditioningStep)
+        # Calling step directly should yield a posterior without touching
+        # the conditioner's internal state.
+        data = jnp.zeros((3, 2))
+        post = step(prior, data)
+        assert isinstance(post, EmpiricalDistribution)
+        # Internal state unchanged because we bypassed update().
+        assert conditioner.curr_posterior is prior
