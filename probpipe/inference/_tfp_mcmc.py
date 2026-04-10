@@ -74,10 +74,13 @@ def _build_target_log_prob(dist: Any, observed: Any) -> Callable[[jnp.ndarray], 
     2. **Bare SupportsLogProb with data**: ``dist._log_prob(params)``
        (data is assumed already folded in, e.g., via closure).
     3. **Joint over (params, data)**: ``dist._log_prob((params, data))``
+
+    Observed data is passed through to the likelihood as-is (may be a
+    raw array, a ``Values`` object, or a dict — the likelihood handles
+    its own input types).
     """
-    # SimpleModel: separate prior + likelihood
     if _is_simple_model(dist):
-        data = jnp.asarray(observed) if observed is not None else None
+        data = observed
 
         def target_log_prob_fn(params):
             lp = dist._prior._log_prob(params)
@@ -87,12 +90,9 @@ def _build_target_log_prob(dist: Any, observed: Any) -> Callable[[jnp.ndarray], 
 
         return target_log_prob_fn
 
-    # Joint _log_prob((params, data))
     if observed is not None:
-        data = jnp.asarray(observed)
-        return lambda params: dist._log_prob((params, data))
+        return lambda params: dist._log_prob((params, observed))
 
-    # Bare SupportsLogProb (no data)
     return dist._log_prob
 
 

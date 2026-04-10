@@ -8,6 +8,7 @@ import jax.numpy as jnp
 
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb
+from ..core.values import Values
 from ..custom_types import Array
 from ._base import ProbabilisticModel
 from ._likelihood import Likelihood
@@ -23,16 +24,10 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
     The prior must support :class:`SupportsLogProb` so that the joint
     log-density is always computable.
 
-    **Named components:** ``"parameters"`` (the prior) and ``"data"``
-    (the likelihood).  Only ``"data"`` is conditionable.
-
-    **Log-prob:** ``_log_prob((params, data))`` returns the joint
-    log-density: ``prior._log_prob(params) + likelihood.log_likelihood(params, data)``.
-
-    **Conditioning:** Use ``condition_on(model, data)`` — the inference
-    method registry auto-selects NUTS (if JAX-traceable) or RWMH
-    (gradient-free fallback).  ``SimpleModel`` does not implement
-    ``SupportsConditioning`` directly.
+    **Named components:** derived from the prior's ``values_template``
+    when available (e.g. ``("r", "K", "phi")``), otherwise defaults to
+    ``("parameters",)``.  The likelihood is always accessible as
+    ``"data"``.
 
     Parameters
     ----------
@@ -63,6 +58,12 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         self._likelihood = likelihood
         self._name_str = name
 
+        # Propagate the prior's values_template so inference methods
+        # can produce named posterior draws.
+        tpl = prior.values_template
+        if tpl is not None:
+            self._values_template = tpl
+
     # -- Distribution interface ---------------------------------------------
 
     @property
@@ -73,13 +74,19 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
 
     @property
     def component_names(self) -> tuple[str, ...]:
+        tpl = self._prior.values_template
+        if tpl is not None:
+            return (*tpl.fields(), "data")
         return ("parameters", "data")
 
     def __getitem__(self, key: str) -> Any:
-        if key == "parameters":
-            return self._prior
         if key == "data":
             return self._likelihood
+        tpl = self._prior.values_template
+        if tpl is not None and key in tpl:
+            return self._prior
+        if key == "parameters":
+            return self._prior
         raise KeyError(
             f"Unknown component: {key!r}; "
             f"available: {self.component_names}"
@@ -89,6 +96,9 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
 
     @property
     def parameter_names(self) -> tuple[str, ...]:
+        tpl = self._prior.values_template
+        if tpl is not None:
+            return tpl.fields()
         return ("parameters",)
 
     # -- SupportsLogProb interface -----------------------------------------

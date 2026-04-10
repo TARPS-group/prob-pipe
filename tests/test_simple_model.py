@@ -21,6 +21,7 @@ from probpipe import (
     SupportsLogProb,
     SupportsNamedComponents,
     SupportsSampling,
+    Values,
     condition_on,
 )
 from probpipe.distributions.multivariate import MultivariateNormal
@@ -226,3 +227,74 @@ class TestSimpleModelConditioningPaths:
         assert result.inference_data is not None
         assert hasattr(result.inference_data, "posterior")
         assert hasattr(result.inference_data, "sample_stats")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Values integration
+# ---------------------------------------------------------------------------
+
+
+class _ValuesAwareLikelihood:
+    """Gaussian likelihood that handles both raw arrays and Values."""
+
+    def log_likelihood(self, params, data):
+        if isinstance(data, Values):
+            d = data[data.fields()[0]]
+        else:
+            d = data
+        if isinstance(params, Values):
+            p = params[params.fields()[0]]
+        else:
+            p = params
+        return -0.5 * jnp.sum((d - p) ** 2)
+
+
+class TestSimpleModelWithValues:
+    """SimpleModel propagates values_template and accepts Values data."""
+
+    @pytest.fixture
+    def prior_with_template(self):
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
+        prior._values_template = Values(a=jnp.zeros(()), b=jnp.zeros(()))
+        return prior
+
+    @pytest.fixture
+    def likelihood(self):
+        return _ValuesAwareLikelihood()
+
+    def test_values_template_propagated(self, prior_with_template, likelihood):
+        model = SimpleModel(prior_with_template, likelihood)
+        assert model.values_template is prior_with_template.values_template
+
+    def test_component_names_from_template(self, prior_with_template, likelihood):
+        model = SimpleModel(prior_with_template, likelihood)
+        assert model.component_names == ("a", "b", "data")
+
+    def test_parameter_names_from_template(self, prior_with_template, likelihood):
+        model = SimpleModel(prior_with_template, likelihood)
+        assert model.parameter_names == ("a", "b")
+
+    def test_condition_on_with_values_data(self, prior_with_template, likelihood):
+        model = SimpleModel(prior_with_template, likelihood)
+        data = Values(obs=jnp.array([[1.0, 2.0], [1.5, 2.5]]))
+        result = condition_on(
+            model, data, num_results=50, num_warmup=20,
+            step_size=0.3, random_seed=42,
+        )
+        assert isinstance(result, ApproximateDistribution)
+
+    def test_condition_on_raw_array_still_works(self, prior_with_template, likelihood):
+        model = SimpleModel(prior_with_template, likelihood)
+        data = jnp.array([[1.0, 2.0], [1.5, 2.5]])
+        result = condition_on(
+            model, data, num_results=50, num_warmup=20,
+            step_size=0.3, random_seed=42,
+        )
+        assert isinstance(result, ApproximateDistribution)
+
+    def test_without_template_defaults(self):
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        model = SimpleModel(prior, GaussianLikelihood())
+        assert model.component_names == ("parameters", "data")
+        assert model.parameter_names == ("parameters",)
+        assert model.values_template is None

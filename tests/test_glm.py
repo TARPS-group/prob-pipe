@@ -7,7 +7,7 @@ import pytest
 import scipy.stats
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from probpipe import GLMLikelihood, MultivariateNormal, SimpleModel, condition_on, mean
+from probpipe import GLMLikelihood, MultivariateNormal, SimpleModel, Values, condition_on, mean
 from probpipe.modeling import Likelihood, GenerativeLikelihood
 
 
@@ -135,6 +135,41 @@ class TestGLMLikelihood:
         y1 = lik1.generate_data(params, 10)
         y2 = lik2.generate_data(params, 10)
         np.testing.assert_array_equal(y1, y2)
+
+
+class TestGLMLikelihoodWithValues:
+    """GLMLikelihood accepts Values for params and data."""
+
+    def test_log_likelihood_with_values_params(self, poisson_lik):
+        params = Values(beta=jnp.array([1.0, 0.5]))
+        data = jnp.ones(20)
+        ll = poisson_lik.log_likelihood(params, data)
+        assert jnp.isfinite(ll)
+
+    def test_log_likelihood_with_values_data(self, poisson_lik):
+        params = jnp.array([1.0, 0.5])
+        data = Values(y=jnp.ones(20))
+        ll = poisson_lik.log_likelihood(params, data)
+        assert jnp.isfinite(ll)
+
+    def test_values_matches_raw(self, poisson_lik):
+        params_raw = jnp.array([1.0, 0.5])
+        data_raw = jnp.ones(20, dtype=jnp.float32)
+        ll_raw = float(poisson_lik.log_likelihood(params_raw, data_raw))
+
+        params_v = Values(beta=params_raw)
+        data_v = Values(y=data_raw)
+        ll_v = float(poisson_lik.log_likelihood(params_v, data_v))
+        np.testing.assert_allclose(ll_v, ll_raw, rtol=1e-6)
+
+    def test_condition_on_with_values_data(self, poisson_lik):
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2))
+        model = SimpleModel(prior, poisson_lik)
+        data = Values(y=jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1,
+                                    0, 2, 6, 1, 3, 2, 0, 4, 1, 3],
+                                   dtype=jnp.float32))
+        posterior = condition_on(model, data, num_results=50, num_warmup=25, random_seed=0)
+        assert mean(posterior).shape == (2,)
 
 
 class TestIncrementalConditionerAutoConvert:
