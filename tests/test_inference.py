@@ -13,6 +13,7 @@ import pytest
 
 from probpipe import (
     ApproximateDistribution,
+    MultivariateNormal,
     Normal,
     Values,
     mean,
@@ -21,7 +22,6 @@ from probpipe import (
 )
 from unittest.mock import MagicMock
 
-from probpipe.distributions.multivariate import MultivariateNormal
 from probpipe.inference import rwmh
 from probpipe.inference._approximate_distribution import make_posterior
 from probpipe.inference._tfp_mcmc import _build_mcmc_datatree
@@ -191,6 +191,42 @@ class TestApproximateDistributionValuesTemplate:
         assert draws.mean.shape == (20, 3)
         assert draws.cov.shape == (20, 2, 2)
 
+    def test_draws_with_warmup_and_template(self):
+        """draws(include_warmup=True) returns Values when template is set."""
+        template = Values(a=jnp.array(0.0), b=jnp.array(0.0))
+        chain = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
+        warmup = jax.random.normal(jax.random.PRNGKey(1), (10, 2))
+        auxiliary = _build_mcmc_datatree([chain], warmup_chains=[warmup])
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        post = make_posterior(
+            [chain], parents=(prior,), algorithm="test",
+            auxiliary=auxiliary, values_template=template,
+        )
+        draws = post.draws(include_warmup=True)
+        assert isinstance(draws, Values)
+        assert draws.a.shape == (60,)  # 10 warmup + 50 draws
+        assert draws.b.shape == (60,)
+
+    def test_nested_values_template_unflatten(self):
+        """Nested Values template unflattens draws into nested structure."""
+        template = Values(
+            params=Values(a=jnp.array(0.0), b=jnp.array(0.0)),
+            scale=jnp.array(0.0),
+        )
+        flat_size = 3  # a + b + scale
+        chain = jax.random.normal(jax.random.PRNGKey(0), (30, flat_size))
+        prior = MultivariateNormal(loc=jnp.zeros(flat_size), cov=jnp.eye(flat_size))
+        post = make_posterior(
+            [chain], parents=(prior,), algorithm="test",
+            values_template=template,
+        )
+        draws = post.draws()
+        assert isinstance(draws, Values)
+        assert isinstance(draws.params, Values)
+        assert draws.params.a.shape == (30,)
+        assert draws.params.b.shape == (30,)
+        assert draws.scale.shape == (30,)
+
     def test_without_warmup(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = ApproximateDistribution([chain])
@@ -243,7 +279,7 @@ class TestRWMH:
         assert result.algorithm == "rwmh"
 
     def test_inference_data_produced(self):
-        """RWMH produces InferenceData with posterior and sample_stats."""
+        """RWMH produces auxiliary DataTree with posterior group."""
         dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
         result = rwmh(
             dist=dist,
@@ -253,9 +289,11 @@ class TestRWMH:
             random_seed=42,
         )
         assert result.inference_data is not None
-        assert hasattr(result.inference_data, "posterior")
-        assert hasattr(result.inference_data, "sample_stats")
-        assert "acceptance_rate" in result.inference_data.sample_stats
+        assert "posterior" in result.inference_data.children
+        # RWMH scalar stats (accept_rate, step_size) live in provenance,
+        # not as per-draw arrays in sample_stats.
+        assert result.source.metadata["accept_rate"] > 0
+        assert result.source.metadata["step_size"] == 0.5
 
     def test_multi_chain(self):
         """RWMH with multiple chains."""

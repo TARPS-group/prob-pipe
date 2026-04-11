@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
+if TYPE_CHECKING:
+    from xarray import DataTree
 
 import jax
 import jax.numpy as jnp
@@ -33,7 +35,7 @@ def _is_jax_traceable(fn: Callable, init_state: jnp.ndarray) -> bool:
 
 
 def _get_init_state(
-    dist: Any, init: ArrayLike | None, data: ArrayLike | None,
+    dist: Distribution, init: ArrayLike | None, data: ArrayLike | None,
 ) -> jnp.ndarray:
     """Determine an initial chain state from the distribution or data."""
     if init is not None:
@@ -58,13 +60,13 @@ def _get_init_state(
     )
 
 
-def _is_simple_model(dist: Any) -> bool:
+def _is_simple_model(dist: Distribution) -> bool:
     """Check if *dist* is a SimpleModel (lazy import to avoid circularity)."""
     from ..modeling._simple import SimpleModel
     return isinstance(dist, SimpleModel)
 
 
-def _build_target_log_prob(dist: Any, observed: Any) -> Callable[[jnp.ndarray], Array]:
+def _build_target_log_prob(dist: Distribution, observed: ArrayLike | Values | None) -> Callable[[jnp.ndarray], Array]:
     """Build a target_log_prob_fn(params) from *dist* and *observed*.
 
     Handles three cases:
@@ -106,7 +108,7 @@ def _run_tfp_chains(
     num_chains: int,
     step_size: float,
     random_seed: int,
-) -> tuple[list[Array], dict[str, Any]]:
+) -> tuple[list[Array], dict[str, np.ndarray]]:
     """Run TFP-backed MCMC chains.
 
     Returns (chains, sample_stats_dict) where sample_stats_dict contains
@@ -157,13 +159,13 @@ def _run_tfp_chains(
     return chains, sample_stats
 
 
-def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, Any]:
+def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, np.ndarray]:
     """Extract sample stats arrays from TFP traces.
 
     Returns dict of numpy arrays shaped (num_chains, num_draws).
     """
     results = traces
-    stats: dict[str, Any] = {}
+    stats: dict[str, np.ndarray] = {}
 
     if hasattr(results, "new_step_size"):
         stats["step_size"] = np.asarray(results.new_step_size)
@@ -190,9 +192,9 @@ def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, Any]:
 
 def _build_mcmc_datatree(
     chains: list[Array],
-    sample_stats: dict[str, Any] | None = None,
+    sample_stats: dict[str, np.ndarray] | None = None,
     warmup_chains: list[Array] | None = None,
-):
+) -> DataTree:
     """Build an arviz-convention DataTree from MCMC chains + diagnostics.
 
     Groups: ``posterior``, ``sample_stats`` (if provided), ``warmup``
@@ -204,7 +206,7 @@ def _build_mcmc_datatree(
     def _stack(chain_list):
         return np.stack([np.asarray(c) for c in chain_list], axis=0)
 
-    groups: dict[str, Any] = {"posterior": {"params": _stack(chains)}}
+    groups: dict[str, dict[str, np.ndarray]] = {"posterior": {"params": _stack(chains)}}
     if sample_stats:
         groups["sample_stats"] = sample_stats
     dt = az.from_dict(groups)
@@ -234,21 +236,11 @@ def _get_prior(dist: Distribution) -> Distribution:
     return dist._prior if _is_simple_model(dist) else dist
 
 
-def _extract_values_template(prior: Distribution) -> Values | None:
-    """Try to build a Values template from a prior's mean.
-
-    Returns ``None`` if the prior does not support mean or its mean is not
-    a ``Values`` object.  In that case, posterior draws remain raw arrays.
-    """
-    if not isinstance(prior, SupportsMean):
-        return None
-    try:
-        m = prior._mean()
-    except Exception:
-        return None
-    if isinstance(m, Values):
-        return m
-    return None
+def _extract_values_template(dist: Distribution) -> Values | None:
+    """Return the Values template from *dist*'s prior, or ``None``."""
+    prior = _get_prior(dist)
+    tpl = prior.values_template
+    return tpl if isinstance(tpl, Values) else None
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +289,7 @@ class _TFPGradientMethod(InferenceMethod):
         target = _build_target_log_prob(dist, observed)
         prior = _get_prior(dist)
         init = _get_init_state(prior, kwargs.get("init"), observed)
-        values_template = _extract_values_template(prior)
+        values_template = _extract_values_template(dist)
 
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 500)

@@ -24,14 +24,19 @@ Usage::
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import Any, Callable
+from collections.abc import Iterator
+from typing import Any, Callable, TypeAlias
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ..custom_types import ArrayLike
 
 __all__ = ["Values"]
+
+# Resolved field: JAX array for leaves, ``Values`` for nested structure.
+_ResolvedField: TypeAlias = "jnp.ndarray | Values"
 
 
 # ---------------------------------------------------------------------------
@@ -40,25 +45,15 @@ __all__ = ["Values"]
 
 
 def _resolve(raw: Any) -> jnp.ndarray:
-    """Convert a raw stored object to a JAX array.
-
-    Called at most once per field (result is cached).
-    """
+    """Convert a raw stored object to a JAX array."""
     if isinstance(raw, jnp.ndarray):
         return raw
-    if isinstance(raw, np.ndarray):
-        return jnp.asarray(raw)
-    if isinstance(raw, (int, float, complex, bool)):
-        return jnp.asarray(raw)
-    # xarray DataArray
+    # xarray DataArray — extract .values before conversion
     if hasattr(raw, "values") and hasattr(raw, "dims"):
         return jnp.asarray(raw.values)
-    # pandas Series / DataFrame
+    # pandas Series / DataFrame — use .to_numpy() for clean conversion
     if hasattr(raw, "to_numpy"):
         return jnp.asarray(raw.to_numpy())
-    # list / tuple of numbers
-    if isinstance(raw, (list, tuple)):
-        return jnp.asarray(raw)
     return jnp.asarray(raw)
 
 
@@ -94,18 +89,18 @@ class Values:
 
     __slots__ = ("_store", "_resolved", "_coords")
 
-    def __init__(self, _dict: dict[str, Any] | None = None, /, **fields: Any):
+    def __init__(self, _dict: dict[str, ArrayLike | Values] | None = None, /, **fields: ArrayLike | Values):
         if _dict is not None:
             if fields:
                 raise ValueError("Cannot pass both positional dict and keyword arguments")
             fields = _dict
         if not fields:
             raise ValueError("Values requires at least one named field")
-        # Store in sorted order for deterministic pytree flattening.
         store = OrderedDict(sorted(fields.items()))
         object.__setattr__(self, "_store", store)
         object.__setattr__(self, "_resolved", {})
-        # Extract xarray coord metadata for round-tripping.
+        # Preserve xarray coordinate metadata so to_datatree() can
+        # reconstruct labelled axes after a JAX round-trip.
         coords: dict[str, dict[str, Any]] = {}
         for name, raw in store.items():
             c = _extract_coords(raw)
@@ -123,13 +118,13 @@ class Values:
 
     # -- Field access -------------------------------------------------------
 
-    def __getattr__(self, name: str) -> Any:
+    def __getattr__(self, name: str) -> _ResolvedField:
         store = object.__getattribute__(self, "_store")
         if name in store:
             return self._resolve_field(name)
         raise AttributeError(f"Values has no field {name!r}")
 
-    def __getitem__(self, key: str | tuple[str, ...]) -> Any:
+    def __getitem__(self, key: str | tuple[str, ...]) -> _ResolvedField:
         if isinstance(key, str):
             store = self._store
             if key not in store:
@@ -142,7 +137,7 @@ class Values:
             return v
         raise TypeError(f"key must be str or tuple[str, ...], got {type(key).__name__}")
 
-    def _resolve_field(self, name: str) -> Any:
+    def _resolve_field(self, name: str) -> _ResolvedField:
         """Resolve a single field, caching the result."""
         resolved = object.__getattribute__(self, "_resolved")
         if name in resolved:
@@ -169,26 +164,26 @@ class Values:
     def __contains__(self, name: str) -> bool:
         return name in self._store
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(self._store)
 
-    def items(self):
+    def items(self) -> Iterator[tuple[str, _ResolvedField]]:
         """Iterate over (name, resolved_value) pairs."""
         for name in self._store:
             yield name, self._resolve_field(name)
 
-    def keys(self):
+    def keys(self) -> Iterator[str]:
         """Iterate over field names."""
-        return self._store.keys()
+        return iter(self._store)
 
-    def values(self):
+    def values(self) -> Iterator[_ResolvedField]:
         """Iterate over resolved values."""
         for name in self._store:
             yield self._resolve_field(name)
 
     # -- Immutable updates --------------------------------------------------
 
-    def replace(self, **updates: Any) -> Values:
+    def replace(self, **updates: ArrayLike | Values) -> Values:
         """Return a new Values with specified fields replaced."""
         new = dict(self._store)
         for k, v in updates.items():
@@ -251,7 +246,7 @@ class Values:
 
         The template provides field names, shapes, and nesting structure.
         """
-        fields: dict[str, Any] = {}
+        fields: dict[str, jnp.ndarray | Values] = {}
         offset = 0
         for name in template._store:
             tval = template._resolve_field(name)
@@ -268,9 +263,9 @@ class Values:
 
     # -- Backend conversion -------------------------------------------------
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, jnp.ndarray | dict]:
         """Return a dict of resolved JAX arrays (recursive for nested)."""
-        result: dict[str, Any] = {}
+        result: dict[str, jnp.ndarray | dict] = {}
         for name in self._store:
             val = self._resolve_field(name)
             if isinstance(val, Values):
@@ -279,9 +274,9 @@ class Values:
                 result[name] = val
         return result
 
-    def to_numpy(self) -> dict[str, Any]:
+    def to_numpy(self) -> dict[str, np.ndarray | dict]:
         """Return a dict of numpy arrays (recursive for nested)."""
-        result: dict[str, Any] = {}
+        result: dict[str, np.ndarray | dict] = {}
         for name in self._store:
             val = self._resolve_field(name)
             if isinstance(val, Values):
@@ -297,13 +292,12 @@ class Values:
         """
         import xarray as xr
 
-        datasets: dict[str, xr.Dataset] = {}
+        datasets: dict[str, xr.Dataset | xr.DataTree] = {}
         coords_map = self._coords or {}
         for name in self._store:
             val = self._resolve_field(name)
             if isinstance(val, Values):
-                # Nested Values become child groups (recursive).
-                datasets[f"/{name}"] = val.to_datatree()[name]
+                datasets[f"/{name}"] = val.to_datatree()
                 continue
             arr = np.asarray(val)
             if name in coords_map:
@@ -336,7 +330,7 @@ class Values:
     # -- Constructors -------------------------------------------------------
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> Values:
+    def from_dict(cls, d: dict[str, ArrayLike | Values]) -> Values:
         """Construct Values from a dict of arrays."""
         return cls(d)
 
@@ -346,22 +340,27 @@ class Values:
 
         Extracts arrays and preserves coordinate metadata for round-tripping.
         """
-        fields: dict[str, Any] = {}
-        # DataTree root dataset variables.
+        fields: dict[str, ArrayLike | Values] = {}
         if hasattr(dt, "data_vars"):
             for var_name in dt.data_vars:
                 fields[var_name] = dt[var_name]
-        # DataTree children become nested Values.
         if hasattr(dt, "children"):
             for child_name, child_node in dt.children.items():
-                fields[child_name] = cls.from_datatree(child_node)
+                child_vars = list(child_node.data_vars) if hasattr(child_node, "data_vars") else []
+                child_kids = list(child_node.children) if hasattr(child_node, "children") else []
+                # Leaf group with a single variable matching its name →
+                # extract the DataArray directly (avoids double-wrapping).
+                if child_vars == [child_name] and not child_kids:
+                    fields[child_name] = child_node[child_name]
+                else:
+                    fields[child_name] = cls.from_datatree(child_node)
         return cls(fields)
 
     # -- Leaf-wise operations -----------------------------------------------
 
-    def map(self, fn: Callable) -> Values:
+    def map(self, fn: Callable[[jnp.ndarray], jnp.ndarray]) -> Values:
         """Apply *fn* to each leaf array, returning a new Values."""
-        fields: dict[str, Any] = {}
+        fields: dict[str, jnp.ndarray | Values] = {}
         for name in self._store:
             val = self._resolve_field(name)
             if isinstance(val, Values):
@@ -370,9 +369,9 @@ class Values:
                 fields[name] = fn(val)
         return Values(fields)
 
-    def map_with_names(self, fn: Callable[[str, Any], Any]) -> Values:
+    def map_with_names(self, fn: Callable[[str, jnp.ndarray], jnp.ndarray]) -> Values:
         """Apply *fn(name, array)* to each leaf, returning a new Values."""
-        fields: dict[str, Any] = {}
+        fields: dict[str, jnp.ndarray | Values] = {}
         for name in self._store:
             val = self._resolve_field(name)
             if isinstance(val, Values):
@@ -389,7 +388,7 @@ class Values:
                 f"Cannot zip Values with different fields: "
                 f"{v1.fields()} vs {v2.fields()}"
             )
-        fields: dict[str, Any] = {}
+        fields: dict[str, jnp.ndarray | Values] = {}
         for name in v1._store:
             a = v1._resolve_field(name)
             b = v2._resolve_field(name)
@@ -445,28 +444,21 @@ class Values:
 # ---------------------------------------------------------------------------
 
 
-def _values_flatten(v: Values) -> tuple[list, tuple]:
+def _values_flatten(v: Values) -> tuple[list, tuple[str, ...]]:
     """Flatten Values for JAX pytree traversal."""
     children = []
-    is_nested = []
     for name in v._store:
         raw = v._store[name]
         if isinstance(raw, Values):
             children.append(raw)
-            is_nested.append(True)
         else:
             children.append(v._resolve_field(name))
-            is_nested.append(False)
-    return children, (v.fields(), tuple(is_nested))
+    return children, v.fields()
 
 
-def _values_unflatten(aux: tuple, children: list) -> Values:
+def _values_unflatten(aux: tuple[str, ...], children: list) -> Values:
     """Unflatten Values from JAX pytree traversal."""
-    field_names, is_nested = aux
-    fields: dict[str, Any] = {}
-    for name, child, nested in zip(field_names, children, is_nested):
-        fields[name] = child
-    return Values(fields)
+    return Values(dict(zip(aux, children)))
 
 
 jax.tree_util.register_pytree_node(Values, _values_flatten, _values_unflatten)

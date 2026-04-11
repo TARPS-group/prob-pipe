@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from xarray import DataTree
 
 import jax.numpy as jnp
 
@@ -26,7 +29,7 @@ def _unflatten_draws(flat_draws: Array, template: Values) -> Values:
     Each field in the returned Values has shape ``(num_draws, *event_shape)``
     where ``event_shape`` is taken from the corresponding field in *template*.
     """
-    fields: dict[str, Any] = {}
+    fields: dict[str, jnp.ndarray | Values] = {}
     offset = 0
     for name in template.fields():
         tval = template[name]
@@ -81,8 +84,6 @@ class ApproximateDistribution(ArrayEmpiricalDistribution):
         self._chains = [jnp.asarray(c) for c in chains]
         self._concatenated: Array | None = None
 
-        # Pass the concatenated view to the parent.  The concatenation
-        # is cached so _chains is the single authoritative copy.
         super().__init__(self._concat_chains(), weights=weights, name=name)
 
     def _concat_chains(self) -> Array:
@@ -117,7 +118,7 @@ class ApproximateDistribution(ArrayEmpiricalDistribution):
         return "unknown"
 
     @property
-    def inference_data(self) -> Any | None:
+    def inference_data(self) -> DataTree | None:
         """The auxiliary DataTree, for ArviZ compatibility.
 
         Alias for ``self.auxiliary``.  Use ArviZ functions for diagnostics::
@@ -198,7 +199,7 @@ def make_posterior(
     parents: tuple[Distribution, ...],
     algorithm: str,
     *,
-    auxiliary: Any | None = None,
+    auxiliary: DataTree | None = None,
     values_template: Values | None = None,
     **meta: Any,
 ) -> ApproximateDistribution:

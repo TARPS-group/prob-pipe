@@ -7,7 +7,6 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
@@ -60,7 +59,7 @@ def rwmh(
     Returns
     -------
     ApproximateDistribution
-        Posterior samples with chain structure and ArviZ InferenceData.
+        Posterior samples with chain structure and auxiliary DataTree.
     """
     if not isinstance(dist, SupportsLogProb):
         raise TypeError(
@@ -121,11 +120,7 @@ def rwmh(
     accept_rate = total_accepts / total_steps
     warmup = warmup_chains if all(w is not None for w in warmup_chains) else None
 
-    sample_stats = {
-        "acceptance_rate": np.full((num_chains, num_results), accept_rate),
-        "step_size": np.full((num_chains, num_results), step_size),
-    }
-    auxiliary = _build_mcmc_datatree(chains, sample_stats, warmup)
+    auxiliary = _build_mcmc_datatree(chains, warmup_chains=warmup)
 
     values_template = _extract_values_template(dist)
     return make_posterior(

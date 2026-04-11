@@ -79,7 +79,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
             return (*tpl.fields(), "data")
         return ("parameters", "data")
 
-    def __getitem__(self, key: str) -> Any:
+    def __getitem__(self, key: str) -> Distribution | Likelihood:
         if key == "data":
             return self._likelihood
         tpl = self._prior.values_template

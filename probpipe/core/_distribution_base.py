@@ -9,7 +9,12 @@ Provides:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from xarray import DataTree
+
+    from .values import Values
 
 import jax
 import jax.numpy as jnp
@@ -81,7 +86,7 @@ class Distribution[T](ABC):
     # -- values template ----------------------------------------------------
 
     @property
-    def values_template(self) -> Any | None:
+    def values_template(self) -> Values | None:
         """A :class:`~probpipe.core.values.Values` describing the named
         structure of samples from this distribution, or ``None``.
 
@@ -93,7 +98,7 @@ class Distribution[T](ABC):
     # -- auxiliary information ----------------------------------------------
 
     @property
-    def auxiliary(self) -> Any | None:
+    def auxiliary(self) -> DataTree | None:
         """An xarray ``DataTree`` of auxiliary information (diagnostics,
         sample statistics, algorithm metadata), or ``None``.
 

@@ -127,7 +127,8 @@ full public API surface.
 
 | Abstraction | Description |
 |-------------|-------------|
-| `Distribution[T]` | Generic base parameterized by value type |
+| `Distribution[T]` | Generic base parameterized by value type; provides `values_template` and `auxiliary` properties |
+| `Values` | Named, immutable, lazy, JAX-pytree container for structured non-random values |
 | `ArrayDistribution` | Single-array specialization with TFP shape conventions |
 | `WorkflowFunction` | Orchestration-aware function wrapper |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |

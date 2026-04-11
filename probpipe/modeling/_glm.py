@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.glm as tfp_glm
@@ -15,7 +13,7 @@ from .._utils import _auto_key
 __all__ = ["GLMLikelihood"]
 
 
-def _coerce_array(x: Any) -> jnp.ndarray:
+def _coerce_array(x: ArrayLike | Values) -> jnp.ndarray:
     """Extract a JAX array from a Values field or raw array-like."""
     if isinstance(x, jnp.ndarray):
         return x
@@ -62,7 +60,7 @@ class GLMLikelihood:
             self._x = self._x.T
         self._key = jax.random.PRNGKey(seed)
 
-    def log_likelihood(self, params: Any, data: Any) -> float:
+    def log_likelihood(self, params: ArrayLike | Values, data: ArrayLike | Values) -> float:
         """Log-likelihood: sum of per-observation log-probs.
 
         *params* and *data* can be raw arrays or ``Values`` objects.
@@ -72,7 +70,7 @@ class GLMLikelihood:
 
     def generate_data(
         self,
-        params: Any,
+        params: ArrayLike | Values,
         n_samples: int,
         *,
         key: PRNGKey | None = None,

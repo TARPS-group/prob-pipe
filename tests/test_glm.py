@@ -70,13 +70,15 @@ class TestGLMLikelihood:
         expected = scipy.stats.bernoulli.logpmf(data, p).sum()
         np.testing.assert_allclose(ll, expected, rtol=1e-5)
 
-    def test_poisson_generate_data_moments(self, poisson_lik):
+    def test_poisson_generate_data_moments(self):
         """Sample mean must approximate exp(intercept) for constant-rate Poisson."""
+        n = 2000
+        X = np.column_stack([np.ones(n), np.zeros(n)]).astype(np.float32)
+        lik = GLMLikelihood(tfp_glm.Poisson(), X, seed=7)
         params = jnp.array([0.5, 0.0])  # constant rate = exp(0.5)
         expected_rate = np.exp(0.5)
-        y = np.asarray(poisson_lik.generate_data(params, 20))
-        assert y.shape == (20,)
-        np.testing.assert_allclose(float(y.mean()), expected_rate, atol=0.5)
+        y = np.asarray(lik.generate_data(params, n))
+        np.testing.assert_allclose(float(y.mean()), expected_rate, atol=0.15)
 
     def test_generate_data_shape(self, poisson_lik):
         params = jnp.array([1.0, 0.5])
@@ -161,6 +163,12 @@ class TestGLMLikelihoodWithValues:
         data_v = Values(y=data_raw)
         ll_v = float(poisson_lik.log_likelihood(params_v, data_v))
         np.testing.assert_allclose(ll_v, ll_raw, rtol=1e-6)
+
+    def test_coerce_multi_field_values_raises(self, poisson_lik):
+        """Multi-field Values cannot be coerced to a single array."""
+        multi = Values(a=jnp.array([1.0, 0.5]), b=jnp.array([2.0, 3.0]))
+        with pytest.raises(ValueError, match="Cannot coerce multi-field"):
+            poisson_lik.log_likelihood(multi, jnp.ones(20))
 
     def test_condition_on_with_values_data(self, poisson_lik):
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2))

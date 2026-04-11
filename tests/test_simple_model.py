@@ -17,6 +17,7 @@ import pytest
 from probpipe import (
     Likelihood,
     ApproximateDistribution,
+    MultivariateNormal,
     SimpleModel,
     SupportsLogProb,
     SupportsNamedComponents,
@@ -24,7 +25,6 @@ from probpipe import (
     Values,
     condition_on,
 )
-from probpipe.distributions.multivariate import MultivariateNormal
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +273,13 @@ class TestSimpleModelWithValues:
     def test_parameter_names_from_template(self, prior_with_template, likelihood):
         model = SimpleModel(prior_with_template, likelihood)
         assert model.parameter_names == ("a", "b")
+
+    def test_getitem_template_field_name(self, prior_with_template, likelihood):
+        """Indexing by a template field name returns the prior."""
+        model = SimpleModel(prior_with_template, likelihood)
+        assert model["a"] is prior_with_template
+        assert model["b"] is prior_with_template
+        assert model["data"] is likelihood
 
     def test_condition_on_with_values_data(self, prior_with_template, likelihood):
         model = SimpleModel(prior_with_template, likelihood)

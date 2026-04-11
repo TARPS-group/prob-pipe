@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe.core.values import Values
+from probpipe import Values
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +166,12 @@ class TestImmutability:
         v = Values(a=1.0, b=2.0, c=3.0)
         v2 = v.without("b")
         assert v2.fields() == ("a", "c")
+
+    def test_without_nonexistent_key(self):
+        """Removing a key that doesn't exist silently keeps all fields."""
+        v = Values(a=1.0, b=2.0)
+        v2 = v.without("z")
+        assert v2.fields() == ("a", "b")
 
     def test_without_all_raises(self):
         v = Values(a=1.0)
@@ -394,7 +400,8 @@ class TestConversion:
         xr = pytest.importorskip("xarray")
         v = Values(x=np.array([1.0, 2.0]), y=np.array(3.0))
         dt = v.to_datatree()
-        assert hasattr(dt, "children")
+        np.testing.assert_allclose(dt["/x"]["x"].values, [1.0, 2.0])
+        np.testing.assert_allclose(float(dt["/y"]["y"].values), 3.0)
 
     def test_from_datatree_roundtrip(self):
         xr = pytest.importorskip("xarray")
@@ -407,6 +414,18 @@ class TestConversion:
         v = Values.from_datatree(dt["root"])
         assert "y" in v
         np.testing.assert_allclose(v.y, [1.0, 2.0, 3.0])
+
+    def test_from_datatree_nested(self):
+        """from_datatree reconstructs nested Values from child groups."""
+        xr = pytest.importorskip("xarray")
+        inner = Values(a=np.array(1.0), b=np.array(2.0))
+        outer = Values(params=inner, z=np.array(3.0))
+        dt = outer.to_datatree()
+        roundtripped = Values.from_datatree(dt)
+        assert isinstance(roundtripped.params, Values)
+        np.testing.assert_allclose(float(roundtripped.params.a), 1.0)
+        np.testing.assert_allclose(float(roundtripped.params.b), 2.0)
+        np.testing.assert_allclose(float(roundtripped.z), 3.0)
 
 
 # ---------------------------------------------------------------------------
