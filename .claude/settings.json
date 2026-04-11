@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git branch*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git push*)",
+      "Bash(git stash*)",
+      "Bash(git checkout*)",
+      "Bash(git rebase*)",
+      "Bash(git merge*)",
+      "Bash(git remote*)",
+      "Bash(git fetch*)",
+      "Bash(git rev-parse*)",
+      "Bash(gh pr *)",
+      "Bash(gh issue *)",
+      "Bash(gh api *)",
+      "Bash(wc -l *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(ls *)",
+      "Bash(ls)",
+      "Bash(which *)",
+      "Bash(sleep *)",
+      "Bash(cd *)",
+      "Bash(.venv/bin/python -m pytest*)",
+      "Bash(.venv/bin/python -c *)"
+    ]
+  }
+}

@@ -7,151 +7,17 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from xarray import DataTree
 
+import jax
 import jax.numpy as jnp
 
-from ..core.constraints import real
-from ..core.distribution import ArrayDistribution, ArrayEmpiricalDistribution, Distribution
-from ..core.protocols import SupportsMean, SupportsSampling, SupportsVariance
+from ..core.distribution import ArrayEmpiricalDistribution, Distribution, ValuesDistribution, _unflatten_batched
+from ..core._values_distribution import _ValuesDistributionView
 from ..core.provenance import Provenance
 from ..core.values import Values
 from ..custom_types import Array, ArrayLike, PRNGKey
 from .._weights import Weights
 
-__all__ = ["ApproximateDistribution", "make_posterior", "_ValuesDistributionView"]
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _unflatten_draws(flat_draws: Array, template: Values) -> Values:
-    """Unflatten a (num_draws, flat_size) array into a Values with a draw axis.
-
-    Each field in the returned Values has shape ``(num_draws, *event_shape)``
-    where ``event_shape`` is taken from the corresponding field in *template*.
-    """
-    fields: dict[str, jnp.ndarray | Values] = {}
-    offset = 0
-    for name in template.fields():
-        tval = template[name]
-        if isinstance(tval, Values):
-            size = tval.flat_size
-            child_flat = flat_draws[:, offset:offset + size]
-            fields[name] = _unflatten_draws(child_flat, tval)
-            offset += size
-        else:
-            size = tval.size
-            event_shape = tval.shape
-            chunk = flat_draws[:, offset:offset + size]
-            fields[name] = chunk.reshape(flat_draws.shape[0], *event_shape)
-            offset += size
-    return Values(fields)
-
-
-# ---------------------------------------------------------------------------
-# _ValuesDistributionView — lightweight ref to a named field
-# ---------------------------------------------------------------------------
-
-
-class _ValuesDistributionView(ArrayDistribution, SupportsSampling, SupportsMean, SupportsVariance):
-    """Lightweight reference to a single named field of a Values-based distribution.
-
-    The Values-world analog of
-    :class:`~probpipe.core._joint.DistributionView`.  Preserves
-    correlation when multiple views from the same parent are used in
-    :class:`~probpipe.core.node.WorkflowFunction` broadcasting.
-
-    Parameters
-    ----------
-    parent : Distribution
-        A distribution with ``values_template`` set.
-    key : str
-        Field name in the parent's ``values_template``.
-    """
-
-    _sampling_cost = "low"
-    _preferred_orchestration = None
-
-    def __init__(self, parent: Distribution, key: str):
-        template = parent.values_template
-        if template is None or key not in template:
-            raise KeyError(
-                f"No field {key!r} in values_template "
-                f"(available: {template.fields() if template else ()})"
-            )
-        self._parent = parent
-        self._key = key
-        self._key_path = (key,)  # duck-type contract with DistributionView
-        self._template_field = template[key]
-
-    # -- ArrayDistribution interface ----------------------------------------
-
-    @property
-    def event_shape(self) -> tuple[int, ...]:
-        f = self._template_field
-        return f.shape if not isinstance(f, Values) else ()
-
-    @property
-    def support(self):
-        return real
-
-    @classmethod
-    def _default_support(cls):
-        return real
-
-    # -- SupportsSampling ---------------------------------------------------
-
-    def _sample_one(self, key: PRNGKey) -> Array:
-        structured = self._parent._sample(key)
-        return self._extract(structured)
-
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
-        structured = self._parent._sample(key, sample_shape)
-        return self._extract(structured)
-
-    # -- SupportsMean / SupportsVariance ------------------------------------
-
-    def _mean(self) -> Array:
-        if isinstance(self._parent, SupportsMean):
-            m = self._parent._mean()
-            if isinstance(m, Values):
-                return m[self._key]
-        # Fallback: empirical mean from draws
-        return self._field_draws().mean(axis=0)
-
-    def _variance(self) -> Array:
-        if isinstance(self._parent, SupportsVariance):
-            v = self._parent._variance()
-            if isinstance(v, Values):
-                return v[self._key]
-        return self._field_draws().var(axis=0)
-
-    # -- Internals ----------------------------------------------------------
-
-    def _extract(self, structured: Array) -> Array:
-        """Extract this field from a parent sample (flat array or Values)."""
-        if isinstance(structured, Values):
-            return structured[self._key]
-        template = self._parent.values_template
-        if structured.ndim == 1:
-            return Values.unflatten(structured, template=template)[self._key]
-        return _unflatten_draws(structured, template)[self._key]
-
-    def _field_draws(self) -> Array:
-        """All draws for this field (requires parent to have a ``draws()`` method)."""
-        draws = self._parent.draws()
-        if isinstance(draws, Values):
-            return jnp.asarray(draws[self._key])
-        return jnp.asarray(
-            _unflatten_draws(draws, self._parent.values_template)[self._key]
-        )
-
-    def __repr__(self) -> str:
-        return (
-            f"_ValuesDistributionView(parent={type(self._parent).__name__}, "
-            f"field={self._key!r})"
-        )
+__all__ = ["ApproximateDistribution", "make_posterior"]
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +25,7 @@ class _ValuesDistributionView(ArrayDistribution, SupportsSampling, SupportsMean,
 # ---------------------------------------------------------------------------
 
 
-class ApproximateDistribution(ArrayEmpiricalDistribution):
+class ApproximateDistribution(ArrayEmpiricalDistribution, ValuesDistribution):
     """Empirical distribution with chain structure.
 
     Stores per-chain sample arrays for chain-structured access via
@@ -198,34 +64,6 @@ class ApproximateDistribution(ArrayEmpiricalDistribution):
         if self._concatenated is None:
             self._concatenated = jnp.concatenate(self._chains, axis=0)
         return self._concatenated
-
-    # -- Named component access (SupportsNamedComponents) --------------------
-
-    @property
-    def component_names(self) -> tuple[str, ...]:
-        """Field names from the values_template, or empty tuple."""
-        tpl = self.values_template
-        return tpl.fields() if tpl is not None else ()
-
-    def __getitem__(self, key: str) -> _ValuesDistributionView:
-        return _ValuesDistributionView(self, key)
-
-    def select(self, *fields: str, **mapping: str) -> dict[str, _ValuesDistributionView]:
-        """Select named fields as views for workflow function broadcasting.
-
-        Positional args use the field name as the argument name.
-        Keyword args remap: ``select(x="field_name")``.
-
-        Usage::
-
-            predict(**posterior.select("r", "K", "phi"), x=x_grid)
-        """
-        result: dict[str, _ValuesDistributionView] = {}
-        for f in fields:
-            result[f] = self[f]
-        for arg_name, field_name in mapping.items():
-            result[arg_name] = self[field_name]
-        return result
 
     # -- Chain access ---------------------------------------------------------
 
@@ -311,7 +149,7 @@ class ApproximateDistribution(ArrayEmpiricalDistribution):
             samples = jnp.concatenate(parts, axis=0)
 
         if self.values_template is not None:
-            return _unflatten_draws(samples, self.values_template)
+            return _unflatten_batched(samples, self.values_template)
         return samples
 
     def __repr__(self) -> str:

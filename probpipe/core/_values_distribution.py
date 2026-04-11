@@ -1,0 +1,229 @@
+"""ValuesDistribution — generic Values-based distribution base.
+
+Provides the named-component layer (``component_names``, ``__getitem__``,
+``select()``) and Values-aware flatten/unflatten, without imposing TFP
+shape conventions (dtype, support, batch_shape).  Those live on
+``TFPShapeMixin`` and its consumers.
+
+``_ValuesDistributionView`` is the lightweight component reference,
+analogous to :class:`~probpipe.core._joint.DistributionView` but for
+any distribution whose ``values_template`` is set.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import jax.numpy as jnp
+
+from .constraints import real
+from ._distribution_base import Distribution
+from .protocols import SupportsMean, SupportsSampling, SupportsVariance
+from .values import Values
+from ..custom_types import Array, PRNGKey
+
+
+__all__ = ["ValuesDistribution", "_ValuesDistributionView"]
+
+
+# ---------------------------------------------------------------------------
+# _ValuesDistributionView
+# ---------------------------------------------------------------------------
+
+
+class _ValuesDistributionView(Distribution, SupportsSampling, SupportsMean, SupportsVariance):
+    """Lightweight reference to a single named field of a Values-based distribution.
+
+    The Values-world analog of
+    :class:`~probpipe.core._joint.DistributionView`.  Preserves
+    correlation when multiple views from the same parent are used in
+    :class:`~probpipe.core.node.WorkflowFunction` broadcasting.
+
+    Parameters
+    ----------
+    parent : Distribution
+        A distribution with ``values_template`` set.
+    key : str
+        Field name in the parent's ``values_template``.
+    """
+
+    _sampling_cost = "low"
+    _preferred_orchestration = None
+
+    def __init__(self, parent: Distribution, key: str):
+        template = parent.values_template
+        if template is None or key not in template:
+            raise KeyError(
+                f"No field {key!r} in values_template "
+                f"(available: {template.fields() if template else ()})"
+            )
+        self._parent = parent
+        self._key = key
+        self._key_path = (key,)  # duck-type contract with DistributionView
+        self._template_field = template[key]
+
+    # -- Shape info ---------------------------------------------------------
+
+    @property
+    def event_shape(self) -> tuple[int, ...]:
+        f = self._template_field
+        return f.shape if not isinstance(f, Values) else ()
+
+    # -- SupportsSampling ---------------------------------------------------
+
+    def _sample_one(self, key: PRNGKey) -> Array:
+        structured = self._parent._sample(key)
+        return self._extract(structured)
+
+    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+        structured = self._parent._sample(key, sample_shape)
+        return self._extract(structured)
+
+    # -- SupportsMean / SupportsVariance ------------------------------------
+
+    def _mean(self) -> Array:
+        if isinstance(self._parent, SupportsMean):
+            m = self._parent._mean()
+            if isinstance(m, Values):
+                return m[self._key]
+        return self._field_draws().mean(axis=0)
+
+    def _variance(self) -> Array:
+        if isinstance(self._parent, SupportsVariance):
+            v = self._parent._variance()
+            if isinstance(v, Values):
+                return v[self._key]
+        return self._field_draws().var(axis=0)
+
+    # -- Internals ----------------------------------------------------------
+
+    def _extract(self, structured: Array) -> Array:
+        """Extract this field from a parent sample (flat array or Values)."""
+        if isinstance(structured, Values):
+            return structured[self._key]
+        template = self._parent.values_template
+        if structured.ndim == 1:
+            return Values.unflatten(structured, template=template)[self._key]
+        return _unflatten_batched(structured, template)[self._key]
+
+    def _field_draws(self) -> Array:
+        """All draws for this field (requires parent to have a ``draws()`` method)."""
+        draws = self._parent.draws()
+        if isinstance(draws, Values):
+            return jnp.asarray(draws[self._key])
+        return jnp.asarray(
+            _unflatten_batched(draws, self._parent.values_template)[self._key]
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"_ValuesDistributionView(parent={type(self._parent).__name__}, "
+            f"field={self._key!r})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Batched unflatten helper
+# ---------------------------------------------------------------------------
+
+
+def _unflatten_batched(flat_draws: Array, template: Values) -> Values:
+    """Unflatten a ``(num_draws, flat_size)`` array into a Values with a draw axis.
+
+    Each field in the returned Values has shape ``(num_draws, *event_shape)``
+    where ``event_shape`` comes from the corresponding field in *template*.
+    """
+    fields: dict[str, jnp.ndarray | Values] = {}
+    offset = 0
+    for name in template.fields():
+        tval = template[name]
+        if isinstance(tval, Values):
+            size = tval.flat_size
+            child_flat = flat_draws[:, offset:offset + size]
+            fields[name] = _unflatten_batched(child_flat, tval)
+            offset += size
+        else:
+            size = tval.size
+            event_shape = tval.shape
+            chunk = flat_draws[:, offset:offset + size]
+            fields[name] = chunk.reshape(flat_draws.shape[0], *event_shape)
+            offset += size
+    return Values(fields)
+
+
+# ---------------------------------------------------------------------------
+# ValuesDistribution
+# ---------------------------------------------------------------------------
+
+
+class ValuesDistribution(Distribution[Values]):
+    """Generic Values-based distribution.
+
+    Provides named component access (``component_names``, ``__getitem__``,
+    ``select()``) and Values-aware flatten / unflatten.  Does NOT impose
+    TFP shape conventions (dtype, support, batch_shape) — those belong
+    on ``TFPShapeMixin`` and its consumers.
+
+    Concrete subclasses must set ``_values_template`` (a :class:`Values`
+    giving the named structure) and implement the relevant sampling /
+    log-prob protocols.
+    """
+
+    # -- Named component access ---------------------------------------------
+
+    @property
+    def component_names(self) -> tuple[str, ...]:
+        """Field names from the values_template, or empty tuple."""
+        tpl = self.values_template
+        return tpl.fields() if tpl is not None else ()
+
+    def __getitem__(self, key: str) -> _ValuesDistributionView:
+        return _ValuesDistributionView(self, key)
+
+    def select(self, *fields: str, **mapping: str) -> dict[str, _ValuesDistributionView]:
+        """Select named fields as views for workflow function broadcasting.
+
+        Positional args use the field name as the argument name.
+        Keyword args remap: ``select(x="field_name")``.
+
+        Usage::
+
+            predict(**posterior.select("r", "K", "phi"), x=x_grid)
+        """
+        result: dict[str, _ValuesDistributionView] = {}
+        for f in fields:
+            result[f] = self[f]
+        for arg_name, field_name in mapping.items():
+            result[arg_name] = self[field_name]
+        return result
+
+    # -- Flatten / unflatten ------------------------------------------------
+
+    def flatten_value(self, value: Values) -> Array:
+        """Flatten a Values sample to a 1-D array."""
+        return value.flatten()
+
+    def unflatten_value(self, flat: Array) -> Values:
+        """Reconstruct a Values from a flat array using the template."""
+        tpl = self.values_template
+        if tpl is None:
+            raise RuntimeError("Cannot unflatten without values_template")
+        return Values.unflatten(flat, template=tpl)
+
+    @property
+    def event_size(self) -> int:
+        """Total number of scalar elements in one sample."""
+        tpl = self.values_template
+        return tpl.flat_size if tpl is not None else 0
+
+    @property
+    def event_shapes(self) -> dict[str, tuple[int, ...]]:
+        """Per-field event shapes derived from values_template."""
+        tpl = self.values_template
+        if tpl is None:
+            return {}
+        result: dict[str, tuple[int, ...]] = {}
+        for name in tpl.fields():
+            val = tpl[name]
+            result[name] = val.shape if not isinstance(val, Values) else ()
+        return result

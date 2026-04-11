@@ -34,12 +34,20 @@ def __getattr__(name: str):
         return getattr(_base, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+# -- _values_distribution ---------------------------------------------------
+from ._values_distribution import (
+    ValuesDistribution,
+    _ValuesDistributionView,
+    _unflatten_batched,
+)
+
 # -- _array_distributions ---------------------------------------------------
 from ._array_distributions import (
     ArrayDistribution,
     BootstrapDistribution,
     FlattenedView,
     PyTreeArrayDistribution,
+    TFPShapeMixin,
     _mc_expectation,
     _vmap_sample,
 )
@@ -87,6 +95,10 @@ __all__ = [
     # Helpers
     "_vmap_sample",
     "_mc_expectation",
+    # Values distribution
+    "ValuesDistribution",
+    "_ValuesDistributionView",
+    "_unflatten_batched",
     # Array hierarchy
     "PyTreeArrayDistribution",
     "ArrayDistribution",

@@ -24,10 +24,8 @@ from probpipe import (
 from unittest.mock import MagicMock
 
 from probpipe.inference import rwmh
-from probpipe.inference._approximate_distribution import (
-    _ValuesDistributionView,
-    make_posterior,
-)
+from probpipe.core._values_distribution import _ValuesDistributionView
+from probpipe.inference._approximate_distribution import make_posterior
 from probpipe.inference._tfp_mcmc import _build_mcmc_datatree
 
 

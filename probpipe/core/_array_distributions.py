@@ -251,10 +251,70 @@ class PyTreeArrayDistribution[T](Distribution[T]):
 
 
 # ---------------------------------------------------------------------------
+# TFPShapeMixin — TFP-specific shape conventions
+# ---------------------------------------------------------------------------
+
+class TFPShapeMixin:
+    """Mixin providing TFP-style shape conventions: dtype, support, batch_shape.
+
+    Used by both ``ArrayDistribution`` (for generative TFP distributions)
+    and ``TFPEmpiricalDistribution`` (for empirical distributions with
+    TFP shape semantics).  Does not inherit from any base class.
+    """
+
+    @property
+    def dtype(self) -> jnp.dtype:
+        """Array dtype of samples (default: float32)."""
+        return jnp.float32
+
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        """Batch shape (default: scalar, no batching)."""
+        return ()
+
+    @property
+    def support(self) -> Constraint:
+        """The support of this distribution (set of values with non-zero density)."""
+        raise NotImplementedError(f"{type(self).__name__}.support")
+
+    @property
+    def supports(self) -> Constraint:
+        """Singular support (alias for ``support``)."""
+        return self.support
+
+    @classmethod
+    def _check_support_compatible(cls, other: TFPShapeMixin) -> None:
+        """Raise ValueError if *other*'s support is incompatible with *cls*."""
+        try:
+            target_support = cls._default_support()
+        except NotImplementedError:
+            return
+        try:
+            source_support = other.support
+        except NotImplementedError:
+            return
+        if not _supports_compatible(source_support, target_support):
+            raise ValueError(
+                f"Cannot convert {type(other).__name__} (support={source_support}) "
+                f"to {cls.__name__} (support={target_support}). "
+                f"Pass check_support=False to override."
+            )
+
+    @classmethod
+    def _default_support(cls) -> Constraint:
+        """Return the default support for this distribution class.
+
+        Override in subclasses.  Used by ``_check_support_compatible``
+        when no instance is available yet.
+        """
+        raise NotImplementedError
+
+
+# ---------------------------------------------------------------------------
 # ArrayDistribution — distribution over arrays (TFP shape semantics)
 # ---------------------------------------------------------------------------
 
-class ArrayDistribution(PyTreeArrayDistribution[Array]):
+class ArrayDistribution(PyTreeArrayDistribution[Array], TFPShapeMixin):
     """
     Distribution over a single array with TFP-style shape semantics.
 
@@ -277,13 +337,13 @@ class ArrayDistribution(PyTreeArrayDistribution[Array]):
     def event_shape(self) -> tuple[int, ...]:
         ...
 
+    # dtype, support, _check_support_compatible, _default_support
+    # inherited from TFPShapeMixin.
+
+    # Concrete batch_shape satisfies the abstract from PyTreeArrayDistribution.
     @property
     def batch_shape(self) -> tuple[int, ...]:
         return ()
-
-    @property
-    def dtype(self) -> jnp.dtype:
-        return jnp.float32
 
     # -- PyTreeArrayDistribution interface (trivial single-leaf) -------------
 
@@ -343,47 +403,8 @@ class ArrayDistribution(PyTreeArrayDistribution[Array]):
         batch_dims = flat.shape[:-1]
         return flat.reshape(*batch_dims, *es)
 
-    # -- support ------------------------------------------------------------
-
-    @property
-    def support(self) -> Constraint:
-        """The support of this distribution (set of values with non-zero density)."""
-        raise NotImplementedError(f"{type(self).__name__}.support")
-
-    @property
-    def supports(self) -> Constraint:
-        """For ArrayDistribution, supports is just the singular support."""
-        return self.support
-
-    # -- support compatibility (for conversion) ------------------------------
-
-    @classmethod
-    def _check_support_compatible(cls, other: ArrayDistribution) -> None:
-        """Raise ValueError if *other*'s support is incompatible with *cls*."""
-        try:
-            target_support = cls._default_support()
-        except NotImplementedError:
-            return  # can't check if target doesn't declare support
-        try:
-            source_support = other.support
-        except NotImplementedError:
-            return  # can't check if source doesn't declare support
-
-        if not _supports_compatible(source_support, target_support):
-            raise ValueError(
-                f"Cannot convert {type(other).__name__} (support={source_support}) "
-                f"to {cls.__name__} (support={target_support}). "
-                f"Pass check_support=False to override."
-            )
-
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        """Return the default support for this distribution class.
-
-        Override in subclasses. Used by ``_check_support_compatible``
-        when no instance is available yet.
-        """
-        raise NotImplementedError
+    # support, supports, _check_support_compatible, _default_support
+    # inherited from TFPShapeMixin
 
     # -- repr ---------------------------------------------------------------
 
