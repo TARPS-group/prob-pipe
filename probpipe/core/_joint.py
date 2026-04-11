@@ -25,6 +25,7 @@ from ._array_distributions import (
 )
 from .constraints import Constraint, real
 from .provenance import Provenance
+from .values import Values
 from .protocols import (
     SupportsConditioning,
     SupportsLogProb,
@@ -137,6 +138,28 @@ def _component_key_paths(components) -> tuple:
         )
         key_paths.append(str_path)
     return tuple(key_paths)
+
+
+# ---------------------------------------------------------------------------
+# Values template builder
+# ---------------------------------------------------------------------------
+
+
+def _build_values_template(components: dict) -> Values:
+    """Build a Values template from a component pytree.
+
+    Each ``ArrayDistribution`` leaf becomes a ``jnp.zeros(event_shape)``
+    placeholder.  Nested dicts become nested ``Values``.
+    """
+    fields: dict[str, jnp.ndarray | Values] = {}
+    for name, comp in components.items():
+        if isinstance(comp, dict):
+            fields[name] = _build_values_template(comp)
+        elif isinstance(comp, ArrayDistribution):
+            fields[name] = jnp.zeros(comp.event_shape)
+        else:
+            raise TypeError(f"Unexpected component type: {type(comp).__name__}")
+    return Values(fields)
 
 
 # ---------------------------------------------------------------------------
@@ -519,6 +542,7 @@ class JointDistribution(PyTreeArrayDistribution, SupportsNamedComponents):
                 )
         self._components = dict(components)
         self._name = name
+        self._values_template = _build_values_template(self._components)
 
     # -- PyTreeArrayDistribution interface ---------------------------------
 

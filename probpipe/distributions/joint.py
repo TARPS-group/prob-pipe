@@ -99,6 +99,7 @@ from ..core._joint import (
     ProductDistribution,
     DistributionView,
     KeyPath,
+    _build_values_template,
     _normalize_key,
     _walk_pytree,
     _component_key_paths,
@@ -211,6 +212,7 @@ class SequentialJointDistribution(JointDistribution, SupportsSampling, SupportsL
 
         # Build _components dict from resolved prototypes (for shape introspection)
         self._components = resolved
+        self._values_template = _build_values_template(self._components)
 
     @staticmethod
     def _compute_sampleable_error(
@@ -541,6 +543,7 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
                 arr, weights=self._w, name=cname,
             )
         self._components = comp_dists
+        self._values_template = _build_values_template(self._components)
 
     @property
     def n(self) -> int:
@@ -761,6 +764,7 @@ class JointGaussian(JointDistribution, SupportsSampling, SupportsLogProb, Suppor
 
         self._components = components
         self._component_slices = slices  # still needed for Gaussian conditioning
+        self._values_template = _build_values_template(self._components)
         self._total_dim = total_dim  # still needed for Gaussian conditioning
 
     @property
