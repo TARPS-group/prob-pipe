@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from xarray import DataTree
 
-import jax
 import jax.numpy as jnp
 
 from ..core.distribution import ArrayEmpiricalDistribution, Distribution, ValuesDistribution, _unflatten_batched

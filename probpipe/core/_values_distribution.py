@@ -12,11 +12,8 @@ any distribution whose ``values_template`` is set.
 
 from __future__ import annotations
 
-from typing import Any
-
 import jax.numpy as jnp
 
-from .constraints import real
 from ._distribution_base import Distribution
 from .protocols import SupportsMean, SupportsSampling, SupportsVariance
 from .values import Values

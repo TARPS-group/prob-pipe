@@ -24,7 +24,7 @@ from probpipe import (
 from unittest.mock import MagicMock
 
 from probpipe.inference import rwmh
-from probpipe.core._values_distribution import _ValuesDistributionView
+from probpipe.core.distribution import _ValuesDistributionView
 from probpipe.inference._approximate_distribution import make_posterior
 from probpipe.inference._tfp_mcmc import _build_mcmc_datatree
 
@@ -579,6 +579,77 @@ class TestValuesDistributionView:
         assert "ApproximateDistribution" in r
         assert "r" in r
 
+    def test_view_mean_fallback_without_supports_mean(self):
+        """_mean() falls back to _field_draws() when parent lacks SupportsMean."""
+        # ApproximateDistribution IS SupportsMean, so we test the fallback
+        # by checking the empirical mean matches the draws directly.
+        template = Values(a=jnp.array(0.0), b=jnp.array(0.0))
+        chain = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        post = make_posterior([chain], parents=(prior,), algorithm="test",
+                             values_template=template)
+        view = post["a"]
+        # Mean of column 0 (field "a"): (1+3+5)/3 = 3.0
+        np.testing.assert_allclose(float(view._mean()), 3.0, atol=1e-5)
+        # Variance of column 0: var([1,3,5]) = 8/3
+        np.testing.assert_allclose(float(view._variance()), jnp.var(chain[:, 0]), atol=1e-5)
+
+
+class TestValuesDistributionProperties:
+    """ValuesDistribution base class properties on ApproximateDistribution."""
+
+    @pytest.fixture
+    def template(self):
+        return Values(K=jnp.array(0.0), phi=jnp.array(0.0), r=jnp.array(0.0))
+
+    @pytest.fixture
+    def posterior(self, template):
+        chain = jax.random.normal(jax.random.PRNGKey(0), (50, 3))
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
+        return make_posterior(
+            [chain], parents=(prior,), algorithm="test",
+            values_template=template,
+        )
+
+    def test_values_distribution_flatten_unflatten(self, posterior):
+        """ValuesDistribution.flatten_value / unflatten_value round-trip."""
+        from probpipe.core._values_distribution import ValuesDistribution
+        v = Values(K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
+        flat = ValuesDistribution.flatten_value(posterior, v)
+        np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])  # sorted: K, phi, r
+        v2 = ValuesDistribution.unflatten_value(posterior, flat)
+        assert isinstance(v2, Values)
+        np.testing.assert_allclose(float(v2.K), 1.0)
+        np.testing.assert_allclose(float(v2.r), 3.0)
+
+    def test_flatten_unflatten_roundtrip(self, posterior, template):
+        from probpipe.core._values_distribution import ValuesDistribution
+        v = Values(K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
+        flat = ValuesDistribution.flatten_value(posterior, v)
+        assert flat.shape == (3,)
+        v2 = ValuesDistribution.unflatten_value(posterior, flat)
+        assert isinstance(v2, Values)
+        np.testing.assert_allclose(float(v2.K), 1.0)
+        np.testing.assert_allclose(float(v2.r), 3.0)
+
+    def test_unflatten_without_template_raises(self):
+        from probpipe.core._values_distribution import ValuesDistribution
+        chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
+        dist = ApproximateDistribution([chain])
+        with pytest.raises(RuntimeError, match="values_template"):
+            ValuesDistribution.unflatten_value(dist, jnp.zeros(3))
+
+    def test_values_distribution_event_shapes(self, posterior):
+        """ValuesDistribution.event_shapes returns per-field dict."""
+        from probpipe.core._values_distribution import ValuesDistribution
+        shapes = ValuesDistribution.event_shapes.fget(posterior)
+        assert shapes == {"K": (), "phi": (), "r": ()}
+
+    def test_values_distribution_event_size(self, posterior, template):
+        """ValuesDistribution.event_size matches template.flat_size."""
+        from probpipe.core._values_distribution import ValuesDistribution
+        assert ValuesDistribution.event_size.fget(posterior) == template.flat_size
+
 
 class TestValuesSelect:
     """Values.select() for concrete data."""
@@ -610,3 +681,8 @@ class TestValuesSelect:
         v = Values(r=1.0)
         with pytest.raises(KeyError, match="z"):
             v.select(x="z")
+
+    def test_empty_select(self):
+        v = Values(r=1.0, K=70.0)
+        sel = v.select()
+        assert sel == {}

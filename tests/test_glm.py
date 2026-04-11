@@ -178,6 +178,9 @@ class TestGLMLikelihoodWithValues:
                                    dtype=jnp.float32))
         posterior = condition_on(model, data, num_results=50, num_warmup=25, random_seed=0)
         assert mean(posterior).shape == (2,)
+        # Prior has no values_template, so draws are raw arrays.
+        # Named draws require prior._values_template to be set.
+        assert posterior.draws().shape == (50, 2)
 
 
 class TestIncrementalConditionerAutoConvert:
