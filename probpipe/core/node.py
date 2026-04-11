@@ -650,40 +650,46 @@ class WorkflowFunction(Node):
         key: PRNGKey,
     ) -> dict[str, Array]:
         """
-        Sample all broadcast arguments, handling DistributionView reconnection.
+        Sample all broadcast arguments, handling view reconnection.
 
-        When multiple arguments are DistributionViews from the same parent
-        JointDistribution, the parent is sampled once and component samples
-        are distributed to the appropriate arguments.  This preserves
-        correlation between jointly-distributed components.
+        When multiple arguments are views (DistributionView or
+        _ValuesDistributionView) from the same parent distribution,
+        the parent is sampled once and component samples are distributed
+        to the appropriate arguments.  This preserves correlation
+        between jointly-distributed components.
         """
-        # Group DistributionView args by parent
-        joint_groups: dict[int, dict] = {}  # id(parent) → {parent, mappings}
+        # Group view args by parent — works for both DistributionView
+        # and _ValuesDistributionView via duck-typing (_parent + _key_path).
+        view_groups: dict[int, dict] = {}  # id(parent) → {parent, views}
         independent: list[str] = []
 
         for name in broadcast_args:
             dist = values[name]
-            if isinstance(dist, DistributionView):
+            if hasattr(dist, "_parent") and hasattr(dist, "_key_path"):
                 pid = id(dist._parent)
-                if pid not in joint_groups:
-                    joint_groups[pid] = {"parent": dist._parent, "mappings": {}}
-                # Store the key path (tuple of strings) for nested pytree navigation
-                joint_groups[pid]["mappings"][name] = dist._key_path
+                if pid not in view_groups:
+                    view_groups[pid] = {"parent": dist._parent, "views": {}}
+                view_groups[pid]["views"][name] = dist
             else:
                 independent.append(name)
 
         sampled: dict[str, Array] = {}
 
-        # Sample each joint group once, distribute to arguments
-        for group in joint_groups.values():
+        # Sample each parent once, distribute to arguments.
+        # DistributionView parents return pytree dicts (walk by key).
+        # _ValuesDistributionView parents may return flat arrays
+        # (delegated to the view's _extract method).
+        for group in view_groups.values():
             key, subkey = jax.random.split(key)
             structured = group["parent"]._sample(subkey, (n,))
-            for arg_name, key_path in group["mappings"].items():
-                # Walk the (possibly nested) sample pytree to extract the leaf
-                val = structured
-                for k in key_path:
-                    val = val[k]
-                sampled[arg_name] = val
+            for arg_name, view in group["views"].items():
+                if hasattr(view, "_extract"):
+                    sampled[arg_name] = view._extract(structured)
+                else:
+                    val = structured
+                    for k in view._key_path:
+                        val = val[k]
+                    sampled[arg_name] = val
 
         # Sample independent distributions
         for name in independent:

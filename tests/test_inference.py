@@ -3,6 +3,7 @@
 Covers:
 - ApproximateDistribution: chain access, warmup, inference_data, draws
 - ApproximateDistribution with Values template: named draws
+- _ValuesDistributionView: component views, select, broadcasting
 - rwmh workflow function: basic sampling with SupportsLogProb
 """
 
@@ -23,7 +24,10 @@ from probpipe import (
 from unittest.mock import MagicMock
 
 from probpipe.inference import rwmh
-from probpipe.inference._approximate_distribution import make_posterior
+from probpipe.inference._approximate_distribution import (
+    _ValuesDistributionView,
+    make_posterior,
+)
 from probpipe.inference._tfp_mcmc import _build_mcmc_datatree
 
 
@@ -480,3 +484,131 @@ class TestRWMH:
             random_seed=42,
         )
         assert isinstance(result, ApproximateDistribution)
+
+
+# ---------------------------------------------------------------------------
+# _ValuesDistributionView + select
+# ---------------------------------------------------------------------------
+
+
+class TestValuesDistributionView:
+    """Component views from Values-based posteriors."""
+
+    @pytest.fixture
+    def template(self):
+        return Values(K=jnp.array(0.0), phi=jnp.array(0.0), r=jnp.array(0.0))
+
+    @pytest.fixture
+    def posterior(self, template):
+        chain = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
+        return make_posterior(
+            [chain], parents=(prior,), algorithm="test",
+            values_template=template,
+        )
+
+    def test_getitem_returns_view(self, posterior):
+        view = posterior["r"]
+        assert isinstance(view, _ValuesDistributionView)
+
+    def test_getitem_missing_field_raises(self, posterior):
+        with pytest.raises(KeyError, match="nonexistent"):
+            posterior["nonexistent"]
+
+    def test_getitem_without_template_raises(self):
+        chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
+        dist = ApproximateDistribution([chain])
+        with pytest.raises(KeyError):
+            dist["x"]
+
+    def test_component_names(self, posterior):
+        assert posterior.component_names == ("K", "phi", "r")
+
+    def test_component_names_without_template(self):
+        chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
+        dist = ApproximateDistribution([chain])
+        assert dist.component_names == ()
+
+    def test_view_event_shape_scalar(self, posterior):
+        view = posterior["r"]
+        assert view.event_shape == ()
+
+    def test_view_event_shape_vector(self):
+        template = Values(vec=jnp.zeros(5), scalar=jnp.array(0.0))
+        chain = jax.random.normal(jax.random.PRNGKey(0), (50, 6))
+        prior = MultivariateNormal(loc=jnp.zeros(6), cov=jnp.eye(6))
+        post = make_posterior([chain], parents=(prior,), algorithm="test",
+                             values_template=template)
+        assert post["scalar"].event_shape == ()
+        assert post["vec"].event_shape == (5,)
+
+    def test_view_mean(self, posterior):
+        view = posterior["K"]
+        draws = posterior.draws()
+        np.testing.assert_allclose(
+            float(view._mean()), float(jnp.mean(draws.K)), atol=1e-5
+        )
+
+    def test_view_variance(self, posterior):
+        view = posterior["K"]
+        draws = posterior.draws()
+        np.testing.assert_allclose(
+            float(view._variance()), float(jnp.var(draws.K)), atol=1e-5
+        )
+
+    def test_view_sample(self, posterior):
+        view = posterior["r"]
+        s = view._sample(jax.random.PRNGKey(42), (10,))
+        assert s.shape == (10,)
+
+    def test_select_positional(self, posterior):
+        sel = posterior.select("r", "K")
+        assert set(sel.keys()) == {"r", "K"}
+        assert all(isinstance(v, _ValuesDistributionView) for v in sel.values())
+
+    def test_select_keyword_remap(self, posterior):
+        sel = posterior.select(growth_rate="r")
+        assert "growth_rate" in sel
+        assert isinstance(sel["growth_rate"], _ValuesDistributionView)
+
+    def test_select_mixed(self, posterior):
+        sel = posterior.select("phi", growth_rate="r")
+        assert set(sel.keys()) == {"phi", "growth_rate"}
+
+    def test_repr(self, posterior):
+        view = posterior["r"]
+        r = repr(view)
+        assert "ApproximateDistribution" in r
+        assert "r" in r
+
+
+class TestValuesSelect:
+    """Values.select() for concrete data."""
+
+    def test_positional(self):
+        v = Values(r=1.0, K=70.0, phi=10.0)
+        sel = v.select("r", "K")
+        assert set(sel.keys()) == {"r", "K"}
+        np.testing.assert_allclose(float(sel["r"]), 1.0)
+        np.testing.assert_allclose(float(sel["K"]), 70.0)
+
+    def test_keyword_remap(self):
+        v = Values(r=1.0, K=70.0)
+        sel = v.select(growth_rate="r")
+        assert "growth_rate" in sel
+        np.testing.assert_allclose(float(sel["growth_rate"]), 1.0)
+
+    def test_mixed(self):
+        v = Values(r=1.0, K=70.0, phi=10.0)
+        sel = v.select("phi", growth_rate="r")
+        assert set(sel.keys()) == {"phi", "growth_rate"}
+
+    def test_missing_field_raises(self):
+        v = Values(r=1.0)
+        with pytest.raises(KeyError, match="nonexistent"):
+            v.select("nonexistent")
+
+    def test_missing_mapping_target_raises(self):
+        v = Values(r=1.0)
+        with pytest.raises(KeyError, match="z"):
+            v.select(x="z")

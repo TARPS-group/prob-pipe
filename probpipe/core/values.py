@@ -181,6 +181,30 @@ class Values:
         for name in self._store:
             yield self._resolve_field(name)
 
+    # -- Selection ----------------------------------------------------------
+
+    def select(self, *fields: str, **mapping: str) -> dict[str, _ResolvedField]:
+        """Select fields as a dict, for splatting into function calls.
+
+        Positional args use the field name as the key (identity mapping).
+        Keyword args remap: ``select(x="field_name")`` → ``{"x": self.field_name}``.
+
+        Usage::
+
+            predict(**params.select("r", "K"), x=x_grid)
+            predict(**params.select(growth_rate="r"), x=x_grid)
+        """
+        result: dict[str, _ResolvedField] = {}
+        for f in fields:
+            if f not in self._store:
+                raise KeyError(f"No field {f!r} in Values")
+            result[f] = self._resolve_field(f)
+        for arg_name, field_name in mapping.items():
+            if field_name not in self._store:
+                raise KeyError(f"No field {field_name!r} in Values")
+            result[arg_name] = self._resolve_field(field_name)
+        return result
+
     # -- Immutable updates --------------------------------------------------
 
     def replace(self, **updates: ArrayLike | Values) -> Values:

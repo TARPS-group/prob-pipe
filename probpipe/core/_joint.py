@@ -657,21 +657,30 @@ class JointDistribution(PyTreeArrayDistribution, SupportsNamedComponents):
             f"which is neither an ArrayDistribution leaf nor a dict node."
         )
 
-    def bind(self, **mapping) -> dict[str, DistributionView]:
-        """Create a dict of views with remapped names.
+    def select(self, *fields: str, **mapping: str) -> dict[str, DistributionView]:
+        """Select named components as views for workflow function broadcasting.
 
-        Values may be strings (for flat access) or tuples of strings
-        (for nested access)::
+        Positional args use the component name as the argument name.
+        Keyword args remap: ``select(x="component_name")``.
+        For nested access, use keyword args with tuple values::
 
-            joint.bind(a='x', b='y')                     # flat
-            joint.bind(f=('physics', 'force'), m='obs')   # nested
+            joint.select("x", "y")                           # flat
+            joint.select(f=("physics", "force"), m="obs")    # nested / remapped
 
-        Parameters
-        ----------
-        **mapping
-            ``{workflow_arg_name: component_key_or_path}``.
+        Usage::
+
+            predict(**joint.select("x", "y"), grid=x_grid)
         """
-        return {arg_name: self[comp_key] for arg_name, comp_key in mapping.items()}
+        result: dict[str, DistributionView] = {}
+        for f in fields:
+            result[f] = self[f]
+        for arg_name, comp_key in mapping.items():
+            result[arg_name] = self[comp_key]
+        return result
+
+    def bind(self, **mapping) -> dict[str, DistributionView]:
+        """Deprecated — use :meth:`select` instead."""
+        return self.select(**mapping)
 
     # -- Component-level log_prob ------------------------------------------
 
