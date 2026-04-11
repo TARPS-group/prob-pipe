@@ -58,6 +58,7 @@ from ._empirical import (
     ArrayBootstrapReplicateDistribution,
     EmpiricalDistribution,
     BootstrapReplicateDistribution,
+    TFPEmpiricalDistribution,
 )
 
 # -- _broadcast_distributions -----------------------------------------------

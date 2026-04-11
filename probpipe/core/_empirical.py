@@ -542,6 +542,12 @@ class BootstrapReplicateDistribution[T](
         )
 
 
+# Alias: the planned Phase 4 name.  ArrayEmpiricalDistribution will be
+# phased out in favor of TFPEmpiricalDistribution once the full
+# ValuesDistribution hierarchy is in place.
+TFPEmpiricalDistribution = ArrayEmpiricalDistribution
+
+
 class ArrayBootstrapReplicateDistribution(BootstrapReplicateDistribution[Array], ArrayDistribution):
     """Joint bootstrap distribution with full :class:`ArrayDistribution` shape semantics.
 
