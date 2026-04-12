@@ -56,7 +56,6 @@ _DISTRIBUTION_PROTOCOLS: tuple[type, ...] = (
     SupportsConditioning,
     SupportsNamedComponents,
 )
-from ..distributions.joint import DistributionView
 from ..converters import converter_registry
 
 logger = logging.getLogger(__name__)
@@ -652,14 +651,14 @@ class WorkflowFunction(Node):
         """
         Sample all broadcast arguments, handling view reconnection.
 
-        When multiple arguments are views (DistributionView or
-        _ValuesDistributionView) from the same parent distribution,
-        the parent is sampled once and component samples are distributed
-        to the appropriate arguments.  This preserves correlation
-        between jointly-distributed components.
+        When multiple arguments are views from the same parent
+        distribution, the parent is sampled once and component samples
+        are distributed to the appropriate arguments.  This preserves
+        correlation between jointly-distributed components.
+
+        Views are detected via duck-typing (``_parent`` + ``_key_path``
+        attributes).
         """
-        # Group view args by parent — works for both DistributionView
-        # and _ValuesDistributionView via duck-typing (_parent + _key_path).
         view_groups: dict[int, dict] = {}  # id(parent) → {parent, views}
         independent: list[str] = []
 
@@ -676,9 +675,6 @@ class WorkflowFunction(Node):
         sampled: dict[str, Array] = {}
 
         # Sample each parent once, distribute to arguments.
-        # DistributionView parents return pytree dicts (walk by key).
-        # _ValuesDistributionView parents may return flat arrays
-        # (delegated to the view's _extract method).
         for group in view_groups.values():
             key, subkey = jax.random.split(key)
             structured = group["parent"]._sample(subkey, (n,))

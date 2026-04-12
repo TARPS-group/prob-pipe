@@ -7,7 +7,6 @@ import pytest
 
 from probpipe import (
     JointEmpirical,
-    DistributionView,
     EmpiricalDistribution,
     JointDistribution,
     Values,

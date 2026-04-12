@@ -49,7 +49,6 @@ from probpipe.core.distribution import (
     # Joint
     JointDistribution,
     ProductDistribution,
-    DistributionView,
 )
 from probpipe.distributions import (
     # TFP base
@@ -215,7 +214,6 @@ __all__ = [
     "SequentialJointDistribution",
     "JointEmpirical",
     "JointGaussian",
-    "DistributionView",
     # WorkflowFunction
     "WorkflowFunction",
     "Module",

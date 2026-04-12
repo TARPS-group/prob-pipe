@@ -701,32 +701,6 @@ class JointDistribution(PyTreeArrayDistribution, SupportsNamedComponents):
             result[arg_name] = self[comp_key]
         return result
 
-    # -- Component-level log_prob ------------------------------------------
-
-    def component_log_prob(self, value) -> dict:
-        """Per-leaf log-density contributions.
-
-        Returns a pytree with the same structure as the components,
-        where each leaf is the scalar (or batch-shaped) log-density
-        from the corresponding component evaluated at the matching
-        value.
-
-        The base implementation evaluates each leaf component's
-        ``log_prob`` independently.  Subclasses with cross-component
-        dependencies should override this method.
-
-        Parameters
-        ----------
-        value : pytree
-            A pytree with the same structure as the components, where
-            each leaf is an array.
-        """
-        return jax.tree.map(
-            lambda dist, val: dist._log_prob(jnp.asarray(val)),
-            self._components,
-            value,
-        )
-
     # -- log_prob (abstract) -----------------------------------------------
 
     def _log_prob(self, value) -> Array:

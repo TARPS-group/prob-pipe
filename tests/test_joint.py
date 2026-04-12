@@ -9,7 +9,6 @@ from probpipe import (
     MultivariateNormal,
     Gamma,
     ProductDistribution,
-    DistributionView,
     JointDistribution,
     EmpiricalDistribution,
     ArrayDistribution,
@@ -538,7 +537,7 @@ class TestDistributionViewFromDistribution:
 
     def test_from_distribution_raises(self, joint_xy):
         with pytest.raises(TypeError):
-            from_distribution(Normal(loc=0.0, scale=1.0), DistributionView)
+            from_distribution(Normal(loc=0.0, scale=1.0), _ValuesDistributionView)
 
 
 class TestEnumerateWithDistributionViews:

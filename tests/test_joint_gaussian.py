@@ -8,7 +8,6 @@ import pytest
 from probpipe import (
     JointGaussian,
     MultivariateNormal,
-    DistributionView,
     EmpiricalDistribution,
     JointDistribution,
     Values,
