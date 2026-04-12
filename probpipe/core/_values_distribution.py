@@ -194,6 +194,10 @@ class ValuesDistribution(Distribution[Values]):
             result[arg_name] = self[field_name]
         return result
 
+    def bind(self, **mapping: str) -> dict[str, _ValuesDistributionView]:
+        """Deprecated — use :meth:`select` instead."""
+        return self.select(**mapping)
+
     # -- Flatten / unflatten ------------------------------------------------
 
     def flatten_value(self, value: Values) -> Array:

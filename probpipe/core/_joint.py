@@ -26,6 +26,7 @@ from ._array_distributions import (
 from .constraints import Constraint, real
 from .provenance import Provenance
 from .values import Values
+from ._values_distribution import ValuesDistribution
 from .protocols import (
     SupportsConditioning,
     SupportsLogProb,
@@ -771,30 +772,15 @@ class JointDistribution(PyTreeArrayDistribution, SupportsNamedComponents):
 # ProductDistribution — independent components
 # ---------------------------------------------------------------------------
 
-class ProductDistribution(JointDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning):
+class ProductDistribution(
+    ValuesDistribution,
+    SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning,
+):
     """Joint distribution with **independent** leaf components.
 
-    All leaf components are sampled independently.  The joint
-    ``log_prob`` is the sum of per-leaf log-probs (no coupling terms).
-
-    **Sample type:** A pytree with the same structure as the components,
-    where each ``ArrayDistribution`` leaf is replaced by a sample array.
-    For flat dicts this is ``dict[str, Array]``; for nested dicts it is
-    a nested dict of arrays.
-
-    **Independence assumption:** This class assumes statistical
-    independence across **all** component distributions.  Organizing
-    components into nested dicts is purely structural — it does not
-    introduce any dependence between components.
-
-    For sequential/autoregressive dependence, use
-    :class:`SequentialJointDistribution`.  For arbitrary dependence
-    with a known joint density, subclass :class:`JointDistribution`
-    directly.
-
-    **Flat-vector interop:** Use ``as_flat_distribution()`` or
-    ``flatten_value()`` to obtain flat representations compatible
-    with algorithms expecting ``ArrayDistribution``.
+    Inherits from :class:`ValuesDistribution`.  All leaf components are
+    sampled independently; the joint ``log_prob`` is the sum of per-leaf
+    log-probs.  ``_sample()`` returns :class:`Values`.
 
     Parameters
     ----------
@@ -804,71 +790,51 @@ class ProductDistribution(JointDistribution, SupportsSampling, SupportsLogProb, 
         Named independent component distributions.  Values may be
         ``ArrayDistribution`` instances (leaves) or nested dicts
         whose leaves are ``ArrayDistribution`` instances.
-
-    Examples
-    --------
-    Flat dict (most common)::
-
-        >>> joint = ProductDistribution(
-        ...     x=Normal(loc=0.0, scale=1.0),
-        ...     y=Normal(loc=3.0, scale=2.0),
-        ... )
-        >>> s = joint._sample(jax.random.PRNGKey(0))
-        >>> s.keys()
-        dict_keys(['x', 'y'])
-
-    Nested dict (grouped parameters)::
-
-        >>> joint = ProductDistribution(
-        ...     physics={"force": Normal(0, 1), "mass": Gamma(2, 1)},
-        ...     observation=Normal(0, 0.1),
-        ... )
-        >>> s = joint._sample(jax.random.PRNGKey(0))
-        >>> s["physics"]["force"].shape  # scalar leaf
-        ()
     """
 
     _sampling_cost = "low"
     _preferred_orchestration = None
 
-    def _sample_one(self, key: PRNGKey):
-        leaves = jax.tree.leaves(self._components)
-        keys = jax.random.split(key, len(leaves))
-        sampled_leaves = [
-            dist._sample(subkey) for subkey, dist in zip(keys, leaves)
-        ]
-        return jax.tree.unflatten(self.treedef, sampled_leaves)
+    def __init__(self, *, name: str | None = None, **components):
+        if not components:
+            raise ValueError("ProductDistribution requires at least one component.")
+        leaves = jax.tree.leaves(components)
+        if not leaves:
+            raise ValueError("ProductDistribution requires at least one component.")
+        for leaf in leaves:
+            if not isinstance(leaf, ArrayDistribution):
+                raise TypeError(
+                    f"All leaf components must be ArrayDistribution, "
+                    f"got {type(leaf).__name__}"
+                )
+        self._components = dict(components)
+        self._name = name
+        self._values_template = _build_values_template(self._components)
 
-    def _sample(
-        self,
-        key: PRNGKey,
-        sample_shape: tuple[int, ...] = (),
-    ):
-        """Draw independent samples from each leaf component.
+    # -- Sampling (returns Values) ------------------------------------------
 
-        Parameters
-        ----------
-        key : PRNGKey
-            JAX PRNG key.
-        sample_shape : tuple[int, ...], optional
-            Leading dimensions for the samples.
+    def _sample_one(self, key: PRNGKey) -> Values:
+        return self._sample(key)
 
-        Returns
-        -------
-        pytree
-            A pytree with the same structure as the components.
-            Each leaf is an array of shape
-            ``(*sample_shape, *batch_shape, *leaf_event_shape)``.
-        """
-        leaves = jax.tree.leaves(self._components)
-        keys = jax.random.split(key, len(leaves))
-        sampled_leaves = [
-            dist._sample(subkey, sample_shape) for subkey, dist in zip(keys, leaves)
-        ]
-        return jax.tree.unflatten(self.treedef, sampled_leaves)
+    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Values:
+        """Draw independent samples from each component, returning Values."""
+        sorted_names = sorted(self._components.keys())
+        keys = jax.random.split(key, len(sorted_names))
+        fields: dict[str, jnp.ndarray | Values] = {}
+        for subkey, name in zip(keys, sorted_names):
+            comp = self._components[name]
+            if isinstance(comp, dict):
+                fields[name] = _sample_nested(comp, subkey, sample_shape)
+            else:
+                fields[name] = comp._sample(subkey, sample_shape)
+        return Values(fields)
+
+    # -- Log-prob -----------------------------------------------------------
 
     def _log_prob(self, value) -> Array:
         """Sum of independent leaf log-probs."""
+        if isinstance(value, Values):
+            value = value.to_dict()
         lp_tree = jax.tree.map(
             lambda dist, val: dist._log_prob(jnp.asarray(val)),
             self._components,
@@ -880,18 +846,28 @@ class ProductDistribution(JointDistribution, SupportsSampling, SupportsLogProb, 
             total = total + lp
         return total
 
-    def _mean(self):
-        """Per-leaf means (exact for independent components)."""
-        return jax.tree.map(lambda d: d._mean(), self._components)
+    # -- Moments (return Values) --------------------------------------------
 
-    def _variance(self):
-        """Per-leaf variances (exact for independent components)."""
-        return jax.tree.map(lambda d: d._variance(), self._components)
+    def _mean(self) -> Values:
+        return _map_components(self._components, lambda d: d._mean())
+
+    def _variance(self) -> Values:
+        return _map_components(self._components, lambda d: d._variance())
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
         return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
 
-    # -- Conditioning (full nested support) --------------------------------
+    # -- Component access (for backward compat) ----------------------------
+
+    @property
+    def components(self):
+        """Read-only view of the component distributions."""
+        from types import MappingProxyType
+        if all(isinstance(v, ArrayDistribution) for v in self._components.values()):
+            return MappingProxyType(self._components)
+        return self._components
+
+    # -- Conditioning -------------------------------------------------------
 
     def _condition_on(self, observed=None, /, **kwargs):
         observed_leaves = _parse_condition_args(self, observed, kwargs)
@@ -900,30 +876,51 @@ class ProductDistribution(JointDistribution, SupportsSampling, SupportsLogProb, 
     def _condition_on_impl(
         self, observed_leaves: dict[KeyPath, ArrayLike],
     ) -> ProductDistribution:
-        """Remove conditioned component distributions and return a new
-        ProductDistribution.
-
-        Since all component distributions are independent, conditioning
-        simply removes the specified components from the pytree.  If
-        removing components causes an intermediate dict to become empty,
-        that dict is pruned from the tree.
-
-        Parameters
-        ----------
-        observed_leaves : dict[KeyPath, ArrayLike]
-            Validated mapping from leaf key paths to observed values.
-        """
         new_components = _prune_leaves(self._components, set(observed_leaves.keys()))
         result = ProductDistribution(**new_components, name=self._name)
-        # Record provenance
-        conditioned_names = [
-            " > ".join(path) for path in observed_leaves
-        ]
+        conditioned_names = [" > ".join(path) for path in observed_leaves]
         result.with_source(Provenance(
             "condition_on", parents=(self,),
             metadata={"conditioned": conditioned_names},
         ))
         return result
+
+    def __repr__(self) -> str:
+        comp_str = ", ".join(
+            f"{k}={type(v).__name__}" if isinstance(v, ArrayDistribution)
+            else f"{k}={{...}}"
+            for k, v in self._components.items()
+        )
+        name_str = f", name='{self._name}'" if self._name else ""
+        return f"ProductDistribution({comp_str}{name_str})"
+
+
+# -- Helpers for nested component pytrees ----------------------------------
+
+
+def _sample_nested(components: dict, key, sample_shape) -> Values:
+    """Recursively sample from nested component dicts, returning nested Values."""
+    sorted_names = sorted(components.keys())
+    keys = jax.random.split(key, len(sorted_names))
+    fields: dict = {}
+    for subkey, name in zip(keys, sorted_names):
+        comp = components[name]
+        if isinstance(comp, dict):
+            fields[name] = _sample_nested(comp, subkey, sample_shape)
+        else:
+            fields[name] = comp._sample(subkey, sample_shape)
+    return Values(fields)
+
+
+def _map_components(components: dict, fn) -> Values:
+    """Apply fn to each leaf distribution, returning nested Values."""
+    fields: dict = {}
+    for name, comp in components.items():
+        if isinstance(comp, dict):
+            fields[name] = _map_components(comp, fn)
+        else:
+            fields[name] = fn(comp)
+    return Values(fields)
 
 
 def _prune_leaves(tree: dict, remove_paths: set[KeyPath], prefix: tuple = ()) -> dict:
