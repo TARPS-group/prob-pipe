@@ -820,25 +820,38 @@ class TestEndToEndValuesPipeline:
         assert draws.params.shape == (500, 2)
 
     def test_draws_values_correct(self, posterior):
-        """Posterior mean recovers true parameters (analytical conjugate)."""
-        # Gaussian prior N(0, 10*I) + Gaussian likelihood with data [1, 2]
-        # Posterior mean ≈ n*sigma_prior^2 / (sigma_lik^2 + n*sigma_prior^2) * data_mean
-        # With n=1, sigma_lik=1, sigma_prior^2=10: post_mean ≈ 10/11 * [1,2] ≈ [0.91, 1.82]
+        """Posterior mean and std match analytical conjugate values."""
+        # Prior N(0, 10I) + likelihood N(data, I), data=[1,2], n=1
+        # Posterior mean = sigma_prior^2 / (sigma_lik^2 + sigma_prior^2) * data
+        #                = 10/11 * [1, 2] ≈ [0.909, 1.818]
+        # Posterior var  = sigma_prior^2 * sigma_lik^2 / (sigma_lik^2 + sigma_prior^2)
+        #                = 10/11 ≈ 0.909
         draws = posterior.draws()
         post_mean = np.asarray(draws.params.mean(axis=0))
-        np.testing.assert_allclose(post_mean, [1.0, 2.0], atol=0.25)
+        post_std = np.asarray(draws.params.std(axis=0))
+        analytical_mean = np.array([10 / 11, 20 / 11])
+        analytical_std = np.sqrt(10 / 11)
+        np.testing.assert_allclose(post_mean, analytical_mean, atol=0.15)
+        np.testing.assert_allclose(post_std, analytical_std, atol=0.15)
 
     def test_view_values_match_draws(self, posterior):
-        """View _mean() matches draws().params.mean()."""
+        """View _mean() matches draws and analytical posterior mean."""
         view = posterior["params"]
         assert isinstance(view, _ValuesDistributionView)
         assert view.event_shape == (2,)
 
+        # Delegation check: view._mean() == draws().params.mean()
         draws = posterior.draws()
         np.testing.assert_allclose(
             np.asarray(view._mean()),
             np.asarray(draws.params.mean(axis=0)),
             atol=1e-5,
+        )
+        # Analytical check: view._mean() near analytical posterior mean
+        np.testing.assert_allclose(
+            np.asarray(view._mean()),
+            np.array([10 / 11, 20 / 11]),
+            atol=0.15,
         )
 
     def test_select_returns_views(self, posterior):
@@ -857,19 +870,70 @@ class TestEndToEndValuesPipeline:
 
         result = predict(**posterior.select("params"), x=0.5)
         assert result.n == 100
-        # predict([~1, ~2], 0.5) ≈ 1 + 2*0.5 = 2.0
-        np.testing.assert_allclose(float(mean(result)), 2.0, atol=0.4)
+        # predict([~0.91, ~1.82], 0.5) ≈ 0.91 + 1.82*0.5 ≈ 1.82
+        analytical = 10 / 11 + 0.5 * 20 / 11
+        np.testing.assert_allclose(float(mean(result)), analytical, atol=0.2)
 
     def test_workflow_broadcasting_preserves_correlation(self, posterior):
-        """Two views from same posterior sample jointly (not independently)."""
+        """Two views from same posterior sample jointly (not independently).
+
+        Both mean AND variance of a-b must be ~0.  An independent-sampling
+        bug would produce mean≈0 (by symmetry) but var≈2*var(params),
+        so checking var is the real correlation test.
+        """
         from probpipe.core.node import workflow_function
 
         @workflow_function(n_broadcast_samples=50, vectorize="loop", seed=0)
         def identity_pair(a, b):
             return a - b
 
-        # Both args are the same view → difference should be exactly 0
         sel = posterior.select(a="params", b="params")
         result = identity_pair(**sel)
-        # Same parent, same key_path → samples are identical → diff is 0
+        # Mean check: necessary but insufficient
         np.testing.assert_allclose(np.asarray(mean(result)), 0.0, atol=1e-5)
+        # Variance check: this is what actually validates correlation
+        np.testing.assert_allclose(np.asarray(variance(result)), 0.0, atol=1e-5)
+
+    def test_multi_field_posterior(self):
+        """Posterior with multiple named scalar fields."""
+        template = Values(a=jnp.array(0.0), b=jnp.array(0.0), c=jnp.array(0.0))
+        # 3 scalar fields → flat draw vectors of size 3
+        chain = jax.random.normal(jax.random.PRNGKey(0), (200, 3))
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
+        post = make_posterior(
+            [chain], parents=(prior,), algorithm="test",
+            values_template=template,
+        )
+        draws = post.draws()
+        assert isinstance(draws, Values)
+        assert draws.fields() == ("a", "b", "c")
+        assert draws.a.shape == (200,)
+
+        # Per-field views
+        view_a = post["a"]
+        view_b = post["b"]
+        assert isinstance(view_a, _ValuesDistributionView)
+        np.testing.assert_allclose(
+            float(view_a._mean()), float(draws.a.mean()), atol=1e-5
+        )
+
+        # Select multiple fields
+        sel = post.select("a", "c")
+        assert set(sel.keys()) == {"a", "c"}
+
+    def test_workflow_mixed_posterior_and_independent(self, posterior):
+        """Workflow with both posterior views and an independent distribution."""
+        from probpipe.core.node import workflow_function
+
+        @workflow_function(n_broadcast_samples=50, vectorize="loop", seed=0)
+        def noisy_predict(params, noise):
+            return params[0] + params[1] * 0.5 + noise
+
+        result = noisy_predict(
+            **posterior.select("params"),
+            noise=Normal(0, 0.01),
+        )
+        assert result.n == 50
+        # Mean should be close to predict without noise
+        analytical = 10 / 11 + 0.5 * 20 / 11
+        np.testing.assert_allclose(float(mean(result)), analytical, atol=0.3)
