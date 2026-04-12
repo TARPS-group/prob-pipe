@@ -13,8 +13,10 @@ from probpipe import (
     DistributionView,
     EmpiricalDistribution,
     JointDistribution,
+    Values,
+    ValuesDistribution,
 )
-from probpipe.core.distribution import PyTreeArrayDistribution
+from probpipe.core._values_distribution import _ValuesDistributionView
 from probpipe.core.node import WorkflowFunction
 from probpipe import condition_on, log_prob, sample, unnormalized_log_prob
 
@@ -31,8 +33,7 @@ class TestConstruction:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         assert isinstance(joint, SequentialJointDistribution)
-        assert isinstance(joint, JointDistribution)
-        assert isinstance(joint, PyTreeArrayDistribution)
+        assert isinstance(joint, ValuesDistribution)
 
     def test_component_names(self):
         joint = SequentialJointDistribution(
@@ -94,15 +95,15 @@ class TestConstruction:
 
 class TestSampling:
 
-    def test_sample_returns_dict(self):
+    def test_sample_returns_values(self):
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0),
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         key = jax.random.PRNGKey(0)
         s = sample(joint, key=key)
-        assert isinstance(s, dict)
-        assert set(s.keys()) == {"z", "x"}
+        assert isinstance(s, Values)
+        assert set(s.fields()) == {"z", "x"}
         assert s["z"].shape == ()
         assert s["x"].shape == ()
 
@@ -113,7 +114,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(1)
         s = sample(joint, key=key, sample_shape=(10,))
-        assert isinstance(s, dict)
+        assert isinstance(s, Values)
         assert s["z"].shape == (10,)
         assert s["x"].shape == (10,)
 
@@ -135,7 +136,7 @@ class TestSampling:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         s = sample(joint, sample_shape=(5,))
-        assert isinstance(s, dict)
+        assert isinstance(s, Values)
         assert s["z"].shape == (5,)
         assert s["x"].shape == (5,)
 
@@ -174,7 +175,7 @@ class TestLogProb:
         )
         z_val = jnp.array(1.0)
         x_val = jnp.array(1.5)
-        value = {"z": z_val, "x": x_val}
+        value = Values(z=z_val, x=x_val)
         lp = log_prob(joint, value)
 
         # Independent baseline: scipy.stats.norm.logpdf
@@ -191,7 +192,7 @@ class TestLogProb:
             y=lambda z, x: Normal(loc=z + x, scale=0.1),
         )
         z_val, x_val, y_val = 0.5, 0.8, 1.2
-        value = {"z": jnp.array(z_val), "x": jnp.array(x_val), "y": jnp.array(y_val)}
+        value = Values(z=jnp.array(z_val), x=jnp.array(x_val), y=jnp.array(y_val))
         lp = log_prob(joint, value)
 
         # Independent baseline: scipy.stats.norm.logpdf
@@ -215,8 +216,8 @@ class TestDistributionView:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         view = joint["z"]
-        assert isinstance(view, DistributionView)
-        assert view._component_name == "z"
+        assert isinstance(view, _ValuesDistributionView)
+        assert view._key == "z"
 
     def test_view_event_shape(self):
         joint = SequentialJointDistribution(
@@ -262,7 +263,7 @@ class TestConditionOn:
         cond = condition_on(joint, z=jnp.array(3.0))
         key = jax.random.PRNGKey(30)
         s = sample(cond, key=key, sample_shape=(50,))
-        # z should not be in s (it's conditioned)
+        # z should not be in s (it's conditioned); Values supports `in`
         assert "z" not in s
         # x should be centered around 3.0 (since x = N(z=3, 0.5))
         assert abs(float(jnp.mean(s["x"])) - 3.0) < 0.3
@@ -343,7 +344,7 @@ class TestConditionOn:
         )
         # Condition on root z — x's conditional p(x|z=2) is normalized
         cond = condition_on(joint, z=jnp.array(2.0))
-        value = {"x": jnp.array(1.5)}
+        value = Values(x=jnp.array(1.5))
         lp = log_prob(cond, value)
         assert jnp.isfinite(lp)
         # Should equal log p(x=1.5 | z=2.0) = log N(1.5; 2.0, 0.5)
@@ -357,7 +358,7 @@ class TestConditionOn:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         cond = condition_on(joint, x=jnp.array(1.0))
-        value = {"z": jnp.array(0.0)}
+        value = Values(z=jnp.array(0.0))
         with pytest.raises(NotImplementedError, match="unnormalized_log_prob"):
             log_prob(cond, value)
 
@@ -368,8 +369,8 @@ class TestConditionOn:
             x=lambda z: Normal(loc=z, scale=0.5),
         )
         cond = condition_on(joint, x=jnp.array(1.0))
-        # Only z is unconditioned; input is dict with just z
-        value = {"z": jnp.array(0.0)}
+        # Only z is unconditioned; input is Values with just z
+        value = Values(z=jnp.array(0.0))
         lp = unnormalized_log_prob(cond, value)
         assert jnp.isfinite(lp)
         # Should be log p(z=0) + log p(x=1|z=0) (unnormalized conditional)
@@ -395,8 +396,8 @@ class TestConditionOn:
         cond2 = condition_on(cond1, z=jnp.array(0.0))
         assert cond2.component_names == ("y",)
         s = sample(cond2, sample_shape=(5,))
-        assert isinstance(s, dict)
-        assert set(s.keys()) == {"y"}
+        assert isinstance(s, Values)
+        assert set(s.fields()) == {"y"}
         assert s["y"].shape == (5,)
 
     def test_raises_on_conditioning_all(self):

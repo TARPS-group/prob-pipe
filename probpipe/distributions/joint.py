@@ -106,6 +106,8 @@ from ..core._joint import (
     _collect_observed_leaves,
     _parse_condition_args,
 )
+from ..core._values_distribution import ValuesDistribution
+from ..core.values import Values
 from ..core.provenance import Provenance
 from ..core.constraints import Constraint, real
 from ..core.protocols import (
@@ -126,7 +128,40 @@ __all__ = [
     "DistributionView",
 ]
 
-class SequentialJointDistribution(JointDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning):
+
+def _flatten_values_batched(value: Values, event_shapes: dict[str, tuple[int, ...]]) -> Array:
+    """Flatten a (possibly batched) Values into ``(*leading, event_size)``."""
+    parts = []
+    for name in sorted(event_shapes.keys()):
+        arr = jnp.asarray(value[name])
+        es = event_shapes[name]
+        n_event = prod(es) if es else 1
+        n_event_dims = len(es)
+        if n_event_dims:
+            leading = arr.shape[:arr.ndim - n_event_dims]
+        else:
+            leading = arr.shape
+        parts.append(arr.reshape(*leading, n_event))
+    return jnp.concatenate(parts, axis=-1)
+
+
+def _unflatten_values_batched(flat: Array, event_shapes: dict[str, tuple[int, ...]]) -> Values:
+    """Unflatten ``(*leading, event_size)`` back into a Values."""
+    fields: dict[str, Array] = {}
+    offset = 0
+    for name in sorted(event_shapes.keys()):
+        es = event_shapes[name]
+        n_event = prod(es) if es else 1
+        chunk = flat[..., offset:offset + n_event]
+        if es:
+            leading = flat.shape[:-1]
+            fields[name] = chunk.reshape(*leading, *es)
+        else:
+            fields[name] = chunk.squeeze(axis=-1)
+        offset += n_event
+    return Values(fields)
+
+class SequentialJointDistribution(ValuesDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning):
     """
     Joint distribution with autoregressive (sequential) dependence.
 
@@ -249,6 +284,30 @@ class SequentialJointDistribution(JointDistribution, SupportsSampling, SupportsL
         if self._sampleable_error is not None:
             raise NotImplementedError(self._sampleable_error)
 
+    @property
+    def component_names(self) -> tuple[str, ...]:
+        """Component names in topological (insertion) order."""
+        return tuple(self._components.keys())
+
+    @property
+    def event_shapes(self) -> dict[str, tuple[int, ...]]:
+        """Per-component event shapes from component distributions."""
+        return {k: v.event_shape for k, v in self._components.items()}
+
+    def flatten_value(self, value: Values) -> Array:
+        """Flatten a (possibly batched) Values to ``(*leading, event_size)``."""
+        return _flatten_values_batched(value, self.event_shapes)
+
+    def unflatten_value(self, flat: Array) -> Values:
+        """Reconstruct a Values from a flat ``(*leading, event_size)`` array."""
+        return _unflatten_values_batched(flat, self.event_shapes)
+
+    @property
+    def components(self):
+        """Read-only view of the component distributions."""
+        from types import MappingProxyType
+        return MappingProxyType(self._components)
+
     def _sample_sequential(
         self,
         key: PRNGKey,
@@ -282,24 +341,24 @@ class SequentialJointDistribution(JointDistribution, SupportsSampling, SupportsL
 
         return sampled
 
-    def _sample_one(self, key: PRNGKey) -> dict[str, Array]:
+    def _sample_one(self, key: PRNGKey) -> Values:
         full = self._sample_sequential(key, ())
-        return {k: v for k, v in full.items() if k not in self._conditioned_names}
+        return Values({k: v for k, v in full.items() if k not in self._conditioned_names})
 
     def _sample(
         self,
         key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
-    ) -> dict[str, Array]:
+    ) -> Values:
         full = self._sample_sequential(key, sample_shape)
-        return {k: v for k, v in full.items() if k not in self._conditioned_names}
+        return Values({k: v for k, v in full.items() if k not in self._conditioned_names})
 
-    def _eval_log_prob(self, value: dict[str, ArrayLike], *, components: str) -> Array:
+    def _eval_log_prob(self, value, *, components: str) -> Array:
         """Evaluate log-density over selected components.
 
         Parameters
         ----------
-        value : dict[str, ArrayLike]
+        value : dict[str, ArrayLike] or Values
             Dict of unconditioned component values.
         components : ``"all"`` or ``"unconditioned"``
             Which components to include in the sum.  ``"all"`` sums over
@@ -309,6 +368,8 @@ class SequentialJointDistribution(JointDistribution, SupportsSampling, SupportsL
             (with conditioned values plugged in as parents), giving the
             normalized conditional when the Markov structure permits it.
         """
+        if isinstance(value, Values):
+            value = value.to_dict()
         structured = {k: jnp.asarray(v) for k, v in value.items()}
 
         # Add conditioned values so callables can receive them
@@ -367,7 +428,7 @@ class SequentialJointDistribution(JointDistribution, SupportsSampling, SupportsL
         """
         return self._eval_log_prob(value, components="all")
 
-    def _mean(self) -> dict[str, Array]:
+    def _mean(self) -> Values:
         """Per-component means (approximate — uses prototype components).
 
         For sequential joints, the true marginal mean is not simply the
@@ -375,11 +436,11 @@ class SequentialJointDistribution(JointDistribution, SupportsSampling, SupportsL
         samples.  This returns the prototype (prior-evaluated) means
         as an approximation.
         """
-        return {k: v._mean() for k, v in self._proto_components.items()}
+        return Values({k: v._mean() for k, v in self._proto_components.items()})
 
-    def _variance(self) -> dict[str, Array]:
+    def _variance(self) -> Values:
         """Per-component variances (approximate — uses prototype components)."""
-        return {k: v._variance() for k, v in self._proto_components.items()}
+        return Values({k: v._variance() for k, v in self._proto_components.items()})
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
         return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
@@ -446,6 +507,7 @@ class SequentialJointDistribution(JointDistribution, SupportsSampling, SupportsL
             if k not in result._conditioned_names
         }
         result._components = unconditioned
+        result._values_template = _build_values_template(unconditioned)
 
         result.with_source(Provenance(
             "condition_on", parents=(self,),
@@ -469,7 +531,7 @@ class SequentialJointDistribution(JointDistribution, SupportsSampling, SupportsL
 # JointEmpirical — weighted joint samples
 # ---------------------------------------------------------------------------
 
-class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, SupportsVariance, SupportsConditioning):
+class JointEmpirical(ValuesDistribution, SupportsSampling, SupportsMean, SupportsVariance, SupportsConditioning):
     """
     Joint distribution from weighted joint samples.
 
@@ -559,19 +621,43 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
         """Normalised weights, shape ``(n,)``."""
         return self._w.normalized
 
-    def _sample_one(self, key: PRNGKey) -> dict[str, Array]:
+    @property
+    def component_names(self) -> tuple[str, ...]:
+        """Component names in insertion order."""
+        return tuple(self._components.keys())
+
+    @property
+    def event_shapes(self) -> dict[str, tuple[int, ...]]:
+        """Per-component event shapes from component distributions."""
+        return {k: v.event_shape for k, v in self._components.items()}
+
+    def flatten_value(self, value: Values) -> Array:
+        """Flatten a (possibly batched) Values to ``(*leading, event_size)``."""
+        return _flatten_values_batched(value, self.event_shapes)
+
+    def unflatten_value(self, flat: Array) -> Values:
+        """Reconstruct a Values from a flat ``(*leading, event_size)`` array."""
+        return _unflatten_values_batched(flat, self.event_shapes)
+
+    @property
+    def components(self):
+        """Read-only view of the component distributions."""
+        from types import MappingProxyType
+        return MappingProxyType(self._components)
+
+    def _sample_one(self, key: PRNGKey) -> Values:
         return self._sample_joint_rows(key, ())
 
     def _sample(
         self,
         key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
-    ) -> dict[str, Array]:
+    ) -> Values:
         return self._sample_joint_rows(key, sample_shape)
 
     def _sample_joint_rows(
         self, key: PRNGKey, sample_shape: tuple[int, ...]
-    ) -> dict[str, Array]:
+    ) -> Values:
         """Resample rows jointly, preserving correlation."""
         n_draws = prod(sample_shape)
         indices = self._w.choice(key, shape=(n_draws,))
@@ -582,13 +668,15 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
                 result[cname] = drawn.reshape(sample_shape + arr.shape[1:])
             else:
                 result[cname] = drawn.squeeze(axis=0)
-        return result
+        return Values(result)
 
-    def _log_prob(self, value: dict[str, ArrayLike]) -> Array:
+    def _log_prob(self, value) -> Array:
         """Gaussian-approximation log-density (same as EmpiricalDistribution).
 
         Evaluates a diagonal Gaussian approximation in the flat space.
         """
+        if not isinstance(value, Values):
+            value = Values(value)
         flat = self.flatten_value(value)
         mu = self._flat_mean()
         var = self._flat_variance()
@@ -612,19 +700,19 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
             parts.append(self._w.variance(arr_flat))
         return jnp.concatenate(parts)
 
-    def _mean(self) -> dict[str, Array]:
+    def _mean(self) -> Values:
         """Per-component weighted means."""
-        return {
+        return Values({
             cname: self._w.mean(arr)
             for cname, arr in self._joint_samples.items()
-        }
+        })
 
-    def _variance(self) -> dict[str, Array]:
+    def _variance(self) -> Values:
         """Per-component weighted variances."""
-        return {
+        return Values({
             cname: self._w.variance(arr)
             for cname, arr in self._joint_samples.items()
-        }
+        })
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
         return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
@@ -685,7 +773,7 @@ class JointEmpirical(JointDistribution, SupportsSampling, SupportsMean, Supports
 # JointGaussian — analytical joint Gaussian with cross-covariance
 # ---------------------------------------------------------------------------
 
-class JointGaussian(JointDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsCovariance, SupportsConditioning):
+class JointGaussian(ValuesDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsCovariance, SupportsConditioning):
     """
     Joint Gaussian distribution with named components and cross-covariance.
 
@@ -777,7 +865,31 @@ class JointGaussian(JointDistribution, SupportsSampling, SupportsLogProb, Suppor
         """Full covariance matrix."""
         return self._cov_mat
 
-    def _sample_one(self, key: PRNGKey) -> dict[str, Array]:
+    @property
+    def component_names(self) -> tuple[str, ...]:
+        """Component names in insertion order."""
+        return tuple(self._component_shapes.keys())
+
+    @property
+    def event_shapes(self) -> dict[str, tuple[int, ...]]:
+        """Per-component event shapes."""
+        return {k: (v,) for k, v in self._component_shapes.items()}
+
+    def flatten_value(self, value: Values) -> Array:
+        """Flatten a (possibly batched) Values to ``(*leading, event_size)``."""
+        return _flatten_values_batched(value, self.event_shapes)
+
+    def unflatten_value(self, flat: Array) -> Values:
+        """Reconstruct a Values from a flat ``(*leading, event_size)`` array."""
+        return _unflatten_values_batched(flat, self.event_shapes)
+
+    @property
+    def components(self):
+        """Read-only view of the component distributions."""
+        from types import MappingProxyType
+        return MappingProxyType(self._components)
+
+    def _sample_one(self, key: PRNGKey) -> Values:
         from .multivariate import MultivariateNormal as MVN
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
         flat = full_mvn._sample(key)
@@ -787,40 +899,42 @@ class JointGaussian(JointDistribution, SupportsSampling, SupportsLogProb, Suppor
         self,
         key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
-    ) -> dict[str, Array]:
+    ) -> Values:
         from .multivariate import MultivariateNormal as MVN
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
         flat = full_mvn._sample(key, sample_shape)
         return self._unflatten_flat_vec(flat)
 
-    def _unflatten_flat_vec(self, flat: Array) -> dict[str, Array]:
+    def _unflatten_flat_vec(self, flat: Array) -> Values:
         """Split a flat Gaussian sample vector into per-component arrays."""
         result = {}
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = flat[..., sl]
-        return result
+        return Values(result)
 
-    def _log_prob(self, value: dict[str, ArrayLike]) -> Array:
+    def _log_prob(self, value) -> Array:
+        if not isinstance(value, Values):
+            value = Values(value)
         from .multivariate import MultivariateNormal as MVN
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
         flat = self.flatten_value(value)
         return full_mvn._log_prob(flat)
 
-    def _mean(self) -> dict[str, Array]:
+    def _mean(self) -> Values:
         result = {}
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = self._mean_vec[sl]
-        return result
+        return Values(result)
 
-    def _variance(self) -> dict[str, Array]:
+    def _variance(self) -> Values:
         diag = jnp.diag(self._cov_mat)
         result = {}
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = diag[sl]
-        return result
+        return Values(result)
 
     def _cov(self) -> Array:
         """Full covariance matrix."""
