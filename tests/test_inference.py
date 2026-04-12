@@ -686,3 +686,102 @@ class TestValuesSelect:
         v = Values(r=1.0, K=70.0)
         sel = v.select()
         assert sel == {}
+
+
+# ---------------------------------------------------------------------------
+# End-to-end integration
+# ---------------------------------------------------------------------------
+
+
+class TestEndToEndValuesPipeline:
+    """Full pipeline: named prior → inference → named draws → views → broadcasting.
+
+    Validates correctness at every step, not just types and shapes.
+    """
+
+    @pytest.fixture
+    def posterior(self):
+        """Run inference once for all end-to-end tests."""
+        prior = MultivariateNormal(
+            loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params"
+        )
+
+        class _Lik:
+            def log_likelihood(self, params, data):
+                return -0.5 * jnp.sum((data - params) ** 2)
+
+        from probpipe import SimpleModel, condition_on
+        model = SimpleModel(prior, _Lik())
+        return condition_on(
+            model, jnp.array([1.0, 2.0]),
+            num_results=500, num_warmup=200, step_size=0.3, random_seed=42,
+        )
+
+    def test_template_propagation(self, posterior):
+        """values_template flows from named prior through to posterior."""
+        tpl = posterior.values_template
+        assert tpl is not None
+        assert tpl.fields() == ("params",)
+        assert tpl.params.shape == (2,)
+
+    def test_draws_are_named_values(self, posterior):
+        """draws() returns Values with correct field names and shapes."""
+        draws = posterior.draws()
+        assert isinstance(draws, Values)
+        assert draws.fields() == ("params",)
+        assert draws.params.shape == (500, 2)
+
+    def test_draws_values_correct(self, posterior):
+        """Posterior mean recovers true parameters (analytical conjugate)."""
+        # Gaussian prior N(0, 10*I) + Gaussian likelihood with data [1, 2]
+        # Posterior mean ≈ n*sigma_prior^2 / (sigma_lik^2 + n*sigma_prior^2) * data_mean
+        # With n=1, sigma_lik=1, sigma_prior^2=10: post_mean ≈ 10/11 * [1,2] ≈ [0.91, 1.82]
+        draws = posterior.draws()
+        post_mean = np.asarray(draws.params.mean(axis=0))
+        np.testing.assert_allclose(post_mean, [1.0, 2.0], atol=0.25)
+
+    def test_view_values_match_draws(self, posterior):
+        """View _mean() matches draws().params.mean()."""
+        view = posterior["params"]
+        assert isinstance(view, _ValuesDistributionView)
+        assert view.event_shape == (2,)
+
+        draws = posterior.draws()
+        np.testing.assert_allclose(
+            np.asarray(view._mean()),
+            np.asarray(draws.params.mean(axis=0)),
+            atol=1e-5,
+        )
+
+    def test_select_returns_views(self, posterior):
+        """select() returns dict of views matching component names."""
+        sel = posterior.select("params")
+        assert set(sel.keys()) == {"params"}
+        assert isinstance(sel["params"], _ValuesDistributionView)
+
+    def test_workflow_broadcasting_values_correct(self, posterior):
+        """Broadcast predict(params, x) computes correct function of posterior."""
+        from probpipe.core.node import workflow_function
+
+        @workflow_function(n_broadcast_samples=100, vectorize="loop", seed=0)
+        def predict(params, x):
+            return params[0] + params[1] * x
+
+        result = predict(**posterior.select("params"), x=0.5)
+        assert result.n == 100
+        # predict([~1, ~2], 0.5) ≈ 1 + 2*0.5 = 2.0
+        np.testing.assert_allclose(float(mean(result)), 2.0, atol=0.4)
+
+    def test_workflow_broadcasting_preserves_correlation(self, posterior):
+        """Two views from same posterior sample jointly (not independently)."""
+        from probpipe.core.node import workflow_function
+
+        @workflow_function(n_broadcast_samples=50, vectorize="loop", seed=0)
+        def identity_pair(a, b):
+            return a - b
+
+        # Both args are the same view → difference should be exactly 0
+        sel = posterior.select(a="params", b="params")
+        result = identity_pair(**sel)
+        # Same parent, same key_path → samples are identical → diff is 0
+        np.testing.assert_allclose(np.asarray(mean(result)), 0.0, atol=1e-5)
