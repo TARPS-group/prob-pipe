@@ -23,6 +23,7 @@ from ..core.protocols import (
     SupportsSampling,
     SupportsVariance,
 )
+from ..core.values import Values
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 
@@ -51,6 +52,21 @@ class TFPDistribution(
     _tfp_dist: tfd.Distribution
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
+
+    # -- values_template auto-generation ------------------------------------
+
+    @property
+    def values_template(self):
+        """Auto-build values_template from name + event_shape when named."""
+        tpl = getattr(self, "_values_template", None)
+        if tpl is not None:
+            return tpl
+        name = getattr(self, "_name", None)
+        if name is not None:
+            tpl = Values(**{name: jnp.zeros(self.event_shape)})
+            object.__setattr__(self, "_values_template", tpl)
+            return tpl
+        return None
 
     # -- shape delegation ---------------------------------------------------
 
