@@ -207,3 +207,33 @@ class TestNameAndRepr:
     def test_dtype(self):
         td = TransformedDistribution(Normal(0.0, 1.0), tfb.Exp())
         assert td.dtype == jnp.float32
+
+
+class TestTransformedProtocolDuckTyping:
+    """TransformedDistribution dynamically inherits protocols from its base."""
+
+    def test_isinstance_log_prob_from_tfp_base(self):
+        """TFP base supports SupportsLogProb → transformed does too."""
+        from probpipe import SupportsLogProb
+        td = TransformedDistribution(Normal(0, 1), tfb.Exp())
+        assert isinstance(td, SupportsLogProb)
+
+    def test_isinstance_mean_from_tfp_base(self):
+        """TFP base supports SupportsMean → transformed does too."""
+        from probpipe import SupportsMean
+        td = TransformedDistribution(Normal(0, 1), tfb.Exp())
+        assert isinstance(td, SupportsMean)
+
+    def test_empirical_base_has_mean(self):
+        """ArrayEmpiricalDistribution supports SupportsMean → transformed does too."""
+        from probpipe import SupportsMean
+        emp = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
+        td = TransformedDistribution(emp, tfb.Exp())
+        assert isinstance(td, SupportsMean)
+
+    def test_empirical_base_no_log_prob(self):
+        """ArrayEmpiricalDistribution lacks SupportsLogProb → transformed lacks it."""
+        from probpipe import SupportsLogProb
+        emp = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
+        td = TransformedDistribution(emp, tfb.Exp())
+        assert not isinstance(td, SupportsLogProb)

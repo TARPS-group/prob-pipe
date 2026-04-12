@@ -157,7 +157,7 @@ def _unflatten_values_batched(flat: Array, event_shapes: dict[str, tuple[int, ..
         offset += n_event
     return Values(fields)
 
-class SequentialJointDistribution(ValuesDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning):
+class SequentialJointDistribution(ValuesDistribution, SupportsSampling, SupportsLogProb, SupportsConditioning):
     """
     Joint distribution with autoregressive (sequential) dependence.
 
@@ -527,7 +527,7 @@ class SequentialJointDistribution(ValuesDistribution, SupportsSampling, Supports
 # JointEmpirical — weighted joint samples
 # ---------------------------------------------------------------------------
 
-class JointEmpirical(ValuesDistribution, SupportsSampling, SupportsMean, SupportsVariance, SupportsConditioning):
+class JointEmpirical(ValuesDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning):
     """
     Joint distribution from weighted joint samples.
 

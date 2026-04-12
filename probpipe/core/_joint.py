@@ -21,7 +21,7 @@ from ._array_distributions import (
 )
 from .provenance import Provenance
 from .values import Values
-from ._values_distribution import ValuesDistribution
+from ._values_distribution import ValuesDistribution, _register_dynamic_subclass
 from .protocols import (
     SupportsConditioning,
     SupportsLogProb,
@@ -314,15 +314,71 @@ def _parse_condition_args(
 # ProductDistribution — independent components
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Dynamic protocol factory for ProductDistribution
+# ---------------------------------------------------------------------------
+
+_PRODUCT_CLASS_CACHE: dict[frozenset[str], type] = {}
+
+
+def _product_class_for_components(components: dict) -> type:
+    """Return a ProductDistribution subclass whose protocol bases match
+    what ALL leaf components support.
+
+    SupportsSampling and SupportsConditioning are always included.
+    SupportsLogProb, SupportsMean, SupportsVariance are included only
+    when every leaf component supports them.
+    """
+    leaves = jax.tree.leaves(components)
+
+    protocols: set[str] = set()
+    if all(isinstance(l, SupportsLogProb) for l in leaves):
+        protocols.add("log_prob")
+    if all(isinstance(l, SupportsMean) for l in leaves):
+        protocols.add("mean")
+    if all(isinstance(l, SupportsVariance) for l in leaves):
+        protocols.add("variance")
+
+    key = frozenset(protocols)
+    if key in _PRODUCT_CLASS_CACHE:
+        return _PRODUCT_CLASS_CACHE[key]
+
+    extra_bases: list[type] = []
+    if "log_prob" in protocols:
+        extra_bases.append(SupportsLogProb)
+    if "mean" in protocols:
+        extra_bases.append(SupportsMean)
+    if "variance" in protocols:
+        extra_bases.append(SupportsVariance)
+
+    if not extra_bases:
+        _PRODUCT_CLASS_CACHE[key] = ProductDistribution
+        return ProductDistribution
+
+    cls = type("ProductDistribution", (ProductDistribution, *extra_bases), {})
+    _register_dynamic_subclass(cls)
+    _PRODUCT_CLASS_CACHE[key] = cls
+    return cls
+
+
+# ---------------------------------------------------------------------------
+# ProductDistribution
+# ---------------------------------------------------------------------------
+
+
 class ProductDistribution(
     ValuesDistribution,
-    SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning,
+    SupportsSampling, SupportsConditioning,
 ):
     """Joint distribution with **independent** leaf components.
 
     Inherits from :class:`ValuesDistribution`.  All leaf components are
-    sampled independently; the joint ``log_prob`` is the sum of per-leaf
-    log-probs.  ``_sample()`` returns :class:`Values`.
+    sampled independently.  ``_sample()`` returns :class:`Values`.
+
+    **Dynamic protocol support:** ``SupportsLogProb``, ``SupportsMean``,
+    and ``SupportsVariance`` are included only when ALL leaf components
+    support them.  ``isinstance(product, SupportsLogProb)`` is ``True``
+    only when every component has ``_log_prob``.
 
     Parameters
     ----------
@@ -336,6 +392,12 @@ class ProductDistribution(
 
     _sampling_cost = "low"
     _preferred_orchestration = None
+
+    def __new__(cls, *, name: str | None = None, **components):
+        if not components:
+            return object.__new__(cls)
+        actual_cls = _product_class_for_components(components)
+        return object.__new__(actual_cls)
 
     def __init__(self, *, name: str | None = None, **components):
         if not components:

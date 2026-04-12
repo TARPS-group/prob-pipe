@@ -12,6 +12,7 @@ any distribution whose ``values_template`` is set.
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 
 from ._distribution_base import Distribution
@@ -305,3 +306,39 @@ class ValuesDistribution(Distribution[Values]):
             val = tpl[name]
             result[name] = val.shape if not isinstance(val, Values) else ()
         return result
+
+
+
+# ---------------------------------------------------------------------------
+# JAX PyTree registration helpers
+# ---------------------------------------------------------------------------
+
+
+def _register_dynamic_subclass(cls: type) -> type:
+    """Register a dynamically-created ValuesDistribution subclass as a JAX
+    pytree node, reusing the flatten/unflatten from the existing
+    ``ProductDistribution`` registration in ``distributions/joint.py``.
+    """
+    from .._utils import prod as _unused  # noqa — force module load order
+
+    # Avoid double-registration (the base ProductDistribution is
+    # already registered in distributions/joint.py).
+    try:
+        jax.tree_util.tree_flatten(cls)  # probe
+    except Exception:
+        pass
+
+    # Dynamic subclasses of ProductDistribution share the same
+    # flatten/unflatten logic.  Delegate to _components + _name.
+    def _flatten(dist):
+        leaves = jax.tree.leaves(dist._components)
+        treedef = jax.tree.structure(dist._components)
+        return leaves, (treedef, dist._name)
+
+    def _unflatten(aux, children):
+        treedef, name = aux
+        components = jax.tree.unflatten(treedef, children)
+        return cls(**components, name=name)
+
+    jax.tree_util.register_pytree_node(cls, _flatten, _unflatten)
+    return cls

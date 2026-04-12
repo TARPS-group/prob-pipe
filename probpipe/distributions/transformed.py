@@ -37,7 +37,46 @@ _BIJECTOR_SUPPORT_MAP: dict[str, Constraint] = {
 }
 
 
-class TransformedDistribution(ArrayDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance):
+# ---------------------------------------------------------------------------
+# Dynamic protocol factory for TransformedDistribution
+# ---------------------------------------------------------------------------
+
+_TRANSFORMED_CLASS_CACHE: dict[frozenset[str], type] = {}
+
+
+def _transformed_class_for_base(base: ArrayDistribution) -> type:
+    """Return a TransformedDistribution subclass whose protocol bases
+    match what the base distribution supports."""
+    protocols: set[str] = set()
+    if isinstance(base, SupportsLogProb):
+        protocols.add("log_prob")
+    if isinstance(base, SupportsMean):
+        protocols.add("mean")
+    if isinstance(base, SupportsVariance):
+        protocols.add("variance")
+
+    key = frozenset(protocols)
+    if key in _TRANSFORMED_CLASS_CACHE:
+        return _TRANSFORMED_CLASS_CACHE[key]
+
+    extra_bases: list[type] = []
+    if "log_prob" in protocols:
+        extra_bases.append(SupportsLogProb)
+    if "mean" in protocols:
+        extra_bases.append(SupportsMean)
+    if "variance" in protocols:
+        extra_bases.append(SupportsVariance)
+
+    if not extra_bases:
+        _TRANSFORMED_CLASS_CACHE[key] = TransformedDistribution
+        return TransformedDistribution
+
+    cls = type("TransformedDistribution", (TransformedDistribution, *extra_bases), {})
+    _TRANSFORMED_CLASS_CACHE[key] = cls
+    return cls
+
+
+class TransformedDistribution(ArrayDistribution, SupportsSampling):
     """
     Distribution formed by applying a TFP bijector to a base distribution.
 
@@ -47,6 +86,10 @@ class TransformedDistribution(ArrayDistribution, SupportsSampling, SupportsLogPr
     bijector's ``forward`` / ``inverse`` / ``inverse_log_det_jacobian``
     are applied manually.
 
+    **Dynamic protocol support:** ``SupportsLogProb``, ``SupportsMean``,
+    and ``SupportsVariance`` are included only when the base distribution
+    supports them.
+
     Parameters
     ----------
     base : Distribution
@@ -54,8 +97,18 @@ class TransformedDistribution(ArrayDistribution, SupportsSampling, SupportsLogPr
     bijector : tfb.Bijector
         A TFP bijector (e.g. ``tfb.Exp()``, ``tfb.Sigmoid()``).
     name : str, optional
-        Distribution name for provenance / JointDistribution.
+        Distribution name for provenance.
     """
+
+    def __new__(
+        cls,
+        base: ArrayDistribution,
+        bijector: tfb.Bijector,
+        *,
+        name: str | None = None,
+    ):
+        actual_cls = _transformed_class_for_base(base)
+        return object.__new__(actual_cls)
 
     def __init__(
         self,

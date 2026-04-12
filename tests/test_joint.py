@@ -457,32 +457,66 @@ class TestPytreeRegistration:
         np.testing.assert_allclose(s_orig["x"], s_recon["x"], atol=1e-6)
         np.testing.assert_allclose(s_orig["z"], s_recon["z"], atol=1e-6)
 
-    def test_tree_leaves_returns_components(self, normal_x, normal_y):
+    def test_pytree_leaves_returns_components(self, normal_x, normal_y):
         joint = ProductDistribution(x=normal_x, y=normal_y)
         leaves = jax.tree.leaves(joint)
-        # The leaves should be the component distributions
         assert len(leaves) == 2
 
-    def test_tree_flatten_preserves_name(self, normal_x, normal_y):
-        joint = ProductDistribution(x=normal_x, y=normal_y, name="named_joint")
-        children, aux = jax.tree_util.tree_flatten(joint)
-        reconstructed = jax.tree_util.tree_unflatten(aux, children)
-        assert reconstructed._name == "named_joint"
+    def test_pytree_roundtrip(self, normal_x, normal_y):
+        joint = ProductDistribution(x=normal_x, y=normal_y, name="j")
+        children, aux = jax.tree.flatten(joint)
+        reconstructed = jax.tree.unflatten(aux, children)
+        assert isinstance(reconstructed, ProductDistribution)
+        assert reconstructed.component_names == ("x", "y")
+        assert reconstructed._name == "j"
 
-    def test_unflatten_with_modified_children(self):
-        """Verify tree_unflatten works with different component distributions."""
-        a = Normal(loc=0.0, scale=1.0, name="a")
-        b = Normal(loc=1.0, scale=1.0, name="b")
-        joint = ProductDistribution(a=a, b=b)
-        _, aux = jax.tree_util.tree_flatten(joint)
 
-        # Substitute different distributions
-        new_a = Normal(loc=10.0, scale=0.1, name="a")
-        new_b = Normal(loc=20.0, scale=0.2, name="b")
-        reconstructed = jax.tree_util.tree_unflatten(aux, [new_a, new_b])
-        m = mean(reconstructed)
-        np.testing.assert_allclose(float(m["a"]), 10.0, atol=1e-5)
-        np.testing.assert_allclose(float(m["b"]), 20.0, atol=1e-5)
+# ===========================================================================
+# 11. Dynamic protocol support
+# ===========================================================================
+
+class TestProductProtocolDuckTyping:
+    """ProductDistribution dynamically includes protocols based on components."""
+
+    def test_all_log_prob_components(self):
+        """All Normal components → isinstance SupportsLogProb True."""
+        from probpipe import SupportsLogProb
+        joint = ProductDistribution(x=Normal(0, 1), y=Normal(1, 2))
+        assert isinstance(joint, SupportsLogProb)
+
+    def test_all_mean_variance_components(self):
+        """All Normal components → isinstance SupportsMean/SupportsVariance True."""
+        from probpipe import SupportsMean, SupportsVariance
+        joint = ProductDistribution(x=Normal(0, 1), y=Normal(1, 2))
+        assert isinstance(joint, SupportsMean)
+        assert isinstance(joint, SupportsVariance)
+
+    def test_mixed_no_log_prob(self):
+        """Component lacking SupportsLogProb → product lacks it too."""
+        from probpipe import SupportsLogProb, BootstrapDistribution
+        boot = BootstrapDistribution(jnp.array([1.0, 2.0, 3.0]))
+        joint = ProductDistribution(x=Normal(0, 1), y=boot)
+        assert not isinstance(joint, SupportsLogProb)
+
+    def test_always_supports_sampling(self):
+        """ProductDistribution always supports SupportsSampling."""
+        from probpipe import SupportsSampling
+        joint = ProductDistribution(x=Normal(0, 1), y=Normal(1, 2))
+        assert isinstance(joint, SupportsSampling)
+
+    def test_always_supports_conditioning(self):
+        """ProductDistribution always supports SupportsConditioning."""
+        from probpipe import SupportsConditioning
+        joint = ProductDistribution(x=Normal(0, 1), y=Normal(1, 2))
+        assert isinstance(joint, SupportsConditioning)
+
+    def test_dynamic_subclass_pytree_roundtrip(self):
+        """Dynamic ProductDistribution subclass is JAX pytree-compatible."""
+        joint = ProductDistribution(x=Normal(0, 1), y=Normal(1, 2))
+        children, aux = jax.tree.flatten(joint)
+        reconstructed = jax.tree.unflatten(aux, children)
+        assert isinstance(reconstructed, ProductDistribution)
+        assert reconstructed.component_names == ("x", "y")
 
 
 # ===========================================================================
