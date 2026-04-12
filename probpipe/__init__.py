@@ -47,7 +47,6 @@ from probpipe.core.distribution import (
     RandomFunction,
     ArrayRandomFunction,
     # Joint
-    JointDistribution,
     ProductDistribution,
 )
 from probpipe.distributions import (
@@ -209,7 +208,6 @@ __all__ = [
     # Transformed
     "TransformedDistribution",
     # Joint
-    "JointDistribution",
     "ProductDistribution",
     "SequentialJointDistribution",
     "JointEmpirical",

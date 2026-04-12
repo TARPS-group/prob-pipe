@@ -24,12 +24,10 @@ from .discrete import (
 )
 from .transformed import TransformedDistribution
 from .joint import (
-    JointDistribution,
     ProductDistribution,
     SequentialJointDistribution,
     JointEmpirical,
     JointGaussian,
-    DistributionView,
 )
 from .multivariate import (
     MultivariateNormal,
@@ -72,12 +70,10 @@ __all__ = [
     # Transformed
     "TransformedDistribution",
     # Joint
-    "JointDistribution",
     "ProductDistribution",
     "SequentialJointDistribution",
     "JointEmpirical",
     "JointGaussian",
-    "DistributionView",
     # Multivariate
     "MultivariateNormal",
     "Dirichlet",

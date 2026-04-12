@@ -95,9 +95,7 @@ from ..core.distribution import (
     _mc_expectation,
 )
 from ..core._joint import (
-    JointDistribution,
     ProductDistribution,
-    DistributionView,
     KeyPath,
     _build_values_template,
     _normalize_key,
@@ -120,12 +118,10 @@ from ..core.protocols import (
 )
 
 __all__ = [
-    "JointDistribution",
     "ProductDistribution",
     "SequentialJointDistribution",
     "JointEmpirical",
     "JointGaussian",
-    "DistributionView",
 ]
 
 

@@ -74,9 +74,7 @@ from ._broadcast_distributions import (
 
 # -- _joint -----------------------------------------------------------------
 from ._joint import (
-    JointDistribution,
     ProductDistribution,
-    DistributionView,
 )
 
 # -- _random_functions ------------------------------------------------------
@@ -112,9 +110,7 @@ __all__ = [
     "BootstrapReplicateDistribution",
     "ArrayBootstrapReplicateDistribution",
     # Joint
-    "JointDistribution",
     "ProductDistribution",
-    "DistributionView",
     # Random functions
     "RandomFunction",
     "ArrayRandomFunction",

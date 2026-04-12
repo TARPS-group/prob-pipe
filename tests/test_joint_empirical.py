@@ -8,7 +8,6 @@ import pytest
 from probpipe import (
     JointEmpirical,
     EmpiricalDistribution,
-    JointDistribution,
     Values,
     ValuesDistribution,
 )

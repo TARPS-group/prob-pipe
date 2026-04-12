@@ -11,7 +11,6 @@ from probpipe import (
     MultivariateNormal,
     SequentialJointDistribution,
     EmpiricalDistribution,
-    JointDistribution,
     Values,
     ValuesDistribution,
 )

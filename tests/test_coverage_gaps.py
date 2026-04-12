@@ -3,7 +3,6 @@
 Covers:
 - BootstrapDistribution: weighted sampling, variance, repr, support, evaluations
 - EmpiricalDistribution: weighted subsampled expectation
-- FlattenedView: sampling, log_prob, expectation, support
 - TFPDistribution._cov: scalar and multivariate
 - ops error paths for unsupported protocols
 - SupportsCovariance default implementation
@@ -264,80 +263,6 @@ class TestOpsErrorPaths:
         d = MinimalDist()
         with pytest.raises(TypeError, match="does not support covariance"):
             cov(d)
-
-
-# ---------------------------------------------------------------------------
-# FlattenedView
-# ---------------------------------------------------------------------------
-
-
-class TestFlattenedView:
-    """Cover FlattenedView sampling, log_prob, expectation, support."""
-
-    @pytest.fixture
-    def joint_dist(self):
-        """A JointDistribution (PyTreeArrayDistribution) that can be flattened."""
-        from probpipe.core._joint import JointDistribution
-
-        # Use JointDistribution directly (not ProductDistribution, which
-        # now inherits from ValuesDistribution and has no as_flat_distribution).
-        class _FlatJoint(JointDistribution):
-            _sampling_cost = "low"
-            _preferred_orchestration = None
-
-            def _sample_one(self, key):
-                import jax
-                keys = jax.random.split(key, 2)
-                return {"x": self._components["x"]._sample(keys[0]),
-                        "y": self._components["y"]._sample(keys[1])}
-
-            def _sample(self, key, sample_shape=()):
-                import jax
-                keys = jax.random.split(key, 2)
-                return {"x": self._components["x"]._sample(keys[0], sample_shape),
-                        "y": self._components["y"]._sample(keys[1], sample_shape)}
-
-            def _log_prob(self, value):
-                return (self._components["x"]._log_prob(value["x"])
-                        + self._components["y"]._log_prob(value["y"]))
-
-        return _FlatJoint(
-            x=Normal(loc=0.0, scale=1.0),
-            y=Normal(loc=1.0, scale=0.5),
-        )
-
-    def test_sample_one(self, joint_dist):
-        flat = joint_dist.as_flat_distribution()
-        key = jax.random.PRNGKey(0)
-        s = sample(flat, key=key)
-        assert s.shape == (flat.event_shape[0],)
-        assert jnp.all(jnp.isfinite(s))
-
-    def test_sample_batched(self, joint_dist):
-        flat = joint_dist.as_flat_distribution()
-        key = jax.random.PRNGKey(0)
-        s = sample(flat, key=key, sample_shape=(5,))
-        assert s.shape == (5, flat.event_shape[0])
-
-    def test_log_prob(self, joint_dist):
-        flat = joint_dist.as_flat_distribution()
-        key = jax.random.PRNGKey(0)
-        s = sample(flat, key=key)
-        lp = log_prob(flat, s)
-        assert jnp.isfinite(lp)
-
-    def test_support(self, joint_dist):
-        from probpipe.core.constraints import real
-
-        flat = joint_dist.as_flat_distribution()
-        assert flat.support is real
-
-    def test_expectation(self, joint_dist):
-        flat = joint_dist.as_flat_distribution()
-        key = jax.random.PRNGKey(0)
-        result = expectation(flat, lambda x: x, key=key, num_evaluations=500, return_dist=False)
-        assert result.shape == flat.event_shape
-        assert jnp.all(jnp.isfinite(result))
 
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,6 @@ from probpipe import (
     JointGaussian,
     MultivariateNormal,
     EmpiricalDistribution,
-    JointDistribution,
     Values,
     ValuesDistribution,
 )

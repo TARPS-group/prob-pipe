@@ -9,7 +9,6 @@ from probpipe import (
     MultivariateNormal,
     Gamma,
     ProductDistribution,
-    JointDistribution,
     EmpiricalDistribution,
     ArrayDistribution,
     PyTreeArrayDistribution,
@@ -600,7 +599,6 @@ class TestNestedProductDistribution:
     def test_isinstance(self, nested_joint):
         assert isinstance(nested_joint, ProductDistribution)
         assert isinstance(nested_joint, ValuesDistribution)
-        assert not isinstance(nested_joint, JointDistribution)
         assert not isinstance(nested_joint, PyTreeArrayDistribution)
         assert not isinstance(nested_joint, ArrayDistribution)
 
