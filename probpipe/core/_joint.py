@@ -16,12 +16,10 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
-from .._utils import _auto_key
 from ._array_distributions import (
     ArrayDistribution,
     PyTreeArrayDistribution,
     _mc_expectation,
-    _vmap_sample,
 )
 from .constraints import Constraint, real
 from .provenance import Provenance
@@ -507,8 +505,8 @@ class JointDistribution(PyTreeArrayDistribution, SupportsNamedComponents):
     ``ArrayDistribution`` that extracts the named component from
     joint samples.  For nested dicts, use a key-path tuple like
     ``joint["physics", "force"]`` to reach a nested component.
-    ``joint.bind(a="x", b="y")`` creates a dict of views with
-    remapped names for use in broadcasting.
+    ``joint.select("x", "y")`` creates a dict of views for
+    workflow function broadcasting.
 
     **Subclass note:**
 
@@ -703,10 +701,6 @@ class JointDistribution(PyTreeArrayDistribution, SupportsNamedComponents):
             result[arg_name] = self[comp_key]
         return result
 
-    def bind(self, **mapping) -> dict[str, DistributionView]:
-        """Deprecated — use :meth:`select` instead."""
-        return self.select(**mapping)
-
     # -- Component-level log_prob ------------------------------------------
 
     def component_log_prob(self, value) -> dict:
@@ -798,10 +792,7 @@ class ProductDistribution(
     def __init__(self, *, name: str | None = None, **components):
         if not components:
             raise ValueError("ProductDistribution requires at least one component.")
-        leaves = jax.tree.leaves(components)
-        if not leaves:
-            raise ValueError("ProductDistribution requires at least one component.")
-        for leaf in leaves:
+        for leaf in jax.tree.leaves(components):
             if not isinstance(leaf, ArrayDistribution):
                 raise TypeError(
                     f"All leaf components must be ArrayDistribution, "
@@ -862,7 +853,6 @@ class ProductDistribution(
     @property
     def components(self):
         """Read-only view of the component distributions."""
-        from types import MappingProxyType
         if all(isinstance(v, ArrayDistribution) for v in self._components.values()):
             return MappingProxyType(self._components)
         return self._components

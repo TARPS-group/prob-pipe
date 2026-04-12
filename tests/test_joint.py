@@ -256,27 +256,6 @@ class TestDistributionView:
         assert "'x'" in r
 
 
-# ===========================================================================
-# 5. TestBind
-# ===========================================================================
-
-class TestBind:
-
-    def test_bind_returns_dict_of_views(self, joint_xy):
-        views = joint_xy.bind(a="x", b="y")
-        assert isinstance(views, dict)
-        assert set(views.keys()) == {"a", "b"}
-        assert all(isinstance(v, _ValuesDistributionView) for v in views.values())
-
-    def test_bind_key_mapping(self, joint_xy):
-        views = joint_xy.bind(alpha="x", beta="y")
-        assert views["alpha"]._key == "x"
-        assert views["beta"]._key == "y"
-
-    def test_bind_single(self, joint_xy):
-        views = joint_xy.bind(only_x="x")
-        assert len(views) == 1
-        assert views["only_x"]._key == "x"
 
 
 # ===========================================================================
