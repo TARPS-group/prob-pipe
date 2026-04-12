@@ -1,80 +1,30 @@
-"""Joint distributions and component views for correlated broadcasting.
+"""Joint distributions built on ValuesDistribution.
 
-This module implements joint distributions whose samples are **pytrees of
-arrays** (typically nested dicts).  The base class
-:class:`JointDistribution` inherits from
-:class:`PyTreeArrayDistribution[T]`, so all pytree shape semantics
-(``event_shapes``, ``event_size``, ``flatten_value`` /
-``unflatten_value``, ``as_flat_distribution()``) are available.
+All joint distributions in this module inherit from
+:class:`~probpipe.core._values_distribution.ValuesDistribution` and
+return :class:`~probpipe.core.values.Values` from ``_sample()``.
+Component access uses ``_ValuesDistributionView`` via
+``dist["name"]`` or ``dist.select("x", "y")``.
 
-**Component structure:**
+**Concrete classes:**
 
-Components are stored as a pytree whose leaves are
-``ArrayDistribution`` instances.  The simplest case is a flat dict::
+*  :class:`ProductDistribution` — independent leaf components.
+*  :class:`SequentialJointDistribution` — autoregressive dependencies.
+*  :class:`JointEmpirical` — joint empirical distribution from samples.
+*  :class:`JointGaussian` — multivariate Gaussian with named components
+   and closed-form conditioning.
 
-    ProductDistribution(x=Normal(0, 1), y=Normal(1, 2))
+**Dynamic protocol support:**
 
-but components may also be nested dicts::
+``ProductDistribution`` and ``TransformedDistribution`` dynamically
+include ``SupportsLogProb``, ``SupportsMean``, and ``SupportsVariance``
+only when all leaf components support them.
 
-    ProductDistribution(
-        physics={"force": Normal(0, 1), "mass": Gamma(2, 1)},
-        observation=Normal(0, 0.1),
-    )
+**Flat-dict limitation:**
 
-The pytree structure of the components determines the structure of
-samples, ``event_shapes``, ``_log_prob`` inputs, etc.
-
-**Structural contract:**
-
-*  ``_sample(key, sample_shape)`` returns a pytree with the same
-   structure as the components, but with ``ArrayDistribution`` leaves
-   replaced by arrays of shape
-   ``(*sample_shape, *batch_shape, *leaf_event_shape)``.
-*  ``_log_prob(value)`` accepts a pytree with the same structure.
-*  ``event_shapes`` returns a pytree with the same structure, where
-   each leaf is the ``event_shape`` tuple of the corresponding
-   component distribution.
-*  ``batch_shape`` is shared across all components (an empty tuple unless
-   the component distributions themselves are batched identically).
-*  ``flatten_value`` / ``unflatten_value`` (inherited from
-   ``PyTreeArrayDistribution``) convert between the pytree
-   representation and a flat ``(*leading_dims, event_size)`` array.
-   Leaf ordering follows JAX's canonical pytree traversal order
-   (sorted dict keys, depth-first).
-*  ``as_flat_distribution()`` returns a :class:`FlattenedView` with
-   ``event_shape = (event_size,)`` for use with algorithms expecting
-   flat vectors.
-
-**Component access:**
-
-*  ``joint["name"]`` returns a :class:`DistributionView` when the
-   key resolves to a component distribution (leaf).
-*  ``joint["physics", "force"]`` returns a ``DistributionView`` for a
-   nested component, navigating through intermediate dict levels.
-*  ``joint["physics"]`` returns a new :class:`ProductDistribution`
-   when the key resolves to an intermediate dict node (a sub-tree).
-   This sub-joint is the **marginal** distribution over the
-   components in that sub-tree — sampling it draws only from those
-   components.
-*  ``component_names`` returns a tuple of key paths — plain strings
-   for flat dicts, or tuples of strings for nested components.
-
-**Independence assumptions:**
-
-*  :class:`JointDistribution` (base) makes **no** independence assumption.
-   Subclasses define the factorization structure.
-*  :class:`ProductDistribution` assumes **all leaf components are
-   independent**.  ``log_prob`` is the sum of per-leaf log-probs with
-   no coupling.
-
-**Subclass structure limitations:**
-
-*  :class:`SequentialJointDistribution`, :class:`JointEmpirical`, and
-   :class:`JointGaussian` currently support **flat dicts only** (no
-   nesting).  This is because sequential dependencies use function
-   parameter names (inherently flat), empirical distributions store
-   sample arrays keyed by name, and Gaussian conditioning operates on
-   flat index slices.
+:class:`SequentialJointDistribution`, :class:`JointEmpirical`, and
+:class:`JointGaussian` support flat dicts only (no nesting).
+:class:`ProductDistribution` supports nested dicts.
 """
 from __future__ import annotations
 

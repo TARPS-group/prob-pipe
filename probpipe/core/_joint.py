@@ -248,7 +248,7 @@ def _collect_observed_leaves(
 
 
 def _parse_condition_args(
-    joint: JointDistribution,
+    joint: ValuesDistribution,
     observed: dict | None,
     kwargs: dict,
 ) -> dict[KeyPath, ArrayLike]:
@@ -261,7 +261,7 @@ def _parse_condition_args(
 
     Parameters
     ----------
-    joint : JointDistribution
+    joint : ValuesDistribution
         The joint distribution whose components are being conditioned.
     observed : dict or None
         Positional dict argument from ``_condition_on``.

@@ -123,7 +123,7 @@ this distribution hold?"
 | Class | `.n` meaning |
 |-------|-------------|
 | `EmpiricalDistribution` | Number of samples |
-| `JointEmpiricalDistribution` | Number of joint samples |
+| `JointEmpirical` | Number of joint samples |
 | `BootstrapDistribution` | Number of function evaluations |
 | `BootstrapReplicateDistribution` | Number of observations per bootstrap dataset |
 | `BroadcastDistribution` | Number of input–output pairs |
