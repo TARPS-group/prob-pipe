@@ -276,10 +276,32 @@ class TestFlattenedView:
 
     @pytest.fixture
     def joint_dist(self):
-        """A simple joint distribution that can be flattened."""
-        from probpipe.distributions.joint import ProductDistribution
+        """A JointDistribution (PyTreeArrayDistribution) that can be flattened."""
+        from probpipe.core._joint import JointDistribution
 
-        return ProductDistribution(
+        # Use JointDistribution directly (not ProductDistribution, which
+        # now inherits from ValuesDistribution and has no as_flat_distribution).
+        class _FlatJoint(JointDistribution):
+            _sampling_cost = "low"
+            _preferred_orchestration = None
+
+            def _sample_one(self, key):
+                import jax
+                keys = jax.random.split(key, 2)
+                return {"x": self._components["x"]._sample(keys[0]),
+                        "y": self._components["y"]._sample(keys[1])}
+
+            def _sample(self, key, sample_shape=()):
+                import jax
+                keys = jax.random.split(key, 2)
+                return {"x": self._components["x"]._sample(keys[0], sample_shape),
+                        "y": self._components["y"]._sample(keys[1], sample_shape)}
+
+            def _log_prob(self, value):
+                return (self._components["x"]._log_prob(value["x"])
+                        + self._components["y"]._log_prob(value["y"]))
+
+        return _FlatJoint(
             x=Normal(loc=0.0, scale=1.0),
             y=Normal(loc=1.0, scale=0.5),
         )

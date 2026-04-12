@@ -403,8 +403,12 @@ class ArrayDistribution(PyTreeArrayDistribution[Array], TFPShapeMixin):
         batch_dims = flat.shape[:-1]
         return flat.reshape(*batch_dims, *es)
 
-    # support, supports, _check_support_compatible, _default_support
-    # inherited from TFPShapeMixin
+    # support, _check_support_compatible, _default_support from TFPShapeMixin.
+    # Override supports to return the singular support (not the pytree
+    # version from PyTreeArrayDistribution which doesn't work for scalars).
+    @property
+    def supports(self):
+        return self.support
 
     # -- repr ---------------------------------------------------------------
 
