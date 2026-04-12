@@ -595,6 +595,94 @@ class TestValuesDistributionView:
         np.testing.assert_allclose(float(view._variance()), jnp.var(chain[:, 0]), atol=1e-5)
 
 
+class TestViewProtocolDuckTyping:
+    """_ValuesDistributionView dynamically inherits protocol support from its parent.
+
+    When the parent supports SupportsLogProb, the view's dynamic subclass
+    also inherits SupportsLogProb — so isinstance checks work correctly.
+    """
+
+    def test_view_from_product_isinstance_log_prob(self):
+        """ProductDistribution supports SupportsLogProb → so does view."""
+        from probpipe import ProductDistribution, SupportsLogProb
+        joint = ProductDistribution(x=Normal(0, 1), y=Normal(3, 2))
+        view = joint["x"]
+        assert isinstance(view, SupportsLogProb)
+
+    def test_view_from_posterior_not_isinstance_log_prob(self):
+        """ApproximateDistribution lacks SupportsLogProb → view doesn't have it."""
+        from probpipe import SupportsLogProb
+        template = Values(a=jnp.array(0.0), b=jnp.array(0.0))
+        chain = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        post = make_posterior([chain], parents=(prior,), algorithm="test",
+                             values_template=template)
+        view = post["a"]
+        assert not isinstance(view, SupportsLogProb)
+
+    def test_view_always_isinstance_sampling(self):
+        """Every view is SupportsSampling regardless of parent type."""
+        from probpipe import SupportsSampling, ProductDistribution
+        joint = ProductDistribution(x=Normal(0, 1), y=Normal(3, 2))
+        assert isinstance(joint["x"], SupportsSampling)
+
+        template = Values(a=jnp.array(0.0))
+        chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
+        prior = Normal(0, 1)
+        post = make_posterior([chain], parents=(prior,), algorithm="test",
+                             values_template=template)
+        assert isinstance(post["a"], SupportsSampling)
+
+    def test_view_always_isinstance_mean_variance(self):
+        """Every view is SupportsMean and SupportsVariance."""
+        from probpipe import SupportsMean, SupportsVariance, ProductDistribution
+        joint = ProductDistribution(x=Normal(0, 1), y=Normal(3, 2))
+        view = joint["x"]
+        assert isinstance(view, SupportsMean)
+        assert isinstance(view, SupportsVariance)
+
+    def test_view_log_prob_delegates_to_component(self):
+        """View _log_prob delegates to the underlying component distribution."""
+        from probpipe import ProductDistribution
+        import scipy.stats
+        joint = ProductDistribution(x=Normal(loc=2.0, scale=0.5), y=Normal(0, 1))
+        view = joint["x"]
+        lp = float(view._log_prob(jnp.array(2.0)))
+        expected = scipy.stats.norm.logpdf(2.0, loc=2.0, scale=0.5)
+        np.testing.assert_allclose(lp, expected, rtol=1e-5)
+
+    def test_view_no_cov_when_parent_lacks_it(self):
+        """View lacks SupportsCovariance when parent doesn't have it."""
+        from probpipe import SupportsCovariance, ProductDistribution
+        joint = ProductDistribution(x=Normal(0, 1), y=Normal(3, 2))
+        view = joint["x"]
+        assert not isinstance(view, SupportsCovariance)
+
+    def test_dynamic_protocol_depends_on_parent(self):
+        """Same _ValuesDistributionView base, different isinstance results."""
+        from probpipe import SupportsLogProb, ProductDistribution
+        # ProductDistribution parent → isinstance True
+        joint = ProductDistribution(x=Normal(0, 1), y=Normal(3, 2))
+        view_with = joint["x"]
+        assert isinstance(view_with, SupportsLogProb)
+
+        # ApproximateDistribution parent → isinstance False
+        template = Values(a=jnp.array(0.0))
+        chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
+        prior = Normal(0, 1)
+        post = make_posterior([chain], parents=(prior,), algorithm="test",
+                             values_template=template)
+        view_without = post["a"]
+        assert not isinstance(view_without, SupportsLogProb)
+
+    def test_view_still_isinstance_base_class(self):
+        """Dynamic subclass is still isinstance of _ValuesDistributionView."""
+        from probpipe import ProductDistribution
+        joint = ProductDistribution(x=Normal(0, 1), y=Normal(3, 2))
+        view = joint["x"]
+        assert isinstance(view, _ValuesDistributionView)
+
+
 class TestValuesDistributionProperties:
     """ValuesDistribution base class properties on ApproximateDistribution."""
 

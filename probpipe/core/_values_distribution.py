@@ -15,12 +15,82 @@ from __future__ import annotations
 import jax.numpy as jnp
 
 from ._distribution_base import Distribution
-from .protocols import SupportsMean, SupportsSampling, SupportsVariance
+from .protocols import (
+    SupportsCovariance,
+    SupportsLogProb,
+    SupportsMean,
+    SupportsSampling,
+    SupportsVariance,
+)
 from .values import Values
 from ..custom_types import Array, PRNGKey
 
 
 __all__ = ["ValuesDistribution", "_ValuesDistributionView"]
+
+
+# ---------------------------------------------------------------------------
+# Dynamic view class factory
+# ---------------------------------------------------------------------------
+
+_VIEW_CLASS_CACHE: dict[frozenset[str], type] = {}
+
+
+def _view_class_for_parent(parent: Distribution) -> type[_ValuesDistributionView]:
+    """Return a ``_ValuesDistributionView`` subclass whose protocol bases
+    match the capabilities of *parent*.
+
+    Dynamic subclasses are cached by protocol signature so each unique
+    combination is created only once.  The subclass has concrete
+    implementations of the delegated protocol methods at the **class**
+    level, which means ``isinstance(view, SupportsLogProb)`` works
+    correctly with ``@runtime_checkable`` protocols.
+    """
+    protocols: set[str] = set()
+    if isinstance(parent, SupportsLogProb):
+        protocols.add("log_prob")
+    if isinstance(parent, SupportsCovariance):
+        protocols.add("cov")
+
+    key = frozenset(protocols)
+    if key in _VIEW_CLASS_CACHE:
+        return _VIEW_CLASS_CACHE[key]
+
+    extra_bases: list[type] = []
+    extra_methods: dict[str, object] = {}
+
+    if "log_prob" in protocols:
+        extra_bases.append(SupportsLogProb)
+
+        def _log_prob(self, value):
+            components = getattr(self._parent, "_components", None)
+            if components is not None and self._key in components:
+                return components[self._key]._log_prob(value)
+            raise NotImplementedError(
+                f"_log_prob not available for view {self._key!r}"
+            )
+        extra_methods["_log_prob"] = _log_prob
+
+    if "cov" in protocols:
+        extra_bases.append(SupportsCovariance)
+
+        def _cov(self):
+            c = self._parent._cov()
+            if isinstance(c, Values):
+                return c[self._key]
+            raise NotImplementedError(
+                f"_cov not available for view {self._key!r}"
+            )
+        extra_methods["_cov"] = _cov
+
+    if not extra_bases:
+        _VIEW_CLASS_CACHE[key] = _ValuesDistributionView
+        return _ValuesDistributionView
+
+    cls_name = "_ValuesDistributionView"
+    new_cls = type(cls_name, (_ValuesDistributionView, *extra_bases), extra_methods)
+    _VIEW_CLASS_CACHE[key] = new_cls
+    return new_cls
 
 
 # ---------------------------------------------------------------------------
@@ -36,6 +106,13 @@ class _ValuesDistributionView(Distribution, SupportsSampling, SupportsMean, Supp
     correlation when multiple views from the same parent are used in
     :class:`~probpipe.core.node.WorkflowFunction` broadcasting.
 
+    **Dynamic protocol support:** The view's ``isinstance`` protocol
+    compliance matches the parent's capabilities.  When the parent
+    supports ``SupportsLogProb``, the view does too (via a cached
+    dynamic subclass).  Use :func:`_view_class_for_parent` or call
+    ``_ValuesDistributionView(parent, key)`` — the ``__new__`` method
+    selects the right subclass automatically.
+
     Parameters
     ----------
     parent : Distribution
@@ -47,6 +124,10 @@ class _ValuesDistributionView(Distribution, SupportsSampling, SupportsMean, Supp
     _sampling_cost = "low"
     _preferred_orchestration = None
 
+    def __new__(cls, parent: Distribution, key: str):
+        actual_cls = _view_class_for_parent(parent)
+        return object.__new__(actual_cls)
+
     def __init__(self, parent: Distribution, key: str):
         template = parent.values_template
         if template is None or key not in template:
@@ -56,7 +137,7 @@ class _ValuesDistributionView(Distribution, SupportsSampling, SupportsMean, Supp
             )
         self._parent = parent
         self._key = key
-        self._key_path = (key,)  # duck-type contract with DistributionView
+        self._key_path = (key,)
         self._template_field = template[key]
 
     # -- Shape info ---------------------------------------------------------
