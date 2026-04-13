@@ -164,11 +164,14 @@ class TestGLMLikelihoodWithValues:
         ll_v = float(poisson_lik.log_likelihood(params_v, data_v))
         np.testing.assert_allclose(ll_v, ll_raw, rtol=1e-6)
 
-    def test_coerce_multi_field_values_raises(self, poisson_lik):
-        """Multi-field Values cannot be coerced to a single array."""
-        multi = Values(a=jnp.array([1.0, 0.5]), b=jnp.array([2.0, 3.0]))
-        with pytest.raises(ValueError, match="Cannot coerce multi-field"):
-            poisson_lik.log_likelihood(multi, jnp.ones(20))
+    def test_coerce_multi_field_values_stacks(self, poisson_lik):
+        """Multi-field Values are stacked into a flat vector (sorted field order)."""
+        params_v = Values(intercept=jnp.array(1.0), slope=jnp.array(0.5))
+        params_raw = jnp.array([1.0, 0.5])  # intercept, slope (sorted)
+        data = jnp.ones(20)
+        ll_v = float(poisson_lik.log_likelihood(params_v, data))
+        ll_raw = float(poisson_lik.log_likelihood(params_raw, data))
+        np.testing.assert_allclose(ll_v, ll_raw, rtol=1e-6)
 
     def test_condition_on_with_values_data(self, poisson_lik):
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2))

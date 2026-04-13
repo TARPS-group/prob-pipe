@@ -14,16 +14,23 @@ __all__ = ["GLMLikelihood"]
 
 
 def _coerce_array(x: ArrayLike | Values) -> jnp.ndarray:
-    """Extract a JAX array from a Values field or raw array-like."""
+    """Extract a JAX array from a Values field or raw array-like.
+
+    Single-field Values: extract the field.
+    Multi-field Values with scalar fields: stack into a vector
+    (preserving any leading batch dimensions).
+    """
     if isinstance(x, jnp.ndarray):
         return x
     if isinstance(x, Values):
         fields = x.fields()
         if len(fields) == 1:
             return x[fields[0]]
-        raise ValueError(
-            f"Cannot coerce multi-field Values to array: fields={fields}"
-        )
+        # Stack scalar fields along a new trailing axis.
+        # E.g., Values(a=array(100,), b=array(100,)) → array(100, 2)
+        # E.g., Values(a=scalar, b=scalar) → array(2,)
+        arrays = [jnp.asarray(x[f]) for f in fields]
+        return jnp.stack(arrays, axis=-1)
     return jnp.asarray(x)
 
 
