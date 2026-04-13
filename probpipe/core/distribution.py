@@ -71,8 +71,8 @@ from ._broadcast_distributions import (
     _make_mixture_marginal,
 )
 
-# -- _joint -----------------------------------------------------------------
-from ._joint import (
+# -- _joint (moved to distributions._product) --------------------------------
+from ..distributions._product import (
     ProductDistribution,
 )
 

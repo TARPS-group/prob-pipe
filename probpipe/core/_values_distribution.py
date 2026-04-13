@@ -231,6 +231,30 @@ def _unflatten_batched(flat_draws: Array, template: Values) -> Values:
 
 
 # ---------------------------------------------------------------------------
+# Values template builder
+# ---------------------------------------------------------------------------
+
+
+def _build_values_template(components: dict) -> Values:
+    """Build a Values template from a component pytree.
+
+    Each ``ArrayDistribution`` leaf becomes a ``jnp.zeros(event_shape)``
+    placeholder.  Nested dicts become nested ``Values``.
+    """
+    from ._array_distributions import ArrayDistribution
+
+    fields: dict[str, jnp.ndarray | Values] = {}
+    for name, comp in components.items():
+        if isinstance(comp, dict):
+            fields[name] = _build_values_template(comp)
+        elif isinstance(comp, ArrayDistribution):
+            fields[name] = jnp.zeros(comp.event_shape)
+        else:
+            raise TypeError(f"Unexpected component type: {type(comp).__name__}")
+    return Values(fields)
+
+
+# ---------------------------------------------------------------------------
 # ValuesDistribution
 # ---------------------------------------------------------------------------
 
