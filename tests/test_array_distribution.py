@@ -1,4 +1,4 @@
-"""Tests for PyTreeArrayDistribution, FlattenedView, and ArrayDistribution pytree interface (Phase 2)."""
+"""Tests for ArrayDistribution, FlattenedView, and shape semantics."""
 
 import jax
 import jax.numpy as jnp
@@ -8,7 +8,6 @@ import pytest
 
 from probpipe import (
     Distribution,
-    PyTreeArrayDistribution,
     ArrayDistribution,
     ArrayEmpiricalDistribution,
     FlattenedView,
@@ -57,15 +56,15 @@ def matrix_mvn():
 
 class TestHierarchy:
     def test_arraydist_is_pytreearraydist(self, scalar_normal):
-        assert isinstance(scalar_normal, PyTreeArrayDistribution)
+        assert isinstance(scalar_normal, ArrayDistribution)
 
     def test_arraydist_is_distribution(self, scalar_normal):
         assert isinstance(scalar_normal, Distribution)
 
     def test_pytreearraydist_is_distribution(self, scalar_normal):
-        """ArrayDistribution inherits PyTreeArrayDistribution which inherits Distribution."""
+        """ArrayDistribution inherits ArrayDistribution which inherits Distribution."""
         assert isinstance(scalar_normal, Distribution)
-        assert isinstance(scalar_normal, PyTreeArrayDistribution)
+        assert isinstance(scalar_normal, ArrayDistribution)
         assert isinstance(scalar_normal, ArrayDistribution)
 
 

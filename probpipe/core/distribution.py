@@ -46,7 +46,6 @@ from ._array_distributions import (
     ArrayDistribution,
     BootstrapDistribution,
     FlattenedView,
-    PyTreeArrayDistribution,
     TFPShapeMixin,
     _mc_expectation,
     _vmap_sample,
@@ -99,7 +98,6 @@ __all__ = [
     "_ValuesDistributionView",
     "_unflatten_batched",
     # Array hierarchy
-    "PyTreeArrayDistribution",
     "ArrayDistribution",
     "BootstrapDistribution",
     "FlattenedView",

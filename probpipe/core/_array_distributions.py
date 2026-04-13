@@ -110,10 +110,6 @@ def _mc_expectation(
     return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
 
 
-# Deprecated alias — PyTreeArrayDistribution has been merged into ArrayDistribution.
-# Defined after ArrayDistribution below.
-
-
 # ---------------------------------------------------------------------------
 # TFPShapeMixin — TFP-specific shape conventions
 # ---------------------------------------------------------------------------
@@ -483,7 +479,3 @@ class FlattenedView(ArrayDistribution, SupportsSampling, SupportsLogProb):
             f"FlattenedView(base={type(self._base).__name__}, "
             f"event_shape={self.event_shape})"
         )
-
-
-# Deprecated alias — PyTreeArrayDistribution has been absorbed into ArrayDistribution.
-PyTreeArrayDistribution = ArrayDistribution

@@ -11,7 +11,7 @@ from probpipe import (
     ProductDistribution,
     EmpiricalDistribution,
     ArrayDistribution,
-    PyTreeArrayDistribution,
+    ArrayDistribution,
     ValuesDistribution,
 )
 from probpipe.core._values_distribution import _ValuesDistributionView
@@ -68,7 +68,7 @@ class TestProductDistribution:
 
     def test_isinstance_values_distribution(self, joint_xy):
         assert isinstance(joint_xy, ValuesDistribution)
-        assert not isinstance(joint_xy, PyTreeArrayDistribution)
+        assert not isinstance(joint_xy, ArrayDistribution)
         assert not isinstance(joint_xy, ArrayDistribution)
 
     def test_event_shapes(self, joint_xy):
@@ -633,7 +633,7 @@ class TestNestedProductDistribution:
     def test_isinstance(self, nested_joint):
         assert isinstance(nested_joint, ProductDistribution)
         assert isinstance(nested_joint, ValuesDistribution)
-        assert not isinstance(nested_joint, PyTreeArrayDistribution)
+        assert not isinstance(nested_joint, ArrayDistribution)
         assert not isinstance(nested_joint, ArrayDistribution)
 
     def test_event_shapes_nested(self, nested_joint):

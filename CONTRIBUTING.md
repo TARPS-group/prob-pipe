@@ -132,7 +132,7 @@ full public API surface.
 | `ValuesDistribution` | Values-based distribution base; `component_names`, `__getitem__` → `_ValuesDistributionView`, `select()` for correlated broadcasting |
 | `_ValuesDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
 | `TFPShapeMixin` | Mixin providing TFP shape conventions (`dtype`, `support`, `batch_shape`); shared by `ArrayDistribution` and `TFPEmpiricalDistribution` |
-| `ArrayDistribution` | Single-array specialization (`TFPShapeMixin` + `PyTreeArrayDistribution`); base for all TFP-backed distributions |
+| `ArrayDistribution` | Single-array distribution with TFP shape semantics (`TFPShapeMixin`); base for all TFP-backed distributions |
 | `WorkflowFunction` | Orchestration-aware function wrapper; groups views by parent for correlated broadcasting |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
