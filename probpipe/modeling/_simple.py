@@ -79,13 +79,6 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
             self._values_template = Values(merged)
         elif prior_tpl is not None:
             self._values_template = prior_tpl
-        # Store prior field names for parameter_names / __getitem__ dispatch
-        self._prior_fields: frozenset[str] = frozenset(
-            prior_tpl.fields() if prior_tpl is not None else ()
-        )
-        self._data_fields: frozenset[str] = frozenset(
-            data_tpl.fields() if data_tpl is not None else ()
-        )
 
     # -- Distribution interface ---------------------------------------------
 
@@ -101,6 +94,16 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         if tpl is not None:
             return tpl.fields()
         return ("parameters", "data")
+
+    @property
+    def _prior_fields(self) -> frozenset[str]:
+        tpl = self._prior.values_template
+        return frozenset(tpl.fields()) if tpl is not None else frozenset()
+
+    @property
+    def _data_fields(self) -> frozenset[str]:
+        tpl = getattr(self._likelihood, 'data_template', None)
+        return frozenset(tpl.fields()) if tpl is not None else frozenset()
 
     def __getitem__(self, key: str) -> Distribution | Likelihood:
         if key in self._data_fields:

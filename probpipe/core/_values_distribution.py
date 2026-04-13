@@ -285,6 +285,7 @@ class ValuesDistribution(Distribution[Values]):
 
     def __getattr__(self, name: str):
         """Attribute access for named fields: ``dist.field_name`` → view."""
+        # Skip private attrs to avoid infinite recursion during __dict__ lookups
         if name.startswith('_'):
             raise AttributeError(name)
         tpl = self.__dict__.get('_values_template')

@@ -336,6 +336,43 @@ class ArrayEmpiricalDistribution(
 
 
 # ---------------------------------------------------------------------------
+# Shared helpers for Values-based distribution classes
+# ---------------------------------------------------------------------------
+
+
+def _values_template_from_data(
+    values_data: Values,
+    leading_shape: tuple[int, ...] = (),
+) -> Values:
+    """Build a values_template from stored Values data.
+
+    Strips the first dimension (sample axis) from each field and
+    optionally prepends ``leading_shape``.
+    """
+    tpl_fields: dict[str, jnp.ndarray] = {}
+    for fname in values_data.fields():
+        arr = jnp.asarray(values_data[fname])
+        tpl_fields[fname] = jnp.zeros((*leading_shape, *arr.shape[1:]))
+    return Values(tpl_fields)
+
+
+def _index_values(values_data: Values, idx) -> Values:
+    """Index all fields of a Values object with the same indices."""
+    return Values({
+        f: jnp.asarray(values_data[f])[idx]
+        for f in values_data.fields()
+    })
+
+
+def _fieldwise_op(values_data: Values, op: Callable) -> Values:
+    """Apply an operation to each field of a Values object."""
+    return Values({
+        f: op(jnp.asarray(values_data[f]))
+        for f in values_data.fields()
+    })
+
+
+# ---------------------------------------------------------------------------
 # _ValuesEmpiricalDistribution (Values specialization)
 # ---------------------------------------------------------------------------
 
@@ -373,30 +410,26 @@ class _ValuesEmpiricalDistribution(
         name: str | None = None,
     ):
         self._values_data = samples
-        self._samples = samples  # for base class .samples property
         first_field = samples[samples.fields()[0]]
         n = jnp.asarray(first_field).shape[0]
         self._n_samples = n
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._name = name
         self._approximate = True
-        # values_template: structure with leading sample dim removed
-        tpl_fields: dict[str, jnp.ndarray] = {}
-        for fname in samples.fields():
-            arr = jnp.asarray(samples[fname])
-            tpl_fields[fname] = jnp.zeros(arr.shape[1:])
-        self._values_template = Values(tpl_fields)
+        self._values_template = _values_template_from_data(samples)
 
     @property
     def n(self) -> int:
         return self._n_samples
 
+    @property
+    def samples(self) -> Values:
+        """The stored Values data."""
+        return self._values_data
+
     def _sample_one(self, key: PRNGKey) -> Values:
         idx = self._w.choice(key)
-        return Values({
-            f: jnp.asarray(self._values_data[f])[idx]
-            for f in self._values_data.fields()
-        })
+        return _index_values(self._values_data, idx)
 
     def _sample(
         self,
@@ -413,16 +446,10 @@ class _ValuesEmpiricalDistribution(
         return Values(fields)
 
     def _mean(self) -> Values:
-        return Values({
-            f: self._w.mean(jnp.asarray(self._values_data[f]))
-            for f in self._values_data.fields()
-        })
+        return _fieldwise_op(self._values_data, self._w.mean)
 
     def _variance(self) -> Values:
-        return Values({
-            f: self._w.variance(jnp.asarray(self._values_data[f]))
-            for f in self._values_data.fields()
-        })
+        return _fieldwise_op(self._values_data, self._w.variance)
 
     def __repr__(self) -> str:
         fields = ", ".join(self._values_data.fields())
@@ -782,19 +809,13 @@ class _ValuesBootstrapReplicateDistribution(
         # self._data required by base class .data property
         self._data = self._values_data
         self._init_bootstrap_state(default_n, n=n, name=name)
-        # values_template: full dataset shape (n rows per field)
-        tpl_fields: dict[str, jnp.ndarray] = {}
-        for fname in self._values_data.fields():
-            arr = jnp.asarray(self._values_data[fname])
-            tpl_fields[fname] = jnp.zeros((self._n, *arr.shape[1:]))
-        self._values_template = Values(tpl_fields)
+        self._values_template = _values_template_from_data(
+            self._values_data, leading_shape=(self._n,),
+        )
 
     def _sample_one(self, key: PRNGKey) -> Values:
         idx = self._w.choice(key, shape=(self._n,))
-        return Values({
-            f: jnp.asarray(self._values_data[f])[idx]
-            for f in self._values_data.fields()
-        })
+        return _index_values(self._values_data, idx)
 
     def _sample(
         self,
