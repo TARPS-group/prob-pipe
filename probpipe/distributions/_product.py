@@ -36,7 +36,6 @@ from ..core.protocols import (
 )
 from ._joint_utils import (
     KeyPath,
-    _component_key_paths,
     _parse_condition_args,
     _prune_leaves,
 )

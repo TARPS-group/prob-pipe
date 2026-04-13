@@ -16,7 +16,6 @@ import jax.numpy as jnp
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..core.distribution import (
     ArrayDistribution,
-    _vmap_sample,
     _mc_expectation,
 )
 from ..core._values_distribution import ValuesDistribution, _build_values_template
@@ -30,6 +29,8 @@ from ..core.protocols import (
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
+    _flatten_values_batched,
+    _unflatten_values_batched,
 )
 
 

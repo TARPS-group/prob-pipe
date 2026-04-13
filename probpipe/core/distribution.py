@@ -71,11 +71,6 @@ from ._broadcast_distributions import (
     _make_mixture_marginal,
 )
 
-# -- _joint (moved to distributions._product) --------------------------------
-from ..distributions._product import (
-    ProductDistribution,
-)
-
 # -- _random_functions ------------------------------------------------------
 from ._random_functions import (
     RandomFunction,
@@ -107,8 +102,6 @@ __all__ = [
     # Joint bootstrap
     "BootstrapReplicateDistribution",
     "ArrayBootstrapReplicateDistribution",
-    # Joint
-    "ProductDistribution",
     # Random functions
     "RandomFunction",
     "ArrayRandomFunction",

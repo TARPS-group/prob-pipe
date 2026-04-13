@@ -45,8 +45,6 @@ from probpipe.core.distribution import (
     # Random functions
     RandomFunction,
     ArrayRandomFunction,
-    # Joint
-    ProductDistribution,
 )
 from probpipe.distributions import (
     # TFP base
@@ -80,7 +78,8 @@ from probpipe.distributions import (
     VonMisesFisher,
     # Transformed
     TransformedDistribution,
-    # Joint (specialized)
+    # Joint
+    ProductDistribution,
     SequentialJointDistribution,
     JointEmpirical,
     JointGaussian,

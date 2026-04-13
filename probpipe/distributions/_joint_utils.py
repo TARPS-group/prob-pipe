@@ -303,3 +303,45 @@ def _prune_leaves(tree: dict, remove_paths: set[KeyPath], prefix: tuple = ()) ->
         else:
             result[key] = value
     return result
+
+
+# ---------------------------------------------------------------------------
+# Batched flatten / unflatten for Values with known event_shapes
+# ---------------------------------------------------------------------------
+
+
+def _flatten_values_batched(value: Values, event_shapes: dict[str, tuple[int, ...]]) -> jnp.ndarray:
+    """Flatten a (possibly batched) Values into ``(*leading, event_size)``."""
+    from .._utils import prod
+
+    parts = []
+    for name in sorted(event_shapes.keys()):
+        arr = jnp.asarray(value[name])
+        es = event_shapes[name]
+        n_event = prod(es) if es else 1
+        n_event_dims = len(es)
+        if n_event_dims:
+            leading = arr.shape[:arr.ndim - n_event_dims]
+        else:
+            leading = arr.shape
+        parts.append(arr.reshape(*leading, n_event))
+    return jnp.concatenate(parts, axis=-1)
+
+
+def _unflatten_values_batched(flat: jnp.ndarray, event_shapes: dict[str, tuple[int, ...]]) -> Values:
+    """Unflatten ``(*leading, event_size)`` back into a Values."""
+    from .._utils import prod
+
+    fields: dict[str, jnp.ndarray] = {}
+    offset = 0
+    for name in sorted(event_shapes.keys()):
+        es = event_shapes[name]
+        n_event = prod(es) if es else 1
+        chunk = flat[..., offset:offset + n_event]
+        if es:
+            leading = flat.shape[:-1]
+            fields[name] = chunk.reshape(*leading, *es)
+        else:
+            fields[name] = chunk.squeeze(axis=-1)
+        offset += n_event
+    return Values(fields)

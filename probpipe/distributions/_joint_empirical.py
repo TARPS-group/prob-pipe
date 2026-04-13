@@ -33,6 +33,8 @@ from ..core.protocols import (
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
+    _flatten_values_batched,
+    _unflatten_values_batched,
 )
 
 
