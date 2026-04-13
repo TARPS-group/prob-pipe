@@ -74,6 +74,11 @@ class GLMLikelihood:
             self._x = None
         self._key = jax.random.PRNGKey(seed)
 
+    @property
+    def data_template(self) -> Values:
+        """Named structure of GLM data: ``X`` (design matrix) and ``y`` (response)."""
+        return Values(X=jnp.zeros((0, 0)), y=jnp.zeros(0))
+
     def _extract_X_y(self, data):
         """Extract design matrix and response from data.
 

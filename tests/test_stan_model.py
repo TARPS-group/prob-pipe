@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 
-from probpipe import SupportsLogProb, SupportsNamedComponents
+from probpipe import SupportsLogProb
 from probpipe.modeling._stan import StanModel, _UnconstrainedStanView
 
 
@@ -55,7 +55,7 @@ class TestStanModelProtocols:
 
     def test_supports_named_components(self):
         model = _make_stan_model()
-        assert isinstance(model, SupportsNamedComponents)
+        assert hasattr(model, 'component_names')
 
 
 # ---------------------------------------------------------------------------

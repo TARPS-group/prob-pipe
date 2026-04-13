@@ -283,6 +283,17 @@ class ValuesDistribution(Distribution[Values]):
     def __getitem__(self, key: str) -> _ValuesDistributionView:
         return _ValuesDistributionView(self, key)
 
+    def __getattr__(self, name: str):
+        """Attribute access for named fields: ``dist.field_name`` → view."""
+        if name.startswith('_'):
+            raise AttributeError(name)
+        tpl = self.__dict__.get('_values_template')
+        if tpl is not None and name in tpl:
+            return self[name]
+        raise AttributeError(
+            f"'{type(self).__name__}' has no attribute {name!r}"
+        )
+
     def select(self, *fields: str, **mapping: str) -> dict[str, _ValuesDistributionView]:
         """Select named fields as views for workflow function broadcasting.
 

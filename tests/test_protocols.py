@@ -29,7 +29,6 @@ from probpipe.core.protocols import (
     SupportsVariance,
     SupportsCovariance,
     SupportsConditioning,
-    SupportsNamedComponents,
 )
 
 
@@ -227,15 +226,15 @@ class TestSupportsConditioning:
 
 
 # ---------------------------------------------------------------------------
-# SupportsNamedComponents
+# Named components (duck-typing check)
 # ---------------------------------------------------------------------------
 
-class TestSupportsNamedComponents:
+class TestNamedComponents:
     def test_product_distribution(self, joint):
-        assert isinstance(joint, SupportsNamedComponents)
+        assert hasattr(joint, 'component_names')
 
-    def test_normal_not_named_components(self, normal):
-        assert not isinstance(normal, SupportsNamedComponents)
+    def test_normal_component_names_empty(self, normal):
+        assert normal.component_names == ()
 
 
 # ---------------------------------------------------------------------------

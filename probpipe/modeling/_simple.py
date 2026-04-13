@@ -24,10 +24,11 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
     The prior must support :class:`SupportsLogProb` so that the joint
     log-density is always computable.
 
-    **Named components:** derived from the prior's ``values_template``
-    when available (e.g. ``("r", "K", "phi")``), otherwise defaults to
-    ``("parameters",)``.  The likelihood is always accessible as
-    ``"data"``.
+    **Named components:** merged from the prior's ``values_template``
+    and the likelihood's ``data_template`` when both are available.
+    For example, a GLM model might have
+    ``component_names == ("X", "intercept", "slope", "y")``.
+    Falls back to ``("parameters", "data")`` when templates are absent.
 
     Parameters
     ----------
@@ -58,11 +59,33 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         self._likelihood = likelihood
         self._name_str = name
 
-        # Propagate the prior's values_template so inference methods
-        # can produce named posterior draws.
-        tpl = prior.values_template
-        if tpl is not None:
-            self._values_template = tpl
+        # Build merged values_template: prior params + likelihood data fields.
+        # This makes component_names include both parameter and data names,
+        # so condition_on can use component names as the sole signal for
+        # splitting data kwargs from inference kwargs.
+        prior_tpl = prior.values_template
+        data_tpl = getattr(likelihood, 'data_template', None)
+        if prior_tpl is not None and data_tpl is not None:
+            overlap = set(prior_tpl.fields()) & set(data_tpl.fields())
+            if overlap:
+                raise ValueError(
+                    f"Parameter and data field names overlap: {overlap}"
+                )
+            merged = {}
+            for f in prior_tpl.fields():
+                merged[f] = prior_tpl[f]
+            for f in data_tpl.fields():
+                merged[f] = data_tpl[f]
+            self._values_template = Values(merged)
+        elif prior_tpl is not None:
+            self._values_template = prior_tpl
+        # Store prior field names for parameter_names / __getitem__ dispatch
+        self._prior_fields: frozenset[str] = frozenset(
+            prior_tpl.fields() if prior_tpl is not None else ()
+        )
+        self._data_fields: frozenset[str] = frozenset(
+            data_tpl.fields() if data_tpl is not None else ()
+        )
 
     # -- Distribution interface ---------------------------------------------
 
@@ -70,21 +93,23 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
     def name(self) -> str | None:
         return self._name_str
 
-    # -- SupportsNamedComponents interface ----------------------------------
+    # -- Named components interface ------------------------------------------
 
     @property
     def component_names(self) -> tuple[str, ...]:
-        tpl = self._prior.values_template
+        tpl = self.values_template
         if tpl is not None:
-            return (*tpl.fields(), "data")
+            return tpl.fields()
         return ("parameters", "data")
 
     def __getitem__(self, key: str) -> Distribution | Likelihood:
+        if key in self._data_fields:
+            return self._likelihood
+        if key in self._prior_fields:
+            return self._prior
+        # Fallback for unstructured models
         if key == "data":
             return self._likelihood
-        tpl = self._prior.values_template
-        if tpl is not None and key in tpl:
-            return self._prior
         if key == "parameters":
             return self._prior
         raise KeyError(
@@ -96,9 +121,8 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
 
     @property
     def parameter_names(self) -> tuple[str, ...]:
-        tpl = self._prior.values_template
-        if tpl is not None:
-            return tpl.fields()
+        if self._prior_fields:
+            return tuple(sorted(self._prior_fields))
         return ("parameters",)
 
     # -- SupportsLogProb interface -----------------------------------------

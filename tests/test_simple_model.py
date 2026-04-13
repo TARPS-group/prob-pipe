@@ -20,7 +20,6 @@ from probpipe import (
     MultivariateNormal,
     SimpleModel,
     SupportsLogProb,
-    SupportsNamedComponents,
     SupportsSampling,
     Values,
     condition_on,
@@ -94,7 +93,7 @@ class TestSimpleModel:
         assert model.parameter_names == ("parameters",)
 
     def test_supports_named_components(self, model):
-        assert isinstance(model, SupportsNamedComponents)
+        assert hasattr(model, 'component_names')
 
     def test_getitem_parameters(self, model, prior):
         assert model["parameters"] is prior
@@ -268,7 +267,8 @@ class TestSimpleModelWithValues:
 
     def test_component_names_from_template(self, prior_with_template, likelihood):
         model = SimpleModel(prior_with_template, likelihood)
-        assert model.component_names == ("a", "b", "data")
+        # Likelihood has no data_template, so only prior fields appear
+        assert model.component_names == ("a", "b")
 
     def test_parameter_names_from_template(self, prior_with_template, likelihood):
         model = SimpleModel(prior_with_template, likelihood)

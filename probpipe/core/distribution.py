@@ -43,6 +43,7 @@ from ._values_distribution import (
 
 # -- _array_distributions ---------------------------------------------------
 from ._array_distributions import (
+    TFPValuesDistribution,
     ArrayDistribution,
     BootstrapDistribution,
     FlattenedView,
@@ -93,6 +94,7 @@ __all__ = [
     "_ValuesDistributionView",
     "_unflatten_batched",
     # Array hierarchy
+    "TFPValuesDistribution",
     "ArrayDistribution",
     "BootstrapDistribution",
     "FlattenedView",

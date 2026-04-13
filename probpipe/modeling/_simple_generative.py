@@ -69,7 +69,7 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]]):
     def name(self) -> str | None:
         return self._name_str
 
-    # -- SupportsNamedComponents interface ----------------------------------
+    # -- Named components interface ------------------------------------------
 
     @property
     def component_names(self) -> tuple[str, ...]:

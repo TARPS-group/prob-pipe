@@ -28,6 +28,7 @@ from probpipe._weights import Weights
 from probpipe.core.distribution import (
     Distribution,
     ValuesDistribution,
+    TFPValuesDistribution,
     TFPShapeMixin,
     ArrayDistribution,
     FlattenedView,
@@ -132,7 +133,6 @@ from probpipe.core.protocols import (
     SupportsVariance,
     SupportsCovariance,
     SupportsConditioning,
-    SupportsNamedComponents,
 )
 from probpipe.converters import (
     converter_registry,
@@ -149,6 +149,7 @@ __all__ = [
     # Base classes
     "Distribution",
     "ValuesDistribution",
+    "TFPValuesDistribution",
     "TFPShapeMixin",
     "ArrayDistribution",
     "FlattenedView",
@@ -234,7 +235,6 @@ __all__ = [
     "SupportsVariance",
     "SupportsCovariance",
     "SupportsConditioning",
-    "SupportsNamedComponents",
     # Transition / iteration
     "iterate",
     "with_conversion",

@@ -145,7 +145,7 @@ full public API surface.
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
 | `MethodRegistry` | Generic priority-based dispatch; used by the inference method registry |
-| `ProbabilisticModel` | Base for models (extends `Distribution` + `SupportsNamedComponents`) |
+| `ProbabilisticModel` | Base for models (extends `Distribution`; provides `component_names`) |
 | `SimpleGenerativeModel` | Simulator-only model wrapper for SBI/ABC (prior + `GenerativeLikelihood`) |
 | `IncrementalConditioner` | Stateful `Module` for sequential Bayesian updating via `update()` / `update_all()` |
 | `iterate` / combinators | Iterative distribution transformation; `with_conversion`, `with_resampling` |
@@ -162,7 +162,7 @@ whose `check()` returns `feasible=True` wins.
 Models no longer implement `_condition_on` directly — conditioning is
 handled entirely by registered methods.  The removed protocol
 `SupportsConditionableComponents` is no longer part of the public API;
-use `SupportsNamedComponents` and the inference registry instead.
+use `component_names` and the inference registry instead.
 
 Built-in methods:
 

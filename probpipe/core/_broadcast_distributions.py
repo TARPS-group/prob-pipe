@@ -17,7 +17,6 @@ from .._utils import prod
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
-    SupportsNamedComponents,
     SupportsSampling,
     SupportsVariance,
 )
@@ -290,7 +289,7 @@ def _make_marginal(
 # ---------------------------------------------------------------------------
 
 
-class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedComponents):
+class BroadcastDistribution(Distribution[dict], SupportsSampling):
     """Joint distribution over broadcast inputs and function output.
 
     Stores the paired input–output samples from a
@@ -389,7 +388,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
         m = self.marginalize()
         return m.samples if hasattr(m, 'samples') else m.items
 
-    # -- SupportsNamedComponents --------------------------------------------
+    # -- Named components ----------------------------------------------------
 
     @property
     def component_names(self) -> tuple[str, ...]:

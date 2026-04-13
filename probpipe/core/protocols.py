@@ -229,20 +229,6 @@ class SupportsConditioning(Protocol):
     def _condition_on(self, observed: Any, /, **kwargs: Any) -> Any: ...
 
 
-# ---------------------------------------------------------------------------
-# Named components (joint distributions)
-# ---------------------------------------------------------------------------
-
-@runtime_checkable
-class SupportsNamedComponents(Protocol):
-    """Distribution with named sub-components (e.g., joint distributions)."""
-
-    @property
-    def component_names(self) -> tuple: ...
-
-    def __getitem__(self, key: Any) -> Any: ...
-
-
 __all__ = [
     "compute_expectation",
     "SupportsExpectation",
@@ -253,5 +239,4 @@ __all__ = [
     "SupportsVariance",
     "SupportsCovariance",
     "SupportsConditioning",
-    "SupportsNamedComponents",
 ]

@@ -109,7 +109,7 @@ class PyMCModel(ProbabilisticModel):
             total += size
         return (total,)
 
-    # -- SupportsNamedComponents interface ----------------------------------
+    # -- Named components interface ------------------------------------------
 
     @property
     def component_names(self) -> tuple[str, ...]:

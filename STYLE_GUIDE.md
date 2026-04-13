@@ -408,7 +408,7 @@ class SupportsFoo(Protocol):
 - `SupportsLogProb` extends `SupportsUnnormalizedLogProb`.
 - All other protocols (`SupportsSampling`, `SupportsMean`,
   `SupportsVariance`, `SupportsCovariance`, `SupportsExpectation`,
-  `SupportsConditioning`, `SupportsNamedComponents`) are standalone.
+  `SupportsConditioning`) are standalone.
 
 ### 7.3 Implementing protocols
 

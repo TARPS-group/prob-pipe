@@ -3,8 +3,10 @@
 Provides:
   - ``EmpiricalDistribution[T]``        – Generic weighted empirical distribution.
   - ``ArrayEmpiricalDistribution``       – Array specialization with moments.
+  - ``_ValuesEmpiricalDistribution``     – Values specialization with per-field moments.
   - ``BootstrapReplicateDistribution[T]``    – Bootstrap resampling over datasets.
   - ``ArrayBootstrapReplicateDistribution``  – Array specialization.
+  - ``_ValuesBootstrapReplicateDistribution`` – Values specialization with joint row resampling.
 """
 
 from __future__ import annotations
@@ -36,6 +38,8 @@ from ._array_distributions import (
     ArrayDistribution,
     BootstrapDistribution,
 )
+from ._values_distribution import ValuesDistribution
+from .values import Values
 
 
 # ---------------------------------------------------------------------------
@@ -82,8 +86,11 @@ class EmpiricalDistribution[T](
     """
 
     def __new__(cls, samples=None, *args, **kwargs):
-        if cls is EmpiricalDistribution and samples is not None and _is_numeric_array(samples):
-            return object.__new__(ArrayEmpiricalDistribution)
+        if cls is EmpiricalDistribution and samples is not None:
+            if isinstance(samples, Values):
+                return object.__new__(_ValuesEmpiricalDistribution)
+            if _is_numeric_array(samples):
+                return object.__new__(ArrayEmpiricalDistribution)
         return object.__new__(cls)
 
     def __init__(
@@ -329,6 +336,103 @@ class ArrayEmpiricalDistribution(
 
 
 # ---------------------------------------------------------------------------
+# _ValuesEmpiricalDistribution (Values specialization)
+# ---------------------------------------------------------------------------
+
+
+class _ValuesEmpiricalDistribution(
+    EmpiricalDistribution[Values],
+    ValuesDistribution,
+    SupportsMean,
+    SupportsVariance,
+):
+    """Empirical distribution over Values-structured data.
+
+    Each sample is a *row* of the stored Values: if the Values has fields
+    ``X`` of shape ``(n, p)`` and ``y`` of shape ``(n,)``, then ``n`` is
+    the number of samples and each draw is a ``Values(X=array(p,), y=scalar)``.
+
+    Joint row indexing ensures that all fields are resampled with the same
+    indices, preserving per-observation relationships.
+
+    The ``values_template`` is set automatically from the field shapes
+    (leading sample dimension removed), enabling ``__getitem__``,
+    ``select()``, and ``component_names`` via
+    :class:`~probpipe.core._values_distribution.ValuesDistribution`.
+    """
+
+    _sampling_cost: str = "low"
+    _preferred_orchestration: str | None = None
+
+    def __init__(
+        self,
+        samples: Values,
+        weights: ArrayLike | Weights | None = None,
+        *,
+        log_weights: ArrayLike | Weights | None = None,
+        name: str | None = None,
+    ):
+        self._values_data = samples
+        self._samples = samples  # for base class .samples property
+        first_field = samples[samples.fields()[0]]
+        n = jnp.asarray(first_field).shape[0]
+        self._n_samples = n
+        self._w = Weights(n=n, weights=weights, log_weights=log_weights)
+        self._name = name
+        self._approximate = True
+        # values_template: structure with leading sample dim removed
+        tpl_fields: dict[str, jnp.ndarray] = {}
+        for fname in samples.fields():
+            arr = jnp.asarray(samples[fname])
+            tpl_fields[fname] = jnp.zeros(arr.shape[1:])
+        self._values_template = Values(tpl_fields)
+
+    @property
+    def n(self) -> int:
+        return self._n_samples
+
+    def _sample_one(self, key: PRNGKey) -> Values:
+        idx = self._w.choice(key)
+        return Values({
+            f: jnp.asarray(self._values_data[f])[idx]
+            for f in self._values_data.fields()
+        })
+
+    def _sample(
+        self,
+        key: PRNGKey,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Values:
+        if sample_shape == ():
+            return self._sample_one(key)
+        indices = self._w.choice(key, shape=(prod(sample_shape),))
+        fields: dict[str, jnp.ndarray] = {}
+        for f in self._values_data.fields():
+            arr = jnp.asarray(self._values_data[f])
+            fields[f] = arr[indices].reshape(*sample_shape, *arr.shape[1:])
+        return Values(fields)
+
+    def _mean(self) -> Values:
+        return Values({
+            f: self._w.mean(jnp.asarray(self._values_data[f]))
+            for f in self._values_data.fields()
+        })
+
+    def _variance(self) -> Values:
+        return Values({
+            f: self._w.variance(jnp.asarray(self._values_data[f]))
+            for f in self._values_data.fields()
+        })
+
+    def __repr__(self) -> str:
+        fields = ", ".join(self._values_data.fields())
+        return (
+            f"_ValuesEmpiricalDistribution(n={self._n_samples}, "
+            f"fields=({fields}))"
+        )
+
+
+# ---------------------------------------------------------------------------
 # BootstrapReplicateDistribution (generic base)
 # ---------------------------------------------------------------------------
 
@@ -382,6 +486,10 @@ class BootstrapReplicateDistribution[T](
 
     def __new__(cls, source=None, *args, **kwargs):
         if cls is BootstrapReplicateDistribution and source is not None:
+            if isinstance(source, _ValuesEmpiricalDistribution):
+                return object.__new__(_ValuesBootstrapReplicateDistribution)
+            if isinstance(source, Values):
+                return object.__new__(_ValuesBootstrapReplicateDistribution)
             if _is_numeric_array(source):
                 return object.__new__(ArrayBootstrapReplicateDistribution)
             if isinstance(source, EmpiricalDistribution) and _is_numeric_array(source.samples):
@@ -613,4 +721,102 @@ class ArrayBootstrapReplicateDistribution(BootstrapReplicateDistribution[Array],
             f"ArrayBootstrapReplicateDistribution(n={self._n}, "
             f"source_n={self._source_n}, "
             f"obs_shape={self._event_shape_per_obs})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# _ValuesBootstrapReplicateDistribution (Values specialization)
+# ---------------------------------------------------------------------------
+
+
+class _ValuesBootstrapReplicateDistribution(
+    BootstrapReplicateDistribution[Values],
+    ValuesDistribution,
+):
+    """Bootstrap replicate distribution over Values-structured data.
+
+    Each sample is a full bootstrapped dataset: ``n`` rows drawn i.i.d.
+    with replacement from the source data, with the *same* row indices
+    applied to all fields jointly.
+
+    Supports named field access (``bootstrap.X``, ``bootstrap["y"]``)
+    via :class:`~probpipe.core._values_distribution.ValuesDistribution`,
+    returning ``_ValuesDistributionView`` instances that preserve
+    correlation when used together in workflow function broadcasting.
+
+    Parameters
+    ----------
+    source : _ValuesEmpiricalDistribution or Values
+        The data to bootstrap from.
+    n : int or None
+        Number of observations per bootstrap dataset.  Defaults to the
+        number of rows in ``source``.
+    name : str or None
+        Distribution name for provenance.
+    """
+
+    _sampling_cost: str = "low"
+    _preferred_orchestration: str | None = None
+
+    def __init__(
+        self,
+        source: _ValuesEmpiricalDistribution | Values,
+        *,
+        n: int | None = None,
+        name: str | None = None,
+    ):
+        if isinstance(source, _ValuesEmpiricalDistribution):
+            self._values_data = source._values_data
+            self._w = source._w
+            default_n = source.n
+        elif isinstance(source, Values):
+            self._values_data = source
+            first = jnp.asarray(source[source.fields()[0]])
+            default_n = first.shape[0]
+            self._w = Weights.uniform(default_n)
+        else:
+            raise TypeError(
+                f"Expected Values or _ValuesEmpiricalDistribution, "
+                f"got {type(source).__name__}"
+            )
+        # self._data required by base class .data property
+        self._data = self._values_data
+        self._init_bootstrap_state(default_n, n=n, name=name)
+        # values_template: full dataset shape (n rows per field)
+        tpl_fields: dict[str, jnp.ndarray] = {}
+        for fname in self._values_data.fields():
+            arr = jnp.asarray(self._values_data[fname])
+            tpl_fields[fname] = jnp.zeros((self._n, *arr.shape[1:]))
+        self._values_template = Values(tpl_fields)
+
+    def _sample_one(self, key: PRNGKey) -> Values:
+        idx = self._w.choice(key, shape=(self._n,))
+        return Values({
+            f: jnp.asarray(self._values_data[f])[idx]
+            for f in self._values_data.fields()
+        })
+
+    def _sample(
+        self,
+        key: PRNGKey,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Values:
+        if sample_shape == ():
+            return self._sample_one(key)
+        total = prod(sample_shape)
+        keys = jax.random.split(key, total)
+        results = [self._sample_one(k) for k in keys]
+        # Stack: each result is Values(X=array(n,p), y=array(n,))
+        # → Values(X=array(*sample_shape, n, p), y=array(*sample_shape, n))
+        stacked: dict[str, jnp.ndarray] = {}
+        for f in self._values_data.fields():
+            arrs = jnp.stack([jnp.asarray(r[f]) for r in results])
+            stacked[f] = arrs.reshape(*sample_shape, *arrs.shape[1:])
+        return Values(stacked)
+
+    def __repr__(self) -> str:
+        fields = ", ".join(self._values_data.fields())
+        return (
+            f"_ValuesBootstrapReplicateDistribution(n={self._n}, "
+            f"source_n={self._source_n}, fields=({fields}))"
         )

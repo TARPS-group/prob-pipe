@@ -6,12 +6,11 @@ from abc import abstractmethod
 from typing import Any
 
 from ..core.distribution import Distribution
-from ..core.protocols import SupportsNamedComponents
 
 __all__ = ["ProbabilisticModel"]
 
 
-class ProbabilisticModel[T](Distribution[T], SupportsNamedComponents):
+class ProbabilisticModel[T](Distribution[T]):
     """Abstract base for probabilistic programming models.
 
     A ``ProbabilisticModel`` is a first-class :class:`Distribution`
@@ -23,7 +22,7 @@ class ProbabilisticModel[T](Distribution[T], SupportsNamedComponents):
     ``condition_on(model, data)`` rather than ``model._condition_on()``.
     """
 
-    # -- SupportsNamedComponents interface ----------------------------------
+    # -- Named components interface -----------------------------------------
 
     @property
     @abstractmethod

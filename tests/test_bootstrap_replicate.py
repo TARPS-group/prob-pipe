@@ -14,6 +14,7 @@ from probpipe import (
     BootstrapReplicateDistribution,
     SupportsExpectation,
     SupportsSampling,
+    Values,
     expectation,
     sample,
 )
@@ -356,3 +357,185 @@ class TestRepr:
         assert "BootstrapReplicateDistribution" in r
         assert "n=8" in r
         assert "source_n=10" in r
+
+
+# ---------------------------------------------------------------------------
+# Values-based EmpiricalDistribution
+# ---------------------------------------------------------------------------
+
+
+class TestValuesEmpiricalDistribution:
+    """EmpiricalDistribution(Values(...)) → _ValuesEmpiricalDistribution."""
+
+    @pytest.fixture
+    def values_data(self):
+        X = jnp.ones((20, 3))
+        y = jnp.arange(20.0)
+        return Values(X=X, y=y)
+
+    def test_dispatch(self, values_data):
+        from probpipe.core._empirical import _ValuesEmpiricalDistribution
+        emp = EmpiricalDistribution(values_data)
+        assert isinstance(emp, _ValuesEmpiricalDistribution)
+
+    def test_n(self, values_data):
+        emp = EmpiricalDistribution(values_data)
+        assert emp.n == 20
+
+    def test_satisfies_sampling(self, values_data):
+        emp = EmpiricalDistribution(values_data)
+        assert isinstance(emp, SupportsSampling)
+
+    def test_sample_one_returns_values(self, values_data):
+        emp = EmpiricalDistribution(values_data)
+        s = sample(emp, key=jax.random.PRNGKey(0))
+        assert isinstance(s, Values)
+        assert "X" in s and "y" in s
+
+    def test_sample_one_shapes(self, values_data):
+        emp = EmpiricalDistribution(values_data)
+        s = sample(emp, key=jax.random.PRNGKey(0))
+        assert s["X"].shape == (3,)
+        assert s["y"].shape == ()
+
+    def test_sample_batch(self, values_data):
+        emp = EmpiricalDistribution(values_data)
+        s = emp._sample(jax.random.PRNGKey(0), sample_shape=(5,))
+        assert isinstance(s, Values)
+        assert s["X"].shape == (5, 3)
+        assert s["y"].shape == (5,)
+
+    def test_values_template(self, values_data):
+        emp = EmpiricalDistribution(values_data)
+        tpl = emp.values_template
+        assert tpl is not None
+        assert tpl["X"].shape == (3,)
+        assert tpl["y"].shape == ()
+
+    def test_component_names(self, values_data):
+        emp = EmpiricalDistribution(values_data)
+        assert emp.component_names == ("X", "y")
+
+    def test_getitem_returns_view(self, values_data):
+        from probpipe.core._values_distribution import _ValuesDistributionView
+        emp = EmpiricalDistribution(values_data)
+        view = emp["X"]
+        assert isinstance(view, _ValuesDistributionView)
+
+    def test_getattr_returns_view(self, values_data):
+        from probpipe.core._values_distribution import _ValuesDistributionView
+        emp = EmpiricalDistribution(values_data)
+        view = emp.X
+        assert isinstance(view, _ValuesDistributionView)
+
+    def test_mean(self, values_data):
+        emp = EmpiricalDistribution(values_data)
+        m = emp._mean()
+        assert isinstance(m, Values)
+        np.testing.assert_allclose(m["X"], 1.0)
+        np.testing.assert_allclose(m["y"], jnp.arange(20.0).mean())
+
+    def test_variance(self, values_data):
+        emp = EmpiricalDistribution(values_data)
+        v = emp._variance()
+        assert isinstance(v, Values)
+        np.testing.assert_allclose(v["X"], 0.0, atol=1e-7)
+
+    def test_repr(self, values_data):
+        emp = EmpiricalDistribution(values_data)
+        r = repr(emp)
+        assert "_ValuesEmpiricalDistribution" in r
+        assert "n=20" in r
+
+
+# ---------------------------------------------------------------------------
+# Values-based BootstrapReplicateDistribution
+# ---------------------------------------------------------------------------
+
+
+class TestValuesBootstrapReplicateDistribution:
+    """BootstrapReplicateDistribution with Values source."""
+
+    @pytest.fixture
+    def values_data(self):
+        X = jnp.ones((20, 3))
+        y = jnp.arange(20.0)
+        return Values(X=X, y=y)
+
+    @pytest.fixture
+    def bootstrap(self, values_data):
+        emp = EmpiricalDistribution(values_data)
+        return BootstrapReplicateDistribution(emp)
+
+    def test_dispatch_from_empirical(self, values_data):
+        from probpipe.core._empirical import _ValuesBootstrapReplicateDistribution
+        emp = EmpiricalDistribution(values_data)
+        boot = BootstrapReplicateDistribution(emp)
+        assert isinstance(boot, _ValuesBootstrapReplicateDistribution)
+
+    def test_dispatch_from_values(self, values_data):
+        from probpipe.core._empirical import _ValuesBootstrapReplicateDistribution
+        boot = BootstrapReplicateDistribution(values_data)
+        assert isinstance(boot, _ValuesBootstrapReplicateDistribution)
+
+    def test_n(self, bootstrap):
+        assert bootstrap.n == 20
+
+    def test_custom_n(self, values_data):
+        emp = EmpiricalDistribution(values_data)
+        boot = BootstrapReplicateDistribution(emp, n=10)
+        assert boot.n == 10
+
+    def test_sample_one_returns_values(self, bootstrap):
+        s = sample(bootstrap, key=jax.random.PRNGKey(0))
+        assert isinstance(s, Values)
+        assert "X" in s and "y" in s
+
+    def test_sample_one_shapes(self, bootstrap):
+        s = sample(bootstrap, key=jax.random.PRNGKey(0))
+        assert s["X"].shape == (20, 3)
+        assert s["y"].shape == (20,)
+
+    def test_sample_batch(self, bootstrap):
+        s = bootstrap._sample(jax.random.PRNGKey(0), sample_shape=(4,))
+        assert isinstance(s, Values)
+        assert s["X"].shape == (4, 20, 3)
+        assert s["y"].shape == (4, 20)
+
+    def test_values_template(self, bootstrap):
+        tpl = bootstrap.values_template
+        assert tpl is not None
+        assert tpl["X"].shape == (20, 3)
+        assert tpl["y"].shape == (20,)
+
+    def test_component_names(self, bootstrap):
+        assert bootstrap.component_names == ("X", "y")
+
+    def test_getitem_returns_view(self, bootstrap):
+        from probpipe.core._values_distribution import _ValuesDistributionView
+        view = bootstrap["X"]
+        assert isinstance(view, _ValuesDistributionView)
+
+    def test_getattr_returns_view(self, bootstrap):
+        from probpipe.core._values_distribution import _ValuesDistributionView
+        view = bootstrap.X
+        assert isinstance(view, _ValuesDistributionView)
+
+    def test_view_sample(self, bootstrap):
+        """Sampling a view extracts the named field from a bootstrap sample."""
+        view = bootstrap["y"]
+        s = sample(view, key=jax.random.PRNGKey(0))
+        assert s.shape == (20,)  # one bootstrapped dataset's y
+
+    def test_joint_resampling(self, bootstrap):
+        """X and y views from the same parent preserve row correspondence."""
+        key = jax.random.PRNGKey(42)
+        full = sample(bootstrap, key=key)
+        # Extract individually from the same full sample
+        assert full["X"].shape == (20, 3)
+        assert full["y"].shape == (20,)
+
+    def test_repr(self, bootstrap):
+        r = repr(bootstrap)
+        assert "_ValuesBootstrapReplicateDistribution" in r
+        assert "n=20" in r

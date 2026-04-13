@@ -14,7 +14,6 @@ from probpipe import (
     SupportsVariance,
     SupportsCovariance,
     SupportsLogProb,
-    SupportsNamedComponents,
 )
 from probpipe.core.distribution import (
     _ArrayMarginal,
@@ -100,7 +99,7 @@ class TestBroadcastDistributionProtocols:
             weights=None,
             broadcast_args=["x"],
         )
-        assert isinstance(bd, SupportsNamedComponents)
+        assert hasattr(bd, 'component_names')
 
 
 # ---------------------------------------------------------------------------

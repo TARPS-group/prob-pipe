@@ -1,12 +1,13 @@
-"""Array-based distribution hierarchy and helpers.
+"""Distribution hierarchy with TFP shape semantics.
 
 Provides:
-  - ``_vmap_sample()``         – Batched sampling via ``jax.vmap``.
-  - ``_mc_expectation()``      – Monte Carlo expectation helper.
-  - ``TFPShapeMixin``          – TFP shape conventions (dtype, support, batch_shape).
-  - ``ArrayDistribution``      – Single-array distribution with TFP shape semantics.
-  - ``BootstrapDistribution``  – MC error tracking via bootstrap resampling.
-  - ``FlattenedView``          – Wraps any distribution as a flat ``ArrayDistribution``.
+  - ``_vmap_sample()``           – Batched sampling via ``jax.vmap``.
+  - ``_mc_expectation()``        – Monte Carlo expectation helper.
+  - ``TFPShapeMixin``            – TFP shape conventions (dtype, support, batch_shape).
+  - ``TFPValuesDistribution``    – ValuesDistribution + TFP shapes (base for all TFP dists).
+  - ``ArrayDistribution``        – Alias for ``TFPValuesDistribution`` (backward compat).
+  - ``BootstrapDistribution``    – MC error tracking via bootstrap resampling.
+  - ``FlattenedView``            – Wraps any distribution as a flat distribution.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from .constraints import (
 from . import _distribution_base as _base
 from .._utils import _auto_key
 from ._distribution_base import Distribution
+from ._values_distribution import ValuesDistribution
 
 
 # ---------------------------------------------------------------------------
@@ -171,12 +173,15 @@ class TFPShapeMixin:
 
 
 # ---------------------------------------------------------------------------
-# ArrayDistribution — distribution over arrays (TFP shape semantics)
+# TFPValuesDistribution — ValuesDistribution + TFP shape semantics
 # ---------------------------------------------------------------------------
 
-class ArrayDistribution(Distribution[Array], TFPShapeMixin):
-    """
-    Distribution over a single array with TFP-style shape semantics.
+class TFPValuesDistribution(ValuesDistribution, TFPShapeMixin):
+    """Distribution with TFP-style shape semantics and Values support.
+
+    Combines :class:`ValuesDistribution` (named component access,
+    Values-aware flatten/unflatten) with :class:`TFPShapeMixin` (dtype,
+    support, batch_shape).
 
     Shape semantics follow TFP conventions:
 
@@ -184,10 +189,13 @@ class ArrayDistribution(Distribution[Array], TFPShapeMixin):
       *d*-dimensional vector distribution).
     * ``batch_shape``  -- shape of independent-but-not-identically-distributed
       parameter batches.
-    * ``_sample(key, sample_shape)`` returns an array of shape
-      ``sample_shape + batch_shape + event_shape``.
 
-    Standard distributions (Normal, Gamma, Poisson, etc.) inherit from this class.
+    When ``values_template`` is set (named distribution), samples are
+    wrapped as :class:`~probpipe.Values`.  Otherwise, raw arrays are
+    returned for backward compatibility.
+
+    Standard distributions (Normal, Gamma, Poisson, etc.) inherit from
+    this class via :class:`TFPDistribution`.
     """
 
     # -- shape properties ---------------------------------------------------
@@ -213,8 +221,11 @@ class ArrayDistribution(Distribution[Array], TFPShapeMixin):
         return jax.tree.structure(None)
 
     @property
-    def event_shapes(self) -> Array:
-        """Single event shape, wrapped to satisfy the pytree interface."""
+    def event_shapes(self):
+        """Per-field event shapes, or single event shape when unnamed."""
+        tpl = self.values_template
+        if tpl is not None:
+            return super().event_shapes  # ValuesDistribution dict version
         return self.event_shape
 
     @property
@@ -225,37 +236,39 @@ class ArrayDistribution(Distribution[Array], TFPShapeMixin):
     @property
     def event_size(self) -> int:
         """Total flat dimensionality."""
-        es = self.event_shape
-        return prod(es)
+        tpl = self.values_template
+        if tpl is not None:
+            return tpl.flat_size
+        return prod(self.event_shape)
 
-    def flatten_value(self, value: ArrayLike) -> Array:
-        """Flatten event dimensions into a single trailing axis.
+    def flatten_value(self, value) -> Array:
+        """Flatten a sample (Values or array) to a flat trailing axis.
 
-        Leading dimensions (``sample_shape``, ``batch_shape``) are
-        preserved::
-
-            (*sample_shape, *batch_shape, *event_shape)
-            → (*sample_shape, *batch_shape, prod(event_shape))
+        When *value* is a :class:`Values`, delegates to
+        ``ValuesDistribution.flatten_value``.  Otherwise flattens event
+        dimensions of a raw array, preserving leading batch/sample dims.
         """
+        from .values import Values as _Values
+        if isinstance(value, _Values):
+            return super().flatten_value(value)
         value = jnp.asarray(value)
         es = self.event_shape
         n_event = prod(es)
         if not es:
-            # scalar event: just add a trailing dim
             return value[..., None]
         n_batch = value.ndim - len(es)
         batch_dims = value.shape[:n_batch]
         return value.reshape(*batch_dims, n_event)
 
-    def unflatten_value(self, flat: ArrayLike) -> Array:
-        """Unflatten a flat trailing axis back to event dimensions.
+    def unflatten_value(self, flat: ArrayLike):
+        """Unflatten a flat trailing axis back to event dimensions or Values.
 
-        Leading dimensions (``sample_shape``, ``batch_shape``) are
-        preserved::
-
-            (*sample_shape, *batch_shape, event_size)
-            → (*sample_shape, *batch_shape, *event_shape)
+        When ``values_template`` is set, returns a :class:`Values`.
+        Otherwise reshapes to ``(*batch, *event_shape)``.
         """
+        tpl = self.values_template
+        if tpl is not None:
+            return super().unflatten_value(flat)
         flat = jnp.asarray(flat)
         es = self.event_shape
         if not es:
@@ -270,11 +283,10 @@ class ArrayDistribution(Distribution[Array], TFPShapeMixin):
         """Singular support constraint."""
         return self.support
 
-    def as_flat_distribution(self) -> ArrayDistribution:
-        """View this distribution as a flat ``ArrayDistribution``.
+    def as_flat_distribution(self):
+        """View this distribution as a flat distribution.
 
-        Returns ``self`` for single-array distributions (already flat).
-        Overridden by ``ValuesDistribution`` to return a ``FlattenedView``.
+        Returns a :class:`FlattenedView` wrapping this distribution.
         """
         return FlattenedView(self)
 
@@ -288,6 +300,10 @@ class ArrayDistribution(Distribution[Array], TFPShapeMixin):
         if self.batch_shape:
             parts.append(f"batch_shape={self.batch_shape}")
         return f"{parts[0]}({', '.join(parts[1:])})"
+
+
+# Backward compatibility alias
+ArrayDistribution = TFPValuesDistribution
 
 
 # ---------------------------------------------------------------------------
