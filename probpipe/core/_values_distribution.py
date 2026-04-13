@@ -289,6 +289,16 @@ class ValuesDistribution(Distribution[Values]):
             raise RuntimeError("Cannot unflatten without values_template")
         return Values.unflatten(flat, template=tpl)
 
+    def as_flat_distribution(self):
+        """View this distribution as a flat ``ArrayDistribution``.
+
+        Returns a :class:`~probpipe.core._array_distributions.FlattenedView`
+        with ``event_shape = (event_size,)`` for algorithms expecting
+        flat vectors (MCMC, optimizers, VI methods).
+        """
+        from ._array_distributions import FlattenedView
+        return FlattenedView(self)
+
     @property
     def event_size(self) -> int:
         """Total number of scalar elements in one sample."""

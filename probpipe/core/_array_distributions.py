@@ -417,14 +417,14 @@ class FlattenedView(ArrayDistribution, SupportsSampling, SupportsLogProb):
     distribution after unflattening.
 
     This is the primary interoperability mechanism: any algorithm written
-    for ``ArrayDistribution`` works with ``PyTreeArrayDistribution`` via
-    ``dist.as_flat_distribution()``.
+    for ``ArrayDistribution`` works with ``ValuesDistribution`` or
+    ``ArrayDistribution`` via ``dist.as_flat_distribution()``.
     """
 
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
 
-    def __init__(self, base: ArrayDistribution):
+    def __init__(self, base: Distribution):
         self._base = base
 
     @property
@@ -433,7 +433,7 @@ class FlattenedView(ArrayDistribution, SupportsSampling, SupportsLogProb):
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
-        return self._base.batch_shape
+        return getattr(self._base, "batch_shape", ())
 
     def _sample_one(self, key: PRNGKey) -> Array:
         pytree_sample = self._base._sample_one(key)
@@ -470,8 +470,8 @@ class FlattenedView(ArrayDistribution, SupportsSampling, SupportsLogProb):
         return real
 
     @property
-    def base_distribution(self) -> ArrayDistribution:
-        """The underlying pytree distribution."""
+    def base_distribution(self) -> Distribution:
+        """The underlying distribution."""
         return self._base
 
     def unflatten_sample(self, flat_sample: ArrayLike):
