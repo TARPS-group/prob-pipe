@@ -67,7 +67,7 @@ prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), name="beta")
 model = SimpleModel(prior, GLMLikelihood(tfp_glm.Bernoulli(), X))
 
 # 2. Condition on data — runs NUTS automatically
-posterior = condition_on(model, y_obs, num_results=2000, num_warmup=1000, random_seed=0)
+posterior = condition_on(model, y_obs)
 draws = posterior.draws()   # Values(beta=array(2000, 2)) — named!
 draws.beta.mean(axis=0)     # Array([-1.38, 1.77], dtype=float32)
 
