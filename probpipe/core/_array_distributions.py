@@ -1,13 +1,12 @@
 """Array-based distribution hierarchy and helpers.
 
 Provides:
-  - ``_vmap_sample()``             – Batched sampling via ``jax.vmap``.
-  - ``_mc_expectation()``          – Monte Carlo expectation helper.
-  - ``PyTreeArrayDistribution[T]`` – Pytree-of-arrays layer with shape semantics.
-  - ``ArrayDistribution``          – Single-array specialization (T = Array).
-  - ``BootstrapDistribution``      – MC error tracking via bootstrap resampling.
-  - ``FlattenedView``              – Wraps any ``PyTreeArrayDistribution`` as a flat
-                                     ``ArrayDistribution``.
+  - ``_vmap_sample()``         – Batched sampling via ``jax.vmap``.
+  - ``_mc_expectation()``      – Monte Carlo expectation helper.
+  - ``TFPShapeMixin``          – TFP shape conventions (dtype, support, batch_shape).
+  - ``ArrayDistribution``      – Single-array distribution with TFP shape semantics.
+  - ``BootstrapDistribution``  – MC error tracking via bootstrap resampling.
+  - ``FlattenedView``          – Wraps any distribution as a flat ``ArrayDistribution``.
 """
 
 from __future__ import annotations
@@ -111,143 +110,8 @@ def _mc_expectation(
     return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
 
 
-# ---------------------------------------------------------------------------
-# PyTreeArrayDistribution[T] — pytree of arrays with shape semantics
-# ---------------------------------------------------------------------------
-
-class PyTreeArrayDistribution[T](Distribution[T]):
-    """
-    Distribution over a pytree of arrays with TFP-style shape semantics.
-
-    The type parameter ``T`` represents the **pytree structure** of a
-    single sample — for example, ``dict[str, Array]`` for joint
-    distributions or plain ``Array`` for single-array distributions.
-
-    All leaves are JAX arrays. ``batch_shape`` is shared across all leaves.
-    Each leaf has its own ``event_shape``. The full shape identity is:
-    ``treedef + batch_shape + per-leaf event_shapes``.
-
-    This class is purely about shape semantics and pytree structure.
-    Concrete subclasses declare their capabilities via protocol inheritance
-    (e.g., ``SupportsSampling``, ``SupportsExpectation``).
-
-    This is the workhorse layer for distributions over structured values
-    (e.g., dicts of arrays for joint parameter distributions). Single-array
-    distributions use the ``ArrayDistribution`` subclass.
-    """
-
-    # -- pytree structure ---------------------------------------------------
-
-    @property
-    @abstractmethod
-    def treedef(self) -> jax.tree_util.PyTreeDef:
-        """The pytree structure of a single sample."""
-        ...
-
-    # -- shape properties ---------------------------------------------------
-
-    @property
-    @abstractmethod
-    def batch_shape(self) -> tuple[int, ...]:
-        """Batch shape, shared across all leaves."""
-        ...
-
-    @property
-    @abstractmethod
-    def event_shapes(self) -> T:
-        """Per-leaf event shapes.
-
-        Returns a pytree with the same structure as T, with
-        ``tuple[int, ...]`` at each leaf position.
-        """
-        ...
-
-    @property
-    def flat_event_shapes(self) -> list[tuple[int, ...]]:
-        """Event shapes as a flat list in canonical leaf order."""
-        return self.treedef.flatten_up_to(self.event_shapes)
-
-    @property
-    def event_size(self) -> int:
-        """Total number of scalar elements in one event (analogous to ``numpy.ndarray.size``).
-
-        Equal to the sum of ``prod(s)`` over all leaf event shapes.
-        """
-        return sum(prod(s) for s in self.flat_event_shapes)
-
-    # -- flatten / unflatten ------------------------------------------------
-
-    def flatten_value(self, value: T) -> Array:
-        """Flatten the event dimensions of a pytree value into a single trailing axis.
-
-        Each leaf's event dimensions are raveled and the results are
-        concatenated in canonical leaf order.  All leading dimensions
-        (``sample_shape``, ``batch_shape``, or both) are preserved.
-
-        Shape contract for each leaf::
-
-            (*sample_shape, *batch_shape, *event_shape)
-            → (*sample_shape, *batch_shape, prod(event_shape))
-
-        After concatenating across leaves the result has shape
-        ``(*sample_shape, *batch_shape, event_size)``.
-        """
-        leaves = jax.tree.leaves(value)
-        event_shapes = self.flat_event_shapes
-        flat_leaves = []
-        for leaf, es in zip(leaves, event_shapes):
-            leaf = jnp.asarray(leaf)
-            n_event = prod(es)
-            # Reshape: (*batch_dims, *event_shape) -> (*batch_dims, n_event)
-            n_event_dims = len(es)
-            batch_dims = leaf.shape[:leaf.ndim - n_event_dims] if n_event_dims else leaf.shape
-            flat_leaves.append(leaf.reshape(*batch_dims, n_event))
-        return jnp.concatenate(flat_leaves, axis=-1)
-
-    def unflatten_value(self, flat: Array) -> T:
-        """Unflatten a flat array back to the pytree structure.
-
-        Reverses :meth:`flatten_value`.  All dimensions preceding the
-        final ``event_size`` axis are preserved (whether they represent
-        ``sample_shape``, ``batch_shape``, or both).
-
-        Parameters
-        ----------
-        flat : Array
-            Array of shape ``(*sample_shape, *batch_shape, event_size)``.
-
-        Returns
-        -------
-        T
-            Pytree with each leaf reshaped to
-            ``(*sample_shape, *batch_shape, *event_shape)``.
-        """
-        event_shapes = self.flat_event_shapes
-        batch_dims = flat.shape[:-1]
-        leaves = []
-        offset = 0
-        for es in event_shapes:
-            n = prod(es)
-            chunk = flat[..., offset:offset + n]
-            leaves.append(chunk.reshape(*batch_dims, *es))
-            offset += n
-        return jax.tree.unflatten(self.treedef, leaves)
-
-    def as_flat_distribution(self) -> ArrayDistribution:
-        """View this distribution as a flat ``ArrayDistribution``.
-
-        Returns an ``ArrayDistribution`` with ``event_shape=(event_size,)``.
-        Enables interoperability with algorithms that expect flat vectors
-        (MCMC, optimizers, VI methods).
-        """
-        return FlattenedView(self)
-
-    # -- supports (pytree of per-leaf constraints) ---------------------------
-
-    @property
-    def supports(self) -> T:
-        """Per-leaf constraints. Default returns ``real`` for every leaf."""
-        return jax.tree.map(lambda _: real, self.event_shapes)
+# Deprecated alias — PyTreeArrayDistribution has been merged into ArrayDistribution.
+# Defined after ArrayDistribution below.
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +178,7 @@ class TFPShapeMixin:
 # ArrayDistribution — distribution over arrays (TFP shape semantics)
 # ---------------------------------------------------------------------------
 
-class ArrayDistribution(PyTreeArrayDistribution[Array], TFPShapeMixin):
+class ArrayDistribution(Distribution[Array], TFPShapeMixin):
     """
     Distribution over a single array with TFP-style shape semantics.
 
@@ -340,12 +204,12 @@ class ArrayDistribution(PyTreeArrayDistribution[Array], TFPShapeMixin):
     # dtype, support, _check_support_compatible, _default_support
     # inherited from TFPShapeMixin.
 
-    # Concrete batch_shape satisfies the abstract from PyTreeArrayDistribution.
+    # Concrete batch_shape default (no batching).
     @property
     def batch_shape(self) -> tuple[int, ...]:
         return ()
 
-    # -- PyTreeArrayDistribution interface (trivial single-leaf) -------------
+    # -- Single-leaf pytree interface -----------------------------------------
 
     @property
     def treedef(self) -> jax.tree_util.PyTreeDef:
@@ -404,11 +268,19 @@ class ArrayDistribution(PyTreeArrayDistribution[Array], TFPShapeMixin):
         return flat.reshape(*batch_dims, *es)
 
     # support, _check_support_compatible, _default_support from TFPShapeMixin.
-    # Override supports to return the singular support (not the pytree
-    # version from PyTreeArrayDistribution which doesn't work for scalars).
+
     @property
     def supports(self):
+        """Singular support constraint."""
         return self.support
+
+    def as_flat_distribution(self) -> ArrayDistribution:
+        """View this distribution as a flat ``ArrayDistribution``.
+
+        Returns ``self`` for single-array distributions (already flat).
+        Overridden by ``ValuesDistribution`` to return a ``FlattenedView``.
+        """
+        return FlattenedView(self)
 
     # -- repr ---------------------------------------------------------------
 
@@ -534,11 +406,11 @@ class BootstrapDistribution(ArrayDistribution, SupportsSampling, SupportsMean, S
         return f"BootstrapDistribution(n={self._n}, event_shape={self.event_shape})"
 
 # ---------------------------------------------------------------------------
-# FlattenedView — wrap a PyTreeArrayDistribution as an ArrayDistribution
+# FlattenedView — wrap any distribution as a flat ArrayDistribution
 # ---------------------------------------------------------------------------
 
 class FlattenedView(ArrayDistribution, SupportsSampling, SupportsLogProb):
-    """Wraps a ``PyTreeArrayDistribution`` as a flat ``ArrayDistribution``.
+    """Wraps a distribution as a flat ``ArrayDistribution``.
 
     Sampling produces flat vectors of shape ``(event_size,)``, and
     ``_log_prob`` accepts flat vectors and delegates to the wrapped
@@ -552,7 +424,7 @@ class FlattenedView(ArrayDistribution, SupportsSampling, SupportsLogProb):
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
 
-    def __init__(self, base: PyTreeArrayDistribution):
+    def __init__(self, base: ArrayDistribution):
         self._base = base
 
     @property
@@ -598,7 +470,7 @@ class FlattenedView(ArrayDistribution, SupportsSampling, SupportsLogProb):
         return real
 
     @property
-    def base_distribution(self) -> PyTreeArrayDistribution:
+    def base_distribution(self) -> ArrayDistribution:
         """The underlying pytree distribution."""
         return self._base
 
@@ -611,3 +483,7 @@ class FlattenedView(ArrayDistribution, SupportsSampling, SupportsLogProb):
             f"FlattenedView(base={type(self._base).__name__}, "
             f"event_shape={self.event_shape})"
         )
+
+
+# Deprecated alias — PyTreeArrayDistribution has been absorbed into ArrayDistribution.
+PyTreeArrayDistribution = ArrayDistribution
