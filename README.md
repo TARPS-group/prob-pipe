@@ -14,13 +14,14 @@ Most workflows for probabilistic inference can be described in terms of **distri
 
 ## Key Features
 
-- **Protocol-based distributions** -- A distribution's capabilities are declared via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsMean`, ...), enabling structural subtyping across representations.
-- **Automatic uncertainty propagation** -- With `@workflow_function` broadcasting, a user can pass a distribution where a function expects a concrete value, progating that uncertainty into the function's output. This works whether the function's output is a fixed value or a distribution. 
-- **Pluggable inference** -- A single `condition_on` interface is backed by an inference registry that auto-selects the best-available algorithm (e.g., No-U-Turn Sampler (NUTS), Hamiltonian Monte Carlo (HMC), automatic differention variational inference (ADVI), and more), taking into acount a distribution's compatiability with available backends (e.g., TensorFlow Probability (TFP), nutpie, Stan, PyMC). A user can override with `method=` when they want control, and get inference diagnostics attached to the output distribution. 
-- **Automatic distribution conversion** -- A converter registry conversion between distribution types, using a similar registry-backed approach to `condition_on`,  
-- **JAX-native** -- Workflows and Array-based distributions are compatible with JAX (`vmap`, `jit`, `grad`, etc.), include always-on support for TFP distributions and inference methods. 
-- **Provenance tracking** -- Every distribution records its lineage through operations, ensuring traceability of the workflow. 
-- **Prefect orchestration** -- Enable prefect to distribute pipeline steps across machines without code changes.
+- **Named structured values** -- `Values` is the universal container for non-random structured data, just as `Distribution` is for random quantities. Both support named fields and `select()` for workflow function splatting. Named distributions automatically produce named posterior draws: `posterior.draws()` returns `Values(params=...)`.
+- **Protocol-based distributions** -- A distribution's capabilities are declared via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsMean`, ...), enabling structural subtyping across representations. Composite distributions dynamically include protocols based on their components' capabilities.
+- **Automatic uncertainty propagation** -- With `@workflow_function` broadcasting, a user can pass a distribution where a function expects a concrete value, propagating that uncertainty into the function's output. Use `dist.select("x", "y")` to pass named components while preserving correlation.
+- **Pluggable inference** -- A single `condition_on` interface is backed by an inference registry that auto-selects the best-available algorithm (NUTS, HMC, ADVI, and more), taking into account a distribution's compatibility with available backends (TFP, nutpie, Stan, PyMC). Override with `method=` when you want control; inference diagnostics are attached to the output distribution.
+- **Automatic distribution conversion** -- A converter registry converts between distribution types, using a similar registry-backed approach to `condition_on`.
+- **JAX-native** -- Workflows and array-based distributions are compatible with JAX (`vmap`, `jit`, `grad`), with always-on support for TFP distributions and inference methods.
+- **Provenance tracking** -- Every distribution records its lineage through operations, ensuring traceability of the workflow.
+- **Prefect orchestration** -- Enable Prefect to distribute pipeline steps across machines without code changes.
 
 
 
@@ -61,21 +62,22 @@ x_obs = jax.random.normal(jax.random.PRNGKey(42), shape=(80,))
 y_obs = jax.random.bernoulli(jax.random.PRNGKey(1), jax.nn.sigmoid(-1 + 2 * x_obs)).astype(jnp.float32)
 X = jnp.column_stack([jnp.ones_like(x_obs), x_obs])
 
-prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2))
+# Named prior — produces named posterior draws automatically
+prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), name="beta")
 model = SimpleModel(prior, GLMLikelihood(tfp_glm.Bernoulli(), X))
 
-# 2. Condition on data -- runs NUTS automatically
+# 2. Condition on data — runs NUTS automatically
 posterior = condition_on(model, y_obs, num_results=2000, num_warmup=1000, random_seed=0)
-posterior       # ApproximateDistribution(num_chains=1, num_draws=2000, ...)
-mean(posterior) # Array([-1.38, 1.77], dtype=float32)
+draws = posterior.draws()   # Values(beta=array(2000, 2)) — named!
+draws.beta.mean(axis=0)     # Array([-1.38, 1.77], dtype=float32)
 
-# 3. Propagate uncertainty -- pass a distribution where a value is expected
+# 3. Propagate uncertainty — select() preserves posterior correlation
 @workflow_function
-def predict_prob(params, x):
-    return jax.nn.sigmoid(params[0] + params[1] * x)
+def predict_prob(beta, x):
+    return jax.nn.sigmoid(beta[0] + beta[1] * x)
 
 x_grid = jnp.linspace(-3, 3, 100)
-predictive = predict_prob(params=posterior, x=x_grid)
+predictive = predict_prob(**posterior.select("beta"), x=x_grid)
 predictive      # EmpiricalDistribution(n=2000) over predicted P(y=1|x)
 ```
 

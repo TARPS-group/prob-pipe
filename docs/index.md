@@ -20,13 +20,14 @@ Using these abstractions, even complex workflows can be written down succinctly.
 
 ProbPipe manages representations and algorithms automatically by default, while giving you control over these choices when you want it:
 
+- **`Values`** is the universal container for named, structured non-random data. `Distribution` is the universal container for random quantities. Both support named fields and `select()` for workflow function splatting.  Together they ensure the full pipeline — from prior specification through inference to posterior predictive checks — produces named, provenance-tracked objects at every step.
 - **`Distribution`s** are generic and support subsets of capabilities via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsConditioning`, ...). This means external distribution types (TensorFlow Probability (TFP), scipy) can participate without inheriting from ProbPipe base classes.
-- **`WorkflowFunction`s** natively handle conversion between distribution representations and automatically compute **pushforward distributions** when functions defined on fixed inputs receive distributions as arguments.
+- **`WorkflowFunction`s** natively handle conversion between distribution representations and automatically compute **pushforward distributions** when functions defined on fixed inputs receive distributions as arguments.  Use `dist.select("x", "y")` to pass named components while preserving correlation.
 - **`Module`s** wrap multiple workflow functions with shared state, enabling reusable inferential components.
 
 ## Quick Example
 
-Fit a Bayesian model, then propagate posterior uncertainty through a prediction function:
+Fit a Bayesian model with named parameters, then propagate posterior uncertainty through a prediction function:
 
 ```python
 import jax
@@ -36,29 +37,31 @@ from probpipe import (
     condition_on, mean, variance,
 )
 
-# 1. Define a model
+# 1. Define a model with a named prior
 class LinearLikelihood:
     def log_likelihood(self, params, data):
         x, y = data[:, 0], data[:, 1]
         return jnp.sum(-0.5 * (y - (params[0] + params[1] * x)) ** 2)
 
-prior = MultivariateNormal(loc=jnp.zeros(2), cov=10.0 * jnp.eye(2))
+prior = MultivariateNormal(loc=jnp.zeros(2), cov=10.0 * jnp.eye(2), name="beta")
 model = SimpleModel(prior, LinearLikelihood())
 
-# 2. Fit the posterior
+# 2. Fit the posterior — named prior produces named draws
 posterior = condition_on(model, data)
+draws = posterior.draws()       # Values(beta=array(num_draws, 2))
+draws.beta.mean(axis=0)         # posterior mean for [intercept, slope]
 
-# 3. Propagate uncertainty through predictions
+# 3. Propagate uncertainty — select() preserves posterior correlation
 @workflow_function
-def predict(params, x):
-    return params[0] + params[1] * x
+def predict(beta, x):
+    return beta[0] + beta[1] * x
 
-predictive = predict(params=posterior, x=0.5)
+predictive = predict(**posterior.select("beta"), x=0.5)
 mean(predictive)       # posterior predictive mean
 variance(predictive)   # posterior predictive variance
 ```
 
-When a `WorkflowFunction` receives a distribution where it expects a concrete value, it automatically broadcasts over samples and returns the output distribution.
+When a `WorkflowFunction` receives a distribution where it expects a concrete value, it automatically broadcasts over samples and returns the output distribution.  Using `select()` ensures that correlated parameters from the same posterior are sampled jointly.
 
 ## Next Steps
 
