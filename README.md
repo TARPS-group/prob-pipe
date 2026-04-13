@@ -6,9 +6,9 @@
 
 ProbPipe is a Python framework for building scalable probabilistic pipelines with automated uncertainty quantification. Its core organizing principle is **distributions in, distributions out**: every node in a pipeline can consume and emit probability distributions, enabling principled uncertainty propagation across the entire workflow.
 
-Most workflows for probabilistic inference can be described in terms of **distributions**, **fixed inputs**, **operations** that transform distributions, and **differentiation** with respect to fixed inputs. Implementing these workflows, however, is harder than describing them:
+Most workflows for probabilistic inference can be described in terms of **distributions**, **fixed values** (data, hyperparameters, covariates), **operations** that transform distributions, and **differentiation** with respect to fixed values. Implementing these workflows, however, is harder than describing them:
 1. **Algorithmic challenges**: There are many possible algorithms for common operations, with varying trade-offs that need to be explored in a problem-specific manner. ProbPipe provides a unified framework for comparing and using such algorithms (e.g., for posterior inference) with reasonable defaults. 
-2. **Representational challenges**: Algorithms require -- and output -- specific distribution formats that are not always with other parts of the workflow. ProbPipe manages representations and algorithms automatically, while still allowing the user to override the defaults when necessary.
+2. **Representational challenges**: Algorithms require -- and output -- specific formats for both distributions and fixed values that are not always compatible with other parts of the workflow. Fixed values may be named parameter vectors, covariate matrices, or structured observations — and different algorithms expect different representations. ProbPipe manages representations automatically, while still allowing the user to override the defaults when necessary.
 
 **[Documentation](https://tarps-group.github.io/prob-pipe/)** | **[Getting Started Tutorial](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** | **[API Reference](https://tarps-group.github.io/prob-pipe/)**
 

@@ -7,14 +7,14 @@ ProbPipe is a Python framework for building probabilistic pipelines with automat
 Most workflows for probabilistic inference -- including validation procedures -- can be described in terms of four **abstract components**:
 
 1. **Distributions** -- priors, posteriors, data products ($\pi, p, q, \nu, \mu, \dots$)
-2. **Fixed inputs** -- data and hyperparameters ($\boldsymbol{X}, \boldsymbol{Y}, \alpha_0, \beta_0, \dots$)
-3. **Operations** that transform distributions, possibly depending on fixed inputs -- conditioning, pushforwards through functions, taking expectations
-4. **Differentiation** with respect to fixed inputs
+2. **Fixed values** -- data and hyperparameters ($\boldsymbol{X}, \boldsymbol{Y}, \alpha_0, \beta_0, \dots$)
+3. **Operations** that transform distributions, possibly depending on fixed values -- conditioning, pushforwards through functions, taking expectations
+4. **Differentiation** with respect to fixed values
 
-Using these abstractions, even complex workflows can be written down succinctly. However, *implementing* them requires concrete representations of distributions and algorithms for operations -- each creating its own challenge:
+Using these abstractions, even complex workflows can be written down succinctly. However, *implementing* them requires concrete representations of both distributions and fixed values, plus algorithms for operations -- each creating its own challenge:
 
 - **Algorithmic challenges.** There are usually many possible algorithms for a given operation. A posterior could be approximated using different Markov chain Monte Carlo (MCMC) algorithms, variational inference methods, or sequential Monte Carlo. These are implemented across many packages and often not designed to be directly compatible.
-- **Representational challenges.** Algorithms often require or output specific distribution representations that are not compatible with other parts of the workflow. For example, MCMC outputs a discrete approximation to a distribution, but many MCMC algorithms require continuous representations of prior distributions.
+- **Representational challenges.** Algorithms often require or output specific representations for both distributions and fixed values that are not compatible with other parts of the workflow. For example, MCMC outputs a discrete approximation to a distribution, but many MCMC algorithms require continuous representations of prior distributions. Similarly, fixed values may need to be structured as named parameter vectors, flat arrays, or covariate matrices depending on the algorithm — and downstream analysis requires named access to specific components of the result.
 
 ### ProbPipe's approach
 
