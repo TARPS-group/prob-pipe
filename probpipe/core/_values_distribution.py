@@ -12,6 +12,8 @@ any distribution whose ``values_template`` is set.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import jax
 import jax.numpy as jnp
 
@@ -25,6 +27,9 @@ from .protocols import (
 )
 from .values import Values
 from ..custom_types import Array, PRNGKey
+
+if TYPE_CHECKING:
+    from ._array_distributions import FlattenedView
 
 
 __all__ = ["ValuesDistribution", "_ValuesDistributionView"]
@@ -212,6 +217,11 @@ def _unflatten_batched(flat_draws: Array, template: Values) -> Values:
     Each field in the returned Values has shape ``(num_draws, *event_shape)``
     where ``event_shape`` comes from the corresponding field in *template*.
     """
+    if jnp.ndim(flat_draws) < 2:
+        raise ValueError(
+            f"_unflatten_batched expects at least 2-D input, "
+            f"got shape {jnp.shape(flat_draws)}"
+        )
     fields: dict[str, jnp.ndarray | Values] = {}
     offset = 0
     for name in template.fields():
@@ -325,7 +335,7 @@ class ValuesDistribution(Distribution[Values]):
             raise RuntimeError("Cannot unflatten without values_template")
         return Values.unflatten(flat, template=tpl)
 
-    def as_flat_distribution(self):
+    def as_flat_distribution(self) -> FlattenedView:
         """View this distribution as a flat ``ArrayDistribution``.
 
         Returns a :class:`~probpipe.core._array_distributions.FlattenedView`
@@ -365,8 +375,6 @@ def _register_dynamic_subclass(cls: type) -> type:
     pytree node, reusing the flatten/unflatten from the existing
     ``ProductDistribution`` registration in ``distributions/joint.py``.
     """
-    from .._utils import prod as _unused  # noqa — force module load order
-
     # Avoid double-registration (the base ProductDistribution is
     # already registered in distributions/joint.py).
     try:

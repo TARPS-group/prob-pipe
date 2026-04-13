@@ -305,3 +305,45 @@ class TestSimpleModelWithValues:
         assert model.component_names == ("parameters", "data")
         assert model.parameter_names == ("parameters",)
         assert model.values_template is None
+
+    def test_field_overlap_raises(self):
+        """SimpleModel rejects overlapping prior and data field names."""
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
+        prior._values_template = Values(X=jnp.zeros(()), y=jnp.zeros(()))
+
+        class _OverlapLikelihood:
+            def log_likelihood(self, params, data):
+                return -0.5 * jnp.sum((data - params) ** 2)
+
+            @property
+            def data_template(self):
+                return Values(X=jnp.zeros((0, 0)), y=jnp.zeros(0))
+
+        with pytest.raises(ValueError, match="overlap"):
+            SimpleModel(prior, _OverlapLikelihood())
+
+    def test_getitem_data_field_returns_likelihood(self, prior_with_template, likelihood):
+        """Data field names return the likelihood."""
+        class _DataTemplateLikelihood(_ValuesAwareLikelihood):
+            @property
+            def data_template(self):
+                return Values(obs=jnp.zeros(0))
+
+        lik = _DataTemplateLikelihood()
+        model = SimpleModel(prior_with_template, lik)
+        assert model["obs"] is lik
+
+    def test_condition_on_rejects_positional_and_named_data(self, prior_with_template):
+        """Cannot pass both positional observed and named data kwargs."""
+        class _DataTemplateLikelihood(_ValuesAwareLikelihood):
+            @property
+            def data_template(self):
+                return Values(obs=jnp.zeros(0))
+
+        model = SimpleModel(prior_with_template, _DataTemplateLikelihood())
+        with pytest.raises(ValueError, match="Cannot provide both"):
+            condition_on(
+                model, jnp.array([1.0, 2.0]),
+                obs=jnp.array([1.0, 2.0]),
+                num_results=50, random_seed=42,
+            )

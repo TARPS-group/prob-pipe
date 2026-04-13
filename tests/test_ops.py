@@ -293,3 +293,55 @@ class TestTopLevelImports:
     def test_import_condition_on(self):
         from probpipe import condition_on as co
         assert callable(co)
+
+
+# ---------------------------------------------------------------------------
+# _split_data_kwargs
+# ---------------------------------------------------------------------------
+
+class TestSplitDataKwargs:
+    """Unit tests for the _split_data_kwargs helper."""
+
+    def test_empty_kwargs(self):
+        from probpipe.core.ops import _split_data_kwargs
+        dist = ProductDistribution(x=Normal(0.0, 1.0))
+        data, inference = _split_data_kwargs(dist, {})
+        assert data == {}
+        assert inference == {}
+
+    def test_all_data_kwargs(self):
+        from probpipe.core.ops import _split_data_kwargs
+        dist = ProductDistribution(x=Normal(0.0, 1.0), y=Normal(0.0, 1.0))
+        data, inference = _split_data_kwargs(
+            dist, {"x": jnp.array(1.0), "y": jnp.array(2.0)},
+        )
+        assert set(data.keys()) == {"x", "y"}
+        assert inference == {}
+
+    def test_all_inference_kwargs(self):
+        from probpipe.core.ops import _split_data_kwargs
+        dist = ProductDistribution(x=Normal(0.0, 1.0))
+        data, inference = _split_data_kwargs(
+            dist, {"num_results": 100, "random_seed": 42},
+        )
+        assert data == {}
+        assert set(inference.keys()) == {"num_results", "random_seed"}
+
+    def test_mixed_kwargs(self):
+        from probpipe.core.ops import _split_data_kwargs
+        dist = ProductDistribution(x=Normal(0.0, 1.0), y=Normal(0.0, 1.0))
+        data, inference = _split_data_kwargs(
+            dist, {"x": jnp.array(1.0), "num_results": 100},
+        )
+        assert set(data.keys()) == {"x"}
+        assert set(inference.keys()) == {"num_results"}
+
+    def test_no_component_names(self):
+        """Distribution without component_names → all kwargs are inference."""
+        from probpipe.core.ops import _split_data_kwargs
+        dist = Normal(0.0, 1.0)
+        data, inference = _split_data_kwargs(
+            dist, {"num_results": 100},
+        )
+        assert data == {}
+        assert set(inference.keys()) == {"num_results"}

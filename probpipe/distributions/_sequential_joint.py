@@ -34,41 +34,6 @@ from ._joint_utils import (
 )
 
 
-def _flatten_values_batched(value: Values, event_shapes: dict[str, tuple[int, ...]]) -> Array:
-    """Flatten a (possibly batched) Values into ``(*leading, event_size)``."""
-    from .._utils import prod
-    parts = []
-    for name in sorted(event_shapes.keys()):
-        arr = jnp.asarray(value[name])
-        es = event_shapes[name]
-        n_event = prod(es) if es else 1
-        n_event_dims = len(es)
-        if n_event_dims:
-            leading = arr.shape[:arr.ndim - n_event_dims]
-        else:
-            leading = arr.shape
-        parts.append(arr.reshape(*leading, n_event))
-    return jnp.concatenate(parts, axis=-1)
-
-
-def _unflatten_values_batched(flat: Array, event_shapes: dict[str, tuple[int, ...]]) -> Values:
-    """Unflatten ``(*leading, event_size)`` back into a Values."""
-    from .._utils import prod
-    fields: dict[str, Array] = {}
-    offset = 0
-    for name in sorted(event_shapes.keys()):
-        es = event_shapes[name]
-        n_event = prod(es) if es else 1
-        chunk = flat[..., offset:offset + n_event]
-        if es:
-            leading = flat.shape[:-1]
-            fields[name] = chunk.reshape(*leading, *es)
-        else:
-            fields[name] = chunk.squeeze(axis=-1)
-        offset += n_event
-    return Values(fields)
-
-
 class SequentialJointDistribution(ValuesDistribution, SupportsSampling, SupportsLogProb, SupportsConditioning):
     """
     Joint distribution with autoregressive (sequential) dependence.

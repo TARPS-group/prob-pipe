@@ -139,6 +139,29 @@ class TestGLMLikelihood:
         np.testing.assert_array_equal(y1, y2)
 
 
+class TestGLMLikelihoodDataTemplate:
+    """GLMLikelihood.data_template declares data field names."""
+
+    def test_data_template_fields(self, poisson_lik):
+        tpl = poisson_lik.data_template
+        assert isinstance(tpl, Values)
+        assert tpl.fields() == ("X", "y")
+
+    def test_data_template_integrates_with_simple_model(self, poisson_lik):
+        """SimpleModel merges GLM data_template into component_names."""
+        from probpipe import Normal, ProductDistribution
+        prior = ProductDistribution(
+            intercept=Normal(loc=0.0, scale=2.0),
+            slope=Normal(loc=0.0, scale=2.0),
+        )
+        model = SimpleModel(prior, poisson_lik)
+        assert "X" in model.component_names
+        assert "y" in model.component_names
+        assert "intercept" in model.component_names
+        assert "slope" in model.component_names
+        assert model.parameter_names == ("intercept", "slope")
+
+
 class TestGLMLikelihoodWithValues:
     """GLMLikelihood accepts Values for params and data."""
 

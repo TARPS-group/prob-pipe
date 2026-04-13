@@ -12,6 +12,8 @@
 
 ::: probpipe.core._distribution_base.Distribution
 
+::: probpipe.core._array_distributions.TFPValuesDistribution
+
 ::: probpipe.core._array_distributions.ArrayDistribution
 
 ::: probpipe.core._array_distributions.TFPShapeMixin

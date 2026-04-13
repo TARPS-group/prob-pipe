@@ -25,13 +25,16 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Iterator
-from typing import Any, Callable, TypeAlias
+from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import ArrayLike
+
+if TYPE_CHECKING:
+    import xarray as xr
 
 __all__ = ["Values"]
 
@@ -309,7 +312,7 @@ class Values:
                 result[name] = np.asarray(val)
         return result
 
-    def to_datatree(self):
+    def to_datatree(self) -> xr.DataTree:
         """Reconstruct an xarray DataTree, reattaching preserved coordinates.
 
         Requires ``xarray`` to be installed.
