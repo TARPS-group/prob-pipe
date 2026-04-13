@@ -44,6 +44,8 @@ def _get_init_state(
     if isinstance(dist, SupportsMean):
         try:
             m = dist._mean()
+            if isinstance(m, Values):
+                m = m.flatten()
             return jnp.atleast_1d(jnp.asarray(m, dtype=jnp.float32))
         except Exception:
             pass

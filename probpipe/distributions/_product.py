@@ -160,7 +160,12 @@ class ProductDistribution(
     # -- Log-prob -----------------------------------------------------------
 
     def _log_prob(self, value) -> Array:
-        """Sum of independent leaf log-probs."""
+        """Sum of independent leaf log-probs.
+
+        Accepts Values, dict, or flat array (auto-unflattened via template).
+        """
+        if isinstance(value, jnp.ndarray) and self._values_template is not None:
+            value = Values.unflatten(value, template=self._values_template)
         if isinstance(value, Values):
             value = value.to_dict()
         lp_tree = jax.tree.map(
