@@ -381,11 +381,10 @@ inference/    (imports core/, custom_types)
 
 > **Exceptions** (intentional reverse edges):
 >
-> - `core/node.py` → `distributions/joint.py` (WorkflowFunction broadcasting)
 > - `inference/` → `modeling/` (lazy imports for model-type dispatch in
 >   `_sbijax`, `_tfp_mcmc`, `_nutpie`, `_cmdstan_method`, `_pymc_method`)
 >
-> Both use lazy (in-function) imports to avoid circular imports at
+> These use lazy (in-function) imports to avoid circular imports at
 > module load time.  Do not add new reverse edges without discussion.
 
 ---

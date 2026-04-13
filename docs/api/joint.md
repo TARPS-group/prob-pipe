@@ -1,13 +1,17 @@
 # Joint Distributions
 
-::: probpipe.core._joint.JointDistribution
+All joint distributions inherit from
+[`ValuesDistribution`][probpipe.core._values_distribution.ValuesDistribution]
+and return [`Values`][probpipe.core.values.Values] from `_sample()`.
 
-::: probpipe.core._joint.ProductDistribution
+Component access uses `dist["name"]` (returns a
+[`_ValuesDistributionView`][probpipe.core._values_distribution._ValuesDistributionView])
+and `dist.select("x", "y")` for workflow function broadcasting.
 
-::: probpipe.distributions.joint.SequentialJointDistribution
+::: probpipe.distributions._product.ProductDistribution
 
-::: probpipe.distributions.joint.JointEmpirical
+::: probpipe.distributions._sequential_joint.SequentialJointDistribution
 
-::: probpipe.distributions.joint.JointGaussian
+::: probpipe.distributions._joint_empirical.JointEmpirical
 
-::: probpipe.core._joint.DistributionView
+::: probpipe.distributions._joint_gaussian.JointGaussian

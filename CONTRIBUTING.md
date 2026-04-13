@@ -118,10 +118,18 @@ full public API surface.
 3. **Capabilities via protocols** — distributions declare support through
    `@runtime_checkable` protocols (e.g., `SupportsSampling`,
    `SupportsLogProb`, `SupportsMean`). Operations check protocols at
-   dispatch time.
+   dispatch time.  Protocols are dynamically included on composite
+   distributions (`ProductDistribution`, `TransformedDistribution`)
+   based on component capabilities.
 4. **Private method convention** — protocols define `_method()` (e.g.,
    `_sample`, `_log_prob`, `_mean`). The public API is via ops:
    `sample(dist)`, not `dist.sample()`.
+5. **Values and Distributions are parallel** — `Values` is the universal
+   container for non-random structured data; `Distribution` is the
+   universal container for random quantities. Both support named fields,
+   `select()` for workflow function splatting, and JAX pytree
+   traversal.  The full pipeline (prior → inference → posterior
+   predictive) produces named, provenance-tracked objects at every step.
 
 ### Key abstractions
 

@@ -1,12 +1,20 @@
 # Distributions
 
+## Values
+
+::: probpipe.core.values.Values
+
+::: probpipe.core._values_distribution.ValuesDistribution
+
+::: probpipe.core._values_distribution._ValuesDistributionView
+
 ## Base Classes
 
 ::: probpipe.core._distribution_base.Distribution
 
-::: probpipe.core._array_distributions.PyTreeArrayDistribution
-
 ::: probpipe.core._array_distributions.ArrayDistribution
+
+::: probpipe.core._array_distributions.TFPShapeMixin
 
 ::: probpipe.distributions._tfp_base.TFPDistribution
 
