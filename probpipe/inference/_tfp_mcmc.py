@@ -214,10 +214,23 @@ def _build_mcmc_datatree(
         return np.stack([np.asarray(c) for c in chain_list], axis=0)
 
     posterior_dict = {"params": _stack(chains)}
-    dt = az.from_dict(
-        posterior=posterior_dict,
-        sample_stats=sample_stats if sample_stats else None,
-    )
+    # arviz 1.x from_dict takes a positional groups dict;
+    # arviz 0.x takes keyword arguments (posterior=, sample_stats=, ...).
+    import inspect
+    sig = inspect.signature(az.from_dict)
+    first_param = next(iter(sig.parameters))
+    if first_param == "posterior":
+        # arviz 0.x keyword-style API
+        kw: dict = {"posterior": posterior_dict}
+        if sample_stats:
+            kw["sample_stats"] = sample_stats
+        dt = az.from_dict(**kw)
+    else:
+        # arviz 1.x groups-dict API
+        groups: dict = {"posterior": posterior_dict}
+        if sample_stats:
+            groups["sample_stats"] = sample_stats
+        dt = az.from_dict(groups)
 
     if warmup_chains is not None and all(w is not None for w in warmup_chains):
         warmup_array = _stack(warmup_chains)
