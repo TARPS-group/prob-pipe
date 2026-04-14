@@ -43,7 +43,7 @@ def _prefect_harness():
 
 @pytest.fixture
 def normal_dist():
-    return Normal(loc=1.0, scale=0.5)
+    return Normal(loc=1.0, scale=0.5, name="x")
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ class TestPrefectTaskLoop:
             n_broadcast_samples=30,
             seed=2,
         )
-        d2 = Normal(loc=2.0, scale=0.3)
+        d2 = Normal(loc=2.0, scale=0.3, name="y")
         result = wf(x=normal_dist, y=d2)
         assert hasattr(result, "samples")
         assert result.n == 30

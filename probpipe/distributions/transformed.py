@@ -119,7 +119,9 @@ class TransformedDistribution(ArrayDistribution, SupportsSampling):
     ):
         self._base = base
         self._bijector = bijector
-        self._name = name
+        if name is None:
+            name = f"transformed({base.name})"
+        super().__init__(name=name)
 
         if isinstance(base, TFPDistribution):
             self._tfp_transformed = tfd.TransformedDistribution(

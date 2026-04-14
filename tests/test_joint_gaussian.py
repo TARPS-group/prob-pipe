@@ -160,7 +160,7 @@ class TestLogProb:
                         [0.5, 1.0, 0.3],
                         [0.1, 0.3, 1.5]])
         jg = JointGaussian(mean=m, cov=c, a=1, b=2)
-        mvn = MultivariateNormal(loc=m, cov=c)
+        mvn = MultivariateNormal(loc=m, cov=c, name="z")
 
         key = jax.random.PRNGKey(11)
         s = sample(jg, key=key, sample_shape=(10,))

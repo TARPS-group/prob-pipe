@@ -214,8 +214,8 @@ class Normal(TFPDistribution):
         Mean of the distribution.
     scale : array-like
         Standard deviation (> 0).
-    name : str, optional
-        Distribution name for provenance.
+    name : str
+        Distribution name (required for leaf distributions).
     """
 ```
 
@@ -450,7 +450,7 @@ Define reusable fixtures at module scope:
 ```python
 @pytest.fixture
 def normal():
-    return Normal(loc=2.0, scale=0.5)
+    return Normal(loc=2.0, scale=0.5, name="x")
 ```
 
 Use `@pytest.fixture(params=...)` for parametrized testing across

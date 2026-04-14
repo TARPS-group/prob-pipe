@@ -174,7 +174,9 @@ class TFPConverter(Converter):
                 src_cls = type(source)
                 if src_cls in self._tfp_map:
                     pp_cls, extractor = self._tfp_map[src_cls]
-                    pp_dist = pp_cls(**extractor(source))
+                    params = extractor(source)
+                    params.setdefault("name", source.name or src_cls.__name__)
+                    pp_dist = pp_cls(**params)
                     pp_dist.with_source(Provenance("convert_from_tfp", parents=()))
                     if isinstance(pp_dist, target_type):
                         return pp_dist

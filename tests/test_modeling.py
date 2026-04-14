@@ -121,7 +121,7 @@ class TestIncrementalConditioner:
 
     @pytest.fixture
     def prior(self, dim):
-        return MultivariateNormal(loc=jnp.zeros(dim), cov=jnp.eye(dim) * 10.0)
+        return MultivariateNormal(loc=jnp.zeros(dim), cov=jnp.eye(dim) * 10.0, name="prior")
 
     @pytest.fixture
     def likelihood(self):

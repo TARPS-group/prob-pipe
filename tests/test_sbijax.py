@@ -78,7 +78,7 @@ class Gaussian2To5Simulator:
 
 @pytest.fixture
 def prior_2d():
-    return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+    return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="theta")
 
 
 @pytest.fixture
@@ -104,7 +104,7 @@ def observed_2d():
 @pytest.fixture(scope="module")
 def _trained_npe_smoke():
     """Tiny, fast NPE training — for smoke tests only (no correctness checks)."""
-    prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+    prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="theta")
     simulator = GaussianSimulator2D()
     return sbi_learn_conditional._func(
         prior, simulator,
@@ -120,7 +120,7 @@ def _trained_npe_smoke():
 @pytest.fixture(scope="module")
 def _trained_nle_correct():
     """Properly trained NLE — used to assert likelihood/posterior correctness."""
-    prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+    prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="theta")
     simulator = GaussianSimulator2D()
     return sbi_learn_likelihood._func(
         prior, simulator,
@@ -135,7 +135,7 @@ def _trained_nle_correct():
 @pytest.fixture(scope="module")
 def _trained_npe_correct():
     """Properly trained NPE — slower, used to assert posterior correctness."""
-    prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+    prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="theta")
     simulator = GaussianSimulator2D()
     return sbi_learn_conditional._func(
         prior, simulator,
@@ -276,7 +276,7 @@ class TestTrainSBI:
         # Compose with a different prior and verify joint log_prob is finite
         # and depends on the parameters.
         alt_prior = MultivariateNormal(
-            loc=jnp.ones(2), cov=2.0 * jnp.eye(2)
+            loc=jnp.ones(2), cov=2.0 * jnp.eye(2), name="theta"
         )
         model = SimpleModel(alt_prior, likelihood)
         obs = jnp.array([0.5, -0.3])
@@ -304,7 +304,7 @@ class TestTrainSBI:
         on a 1D problem end-to-end.
         """
         from probpipe import mean
-        scalar_prior = Normal(loc=0.0, scale=1.0)
+        scalar_prior = Normal(loc=0.0, scale=1.0, name="theta")
 
         class Scalar1DSimulator:
             def generate_data(self, params, n_samples, *, key=None):
@@ -568,7 +568,7 @@ class TestSMCABC:
             def log_likelihood(self, params, data):
                 return 0.0
 
-        model = SimpleModel(Normal(0.0, 1.0), DummyLik())
+        model = SimpleModel(Normal(0.0, 1.0, name="theta"), DummyLik())
         method = SbiSMCABCMethod()
         info = method.check(model, None)
         assert not info.feasible

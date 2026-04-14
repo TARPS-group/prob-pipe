@@ -121,7 +121,7 @@ class TestGLMLikelihood:
 
     def test_condition_on_with_glm(self, poisson_lik):
         """GLMLikelihood works end-to-end with SimpleModel + condition_on."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), name="beta")
         model = SimpleModel(prior, poisson_lik)
         data = jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1,
                            0, 2, 6, 1, 3, 2, 0, 4, 1, 3], dtype=jnp.float32)
@@ -151,8 +151,8 @@ class TestGLMLikelihoodDataTemplate:
         """SimpleModel merges GLM data_template into component_names."""
         from probpipe import Normal, ProductDistribution
         prior = ProductDistribution(
-            intercept=Normal(loc=0.0, scale=2.0),
-            slope=Normal(loc=0.0, scale=2.0),
+            intercept=Normal(loc=0.0, scale=2.0, name="intercept"),
+            slope=Normal(loc=0.0, scale=2.0, name="slope"),
         )
         model = SimpleModel(prior, poisson_lik)
         assert "X" in model.component_names
@@ -197,7 +197,7 @@ class TestGLMLikelihoodWithValues:
         np.testing.assert_allclose(ll_v, ll_raw, rtol=1e-6)
 
     def test_condition_on_with_record_data(self, poisson_lik):
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), name="beta")
         model = SimpleModel(prior, poisson_lik)
         data = Record(y=jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1,
                                     0, 2, 6, 1, 3, 2, 0, 4, 1, 3],
@@ -206,7 +206,13 @@ class TestGLMLikelihoodWithValues:
         assert mean(posterior).shape == (2,)
         # Prior has no record_template, so draws are raw arrays.
         # Named draws require prior._record_template to be set.
-        assert posterior.draws().shape == (50, 2)
+        draws = posterior.draws()
+        if isinstance(draws, Record):
+            # Prior has a name, so draws come back as a Record
+            flat = jnp.concatenate([draws[f] for f in draws.fields()], axis=-1)
+            assert flat.shape == (50, 2)
+        else:
+            assert draws.shape == (50, 2)
 
 
 class TestIncrementalConditionerAutoConvert:
@@ -220,7 +226,7 @@ class TestIncrementalConditionerAutoConvert:
 
         X = np.column_stack([np.ones(20), np.linspace(-1, 1, 20)]).astype(np.float32)
         lik = GLMLikelihood(tfp_glm.Poisson(), X)
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), name="beta")
         model = SimpleModel(prior, lik)
         data = jnp.ones(20, dtype=jnp.float32)
 

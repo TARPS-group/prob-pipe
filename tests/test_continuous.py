@@ -37,22 +37,22 @@ def key():
 
 # Map of (class, kwargs) for every continuous distribution under test.
 _CONTINUOUS_DISTS = {
-    "Normal": (Normal, dict(loc=0.0, scale=1.0)),
-    "Beta": (Beta, dict(alpha=2.0, beta=5.0)),
-    "Gamma": (Gamma, dict(concentration=3.0, rate=1.0)),
-    "InverseGamma": (InverseGamma, dict(concentration=3.0, scale=1.0)),
-    "Exponential": (Exponential, dict(rate=2.0)),
-    "LogNormal": (LogNormal, dict(loc=0.0, scale=1.0)),
-    "StudentT": (StudentT, dict(df=5.0, loc=0.0, scale=1.0)),
-    "Uniform": (Uniform, dict(low=0.0, high=1.0)),
-    "Cauchy": (Cauchy, dict(loc=0.0, scale=1.0)),
-    "Laplace": (Laplace, dict(loc=0.0, scale=1.0)),
-    "HalfNormal": (HalfNormal, dict(scale=1.0)),
-    "HalfCauchy": (HalfCauchy, dict(loc=0.0, scale=1.0)),
-    "Pareto": (Pareto, dict(concentration=3.0, scale=1.0)),
+    "Normal": (Normal, dict(loc=0.0, scale=1.0, name="x")),
+    "Beta": (Beta, dict(alpha=2.0, beta=5.0, name="x")),
+    "Gamma": (Gamma, dict(concentration=3.0, rate=1.0, name="x")),
+    "InverseGamma": (InverseGamma, dict(concentration=3.0, scale=1.0, name="x")),
+    "Exponential": (Exponential, dict(rate=2.0, name="x")),
+    "LogNormal": (LogNormal, dict(loc=0.0, scale=1.0, name="x")),
+    "StudentT": (StudentT, dict(df=5.0, loc=0.0, scale=1.0, name="x")),
+    "Uniform": (Uniform, dict(low=0.0, high=1.0, name="x")),
+    "Cauchy": (Cauchy, dict(loc=0.0, scale=1.0, name="x")),
+    "Laplace": (Laplace, dict(loc=0.0, scale=1.0, name="x")),
+    "HalfNormal": (HalfNormal, dict(scale=1.0, name="x")),
+    "HalfCauchy": (HalfCauchy, dict(loc=0.0, scale=1.0, name="x")),
+    "Pareto": (Pareto, dict(concentration=3.0, scale=1.0, name="x")),
     "TruncatedNormal": (
         TruncatedNormal,
-        dict(loc=0.0, scale=1.0, low=-2.0, high=2.0),
+        dict(loc=0.0, scale=1.0, low=-2.0, high=2.0, name="x"),
     ),
 }
 
@@ -106,14 +106,8 @@ class TestContinuousGeneric:
         class_name = type(continuous_dist).__name__
         assert class_name in r
 
-    def test_name_none_by_default(self, continuous_dist):
-        assert continuous_dist.name is None
-
-    def test_name_set(self):
-        """Every distribution should accept and store a name."""
-        for cls, kwargs in _CONTINUOUS_DISTS.values():
-            d = cls(**kwargs, name="test")
-            assert d.name == "test"
+    def test_name(self, continuous_dist):
+        assert continuous_dist.name == "x"
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +117,7 @@ class TestContinuousGeneric:
 
 class TestBeta:
     def test_samples_in_unit_interval(self, key):
-        d = Beta(alpha=2.0, beta=5.0)
+        d = Beta(alpha=2.0, beta=5.0, name="x")
         s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= 0.0)
         assert jnp.all(s <= 1.0)
@@ -131,49 +125,49 @@ class TestBeta:
 
 class TestGammaDist:
     def test_samples_nonnegative(self, key):
-        d = Gamma(concentration=3.0, rate=1.0)
+        d = Gamma(concentration=3.0, rate=1.0, name="x")
         s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= 0.0)
 
 
 class TestInverseGammaDist:
     def test_samples_nonnegative(self, key):
-        d = InverseGamma(concentration=3.0, scale=1.0)
+        d = InverseGamma(concentration=3.0, scale=1.0, name="x")
         s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= 0.0)
 
 
 class TestExponentialDist:
     def test_samples_nonnegative(self, key):
-        d = Exponential(rate=2.0)
+        d = Exponential(rate=2.0, name="x")
         s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= 0.0)
 
 
 class TestHalfNormalDist:
     def test_samples_nonnegative(self, key):
-        d = HalfNormal(scale=1.0)
+        d = HalfNormal(scale=1.0, name="x")
         s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= 0.0)
 
 
 class TestHalfCauchyDist:
     def test_samples_nonnegative(self, key):
-        d = HalfCauchy(loc=0.0, scale=1.0)
+        d = HalfCauchy(loc=0.0, scale=1.0, name="x")
         s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= 0.0)
 
 
 class TestParetoDist:
     def test_samples_nonnegative(self, key):
-        d = Pareto(concentration=3.0, scale=1.0)
+        d = Pareto(concentration=3.0, scale=1.0, name="x")
         s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= 0.0)
 
 
 class TestUniformDist:
     def test_samples_in_bounds(self, key):
-        d = Uniform(low=0.0, high=1.0)
+        d = Uniform(low=0.0, high=1.0, name="x")
         s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= 0.0)
         assert jnp.all(s <= 1.0)
@@ -181,7 +175,7 @@ class TestUniformDist:
 
 class TestTruncatedNormalDist:
     def test_samples_in_bounds(self, key):
-        d = TruncatedNormal(loc=0.0, scale=1.0, low=-2.0, high=2.0)
+        d = TruncatedNormal(loc=0.0, scale=1.0, low=-2.0, high=2.0, name="x")
         s = sample(d, key=key, sample_shape=(1000,))
         assert jnp.all(s >= -2.0)
         assert jnp.all(s <= 2.0)
@@ -189,7 +183,7 @@ class TestTruncatedNormalDist:
 
 class TestNormalDist:
     def test_has_loc_and_scale(self):
-        d = Normal(loc=0.0, scale=1.0)
+        d = Normal(loc=0.0, scale=1.0, name="x")
         assert hasattr(d, "loc")
         assert hasattr(d, "scale")
         assert float(d.loc) == 0.0

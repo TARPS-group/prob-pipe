@@ -30,7 +30,7 @@ def key():
 
 @pytest.fixture
 def scalar_normal():
-    return Normal(loc=0.0, scale=1.0)
+    return Normal(loc=0.0, scale=1.0, name="x")
 
 
 @pytest.fixture
@@ -38,6 +38,7 @@ def vector_mvn():
     return MultivariateNormal(
         loc=jnp.zeros(3),
         cov=jnp.eye(3),
+        name="z",
     )
 
 
@@ -47,6 +48,7 @@ def matrix_mvn():
     return MultivariateNormal(
         loc=jnp.zeros(4),
         cov=jnp.eye(4),
+        name="w",
     )
 
 
@@ -80,7 +82,7 @@ class TestDistributionBase:
         class StubDist(Distribution):
             def _sample_one(self, key):
                 return jnp.array(0.0)
-        d = StubDist()
+        d = StubDist(name="stub")
         with pytest.raises(TypeError, match="does not support log_prob"):
             log_prob(d, jnp.array(0.0))
 
@@ -99,11 +101,12 @@ class TestDistributionBase:
         r = repr(n)
         assert "my_normal" in r
 
-    def test_repr_without_name(self):
-        """Distribution.__repr__ works without a name."""
-        n = Normal(loc=0.0, scale=1.0)
+    def test_repr_with_name(self):
+        """Distribution.__repr__ includes the name."""
+        n = Normal(loc=0.0, scale=1.0, name="x")
         r = repr(n)
         assert "Normal" in r
+        assert "x" in r
 
     def test_from_distribution_on_base_class(self, scalar_normal):
         """from_distribution is accessible on Distribution[T] base."""
@@ -125,11 +128,11 @@ class TestArrayDistributionPyTreeInterface:
         td = vector_mvn.treedef
         assert td == jax.tree.structure(None)
 
-    def test_event_shapes_equals_event_shape(self, scalar_normal):
-        assert scalar_normal.event_shapes == scalar_normal.event_shape
+    def test_event_shapes_dict(self, scalar_normal):
+        assert scalar_normal.event_shapes == {"x": ()}
 
     def test_event_shapes_vector(self, vector_mvn):
-        assert vector_mvn.event_shapes == (3,)
+        assert vector_mvn.event_shapes == {"z": (3,)}
         assert vector_mvn.event_shape == (3,)
 
     def test_flat_event_shapes_scalar(self, scalar_normal):

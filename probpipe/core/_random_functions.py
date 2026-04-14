@@ -43,6 +43,9 @@ class RandomFunction[X, Y](Distribution[Callable[[X], Y]]):
     This class is generic in ``X`` (input type) and ``Y`` (output type).
     """
 
+    def __init__(self, *, name: str | None = None):
+        super().__init__(name=name or type(self).__name__)
+
     # -- Fundamental interface ----------------------------------------------
 
     @abstractmethod
@@ -116,7 +119,10 @@ class ArrayRandomFunction(RandomFunction[Array, Array]):
         self,
         input_shape: tuple[int, ...],
         output_shape: tuple[int, ...] = (),
+        *,
+        name: str | None = None,
     ) -> None:
+        super().__init__(name=name)
         self._input_shape = tuple(input_shape)
         self._output_shape = tuple(output_shape)
 

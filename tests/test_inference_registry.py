@@ -53,7 +53,7 @@ def simple_model():
     """A simple Poisson regression model."""
     import tensorflow_probability.substrates.jax.glm as tfp_glm
     X = np.column_stack([np.ones(20), np.linspace(-1, 1, 20)]).astype(np.float32)
-    prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2))
+    prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), name="beta")
     return SimpleModel(prior, GLMLikelihood(tfp_glm.Poisson(), X))
 
 
@@ -177,7 +177,7 @@ class TestInferenceMethodRegistry:
         registry can handle a plain distribution (not a model) when an
         explicit method is requested.
         """
-        prior = Normal(loc=0.0, scale=1.0)
+        prior = Normal(loc=0.0, scale=1.0, name="x")
         posterior = condition_on(
             prior, method="tfp_nuts",
             num_results=50, num_warmup=20, random_seed=0,

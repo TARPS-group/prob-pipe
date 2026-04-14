@@ -16,6 +16,7 @@ from probpipe import (
     ApproximateDistribution,
     MultivariateNormal,
     Normal,
+    ProductDistribution,
     Record,
     mean,
     sample,
@@ -46,7 +47,7 @@ class TestApproximateDistribution:
         warmup2 = jax.random.normal(jax.random.PRNGKey(3), (10, 2))
         chains = [chain1, chain2]
         auxiliary = _build_mcmc_datatree(chains, warmup_chains=[warmup1, warmup2])
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         return make_posterior(
             chains, parents=(prior,), algorithm="test", auxiliary=auxiliary,
         )
@@ -133,7 +134,7 @@ class TestApproximateDistributionValuesTemplate:
     def posterior_with_template(self, template):
         # 3 scalar params → flat draw vectors of size 3
         chain = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
-        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
         return make_posterior(
             [chain], parents=(prior,), algorithm="test",
             record_template=template,
@@ -168,7 +169,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_without_template_returns_array(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 3))
-        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
         post = make_posterior([chain], parents=(prior,), algorithm="test")
         draws = post.draws()
         assert isinstance(draws, jnp.ndarray)
@@ -185,7 +186,7 @@ class TestApproximateDistributionValuesTemplate:
         )
         flat_size = 3 + 4  # 3 + 2*2
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, flat_size))
-        prior = MultivariateNormal(loc=jnp.zeros(flat_size), cov=jnp.eye(flat_size))
+        prior = MultivariateNormal(loc=jnp.zeros(flat_size), cov=jnp.eye(flat_size), name="z")
         post = make_posterior(
             [chain], parents=(prior,), algorithm="test",
             record_template=template,
@@ -200,7 +201,7 @@ class TestApproximateDistributionValuesTemplate:
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
         warmup = jax.random.normal(jax.random.PRNGKey(1), (10, 2))
         auxiliary = _build_mcmc_datatree([chain], warmup_chains=[warmup])
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         post = make_posterior(
             [chain], parents=(prior,), algorithm="test",
             auxiliary=auxiliary, record_template=template,
@@ -218,7 +219,7 @@ class TestApproximateDistributionValuesTemplate:
         )
         flat_size = 3  # a + b + scale
         chain = jax.random.normal(jax.random.PRNGKey(0), (30, flat_size))
-        prior = MultivariateNormal(loc=jnp.zeros(flat_size), cov=jnp.eye(flat_size))
+        prior = MultivariateNormal(loc=jnp.zeros(flat_size), cov=jnp.eye(flat_size), name="z")
         post = make_posterior(
             [chain], parents=(prior,), algorithm="test",
             record_template=template,
@@ -246,7 +247,7 @@ class TestApproximateDistributionValuesTemplate:
     def test_auxiliary_has_posterior_group(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         auxiliary = _build_mcmc_datatree([chain])
-        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
         post = make_posterior([chain], parents=(prior,), algorithm="test",
                              auxiliary=auxiliary)
         assert "posterior" in post.auxiliary
@@ -267,7 +268,7 @@ class TestRWMH:
 
     def test_basic_sampling(self):
         """RWMH samples from a simple Normal distribution."""
-        dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         result = rwmh(
             dist=dist,
             num_results=100,
@@ -283,7 +284,7 @@ class TestRWMH:
 
     def test_inference_data_produced(self):
         """RWMH produces auxiliary DataTree with posterior group."""
-        dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         result = rwmh(
             dist=dist,
             num_results=50,
@@ -300,7 +301,7 @@ class TestRWMH:
 
     def test_multi_chain(self):
         """RWMH with multiple chains."""
-        dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         result = rwmh(
             dist=dist,
             num_results=50,
@@ -315,7 +316,7 @@ class TestRWMH:
 
     def test_warmup_stored(self):
         """RWMH stores warmup samples."""
-        dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         result = rwmh(
             dist=dist,
             num_results=50,
@@ -328,7 +329,7 @@ class TestRWMH:
 
     def test_provenance(self):
         """RWMH attaches provenance."""
-        dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         result = rwmh(
             dist=dist,
             num_results=50,
@@ -350,7 +351,7 @@ class TestRWMH:
         """
         sigma_p = np.sqrt(10.0)  # prior std
         sigma_y = 1.0            # likelihood std
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=sigma_p ** 2 * jnp.eye(2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=sigma_p ** 2 * jnp.eye(2), name="params")
         data = jnp.array([[1.0, 2.0], [1.5, 2.5], [0.8, 1.8]])
         n = data.shape[0]
 
@@ -374,7 +375,13 @@ class TestRWMH:
         analytical_mean = (n * sigma_p ** 2 / denom) * y_bar
         analytical_var = (sigma_p ** 2 * sigma_y ** 2) / denom
 
-        draws = np.asarray(result.draws()).reshape(-1, 2)
+        raw_draws = result.draws()
+        if hasattr(raw_draws, 'fields'):
+            # draws() returns a Record when prior has a name; flatten it
+            raw_draws = jnp.concatenate(
+                [raw_draws[f] for f in raw_draws.fields()], axis=-1
+            )
+        draws = np.asarray(raw_draws).reshape(-1, 2)
         np.testing.assert_allclose(draws.mean(0), analytical_mean, atol=0.08)
         np.testing.assert_allclose(draws.var(0, ddof=1), [analytical_var] * 2, atol=0.1)
 
@@ -387,13 +394,13 @@ class TestRWMH:
             def event_shape(self):
                 return (2,)
 
-        dist = NoLogProbNoSample()
+        dist = NoLogProbNoSample(name="test")
         with pytest.raises(TypeError):
             rwmh(dist=dist, num_results=10, num_warmup=5)
 
     def test_custom_init(self):
         """RWMH with custom initial state."""
-        dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         result = rwmh(
             dist=dist,
             num_results=50,
@@ -406,7 +413,7 @@ class TestRWMH:
 
     def test_zero_warmup(self):
         """RWMH with num_warmup=0 stores no warmup samples."""
-        dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         result = rwmh(
             dist=dist,
             num_results=50,
@@ -439,7 +446,7 @@ class TestRWMH:
             def _unnormalized_prob(self, value):
                 return self._prob(value)
 
-        dist = LogProbOnlyDist()
+        dist = LogProbOnlyDist(name="test")
         result = rwmh(
             dist=dist,
             num_results=30,
@@ -474,7 +481,7 @@ class TestRWMH:
             def _mean(self):
                 raise RuntimeError("broken")
 
-        dist = BrokenMeanLogProbDist()
+        dist = BrokenMeanLogProbDist(name="test")
         result = rwmh(
             dist=dist,
             num_results=30,
@@ -500,7 +507,7 @@ class TestRecordDistributionView:
     @pytest.fixture
     def posterior(self, template):
         chain = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
-        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
         return make_posterior(
             [chain], parents=(prior,), algorithm="test",
             record_template=template,
@@ -535,7 +542,7 @@ class TestRecordDistributionView:
     def test_view_event_shape_vector(self):
         template = Record(vec=jnp.zeros(5), scalar=jnp.array(0.0))
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 6))
-        prior = MultivariateNormal(loc=jnp.zeros(6), cov=jnp.eye(6))
+        prior = MultivariateNormal(loc=jnp.zeros(6), cov=jnp.eye(6), name="z")
         post = make_posterior([chain], parents=(prior,), algorithm="test",
                              record_template=template)
         assert post["scalar"].event_shape == ()
@@ -586,7 +593,7 @@ class TestRecordDistributionView:
         # by checking the empirical mean matches the draws directly.
         template = Record(a=jnp.array(0.0), b=jnp.array(0.0))
         chain = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         post = make_posterior([chain], parents=(prior,), algorithm="test",
                              record_template=template)
         view = post["a"]
@@ -594,6 +601,21 @@ class TestRecordDistributionView:
         np.testing.assert_allclose(float(view._mean()), 3.0, atol=1e-5)
         # Variance of column 0: var([1,3,5]) = 8/3
         np.testing.assert_allclose(float(view._variance()), jnp.var(chain[:, 0]), atol=1e-5)
+
+    def test_view_name_matches_field(self, posterior):
+        """View.name should return the field name."""
+        assert posterior["K"].name == "K"
+        assert posterior["phi"].name == "phi"
+        assert posterior["r"].name == "r"
+
+    def test_view_name_from_product(self):
+        """View.name works on ProductDistribution views."""
+        p = ProductDistribution(
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=0.0, scale=1.0, name="y"),
+        )
+        assert p["x"].name == "x"
+        assert p["y"].name == "y"
 
 
 class TestViewProtocolDuckTyping:
@@ -606,7 +628,7 @@ class TestViewProtocolDuckTyping:
     def test_view_from_product_isinstance_log_prob(self):
         """ProductDistribution supports SupportsLogProb → so does view."""
         from probpipe import ProductDistribution, SupportsLogProb
-        joint = ProductDistribution(x=Normal(0, 1), y=Normal(3, 2))
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
         view = joint["x"]
         assert isinstance(view, SupportsLogProb)
 
@@ -615,7 +637,7 @@ class TestViewProtocolDuckTyping:
         from probpipe import SupportsLogProb
         template = Record(a=jnp.array(0.0), b=jnp.array(0.0))
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         post = make_posterior([chain], parents=(prior,), algorithm="test",
                              record_template=template)
         view = post["a"]
@@ -624,12 +646,12 @@ class TestViewProtocolDuckTyping:
     def test_view_always_isinstance_sampling(self):
         """Every view is SupportsSampling regardless of parent type."""
         from probpipe import SupportsSampling, ProductDistribution
-        joint = ProductDistribution(x=Normal(0, 1), y=Normal(3, 2))
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
         assert isinstance(joint["x"], SupportsSampling)
 
         template = Record(a=jnp.array(0.0))
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
-        prior = Normal(0, 1)
+        prior = Normal(0, 1, name="x")
         post = make_posterior([chain], parents=(prior,), algorithm="test",
                              record_template=template)
         assert isinstance(post["a"], SupportsSampling)
@@ -637,7 +659,7 @@ class TestViewProtocolDuckTyping:
     def test_view_always_isinstance_mean_variance(self):
         """Every view is SupportsMean and SupportsVariance."""
         from probpipe import SupportsMean, SupportsVariance, ProductDistribution
-        joint = ProductDistribution(x=Normal(0, 1), y=Normal(3, 2))
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
         view = joint["x"]
         assert isinstance(view, SupportsMean)
         assert isinstance(view, SupportsVariance)
@@ -646,7 +668,7 @@ class TestViewProtocolDuckTyping:
         """View _log_prob delegates to the underlying component distribution."""
         from probpipe import ProductDistribution
         import scipy.stats
-        joint = ProductDistribution(x=Normal(loc=2.0, scale=0.5), y=Normal(0, 1))
+        joint = ProductDistribution(x=Normal(loc=2.0, scale=0.5, name="x"), y=Normal(0, 1, name="y"))
         view = joint["x"]
         lp = float(view._log_prob(jnp.array(2.0)))
         expected = scipy.stats.norm.logpdf(2.0, loc=2.0, scale=0.5)
@@ -655,7 +677,7 @@ class TestViewProtocolDuckTyping:
     def test_view_no_cov_when_parent_lacks_it(self):
         """View lacks SupportsCovariance when parent doesn't have it."""
         from probpipe import SupportsCovariance, ProductDistribution
-        joint = ProductDistribution(x=Normal(0, 1), y=Normal(3, 2))
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
         view = joint["x"]
         assert not isinstance(view, SupportsCovariance)
 
@@ -663,14 +685,14 @@ class TestViewProtocolDuckTyping:
         """Same _RecordDistributionView base, different isinstance results."""
         from probpipe import SupportsLogProb, ProductDistribution
         # ProductDistribution parent → isinstance True
-        joint = ProductDistribution(x=Normal(0, 1), y=Normal(3, 2))
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
         view_with = joint["x"]
         assert isinstance(view_with, SupportsLogProb)
 
         # ApproximateDistribution parent → isinstance False
         template = Record(a=jnp.array(0.0))
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
-        prior = Normal(0, 1)
+        prior = Normal(0, 1, name="x")
         post = make_posterior([chain], parents=(prior,), algorithm="test",
                              record_template=template)
         view_without = post["a"]
@@ -679,7 +701,7 @@ class TestViewProtocolDuckTyping:
     def test_view_still_isinstance_base_class(self):
         """Dynamic subclass is still isinstance of _RecordDistributionView."""
         from probpipe import ProductDistribution
-        joint = ProductDistribution(x=Normal(0, 1), y=Normal(3, 2))
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
         view = joint["x"]
         assert isinstance(view, _RecordDistributionView)
 
@@ -694,7 +716,7 @@ class TestRecordDistributionProperties:
     @pytest.fixture
     def posterior(self, template):
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 3))
-        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
         return make_posterior(
             [chain], parents=(prior,), algorithm="test",
             record_template=template,
@@ -900,7 +922,7 @@ class TestEndToEndValuesPipeline:
         template = Record(a=jnp.array(0.0), b=jnp.array(0.0), c=jnp.array(0.0))
         # 3 scalar fields → flat draw vectors of size 3
         chain = jax.random.normal(jax.random.PRNGKey(0), (200, 3))
-        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
         post = make_posterior(
             [chain], parents=(prior,), algorithm="test",
             record_template=template,
@@ -932,7 +954,7 @@ class TestEndToEndValuesPipeline:
 
         result = noisy_predict(
             **posterior.select("params"),
-            noise=Normal(0, 0.01),
+            noise=Normal(0, 0.01, name="noise"),
         )
         assert result.n == 50
         # Mean should be close to predict without noise

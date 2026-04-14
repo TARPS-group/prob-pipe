@@ -101,7 +101,9 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsLogProb, Supp
 
         self._joint_samples = converted
         self._n = n
-        self._name = name
+        if name is None:
+            name = "joint_empirical(" + ",".join(sorted(samples.keys())) + ")"
+        super().__init__(name=name)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
 
         # Build _components as ArrayEmpiricalDistribution per component

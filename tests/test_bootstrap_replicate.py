@@ -59,9 +59,9 @@ class TestConstruction:
         dist = BootstrapReplicateDistribution(jnp.ones((5, 2)), name="boot")
         assert dist.name == "boot"
 
-    def test_name_default_none(self):
+    def test_name_default(self):
         dist = BootstrapReplicateDistribution(jnp.ones((5, 2)))
-        assert dist.name is None
+        assert dist.name == "bootstrap"
 
 
 # ---------------------------------------------------------------------------

@@ -6,12 +6,13 @@ shape conventions (dtype, support, batch_shape).  Those live on
 ``TFPShapeMixin`` and its consumers.
 
 ``_RecordDistributionView`` is the lightweight component reference,
-analogous to :class:`~probpipe.core._joint.DistributionView` but for
-any distribution whose ``record_template`` is set.
+analogous to the former ``DistributionView`` but for any distribution
+whose ``record_template`` is set.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 import jax
@@ -141,6 +142,9 @@ class _RecordDistributionView(Distribution, SupportsSampling, SupportsMean, Supp
                 f"No field {key!r} in record_template "
                 f"(available: {template.fields() if template else ()})"
             )
+        # Bypass Distribution.__init__ validation (view name comes from
+        # the field key, not a user-supplied argument).
+        self._name = key
         self._parent = parent
         self._key = key
         self._key_path = (key,)
@@ -321,6 +325,33 @@ class RecordDistribution(Distribution[Record]):
         for arg_name, field_name in mapping.items():
             result[arg_name] = self[field_name]
         return result
+
+    # -- Dict-like interface (mirrors Record) ---------------------------------
+
+    def fields(self) -> tuple[str, ...]:
+        """Field names, matching ``Record.fields()``."""
+        return self.component_names
+
+    def __contains__(self, name: str) -> bool:
+        return name in self.component_names
+
+    # NOTE: __iter__ and __len__ are intentionally NOT implemented.
+    # Adding them causes JAX/numpy to treat distributions as sequences,
+    # making jnp.asarray(dist) silently convert to an empty array.
+
+    def keys(self) -> Iterator[str]:
+        """Iterate over component names."""
+        return iter(self.component_names)
+
+    def values(self) -> Iterator[_RecordDistributionView]:
+        """Iterate over component views."""
+        for name in self.component_names:
+            yield self[name]
+
+    def items(self) -> Iterator[tuple[str, _RecordDistributionView]]:
+        """Iterate over (name, view) pairs."""
+        for name in self.component_names:
+            yield name, self[name]
 
     # -- Flatten / unflatten ------------------------------------------------
 

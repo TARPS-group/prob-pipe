@@ -49,7 +49,7 @@ class TestProvenanceBasics:
         assert "n" in repr(p)
 
     def test_write_once(self):
-        n = Normal(loc=0.0, scale=1.0)
+        n = Normal(loc=0.0, scale=1.0, name="n")
         n.with_source(Provenance("first"))
         with pytest.raises(RuntimeError, match="already set"):
             n.with_source(Provenance("second"))
@@ -91,7 +91,7 @@ class TestTransformedDistributionProvenance:
         assert td.source.metadata["bijector"] == "Exp"
 
     def test_transform_chain_provenance(self):
-        base = Normal(loc=0.0, scale=1.0)
+        base = Normal(loc=0.0, scale=1.0, name="base")
         bij = tfb.Chain([tfb.Exp(), tfb.Shift(1.0)])
         td = TransformedDistribution(base, bij)
         assert td.source.metadata["bijector"] == "Chain"
@@ -112,8 +112,8 @@ class TestConditioningProvenance:
 
     def test_product_condition_on(self):
         joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0),
-            y=Normal(loc=1.0, scale=2.0),
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=1.0, scale=2.0, name="y"),
         )
         cond = condition_on(joint, x=jnp.array(0.0))
         assert cond.source is not None
@@ -123,8 +123,8 @@ class TestConditioningProvenance:
 
     def test_sequential_condition_on(self):
         seq = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         cond = condition_on(seq, z=jnp.array(1.0))
         assert cond.source.operation == "condition_on"
@@ -193,7 +193,7 @@ class TestBroadcastingProvenance:
     def test_broadcast_enumerate_provenance(self):
         """Enumeration path should also get provenance."""
         ed = ArrayEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
-        n = Normal(loc=0.0, scale=1.0)
+        n = Normal(loc=0.0, scale=1.0, name="n")
 
         def add(a: float, b: float) -> float:
             return a + b
@@ -215,8 +215,8 @@ class TestProvenanceChains:
     def test_two_step_chain(self):
         """from_distribution → condition_on creates a 2-step chain."""
         src = Beta(alpha=2.0, beta=5.0, name="prior")
-        converted = from_distribution(src, Normal, name="approx")
-        joint = ProductDistribution(x=converted, y=Normal(loc=0.0, scale=1.0))
+        converted = from_distribution(src, Normal, name="x")
+        joint = ProductDistribution(x=converted, y=Normal(loc=0.0, scale=1.0, name="y"))
         cond = condition_on(joint, x=jnp.array(0.0))
 
         # cond's provenance points to joint
@@ -317,7 +317,7 @@ class TestSerialization:
 class TestProvenanceAncestors:
 
     def test_no_provenance_returns_empty(self):
-        n = Normal(loc=0.0, scale=1.0)
+        n = Normal(loc=0.0, scale=1.0, name="n")
         assert provenance_ancestors(n) == []
 
     def test_single_parent(self):

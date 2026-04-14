@@ -65,7 +65,7 @@ def simple_weights():
 
 class TestMultivariateNormal:
     def test_construction_with_cov(self, loc, cov_matrix):
-        g = MultivariateNormal(loc=loc, cov=cov_matrix)
+        g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
         assert g.event_shape == (3,)
         assert g.batch_shape == ()
         assert g.dim == 3
@@ -73,26 +73,26 @@ class TestMultivariateNormal:
 
     def test_construction_with_scale_tril(self, loc, cov_matrix):
         L = jnp.linalg.cholesky(cov_matrix)
-        g = MultivariateNormal(loc=loc, scale_tril=L)
+        g = MultivariateNormal(loc=loc, scale_tril=L, name="z")
         np.testing.assert_allclose(g.cov, cov_matrix, atol=1e-5)
 
     def test_scalar_loc_promoted(self):
-        g = MultivariateNormal(loc=1.0, scale_tril=jnp.eye(1))
+        g = MultivariateNormal(loc=1.0, scale_tril=jnp.eye(1), name="z")
         assert g.event_shape == (1,)
         assert g.dim == 1
 
     def test_rejects_both_cov_and_scale_tril(self, loc, cov_matrix):
         L = jnp.linalg.cholesky(cov_matrix)
         with pytest.raises(ValueError, match="exactly one"):
-            MultivariateNormal(loc=loc, scale_tril=L, cov=cov_matrix)
+            MultivariateNormal(loc=loc, scale_tril=L, cov=cov_matrix, name="z")
 
     def test_rejects_neither_cov_nor_scale_tril(self, loc):
         with pytest.raises(ValueError, match="One of"):
-            MultivariateNormal(loc=loc)
+            MultivariateNormal(loc=loc, name="z")
 
     def test_rejects_dim_mismatch(self):
         with pytest.raises(ValueError, match="does not match"):
-            MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(3))
+            MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(3), name="z")
 
     def test_sample_shape(self, gaussian, key):
         s = sample(gaussian, key=key, sample_shape=(5,))
@@ -157,9 +157,9 @@ class TestMultivariateNormal:
     def test_name(self, gaussian):
         assert gaussian.name == "test_gaussian"
 
-    def test_no_name(self, loc, cov_matrix):
-        g = MultivariateNormal(loc=loc, cov=cov_matrix)
-        assert g.name is None
+    def test_name_set(self, loc, cov_matrix):
+        g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
+        assert g.name == "z"
 
     def test_repr(self, gaussian):
         r = repr(gaussian)
@@ -430,10 +430,10 @@ class TestProvenance:
         assert "test_gaussian" in r
 
     def test_repr_unnamed_parent(self, loc, cov_matrix):
-        g = MultivariateNormal(loc=loc, cov=cov_matrix)  # no name
+        g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
         p = Provenance("op", parents=(g,))
         r = repr(p)
-        assert "MultivariateNormal" in r
+        assert "z" in r
 
     def test_frozen(self, gaussian):
         p = Provenance("test_op")
@@ -486,7 +486,7 @@ class TestDistributionABC:
                 return _vmap_sample(self, key, sample_shape)
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
                 return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
-        d = MinimalDist()
+        d = MinimalDist(name="minimal")
         with pytest.raises(TypeError, match="does not support mean"):
             mean(d)
 
@@ -507,7 +507,7 @@ class TestDistributionABC:
                 return _vmap_sample(self, key, sample_shape)
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
                 return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
-        d = MinimalDist()
+        d = MinimalDist(name="minimal")
         with pytest.raises(TypeError, match="does not support variance"):
             variance(d)
 
@@ -516,7 +516,7 @@ class TestDistributionABC:
             from_distribution(None, ArrayDistribution)
 
     def test_source_default_none(self, gaussian):
-        g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         assert g.source is None
 
     def test_with_source(self, gaussian):
@@ -531,9 +531,9 @@ class TestDistributionABC:
         with pytest.raises(RuntimeError, match="Source already set"):
             gaussian.with_source(p2)
 
-    def test_name_default_none(self, loc, cov_matrix):
-        g = MultivariateNormal(loc=loc, cov=cov_matrix)
-        assert g.name is None
+    def test_name(self, loc, cov_matrix):
+        g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
+        assert g.name == "z"
 
 
 # ---------------------------------------------------------------------------
@@ -601,7 +601,7 @@ class TestDistributionCoverageGaps:
             def event_shape(self):
                 return ()
 
-        assert Scalar().batch_shape == ()
+        assert Scalar(name="s").batch_shape == ()
 
     def test_dtype_default(self):
         """ArrayDistribution.dtype defaults to float32."""
@@ -610,13 +610,13 @@ class TestDistributionCoverageGaps:
             def event_shape(self):
                 return ()
 
-        assert Scalar().dtype == jnp.float32
+        assert Scalar(name="s").dtype == jnp.float32
 
     def test_repr_with_batch_shape(self):
         """TFPDistribution repr includes batch_shape when non-trivial."""
         from probpipe import Normal
 
-        d = Normal(loc=jnp.array([0.0, 1.0]), scale=jnp.array([1.0, 1.0]))
+        d = Normal(loc=jnp.array([0.0, 1.0]), scale=jnp.array([1.0, 1.0]), name="x")
         assert "batch_shape" in repr(d)
 
     def test_array_empirical_dtype(self):

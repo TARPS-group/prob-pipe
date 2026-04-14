@@ -130,6 +130,14 @@ full public API surface.
    `select()` for workflow function splatting, and JAX pytree
    traversal.  The full pipeline (prior → inference → posterior
    predictive) produces named, provenance-tracked objects at every step.
+6. **Every distribution is named** — `Distribution.__init__` requires a
+   non-empty `name: str`.  Leaf distributions (Normal, Gamma, etc.)
+   require an explicit `name=` at construction.  Composite distributions
+   (ProductDistribution, EmpiricalDistribution, TransformedDistribution,
+   etc.) auto-generate a name from their components when one is not
+   provided.  `ProductDistribution` validates that each component
+   distribution's `name` matches its keyword key (e.g.,
+   `ProductDistribution(x=Normal(0, 1, name="x"))`).
 
 ### Key abstractions
 

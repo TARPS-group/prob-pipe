@@ -57,8 +57,8 @@ y = likelihood.generate_data(beta_true, 200).astype(jnp.float32)
 
 # --- 1. Build a model with named parameters ---
 prior = ProductDistribution(
-    intercept=Normal(loc=0.0, scale=5.0),
-    slope=Normal(loc=0.0, scale=5.0),
+    intercept=Normal(loc=0.0, scale=5.0, name="intercept"),
+    slope=Normal(loc=0.0, scale=5.0, name="slope"),
 )
 model = SimpleModel(prior, likelihood)
 

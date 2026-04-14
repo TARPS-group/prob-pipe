@@ -48,7 +48,7 @@ class TestSimpleModel:
 
     @pytest.fixture
     def prior(self):
-        return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
+        return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
 
     @pytest.fixture
     def likelihood(self):
@@ -85,12 +85,11 @@ class TestSimpleModel:
 
     def test_component_names(self, model):
         names = model.component_names
-        assert "parameters" in names
-        assert "data" in names
+        assert "params" in names
         assert isinstance(names, tuple)
 
     def test_parameter_names(self, model):
-        assert model.parameter_names == ("parameters",)
+        assert model.parameter_names == ("params",)
 
     def test_supports_named_components(self, model):
         assert hasattr(model, 'component_names')
@@ -157,7 +156,7 @@ class TestSimpleModelConditioningPaths:
 
     @pytest.fixture
     def prior(self):
-        return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
+        return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
 
     @pytest.fixture
     def likelihood(self):
@@ -207,7 +206,7 @@ class TestSimpleModelConditioningPaths:
                     return jnp.float32(-1e10)
                 return jnp.float32(-0.5 * np.sum((np.array(data) - np.array(params)) ** 2))
 
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
         model = SimpleModel(prior, NonTraceableLikelihood())
         data = jnp.array([[1.0, 2.0], [1.5, 2.5]])
         result = condition_on(
@@ -217,7 +216,7 @@ class TestSimpleModelConditioningPaths:
 
     def test_inference_data_produced(self):
         """TFP NUTS produces InferenceData with posterior and sample_stats."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
         model = SimpleModel(prior, GaussianLikelihood())
         data = jnp.array([[1.0, 2.0], [1.5, 2.5]])
         result = condition_on(
@@ -253,7 +252,7 @@ class TestSimpleModelWithValues:
 
     @pytest.fixture
     def prior_with_template(self):
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
         prior._record_template = Record(a=jnp.zeros(()), b=jnp.zeros(()))
         return prior
 
@@ -300,15 +299,15 @@ class TestSimpleModelWithValues:
         assert isinstance(result, ApproximateDistribution)
 
     def test_without_template_defaults(self):
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="params")
         model = SimpleModel(prior, GaussianLikelihood())
-        assert model.component_names == ("parameters", "data")
-        assert model.parameter_names == ("parameters",)
-        assert model.record_template is None
+        assert "params" in model.component_names
+        assert model.parameter_names == ("params",)
+        assert model.record_template is not None
 
     def test_field_overlap_raises(self):
         """SimpleModel rejects overlapping prior and data field names."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
         prior._record_template = Record(X=jnp.zeros(()), y=jnp.zeros(()))
 
         class _OverlapLikelihood:

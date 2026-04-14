@@ -181,7 +181,9 @@ class ScipyConverter(Converter):
             dist_cls = type(source.dist)
             if dist_cls in self._scipy_map:
                 pp_cls, extractor = self._scipy_map[dist_cls]
-                pp_dist = pp_cls(**extractor(source))
+                params = extractor(source)
+                params.setdefault("name", dist_cls.__name__)
+                pp_dist = pp_cls(**params)
                 pp_dist.with_source(Provenance("convert_from_scipy", parents=()))
                 if isinstance(pp_dist, target_type):
                     return pp_dist

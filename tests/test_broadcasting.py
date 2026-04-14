@@ -23,7 +23,7 @@ class TestBroadcastingBasic:
             return x * 2
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=50, vectorize="loop", seed=0)
-        g = Normal(loc=1.0, scale=0.5)
+        g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
         assert hasattr(result, 'samples')
@@ -34,7 +34,7 @@ class TestBroadcastingBasic:
             return x + 1.0
 
         w = WorkflowFunction(func=add_one, n_broadcast_samples=200, vectorize="loop", seed=1)
-        g = Normal(loc=0.0, scale=0.1)
+        g = Normal(loc=0.0, scale=0.1, name="x")
         result = w(x=g)
         # Mean should be ~1.0 (0 + 1)
         assert abs(float(jnp.mean(result.samples)) - 1.0) < 0.1
@@ -44,7 +44,7 @@ class TestBroadcastingBasic:
             return float(jnp.linalg.norm(x))
 
         w = WorkflowFunction(func=compute_norm, n_broadcast_samples=20, vectorize="loop", seed=2)
-        mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
+        mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="x")
         result = w(x=mvn)
         assert not isinstance(result, BroadcastDistribution)
         assert result.dim == 1
@@ -66,7 +66,7 @@ class TestBroadcastingBasic:
         np.testing.assert_allclose(float(result), 3.0)
 
         # Positional with distribution triggers broadcasting
-        g = Normal(loc=0.0, scale=0.1)
+        g = Normal(loc=0.0, scale=0.1, name="x")
         result = add(g, y=jnp.array(1.0))
         assert hasattr(result, 'samples')
         assert result.n == 30
@@ -76,7 +76,7 @@ class TestBroadcastingBasic:
             return x * 2
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop", seed=0)
-        g = Normal(loc=1.0, scale=0.5)
+        g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g)
         assert not hasattr(result, 'input_samples')
 
@@ -87,8 +87,8 @@ class TestBroadcastingMultipleArgs:
             return a + b
 
         w = WorkflowFunction(func=add_them, n_broadcast_samples=100, vectorize="loop", seed=3)
-        g1 = Normal(loc=1.0, scale=0.1)
-        g2 = Normal(loc=2.0, scale=0.1)
+        g1 = Normal(loc=1.0, scale=0.1, name="a")
+        g2 = Normal(loc=2.0, scale=0.1, name="b")
         result = w(a=g1, b=g2)
         assert result.n == 100
         assert abs(float(jnp.mean(result.samples)) - 3.0) < 0.2
@@ -100,7 +100,7 @@ class TestBroadcastingMixedArgs:
             return x * factor
 
         w = WorkflowFunction(func=scale, n_broadcast_samples=50, vectorize="loop", seed=4)
-        g = Normal(loc=5.0, scale=0.1)
+        g = Normal(loc=5.0, scale=0.1, name="x")
         result = w(x=g, factor=3.0)
         assert result.n == 50
         assert abs(float(jnp.mean(result.samples)) - 15.0) < 1.0
@@ -112,7 +112,7 @@ class TestBroadcastingNSamples:
             return x
 
         w = WorkflowFunction(func=identity, vectorize="loop", seed=5)
-        g = Normal(loc=0.0, scale=1.0)
+        g = Normal(loc=0.0, scale=1.0, name="x")
         result = w(x=g)
         assert result.n == WorkflowFunction.DEFAULT_N_BROADCAST_SAMPLES
 
@@ -121,7 +121,7 @@ class TestBroadcastingNSamples:
             return x
 
         w = WorkflowFunction(func=identity, n_broadcast_samples=100, vectorize="loop", seed=6)
-        g = Normal(loc=0.0, scale=1.0)
+        g = Normal(loc=0.0, scale=1.0, name="x")
         result = w(x=g, n_broadcast_samples=10)
         assert result.n == 10
 
@@ -209,7 +209,7 @@ class TestBroadcastingEnumeration:
             return a + b
 
         ed = EmpiricalDistribution(jnp.array([[1.0], [2.0], [3.0]]))
-        g = Normal(loc=0.0, scale=1.0)
+        g = Normal(loc=0.0, scale=1.0, name="b")
 
         w = WorkflowFunction(func=add_them, n_broadcast_samples=30, vectorize="loop", seed=10)
         result = w(a=ed, b=g)
@@ -244,7 +244,7 @@ class TestBroadcastingNonNumeric:
             return f"val={float(x):.2f}"
 
         w = WorkflowFunction(func=describe, n_broadcast_samples=5, vectorize="loop", seed=11)
-        g = Normal(loc=0.0, scale=1.0)
+        g = Normal(loc=0.0, scale=1.0, name="x")
         result = w(x=g)
         # Non-numeric results still return a marginal (ListMarginal)
         assert not isinstance(result, BroadcastDistribution)
@@ -262,7 +262,7 @@ class TestBroadcastingJAX:
             return x * 2
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=50, vectorize="jax", seed=20)
-        g = Normal(loc=1.0, scale=0.5)
+        g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
         assert result.n == 50
@@ -272,7 +272,7 @@ class TestBroadcastingJAX:
             return x + 1.0
 
         w = WorkflowFunction(func=add_one, n_broadcast_samples=200, vectorize="jax", seed=21)
-        g = Normal(loc=0.0, scale=0.1)
+        g = Normal(loc=0.0, scale=0.1, name="x")
         result = w(x=g)
         assert abs(float(jnp.mean(result.samples)) - 1.0) < 0.1
 
@@ -281,8 +281,8 @@ class TestBroadcastingJAX:
             return a + b
 
         w = WorkflowFunction(func=add_them, n_broadcast_samples=100, vectorize="jax", seed=22)
-        g1 = Normal(loc=1.0, scale=0.1)
-        g2 = Normal(loc=2.0, scale=0.1)
+        g1 = Normal(loc=1.0, scale=0.1, name="a")
+        g2 = Normal(loc=2.0, scale=0.1, name="b")
         result = w(a=g1, b=g2)
         assert result.n == 100
         assert abs(float(jnp.mean(result.samples)) - 3.0) < 0.2
@@ -292,7 +292,7 @@ class TestBroadcastingJAX:
             return x * factor
 
         w = WorkflowFunction(func=scale, n_broadcast_samples=50, vectorize="jax", seed=23)
-        g = Normal(loc=5.0, scale=0.1)
+        g = Normal(loc=5.0, scale=0.1, name="x")
         result = w(x=g, factor=3.0)
         assert result.n == 50
         assert abs(float(jnp.mean(result.samples)) - 15.0) < 1.0
@@ -302,7 +302,7 @@ class TestBroadcastingJAX:
             return x / 2.0
 
         w = WorkflowFunction(func=halve, n_broadcast_samples=30, vectorize="jax", seed=24)
-        mvn = MultivariateNormal(loc=jnp.array([4.0, 6.0]), cov=0.01 * jnp.eye(2))
+        mvn = MultivariateNormal(loc=jnp.array([4.0, 6.0]), cov=0.01 * jnp.eye(2), name="x")
         result = w(x=mvn)
         assert result.n == 30
         assert result.dim == 2
@@ -315,7 +315,7 @@ class TestBroadcastingJAX:
             return x * 2
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=30, vectorize="jax", seed=20)
-        g = Normal(loc=1.0, scale=0.5)
+        g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g, include_inputs=True)
         assert isinstance(result, BroadcastDistribution)
         assert "x" in result.input_samples
@@ -337,7 +337,7 @@ class TestAutoBackend:
             return jnp.sin(x)
 
         w = WorkflowFunction(func=pure_jax, n_broadcast_samples=20, vectorize="auto", seed=30)
-        g = Normal(loc=0.0, scale=1.0)
+        g = Normal(loc=0.0, scale=1.0, name="x")
         result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
         assert w._resolved_vectorize == "jax"
@@ -349,7 +349,7 @@ class TestAutoBackend:
             return jnp.asarray(scipy.special.gamma(np.asarray(x)))
 
         w = WorkflowFunction(func=scipy_fn, n_broadcast_samples=20, vectorize="auto", seed=31)
-        g = Normal(loc=2.0, scale=0.1)
+        g = Normal(loc=2.0, scale=0.1, name="x")
         result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
         assert w._resolved_vectorize == "loop"
@@ -364,7 +364,7 @@ class TestSeedManagement:
         def identity(x: jnp.ndarray) -> jnp.ndarray:
             return x
 
-        g = Normal(loc=0.0, scale=1.0)
+        g = Normal(loc=0.0, scale=1.0, name="x")
 
         w1 = WorkflowFunction(func=identity, n_broadcast_samples=20, vectorize="loop", seed=0)
         r1 = w1(x=g)
@@ -378,7 +378,7 @@ class TestSeedManagement:
         def identity(x: jnp.ndarray) -> jnp.ndarray:
             return x
 
-        g = Normal(loc=0.0, scale=1.0)
+        g = Normal(loc=0.0, scale=1.0, name="x")
         w = WorkflowFunction(func=identity, n_broadcast_samples=20, vectorize="loop", seed=0)
 
         r1 = w(x=g, seed=42)
@@ -398,7 +398,7 @@ class TestIncludeInputsArgument:
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop",
                              seed=0, include_inputs=True)
-        g = Normal(loc=1.0, scale=0.5)
+        g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g)
         assert isinstance(result, BroadcastDistribution)
         assert "x" in result.input_samples
@@ -409,7 +409,7 @@ class TestIncludeInputsArgument:
             return x * 2
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop", seed=0)
-        g = Normal(loc=1.0, scale=0.5)
+        g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g, include_inputs=True)
         assert isinstance(result, BroadcastDistribution)
         assert "x" in result.input_samples
@@ -419,7 +419,7 @@ class TestIncludeInputsArgument:
             return x * 2
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop", seed=0)
-        g = Normal(loc=1.0, scale=0.5)
+        g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
         assert not hasattr(result, 'input_samples')
@@ -429,8 +429,8 @@ class TestIncludeInputsArgument:
             return a + b
 
         w = WorkflowFunction(func=add_them, n_broadcast_samples=20, vectorize="loop", seed=0)
-        g1 = Normal(loc=1.0, scale=0.1)
-        g2 = Normal(loc=2.0, scale=0.1)
+        g1 = Normal(loc=1.0, scale=0.1, name="a")
+        g2 = Normal(loc=2.0, scale=0.1, name="b")
         result = w(a=g1, b=g2, include_inputs=True)
         assert isinstance(result, BroadcastDistribution)
         assert "a" in result.component_names
@@ -448,8 +448,8 @@ class TestNamedComponents:
             return a + b
 
         w = WorkflowFunction(func=add_them, n_broadcast_samples=20, vectorize="loop", seed=0)
-        g1 = Normal(loc=1.0, scale=0.1)
-        g2 = Normal(loc=2.0, scale=0.1)
+        g1 = Normal(loc=1.0, scale=0.1, name="a")
+        g2 = Normal(loc=2.0, scale=0.1, name="b")
         result = w(a=g1, b=g2, include_inputs=True)
         assert "a" in result.component_names
         assert "b" in result.component_names
@@ -460,7 +460,7 @@ class TestNamedComponents:
             return x * 2
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop", seed=0)
-        g = Normal(loc=1.0, scale=0.5)
+        g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g, include_inputs=True)
         x_marginal = result["x"]
         assert isinstance(x_marginal, EmpiricalDistribution)
@@ -471,7 +471,7 @@ class TestNamedComponents:
             return x * 2
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop", seed=0)
-        g = Normal(loc=1.0, scale=0.5)
+        g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g, include_inputs=True)
         out = result["_output"]
         assert hasattr(out, 'samples')

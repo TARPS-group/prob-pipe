@@ -97,6 +97,18 @@ def _product_class_for_components(components: dict) -> type:
     return cls
 
 
+def _validate_nested_names(parent_key: str, d: dict) -> None:
+    """Recursively validate that leaf distribution names match their dict keys."""
+    for key, val in d.items():
+        if isinstance(val, dict):
+            _validate_nested_names(key, val)
+        elif hasattr(val, "name") and val.name != key:
+            raise ValueError(
+                f"Component name mismatch inside '{parent_key}': "
+                f"keyword '{key}' but distribution has name='{val.name}'"
+            )
+
+
 # ---------------------------------------------------------------------------
 # ProductDistribution
 # ---------------------------------------------------------------------------
@@ -138,6 +150,14 @@ class ProductDistribution(
     def __init__(self, *, name: str | None = None, **components):
         if not components:
             raise ValueError("ProductDistribution requires at least one component.")
+        for key, comp in components.items():
+            if isinstance(comp, dict):
+                _validate_nested_names(key, comp)
+            elif comp.name != key:
+                raise ValueError(
+                    f"Component name mismatch: keyword '{key}' but "
+                    f"distribution has name='{comp.name}'"
+                )
         for leaf in jax.tree.leaves(components):
             if not isinstance(leaf, ArrayDistribution):
                 raise TypeError(
@@ -145,7 +165,9 @@ class ProductDistribution(
                     f"got {type(leaf).__name__}"
                 )
         self._components = dict(components)
-        self._name = name
+        if name is None:
+            name = "product(" + ",".join(sorted(components.keys())) + ")"
+        super().__init__(name=name)
         self._record_template = _build_record_template(self._components)
 
     # -- Sampling (returns Record) ------------------------------------------

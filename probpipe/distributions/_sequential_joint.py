@@ -45,9 +45,9 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
     Example::
 
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
-            y=lambda z, x: Normal(loc=z + x, scale=0.1),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
+            y=lambda z, x: Normal(loc=z + x, scale=0.1, name="y"),
         )
 
     Callable signatures are inspected: parameter names must match earlier
@@ -74,7 +74,9 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
             raise ValueError("SequentialJointDistribution requires at least one component.")
 
         self._raw_components: dict[str, ArrayDistribution | callable] = dict(components)
-        self._name = name
+        if name is None:
+            name = "sequential(" + ",".join(components.keys()) + ")"
+        super().__init__(name=name)
         self._conditioned_names: frozenset[str] = frozenset()
         self._conditioned_values: dict[str, Array] = {}
         self._sampleable_error: str | None = None

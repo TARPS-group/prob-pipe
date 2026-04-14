@@ -147,6 +147,31 @@ class TestProductDistribution:
         r = repr(joint)
         assert "my_joint" in r
 
+    # -- Dict-like interface (shared with Record) -----------------------------
+
+    def test_fields_matches_component_names(self, joint_xy):
+        assert joint_xy.fields() == joint_xy.component_names
+
+    def test_contains_existing(self, joint_xy):
+        assert "x" in joint_xy
+        assert "y" in joint_xy
+
+    def test_contains_missing(self, joint_xy):
+        assert "z" not in joint_xy
+
+    def test_keys(self, joint_xy):
+        assert list(joint_xy.keys()) == list(joint_xy.component_names)
+
+    def test_values(self, joint_xy):
+        vals = list(joint_xy.values())
+        assert len(vals) == 2
+        assert all(isinstance(v, _RecordDistributionView) for v in vals)
+
+    def test_items(self, joint_xy):
+        items = dict(joint_xy.items())
+        assert set(items.keys()) == {"x", "y"}
+        assert all(isinstance(v, _RecordDistributionView) for v in items.values())
+
 
 # ===========================================================================
 # 2. TestFlattenUnflatten
@@ -330,8 +355,8 @@ class TestBroadcastingReconnection:
     def test_joint_views_sampled_together_loop(self):
         """Two views from same parent passed to workflow -> sampled jointly."""
         joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0),
-            y=Normal(loc=10.0, scale=1.0),
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=10.0, scale=1.0, name="y"),
         )
         wf = self._make_add_workflow("loop")
         result = wf(a=joint["x"], b=joint["y"])
@@ -343,8 +368,8 @@ class TestBroadcastingReconnection:
     def test_same_view_twice_gives_identical_values_loop(self):
         """If joint['x'] is passed to both args, they get the same values (loop)."""
         joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0),
-            y=Normal(loc=10.0, scale=1.0),
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=10.0, scale=1.0, name="y"),
         )
         view_x = joint["x"]
 
@@ -367,10 +392,10 @@ class TestBroadcastingReconnection:
     def test_mix_of_view_and_independent(self):
         """Mix of _RecordDistributionView and independent Normal both work."""
         joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0),
-            y=Normal(loc=5.0, scale=1.0),
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=5.0, scale=1.0, name="y"),
         )
-        independent = Normal(loc=100.0, scale=0.1)
+        independent = Normal(loc=100.0, scale=0.1, name="c")
 
         def add3(a: float, b: float, c: float) -> float:
             return a + b + c
@@ -390,8 +415,8 @@ class TestBroadcastingReconnection:
     def test_joint_views_sampled_together_jax(self):
         """Two views from same parent using jax backend."""
         joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0),
-            y=Normal(loc=10.0, scale=1.0),
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=10.0, scale=1.0, name="y"),
         )
 
         def add(a: float, b: float) -> float:
@@ -411,8 +436,8 @@ class TestBroadcastingReconnection:
     def test_same_view_twice_jax_backend(self):
         """Same _RecordDistributionView to both args with jax backend."""
         joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0),
-            y=Normal(loc=10.0, scale=1.0),
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=10.0, scale=1.0, name="y"),
         )
         view_x = joint["x"]
 
@@ -481,38 +506,38 @@ class TestProductProtocolDuckTyping:
     def test_all_log_prob_components(self):
         """All Normal components → isinstance SupportsLogProb True."""
         from probpipe import SupportsLogProb
-        joint = ProductDistribution(x=Normal(0, 1), y=Normal(1, 2))
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
         assert isinstance(joint, SupportsLogProb)
 
     def test_all_mean_variance_components(self):
         """All Normal components → isinstance SupportsMean/SupportsVariance True."""
         from probpipe import SupportsMean, SupportsVariance
-        joint = ProductDistribution(x=Normal(0, 1), y=Normal(1, 2))
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
         assert isinstance(joint, SupportsMean)
         assert isinstance(joint, SupportsVariance)
 
     def test_mixed_no_log_prob(self):
         """Component lacking SupportsLogProb → product lacks it too."""
         from probpipe import SupportsLogProb, BootstrapDistribution
-        boot = BootstrapDistribution(jnp.array([1.0, 2.0, 3.0]))
-        joint = ProductDistribution(x=Normal(0, 1), y=boot)
+        boot = BootstrapDistribution(jnp.array([1.0, 2.0, 3.0]), name="y")
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=boot)
         assert not isinstance(joint, SupportsLogProb)
 
     def test_always_supports_sampling(self):
         """ProductDistribution always supports SupportsSampling."""
         from probpipe import SupportsSampling
-        joint = ProductDistribution(x=Normal(0, 1), y=Normal(1, 2))
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
         assert isinstance(joint, SupportsSampling)
 
     def test_always_supports_conditioning(self):
         """ProductDistribution always supports SupportsConditioning."""
         from probpipe import SupportsConditioning
-        joint = ProductDistribution(x=Normal(0, 1), y=Normal(1, 2))
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
         assert isinstance(joint, SupportsConditioning)
 
     def test_dynamic_subclass_pytree_roundtrip(self):
         """Dynamic ProductDistribution subclass is JAX pytree-compatible."""
-        joint = ProductDistribution(x=Normal(0, 1), y=Normal(1, 2))
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
         children, aux = jax.tree.flatten(joint)
         reconstructed = jax.tree.unflatten(aux, children)
         assert isinstance(reconstructed, ProductDistribution)
@@ -527,17 +552,17 @@ class TestSingleComponent:
     """ProductDistribution with one component."""
 
     def test_single_component_event_size(self):
-        joint = ProductDistribution(a=Normal(loc=0.0, scale=1.0))
+        joint = ProductDistribution(a=Normal(loc=0.0, scale=1.0, name="a"))
         assert joint.event_size == 1
 
     def test_single_component_sample(self):
-        joint = ProductDistribution(a=Normal(loc=0.0, scale=1.0))
+        joint = ProductDistribution(a=Normal(loc=0.0, scale=1.0, name="a"))
         key = jax.random.PRNGKey(70)
         s = sample(joint, key=key, sample_shape=(5,))
         assert s["a"].shape == (5,)
 
     def test_single_component_log_prob(self):
-        n = Normal(loc=0.0, scale=1.0)
+        n = Normal(loc=0.0, scale=1.0, name="a")
         joint = ProductDistribution(a=n)
         s = sample(joint, key=jax.random.PRNGKey(71), sample_shape=(2,))
         lps = log_prob(joint, s)
@@ -570,7 +595,7 @@ class TestDistributionViewFromDistribution:
 
     def test_from_distribution_raises(self, joint_xy):
         with pytest.raises(TypeError):
-            from_distribution(Normal(loc=0.0, scale=1.0), _RecordDistributionView)
+            from_distribution(Normal(loc=0.0, scale=1.0, name="x"), _RecordDistributionView)
 
 
 class TestEnumerateWithDistributionViews:
@@ -579,8 +604,8 @@ class TestEnumerateWithDistributionViews:
     def test_empirical_plus_views_preserves_correlation(self):
         """When an empirical and two correlated views are mixed, views stay paired."""
         joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0),
-            y=Normal(loc=0.0, scale=1.0),
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=0.0, scale=1.0, name="y"),
         )
         view_x = joint["x"]
         view_y = joint["y"]
@@ -612,8 +637,8 @@ class TestNestedProductDistribution:
     A nested ProductDistribution groups components into sub-dicts::
 
         ProductDistribution(
-            physics={"force": Normal(0, 1), "mass": Gamma(2, 1)},
-            observation=Normal(0, 0.1),
+            physics={"force": Normal(0, 1, name="force"), "mass": Gamma(2, 1, name="mass")},
+            observation=Normal(0, 0.1, name="observation"),
         )
 
     The nesting is purely organizational — all leaf components remain
@@ -623,9 +648,9 @@ class TestNestedProductDistribution:
     @pytest.fixture
     def nested_joint(self):
         return ProductDistribution(
-            physics={"force": Normal(loc=0.0, scale=1.0),
-                     "mass": Gamma(concentration=2.0, rate=1.0)},
-            observation=Normal(loc=0.0, scale=0.1),
+            physics={"force": Normal(loc=0.0, scale=1.0, name="force"),
+                     "mass": Gamma(concentration=2.0, rate=1.0, name="mass")},
+            observation=Normal(loc=0.0, scale=0.1, name="observation"),
         )
 
     # -- Construction and introspection ------------------------------------
@@ -696,9 +721,9 @@ class TestNestedProductDistribution:
         lp_joint = log_prob(nested_joint, s)
 
         # Manual sum of leaf log-probs
-        force_dist = Normal(loc=0.0, scale=1.0)
-        mass_dist = Gamma(concentration=2.0, rate=1.0)
-        obs_dist = Normal(loc=0.0, scale=0.1)
+        force_dist = Normal(loc=0.0, scale=1.0, name="force")
+        mass_dist = Gamma(concentration=2.0, rate=1.0, name="mass")
+        obs_dist = Normal(loc=0.0, scale=0.1, name="observation")
         lp_manual = (
             log_prob(force_dist, s["physics"]["force"])
             + log_prob(mass_dist, s["physics"]["mass"])
@@ -927,8 +952,8 @@ class TestNestedProductDistribution:
         """_RecordDistributionViews from nested joints should work in WorkflowFunction."""
         # Use a flat joint so each view is a scalar for the add function
         joint = ProductDistribution(
-            force=Normal(loc=0.0, scale=1.0),
-            observation=Normal(loc=0.0, scale=0.1),
+            force=Normal(loc=0.0, scale=1.0, name="force"),
+            observation=Normal(loc=0.0, scale=0.1, name="observation"),
         )
         view_force = joint["force"]
         view_obs = joint["observation"]
@@ -958,9 +983,9 @@ class TestNestedWithMVN:
     def nested_mvn(self):
         return ProductDistribution(
             group={"position": MultivariateNormal(
-                        loc=jnp.zeros(2), cov=jnp.eye(2)),
-                   "scale": Normal(loc=1.0, scale=0.1)},
-            label=Normal(loc=0.0, scale=1.0),
+                        loc=jnp.zeros(2), cov=jnp.eye(2), name="position"),
+                   "scale": Normal(loc=1.0, scale=0.1, name="scale")},
+            label=Normal(loc=0.0, scale=1.0, name="label"),
         )
 
     def test_event_shapes(self, nested_mvn):

@@ -24,12 +24,12 @@ from probpipe.core import ops
 
 @pytest.fixture
 def normal():
-    return Normal(loc=2.0, scale=0.5)
+    return Normal(loc=2.0, scale=0.5, name="x")
 
 
 @pytest.fixture
 def mvn():
-    return MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
+    return MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
 
 
 @pytest.fixture
@@ -40,7 +40,7 @@ def empirical():
 
 @pytest.fixture
 def joint():
-    return ProductDistribution(x=Normal(0, 1), y=Normal(1, 2))
+    return ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ class TestMean:
                 return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
 
         with pytest.raises(TypeError, match="does not support mean"):
-            ops.mean(NoMeanDist())
+            ops.mean(NoMeanDist(name="test"))
 
 
 # ---------------------------------------------------------------------------
@@ -223,8 +223,8 @@ class TestConditionOn:
 
     def test_condition_sequential(self):
         sjd = SequentialJointDistribution(
-            x=Normal(0, 1),
-            y=lambda x: Normal(loc=x, scale=1.0),
+            x=Normal(0, 1, name="x"),
+            y=lambda x: Normal(loc=x, scale=1.0, name="y"),
         )
         conditioned = ops.condition_on(sjd, x=jnp.array(3.0))
         assert conditioned.component_names == ("y",)
@@ -304,14 +304,14 @@ class TestSplitDataKwargs:
 
     def test_empty_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
-        dist = ProductDistribution(x=Normal(0.0, 1.0))
+        dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"))
         data, inference = _split_data_kwargs(dist, {})
         assert data == {}
         assert inference == {}
 
     def test_all_data_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
-        dist = ProductDistribution(x=Normal(0.0, 1.0), y=Normal(0.0, 1.0))
+        dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"), y=Normal(0.0, 1.0, name="y"))
         data, inference = _split_data_kwargs(
             dist, {"x": jnp.array(1.0), "y": jnp.array(2.0)},
         )
@@ -320,7 +320,7 @@ class TestSplitDataKwargs:
 
     def test_all_inference_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
-        dist = ProductDistribution(x=Normal(0.0, 1.0))
+        dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"))
         data, inference = _split_data_kwargs(
             dist, {"num_results": 100, "random_seed": 42},
         )
@@ -329,7 +329,7 @@ class TestSplitDataKwargs:
 
     def test_mixed_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
-        dist = ProductDistribution(x=Normal(0.0, 1.0), y=Normal(0.0, 1.0))
+        dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"), y=Normal(0.0, 1.0, name="y"))
         data, inference = _split_data_kwargs(
             dist, {"x": jnp.array(1.0), "num_results": 100},
         )
@@ -339,7 +339,7 @@ class TestSplitDataKwargs:
     def test_no_component_names(self):
         """Distribution without component_names → all kwargs are inference."""
         from probpipe.core.ops import _split_data_kwargs
-        dist = Normal(0.0, 1.0)
+        dist = Normal(0.0, 1.0, name="x")
         data, inference = _split_data_kwargs(
             dist, {"num_results": 100},
         )

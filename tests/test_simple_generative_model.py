@@ -20,7 +20,7 @@ class GaussianSimulator:
 
 @pytest.fixture
 def prior():
-    return Normal(loc=0.0, scale=1.0)
+    return Normal(loc=0.0, scale=1.0, name="theta")
 
 
 @pytest.fixture

@@ -179,7 +179,7 @@ class TestTFPDistributionCov:
 
     def test_scalar_cov_equals_variance(self):
         """For scalar distributions, _cov returns variance."""
-        d = Normal(loc=0.0, scale=2.0)
+        d = Normal(loc=0.0, scale=2.0, name="x")
         c = cov(d)
         v = variance(d)
         np.testing.assert_allclose(float(c), float(v), atol=1e-5)
@@ -188,7 +188,7 @@ class TestTFPDistributionCov:
         """For multivariate distributions, _cov returns full covariance matrix."""
         loc = jnp.zeros(3)
         cov_matrix = jnp.eye(3) * 2.0
-        d = MultivariateNormal(loc=loc, cov=cov_matrix)
+        d = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
         C = cov(d)
         np.testing.assert_allclose(C, cov_matrix, atol=1e-5)
 
@@ -212,7 +212,7 @@ class TestOpsErrorPaths:
             def event_shape(self):
                 return ()
 
-        d = NoLogProbNoSampleDist()
+        d = NoLogProbNoSampleDist(name="test")
         with pytest.raises(TypeError):
             prob(d, jnp.float32(0.0))
 
@@ -224,7 +224,7 @@ class TestOpsErrorPaths:
             def event_shape(self):
                 return ()
 
-        d = MinimalDist()
+        d = MinimalDist(name="test")
         with pytest.raises(TypeError, match="does not support expectation"):
             expectation(d, lambda x: x)
 
@@ -236,7 +236,7 @@ class TestOpsErrorPaths:
             def event_shape(self):
                 return ()
 
-        d = MinimalDist()
+        d = MinimalDist(name="test")
         with pytest.raises(TypeError, match="does not support mean"):
             mean(d)
 
@@ -248,7 +248,7 @@ class TestOpsErrorPaths:
             def event_shape(self):
                 return ()
 
-        d = MinimalDist()
+        d = MinimalDist(name="test")
         with pytest.raises(TypeError, match="does not support variance"):
             variance(d)
 
@@ -260,7 +260,7 @@ class TestOpsErrorPaths:
             def event_shape(self):
                 return ()
 
-        d = MinimalDist()
+        d = MinimalDist(name="test")
         with pytest.raises(TypeError, match="does not support covariance"):
             cov(d)
 
@@ -349,7 +349,7 @@ class TestCovarianceRequiresProtocol:
                     return_dist=return_dist,
                 )
 
-        d = NoCovDist()
+        d = NoCovDist(name="test")
         with pytest.raises(TypeError, match="does not support covariance"):
             cov(d)
 
@@ -365,7 +365,7 @@ class TestUnnormalizedProbDefault:
     def test_unnormalized_prob_default(self):
         from probpipe import unnormalized_prob, unnormalized_log_prob
 
-        d = Normal(loc=0.0, scale=1.0)
+        d = Normal(loc=0.0, scale=1.0, name="x")
         x = jnp.array(1.0)
         up = unnormalized_prob(d, x)
         ulp = unnormalized_log_prob(d, x)

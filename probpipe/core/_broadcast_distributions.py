@@ -85,7 +85,9 @@ class _MixtureMarginal[T](Distribution[T]):
         n = len(components)
         self._components = components
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
-        self._name = name
+        if name is None:
+            name = "mixture_marginal"
+        super().__init__(name=name)
         self._approximate = True
 
     @property
@@ -221,7 +223,9 @@ class _ListMarginal[T](Distribution[T]):
     ):
         self._items = items
         self._w = Weights(n=len(items), weights=weights, log_weights=log_weights)
-        self._name = name
+        if name is None:
+            name = "list_marginal"
+        super().__init__(name=name)
 
     @property
     def n(self) -> int:
@@ -361,7 +365,9 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         n = first_arr.shape[0] if hasattr(first_arr, 'shape') else len(first_arr)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._broadcast_args = list(broadcast_args)
-        self._name = name
+        if name is None:
+            name = "broadcast"
+        super().__init__(name=name)
         self._approximate = True
         self._marginal_cache: MarginalizedBroadcastDistribution | None = None
 

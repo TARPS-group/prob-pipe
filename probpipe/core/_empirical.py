@@ -111,7 +111,9 @@ class EmpiricalDistribution[T](
         if n == 0:
             raise ValueError("samples must be a non-empty sequence.")
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
-        self._name = name
+        if name is None:
+            name = "empirical"
+        super().__init__(name=name)
         self._approximate = True
 
     _sampling_cost: str = "low"
@@ -299,7 +301,11 @@ class ArrayEmpiricalDistribution(
         self._w = Weights(
             n=self._samples.shape[0], weights=weights, log_weights=log_weights,
         )
-        self._name = name
+        if name is None:
+            name = "empirical"
+        # Skip EmpiricalDistribution.__init__ (different init pattern),
+        # go directly to Distribution.__init__ for name registration.
+        Distribution.__init__(self, name=name)
         self._approximate = True
 
     # -- array-specific properties ------------------------------------------
@@ -414,7 +420,11 @@ class _RecordEmpiricalDistribution(
         n = jnp.asarray(first_field).shape[0]
         self._n_samples = n
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
-        self._name = name
+        if name is None:
+            name = "empirical(" + ",".join(samples.fields()) + ")"
+        # Skip EmpiricalDistribution.__init__ (different init pattern),
+        # go directly to Distribution.__init__ for name registration.
+        Distribution.__init__(self, name=name)
         self._approximate = True
         self._record_template = _record_template_from_data(samples)
 
@@ -565,15 +575,13 @@ class BootstrapReplicateDistribution[T](
                 raise ValueError(f"n must be positive, got {n}")
             self._n = n
 
-        self._name = name
+        if name is None:
+            name = "bootstrap"
+        super().__init__(name=name)
         self._source_n = len(self._data)
         self._approximate = True
 
     # -- properties ---------------------------------------------------------
-
-    @property
-    def name(self) -> str | None:
-        return self._name
 
     @property
     def n(self) -> int:

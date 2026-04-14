@@ -93,7 +93,9 @@ class JointGaussian(RecordDistribution, SupportsSampling, SupportsLogProb, Suppo
 
         self._mean_vec = mean
         self._cov_mat = cov
-        self._name = name
+        if name is None:
+            name = "joint_gaussian(" + ",".join(sorted(component_shapes.keys())) + ")"
+        super().__init__(name=name)
         self._component_shapes = dict(component_shapes)
 
         # Build slices and component MultivariateNormal distributions
@@ -152,7 +154,7 @@ class JointGaussian(RecordDistribution, SupportsSampling, SupportsLogProb, Suppo
 
     def _sample_one(self, key: PRNGKey) -> Record:
         from .multivariate import MultivariateNormal as MVN
-        full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
+        full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")
         flat = full_mvn._sample(key)
         return self._unflatten_flat_vec(flat)
 
@@ -162,7 +164,7 @@ class JointGaussian(RecordDistribution, SupportsSampling, SupportsLogProb, Suppo
         sample_shape: tuple[int, ...] = (),
     ) -> Record:
         from .multivariate import MultivariateNormal as MVN
-        full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
+        full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")
         flat = full_mvn._sample(key, sample_shape)
         return self._unflatten_flat_vec(flat)
 
@@ -178,7 +180,7 @@ class JointGaussian(RecordDistribution, SupportsSampling, SupportsLogProb, Suppo
         if not isinstance(value, Record):
             value = Record(value)
         from .multivariate import MultivariateNormal as MVN
-        full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
+        full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")
         flat = self.flatten_value(value)
         return full_mvn._log_prob(flat)
 

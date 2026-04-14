@@ -38,7 +38,7 @@ from probpipe.core.protocols import (
 
 @pytest.fixture
 def normal():
-    return Normal(loc=0.0, scale=1.0)
+    return Normal(loc=0.0, scale=1.0, name="x")
 
 
 @pytest.fixture
@@ -55,7 +55,7 @@ def bootstrap():
 
 @pytest.fixture
 def joint():
-    return ProductDistribution(x=Normal(0, 1), y=Normal(1, 2))
+    return ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
 
 
 # ---------------------------------------------------------------------------
@@ -66,11 +66,11 @@ class TestSupportsSampling:
     """All distributions should support sampling."""
 
     @pytest.mark.parametrize("dist_cls,kwargs", [
-        (Normal, {"loc": 0.0, "scale": 1.0}),
-        (Beta, {"alpha": 2.0, "beta": 5.0}),
-        (Gamma, {"concentration": 3.0, "rate": 1.0}),
-        (Bernoulli, {"probs": 0.5}),
-        (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2)}),
+        (Normal, {"loc": 0.0, "scale": 1.0, "name": "x"}),
+        (Beta, {"alpha": 2.0, "beta": 5.0, "name": "b"}),
+        (Gamma, {"concentration": 3.0, "rate": 1.0, "name": "g"}),
+        (Bernoulli, {"probs": 0.5, "name": "d"}),
+        (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "name": "z"}),
     ])
     def test_tfp_distributions(self, dist_cls, kwargs):
         dist = dist_cls(**kwargs)
@@ -107,9 +107,9 @@ class TestSupportsExpectation:
 
 class TestSupportsLogProb:
     @pytest.mark.parametrize("dist_cls,kwargs", [
-        (Normal, {"loc": 0.0, "scale": 1.0}),
-        (Beta, {"alpha": 2.0, "beta": 5.0}),
-        (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2)}),
+        (Normal, {"loc": 0.0, "scale": 1.0, "name": "x"}),
+        (Beta, {"alpha": 2.0, "beta": 5.0, "name": "b"}),
+        (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "name": "z"}),
     ])
     def test_tfp_distributions(self, dist_cls, kwargs):
         dist = dist_cls(**kwargs)
@@ -207,8 +207,8 @@ class TestSupportsConditioning:
 
     def test_sequential_joint(self):
         sjd = SequentialJointDistribution(
-            x=Normal(0, 1),
-            y=lambda x: Normal(loc=x, scale=1.0),
+            x=Normal(0, 1, name="x"),
+            y=lambda x: Normal(loc=x, scale=1.0, name="y"),
         )
         assert isinstance(sjd, SupportsConditioning)
 
@@ -233,8 +233,8 @@ class TestNamedComponents:
     def test_product_distribution(self, joint):
         assert hasattr(joint, 'component_names')
 
-    def test_normal_component_names_empty(self, normal):
-        assert normal.component_names == ()
+    def test_normal_component_names_has_name(self, normal):
+        assert normal.component_names == ("x",)
 
 
 # ---------------------------------------------------------------------------

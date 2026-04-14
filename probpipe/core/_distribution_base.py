@@ -57,10 +57,22 @@ class Distribution[T](ABC):
     Abstract base for all ProbPipe distributions, parameterized by
     value type ``T``.
 
+    Every distribution has a ``name``.  Leaf distributions (Normal, Gamma,
+    etc.) require an explicit ``name=`` argument; composite distributions
+    (ProductDistribution, EmpiricalDistribution, etc.) auto-generate a
+    name from their components when one is not provided.
+
     Provides naming, provenance, conversion, and approximation tracking.
     Sampling and expectation capabilities are provided by the
     :class:`~probpipe.core.protocols.SupportsSampling` protocol.
     """
+
+    def __init__(self, *, name: str):
+        if not isinstance(name, str) or not name:
+            raise TypeError(
+                f"{type(self).__name__} requires a non-empty name= argument"
+            )
+        self._name = name
 
     # -- approximation tracking ---------------------------------------------
 
@@ -111,8 +123,8 @@ class Distribution[T](ABC):
     # -- naming & provenance ------------------------------------------------
 
     @property
-    def name(self) -> str | None:
-        return getattr(self, "_name", None)
+    def name(self) -> str:
+        return self._name
 
     @property
     def source(self) -> Provenance | None:

@@ -90,9 +90,16 @@ class Record:
         xarray DataArray, or a nested ``Record`` object.
     """
 
-    __slots__ = ("_store", "_resolved", "_coords")
+    __slots__ = ("_store", "_resolved", "_coords", "_name")
 
-    def __init__(self, _dict: dict[str, ArrayLike | Record] | None = None, /, **fields: ArrayLike | Record):
+    def __init__(
+        self,
+        _dict: dict[str, ArrayLike | Record] | None = None,
+        /,
+        *,
+        name: str | None = None,
+        **fields: ArrayLike | Record,
+    ):
         if _dict is not None:
             if fields:
                 raise ValueError("Cannot pass both positional dict and keyword arguments")
@@ -102,14 +109,25 @@ class Record:
         store = OrderedDict(sorted(fields.items()))
         object.__setattr__(self, "_store", store)
         object.__setattr__(self, "_resolved", {})
+        # Auto-generate name from field names if not provided
+        if name is None:
+            name = "record(" + ",".join(store.keys()) + ")"
+        object.__setattr__(self, "_name", name)
         # Preserve xarray coordinate metadata so to_datatree() can
         # reconstruct labelled axes after a JAX round-trip.
         coords: dict[str, dict[str, Any]] = {}
-        for name, raw in store.items():
+        for n, raw in store.items():
             c = _extract_coords(raw)
             if c is not None:
-                coords[name] = c
+                coords[n] = c
         object.__setattr__(self, "_coords", coords if coords else None)
+
+    # -- Name ---------------------------------------------------------------
+
+    @property
+    def name(self) -> str:
+        """Name of this Record."""
+        return self._name
 
     # -- Immutability -------------------------------------------------------
 

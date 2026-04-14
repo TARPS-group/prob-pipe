@@ -263,11 +263,12 @@ class TFPRecordDistribution(RecordDistribution, TFPShapeMixin):
     def unflatten_value(self, flat: ArrayLike):
         """Unflatten a flat trailing axis back to event dimensions or Record.
 
-        When ``record_template`` is set, returns a :class:`Record`.
-        Otherwise reshapes to ``(*batch, *event_shape)``.
+        When ``record_template`` is set and has multiple fields, returns
+        a :class:`Record`.  For single-field leaf distributions, reshapes
+        to ``(*batch, *event_shape)`` to stay compatible with ``_log_prob``.
         """
         tpl = self.record_template
-        if tpl is not None:
+        if tpl is not None and len(tpl.fields()) > 1:
             return super().unflatten_value(flat)
         flat = jnp.asarray(flat)
         es = self.event_shape
@@ -346,7 +347,9 @@ class BootstrapDistribution(ArrayDistribution, SupportsSampling, SupportsMean, S
             raise ValueError("evaluations must have at least 1 dimension.")
         self._n = self._evaluations.shape[0]
         self._w = Weights(n=self._n, weights=weights, log_weights=log_weights)
-        self._name = name
+        if name is None:
+            name = "bootstrap_dist"
+        super().__init__(name=name)
         self._approximate = True
 
     _sampling_cost: str = "low"

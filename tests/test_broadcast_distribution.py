@@ -268,24 +268,24 @@ class TestArrayMarginal:
 
 class TestMixtureMarginal:
     def test_sampling_protocol_when_components_support_it(self):
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=5.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=5.0, scale=1.0, name="y")]
         m = _make_mixture_marginal(components, None)
         assert isinstance(m, SupportsSampling)
 
     def test_mean_protocol_when_components_support_it(self):
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=10.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=10.0, scale=1.0, name="y")]
         m = _make_mixture_marginal(components, None)
         assert isinstance(m, SupportsMean)
         np.testing.assert_allclose(m._mean(), 5.0, atol=1e-5)
 
     def test_mean_weighted(self):
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=10.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=10.0, scale=1.0, name="y")]
         weights = jnp.array([0.75, 0.25])
         m = _make_mixture_marginal(components, weights)
         np.testing.assert_allclose(m._mean(), 2.5, atol=1e-5)
 
     def test_variance_protocol(self):
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=10.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=10.0, scale=1.0, name="y")]
         m = _make_mixture_marginal(components, None)
         assert isinstance(m, SupportsVariance)
         v = m._variance()
@@ -294,14 +294,14 @@ class TestMixtureMarginal:
         np.testing.assert_allclose(v, 26.0, atol=1e-4)
 
     def test_log_prob_protocol(self):
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=5.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=5.0, scale=1.0, name="y")]
         m = _make_mixture_marginal(components, None)
         assert isinstance(m, SupportsLogProb)
         lp = m._log_prob(jnp.array(0.0))
         assert jnp.isfinite(lp)
 
     def test_sample_draws(self, key):
-        components = [Normal(loc=-100.0, scale=0.01), Normal(loc=100.0, scale=0.01)]
+        components = [Normal(loc=-100.0, scale=0.01, name="a"), Normal(loc=100.0, scale=0.01, name="b")]
         m = _make_mixture_marginal(components, None)
         draws = m._sample(key, (1000,))
         # Should be bimodal around -100 and 100
@@ -315,12 +315,12 @@ class TestMixtureMarginal:
         class NoSampleDist(Distribution):
             pass
 
-        components = [NoSampleDist(), NoSampleDist()]
+        components = [NoSampleDist(name="test"), NoSampleDist(name="test")]
         m = _make_mixture_marginal(components, None)
         assert not isinstance(m, SupportsSampling)
 
     def test_properties(self):
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=5.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=5.0, scale=1.0, name="y")]
         m = _make_mixture_marginal(components, None)
         assert m.n == 2
         assert m.components is components
@@ -363,12 +363,12 @@ class TestMakeMarginal:
         assert isinstance(m, _ListMarginal)
 
     def test_list_of_distributions(self):
-        dists = [Normal(loc=0.0, scale=1.0), Normal(loc=1.0, scale=1.0)]
+        dists = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=1.0, scale=1.0, name="y")]
         m = _make_marginal(dists, None)
         assert isinstance(m, _MixtureMarginal)
 
     def test_explicit_output_distributions(self):
-        dists = [Normal(loc=0.0, scale=1.0), Normal(loc=1.0, scale=1.0)]
+        dists = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=1.0, scale=1.0, name="y")]
         m = _make_marginal(None, None, output_distributions=dists)
         assert isinstance(m, _MixtureMarginal)
 
@@ -589,7 +589,7 @@ class TestArrayMarginalAdditional:
 
 class TestMixtureMarginalAdditional:
     def test_repr(self):
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=5.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=5.0, scale=1.0, name="y")]
         m = _make_mixture_marginal(components, None)
         r = repr(m)
         assert "MarginalizedBroadcastDistribution" in r
@@ -598,13 +598,13 @@ class TestMixtureMarginalAdditional:
 
     def test_sample_scalar(self, key):
         """Single draw (sample_shape=()) returns scalar."""
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=5.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=5.0, scale=1.0, name="y")]
         m = _make_mixture_marginal(components, None)
         drawn = m._sample(key, ())
         assert drawn.shape == ()
 
     def test_weights_property(self):
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=5.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=5.0, scale=1.0, name="y")]
         m = _make_mixture_marginal(components, None)
         np.testing.assert_allclose(m.weights, jnp.array([0.5, 0.5]), atol=1e-5)
 
