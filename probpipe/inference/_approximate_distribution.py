@@ -102,9 +102,16 @@ class ApproximateDistribution(ArrayEmpiricalDistribution):
 
     @property
     def warmup_samples(self) -> list[Array] | None:
-        """Per-chain warmup samples extracted from auxiliary DataTree."""
+        """Per-chain warmup samples extracted from auxiliary data."""
         aux = self.auxiliary
-        if aux is None or "warmup" not in aux.children:
+        if aux is None:
+            return None
+        # arviz 1.x DataTree uses .children; arviz 0.x InferenceData uses .groups()
+        has_warmup = (
+            ("warmup" in aux.children) if hasattr(aux, "children")
+            else hasattr(aux, "warmup")
+        )
+        if not has_warmup:
             return None
         warmup = aux["warmup"]["params"]
         n_chains = warmup.sizes.get("chain", 1)
