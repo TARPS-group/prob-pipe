@@ -249,7 +249,7 @@ class TestApproximateDistributionValuesTemplate:
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
         post = make_posterior([chain], parents=(prior,), algorithm="test",
                              auxiliary=auxiliary)
-        assert "posterior" in post.auxiliary.children
+        assert "posterior" in post.auxiliary
 
     def test_algorithm_default_without_auxiliary(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
@@ -292,7 +292,7 @@ class TestRWMH:
             random_seed=42,
         )
         assert result.inference_data is not None
-        assert "posterior" in result.inference_data.children
+        assert "posterior" in result.inference_data
         # RWMH scalar stats (accept_rate, step_size) live in provenance,
         # not as per-draw arrays in sample_stats.
         assert result.source.metadata["accept_rate"] > 0
