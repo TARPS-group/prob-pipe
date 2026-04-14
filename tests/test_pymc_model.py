@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 from unittest.mock import MagicMock, patch
 
-from probpipe import SupportsNamedComponents, ApproximateDistribution
+from probpipe import ApproximateDistribution
 from probpipe.modeling import PyMCModel
 
 
@@ -47,7 +47,8 @@ class TestPyMCModel:
         assert "y" in names
 
     def test_supports_named_components(self, model):
-        assert isinstance(model, SupportsNamedComponents)
+        assert hasattr(model, 'component_names')
+        assert len(model.component_names) > 0
 
     def test_repr(self, model):
         r = repr(model)
