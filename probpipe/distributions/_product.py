@@ -138,6 +138,82 @@ class ProductDistribution(
         self._components = dict(components)
         self._name = name
         self._record_template = _build_record_template(self._components)
+        self._build_tfp_dist()
+
+    # -- TFP interop --------------------------------------------------------
+
+    def _build_tfp_dist(self):
+        """If all leaf components are TFP-backed, construct a combined
+        TFP distribution for interop with SBI and other TFP-dependent
+        subsystems.
+
+        Collects component TFP distributions in sorted field order
+        (matching the ``Record`` layout) and stacks them into a single
+        ``tfd.Independent`` distribution.  This avoids ``tfd.Blockwise``
+        whose bijector is incompatible with ``tfd.JointDistributionNamed``
+        (used by sbijax).
+        """
+        leaves = jax.tree.leaves(self._components)
+        if not all(hasattr(leaf, "_tfp_dist") for leaf in leaves):
+            return
+
+        from tensorflow_probability.substrates.jax import distributions as tfd
+
+        # Collect TFP dists in sorted component order
+        tfp_dists = []
+        for name in sorted(self._components.keys()):
+            comp = self._components[name]
+            if isinstance(comp, dict):
+                for sub_leaf in jax.tree.leaves(comp):
+                    tfp_dists.append(sub_leaf._tfp_dist)
+            else:
+                tfp_dists.append(comp._tfp_dist)
+
+        # Fast path: all scalar distributions of the same family can be
+        # stacked into a single Independent(family) distribution.
+        all_same_type = len(set(type(d) for d in tfp_dists)) == 1
+        all_scalar = all(d.event_shape.rank == 0 for d in tfp_dists)
+        if all_same_type and all_scalar:
+            exemplar = tfp_dists[0]
+            params = exemplar.parameters
+            # Only stack numeric (array-like) parameters; skip metadata
+            # like 'name', 'validate_args', 'allow_nan_stats'.
+            _SKIP = {"name", "validate_args", "allow_nan_stats"}
+            stacked_params = {}
+            for pname in params:
+                if pname in _SKIP:
+                    continue
+                vals = [d.parameters[pname] for d in tfp_dists]
+                if all(v is not None for v in vals):
+                    stacked_params[pname] = jnp.stack(vals)
+            self._tfp_dist = tfd.Independent(
+                type(exemplar)(**stacked_params),
+                reinterpreted_batch_ndims=1,
+            )
+        else:
+            # General fallback: use Blockwise (works for sampling/log_prob
+            # but not for sbijax bijector interop).
+            self._tfp_dist = tfd.Blockwise(tfp_dists)
+
+    @property
+    def event_shape(self) -> tuple[int, ...]:
+        """Flat event shape from the combined TFP distribution, if available."""
+        if hasattr(self, "_tfp_dist"):
+            return tuple(self._tfp_dist.event_shape)
+        tpl = self._record_template
+        return (tpl.flatten().shape[0],) if tpl is not None else ()
+
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        if hasattr(self, "_tfp_dist"):
+            return tuple(self._tfp_dist.batch_shape)
+        return ()
+
+    @property
+    def dtype(self):
+        if hasattr(self, "_tfp_dist"):
+            return self._tfp_dist.dtype
+        return jnp.float32
 
     # -- Sampling (returns Record) ------------------------------------------
 
