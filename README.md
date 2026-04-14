@@ -19,7 +19,7 @@ ProbPipe addresses these challenges through a single design principle: **simplif
 
 - **`Distribution`** -- the universal representation of random quantities (priors, posteriors, data-generating processes). A distribution's capabilities are declared via protocols (`SupportsSampling`, `SupportsLogProb`, ...), and ProbPipe converts between representations as needed.
 - **`Record`** -- the universal container for non-random structured data (observed datasets, hyperparameters, design matrices). `Record` is the deterministic counterpart of `Distribution`.
-- **`WorkflowFunction`** -- operations that transform distributions. Write a function that takes fixed values, and ProbPipe propagates uncertainty when those values are instead uncertain (i.e., distributions).
+- **`WorkflowFunction`** -- operations that take distributions or fixed values as input and return distributions or fixed values as output. Decorate any function with `@workflow_function` and ProbPipe automatically propagates uncertainty: pass a `Distribution` where the function expects a concrete value, and the output becomes a `Distribution` over results.
 
 `Distribution` and `Record` follow the same syntax for accessing their components and passing those components into a `WorkflowFunction`, so they can easily be interchanged. Both support **named fields** and a **`select()`** method for splatting (e.g., `predict(**posterior.select("intercept", "slope"))`). The implementation details -- algorithms, data and distribution representations -- are invisible to the user, while remaining fully configurable when control is needed.
 
@@ -48,26 +48,25 @@ from probpipe import (
 )
 
 # --- Simulate data from a logistic regression ---
-beta_true = {'intercept': -1.0, 'slope': 2.0}
-key = jax.random.PRNGKey(0)
-k1, k2 = jax.random.split(key)
-x = jax.random.normal(k1, shape=(200,))
-prob = jax.nn.sigmoid(beta_true['intercept'] + beta_true['slope'] * x)
-y = jax.random.bernoulli(k2, prob).astype(jnp.float32)
-X = jnp.column_stack([jnp.ones_like(x), x])  # design matrix
+beta_true = jnp.array([-1.0, 2.0])  # intercept, slope
+x = jax.random.normal(jax.random.PRNGKey(0), shape=(200,))
+X = jnp.column_stack([jnp.ones_like(x), x])
+
+likelihood = GLMLikelihood(tfp_glm.Bernoulli(), X, seed=1)
+y = likelihood.generate_data(beta_true, 200).astype(jnp.float32)
 
 # --- 1. Build a model with named parameters ---
 prior = ProductDistribution(
     intercept=Normal(loc=0.0, scale=5.0),
     slope=Normal(loc=0.0, scale=5.0),
 )
-model = SimpleModel(prior, GLMLikelihood(tfp_glm.Bernoulli(), X))
+model = SimpleModel(prior, likelihood)
 
 # --- 2. Condition on data (auto-selects NUTS) ---
 posterior = condition_on(model, y)
 draws = posterior.draws()            # Record(intercept=..., slope=...)
-draws.intercept.mean()               # -0.83  (true: -1.0)
-draws.slope.mean()                   #  1.94  (true:  2.0)
+draws.intercept.mean()               # -0.93  (true: -1.0)
+draws.slope.mean()                   #  2.18  (true:  2.0)
 
 # --- 3. Propagate uncertainty through a prediction ---
 @workflow_function
@@ -76,10 +75,10 @@ def predict_prob(intercept, slope, x):
 
 x_new = jnp.linspace(-3, 3, 50)
 predictive = predict_prob(**posterior.select('intercept', 'slope'), x=x_new)
-# predictive is a distribution over predicted P(y=1|x) curves
+# predictive is a Distribution over predicted P(y=1|x) curves
 ```
 
-`@workflow_function` broadcasts: it samples from the posterior and evaluates the function for each draw, returning the full predictive distribution. Plotting the result:
+`predict_prob` is a `@workflow_function`: ProbPipe samples from the posterior and evaluates the function for each draw, returning the full predictive distribution. Plotting the result:
 
 ```python
 import numpy as np, matplotlib.pyplot as plt
@@ -88,7 +87,7 @@ S = np.array(predictive.samples)     # (n_draws, 50)
 lo, hi = np.percentile(S, [5, 95], axis=0)
 plt.fill_between(np.array(x_new), lo, hi, alpha=0.3, label='90% CI')
 plt.plot(np.array(x_new), S.mean(axis=0), lw=2, label='Posterior mean')
-true_curve = jax.nn.sigmoid(beta_true['intercept'] + beta_true['slope'] * x_new)
+true_curve = jax.nn.sigmoid(beta_true[0] + beta_true[1] * x_new)
 plt.plot(np.array(x_new), np.array(true_curve), 'k--', label='True')
 plt.scatter(np.array(x), np.array(y), s=12, alpha=0.4, label='Data')
 plt.xlabel('x'); plt.ylabel('P(y = 1 | x)'); plt.legend(fontsize=8)
@@ -98,14 +97,12 @@ plt.xlabel('x'); plt.ylabel('P(y = 1 | x)'); plt.legend(fontsize=8)
 
 ## Key Features
 
-- **Named structured values** -- `Record` is the universal container for non-random structured data, just as `Distribution` is for random quantities. Both support named fields and `select()` for workflow function splatting. Named distributions automatically produce named posterior draws: `posterior.draws()` returns `Record(intercept=..., slope=...)`.
-- **Protocol-based distributions** -- a distribution's capabilities are declared via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsMean`, ...), enabling structural subtyping across representations. Composite distributions dynamically include protocols based on their components' capabilities.
-- **Automatic uncertainty propagation** -- `@workflow_function` broadcasting lets you pass a distribution where a function expects a concrete value, propagating that uncertainty into the function's output. Use `dist.select("x", "y")` to pass named components while preserving correlation.
-- **Pluggable inference** -- a single `condition_on` interface is backed by an inference registry that auto-selects the best available algorithm (NUTS, HMC, ADVI, and more), taking into account a distribution's compatibility with available backends (TFP, nutpie, Stan, PyMC). Override with `method=` when you want control; inference diagnostics are attached to the output distribution.
-- **Automatic distribution conversion** -- a converter registry converts between distribution types, using a similar registry-backed approach to `condition_on`.
-- **JAX-native** -- workflows and array-based distributions are compatible with JAX (`vmap`, `jit`, `grad`), with built-in support for TFP distributions and inference methods.
-- **Provenance tracking** -- each `Distribution` and `Record` object records its lineage through workflow functions, ensuring computational traceability.
-- **Prefect orchestration** -- enable Prefect to distribute pipeline steps across machines and cpus without code changes.
+- **Protocol-based dispatch** -- a distribution's capabilities are declared via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsMean`, ...). Operations like `condition_on` and `from_distribution` use these protocols to auto-select the best algorithm from a pluggable registry. Override with `method=` when you want control.
+- **Multiple backends** -- the inference registry spans TFP (NUTS, HMC, RWMH), nutpie, CmdStan, PyMC (NUTS, ADVI), and simulation-based inference (SMC-ABC via sbijax). Swap backends without changing model code.
+- **Automatic distribution conversion** -- a converter registry converts between distribution representations (e.g., MCMC samples to KDE) as needed, using protocol-based dispatch analogous to `condition_on`.
+- **JAX-native** -- distributions and workflow functions are compatible with JAX (`vmap`, `jit`, `grad`), with built-in support for TFP distributions.
+- **Provenance tracking** -- each distribution records how it was created (algorithm, parents, metadata), enabling full lineage tracing from any result back to its inputs.
+- **Prefect orchestration** -- distribute pipeline steps across machines and CPUs without code changes.
 
 ## Installation
 
