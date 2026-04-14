@@ -213,10 +213,11 @@ def _build_mcmc_datatree(
     def _stack(chain_list):
         return np.stack([np.asarray(c) for c in chain_list], axis=0)
 
-    groups: dict[str, dict[str, np.ndarray]] = {"posterior": {"params": _stack(chains)}}
-    if sample_stats:
-        groups["sample_stats"] = sample_stats
-    dt = az.from_dict(groups)
+    posterior_dict = {"params": _stack(chains)}
+    dt = az.from_dict(
+        posterior=posterior_dict,
+        sample_stats=sample_stats if sample_stats else None,
+    )
 
     if warmup_chains is not None and all(w is not None for w in warmup_chains):
         warmup_array = _stack(warmup_chains)
