@@ -12,7 +12,7 @@ import jax.numpy as jnp
 
 from ..core.distribution import Distribution
 from ..custom_types import Array
-from ..inference._mcmc_distribution import MCMCApproximateDistribution
+from ..inference._approximate_distribution import ApproximateDistribution
 from ._base import ProbabilisticModel
 
 logger = logging.getLogger(__name__)

@@ -23,9 +23,22 @@ from probpipe.core.node import WorkflowFunction
 
 @pytest.fixture(scope="module", autouse=True)
 def _prefect_harness():
-    """Start a temporary in-process Prefect server for the entire module."""
-    with prefect_test_harness():
+    """Start a temporary in-process Prefect server for the entire module.
+
+    The default ephemeral server startup timeout is only 20 s, which is
+    often too short on resource-constrained CI runners.  We raise it to
+    60 s.  If the server still can't start, skip the module gracefully
+    rather than failing the entire run with 17 ERRORs.
+    """
+    harness = prefect_test_harness(server_startup_timeout=60)
+    try:
+        harness.__enter__()
+    except Exception as e:
+        pytest.skip(f"Prefect server unavailable: {e}")
+    try:
         yield
+    finally:
+        harness.__exit__(None, None, None)
 
 
 @pytest.fixture

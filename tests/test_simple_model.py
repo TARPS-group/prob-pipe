@@ -6,7 +6,7 @@ Covers:
 - SupportsLogProb always satisfied (prior must support it)
 - No event_shape, no _sample
 - Named components: "parameters" and "data"
-- condition_on → MCMCApproximateDistribution
+- condition_on → ApproximateDistribution
 """
 
 import jax
@@ -16,7 +16,7 @@ import pytest
 
 from probpipe import (
     Likelihood,
-    MCMCApproximateDistribution,
+    ApproximateDistribution,
     SimpleModel,
     SupportsLogProb,
     SupportsNamedComponents,
@@ -125,7 +125,7 @@ class TestSimpleModel:
     # -- Conditioning ------------------------------------------------------
 
     def test_condition_on(self, model):
-        """condition_on returns MCMCApproximateDistribution."""
+        """condition_on returns ApproximateDistribution."""
         data = jnp.array([[1.0, 2.0], [1.5, 2.5], [0.8, 1.8]])
         result = condition_on(
             model,
@@ -135,7 +135,7 @@ class TestSimpleModel:
             step_size=0.3,
             random_seed=42,
         )
-        assert isinstance(result, MCMCApproximateDistribution)
+        assert isinstance(result, ApproximateDistribution)
         assert result.event_shape == (2,)
 
     def test_condition_on_via_ops(self, model):
@@ -149,7 +149,7 @@ class TestSimpleModel:
             step_size=0.3,
             random_seed=42,
         )
-        assert isinstance(result, MCMCApproximateDistribution)
+        assert isinstance(result, ApproximateDistribution)
 
 
 class TestSimpleModelConditioningPaths:
@@ -176,14 +176,14 @@ class TestSimpleModelConditioningPaths:
             model, data, num_results=30, num_warmup=10, step_size=0.3,
             random_seed=42, method="tfp_hmc",
         )
-        assert isinstance(result, MCMCApproximateDistribution)
+        assert isinstance(result, ApproximateDistribution)
 
     def test_condition_on_zero_warmup(self, model, data):
         result = condition_on(
             model, data, num_results=30, num_warmup=0, step_size=0.3,
             random_seed=42,
         )
-        assert isinstance(result, MCMCApproximateDistribution)
+        assert isinstance(result, ApproximateDistribution)
 
     def test_condition_on_bad_method(self, model, data):
         with pytest.raises(KeyError):
@@ -195,7 +195,7 @@ class TestSimpleModelConditioningPaths:
             model, data, num_results=30, num_warmup=10, step_size=0.3,
             random_seed=42, init=jnp.ones(2),
         )
-        assert isinstance(result, MCMCApproximateDistribution)
+        assert isinstance(result, ApproximateDistribution)
 
     def test_rwmh_fallback(self):
         """RWMH fallback when likelihood is not JAX-traceable."""
@@ -213,7 +213,7 @@ class TestSimpleModelConditioningPaths:
         result = condition_on(
             model, data, num_results=30, num_warmup=10, step_size=0.3, random_seed=42,
         )
-        assert isinstance(result, MCMCApproximateDistribution)
+        assert isinstance(result, ApproximateDistribution)
 
     def test_inference_data_produced(self):
         """TFP NUTS produces InferenceData with posterior and sample_stats."""

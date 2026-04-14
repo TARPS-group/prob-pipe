@@ -15,7 +15,7 @@ from ..core.distribution import Distribution
 from ..core.node import workflow_function
 from ..core.protocols import SupportsLogProb
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ._mcmc_distribution import MCMCApproximateDistribution, make_posterior
+from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 from ._tfp_mcmc import _get_init_state, _get_prior, _is_simple_model
 
@@ -41,7 +41,7 @@ def rwmh(
     step_size: float = 0.1,
     init: ArrayLike | None = None,
     random_seed: int = 0,
-) -> MCMCApproximateDistribution:
+) -> ApproximateDistribution:
     """Gradient-free random-walk Metropolis-Hastings.
 
     Parameters
@@ -60,7 +60,7 @@ def rwmh(
 
     Returns
     -------
-    MCMCApproximateDistribution
+    ApproximateDistribution
         Posterior samples with chain structure and ArviZ InferenceData.
     """
     if not isinstance(dist, SupportsLogProb):
@@ -125,13 +125,13 @@ def rwmh(
     # Build InferenceData
     posterior_array = np.stack([np.asarray(c) for c in chains], axis=0)
     accept_array = np.full((num_chains, num_results), accept_rate)
-    inference_data = az.from_dict(
-        posterior={"params": posterior_array},
-        sample_stats={
+    inference_data = az.from_dict({
+        "posterior": {"params": posterior_array},
+        "sample_stats": {
             "acceptance_rate": accept_array,
             "step_size": np.full((num_chains, num_results), step_size),
         },
-    )
+    })
 
     return make_posterior(
         chains, parents=(dist,), algorithm="rwmh",
@@ -170,7 +170,7 @@ class TFPRWMHMethod(InferenceMethod):
                               description="Does not support dict-based conditioning")
         return MethodInfo(feasible=True, method_name=self.name)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
+    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         prior = _get_prior(dist)
         log_prob_fn = None
         if _is_simple_model(dist):

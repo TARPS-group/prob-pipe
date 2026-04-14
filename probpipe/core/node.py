@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, Mapping, get_type_hints
+from typing import Any, Callable, Mapping, get_type_hints
 import inspect
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -129,8 +131,8 @@ class Node(ABC):
     """
 
     def __init__(self, **kwargs: Any):
-        child_nodes: Dict[str, Node] = {}
-        inputs: Dict[str, Any] = {}
+        child_nodes: dict[str, Node] = {}
+        inputs: dict[str, Any] = {}
 
         for k, v in kwargs.items():
             if isinstance(v, Node):
@@ -219,7 +221,7 @@ class WorkflowFunction(Node):
         func: Callable,
         workflow_kind: str | None = None,   # "task" or "flow" or None
         name: str | None = None,
-        bind: Dict[str, Any] | None = None,         # construction-time bindings (defaults/config)
+        bind: dict[str, Any] | None = None,         # construction-time bindings (defaults/config)
         module: Any | None = None,                  # typically a Module; kept as Any to avoid import cycles
         n_broadcast_samples: int | None = None,      # default number of samples for broadcasting
         vectorize: str = "auto",                     # "auto" | "jax" | "loop"
@@ -329,7 +331,7 @@ class WorkflowFunction(Node):
 
         return self._execute_many([values])[0]
 
-    def _resolve_inputs(self, call_inputs: Dict[str, Any]) -> Dict[str, Any]:
+    def _resolve_inputs(self, call_inputs: dict[str, Any]) -> dict[str, Any]:
         """
         Build kwargs for calling the underlying function.
 
@@ -339,7 +341,7 @@ class WorkflowFunction(Node):
           3) module.child_nodes/module.inputs (if module attached)
           4) function default values
         """
-        values: Dict[str, Any] = {}
+        values: dict[str, Any] = {}
 
         # convenience access
         mod = self._module
@@ -413,7 +415,7 @@ class WorkflowFunction(Node):
 
         return values
 
-    def _convert_distributions(self, values: Dict[str, Any]) -> Dict[str, Any]:
+    def _convert_distributions(self, values: dict[str, Any]) -> dict[str, Any]:
         """Convert distributions based on type hints.
 
         Handles two cases:
@@ -459,7 +461,7 @@ class WorkflowFunction(Node):
 
         return out
 
-    def _find_broadcast_args(self, values: Dict[str, Any]) -> list[str]:
+    def _find_broadcast_args(self, values: dict[str, Any]) -> list[str]:
         """
         Identify arguments where a Distribution was passed but the type hint
         expects a concrete (non-Distribution) type.
@@ -471,8 +473,15 @@ class WorkflowFunction(Node):
             # Check if the type hint indicates a distribution/protocol parameter.
             # If so, the caller expects a distribution object — don't broadcast.
             expected = self._hints.get(name)
+            # Unwrap parameterized generics (e.g. Distribution[T]) to their origin
+            origin = getattr(expected, "__origin__", None)
+            expected_type = origin if isinstance(origin, type) else expected
             try:
-                is_dist_hint = expected is not None and isinstance(expected, type) and issubclass(expected, Distribution)
+                is_dist_hint = (
+                    expected_type is not None
+                    and isinstance(expected_type, type)
+                    and issubclass(expected_type, Distribution)
+                )
             except TypeError:
                 is_dist_hint = False
             if not is_dist_hint and expected in _DISTRIBUTION_PROTOCOLS:
@@ -491,7 +500,7 @@ class WorkflowFunction(Node):
         self._key, subkey = jax.random.split(self._key)
         return subkey
 
-    def _resolve_vectorize(self, values: Dict[str, Any], broadcast_args: list[str]) -> str:
+    def _resolve_vectorize(self, values: dict[str, Any], broadcast_args: list[str]) -> str:
         """Resolve the vectorization strategy, caching the auto-detection result.
 
         Returns ``"jax"`` or ``"loop"``.  This is independent of orchestration
@@ -534,7 +543,7 @@ class WorkflowFunction(Node):
 
     def _broadcast(
         self,
-        values: Dict[str, Any],
+        values: dict[str, Any],
         broadcast_args: list[str],
         n_broadcast_samples: int,
         do_include_inputs: bool = False,
@@ -575,7 +584,7 @@ class WorkflowFunction(Node):
             # Loop vectorization: supports empirical enumeration
             # Collect candidate empirical dists (small enough individually), sorted smallest first
             candidates = []
-            sample_args: Dict[str, Distribution] = {}
+            sample_args: dict[str, Distribution] = {}
             for name in broadcast_args:
                 dist = values[name]
                 if isinstance(dist, EmpiricalDistribution) and dist.n <= n_broadcast_samples:
@@ -586,7 +595,7 @@ class WorkflowFunction(Node):
             candidates.sort(key=lambda pair: pair[1].n)
 
             # Greedily include smallest empirical dists while product stays within budget
-            empirical_args: Dict[str, EmpiricalDistribution] = {}
+            empirical_args: dict[str, EmpiricalDistribution] = {}
             product_size = 1
             for name, dist in candidates:
                 if product_size * dist.n <= n_broadcast_samples:
@@ -635,11 +644,11 @@ class WorkflowFunction(Node):
 
     def _sample_broadcast_args(
         self,
-        values: Dict[str, Any],
+        values: dict[str, Any],
         broadcast_args: list[str],
         n: int,
         key: PRNGKey,
-    ) -> Dict[str, Array]:
+    ) -> dict[str, Array]:
         """
         Sample all broadcast arguments, handling DistributionView reconnection.
 
@@ -649,7 +658,7 @@ class WorkflowFunction(Node):
         correlation between jointly-distributed components.
         """
         # Group DistributionView args by parent
-        joint_groups: Dict[int, Dict] = {}  # id(parent) → {parent, mappings}
+        joint_groups: dict[int, dict] = {}  # id(parent) → {parent, mappings}
         independent: list[str] = []
 
         for name in broadcast_args:
@@ -663,7 +672,7 @@ class WorkflowFunction(Node):
             else:
                 independent.append(name)
 
-        sampled: Dict[str, Array] = {}
+        sampled: dict[str, Array] = {}
 
         # Sample each joint group once, distribute to arguments
         for group in joint_groups.values():
@@ -685,7 +694,7 @@ class WorkflowFunction(Node):
 
     def _broadcast_jax(
         self,
-        values: Dict[str, Any],
+        values: dict[str, Any],
         broadcast_args: list[str],
         n_broadcast_samples: int,
     ) -> BroadcastDistribution:
@@ -739,9 +748,9 @@ class WorkflowFunction(Node):
 
     def _broadcast_enumerate(
         self,
-        values: Dict[str, Any],
-        empirical_args: Dict[str, EmpiricalDistribution],
-        sample_args: Dict[str, Distribution],
+        values: dict[str, Any],
+        empirical_args: dict[str, EmpiricalDistribution],
+        sample_args: dict[str, Distribution],
         product_size: int,
         n_broadcast_samples: int,
     ) -> BroadcastDistribution:
@@ -812,7 +821,7 @@ class WorkflowFunction(Node):
 
     def _broadcast_sample(
         self,
-        values: Dict[str, Any],
+        values: dict[str, Any],
         broadcast_args: list[str],
         n_broadcast_samples: int,
     ) -> BroadcastDistribution:
@@ -839,7 +848,7 @@ class WorkflowFunction(Node):
             broadcast_args=broadcast_args,
         )
 
-    def _execute_many(self, call_value_list: list[Dict[str, Any]]) -> list:
+    def _execute_many(self, call_value_list: list[dict[str, Any]]) -> list:
         """
         Execute the wrapped function for every dict in *call_value_list* and
         return the results in the same order.
@@ -863,12 +872,12 @@ class WorkflowFunction(Node):
             return self._execute_many_threaded(call_value_list)
         return [self._func(**v) for v in call_value_list]
 
-    def _execute_many_threaded(self, call_value_list: list[Dict[str, Any]]) -> list:
+    def _execute_many_threaded(self, call_value_list: list[dict[str, Any]]) -> list:
         max_workers = self._parallel if isinstance(self._parallel, int) else None
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             return list(pool.map(lambda v: self._func(**v), call_value_list))
 
-    def _map_task(self, call_value_list: list[Dict[str, Any]], task_name: str | None = None) -> list:
+    def _map_task(self, call_value_list: list[dict[str, Any]], task_name: str | None = None) -> list:
         """Create a Prefect task wrapping self._func, .map() over all calls, and resolve."""
         func = self._func
 
@@ -881,7 +890,7 @@ class WorkflowFunction(Node):
         futures = run_func.map(**kwargs_by_param)
         return [f.result() for f in futures]
 
-    def _execute_many_prefect_task(self, call_value_list: list[Dict[str, Any]]) -> list:
+    def _execute_many_prefect_task(self, call_value_list: list[dict[str, Any]]) -> list:
         """Use Prefect task.map() inside a lightweight flow.
 
         Prefect 3.x requires ``task.map()`` to be called within a flow
@@ -896,7 +905,7 @@ class WorkflowFunction(Node):
 
         return _task_map_flow()
 
-    def _execute_many_prefect_flow(self, call_value_list: list[Dict[str, Any]]) -> list:
+    def _execute_many_prefect_flow(self, call_value_list: list[dict[str, Any]]) -> list:
         """Wrap a mapped task inside a named Prefect flow."""
         outer = self
 

@@ -2,7 +2,9 @@
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
+import scipy.stats
 
 from probpipe.distributions import (
     Bernoulli,
@@ -11,7 +13,7 @@ from probpipe.distributions import (
     Categorical,
     NegativeBinomial,
 )
-from probpipe import ArrayDistribution, log_prob, sample
+from probpipe import ArrayDistribution, log_prob, mean, sample, variance
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +56,7 @@ class TestGeneric:
 
     def test_sample_shape(self, discrete_dist, key):
         samples = sample(discrete_dist, key=key, sample_shape=(5,))
-        assert samples.shape[:1] == (5,)
+        assert samples.shape == (5,) + discrete_dist.event_shape
 
     def test_log_prob_shape(self, discrete_dist, key):
         samples = sample(discrete_dist, key=key, sample_shape=(5,))
@@ -68,9 +70,23 @@ class TestGeneric:
     def test_name_none_by_default(self, discrete_dist):
         assert discrete_dist.name is None
 
-    def test_name_set(self):
-        dist = Bernoulli(probs=0.5, name="my_bernoulli")
-        assert dist.name == "my_bernoulli"
+
+_NAMED_DISTS = {
+    "Bernoulli": lambda name: Bernoulli(probs=0.5, name=name),
+    "Binomial": lambda name: Binomial(total_count=10, probs=0.3, name=name),
+    "Poisson": lambda name: Poisson(rate=5.0, name=name),
+    "Categorical": lambda name: Categorical(probs=[0.2, 0.3, 0.5], name=name),
+    "NegativeBinomial": lambda name: NegativeBinomial(
+        total_count=5, probs=0.4, name=name
+    ),
+}
+
+
+@pytest.mark.parametrize("name", list(_NAMED_DISTS))
+def test_name_set(name):
+    """Every discrete distribution must store the ``name`` constructor arg."""
+    dist = _NAMED_DISTS[name](name="my_dist")
+    assert dist.name == "my_dist"
 
 
 # ---------------------------------------------------------------------------
@@ -198,3 +214,94 @@ class TestProbsLogitsValidation:
     def test_error_neither_provided(self, cls, kwargs_both, kwargs_neither):
         with pytest.raises(ValueError, match="Exactly one"):
             cls(**kwargs_neither)
+
+
+# ---------------------------------------------------------------------------
+# Numerical baselines — validate mean/variance against analytical formulas
+# ---------------------------------------------------------------------------
+
+
+def _chi2_discrete(observed_counts, expected_probs, min_expected=5):
+    """Chi-squared goodness-of-fit for discrete samples.
+
+    Normalizes expected_probs to sum to 1 (handles truncated PMFs),
+    merges bins with expected count < ``min_expected`` into one overflow
+    bin, then runs scipy.stats.chisquare.
+    """
+    expected_probs = expected_probs / expected_probs.sum()
+    n = observed_counts.sum()
+    expected = expected_probs * n
+    keep = expected >= min_expected
+    obs = observed_counts[keep]
+    exp = expected[keep]
+    if (~keep).any():
+        obs = np.append(obs, observed_counts[~keep].sum())
+        exp = np.append(exp, expected[~keep].sum())
+    return scipy.stats.chisquare(obs, exp)
+
+
+class TestDiscreteMoments:
+    """Mean/variance match scipy; samples pass chi-squared goodness-of-fit."""
+
+    def test_bernoulli_mean_and_variance(self):
+        d = Bernoulli(probs=0.7)
+        np.testing.assert_allclose(float(mean(d)), 0.7, rtol=1e-6)
+        np.testing.assert_allclose(float(variance(d)), 0.7 * 0.3, rtol=1e-6)
+
+    def test_bernoulli_samples_chi2(self, key):
+        """Bernoulli(0.7) samples must pass a chi-squared test."""
+        d = Bernoulli(probs=0.7)
+        s = np.asarray(sample(d, key=key, sample_shape=(50_000,)))
+        counts = np.bincount(s.astype(int), minlength=2)
+        _, p = _chi2_discrete(counts, np.array([0.3, 0.7]))
+        assert p > 0.001, f"chi2 failed: p={p:.4e}"
+
+    def test_binomial_mean_and_variance(self):
+        n, p = 10, 0.3
+        d = Binomial(total_count=n, probs=p)
+        np.testing.assert_allclose(float(mean(d)), n * p, rtol=1e-6)
+        np.testing.assert_allclose(float(variance(d)), n * p * (1 - p), rtol=1e-6)
+
+    def test_binomial_samples_chi2(self, key):
+        """Binomial(10, 0.3) samples must pass a chi-squared test."""
+        d = Binomial(total_count=10, probs=0.3)
+        s = np.asarray(sample(d, key=key, sample_shape=(50_000,)))
+        counts = np.bincount(s.astype(int), minlength=11)
+        expected_probs = scipy.stats.binom.pmf(np.arange(11), 10, 0.3)
+        _, p = _chi2_discrete(counts, expected_probs)
+        assert p > 0.001, f"chi2 failed: p={p:.4e}"
+
+    def test_poisson_mean_and_variance(self):
+        d = Poisson(rate=5.0)
+        np.testing.assert_allclose(float(mean(d)), 5.0, rtol=1e-6)
+        np.testing.assert_allclose(float(variance(d)), 5.0, rtol=1e-6)
+
+    def test_poisson_samples_chi2(self, key):
+        """Poisson(5) samples must pass a chi-squared test."""
+        d = Poisson(rate=5.0)
+        s = np.asarray(sample(d, key=key, sample_shape=(50_000,)))
+        max_k = int(s.max()) + 1
+        counts = np.bincount(s.astype(int), minlength=max_k)
+        expected_probs = scipy.stats.poisson.pmf(np.arange(max_k), 5.0)
+        _, p = _chi2_discrete(counts, expected_probs)
+        assert p > 0.001, f"chi2 failed: p={p:.4e}"
+
+    def test_poisson_log_prob_matches_scipy(self):
+        """log_prob must match scipy.stats.poisson.logpmf."""
+        d = Poisson(rate=5.0)
+        k = jnp.array([0, 1, 5, 10])
+        np.testing.assert_allclose(
+            np.asarray(log_prob(d, k)),
+            scipy.stats.poisson.logpmf(np.asarray(k), 5.0),
+            rtol=1e-5,
+        )
+
+    def test_binomial_log_prob_matches_scipy(self):
+        """log_prob must match scipy.stats.binom.logpmf."""
+        d = Binomial(total_count=10, probs=0.3)
+        k = jnp.array([0, 3, 5, 10])
+        np.testing.assert_allclose(
+            np.asarray(log_prob(d, k)),
+            scipy.stats.binom.logpmf(np.asarray(k), 10, 0.3),
+            rtol=1e-5,
+        )

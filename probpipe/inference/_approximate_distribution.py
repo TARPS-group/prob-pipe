@@ -1,4 +1,4 @@
-"""MCMC-aware empirical distribution with chain structure and ArviZ InferenceData."""
+"""Approximate empirical distribution with chain structure and ArviZ InferenceData."""
 
 from __future__ import annotations
 
@@ -11,13 +11,13 @@ from ..core.provenance import Provenance
 from ..custom_types import Array, ArrayLike
 from .._weights import Weights
 
-__all__ = ["MCMCApproximateDistribution", "make_posterior"]
+__all__ = ["ApproximateDistribution", "make_posterior"]
 
 
-class MCMCApproximateDistribution(ArrayEmpiricalDistribution):
-    """Empirical distribution from MCMC with chain structure and ArviZ InferenceData.
+class ApproximateDistribution(ArrayEmpiricalDistribution):
+    """Empirical distribution with chain structure and ArviZ InferenceData.
 
-    Wraps one or more MCMC chains as an
+    Wraps one or more sample chains as an
     :class:`~probpipe.core.distribution.EmpiricalDistribution` while
     preserving per-chain structure, optional warmup samples, and an
     ArviZ ``InferenceData`` object for downstream diagnostics.
@@ -80,7 +80,7 @@ class MCMCApproximateDistribution(ArrayEmpiricalDistribution):
 
     @property
     def num_chains(self) -> int:
-        """Number of MCMC chains."""
+        """Number of chains."""
         return len(self._chains)
 
     @property
@@ -149,7 +149,7 @@ class MCMCApproximateDistribution(ArrayEmpiricalDistribution):
 
     def __repr__(self) -> str:
         return (
-            f"MCMCApproximateDistribution("
+            f"ApproximateDistribution("
             f"algorithm={self._algorithm!r}, "
             f"num_chains={self.num_chains}, "
             f"num_draws={self.num_draws}, "
@@ -165,8 +165,8 @@ def make_posterior(
     inference_data: Any | None = None,
     warmup_samples: list[Array] | None = None,
     **meta: Any,
-) -> MCMCApproximateDistribution:
-    """Wrap chains into an MCMCApproximateDistribution with provenance.
+) -> ApproximateDistribution:
+    """Wrap chains into an ApproximateDistribution with provenance.
 
     Parameters
     ----------
@@ -185,10 +185,10 @@ def make_posterior(
 
     Returns
     -------
-    MCMCApproximateDistribution
+    ApproximateDistribution
         Posterior with chain structure, InferenceData, and provenance.
     """
-    result = MCMCApproximateDistribution(
+    result = ApproximateDistribution(
         chains, algorithm=algorithm, inference_data=inference_data,
         warmup_samples=warmup_samples, name="posterior",
     )

@@ -6,7 +6,7 @@ registry for ``condition_on`` dispatch.
 """
 
 from __future__ import annotations
-from ._mcmc_distribution import MCMCApproximateDistribution
+from ._approximate_distribution import ApproximateDistribution
 from ._registry import (
     InferenceMethod,
     inference_method_registry,
@@ -16,7 +16,7 @@ from ._rwmh import rwmh
 from ._nutpie import condition_on_nutpie
 
 __all__ = [
-    "MCMCApproximateDistribution",
+    "ApproximateDistribution",
     "Method",
     "MethodInfo",
     "MethodRegistry",
@@ -24,6 +24,9 @@ __all__ = [
     "inference_method_registry",
     "rwmh",
     "condition_on_nutpie",
+    "sbi_learn_conditional",
+    "sbi_learn_likelihood",
+    "DirectSamplerSBIModel",
 ]
 
 
@@ -62,3 +65,31 @@ try:
     inference_method_registry.register(PyMCADVIMethod())
 except ImportError:
     pass
+
+try:
+    from ._sbijax import (
+        SbiSMCABCMethod,
+        sbi_learn_conditional,
+        sbi_learn_likelihood,
+        DirectSamplerSBIModel,
+    )
+    inference_method_registry.register(SbiSMCABCMethod())
+except ImportError:
+
+    _SBI_INSTALL_MSG = (
+        "SBI features require sbijax: pip install probpipe[sbi]"
+    )
+
+    def sbi_learn_conditional(*args, **kwargs):  # type: ignore[misc]
+        """Placeholder that raises when sbijax is not installed."""
+        raise ImportError(_SBI_INSTALL_MSG)
+
+    def sbi_learn_likelihood(*args, **kwargs):  # type: ignore[misc]
+        """Placeholder that raises when sbijax is not installed."""
+        raise ImportError(_SBI_INSTALL_MSG)
+
+    class DirectSamplerSBIModel:  # type: ignore[no-redef]
+        """Placeholder that raises when sbijax is not installed."""
+
+        def __init__(self, *args, **kwargs):
+            raise ImportError(_SBI_INSTALL_MSG)

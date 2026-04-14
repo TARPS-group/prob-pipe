@@ -103,7 +103,7 @@ def prob(dist: SupportsLogProb, value: Any) -> Array:
             f"{type(dist).__name__} does not support prob "
             f"(missing _log_prob method)"
         )
-    return dist._prob(value)
+    return jnp.exp(dist._log_prob(value))
 
 
 @workflow_function
@@ -129,7 +129,7 @@ def unnormalized_prob(
             f"{type(dist).__name__} does not support unnormalized_prob "
             f"(missing _unnormalized_log_prob method)"
         )
-    return dist._unnormalized_prob(value)
+    return jnp.exp(dist._unnormalized_log_prob(value))
 
 
 @workflow_function

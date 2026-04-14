@@ -4,10 +4,15 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import scipy.stats
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import GLMLikelihood, MultivariateNormal, SimpleModel, condition_on, mean
 from probpipe.modeling import Likelihood, GenerativeLikelihood
+
+
+def _sigmoid(x):
+    return 1.0 / (1.0 + np.exp(-x))
 
 
 @pytest.fixture
@@ -36,6 +41,42 @@ class TestGLMLikelihood:
         ll = poisson_lik.log_likelihood(params, data)
         assert ll.shape == ()
         assert jnp.isfinite(ll)
+
+    def test_poisson_log_likelihood_matches_scipy(self, poisson_lik):
+        """Poisson GLM log-likelihood must match sum of scipy.stats.poisson.logpmf."""
+        params = jnp.array([1.0, 0.5])
+        data = jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1,
+                          0, 2, 6, 1, 3, 2, 0, 4, 1, 3], dtype=jnp.float32)
+        ll = float(poisson_lik.log_likelihood(params, data))
+
+        # Independent baseline: Poisson log link -> rate = exp(X @ params).
+        X = np.asarray(poisson_lik._x)
+        eta = X @ np.asarray(params)
+        rates = np.exp(eta)
+        expected = scipy.stats.poisson.logpmf(np.asarray(data), rates).sum()
+        np.testing.assert_allclose(ll, expected, rtol=1e-5)
+
+    def test_bernoulli_log_likelihood_matches_scipy(self, bernoulli_lik):
+        """Bernoulli GLM log-likelihood must match sum of scipy.stats.bernoulli.logpmf."""
+        params = jnp.array([0.2, 1.0])
+        rng = np.random.default_rng(0)
+        data = rng.binomial(1, 0.5, size=30).astype(np.float32)
+        ll = float(bernoulli_lik.log_likelihood(params, jnp.asarray(data)))
+
+        # Independent baseline: Bernoulli logit link -> p = sigmoid(X @ params).
+        X = np.asarray(bernoulli_lik._x)
+        eta = X @ np.asarray(params)
+        p = _sigmoid(eta)
+        expected = scipy.stats.bernoulli.logpmf(data, p).sum()
+        np.testing.assert_allclose(ll, expected, rtol=1e-5)
+
+    def test_poisson_generate_data_moments(self, poisson_lik):
+        """Sample mean must approximate exp(intercept) for constant-rate Poisson."""
+        params = jnp.array([0.5, 0.0])  # constant rate = exp(0.5)
+        expected_rate = np.exp(0.5)
+        y = np.asarray(poisson_lik.generate_data(params, 20))
+        assert y.shape == (20,)
+        np.testing.assert_allclose(float(y.mean()), expected_rate, atol=0.5)
 
     def test_generate_data_shape(self, poisson_lik):
         params = jnp.array([1.0, 0.5])
@@ -102,7 +143,7 @@ class TestIncrementalConditionerAutoConvert:
     def test_auto_convert_to_kde(self):
         """update() should work without a custom condition_fn."""
         from probpipe.modeling import IncrementalConditioner
-        from probpipe.inference import MCMCApproximateDistribution
+        from probpipe.inference import ApproximateDistribution
         from probpipe.core.protocols import SupportsLogProb
 
         X = np.column_stack([np.ones(20), np.linspace(-1, 1, 20)]).astype(np.float32)
@@ -111,9 +152,9 @@ class TestIncrementalConditionerAutoConvert:
         model = SimpleModel(prior, lik)
         data = jnp.ones(20, dtype=jnp.float32)
 
-        # Get an MCMCApproximateDistribution (does NOT support SupportsLogProb)
+        # Get an ApproximateDistribution (does NOT support SupportsLogProb)
         post = condition_on(model, data, num_results=100, num_warmup=50, random_seed=0)
-        assert isinstance(post, MCMCApproximateDistribution)
+        assert isinstance(post, ApproximateDistribution)
         assert not isinstance(post, SupportsLogProb)
 
         # IncrementalConditioner should auto-convert when using post as prior

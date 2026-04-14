@@ -75,7 +75,7 @@ fully-qualified Python paths.
 GitHub Actions (`.github/workflows/ci.yml`):
 
 - Tests on Python 3.12 and 3.13
-- Installs `.[dev,nutpie]` (bridgestan and pymc are not included)
+- Installs `.[dev,nutpie,sbi]` (bridgestan and pymc are not included)
 - Coverage uploaded to Codecov
 
 Docs build (`.github/workflows/docs.yml`) with `mkdocs build --strict`.
@@ -86,62 +86,23 @@ Docs build (`.github/workflows/docs.yml`) with `mkdocs build --strict`.
 
 ```
 probpipe/
-├── __init__.py              # Public API re-exports
-├── custom_types.py          # Array, PRNGKey, ArrayLike type aliases
-├── _utils.py                # Internal utilities
-├── _array_utils.py          # Array manipulation helpers
-├── _weights.py              # Weights class + weighted operations
-│
-├── core/                    # Core abstractions (no specialized distributions)
-│   ├── distribution.py        # Re-export facade for all core distribution symbols
-│   ├── _distribution_base.py  # Distribution[T] base, global settings
-│   ├── _array_distributions.py # PyTreeArrayDistribution, ArrayDistribution,
-│   │                          #   BootstrapDistribution, FlattenedView
-│   ├── _empirical.py          # EmpiricalDistribution[T], ArrayEmpiricalDistribution,
-│   │                          #   BootstrapReplicateDistribution[T]
-│   ├── _broadcast_distributions.py # BroadcastDistribution, marginal types
-│   ├── _joint.py              # JointDistribution, ProductDistribution, DistributionView
-│   ├── _random_functions.py   # RandomFunction[X,Y], ArrayRandomFunction
-│   ├── protocols.py           # @runtime_checkable protocol definitions
-│   ├── ops.py                 # Built-in ops: sample, mean, log_prob, etc.
-│   ├── constraints.py         # Constraint hierarchy (real, positive, etc.)
-│   ├── node.py                # Node, Module, WorkflowFunction, @workflow_function, @workflow_method, @abstract_workflow_method
-│   ├── modeling.py            # Likelihood, GenerativeLikelihood, IncrementalConditioner
-│   └── provenance.py          # Provenance tracking
-│
-├── distributions/           # Concrete distribution implementations
-│   ├── continuous.py        # Normal, Gamma, Beta, etc.
-│   ├── discrete.py          # Bernoulli, Poisson, Categorical, etc.
-│   ├── multivariate.py      # MultivariateNormal, Dirichlet, Wishart, etc.
-│   ├── joint.py             # SequentialJointDistribution, JointEmpirical, etc.
-│   ├── transformed.py       # TransformedDistribution
-│   ├── gaussian_random_function.py  # GaussianRandomFunction, LinearBasisFunction
-│   └── _tfp_base.py         # TFPDistribution mixin
-│
-├── modeling/                # Probabilistic model wrappers
-│   ├── _base.py             # ProbabilisticModel base class
-│   ├── _simple.py           # SimpleModel (prior + likelihood)
-│   ├── _stan.py             # StanModel (BridgeStan, optional dep)
-│   ├── _pymc.py             # PyMCModel (PyMC, optional dep)
-│   └── _likelihood.py       # Likelihood helpers
-│
-├── inference/               # Inference algorithms
-│   ├── _mcmc_distribution.py  # MCMCApproximateDistribution + make_posterior
-│   ├── _rwmh.py             # Random-walk Metropolis-Hastings
-│   └── _nutpie.py           # Nutpie-backed NUTS (optional dep)
-│
-├── converters/              # Distribution conversion registry
-│   ├── _registry.py         # Converter ABC, registry, and metadata types
-│   ├── _protocol.py         # Protocol-based conversion (SupportsLogProb, etc.)
-│   ├── _probpipe.py         # ProbPipe ↔ ProbPipe conversions
-│   ├── _tfp.py              # TFP conversions
-│   └── _scipy.py            # SciPy conversions
-│
-└── linalg/                  # Linear algebra for random functions
-    ├── linear_operator.py   # LinOp hierarchy
-    ├── operations.py        # Functional interface
-    └── utils.py             # add_diag_jitter, symmetrize_pd
+├── core/           # Base abstractions: Distribution, protocols, ops, node, transition
+├── distributions/  # Concrete distributions (continuous, discrete, multivariate, ...)
+├── modeling/       # Model wrappers (SimpleModel, StanModel, PyMCModel, likelihoods)
+├── inference/      # Inference methods + registry (TFP, nutpie, RWMH, sbijax)
+├── converters/     # Distribution conversion registry
+├── linalg/         # Linear algebra for random functions
+├── custom_types.py # Array, PRNGKey, ArrayLike type aliases
+└── _utils.py, _array_utils.py, _weights.py  # Internal helpers
 ```
+
+Within subpackages that contain multiple implementation files
+(`modeling/`, `inference/`, `converters/`), implementation modules use
+a leading underscore (`_simple.py`, `_rwmh.py`).  The package
+`__init__.py` re-exports the public API so users import from
+`probpipe` or from subpackage `__init__` modules, never from
+underscore modules directly.  See `probpipe/__init__.py` for the
+full public API surface.
 
 ---
 
@@ -169,9 +130,14 @@ probpipe/
 | `Distribution[T]` | Generic base parameterized by value type |
 | `ArrayDistribution` | Single-array specialization with TFP shape conventions |
 | `WorkflowFunction` | Orchestration-aware function wrapper |
+| `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc. |
 | `MethodRegistry` | Generic priority-based dispatch; used by the inference method registry |
 | `ProbabilisticModel` | Base for models (extends `Distribution` + `SupportsNamedComponents`) |
+| `SimpleGenerativeModel` | Simulator-only model wrapper for SBI/ABC (prior + `GenerativeLikelihood`) |
+| `IncrementalConditioner` | Stateful `Module` for sequential Bayesian updating via `update()` / `update_all()` |
+| `iterate` / combinators | Iterative distribution transformation; `with_conversion`, `with_resampling` |
+| `sbi_learn_conditional` / `sbi_learn_likelihood` | SBI workflow functions; return `DirectSamplerSBIModel` or `SimpleModel` with neural likelihood |
 
 ### Inference method registry
 
@@ -196,6 +162,7 @@ Built-in methods:
 | 70 | `cmdstan_nuts` | CmdStanPy | `StanModel` |
 | 60 | `pymc_nuts` | PyMC | `PyMCModel` |
 | 50 | `tfp_rwmh` | TFP | Any `SupportsLogProb` |
+| 40 | `sbijax_smcabc` | sbijax | `SimpleGenerativeModel` |
 | 35 | `pymc_advi` | PyMC | `PyMCModel` |
 
 ### Converter priority system

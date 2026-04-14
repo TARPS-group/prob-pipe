@@ -150,7 +150,7 @@ Each file should contain **one independent concern**. Use judgment:
   `SimpleModel` vs `StanModel`, `RWMH` vs nutpie) get their own file.
 - **Small helpers** tightly coupled to one consumer belong in
   that consumer's file (e.g., `make_posterior` in
-  `_mcmc_distribution.py`).
+  `_approximate_distribution.py`).
 
 The test: *if two classes are always modified together or one only exists
 to serve the other, they belong in the same file. If they can evolve
@@ -360,27 +360,33 @@ distributions/ (imports core/, custom_types)
 linalg/       (imports core/, custom_types; no distribution imports)
      ↑
 converters/   (imports core/, distributions/, custom_types)
-modeling/     (imports core/, inference/, custom_types)
+     ↑
+modeling/     (imports core/, inference/, converters/, custom_types)
 inference/    (imports core/, custom_types)
 ```
 
 ### Rules
 
-1. **`core/`** must never import from `distributions/`, `modeling/`,
-   `inference/`, `converters/`, or `linalg/`.
-2. **`distributions/`** must never import from `modeling/`, `inference/`,
-   or `converters/`.
-3. **`inference/`** must never import from `modeling/` or `converters/`.
-4. **`modeling/`** may import from `inference/` (for MCMC result types)
-   but must never import from `converters/`.
-5. **`converters/`** may import from `distributions/` and `core/` but
-   must never import from `modeling/` or `inference/`.
-6. **`linalg/`** is self-contained; it may import from `core/` and
+1. **`core/`** must never import from `distributions/`, `linalg/`,
+   `converters/`, `inference/`, or `modeling/`.
+2. **`distributions/`** must never import from `linalg/`, `converters/`,
+   `inference/`, or `modeling/`.
+3. **`linalg/`** is self-contained; it may import from `core/` and
    `custom_types` only.
+4. **`converters/`** may import from `distributions/` and `core/` but
+   must never import from `inference/` or `modeling/`.
+5. **`inference/`** must never import from `modeling/` or `converters/`.
+6. **`modeling/`** may import from `inference/` (for MCMC result types)
+   and from `converters/` (for auto-conversion in conditioning).
 
-> **Exception:** `core/node.py` imports from `distributions/joint.py` for
-> `WorkflowFunction` broadcasting. This is the single allowed reverse edge
-> and should not be extended.
+> **Exceptions** (intentional reverse edges):
+>
+> - `core/node.py` → `distributions/joint.py` (WorkflowFunction broadcasting)
+> - `inference/` → `modeling/` (lazy imports for model-type dispatch in
+>   `_sbijax`, `_tfp_mcmc`, `_nutpie`, `_cmdstan_method`, `_pymc_method`)
+>
+> Both use lazy (in-function) imports to avoid circular imports at
+> module load time.  Do not add new reverse edges without discussion.
 
 ---
 
@@ -471,7 +477,9 @@ Disable for debugging: `pytest -p no:xdist -o "addopts="`.
 ### 9.1 `__all__` exports
 
 Every public module defines `__all__`. Package `__init__.py` files
-aggregate exports from private submodules.
+aggregate exports from private submodules.  Private implementation
+modules (`_*.py`) whose symbols are re-exported through the package
+`__init__.py` are exempt.
 
 ### 9.2 Immutability
 

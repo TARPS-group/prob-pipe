@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import arviz as az
+
+if TYPE_CHECKING:
+    from xarray import DataTree
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -14,7 +17,7 @@ from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb, SupportsMean
 from ..custom_types import Array, ArrayLike
-from ._mcmc_distribution import MCMCApproximateDistribution, make_posterior
+from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
 
@@ -109,7 +112,7 @@ def _run_tfp_chains(
     """Run TFP-backed MCMC chains.
 
     Returns (chains, sample_stats_dict) where sample_stats_dict contains
-    arrays shaped (num_chains, num_results) for building InferenceData.
+    arrays shaped (num_chains, num_results) for building DataTree.
     """
     if algorithm == "nuts":
         inner_kernel = tfp_mcmc.NoUTurnSampler(
@@ -152,7 +155,7 @@ def _run_tfp_chains(
     # all_samples: (num_chains, num_results, *event_shape)
     chains = [all_samples[c] for c in range(num_chains)]
 
-    # Extract sample_stats from traces for InferenceData
+    # Extract sample_stats from traces for DataTree
     sample_stats = _extract_sample_stats(all_traces, num_chains)
     return chains, sample_stats
 
@@ -186,14 +189,14 @@ def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, Any]:
 def _build_tfp_inference_data(
     chains: list[Array],
     sample_stats: dict[str, Any],
-) -> az.InferenceData:
-    """Build an ArviZ InferenceData from TFP chains and sample stats."""
+) -> DataTree:
+    """Build an ArviZ ``DataTree`` from TFP chains and sample stats."""
     # Stack chains: (num_chains, num_draws, *event_shape)
     posterior_array = np.stack([np.asarray(c) for c in chains], axis=0)
-    return az.from_dict(
-        posterior={"params": posterior_array},
-        sample_stats=sample_stats if sample_stats else None,
-    )
+    groups: dict[str, Any] = {"posterior": {"params": posterior_array}}
+    if sample_stats:
+        groups["sample_stats"] = sample_stats
+    return az.from_dict(groups)
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +250,7 @@ class _TFPGradientMethod(InferenceMethod):
                               description=str(e))
         return MethodInfo(feasible=True, method_name=self.name)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> MCMCApproximateDistribution:
+    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         target = _build_target_log_prob(dist, observed)
         prior = _get_prior(dist)
         init = _get_init_state(prior, kwargs.get("init"), observed)

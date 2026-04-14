@@ -18,13 +18,17 @@ from probpipe.modeling._stan import StanModel, _UnconstrainedStanView
 
 
 def _make_mock_bs_model(num_params=3, param_names=("alpha", "beta", "sigma")):
-    """Create a mock BridgeStan model."""
+    """Create a mock BridgeStan model.
+
+    constrain(x) = x + 1, unconstrain(x) = x - 1: a genuine inverse pair
+    so the round-trip test can verify value preservation.
+    """
     mock = MagicMock()
     mock.param_unc_num.return_value = num_params
     mock.param_names.return_value = list(param_names)
     mock.log_density.return_value = -5.0
-    mock.param_constrain.return_value = np.array([1.0, 2.0, 3.0])
-    mock.param_unconstrain.return_value = np.array([0.5, 1.0, 1.5])
+    mock.param_constrain.side_effect = lambda x: np.asarray(x) + 1.0
+    mock.param_unconstrain.side_effect = lambda x: np.asarray(x) - 1.0
     return mock
 
 
@@ -76,10 +80,16 @@ class TestStanModelMocked:
     def test_parameter_names(self, model):
         assert model.parameter_names == ("alpha", "beta", "sigma")
 
-    def test_getitem_valid(self, model):
+    def test_getitem_returns_name_placeholder(self, model):
+        """StanModel['alpha'] returns the parameter name — BridgeStan doesn't
+        expose sub-distributions, so __getitem__ is a placeholder that merely
+        validates the key. See the comment in StanModel.__getitem__.
+        """
         assert model["alpha"] == "alpha"
+        assert model["beta"] == "beta"
+        assert model["sigma"] == "sigma"
 
-    def test_getitem_invalid(self, model):
+    def test_getitem_unknown_key_raises(self, model):
         with pytest.raises(KeyError, match="Unknown component"):
             model["nonexistent"]
 
@@ -113,17 +123,25 @@ class TestStanModelMocked:
         assert jnp.isfinite(p)
         assert float(p) > 0
 
-    def test_param_constrain(self, model):
+    def test_param_constrain_applies_transform(self, model):
+        """param_constrain should apply the underlying bridgestan transform."""
         unc = jnp.array([0.5, 1.0, 1.5])
         result = model.param_constrain(unc)
-        model._bs_model.param_constrain.assert_called()
-        assert result.shape == (3,)
+        # Mock defines constrain(x) = x + 1.
+        np.testing.assert_allclose(np.asarray(result), np.asarray(unc) + 1.0)
 
-    def test_param_unconstrain(self, model):
+    def test_param_unconstrain_applies_transform(self, model):
+        """param_unconstrain should apply the underlying bridgestan transform."""
         x = jnp.array([1.0, 2.0, 3.0])
         result = model.param_unconstrain(x)
-        model._bs_model.param_unconstrain.assert_called()
-        assert result.shape == (3,)
+        # Mock defines unconstrain(x) = x - 1.
+        np.testing.assert_allclose(np.asarray(result), np.asarray(x) - 1.0)
+
+    def test_constrain_unconstrain_are_inverses(self, model):
+        """constrain(unconstrain(x)) == x: the wrapper must preserve values."""
+        x = jnp.array([1.0, 2.0, 3.0])
+        roundtrip = model.param_constrain(model.param_unconstrain(x))
+        np.testing.assert_allclose(np.asarray(roundtrip), np.asarray(x), atol=1e-12)
 
     def test_as_unconstrained_distribution(self, model):
         view = model.as_unconstrained_distribution()

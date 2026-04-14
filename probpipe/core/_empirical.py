@@ -137,6 +137,16 @@ class EmpiricalDistribution[T](
         """Normalised log-weights, shape ``(n,)``."""
         return self._w.log_normalized
 
+    @property
+    def effective_sample_size(self) -> Array:
+        """Kish's effective sample size (ESS).
+
+        Returns ``n`` for uniformly weighted samples; less than ``n``
+        when weights are non-uniform.  Computed in log-space for
+        numerical stability.
+        """
+        return self._w.effective_sample_size
+
     # -- sampling -----------------------------------------------------------
 
     def _sample_one(self, key: PRNGKey) -> T:

@@ -2,7 +2,9 @@
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
+import scipy.stats as _scipy
 
 from probpipe.distributions import (
     Normal,
@@ -192,3 +194,58 @@ class TestNormalDist:
         assert hasattr(d, "scale")
         assert float(d.loc) == 0.0
         assert float(d.scale) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Numerical baselines — validate mean/variance against scipy.stats
+# ---------------------------------------------------------------------------
+
+
+# scipy equivalents of _CONTINUOUS_DISTS.  Cauchy and HalfCauchy omitted
+# (mean/variance undefined).
+_SCIPY_EQUIVALENTS = {
+    "Normal": _scipy.norm(loc=0.0, scale=1.0),
+    "Beta": _scipy.beta(a=2.0, b=5.0),
+    "Gamma": _scipy.gamma(a=3.0, scale=1.0),        # scipy scale = 1 / rate
+    "InverseGamma": _scipy.invgamma(a=3.0, scale=1.0),
+    "Exponential": _scipy.expon(scale=0.5),         # scipy scale = 1 / rate
+    "LogNormal": _scipy.lognorm(s=1.0, scale=1.0),  # s = sigma, scale = exp(loc)
+    "StudentT": _scipy.t(df=5.0, loc=0.0, scale=1.0),
+    "Uniform": _scipy.uniform(loc=0.0, scale=1.0),  # scipy scale = high - low
+    "Laplace": _scipy.laplace(loc=0.0, scale=1.0),
+    "HalfNormal": _scipy.halfnorm(scale=1.0),
+    "Pareto": _scipy.pareto(b=3.0, scale=1.0),
+    "TruncatedNormal": _scipy.truncnorm(a=-2.0, b=2.0, loc=0.0, scale=1.0),
+}
+
+
+class TestContinuousMoments:
+    """Analytical mean/variance must match scipy; samples must pass KS test."""
+
+    @pytest.mark.parametrize("name", list(_SCIPY_EQUIVALENTS))
+    def test_mean_matches_scipy(self, name):
+        cls, kwargs = _CONTINUOUS_DISTS[name]
+        scipy_dist = _SCIPY_EQUIVALENTS[name]
+        np.testing.assert_allclose(
+            float(mean(cls(**kwargs))), float(scipy_dist.mean()),
+            rtol=1e-5, atol=1e-6,
+        )
+
+    @pytest.mark.parametrize("name", list(_SCIPY_EQUIVALENTS))
+    def test_variance_matches_scipy(self, name):
+        cls, kwargs = _CONTINUOUS_DISTS[name]
+        scipy_dist = _SCIPY_EQUIVALENTS[name]
+        np.testing.assert_allclose(
+            float(variance(cls(**kwargs))), float(scipy_dist.var()),
+            rtol=1e-5, atol=1e-6,
+        )
+
+    @pytest.mark.parametrize("name", list(_SCIPY_EQUIVALENTS))
+    def test_samples_pass_ks_test(self, name, key):
+        """Two-sided KS test: samples must be consistent with the scipy CDF."""
+        cls, kwargs = _CONTINUOUS_DISTS[name]
+        our_dist = cls(**kwargs)
+        scipy_dist = _SCIPY_EQUIVALENTS[name]
+        draws = np.asarray(sample(our_dist, key=key, sample_shape=(50_000,)))
+        stat, p = _scipy.kstest(draws, scipy_dist.cdf)
+        assert p > 0.001, f"KS test failed for {name}: stat={stat:.4f}, p={p:.4e}"

@@ -64,6 +64,7 @@ nav:
   - Home: index.md
   - Tutorials:
     - Getting Started: tutorials/getting_started.ipynb
+    - Flexible Inference with condition_on: tutorials/flexible_inference.ipynb
   - Reference Notebooks:
     - Overview: reference_notebooks.md
     - Distributions: examples/01_distributions.ipynb
