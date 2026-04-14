@@ -75,8 +75,10 @@ class TestBootstrapDistributionCoverage:
         bd = BootstrapDistribution(evals, weights=weights)
         v = variance(bd)
         assert jnp.isfinite(v)
-        # Weighted variance / n_eff should be positive and smaller than sample_var
         assert float(v) > 0
+        # Weighted variance should be smaller than unweighted sample variance
+        sample_var = float(jnp.var(evals))
+        assert float(v) < sample_var
 
     def test_weighted_sample_one(self):
         evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
@@ -125,7 +127,10 @@ class TestBootstrapDistributionCoverage:
         bd = BootstrapDistribution(evals)
         assert bd.event_shape == (3,)
         assert bd.n == 10
-        assert repr(bd) == "BootstrapDistribution(n=10, event_shape=(3,))"
+        r = repr(bd)
+        assert "BootstrapDistribution" in r
+        assert "n=10" in r
+        assert "event_shape=(3,)" in r
 
 
 # ---------------------------------------------------------------------------

@@ -242,4 +242,4 @@ class TestContinuousMoments:
         scipy_dist = _SCIPY_EQUIVALENTS[name]
         draws = np.asarray(sample(our_dist, key=key, sample_shape=(50_000,)))
         stat, p = _scipy.kstest(draws, scipy_dist.cdf)
-        assert p > 0.001, f"KS test failed for {name}: stat={stat:.4f}, p={p:.4e}"
+        assert p > 0.01, f"KS test failed for {name}: stat={stat:.4f}, p={p:.4e}"

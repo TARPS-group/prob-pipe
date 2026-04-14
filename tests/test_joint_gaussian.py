@@ -168,7 +168,7 @@ class TestLogProb:
         # MVN expects flat arrays
         flat = jg.flatten_value(s)
         lp_mvn = log_prob(mvn, flat)
-        np.testing.assert_allclose(lp_jg, lp_mvn, atol=1e-4)
+        np.testing.assert_allclose(lp_jg, lp_mvn, atol=1e-6)
 
 
 # ---------------------------------------------------------------------------

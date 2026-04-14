@@ -101,8 +101,8 @@ class TestDistributionBase:
         r = repr(n)
         assert "my_normal" in r
 
-    def test_repr_with_name(self):
-        """Distribution.__repr__ includes the name."""
+    def test_repr_includes_class_and_name(self):
+        """Distribution.__repr__ includes both the class name and the name."""
         n = Normal(loc=0.0, scale=1.0, name="x")
         r = repr(n)
         assert "Normal" in r

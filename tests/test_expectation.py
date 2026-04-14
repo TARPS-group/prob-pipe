@@ -140,7 +140,7 @@ class TestExpectationSampleBased:
         d = Normal(loc=3.0, scale=1.0, name="x")
         key = jax.random.PRNGKey(0)
         result = expectation(d, lambda x: x, key=key, num_evaluations=10_000, return_dist=False)
-        np.testing.assert_allclose(float(result), 3.0, atol=0.1)
+        np.testing.assert_allclose(float(result), 3.0, atol=0.05)
 
     def test_normal_second_moment(self):
         loc, scale = 2.0, 1.5
@@ -148,6 +148,7 @@ class TestExpectationSampleBased:
         key = jax.random.PRNGKey(1)
         result = expectation(d, lambda x: x ** 2, key=key, num_evaluations=10_000, return_dist=False)
         expected = loc ** 2 + scale ** 2
+        # Second moment has higher variance than first moment (kurtosis effect)
         np.testing.assert_allclose(float(result), expected, atol=0.15)
 
     def test_normal_variance_from_moments(self):
@@ -157,14 +158,14 @@ class TestExpectationSampleBased:
         ex = expectation(d, lambda x: x, key=key1, num_evaluations=10_000, return_dist=False)
         ex2 = expectation(d, lambda x: x ** 2, key=key2, num_evaluations=10_000, return_dist=False)
         var_est = float(ex2) - float(ex) ** 2
-        np.testing.assert_allclose(var_est, scale ** 2, atol=0.3)
+        np.testing.assert_allclose(var_est, scale ** 2, atol=0.15)
 
     def test_gamma_mean(self):
         conc, rate = 3.0, 2.0
         d = Gamma(concentration=conc, rate=rate, name="x")
         key = jax.random.PRNGKey(3)
         result = expectation(d, lambda x: x, key=key, num_evaluations=10_000, return_dist=False)
-        np.testing.assert_allclose(float(result), conc / rate, atol=0.1)
+        np.testing.assert_allclose(float(result), conc / rate, atol=0.05)
 
     def test_gamma_log_sufficient_statistic(self):
         conc, rate = 3.0, 2.0
@@ -172,14 +173,14 @@ class TestExpectationSampleBased:
         key = jax.random.PRNGKey(4)
         result = expectation(d, lambda x: jnp.log(x), key=key, num_evaluations=20_000, return_dist=False)
         expected = float(jsp.digamma(conc)) - float(jnp.log(rate))
-        np.testing.assert_allclose(float(result), expected, atol=0.1)
+        np.testing.assert_allclose(float(result), expected, atol=0.05)
 
     def test_beta_mean(self):
         a, b = 2.0, 5.0
         d = Beta(alpha=a, beta=b, name="x")
         key = jax.random.PRNGKey(5)
         result = expectation(d, lambda x: x, key=key, num_evaluations=10_000, return_dist=False)
-        np.testing.assert_allclose(float(result), a / (a + b), atol=0.05)
+        np.testing.assert_allclose(float(result), a / (a + b), atol=0.03)
 
     def test_beta_log_sufficient_statistic(self):
         a, b = 2.0, 5.0
@@ -187,14 +188,14 @@ class TestExpectationSampleBased:
         key = jax.random.PRNGKey(6)
         result = expectation(d, lambda x: jnp.log(x), key=key, num_evaluations=20_000, return_dist=False)
         expected = float(jsp.digamma(a)) - float(jsp.digamma(a + b))
-        np.testing.assert_allclose(float(result), expected, atol=0.1)
+        np.testing.assert_allclose(float(result), expected, atol=0.05)
 
     def test_exponential_second_moment(self):
         rate = 3.0
         d = Exponential(rate=rate, name="x")
         key = jax.random.PRNGKey(7)
         result = expectation(d, lambda x: x ** 2, key=key, num_evaluations=10_000, return_dist=False)
-        np.testing.assert_allclose(float(result), 2.0 / rate ** 2, atol=0.05)
+        np.testing.assert_allclose(float(result), 2.0 / rate ** 2, atol=0.03)
 
 
 # ---------------------------------------------------------------------------

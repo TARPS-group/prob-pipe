@@ -293,7 +293,8 @@ class TestExpectation:
             return_dist=False,
         )
         expected = jnp.mean(data, axis=0)
-        np.testing.assert_allclose(result, expected, atol=0.5)
+        # Bootstrap resampling with only 10 data points has high variance
+        np.testing.assert_allclose(result, expected, atol=0.25)
 
 
 # ---------------------------------------------------------------------------

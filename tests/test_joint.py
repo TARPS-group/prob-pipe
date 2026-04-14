@@ -11,7 +11,6 @@ from probpipe import (
     ProductDistribution,
     EmpiricalDistribution,
     ArrayDistribution,
-    ArrayDistribution,
     RecordDistribution,
 )
 from probpipe.core._record_distribution import _RecordDistributionView
