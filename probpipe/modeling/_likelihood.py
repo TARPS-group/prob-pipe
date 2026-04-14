@@ -221,7 +221,9 @@ class IncrementalConditioner[P, D](Module):
         Parameters
         ----------
         data : D
-            New observed data to condition on.
+            New observed data to condition on.  For GLM likelihoods,
+            pass ``Record(X=new_X, y=new_y)`` to provide both the
+            design matrix and response for the current batch.
 
         Returns
         -------

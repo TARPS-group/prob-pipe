@@ -85,6 +85,11 @@ def _build_target_log_prob(dist: Distribution, observed: ArrayLike | Record | No
     """
     if _is_simple_model(dist):
         data = observed
+        # Pre-resolve Record fields to raw arrays so that JAX tracing
+        # doesn't trigger Record's lazy _resolve (which causes tracer leaks).
+        from ..core.record import Record
+        if isinstance(data, Record):
+            data = Record({f: jnp.asarray(data[f]) for f in data.fields()})
 
         def target_log_prob_fn(params):
             lp = dist._prior._log_prob(params)
