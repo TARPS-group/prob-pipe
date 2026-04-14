@@ -4,8 +4,8 @@ Provides:
   - ``_vmap_sample()``           – Batched sampling via ``jax.vmap``.
   - ``_mc_expectation()``        – Monte Carlo expectation helper.
   - ``TFPShapeMixin``            – TFP shape conventions (dtype, support, batch_shape).
-  - ``TFPValuesDistribution``    – ValuesDistribution + TFP shapes (base for all TFP dists).
-  - ``ArrayDistribution``        – Alias for ``TFPValuesDistribution`` (backward compat).
+  - ``TFPRecordDistribution``    – RecordDistribution + TFP shapes (base for all TFP dists).
+  - ``ArrayDistribution``        – Alias for ``TFPRecordDistribution`` (backward compat).
   - ``BootstrapDistribution``    – MC error tracking via bootstrap resampling.
   - ``FlattenedView``            – Wraps any distribution as a flat distribution.
 """
@@ -37,7 +37,7 @@ from .constraints import (
 from . import _distribution_base as _base
 from .._utils import _auto_key
 from ._distribution_base import Distribution
-from ._values_distribution import ValuesDistribution
+from ._record_distribution import RecordDistribution
 
 
 # ---------------------------------------------------------------------------
@@ -173,14 +173,14 @@ class TFPShapeMixin:
 
 
 # ---------------------------------------------------------------------------
-# TFPValuesDistribution — ValuesDistribution + TFP shape semantics
+# TFPRecordDistribution — RecordDistribution + TFP shape semantics
 # ---------------------------------------------------------------------------
 
-class TFPValuesDistribution(ValuesDistribution, TFPShapeMixin):
-    """Distribution with TFP-style shape semantics and Values support.
+class TFPRecordDistribution(RecordDistribution, TFPShapeMixin):
+    """Distribution with TFP-style shape semantics and Record support.
 
-    Combines :class:`ValuesDistribution` (named component access,
-    Values-aware flatten/unflatten) with :class:`TFPShapeMixin` (dtype,
+    Combines :class:`RecordDistribution` (named component access,
+    Record-aware flatten/unflatten) with :class:`TFPShapeMixin` (dtype,
     support, batch_shape).
 
     Shape semantics follow TFP conventions:
@@ -190,8 +190,8 @@ class TFPValuesDistribution(ValuesDistribution, TFPShapeMixin):
     * ``batch_shape``  -- shape of independent-but-not-identically-distributed
       parameter batches.
 
-    When ``values_template`` is set (named distribution), samples are
-    wrapped as :class:`~probpipe.Values`.  Otherwise, raw arrays are
+    When ``record_template`` is set (named distribution), samples are
+    wrapped as :class:`~probpipe.Record`.  Otherwise, raw arrays are
     returned for backward compatibility.
 
     Standard distributions (Normal, Gamma, Poisson, etc.) inherit from
@@ -223,9 +223,9 @@ class TFPValuesDistribution(ValuesDistribution, TFPShapeMixin):
     @property
     def event_shapes(self):
         """Per-field event shapes, or single event shape when unnamed."""
-        tpl = self.values_template
+        tpl = self.record_template
         if tpl is not None:
-            return super().event_shapes  # ValuesDistribution dict version
+            return super().event_shapes  # RecordDistribution dict version
         return self.event_shape
 
     @property
@@ -236,19 +236,19 @@ class TFPValuesDistribution(ValuesDistribution, TFPShapeMixin):
     @property
     def event_size(self) -> int:
         """Total flat dimensionality."""
-        tpl = self.values_template
+        tpl = self.record_template
         if tpl is not None:
             return tpl.flat_size
         return prod(self.event_shape)
 
     def flatten_value(self, value) -> Array:
-        """Flatten a sample (Values or array) to a flat trailing axis.
+        """Flatten a sample (Record or array) to a flat trailing axis.
 
-        When *value* is a :class:`Values`, delegates to
-        ``ValuesDistribution.flatten_value``.  Otherwise flattens event
+        When *value* is a :class:`Record`, delegates to
+        ``RecordDistribution.flatten_value``.  Otherwise flattens event
         dimensions of a raw array, preserving leading batch/sample dims.
         """
-        from .values import Values as _Values
+        from .record import Record as _Values
         if isinstance(value, _Values):
             return super().flatten_value(value)
         value = jnp.asarray(value)
@@ -261,12 +261,12 @@ class TFPValuesDistribution(ValuesDistribution, TFPShapeMixin):
         return value.reshape(*batch_dims, n_event)
 
     def unflatten_value(self, flat: ArrayLike):
-        """Unflatten a flat trailing axis back to event dimensions or Values.
+        """Unflatten a flat trailing axis back to event dimensions or Record.
 
-        When ``values_template`` is set, returns a :class:`Values`.
+        When ``record_template`` is set, returns a :class:`Record`.
         Otherwise reshapes to ``(*batch, *event_shape)``.
         """
-        tpl = self.values_template
+        tpl = self.record_template
         if tpl is not None:
             return super().unflatten_value(flat)
         flat = jnp.asarray(flat)
@@ -303,7 +303,7 @@ class TFPValuesDistribution(ValuesDistribution, TFPShapeMixin):
 
 
 # Backward compatibility alias
-ArrayDistribution = TFPValuesDistribution
+ArrayDistribution = TFPRecordDistribution
 
 
 # ---------------------------------------------------------------------------
@@ -429,7 +429,7 @@ class FlattenedView(ArrayDistribution, SupportsSampling, SupportsLogProb):
     distribution after unflattening.
 
     This is the primary interoperability mechanism: any algorithm written
-    for ``ArrayDistribution`` works with ``ValuesDistribution`` or
+    for ``ArrayDistribution`` works with ``RecordDistribution`` or
     ``ArrayDistribution`` via ``dist.as_flat_distribution()``.
     """
 

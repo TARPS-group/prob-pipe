@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from xarray import DataTree
 
-    from .values import Values
+    from .record import Record
 
 import jax
 import jax.numpy as jnp
@@ -86,14 +86,14 @@ class Distribution[T](ABC):
     # -- values template ----------------------------------------------------
 
     @property
-    def values_template(self) -> Values | None:
-        """A :class:`~probpipe.core.values.Values` describing the named
+    def record_template(self) -> Record | None:
+        """A :class:`~probpipe.core.record.Record` describing the named
         structure of samples from this distribution, or ``None``.
 
         Set automatically from the ``name`` kwarg for named distributions
         and from component structure for joint distributions.
         """
-        return getattr(self, "_values_template", None)
+        return getattr(self, "_record_template", None)
 
     # -- auxiliary information ----------------------------------------------
 

@@ -2,7 +2,7 @@
 
 Provides:
   - ``ProductDistribution``  -- Independent-component joint distribution
-    (inherits from :class:`ValuesDistribution`).
+    (inherits from :class:`RecordDistribution`).
   - Dynamic protocol factory for automatic protocol support.
   - Helpers for nested component sampling and mapping.
   - JAX pytree registration.
@@ -21,11 +21,11 @@ from ..core._array_distributions import (
     _mc_expectation,
 )
 from ..core.provenance import Provenance
-from ..core.values import Values
-from ..core._values_distribution import (
-    ValuesDistribution,
+from ..core.record import Record
+from ..core._record_distribution import (
+    RecordDistribution,
     _register_dynamic_subclass,
-    _build_values_template,
+    _build_record_template,
 )
 from ..core.protocols import (
     SupportsConditioning,
@@ -94,13 +94,13 @@ def _product_class_for_components(components: dict) -> type:
 
 
 class ProductDistribution(
-    ValuesDistribution,
+    RecordDistribution,
     SupportsSampling, SupportsConditioning,
 ):
     """Joint distribution with **independent** leaf components.
 
-    Inherits from :class:`ValuesDistribution`.  All leaf components are
-    sampled independently.  ``_sample()`` returns :class:`Values`.
+    Inherits from :class:`RecordDistribution`.  All leaf components are
+    sampled independently.  ``_sample()`` returns :class:`Record`.
 
     **Dynamic protocol support:** ``SupportsLogProb``, ``SupportsMean``,
     and ``SupportsVariance`` are included only when ALL leaf components
@@ -112,7 +112,7 @@ class ProductDistribution(
     name : str, optional
         Distribution name.
     **components : ArrayDistribution or dict
-        Named independent component distributions.  Values may be
+        Named independent component distributions.  Record may be
         ``ArrayDistribution`` instances (leaves) or nested dicts
         whose leaves are ``ArrayDistribution`` instances.
     """
@@ -137,36 +137,36 @@ class ProductDistribution(
                 )
         self._components = dict(components)
         self._name = name
-        self._values_template = _build_values_template(self._components)
+        self._record_template = _build_record_template(self._components)
 
-    # -- Sampling (returns Values) ------------------------------------------
+    # -- Sampling (returns Record) ------------------------------------------
 
-    def _sample_one(self, key: PRNGKey) -> Values:
+    def _sample_one(self, key: PRNGKey) -> Record:
         return self._sample(key)
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Values:
-        """Draw independent samples from each component, returning Values."""
+    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Record:
+        """Draw independent samples from each component, returning Record."""
         sorted_names = sorted(self._components.keys())
         keys = jax.random.split(key, len(sorted_names))
-        fields: dict[str, jnp.ndarray | Values] = {}
+        fields: dict[str, jnp.ndarray | Record] = {}
         for subkey, name in zip(keys, sorted_names):
             comp = self._components[name]
             if isinstance(comp, dict):
                 fields[name] = _sample_nested(comp, subkey, sample_shape)
             else:
                 fields[name] = comp._sample(subkey, sample_shape)
-        return Values(fields)
+        return Record(fields)
 
     # -- Log-prob -----------------------------------------------------------
 
     def _log_prob(self, value) -> Array:
         """Sum of independent leaf log-probs.
 
-        Accepts Values, dict, or flat array (auto-unflattened via template).
+        Accepts Record, dict, or flat array (auto-unflattened via template).
         """
-        if isinstance(value, jnp.ndarray) and self._values_template is not None:
-            value = Values.unflatten(value, template=self._values_template)
-        if isinstance(value, Values):
+        if isinstance(value, jnp.ndarray) and self._record_template is not None:
+            value = Record.unflatten(value, template=self._record_template)
+        if isinstance(value, Record):
             value = value.to_dict()
         lp_tree = jax.tree.map(
             lambda dist, val: dist._log_prob(jnp.asarray(val)),
@@ -179,12 +179,12 @@ class ProductDistribution(
             total = total + lp
         return total
 
-    # -- Moments (return Values) --------------------------------------------
+    # -- Moments (return Record) --------------------------------------------
 
-    def _mean(self) -> Values:
+    def _mean(self) -> Record:
         return _map_components(self._components, lambda d: d._mean())
 
-    def _variance(self) -> Values:
+    def _variance(self) -> Record:
         return _map_components(self._components, lambda d: d._variance())
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
@@ -230,8 +230,8 @@ class ProductDistribution(
 # -- Helpers for nested component pytrees ----------------------------------
 
 
-def _sample_nested(components: dict, key, sample_shape) -> Values:
-    """Recursively sample from nested component dicts, returning nested Values."""
+def _sample_nested(components: dict, key, sample_shape) -> Record:
+    """Recursively sample from nested component dicts, returning nested Record."""
     sorted_names = sorted(components.keys())
     keys = jax.random.split(key, len(sorted_names))
     fields: dict = {}
@@ -241,18 +241,18 @@ def _sample_nested(components: dict, key, sample_shape) -> Values:
             fields[name] = _sample_nested(comp, subkey, sample_shape)
         else:
             fields[name] = comp._sample(subkey, sample_shape)
-    return Values(fields)
+    return Record(fields)
 
 
-def _map_components(components: dict, fn) -> Values:
-    """Apply fn to each leaf distribution, returning nested Values."""
+def _map_components(components: dict, fn) -> Record:
+    """Apply fn to each leaf distribution, returning nested Record."""
     fields: dict = {}
     for name, comp in components.items():
         if isinstance(comp, dict):
             fields[name] = _map_components(comp, fn)
         else:
             fields[name] = fn(comp)
-    return Values(fields)
+    return Record(fields)
 
 
 # ---------------------------------------------------------------------------

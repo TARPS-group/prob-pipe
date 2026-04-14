@@ -7,7 +7,7 @@ import pytest
 import scipy.stats
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from probpipe import GLMLikelihood, MultivariateNormal, SimpleModel, Values, condition_on, mean
+from probpipe import GLMLikelihood, MultivariateNormal, SimpleModel, Record, condition_on, mean
 from probpipe.modeling import Likelihood, GenerativeLikelihood
 
 
@@ -144,7 +144,7 @@ class TestGLMLikelihoodDataTemplate:
 
     def test_data_template_fields(self, poisson_lik):
         tpl = poisson_lik.data_template
-        assert isinstance(tpl, Values)
+        assert isinstance(tpl, Record)
         assert tpl.fields() == ("X", "y")
 
     def test_data_template_integrates_with_simple_model(self, poisson_lik):
@@ -163,17 +163,17 @@ class TestGLMLikelihoodDataTemplate:
 
 
 class TestGLMLikelihoodWithValues:
-    """GLMLikelihood accepts Values for params and data."""
+    """GLMLikelihood accepts Record for params and data."""
 
     def test_log_likelihood_with_values_params(self, poisson_lik):
-        params = Values(beta=jnp.array([1.0, 0.5]))
+        params = Record(beta=jnp.array([1.0, 0.5]))
         data = jnp.ones(20)
         ll = poisson_lik.log_likelihood(params, data)
         assert jnp.isfinite(ll)
 
-    def test_log_likelihood_with_values_data(self, poisson_lik):
+    def test_log_likelihood_with_record_data(self, poisson_lik):
         params = jnp.array([1.0, 0.5])
-        data = Values(y=jnp.ones(20))
+        data = Record(y=jnp.ones(20))
         ll = poisson_lik.log_likelihood(params, data)
         assert jnp.isfinite(ll)
 
@@ -182,30 +182,30 @@ class TestGLMLikelihoodWithValues:
         data_raw = jnp.ones(20, dtype=jnp.float32)
         ll_raw = float(poisson_lik.log_likelihood(params_raw, data_raw))
 
-        params_v = Values(beta=params_raw)
-        data_v = Values(y=data_raw)
+        params_v = Record(beta=params_raw)
+        data_v = Record(y=data_raw)
         ll_v = float(poisson_lik.log_likelihood(params_v, data_v))
         np.testing.assert_allclose(ll_v, ll_raw, rtol=1e-6)
 
     def test_coerce_multi_field_values_stacks(self, poisson_lik):
-        """Multi-field Values are stacked into a flat vector (sorted field order)."""
-        params_v = Values(intercept=jnp.array(1.0), slope=jnp.array(0.5))
+        """Multi-field Record are stacked into a flat vector (sorted field order)."""
+        params_v = Record(intercept=jnp.array(1.0), slope=jnp.array(0.5))
         params_raw = jnp.array([1.0, 0.5])  # intercept, slope (sorted)
         data = jnp.ones(20)
         ll_v = float(poisson_lik.log_likelihood(params_v, data))
         ll_raw = float(poisson_lik.log_likelihood(params_raw, data))
         np.testing.assert_allclose(ll_v, ll_raw, rtol=1e-6)
 
-    def test_condition_on_with_values_data(self, poisson_lik):
+    def test_condition_on_with_record_data(self, poisson_lik):
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2))
         model = SimpleModel(prior, poisson_lik)
-        data = Values(y=jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1,
+        data = Record(y=jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1,
                                     0, 2, 6, 1, 3, 2, 0, 4, 1, 3],
                                    dtype=jnp.float32))
         posterior = condition_on(model, data, num_results=50, num_warmup=25, random_seed=0)
         assert mean(posterior).shape == (2,)
-        # Prior has no values_template, so draws are raw arrays.
-        # Named draws require prior._values_template to be set.
+        # Prior has no record_template, so draws are raw arrays.
+        # Named draws require prior._record_template to be set.
         assert posterior.draws().shape == (50, 2)
 
 

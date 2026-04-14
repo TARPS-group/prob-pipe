@@ -10,9 +10,9 @@ if TYPE_CHECKING:
 import jax.numpy as jnp
 
 from ..core.distribution import ArrayEmpiricalDistribution, Distribution, _unflatten_batched
-from ..core._values_distribution import _ValuesDistributionView
+from ..core._record_distribution import _RecordDistributionView
 from ..core.provenance import Provenance
-from ..core.values import Values
+from ..core.record import Record
 from ..custom_types import Array, ArrayLike, PRNGKey
 from .._weights import Weights
 
@@ -115,8 +115,8 @@ class ApproximateDistribution(ArrayEmpiricalDistribution):
         chain: int | None = None,
         *,
         include_warmup: bool = False,
-    ) -> Array | Values:
-        """Access draws, optionally named via values_template.
+    ) -> Array | Record:
+        """Access draws, optionally named via record_template.
 
         Parameters
         ----------
@@ -128,8 +128,8 @@ class ApproximateDistribution(ArrayEmpiricalDistribution):
 
         Returns
         -------
-        Array or Values
-            If ``values_template`` is set, returns a :class:`~probpipe.Values`
+        Array or Record
+            If ``record_template`` is set, returns a :class:`~probpipe.Record`
             with named fields.  Otherwise returns a raw array.
         """
         if chain is not None:
@@ -147,8 +147,8 @@ class ApproximateDistribution(ArrayEmpiricalDistribution):
                              for w, c in zip(warmup, parts)]
             samples = jnp.concatenate(parts, axis=0)
 
-        if self.values_template is not None:
-            return _unflatten_batched(samples, self.values_template)
+        if self.record_template is not None:
+            return _unflatten_batched(samples, self.record_template)
         return samples
 
     def __repr__(self) -> str:
@@ -172,7 +172,7 @@ def make_posterior(
     algorithm: str,
     *,
     auxiliary: DataTree | None = None,
-    values_template: Values | None = None,
+    record_template: Record | None = None,
     **meta: Any,
 ) -> ApproximateDistribution:
     """Build an ApproximateDistribution with provenance.
@@ -188,8 +188,8 @@ def make_posterior(
     auxiliary : DataTree or None
         Pre-built auxiliary DataTree (diagnostics, sample stats, warmup).
         Inference methods are responsible for building this.
-    values_template : Values or None
-        If provided, ``draws()`` returns named ``Values``.
+    record_template : Record or None
+        If provided, ``draws()`` returns named ``Record``.
     **meta
         Additional metadata stored in provenance.
 
@@ -203,8 +203,8 @@ def make_posterior(
     if auxiliary is not None:
         result._auxiliary = auxiliary
 
-    if values_template is not None:
-        result._values_template = values_template
+    if record_template is not None:
+        result._record_template = record_template
 
     result.with_source(
         Provenance(algorithm, parents=parents, metadata={"algorithm": algorithm, **meta})

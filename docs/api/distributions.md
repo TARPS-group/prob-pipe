@@ -1,18 +1,18 @@
 # Distributions
 
-## Values
+## Record
 
-::: probpipe.core.values.Values
+::: probpipe.core.record.Record
 
-::: probpipe.core._values_distribution.ValuesDistribution
+::: probpipe.core._record_distribution.RecordDistribution
 
-::: probpipe.core._values_distribution._ValuesDistributionView
+::: probpipe.core._record_distribution._RecordDistributionView
 
 ## Base Classes
 
 ::: probpipe.core._distribution_base.Distribution
 
-::: probpipe.core._array_distributions.TFPValuesDistribution
+::: probpipe.core._array_distributions.TFPRecordDistribution
 
 ::: probpipe.core._array_distributions.ArrayDistribution
 

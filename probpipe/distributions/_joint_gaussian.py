@@ -16,8 +16,8 @@ from ..core.distribution import (
     ArrayDistribution,
     _mc_expectation,
 )
-from ..core._values_distribution import ValuesDistribution, _build_values_template
-from ..core.values import Values
+from ..core._record_distribution import RecordDistribution, _build_record_template
+from ..core.record import Record
 from ..core.provenance import Provenance
 from ..core.protocols import (
     SupportsConditioning,
@@ -30,12 +30,12 @@ from ..core.protocols import (
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
-    _flatten_values_batched,
-    _unflatten_values_batched,
+    _flatten_record_batched,
+    _unflatten_record_batched,
 )
 
 
-class JointGaussian(ValuesDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsCovariance, SupportsConditioning):
+class JointGaussian(RecordDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsCovariance, SupportsConditioning):
     """
     Joint Gaussian distribution with named components and cross-covariance.
 
@@ -114,7 +114,7 @@ class JointGaussian(ValuesDistribution, SupportsSampling, SupportsLogProb, Suppo
 
         self._components = components
         self._component_slices = slices  # still needed for Gaussian conditioning
-        self._values_template = _build_values_template(self._components)
+        self._record_template = _build_record_template(self._components)
         self._total_dim = total_dim  # still needed for Gaussian conditioning
 
     @property
@@ -137,20 +137,20 @@ class JointGaussian(ValuesDistribution, SupportsSampling, SupportsLogProb, Suppo
         """Per-component event shapes."""
         return {k: (v,) for k, v in self._component_shapes.items()}
 
-    def flatten_value(self, value: Values) -> Array:
-        """Flatten a (possibly batched) Values to ``(*leading, event_size)``."""
-        return _flatten_values_batched(value, self.event_shapes)
+    def flatten_value(self, value: Record) -> Array:
+        """Flatten a (possibly batched) Record to ``(*leading, event_size)``."""
+        return _flatten_record_batched(value, self.event_shapes)
 
-    def unflatten_value(self, flat: Array) -> Values:
-        """Reconstruct a Values from a flat ``(*leading, event_size)`` array."""
-        return _unflatten_values_batched(flat, self.event_shapes)
+    def unflatten_value(self, flat: Array) -> Record:
+        """Reconstruct a Record from a flat ``(*leading, event_size)`` array."""
+        return _unflatten_record_batched(flat, self.event_shapes)
 
     @property
     def components(self):
         """Read-only view of the component distributions."""
         return MappingProxyType(self._components)
 
-    def _sample_one(self, key: PRNGKey) -> Values:
+    def _sample_one(self, key: PRNGKey) -> Record:
         from .multivariate import MultivariateNormal as MVN
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
         flat = full_mvn._sample(key)
@@ -160,42 +160,42 @@ class JointGaussian(ValuesDistribution, SupportsSampling, SupportsLogProb, Suppo
         self,
         key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
-    ) -> Values:
+    ) -> Record:
         from .multivariate import MultivariateNormal as MVN
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
         flat = full_mvn._sample(key, sample_shape)
         return self._unflatten_flat_vec(flat)
 
-    def _unflatten_flat_vec(self, flat: Array) -> Values:
+    def _unflatten_flat_vec(self, flat: Array) -> Record:
         """Split a flat Gaussian sample vector into per-component arrays."""
         result = {}
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = flat[..., sl]
-        return Values(result)
+        return Record(result)
 
     def _log_prob(self, value) -> Array:
-        if not isinstance(value, Values):
-            value = Values(value)
+        if not isinstance(value, Record):
+            value = Record(value)
         from .multivariate import MultivariateNormal as MVN
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat)
         flat = self.flatten_value(value)
         return full_mvn._log_prob(flat)
 
-    def _mean(self) -> Values:
+    def _mean(self) -> Record:
         result = {}
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = self._mean_vec[sl]
-        return Values(result)
+        return Record(result)
 
-    def _variance(self) -> Values:
+    def _variance(self) -> Record:
         diag = jnp.diag(self._cov_mat)
         result = {}
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = diag[sl]
-        return Values(result)
+        return Record(result)
 
     def _cov(self) -> Array:
         """Full covariance matrix."""

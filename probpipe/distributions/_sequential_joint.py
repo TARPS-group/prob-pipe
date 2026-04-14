@@ -18,8 +18,8 @@ from ..core.distribution import (
     ArrayDistribution,
     _mc_expectation,
 )
-from ..core._values_distribution import ValuesDistribution, _build_values_template
-from ..core.values import Values
+from ..core._record_distribution import RecordDistribution, _build_record_template
+from ..core.record import Record
 from ..core.provenance import Provenance
 from ..core.protocols import (
     SupportsConditioning,
@@ -29,12 +29,12 @@ from ..core.protocols import (
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
-    _flatten_values_batched,
-    _unflatten_values_batched,
+    _flatten_record_batched,
+    _unflatten_record_batched,
 )
 
 
-class SequentialJointDistribution(ValuesDistribution, SupportsSampling, SupportsLogProb, SupportsConditioning):
+class SequentialJointDistribution(RecordDistribution, SupportsSampling, SupportsLogProb, SupportsConditioning):
     """
     Joint distribution with autoregressive (sequential) dependence.
 
@@ -120,7 +120,7 @@ class SequentialJointDistribution(ValuesDistribution, SupportsSampling, Supports
 
         # Build _components dict from resolved prototypes (for shape introspection)
         self._components = resolved
-        self._values_template = _build_values_template(self._components)
+        self._record_template = _build_record_template(self._components)
 
     @staticmethod
     def _compute_sampleable_error(
@@ -167,13 +167,13 @@ class SequentialJointDistribution(ValuesDistribution, SupportsSampling, Supports
         """Per-component event shapes from component distributions."""
         return {k: v.event_shape for k, v in self._components.items()}
 
-    def flatten_value(self, value: Values) -> Array:
-        """Flatten a (possibly batched) Values to ``(*leading, event_size)``."""
-        return _flatten_values_batched(value, self.event_shapes)
+    def flatten_value(self, value: Record) -> Array:
+        """Flatten a (possibly batched) Record to ``(*leading, event_size)``."""
+        return _flatten_record_batched(value, self.event_shapes)
 
-    def unflatten_value(self, flat: Array) -> Values:
-        """Reconstruct a Values from a flat ``(*leading, event_size)`` array."""
-        return _unflatten_values_batched(flat, self.event_shapes)
+    def unflatten_value(self, flat: Array) -> Record:
+        """Reconstruct a Record from a flat ``(*leading, event_size)`` array."""
+        return _unflatten_record_batched(flat, self.event_shapes)
 
     @property
     def components(self):
@@ -213,24 +213,24 @@ class SequentialJointDistribution(ValuesDistribution, SupportsSampling, Supports
 
         return sampled
 
-    def _sample_one(self, key: PRNGKey) -> Values:
+    def _sample_one(self, key: PRNGKey) -> Record:
         full = self._sample_sequential(key, ())
-        return Values({k: v for k, v in full.items() if k not in self._conditioned_names})
+        return Record({k: v for k, v in full.items() if k not in self._conditioned_names})
 
     def _sample(
         self,
         key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
-    ) -> Values:
+    ) -> Record:
         full = self._sample_sequential(key, sample_shape)
-        return Values({k: v for k, v in full.items() if k not in self._conditioned_names})
+        return Record({k: v for k, v in full.items() if k not in self._conditioned_names})
 
     def _eval_log_prob(self, value, *, components: str) -> Array:
         """Evaluate log-density over selected components.
 
         Parameters
         ----------
-        value : dict[str, ArrayLike] or Values
+        value : dict[str, ArrayLike] or Record
             Dict of unconditioned component values.
         components : ``"all"`` or ``"unconditioned"``
             Which components to include in the sum.  ``"all"`` sums over
@@ -240,7 +240,7 @@ class SequentialJointDistribution(ValuesDistribution, SupportsSampling, Supports
             (with conditioned values plugged in as parents), giving the
             normalized conditional when the Markov structure permits it.
         """
-        if isinstance(value, Values):
+        if isinstance(value, Record):
             value = value.to_dict()
         structured = {k: jnp.asarray(v) for k, v in value.items()}
 
@@ -300,7 +300,7 @@ class SequentialJointDistribution(ValuesDistribution, SupportsSampling, Supports
         """
         return self._eval_log_prob(value, components="all")
 
-    def _mean(self) -> Values:
+    def _mean(self) -> Record:
         """Per-component means (approximate --- uses prototype components).
 
         For sequential joints, the true marginal mean is not simply the
@@ -308,11 +308,11 @@ class SequentialJointDistribution(ValuesDistribution, SupportsSampling, Supports
         samples.  This returns the prototype (prior-evaluated) means
         as an approximation.
         """
-        return Values({k: v._mean() for k, v in self._proto_components.items()})
+        return Record({k: v._mean() for k, v in self._proto_components.items()})
 
-    def _variance(self) -> Values:
+    def _variance(self) -> Record:
         """Per-component variances (approximate --- uses prototype components)."""
-        return Values({k: v._variance() for k, v in self._proto_components.items()})
+        return Record({k: v._variance() for k, v in self._proto_components.items()})
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
         return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
@@ -379,7 +379,7 @@ class SequentialJointDistribution(ValuesDistribution, SupportsSampling, Supports
             if k not in result._conditioned_names
         }
         result._components = unconditioned
-        result._values_template = _build_values_template(unconditioned)
+        result._record_template = _build_record_template(unconditioned)
 
         result.with_source(Provenance(
             "condition_on", parents=(self,),

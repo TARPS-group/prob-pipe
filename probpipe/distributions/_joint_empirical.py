@@ -20,8 +20,8 @@ from ..core.distribution import (
     ArrayEmpiricalDistribution,
     _mc_expectation,
 )
-from ..core._values_distribution import ValuesDistribution, _build_values_template
-from ..core.values import Values
+from ..core._record_distribution import RecordDistribution, _build_record_template
+from ..core.record import Record
 from ..core.provenance import Provenance
 from ..core.protocols import (
     SupportsConditioning,
@@ -33,12 +33,12 @@ from ..core.protocols import (
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
-    _flatten_values_batched,
-    _unflatten_values_batched,
+    _flatten_record_batched,
+    _unflatten_record_batched,
 )
 
 
-class JointEmpirical(ValuesDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning):
+class JointEmpirical(RecordDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning):
     """
     Joint distribution from weighted joint samples.
 
@@ -112,7 +112,7 @@ class JointEmpirical(ValuesDistribution, SupportsSampling, SupportsLogProb, Supp
                 arr, weights=self._w, name=cname,
             )
         self._components = comp_dists
-        self._values_template = _build_values_template(self._components)
+        self._record_template = _build_record_template(self._components)
 
     @property
     def n(self) -> int:
@@ -138,32 +138,32 @@ class JointEmpirical(ValuesDistribution, SupportsSampling, SupportsLogProb, Supp
         """Per-component event shapes from component distributions."""
         return {k: v.event_shape for k, v in self._components.items()}
 
-    def flatten_value(self, value: Values) -> Array:
-        """Flatten a (possibly batched) Values to ``(*leading, event_size)``."""
-        return _flatten_values_batched(value, self.event_shapes)
+    def flatten_value(self, value: Record) -> Array:
+        """Flatten a (possibly batched) Record to ``(*leading, event_size)``."""
+        return _flatten_record_batched(value, self.event_shapes)
 
-    def unflatten_value(self, flat: Array) -> Values:
-        """Reconstruct a Values from a flat ``(*leading, event_size)`` array."""
-        return _unflatten_values_batched(flat, self.event_shapes)
+    def unflatten_value(self, flat: Array) -> Record:
+        """Reconstruct a Record from a flat ``(*leading, event_size)`` array."""
+        return _unflatten_record_batched(flat, self.event_shapes)
 
     @property
     def components(self):
         """Read-only view of the component distributions."""
         return MappingProxyType(self._components)
 
-    def _sample_one(self, key: PRNGKey) -> Values:
+    def _sample_one(self, key: PRNGKey) -> Record:
         return self._sample_joint_rows(key, ())
 
     def _sample(
         self,
         key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
-    ) -> Values:
+    ) -> Record:
         return self._sample_joint_rows(key, sample_shape)
 
     def _sample_joint_rows(
         self, key: PRNGKey, sample_shape: tuple[int, ...]
-    ) -> Values:
+    ) -> Record:
         """Resample rows jointly, preserving correlation."""
         n_draws = prod(sample_shape)
         indices = self._w.choice(key, shape=(n_draws,))
@@ -174,15 +174,15 @@ class JointEmpirical(ValuesDistribution, SupportsSampling, SupportsLogProb, Supp
                 result[cname] = drawn.reshape(sample_shape + arr.shape[1:])
             else:
                 result[cname] = drawn.squeeze(axis=0)
-        return Values(result)
+        return Record(result)
 
     def _log_prob(self, value) -> Array:
         """Gaussian-approximation log-density (same as EmpiricalDistribution).
 
         Evaluates a diagonal Gaussian approximation in the flat space.
         """
-        if not isinstance(value, Values):
-            value = Values(value)
+        if not isinstance(value, Record):
+            value = Record(value)
         flat = self.flatten_value(value)
         mu = self._flat_mean()
         var = self._flat_variance()
@@ -206,16 +206,16 @@ class JointEmpirical(ValuesDistribution, SupportsSampling, SupportsLogProb, Supp
             parts.append(self._w.variance(arr_flat))
         return jnp.concatenate(parts)
 
-    def _mean(self) -> Values:
+    def _mean(self) -> Record:
         """Per-component weighted means."""
-        return Values({
+        return Record({
             cname: self._w.mean(arr)
             for cname, arr in self._joint_samples.items()
         })
 
-    def _variance(self) -> Values:
+    def _variance(self) -> Record:
         """Per-component weighted variances."""
-        return Values({
+        return Record({
             cname: self._w.variance(arr)
             for cname, arr in self._joint_samples.items()
         })

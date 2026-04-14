@@ -6,23 +6,23 @@ import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from ..core.values import Values
+from ..core.record import Record
 from ..custom_types import Array, ArrayLike, PRNGKey
 from .._utils import _auto_key
 
 __all__ = ["GLMLikelihood"]
 
 
-def _coerce_array(x: ArrayLike | Values) -> jnp.ndarray:
-    """Extract a JAX array from a Values field or raw array-like.
+def _coerce_array(x: ArrayLike | Record) -> jnp.ndarray:
+    """Extract a JAX array from a Record field or raw array-like.
 
-    Single-field Values: extract the field.
-    Multi-field Values with scalar fields: stack into a vector
+    Single-field Record: extract the field.
+    Multi-field Record with scalar fields: stack into a vector
     (preserving any leading batch dimensions).
     """
     if isinstance(x, jnp.ndarray):
         return x
-    if isinstance(x, Values):
+    if isinstance(x, Record):
         fields = x.fields()
         if len(fields) == 1:
             return x[fields[0]]
@@ -35,14 +35,14 @@ class GLMLikelihood:
     """Wraps a TFP GLM family + design matrix into a Likelihood and GenerativeLikelihood.
 
     The design matrix ``X`` can be provided at construction (default)
-    or per-call via ``data=Values(X=..., y=...)``.  When ``data``
-    is a ``Values`` with ``X`` and ``y`` fields, both are extracted;
+    or per-call via ``data=Record(X=..., y=...)``.  When ``data``
+    is a ``Record`` with ``X`` and ``y`` fields, both are extracted;
     otherwise ``data`` is treated as the response and the stored ``X``
     is used.
 
     This enables joint bootstrapping of covariates and response::
 
-        Xy = Values(X=X_design, y=y_observed)
+        Xy = Record(X=X_design, y=y_observed)
         bootstrap = BootstrapReplicateDistribution(EmpiricalDistribution(Xy))
         bagged = condition_on(model, bootstrap, n_broadcast_samples=16)
 
@@ -53,7 +53,7 @@ class GLMLikelihood:
         ``NegativeBinomial()``).
     x : array-like or None
         Default design matrix of shape ``(n, p)``.  If ``None``, must
-        be provided per-call via ``data=Values(X=..., y=...)``.
+        be provided per-call via ``data=Record(X=..., y=...)``.
     seed : int
         Random seed for data generation.
     """
@@ -75,22 +75,22 @@ class GLMLikelihood:
         self._key = jax.random.PRNGKey(seed)
 
     @property
-    def data_template(self) -> Values:
+    def data_template(self) -> Record:
         """Named structure of GLM data: ``X`` (design matrix) and ``y`` (response)."""
-        return Values(X=jnp.zeros((0, 0)), y=jnp.zeros(0))
+        return Record(X=jnp.zeros((0, 0)), y=jnp.zeros(0))
 
     def _extract_X_y(self, data):
         """Extract design matrix and response from data.
 
         Resolution order:
 
-        1. ``data = Values(X=..., y=...)`` → extract both fields.
+        1. ``data = Record(X=..., y=...)`` → extract both fields.
         2. ``data`` is an array with more columns than ``p`` (the number
            of coefficients, inferred from the stored ``X``) → last column
            is the response, preceding columns are the design matrix.
         3. ``data`` is a response array → use the stored ``X``.
         """
-        if isinstance(data, Values) and "X" in data and "y" in data:
+        if isinstance(data, Record) and "X" in data and "y" in data:
             return jnp.asarray(data["X"]), _coerce_array(data["y"])
         data_arr = _coerce_array(data)
         if self._x is not None:
@@ -104,14 +104,14 @@ class GLMLikelihood:
             return data_arr[:, :-1], data_arr[:, -1]
         raise ValueError(
             "No design matrix: pass X at construction or "
-            "via data=Values(X=..., y=...)"
+            "via data=Record(X=..., y=...)"
         )
 
-    def log_likelihood(self, params: ArrayLike | Values, data: ArrayLike | Values) -> float:
+    def log_likelihood(self, params: ArrayLike | Record, data: ArrayLike | Record) -> float:
         """Log-likelihood: sum of per-observation log-probs.
 
-        *params* and *data* can be raw arrays or ``Values`` objects.
-        When *data* is ``Values(X=..., y=...)``, both the design matrix
+        *params* and *data* can be raw arrays or ``Record`` objects.
+        When *data* is ``Record(X=..., y=...)``, both the design matrix
         and response are extracted.
         """
         X, y = self._extract_X_y(data)
@@ -120,7 +120,7 @@ class GLMLikelihood:
 
     def generate_data(
         self,
-        params: ArrayLike | Values,
+        params: ArrayLike | Record,
         n_samples: int,
         *,
         key: PRNGKey | None = None,
@@ -131,7 +131,7 @@ class GLMLikelihood:
 
         Parameters
         ----------
-        params : Array or Values
+        params : Array or Record
             Parameter vector of shape ``(p,)`` or a batch ``(*batch, p)``.
         n_samples : int
             Number of observations to generate (per batch element).

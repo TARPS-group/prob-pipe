@@ -21,7 +21,7 @@ from probpipe import (
     SimpleModel,
     SupportsLogProb,
     SupportsSampling,
-    Values,
+    Record,
     condition_on,
 )
 
@@ -229,19 +229,19 @@ class TestSimpleModelConditioningPaths:
 
 
 # ---------------------------------------------------------------------------
-# Phase 3: Values integration
+# Phase 3: Record integration
 # ---------------------------------------------------------------------------
 
 
 class _ValuesAwareLikelihood:
-    """Gaussian likelihood that handles both raw arrays and Values."""
+    """Gaussian likelihood that handles both raw arrays and Record."""
 
     def log_likelihood(self, params, data):
-        if isinstance(data, Values):
+        if isinstance(data, Record):
             d = data[data.fields()[0]]
         else:
             d = data
-        if isinstance(params, Values):
+        if isinstance(params, Record):
             p = params[params.fields()[0]]
         else:
             p = params
@@ -249,21 +249,21 @@ class _ValuesAwareLikelihood:
 
 
 class TestSimpleModelWithValues:
-    """SimpleModel propagates values_template and accepts Values data."""
+    """SimpleModel propagates record_template and accepts Record data."""
 
     @pytest.fixture
     def prior_with_template(self):
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
-        prior._values_template = Values(a=jnp.zeros(()), b=jnp.zeros(()))
+        prior._record_template = Record(a=jnp.zeros(()), b=jnp.zeros(()))
         return prior
 
     @pytest.fixture
     def likelihood(self):
         return _ValuesAwareLikelihood()
 
-    def test_values_template_propagated(self, prior_with_template, likelihood):
+    def test_record_template_propagated(self, prior_with_template, likelihood):
         model = SimpleModel(prior_with_template, likelihood)
-        assert model.values_template is prior_with_template.values_template
+        assert model.record_template is prior_with_template.record_template
 
     def test_component_names_from_template(self, prior_with_template, likelihood):
         model = SimpleModel(prior_with_template, likelihood)
@@ -281,9 +281,9 @@ class TestSimpleModelWithValues:
         assert model["b"] is prior_with_template
         assert model["data"] is likelihood
 
-    def test_condition_on_with_values_data(self, prior_with_template, likelihood):
+    def test_condition_on_with_record_data(self, prior_with_template, likelihood):
         model = SimpleModel(prior_with_template, likelihood)
-        data = Values(obs=jnp.array([[1.0, 2.0], [1.5, 2.5]]))
+        data = Record(obs=jnp.array([[1.0, 2.0], [1.5, 2.5]]))
         result = condition_on(
             model, data, num_results=50, num_warmup=20,
             step_size=0.3, random_seed=42,
@@ -304,12 +304,12 @@ class TestSimpleModelWithValues:
         model = SimpleModel(prior, GaussianLikelihood())
         assert model.component_names == ("parameters", "data")
         assert model.parameter_names == ("parameters",)
-        assert model.values_template is None
+        assert model.record_template is None
 
     def test_field_overlap_raises(self):
         """SimpleModel rejects overlapping prior and data field names."""
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
-        prior._values_template = Values(X=jnp.zeros(()), y=jnp.zeros(()))
+        prior._record_template = Record(X=jnp.zeros(()), y=jnp.zeros(()))
 
         class _OverlapLikelihood:
             def log_likelihood(self, params, data):
@@ -317,7 +317,7 @@ class TestSimpleModelWithValues:
 
             @property
             def data_template(self):
-                return Values(X=jnp.zeros((0, 0)), y=jnp.zeros(0))
+                return Record(X=jnp.zeros((0, 0)), y=jnp.zeros(0))
 
         with pytest.raises(ValueError, match="overlap"):
             SimpleModel(prior, _OverlapLikelihood())
@@ -327,7 +327,7 @@ class TestSimpleModelWithValues:
         class _DataTemplateLikelihood(_ValuesAwareLikelihood):
             @property
             def data_template(self):
-                return Values(obs=jnp.zeros(0))
+                return Record(obs=jnp.zeros(0))
 
         lik = _DataTemplateLikelihood()
         model = SimpleModel(prior_with_template, lik)
@@ -338,7 +338,7 @@ class TestSimpleModelWithValues:
         class _DataTemplateLikelihood(_ValuesAwareLikelihood):
             @property
             def data_template(self):
-                return Values(obs=jnp.zeros(0))
+                return Record(obs=jnp.zeros(0))
 
         model = SimpleModel(prior_with_template, _DataTemplateLikelihood())
         with pytest.raises(ValueError, match="Cannot provide both"):

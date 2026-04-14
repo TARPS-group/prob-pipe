@@ -2,8 +2,8 @@
 
 Covers:
 - ApproximateDistribution: chain access, warmup, inference_data, draws
-- ApproximateDistribution with Values template: named draws
-- _ValuesDistributionView: component views, select, broadcasting
+- ApproximateDistribution with Record template: named draws
+- _RecordDistributionView: component views, select, broadcasting
 - rwmh workflow function: basic sampling with SupportsLogProb
 """
 
@@ -16,7 +16,7 @@ from probpipe import (
     ApproximateDistribution,
     MultivariateNormal,
     Normal,
-    Values,
+    Record,
     mean,
     sample,
     variance,
@@ -24,7 +24,7 @@ from probpipe import (
 from unittest.mock import MagicMock
 
 from probpipe.inference import rwmh
-from probpipe.core.distribution import _ValuesDistributionView
+from probpipe.core.distribution import _RecordDistributionView
 from probpipe.inference._approximate_distribution import make_posterior
 from probpipe.inference._tfp_mcmc import _build_mcmc_datatree
 
@@ -122,11 +122,11 @@ class TestApproximateDistribution:
 
 
 class TestApproximateDistributionValuesTemplate:
-    """draws() returns named Values when a values_template is provided."""
+    """draws() returns named Record when a record_template is provided."""
 
     @pytest.fixture
     def template(self):
-        return Values(r=jnp.array(0.0), K=jnp.array(0.0), phi=jnp.array(0.0))
+        return Record(r=jnp.array(0.0), K=jnp.array(0.0), phi=jnp.array(0.0))
 
     @pytest.fixture
     def posterior_with_template(self, template):
@@ -135,12 +135,12 @@ class TestApproximateDistributionValuesTemplate:
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
         return make_posterior(
             [chain], parents=(prior,), algorithm="test",
-            values_template=template,
+            record_template=template,
         )
 
     def test_draws_returns_values(self, posterior_with_template):
         draws = posterior_with_template.draws()
-        assert isinstance(draws, Values)
+        assert isinstance(draws, Record)
 
     def test_draws_has_correct_fields(self, posterior_with_template):
         draws = posterior_with_template.draws()
@@ -162,7 +162,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_draws_single_chain_returns_values(self, posterior_with_template):
         draws = posterior_with_template.draws(chain=0)
-        assert isinstance(draws, Values)
+        assert isinstance(draws, Record)
         assert draws.r.shape == (100,)
 
     def test_without_template_returns_array(self):
@@ -173,12 +173,12 @@ class TestApproximateDistributionValuesTemplate:
         assert isinstance(draws, jnp.ndarray)
         assert draws.shape == (50, 3)
 
-    def test_values_template_property(self, posterior_with_template, template):
-        assert posterior_with_template.values_template is template
+    def test_record_template_property(self, posterior_with_template, template):
+        assert posterior_with_template.record_template is template
 
     def test_array_shaped_fields(self):
         """Template with non-scalar fields unflattens correctly."""
-        template = Values(
+        template = Record(
             mean=jnp.zeros(3),
             cov=jnp.zeros((2, 2)),
         )
@@ -187,32 +187,32 @@ class TestApproximateDistributionValuesTemplate:
         prior = MultivariateNormal(loc=jnp.zeros(flat_size), cov=jnp.eye(flat_size))
         post = make_posterior(
             [chain], parents=(prior,), algorithm="test",
-            values_template=template,
+            record_template=template,
         )
         draws = post.draws()
         assert draws.mean.shape == (20, 3)
         assert draws.cov.shape == (20, 2, 2)
 
     def test_draws_with_warmup_and_template(self):
-        """draws(include_warmup=True) returns Values when template is set."""
-        template = Values(a=jnp.array(0.0), b=jnp.array(0.0))
+        """draws(include_warmup=True) returns Record when template is set."""
+        template = Record(a=jnp.array(0.0), b=jnp.array(0.0))
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
         warmup = jax.random.normal(jax.random.PRNGKey(1), (10, 2))
         auxiliary = _build_mcmc_datatree([chain], warmup_chains=[warmup])
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
         post = make_posterior(
             [chain], parents=(prior,), algorithm="test",
-            auxiliary=auxiliary, values_template=template,
+            auxiliary=auxiliary, record_template=template,
         )
         draws = post.draws(include_warmup=True)
-        assert isinstance(draws, Values)
+        assert isinstance(draws, Record)
         assert draws.a.shape == (60,)  # 10 warmup + 50 draws
         assert draws.b.shape == (60,)
 
-    def test_nested_values_template_unflatten(self):
-        """Nested Values template unflattens draws into nested structure."""
-        template = Values(
-            params=Values(a=jnp.array(0.0), b=jnp.array(0.0)),
+    def test_nested_record_template_unflatten(self):
+        """Nested Record template unflattens draws into nested structure."""
+        template = Record(
+            params=Record(a=jnp.array(0.0), b=jnp.array(0.0)),
             scale=jnp.array(0.0),
         )
         flat_size = 3  # a + b + scale
@@ -220,11 +220,11 @@ class TestApproximateDistributionValuesTemplate:
         prior = MultivariateNormal(loc=jnp.zeros(flat_size), cov=jnp.eye(flat_size))
         post = make_posterior(
             [chain], parents=(prior,), algorithm="test",
-            values_template=template,
+            record_template=template,
         )
         draws = post.draws()
-        assert isinstance(draws, Values)
-        assert isinstance(draws.params, Values)
+        assert isinstance(draws, Record)
+        assert isinstance(draws.params, Record)
         assert draws.params.a.shape == (30,)
         assert draws.params.b.shape == (30,)
         assert draws.scale.shape == (30,)
@@ -485,16 +485,16 @@ class TestRWMH:
 
 
 # ---------------------------------------------------------------------------
-# _ValuesDistributionView + select
+# _RecordDistributionView + select
 # ---------------------------------------------------------------------------
 
 
-class TestValuesDistributionView:
-    """Component views from Values-based posteriors."""
+class TestRecordDistributionView:
+    """Component views from Record-based posteriors."""
 
     @pytest.fixture
     def template(self):
-        return Values(K=jnp.array(0.0), phi=jnp.array(0.0), r=jnp.array(0.0))
+        return Record(K=jnp.array(0.0), phi=jnp.array(0.0), r=jnp.array(0.0))
 
     @pytest.fixture
     def posterior(self, template):
@@ -502,12 +502,12 @@ class TestValuesDistributionView:
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
         return make_posterior(
             [chain], parents=(prior,), algorithm="test",
-            values_template=template,
+            record_template=template,
         )
 
     def test_getitem_returns_view(self, posterior):
         view = posterior["r"]
-        assert isinstance(view, _ValuesDistributionView)
+        assert isinstance(view, _RecordDistributionView)
 
     def test_getitem_missing_field_raises(self, posterior):
         with pytest.raises(KeyError, match="nonexistent"):
@@ -532,11 +532,11 @@ class TestValuesDistributionView:
         assert view.event_shape == ()
 
     def test_view_event_shape_vector(self):
-        template = Values(vec=jnp.zeros(5), scalar=jnp.array(0.0))
+        template = Record(vec=jnp.zeros(5), scalar=jnp.array(0.0))
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 6))
         prior = MultivariateNormal(loc=jnp.zeros(6), cov=jnp.eye(6))
         post = make_posterior([chain], parents=(prior,), algorithm="test",
-                             values_template=template)
+                             record_template=template)
         assert post["scalar"].event_shape == ()
         assert post["vec"].event_shape == (5,)
 
@@ -562,12 +562,12 @@ class TestValuesDistributionView:
     def test_select_positional(self, posterior):
         sel = posterior.select("r", "K")
         assert set(sel.keys()) == {"r", "K"}
-        assert all(isinstance(v, _ValuesDistributionView) for v in sel.values())
+        assert all(isinstance(v, _RecordDistributionView) for v in sel.values())
 
     def test_select_keyword_remap(self, posterior):
         sel = posterior.select(growth_rate="r")
         assert "growth_rate" in sel
-        assert isinstance(sel["growth_rate"], _ValuesDistributionView)
+        assert isinstance(sel["growth_rate"], _RecordDistributionView)
 
     def test_select_mixed(self, posterior):
         sel = posterior.select("phi", growth_rate="r")
@@ -583,11 +583,11 @@ class TestValuesDistributionView:
         """_mean() falls back to _field_draws() when parent lacks SupportsMean."""
         # ApproximateDistribution IS SupportsMean, so we test the fallback
         # by checking the empirical mean matches the draws directly.
-        template = Values(a=jnp.array(0.0), b=jnp.array(0.0))
+        template = Record(a=jnp.array(0.0), b=jnp.array(0.0))
         chain = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
         post = make_posterior([chain], parents=(prior,), algorithm="test",
-                             values_template=template)
+                             record_template=template)
         view = post["a"]
         # Mean of column 0 (field "a"): (1+3+5)/3 = 3.0
         np.testing.assert_allclose(float(view._mean()), 3.0, atol=1e-5)
@@ -596,7 +596,7 @@ class TestValuesDistributionView:
 
 
 class TestViewProtocolDuckTyping:
-    """_ValuesDistributionView dynamically inherits protocol support from its parent.
+    """_RecordDistributionView dynamically inherits protocol support from its parent.
 
     When the parent supports SupportsLogProb, the view's dynamic subclass
     also inherits SupportsLogProb — so isinstance checks work correctly.
@@ -612,11 +612,11 @@ class TestViewProtocolDuckTyping:
     def test_view_from_posterior_not_isinstance_log_prob(self):
         """ApproximateDistribution lacks SupportsLogProb → view doesn't have it."""
         from probpipe import SupportsLogProb
-        template = Values(a=jnp.array(0.0), b=jnp.array(0.0))
+        template = Record(a=jnp.array(0.0), b=jnp.array(0.0))
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
         post = make_posterior([chain], parents=(prior,), algorithm="test",
-                             values_template=template)
+                             record_template=template)
         view = post["a"]
         assert not isinstance(view, SupportsLogProb)
 
@@ -626,11 +626,11 @@ class TestViewProtocolDuckTyping:
         joint = ProductDistribution(x=Normal(0, 1), y=Normal(3, 2))
         assert isinstance(joint["x"], SupportsSampling)
 
-        template = Values(a=jnp.array(0.0))
+        template = Record(a=jnp.array(0.0))
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
         prior = Normal(0, 1)
         post = make_posterior([chain], parents=(prior,), algorithm="test",
-                             values_template=template)
+                             record_template=template)
         assert isinstance(post["a"], SupportsSampling)
 
     def test_view_always_isinstance_mean_variance(self):
@@ -659,7 +659,7 @@ class TestViewProtocolDuckTyping:
         assert not isinstance(view, SupportsCovariance)
 
     def test_dynamic_protocol_depends_on_parent(self):
-        """Same _ValuesDistributionView base, different isinstance results."""
+        """Same _RecordDistributionView base, different isinstance results."""
         from probpipe import SupportsLogProb, ProductDistribution
         # ProductDistribution parent → isinstance True
         joint = ProductDistribution(x=Normal(0, 1), y=Normal(3, 2))
@@ -667,28 +667,28 @@ class TestViewProtocolDuckTyping:
         assert isinstance(view_with, SupportsLogProb)
 
         # ApproximateDistribution parent → isinstance False
-        template = Values(a=jnp.array(0.0))
+        template = Record(a=jnp.array(0.0))
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
         prior = Normal(0, 1)
         post = make_posterior([chain], parents=(prior,), algorithm="test",
-                             values_template=template)
+                             record_template=template)
         view_without = post["a"]
         assert not isinstance(view_without, SupportsLogProb)
 
     def test_view_still_isinstance_base_class(self):
-        """Dynamic subclass is still isinstance of _ValuesDistributionView."""
+        """Dynamic subclass is still isinstance of _RecordDistributionView."""
         from probpipe import ProductDistribution
         joint = ProductDistribution(x=Normal(0, 1), y=Normal(3, 2))
         view = joint["x"]
-        assert isinstance(view, _ValuesDistributionView)
+        assert isinstance(view, _RecordDistributionView)
 
 
-class TestValuesDistributionProperties:
-    """ValuesDistribution base class properties on ApproximateDistribution."""
+class TestRecordDistributionProperties:
+    """RecordDistribution base class properties on ApproximateDistribution."""
 
     @pytest.fixture
     def template(self):
-        return Values(K=jnp.array(0.0), phi=jnp.array(0.0), r=jnp.array(0.0))
+        return Record(K=jnp.array(0.0), phi=jnp.array(0.0), r=jnp.array(0.0))
 
     @pytest.fixture
     def posterior(self, template):
@@ -696,82 +696,82 @@ class TestValuesDistributionProperties:
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
         return make_posterior(
             [chain], parents=(prior,), algorithm="test",
-            values_template=template,
+            record_template=template,
         )
 
-    def test_values_distribution_flatten_unflatten(self, posterior):
-        """ValuesDistribution.flatten_value / unflatten_value round-trip."""
-        from probpipe.core._values_distribution import ValuesDistribution
-        v = Values(K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
-        flat = ValuesDistribution.flatten_value(posterior, v)
+    def test_record_distribution_flatten_unflatten(self, posterior):
+        """RecordDistribution.flatten_value / unflatten_value round-trip."""
+        from probpipe.core._record_distribution import RecordDistribution
+        v = Record(K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
+        flat = RecordDistribution.flatten_value(posterior, v)
         np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])  # sorted: K, phi, r
-        v2 = ValuesDistribution.unflatten_value(posterior, flat)
-        assert isinstance(v2, Values)
+        v2 = RecordDistribution.unflatten_value(posterior, flat)
+        assert isinstance(v2, Record)
         np.testing.assert_allclose(float(v2.K), 1.0)
         np.testing.assert_allclose(float(v2.r), 3.0)
 
     def test_flatten_unflatten_roundtrip(self, posterior, template):
-        from probpipe.core._values_distribution import ValuesDistribution
-        v = Values(K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
-        flat = ValuesDistribution.flatten_value(posterior, v)
+        from probpipe.core._record_distribution import RecordDistribution
+        v = Record(K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
+        flat = RecordDistribution.flatten_value(posterior, v)
         assert flat.shape == (3,)
-        v2 = ValuesDistribution.unflatten_value(posterior, flat)
-        assert isinstance(v2, Values)
+        v2 = RecordDistribution.unflatten_value(posterior, flat)
+        assert isinstance(v2, Record)
         np.testing.assert_allclose(float(v2.K), 1.0)
         np.testing.assert_allclose(float(v2.r), 3.0)
 
     def test_unflatten_without_template_raises(self):
-        from probpipe.core._values_distribution import ValuesDistribution
+        from probpipe.core._record_distribution import RecordDistribution
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = ApproximateDistribution([chain])
-        with pytest.raises(RuntimeError, match="values_template"):
-            ValuesDistribution.unflatten_value(dist, jnp.zeros(3))
+        with pytest.raises(RuntimeError, match="record_template"):
+            RecordDistribution.unflatten_value(dist, jnp.zeros(3))
 
-    def test_values_distribution_event_shapes(self, posterior):
-        """ValuesDistribution.event_shapes returns per-field dict."""
-        from probpipe.core._values_distribution import ValuesDistribution
-        shapes = ValuesDistribution.event_shapes.fget(posterior)
+    def test_record_distribution_event_shapes(self, posterior):
+        """RecordDistribution.event_shapes returns per-field dict."""
+        from probpipe.core._record_distribution import RecordDistribution
+        shapes = RecordDistribution.event_shapes.fget(posterior)
         assert shapes == {"K": (), "phi": (), "r": ()}
 
-    def test_values_distribution_event_size(self, posterior, template):
-        """ValuesDistribution.event_size matches template.flat_size."""
-        from probpipe.core._values_distribution import ValuesDistribution
-        assert ValuesDistribution.event_size.fget(posterior) == template.flat_size
+    def test_record_distribution_event_size(self, posterior, template):
+        """RecordDistribution.event_size matches template.flat_size."""
+        from probpipe.core._record_distribution import RecordDistribution
+        assert RecordDistribution.event_size.fget(posterior) == template.flat_size
 
 
 class TestValuesSelect:
-    """Values.select() for concrete data."""
+    """Record.select() for concrete data."""
 
     def test_positional(self):
-        v = Values(r=1.0, K=70.0, phi=10.0)
+        v = Record(r=1.0, K=70.0, phi=10.0)
         sel = v.select("r", "K")
         assert set(sel.keys()) == {"r", "K"}
         np.testing.assert_allclose(float(sel["r"]), 1.0)
         np.testing.assert_allclose(float(sel["K"]), 70.0)
 
     def test_keyword_remap(self):
-        v = Values(r=1.0, K=70.0)
+        v = Record(r=1.0, K=70.0)
         sel = v.select(growth_rate="r")
         assert "growth_rate" in sel
         np.testing.assert_allclose(float(sel["growth_rate"]), 1.0)
 
     def test_mixed(self):
-        v = Values(r=1.0, K=70.0, phi=10.0)
+        v = Record(r=1.0, K=70.0, phi=10.0)
         sel = v.select("phi", growth_rate="r")
         assert set(sel.keys()) == {"phi", "growth_rate"}
 
     def test_missing_field_raises(self):
-        v = Values(r=1.0)
+        v = Record(r=1.0)
         with pytest.raises(KeyError, match="nonexistent"):
             v.select("nonexistent")
 
     def test_missing_mapping_target_raises(self):
-        v = Values(r=1.0)
+        v = Record(r=1.0)
         with pytest.raises(KeyError, match="z"):
             v.select(x="z")
 
     def test_empty_select(self):
-        v = Values(r=1.0, K=70.0)
+        v = Record(r=1.0, K=70.0)
         sel = v.select()
         assert sel == {}
 
@@ -806,16 +806,16 @@ class TestEndToEndValuesPipeline:
         )
 
     def test_template_propagation(self, posterior):
-        """values_template flows from named prior through to posterior."""
-        tpl = posterior.values_template
+        """record_template flows from named prior through to posterior."""
+        tpl = posterior.record_template
         assert tpl is not None
         assert tpl.fields() == ("params",)
         assert tpl.params.shape == (2,)
 
     def test_draws_are_named_values(self, posterior):
-        """draws() returns Values with correct field names and shapes."""
+        """draws() returns Record with correct field names and shapes."""
         draws = posterior.draws()
-        assert isinstance(draws, Values)
+        assert isinstance(draws, Record)
         assert draws.fields() == ("params",)
         assert draws.params.shape == (500, 2)
 
@@ -837,7 +837,7 @@ class TestEndToEndValuesPipeline:
     def test_view_values_match_draws(self, posterior):
         """View _mean() matches draws and analytical posterior mean."""
         view = posterior["params"]
-        assert isinstance(view, _ValuesDistributionView)
+        assert isinstance(view, _RecordDistributionView)
         assert view.event_shape == (2,)
 
         # Delegation check: view._mean() == draws().params.mean()
@@ -858,7 +858,7 @@ class TestEndToEndValuesPipeline:
         """select() returns dict of views matching component names."""
         sel = posterior.select("params")
         assert set(sel.keys()) == {"params"}
-        assert isinstance(sel["params"], _ValuesDistributionView)
+        assert isinstance(sel["params"], _RecordDistributionView)
 
     def test_workflow_broadcasting_values_correct(self, posterior):
         """Broadcast predict(params, x) computes correct function of posterior."""
@@ -896,23 +896,23 @@ class TestEndToEndValuesPipeline:
 
     def test_multi_field_posterior(self):
         """Posterior with multiple named scalar fields."""
-        template = Values(a=jnp.array(0.0), b=jnp.array(0.0), c=jnp.array(0.0))
+        template = Record(a=jnp.array(0.0), b=jnp.array(0.0), c=jnp.array(0.0))
         # 3 scalar fields → flat draw vectors of size 3
         chain = jax.random.normal(jax.random.PRNGKey(0), (200, 3))
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
         post = make_posterior(
             [chain], parents=(prior,), algorithm="test",
-            values_template=template,
+            record_template=template,
         )
         draws = post.draws()
-        assert isinstance(draws, Values)
+        assert isinstance(draws, Record)
         assert draws.fields() == ("a", "b", "c")
         assert draws.a.shape == (200,)
 
         # Per-field views
         view_a = post["a"]
         view_b = post["b"]
-        assert isinstance(view_a, _ValuesDistributionView)
+        assert isinstance(view_a, _RecordDistributionView)
         np.testing.assert_allclose(
             float(view_a._mean()), float(draws.a.mean()), atol=1e-5
         )

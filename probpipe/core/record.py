@@ -1,17 +1,17 @@
-"""Values — ProbPipe's universal structured value type.
+"""Record — ProbPipe's universal structured value type.
 
 A named, immutable, lazy, JAX-pytree-registered container for structured
-non-random values.  ``Values`` is the non-random counterpart to
+non-random values.  ``Record`` is the non-random counterpart to
 :class:`~probpipe.core._distribution_base.Distribution`: it carries named
 fields, stores backend-agnostic data (numpy, xarray, JAX), and converts
 lazily on demand.
 
 Usage::
 
-    from probpipe import Values
+    from probpipe import Record
 
-    params = Values(r=1.8, K=70.0, phi=10.0)
-    data = Values(counts=np.array([2, 1, 3, 0, 5]))
+    params = Record(r=1.8, K=70.0, phi=10.0)
+    data = Record(counts=np.array([2, 1, 3, 0, 5]))
 
     params.r          # → jnp.array(1.8)
     params.fields()   # → ('K', 'phi', 'r')
@@ -36,10 +36,10 @@ from ..custom_types import ArrayLike
 if TYPE_CHECKING:
     import xarray as xr
 
-__all__ = ["Values"]
+__all__ = ["Record"]
 
-# Resolved field: JAX array for leaves, ``Values`` for nested structure.
-_ResolvedField: TypeAlias = "jnp.ndarray | Values"
+# Resolved field: JAX array for leaves, ``Record`` for nested structure.
+_ResolvedField: TypeAlias = "jnp.ndarray | Record"
 
 
 # ---------------------------------------------------------------------------
@@ -72,33 +72,33 @@ def _extract_coords(raw: Any) -> dict[str, Any] | None:
 
 
 # ---------------------------------------------------------------------------
-# Values
+# Record
 # ---------------------------------------------------------------------------
 
 
-class Values:
+class Record:
     """Named, immutable, lazy, pytree-registered container for structured values.
 
     Fields are stored in sorted order by name for deterministic flattening.
     Each field is lazily resolved to a JAX array on first access.  Nested
-    ``Values`` objects are supported for hierarchical structure.
+    ``Record`` objects are supported for hierarchical structure.
 
     Parameters
     ----------
     **fields
         Named values.  Each value can be a JAX array, numpy array, scalar,
-        xarray DataArray, or a nested ``Values`` object.
+        xarray DataArray, or a nested ``Record`` object.
     """
 
     __slots__ = ("_store", "_resolved", "_coords")
 
-    def __init__(self, _dict: dict[str, ArrayLike | Values] | None = None, /, **fields: ArrayLike | Values):
+    def __init__(self, _dict: dict[str, ArrayLike | Record] | None = None, /, **fields: ArrayLike | Record):
         if _dict is not None:
             if fields:
                 raise ValueError("Cannot pass both positional dict and keyword arguments")
             fields = _dict
         if not fields:
-            raise ValueError("Values requires at least one named field")
+            raise ValueError("Record requires at least one named field")
         store = OrderedDict(sorted(fields.items()))
         object.__setattr__(self, "_store", store)
         object.__setattr__(self, "_resolved", {})
@@ -114,10 +114,10 @@ class Values:
     # -- Immutability -------------------------------------------------------
 
     def __setattr__(self, name: str, value: Any) -> None:
-        raise AttributeError("Values is immutable")
+        raise AttributeError("Record is immutable")
 
     def __delattr__(self, name: str) -> None:
-        raise AttributeError("Values is immutable")
+        raise AttributeError("Record is immutable")
 
     # -- Field access -------------------------------------------------------
 
@@ -125,7 +125,7 @@ class Values:
         store = object.__getattribute__(self, "_store")
         if name in store:
             return self._resolve_field(name)
-        raise AttributeError(f"Values has no field {name!r}")
+        raise AttributeError(f"Record has no field {name!r}")
 
     def __getitem__(self, key: str | tuple[str, ...]) -> _ResolvedField:
         if isinstance(key, str):
@@ -146,7 +146,7 @@ class Values:
         if name in resolved:
             return resolved[name]
         raw = self._store[name]
-        if isinstance(raw, Values):
+        if isinstance(raw, Record):
             resolved[name] = raw
             return raw
         val = _resolve(raw)
@@ -200,27 +200,27 @@ class Values:
         result: dict[str, _ResolvedField] = {}
         for f in fields:
             if f not in self._store:
-                raise KeyError(f"No field {f!r} in Values")
+                raise KeyError(f"No field {f!r} in Record")
             result[f] = self._resolve_field(f)
         for arg_name, field_name in mapping.items():
             if field_name not in self._store:
-                raise KeyError(f"No field {field_name!r} in Values")
+                raise KeyError(f"No field {field_name!r} in Record")
             result[arg_name] = self._resolve_field(field_name)
         return result
 
     # -- Immutable updates --------------------------------------------------
 
-    def replace(self, **updates: ArrayLike | Values) -> Values:
-        """Return a new Values with specified fields replaced."""
+    def replace(self, **updates: ArrayLike | Record) -> Record:
+        """Return a new Record with specified fields replaced."""
         new = dict(self._store)
         for k, v in updates.items():
             if k not in new:
                 raise KeyError(f"Cannot replace non-existent field {k!r}")
             new[k] = v
-        return Values(new)
+        return Record(new)
 
-    def merge(self, other: Values) -> Values:
-        """Return a new Values combining fields from self and other.
+    def merge(self, other: Record) -> Record:
+        """Return a new Record combining fields from self and other.
 
         Raises ``ValueError`` if any field names overlap.
         """
@@ -229,14 +229,14 @@ class Values:
             raise ValueError(f"Overlapping field names: {overlap}")
         combined = dict(self._store)
         combined.update(other._store)
-        return Values(combined)
+        return Record(combined)
 
-    def without(self, *names: str) -> Values:
-        """Return a new Values with the specified fields removed."""
+    def without(self, *names: str) -> Record:
+        """Return a new Record with the specified fields removed."""
         new = {k: v for k, v in self._store.items() if k not in names}
         if not new:
-            raise ValueError("Cannot remove all fields from Values")
-        return Values(new)
+            raise ValueError("Cannot remove all fields from Record")
+        return Record(new)
 
     # -- Flat-array conversion ----------------------------------------------
 
@@ -246,7 +246,7 @@ class Values:
         total = 0
         for name in self._store:
             val = self._resolve_field(name)
-            if isinstance(val, Values):
+            if isinstance(val, Record):
                 total += val.flat_size
             else:
                 total += val.size
@@ -256,28 +256,28 @@ class Values:
         """Concatenate all leaf arrays into a single 1-D vector.
 
         Fields are traversed in sorted name order, depth-first for nested
-        Values.  Each leaf is raveled before concatenation.
+        Record.  Each leaf is raveled before concatenation.
         """
         parts = []
         for name in self._store:
             val = self._resolve_field(name)
-            if isinstance(val, Values):
+            if isinstance(val, Record):
                 parts.append(val.flatten())
             else:
                 parts.append(jnp.ravel(val))
         return jnp.concatenate(parts)
 
     @classmethod
-    def unflatten(cls, flat: jnp.ndarray, *, template: Values) -> Values:
-        """Reconstruct a Values from a flat array using a template for structure.
+    def unflatten(cls, flat: jnp.ndarray, *, template: Record) -> Record:
+        """Reconstruct a Record from a flat array using a template for structure.
 
         The template provides field names, shapes, and nesting structure.
         """
-        fields: dict[str, jnp.ndarray | Values] = {}
+        fields: dict[str, jnp.ndarray | Record] = {}
         offset = 0
         for name in template._store:
             tval = template._resolve_field(name)
-            if isinstance(tval, Values):
+            if isinstance(tval, Record):
                 size = tval.flat_size
                 child_flat = flat[offset:offset + size]
                 fields[name] = cls.unflatten(child_flat, template=tval)
@@ -295,7 +295,7 @@ class Values:
         result: dict[str, jnp.ndarray | dict] = {}
         for name in self._store:
             val = self._resolve_field(name)
-            if isinstance(val, Values):
+            if isinstance(val, Record):
                 result[name] = val.to_dict()
             else:
                 result[name] = val
@@ -306,7 +306,7 @@ class Values:
         result: dict[str, np.ndarray | dict] = {}
         for name in self._store:
             val = self._resolve_field(name)
-            if isinstance(val, Values):
+            if isinstance(val, Record):
                 result[name] = val.to_numpy()
             else:
                 result[name] = np.asarray(val)
@@ -323,7 +323,7 @@ class Values:
         coords_map = self._coords or {}
         for name in self._store:
             val = self._resolve_field(name)
-            if isinstance(val, Values):
+            if isinstance(val, Record):
                 datasets[f"/{name}"] = val.to_datatree()
                 continue
             arr = np.asarray(val)
@@ -341,12 +341,12 @@ class Values:
     # -- Coercion -----------------------------------------------------------
 
     @classmethod
-    def ensure(cls, x: Any) -> Values:
-        """Coerce *x* to Values if it isn't already.
+    def ensure(cls, x: Any) -> Record:
+        """Coerce *x* to Record if it isn't already.
 
-        - ``Values`` → pass through
-        - ``dict`` → ``Values(**x)``
-        - array-like → ``Values(data=x)``
+        - ``Record`` → pass through
+        - ``dict`` → ``Record(**x)``
+        - array-like → ``Record(data=x)``
         """
         if isinstance(x, cls):
             return x
@@ -357,17 +357,17 @@ class Values:
     # -- Constructors -------------------------------------------------------
 
     @classmethod
-    def from_dict(cls, d: dict[str, ArrayLike | Values]) -> Values:
-        """Construct Values from a dict of arrays."""
+    def from_dict(cls, d: dict[str, ArrayLike | Record]) -> Record:
+        """Construct Record from a dict of arrays."""
         return cls(d)
 
     @classmethod
-    def from_datatree(cls, dt) -> Values:
-        """Construct Values from an xarray DataTree.
+    def from_datatree(cls, dt) -> Record:
+        """Construct Record from an xarray DataTree.
 
         Extracts arrays and preserves coordinate metadata for round-tripping.
         """
-        fields: dict[str, ArrayLike | Values] = {}
+        fields: dict[str, ArrayLike | Record] = {}
         if hasattr(dt, "data_vars"):
             for var_name in dt.data_vars:
                 fields[var_name] = dt[var_name]
@@ -385,45 +385,45 @@ class Values:
 
     # -- Leaf-wise operations -----------------------------------------------
 
-    def map(self, fn: Callable[[jnp.ndarray], jnp.ndarray]) -> Values:
-        """Apply *fn* to each leaf array, returning a new Values."""
-        fields: dict[str, jnp.ndarray | Values] = {}
+    def map(self, fn: Callable[[jnp.ndarray], jnp.ndarray]) -> Record:
+        """Apply *fn* to each leaf array, returning a new Record."""
+        fields: dict[str, jnp.ndarray | Record] = {}
         for name in self._store:
             val = self._resolve_field(name)
-            if isinstance(val, Values):
+            if isinstance(val, Record):
                 fields[name] = val.map(fn)
             else:
                 fields[name] = fn(val)
-        return Values(fields)
+        return Record(fields)
 
-    def map_with_names(self, fn: Callable[[str, jnp.ndarray], jnp.ndarray]) -> Values:
-        """Apply *fn(name, array)* to each leaf, returning a new Values."""
-        fields: dict[str, jnp.ndarray | Values] = {}
+    def map_with_names(self, fn: Callable[[str, jnp.ndarray], jnp.ndarray]) -> Record:
+        """Apply *fn(name, array)* to each leaf, returning a new Record."""
+        fields: dict[str, jnp.ndarray | Record] = {}
         for name in self._store:
             val = self._resolve_field(name)
-            if isinstance(val, Values):
+            if isinstance(val, Record):
                 fields[name] = val.map_with_names(fn)
             else:
                 fields[name] = fn(name, val)
-        return Values(fields)
+        return Record(fields)
 
     @staticmethod
-    def zip(v1: Values, v2: Values) -> Values:
-        """Stack matching fields from two Values along a new leading axis."""
+    def zip(v1: Record, v2: Record) -> Record:
+        """Stack matching fields from two Record along a new leading axis."""
         if v1.fields() != v2.fields():
             raise ValueError(
-                f"Cannot zip Values with different fields: "
+                f"Cannot zip Record with different fields: "
                 f"{v1.fields()} vs {v2.fields()}"
             )
-        fields: dict[str, jnp.ndarray | Values] = {}
+        fields: dict[str, jnp.ndarray | Record] = {}
         for name in v1._store:
             a = v1._resolve_field(name)
             b = v2._resolve_field(name)
-            if isinstance(a, Values) and isinstance(b, Values):
-                fields[name] = Values.zip(a, b)
+            if isinstance(a, Record) and isinstance(b, Record):
+                fields[name] = Record.zip(a, b)
             else:
                 fields[name] = jnp.stack([a, b])
-        return Values(fields)
+        return Record(fields)
 
     # -- Repr ---------------------------------------------------------------
 
@@ -431,7 +431,7 @@ class Values:
         parts = []
         for name in self._store:
             raw = self._store[name]
-            if isinstance(raw, Values):
+            if isinstance(raw, Record):
                 parts.append(f"{name}={raw!r}")
             else:
                 val = self._resolve_field(name)
@@ -439,22 +439,22 @@ class Values:
                     parts.append(f"{name}={float(val):.6g}")
                 else:
                     parts.append(f"{name}=array(shape={val.shape})")
-        return f"Values({', '.join(parts)})"
+        return f"Record({', '.join(parts)})"
 
     # -- Equality (structural, not value) -----------------------------------
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Values):
+        if not isinstance(other, Record):
             return NotImplemented
         if self.fields() != other.fields():
             return False
         for name in self._store:
             a = self._resolve_field(name)
             b = other._resolve_field(name)
-            if isinstance(a, Values) and isinstance(b, Values):
+            if isinstance(a, Record) and isinstance(b, Record):
                 if a != b:
                     return False
-            elif isinstance(a, Values) or isinstance(b, Values):
+            elif isinstance(a, Record) or isinstance(b, Record):
                 return False
             else:
                 if not jnp.array_equal(a, b):
@@ -471,21 +471,21 @@ class Values:
 # ---------------------------------------------------------------------------
 
 
-def _values_flatten(v: Values) -> tuple[list, tuple[str, ...]]:
-    """Flatten Values for JAX pytree traversal."""
+def _record_flatten(v: Record) -> tuple[list, tuple[str, ...]]:
+    """Flatten Record for JAX pytree traversal."""
     children = []
     for name in v._store:
         raw = v._store[name]
-        if isinstance(raw, Values):
+        if isinstance(raw, Record):
             children.append(raw)
         else:
             children.append(v._resolve_field(name))
     return children, v.fields()
 
 
-def _values_unflatten(aux: tuple[str, ...], children: list) -> Values:
-    """Unflatten Values from JAX pytree traversal."""
-    return Values(dict(zip(aux, children)))
+def _record_unflatten(aux: tuple[str, ...], children: list) -> Record:
+    """Unflatten Record from JAX pytree traversal."""
+    return Record(dict(zip(aux, children)))
 
 
-jax.tree_util.register_pytree_node(Values, _values_flatten, _values_unflatten)
+jax.tree_util.register_pytree_node(Record, _record_flatten, _record_unflatten)

@@ -16,7 +16,7 @@ from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb, SupportsMean
 from ..custom_types import Array, ArrayLike
-from ..core.values import Values
+from ..core.record import Record
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
@@ -44,7 +44,7 @@ def _get_init_state(
     if isinstance(dist, SupportsMean):
         try:
             m = dist._mean()
-            if isinstance(m, Values):
+            if isinstance(m, Record):
                 m = m.flatten()
             return jnp.atleast_1d(jnp.asarray(m, dtype=jnp.float32))
         except Exception:
@@ -68,7 +68,7 @@ def _is_simple_model(dist: Distribution) -> bool:
     return isinstance(dist, SimpleModel)
 
 
-def _build_target_log_prob(dist: Distribution, observed: ArrayLike | Values | None) -> Callable[[jnp.ndarray], Array]:
+def _build_target_log_prob(dist: Distribution, observed: ArrayLike | Record | None) -> Callable[[jnp.ndarray], Array]:
     """Build a target_log_prob_fn(params) from *dist* and *observed*.
 
     Handles three cases:
@@ -80,7 +80,7 @@ def _build_target_log_prob(dist: Distribution, observed: ArrayLike | Values | No
     3. **Joint over (params, data)**: ``dist._log_prob((params, data))``
 
     Observed data is passed through to the likelihood as-is (may be a
-    raw array, a ``Values`` object, or a dict — the likelihood handles
+    raw array, a ``Record`` object, or a dict — the likelihood handles
     its own input types).
     """
     if _is_simple_model(dist):
@@ -238,11 +238,11 @@ def _get_prior(dist: Distribution) -> Distribution:
     return dist._prior if _is_simple_model(dist) else dist
 
 
-def _extract_values_template(dist: Distribution) -> Values | None:
-    """Return the Values template from *dist*'s prior, or ``None``."""
+def _extract_record_template(dist: Distribution) -> Record | None:
+    """Return the Record template from *dist*'s prior, or ``None``."""
     prior = _get_prior(dist)
-    tpl = prior.values_template
-    return tpl if isinstance(tpl, Values) else None
+    tpl = prior.record_template
+    return tpl if isinstance(tpl, Record) else None
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +291,7 @@ class _TFPGradientMethod(InferenceMethod):
         target = _build_target_log_prob(dist, observed)
         prior = _get_prior(dist)
         init = _get_init_state(prior, kwargs.get("init"), observed)
-        values_template = _extract_values_template(dist)
+        record_template = _extract_record_template(dist)
 
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 500)
@@ -309,7 +309,7 @@ class _TFPGradientMethod(InferenceMethod):
         auxiliary = _build_mcmc_datatree(chains, sample_stats)
         return make_posterior(
             chains, parents=(prior,), algorithm=self._method_name,
-            auxiliary=auxiliary, values_template=values_template,
+            auxiliary=auxiliary, record_template=record_template,
             num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         )
 

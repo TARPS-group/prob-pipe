@@ -8,7 +8,7 @@ import jax.numpy as jnp
 
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb
-from ..core.values import Values
+from ..core.record import Record
 from ..custom_types import Array
 from ._base import ProbabilisticModel
 from ._likelihood import Likelihood
@@ -24,7 +24,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
     The prior must support :class:`SupportsLogProb` so that the joint
     log-density is always computable.
 
-    **Named components:** merged from the prior's ``values_template``
+    **Named components:** merged from the prior's ``record_template``
     and the likelihood's ``data_template`` when both are available.
     For example, a GLM model might have
     ``component_names == ("X", "intercept", "slope", "y")``.
@@ -59,11 +59,11 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         self._likelihood = likelihood
         self._name_str = name
 
-        # Build merged values_template: prior params + likelihood data fields.
+        # Build merged record_template: prior params + likelihood data fields.
         # This makes component_names include both parameter and data names,
         # so condition_on can use component names as the sole signal for
         # splitting data kwargs from inference kwargs.
-        prior_tpl = prior.values_template
+        prior_tpl = prior.record_template
         data_tpl = getattr(likelihood, 'data_template', None)
         if prior_tpl is not None and data_tpl is not None:
             overlap = set(prior_tpl.fields()) & set(data_tpl.fields())
@@ -76,9 +76,9 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
                 merged[f] = prior_tpl[f]
             for f in data_tpl.fields():
                 merged[f] = data_tpl[f]
-            self._values_template = Values(merged)
+            self._record_template = Record(merged)
         elif prior_tpl is not None:
-            self._values_template = prior_tpl
+            self._record_template = prior_tpl
 
     # -- Distribution interface ---------------------------------------------
 
@@ -90,14 +90,14 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
 
     @property
     def component_names(self) -> tuple[str, ...]:
-        tpl = self.values_template
+        tpl = self.record_template
         if tpl is not None:
             return tpl.fields()
         return ("parameters", "data")
 
     @property
     def _prior_fields(self) -> frozenset[str]:
-        tpl = self._prior.values_template
+        tpl = self._prior.record_template
         return frozenset(tpl.fields()) if tpl is not None else frozenset()
 
     @property

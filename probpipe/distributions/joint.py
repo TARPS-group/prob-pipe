@@ -1,4 +1,4 @@
-"""Joint distributions built on ValuesDistribution.
+"""Joint distributions built on RecordDistribution.
 
 Re-export facade --- all concrete classes live in their own modules:
 

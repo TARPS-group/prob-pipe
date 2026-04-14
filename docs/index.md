@@ -20,7 +20,7 @@ Using these abstractions, even complex workflows can be written down succinctly.
 
 ProbPipe manages representations and algorithms automatically by default, while giving you control over these choices when you want it:
 
-- **`Values`** is the universal container for named, structured non-random data. `Distribution` is the universal container for random quantities. Both support named fields and `select()` for workflow function splatting.  Together they ensure the full pipeline — from prior specification through inference to posterior predictive checks — produces named, provenance-tracked objects at every step.
+- **`Record`** is the universal container for named, structured non-random data. `Distribution` is the universal container for random quantities. Both support named fields and `select()` for workflow function splatting.  Together they ensure the full pipeline — from prior specification through inference to posterior predictive checks — produces named, provenance-tracked objects at every step.
 - **`Distribution`s** are generic and support subsets of capabilities via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsConditioning`, ...). This means external distribution types (TensorFlow Probability (TFP), scipy) can participate without inheriting from ProbPipe base classes.
 - **`WorkflowFunction`s** natively handle conversion between distribution representations and automatically compute **pushforward distributions** when functions defined on fixed inputs receive distributions as arguments.  Use `dist.select("x", "y")` to pass named components while preserving correlation.
 - **`Module`s** wrap multiple workflow functions with shared state, enabling reusable inferential components.
@@ -48,7 +48,7 @@ model = SimpleModel(prior, LinearLikelihood())
 
 # 2. Fit the posterior — named prior produces named draws
 posterior = condition_on(model, data)
-draws = posterior.draws()       # Values(beta=array(num_draws, 2))
+draws = posterior.draws()       # Record(beta=array(num_draws, 2))
 draws.beta.mean(axis=0)         # posterior mean for [intercept, slope]
 
 # 3. Propagate uncertainty — select() preserves posterior correlation

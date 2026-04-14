@@ -8,10 +8,10 @@ import pytest
 from probpipe import (
     JointEmpirical,
     EmpiricalDistribution,
-    Values,
-    ValuesDistribution,
+    Record,
+    RecordDistribution,
 )
-from probpipe.core._values_distribution import _ValuesDistributionView
+from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.node import WorkflowFunction
 from probpipe import condition_on, log_prob, mean, sample, variance
 
@@ -28,7 +28,7 @@ class TestConstruction:
             y=jnp.array([4.0, 5.0, 6.0]),
         )
         assert isinstance(je, JointEmpirical)
-        assert isinstance(je, ValuesDistribution)
+        assert isinstance(je, RecordDistribution)
 
     def test_component_names(self):
         je = JointEmpirical(
@@ -113,7 +113,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(0)
         s = sample(je, key=key)
-        assert isinstance(s, Values)
+        assert isinstance(s, Record)
         assert set(s.fields()) == {"x", "y"}
         assert s["x"].shape == ()
         assert s["y"].shape == ()
@@ -125,7 +125,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(1)
         s = sample(je, key=key, sample_shape=(10,))
-        assert isinstance(s, Values)
+        assert isinstance(s, Record)
         assert s["x"].shape == (10,)
         assert s["y"].shape == (10,)
 
@@ -177,7 +177,7 @@ class TestViews:
             y=jnp.array([3.0, 4.0]),
         )
         view = je["x"]
-        assert isinstance(view, _ValuesDistributionView)
+        assert isinstance(view, _RecordDistributionView)
 
     def test_view_sample(self):
         je = JointEmpirical(
@@ -210,7 +210,7 @@ class TestMoments:
             y=jnp.array([10.0, 20.0]),
         )
         m = mean(je)
-        assert isinstance(m, Values)
+        assert isinstance(m, Record)
         np.testing.assert_allclose(m["x"], 2.0, atol=1e-5)
         np.testing.assert_allclose(m["y"], 15.0, atol=1e-5)
 
@@ -220,7 +220,7 @@ class TestMoments:
             weights=jnp.array([0.25, 0.75]),
         )
         m = mean(je)
-        assert isinstance(m, Values)
+        assert isinstance(m, Record)
         np.testing.assert_allclose(m["x"], 7.5, atol=1e-5)
 
     def test_variance_uniform(self):
@@ -228,7 +228,7 @@ class TestMoments:
             x=jnp.array([0.0, 2.0]),
         )
         v = variance(je)
-        assert isinstance(v, Values)
+        assert isinstance(v, Record)
         np.testing.assert_allclose(v["x"], 1.0, atol=1e-5)
 
 

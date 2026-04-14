@@ -15,7 +15,7 @@ from ..core.protocols import SupportsLogProb
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
-from ._tfp_mcmc import _build_mcmc_datatree, _extract_values_template, _get_init_state, _get_prior, _is_simple_model
+from ._tfp_mcmc import _build_mcmc_datatree, _extract_record_template, _get_init_state, _get_prior, _is_simple_model
 
 logger = logging.getLogger(__name__)
 
@@ -122,10 +122,10 @@ def rwmh(
 
     auxiliary = _build_mcmc_datatree(chains, warmup_chains=warmup)
 
-    values_template = _extract_values_template(dist)
+    record_template = _extract_record_template(dist)
     return make_posterior(
         chains, parents=(dist,), algorithm="rwmh",
-        auxiliary=auxiliary, values_template=values_template,
+        auxiliary=auxiliary, record_template=record_template,
         num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         step_size=step_size, accept_rate=accept_rate,
     )

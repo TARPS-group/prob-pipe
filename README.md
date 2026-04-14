@@ -4,24 +4,24 @@
 [![codecov](https://codecov.io/gh/TARPS-group/prob-pipe/branch/main/graph/badge.svg)](https://codecov.io/gh/TARPS-group/prob-pipe)
 [![docs](https://img.shields.io/badge/docs-tarps--group.github.io%2Fprob--pipe-blue)](https://tarps-group.github.io/prob-pipe/)
 
-ProbPipe is a Python framework for building scalable probabilistic pipelines with automated uncertainty quantification. Its core organizing principle is **distributions in, distributions out**: every node in a pipeline can consume and emit probability distributions, enabling principled uncertainty propagation across the entire workflow.
-
+ProbPipe is a Python framework for building scalable probabilistic pipelines with automated uncertainty quantification. 
 Most workflows for probabilistic inference can be described in terms of **distributions**, **fixed values** (data, hyperparameters, covariates), **operations** that transform distributions, and **differentiation** with respect to fixed values. Implementing these workflows, however, is harder than describing them:
 1. **Algorithmic challenges**: There are many possible algorithms for common operations, with varying trade-offs that need to be explored in a problem-specific manner. ProbPipe provides a unified framework for comparing and using such algorithms (e.g., for posterior inference) with reasonable defaults. 
 2. **Representational challenges**: Algorithms require -- and output -- specific formats for both distributions and fixed values that are not always compatible with other parts of the workflow. Fixed values may be named parameter vectors, covariate matrices, or structured observations — and different algorithms expect different representations. ProbPipe manages representations automatically, while still allowing the user to override the defaults when necessary.
+In short, ProbPipe operates on the principle of **simplification via abstraction**: there is just one object type used to represent distributions (`Distribution`), fixed values (`Record`), and operations (`WorkflowFunction`). The implementation details (algorithms, data and distribution representations) are invisible to the user. Moreover, `Distribution` and `Record` follow similar syntax for accessing their components and passing those components into a `WorkflowFunction`, so they can easily be interchanged as well. 
 
 **[Documentation](https://tarps-group.github.io/prob-pipe/)** | **[Getting Started Tutorial](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** | **[API Reference](https://tarps-group.github.io/prob-pipe/)**
 
 ## Key Features
 
-- **Named structured values** -- `Values` is the universal container for non-random structured data, just as `Distribution` is for random quantities. Both support named fields and `select()` for workflow function splatting. Named distributions automatically produce named posterior draws: `posterior.draws()` returns `Values(params=...)`.
+- **Named structured values** -- `Record` is the universal container for non-random structured data, just as `Distribution` is for random quantities. Both support named fields and `select()` for workflow function splatting. Named distributions automatically produce named posterior draws: `posterior.draws()` returns `Record(params=...)`.
 - **Protocol-based distributions** -- A distribution's capabilities are declared via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsMean`, ...), enabling structural subtyping across representations. Composite distributions dynamically include protocols based on their components' capabilities.
 - **Automatic uncertainty propagation** -- With `@workflow_function` broadcasting, a user can pass a distribution where a function expects a concrete value, propagating that uncertainty into the function's output. Use `dist.select("x", "y")` to pass named components while preserving correlation.
 - **Pluggable inference** -- A single `condition_on` interface is backed by an inference registry that auto-selects the best-available algorithm (NUTS, HMC, ADVI, and more), taking into account a distribution's compatibility with available backends (TFP, nutpie, Stan, PyMC). Override with `method=` when you want control; inference diagnostics are attached to the output distribution.
 - **Automatic distribution conversion** -- A converter registry converts between distribution types, using a similar registry-backed approach to `condition_on`.
-- **JAX-native** -- Workflows and array-based distributions are compatible with JAX (`vmap`, `jit`, `grad`), with always-on support for TFP distributions and inference methods.
-- **Provenance tracking** -- Every distribution records its lineage through operations, ensuring traceability of the workflow.
-- **Prefect orchestration** -- Enable Prefect to distribute pipeline steps across machines without code changes.
+- **JAX-native** -- Workflows and array-based distributions are compatible with JAX (`vmap`, `jit`, `grad`), with built-in support for TFP distributions and inference methods.
+- **Provenance tracking** -- Each `Distribution` and `Record` object records its lineage through workflow functions, ensuring computational traceability.
+- **Prefect orchestration** -- Enable Prefect to distribute pipeline steps across machines and cpus without code changes.
 
 
 
@@ -68,7 +68,7 @@ model = SimpleModel(prior, GLMLikelihood(tfp_glm.Bernoulli(), X))
 
 # 2. Condition on data — runs NUTS automatically
 posterior = condition_on(model, y_obs)
-draws = posterior.draws()   # Values(beta=array(2000, 2)) — named!
+draws = posterior.draws()   # Record(beta=array(2000, 2)) — named!
 draws.beta.mean(axis=0)     # Array([-1.38, 1.77], dtype=float32)
 
 # 3. Propagate uncertainty — select() preserves posterior correlation

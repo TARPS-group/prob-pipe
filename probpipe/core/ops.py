@@ -229,7 +229,7 @@ def condition_on(
         # Positional (backward compatible):
         condition_on(model, y_obs)
 
-        # Named data kwargs — bundled into Values(X=..., y=...):
+        # Named data kwargs — bundled into Record(X=..., y=...):
         condition_on(model, X=bootstrap.X, y=bootstrap.y,
                      n_broadcast_samples=16)
 
@@ -265,7 +265,7 @@ def condition_on(
         observed data; everything else is an inference parameter.
     """
     from ..inference import inference_method_registry
-    from .values import Values
+    from .record import Record
 
     # Separate data kwargs (names matching component_names) from
     # inference kwargs (everything else like num_results, num_warmup).
@@ -279,7 +279,7 @@ def condition_on(
                     "Cannot provide both positional `observed` and named "
                     f"data kwargs ({', '.join(data_kwargs)})"
                 )
-            observed = Values(data_kwargs)
+            observed = Record(data_kwargs)
         return inference_method_registry.execute(
             dist, observed, method=method, **inference_kwargs
         )
@@ -291,14 +291,14 @@ def condition_on(
         return dist._condition_on(observed, **data_kwargs, **inference_kwargs)
 
     # Registry auto-selects the best approximate inference algorithm.
-    # Data kwargs are bundled into observed as a Values object.
+    # Data kwargs are bundled into observed as a Record object.
     if data_kwargs:
         if observed is not None:
             raise ValueError(
                 "Cannot provide both positional `observed` and named "
                 f"data kwargs ({', '.join(data_kwargs)})"
             )
-        observed = Values(data_kwargs)
+        observed = Record(data_kwargs)
     return inference_method_registry.execute(dist, observed, **inference_kwargs)
 
 

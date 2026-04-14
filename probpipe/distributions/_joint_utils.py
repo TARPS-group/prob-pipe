@@ -12,8 +12,8 @@ import jax.numpy as jnp
 
 from ..custom_types import ArrayLike
 from ..core._array_distributions import ArrayDistribution
-from ..core.values import Values
-from ..core._values_distribution import ValuesDistribution
+from ..core.record import Record
+from ..core._record_distribution import RecordDistribution
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +211,7 @@ def _collect_observed_leaves(
 
 
 def _parse_condition_args(
-    joint: ValuesDistribution,
+    joint: RecordDistribution,
     observed: dict | None,
     kwargs: dict,
 ) -> dict[KeyPath, ArrayLike]:
@@ -224,7 +224,7 @@ def _parse_condition_args(
 
     Parameters
     ----------
-    joint : ValuesDistribution
+    joint : RecordDistribution
         The joint distribution whose components are being conditioned.
     observed : dict or None
         Positional dict argument from ``_condition_on``.
@@ -306,12 +306,12 @@ def _prune_leaves(tree: dict, remove_paths: set[KeyPath], prefix: tuple = ()) ->
 
 
 # ---------------------------------------------------------------------------
-# Batched flatten / unflatten for Values with known event_shapes
+# Batched flatten / unflatten for Record with known event_shapes
 # ---------------------------------------------------------------------------
 
 
-def _flatten_values_batched(value: Values, event_shapes: dict[str, tuple[int, ...]]) -> jnp.ndarray:
-    """Flatten a (possibly batched) Values into ``(*leading, event_size)``."""
+def _flatten_record_batched(value: Record, event_shapes: dict[str, tuple[int, ...]]) -> jnp.ndarray:
+    """Flatten a (possibly batched) Record into ``(*leading, event_size)``."""
     from .._utils import prod
 
     parts = []
@@ -328,8 +328,8 @@ def _flatten_values_batched(value: Values, event_shapes: dict[str, tuple[int, ..
     return jnp.concatenate(parts, axis=-1)
 
 
-def _unflatten_values_batched(flat: jnp.ndarray, event_shapes: dict[str, tuple[int, ...]]) -> Values:
-    """Unflatten ``(*leading, event_size)`` back into a Values."""
+def _unflatten_record_batched(flat: jnp.ndarray, event_shapes: dict[str, tuple[int, ...]]) -> Record:
+    """Unflatten ``(*leading, event_size)`` back into a Record."""
     from .._utils import prod
 
     fields: dict[str, jnp.ndarray] = {}
@@ -344,4 +344,4 @@ def _unflatten_values_batched(flat: jnp.ndarray, event_shapes: dict[str, tuple[i
         else:
             fields[name] = chunk.squeeze(axis=-1)
         offset += n_event
-    return Values(fields)
+    return Record(fields)

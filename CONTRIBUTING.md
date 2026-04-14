@@ -124,7 +124,7 @@ full public API surface.
 4. **Private method convention** — protocols define `_method()` (e.g.,
    `_sample`, `_log_prob`, `_mean`). The public API is via ops:
    `sample(dist)`, not `dist.sample()`.
-5. **Values and Distributions are parallel** — `Values` is the universal
+5. **Record and Distributions are parallel** — `Record` is the universal
    container for non-random structured data; `Distribution` is the
    universal container for random quantities. Both support named fields,
    `select()` for workflow function splatting, and JAX pytree
@@ -135,10 +135,10 @@ full public API surface.
 
 | Abstraction | Description |
 |-------------|-------------|
-| `Distribution[T]` | Generic base parameterized by value type; provides `values_template` and `auxiliary` properties |
-| `Values` | Named, immutable, lazy, JAX-pytree container for structured non-random values; `select()` for workflow function splatting |
-| `ValuesDistribution` | Values-based distribution base; `component_names`, `__getitem__` → `_ValuesDistributionView`, `select()` for correlated broadcasting |
-| `_ValuesDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
+| `Distribution[T]` | Generic base parameterized by value type; provides `record_template` and `auxiliary` properties |
+| `Record` | Named, immutable, lazy, JAX-pytree container for structured non-random values; `select()` for workflow function splatting |
+| `RecordDistribution` | Record-based distribution base; `component_names`, `__getitem__` → `_RecordDistributionView`, `select()` for correlated broadcasting |
+| `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
 | `TFPShapeMixin` | Mixin providing TFP shape conventions (`dtype`, `support`, `batch_shape`); shared by `ArrayDistribution` and `TFPEmpiricalDistribution` |
 | `ArrayDistribution` | Single-array distribution with TFP shape semantics (`TFPShapeMixin`); base for all TFP-backed distributions |
 | `WorkflowFunction` | Orchestration-aware function wrapper; groups views by parent for correlated broadcasting |

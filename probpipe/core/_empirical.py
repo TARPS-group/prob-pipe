@@ -3,10 +3,10 @@
 Provides:
   - ``EmpiricalDistribution[T]``        – Generic weighted empirical distribution.
   - ``ArrayEmpiricalDistribution``       – Array specialization with moments.
-  - ``_ValuesEmpiricalDistribution``     – Values specialization with per-field moments.
+  - ``_RecordEmpiricalDistribution``     – Record specialization with per-field moments.
   - ``BootstrapReplicateDistribution[T]``    – Bootstrap resampling over datasets.
   - ``ArrayBootstrapReplicateDistribution``  – Array specialization.
-  - ``_ValuesBootstrapReplicateDistribution`` – Values specialization with joint row resampling.
+  - ``_RecordBootstrapReplicateDistribution`` – Record specialization with joint row resampling.
 """
 
 from __future__ import annotations
@@ -38,8 +38,8 @@ from ._array_distributions import (
     ArrayDistribution,
     BootstrapDistribution,
 )
-from ._values_distribution import ValuesDistribution
-from .values import Values
+from ._record_distribution import RecordDistribution
+from .record import Record
 
 
 # ---------------------------------------------------------------------------
@@ -87,8 +87,8 @@ class EmpiricalDistribution[T](
 
     def __new__(cls, samples=None, *args, **kwargs):
         if cls is EmpiricalDistribution and samples is not None:
-            if isinstance(samples, Values):
-                return object.__new__(_ValuesEmpiricalDistribution)
+            if isinstance(samples, Record):
+                return object.__new__(_RecordEmpiricalDistribution)
             if _is_numeric_array(samples):
                 return object.__new__(ArrayEmpiricalDistribution)
         return object.__new__(cls)
@@ -336,15 +336,15 @@ class ArrayEmpiricalDistribution(
 
 
 # ---------------------------------------------------------------------------
-# Shared helpers for Values-based distribution classes
+# Shared helpers for Record-based distribution classes
 # ---------------------------------------------------------------------------
 
 
-def _values_template_from_data(
-    values_data: Values,
+def _record_template_from_data(
+    values_data: Record,
     leading_shape: tuple[int, ...] = (),
-) -> Values:
-    """Build a values_template from stored Values data.
+) -> Record:
+    """Build a record_template from stored Record data.
 
     Strips the first dimension (sample axis) from each field and
     optionally prepends ``leading_shape``.
@@ -353,49 +353,49 @@ def _values_template_from_data(
     for fname in values_data.fields():
         arr = jnp.asarray(values_data[fname])
         tpl_fields[fname] = jnp.zeros((*leading_shape, *arr.shape[1:]))
-    return Values(tpl_fields)
+    return Record(tpl_fields)
 
 
-def _index_values(values_data: Values, idx) -> Values:
-    """Index all fields of a Values object with the same indices."""
-    return Values({
+def _index_record(values_data: Record, idx) -> Record:
+    """Index all fields of a Record object with the same indices."""
+    return Record({
         f: jnp.asarray(values_data[f])[idx]
         for f in values_data.fields()
     })
 
 
-def _fieldwise_op(values_data: Values, op: Callable) -> Values:
-    """Apply an operation to each field of a Values object."""
-    return Values({
+def _fieldwise_op(values_data: Record, op: Callable) -> Record:
+    """Apply an operation to each field of a Record object."""
+    return Record({
         f: op(jnp.asarray(values_data[f]))
         for f in values_data.fields()
     })
 
 
 # ---------------------------------------------------------------------------
-# _ValuesEmpiricalDistribution (Values specialization)
+# _RecordEmpiricalDistribution (Record specialization)
 # ---------------------------------------------------------------------------
 
 
-class _ValuesEmpiricalDistribution(
-    EmpiricalDistribution[Values],
-    ValuesDistribution,
+class _RecordEmpiricalDistribution(
+    EmpiricalDistribution[Record],
+    RecordDistribution,
     SupportsMean,
     SupportsVariance,
 ):
-    """Empirical distribution over Values-structured data.
+    """Empirical distribution over Record-structured data.
 
-    Each sample is a *row* of the stored Values: if the Values has fields
+    Each sample is a *row* of the stored Record: if the Record has fields
     ``X`` of shape ``(n, p)`` and ``y`` of shape ``(n,)``, then ``n`` is
-    the number of samples and each draw is a ``Values(X=array(p,), y=scalar)``.
+    the number of samples and each draw is a ``Record(X=array(p,), y=scalar)``.
 
     Joint row indexing ensures that all fields are resampled with the same
     indices, preserving per-observation relationships.
 
-    The ``values_template`` is set automatically from the field shapes
+    The ``record_template`` is set automatically from the field shapes
     (leading sample dimension removed), enabling ``__getitem__``,
     ``select()``, and ``component_names`` via
-    :class:`~probpipe.core._values_distribution.ValuesDistribution`.
+    :class:`~probpipe.core._record_distribution.RecordDistribution`.
     """
 
     _sampling_cost: str = "low"
@@ -403,58 +403,58 @@ class _ValuesEmpiricalDistribution(
 
     def __init__(
         self,
-        samples: Values,
+        samples: Record,
         weights: ArrayLike | Weights | None = None,
         *,
         log_weights: ArrayLike | Weights | None = None,
         name: str | None = None,
     ):
-        self._values_data = samples
+        self._record_data = samples
         first_field = samples[samples.fields()[0]]
         n = jnp.asarray(first_field).shape[0]
         self._n_samples = n
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._name = name
         self._approximate = True
-        self._values_template = _values_template_from_data(samples)
+        self._record_template = _record_template_from_data(samples)
 
     @property
     def n(self) -> int:
         return self._n_samples
 
     @property
-    def samples(self) -> Values:
-        """The stored Values data."""
-        return self._values_data
+    def samples(self) -> Record:
+        """The stored Record data."""
+        return self._record_data
 
-    def _sample_one(self, key: PRNGKey) -> Values:
+    def _sample_one(self, key: PRNGKey) -> Record:
         idx = self._w.choice(key)
-        return _index_values(self._values_data, idx)
+        return _index_record(self._record_data, idx)
 
     def _sample(
         self,
         key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
-    ) -> Values:
+    ) -> Record:
         if sample_shape == ():
             return self._sample_one(key)
         indices = self._w.choice(key, shape=(prod(sample_shape),))
         fields: dict[str, jnp.ndarray] = {}
-        for f in self._values_data.fields():
-            arr = jnp.asarray(self._values_data[f])
+        for f in self._record_data.fields():
+            arr = jnp.asarray(self._record_data[f])
             fields[f] = arr[indices].reshape(*sample_shape, *arr.shape[1:])
-        return Values(fields)
+        return Record(fields)
 
-    def _mean(self) -> Values:
-        return _fieldwise_op(self._values_data, self._w.mean)
+    def _mean(self) -> Record:
+        return _fieldwise_op(self._record_data, self._w.mean)
 
-    def _variance(self) -> Values:
-        return _fieldwise_op(self._values_data, self._w.variance)
+    def _variance(self) -> Record:
+        return _fieldwise_op(self._record_data, self._w.variance)
 
     def __repr__(self) -> str:
-        fields = ", ".join(self._values_data.fields())
+        fields = ", ".join(self._record_data.fields())
         return (
-            f"_ValuesEmpiricalDistribution(n={self._n_samples}, "
+            f"_RecordEmpiricalDistribution(n={self._n_samples}, "
             f"fields=({fields}))"
         )
 
@@ -513,10 +513,10 @@ class BootstrapReplicateDistribution[T](
 
     def __new__(cls, source=None, *args, **kwargs):
         if cls is BootstrapReplicateDistribution and source is not None:
-            if isinstance(source, _ValuesEmpiricalDistribution):
-                return object.__new__(_ValuesBootstrapReplicateDistribution)
-            if isinstance(source, Values):
-                return object.__new__(_ValuesBootstrapReplicateDistribution)
+            if isinstance(source, _RecordEmpiricalDistribution):
+                return object.__new__(_RecordBootstrapReplicateDistribution)
+            if isinstance(source, Record):
+                return object.__new__(_RecordBootstrapReplicateDistribution)
             if _is_numeric_array(source):
                 return object.__new__(ArrayBootstrapReplicateDistribution)
             if isinstance(source, EmpiricalDistribution) and _is_numeric_array(source.samples):
@@ -679,7 +679,7 @@ class BootstrapReplicateDistribution[T](
 
 # Alias: the planned Phase 4 name.  ArrayEmpiricalDistribution will be
 # phased out in favor of TFPEmpiricalDistribution once the full
-# ValuesDistribution hierarchy is in place.
+# RecordDistribution hierarchy is in place.
 TFPEmpiricalDistribution = ArrayEmpiricalDistribution
 
 
@@ -752,28 +752,28 @@ class ArrayBootstrapReplicateDistribution(BootstrapReplicateDistribution[Array],
 
 
 # ---------------------------------------------------------------------------
-# _ValuesBootstrapReplicateDistribution (Values specialization)
+# _RecordBootstrapReplicateDistribution (Record specialization)
 # ---------------------------------------------------------------------------
 
 
-class _ValuesBootstrapReplicateDistribution(
-    BootstrapReplicateDistribution[Values],
-    ValuesDistribution,
+class _RecordBootstrapReplicateDistribution(
+    BootstrapReplicateDistribution[Record],
+    RecordDistribution,
 ):
-    """Bootstrap replicate distribution over Values-structured data.
+    """Bootstrap replicate distribution over Record-structured data.
 
     Each sample is a full bootstrapped dataset: ``n`` rows drawn i.i.d.
     with replacement from the source data, with the *same* row indices
     applied to all fields jointly.
 
     Supports named field access (``bootstrap.X``, ``bootstrap["y"]``)
-    via :class:`~probpipe.core._values_distribution.ValuesDistribution`,
-    returning ``_ValuesDistributionView`` instances that preserve
+    via :class:`~probpipe.core._record_distribution.RecordDistribution`,
+    returning ``_RecordDistributionView`` instances that preserve
     correlation when used together in workflow function broadcasting.
 
     Parameters
     ----------
-    source : _ValuesEmpiricalDistribution or Values
+    source : _RecordEmpiricalDistribution or Record
         The data to bootstrap from.
     n : int or None
         Number of observations per bootstrap dataset.  Defaults to the
@@ -787,57 +787,57 @@ class _ValuesBootstrapReplicateDistribution(
 
     def __init__(
         self,
-        source: _ValuesEmpiricalDistribution | Values,
+        source: _RecordEmpiricalDistribution | Record,
         *,
         n: int | None = None,
         name: str | None = None,
     ):
-        if isinstance(source, _ValuesEmpiricalDistribution):
-            self._values_data = source._values_data
+        if isinstance(source, _RecordEmpiricalDistribution):
+            self._record_data = source._record_data
             self._w = source._w
             default_n = source.n
-        elif isinstance(source, Values):
-            self._values_data = source
+        elif isinstance(source, Record):
+            self._record_data = source
             first = jnp.asarray(source[source.fields()[0]])
             default_n = first.shape[0]
             self._w = Weights.uniform(default_n)
         else:
             raise TypeError(
-                f"Expected Values or _ValuesEmpiricalDistribution, "
+                f"Expected Record or _RecordEmpiricalDistribution, "
                 f"got {type(source).__name__}"
             )
         # self._data required by base class .data property
-        self._data = self._values_data
+        self._data = self._record_data
         self._init_bootstrap_state(default_n, n=n, name=name)
-        self._values_template = _values_template_from_data(
-            self._values_data, leading_shape=(self._n,),
+        self._record_template = _record_template_from_data(
+            self._record_data, leading_shape=(self._n,),
         )
 
-    def _sample_one(self, key: PRNGKey) -> Values:
+    def _sample_one(self, key: PRNGKey) -> Record:
         idx = self._w.choice(key, shape=(self._n,))
-        return _index_values(self._values_data, idx)
+        return _index_record(self._record_data, idx)
 
     def _sample(
         self,
         key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
-    ) -> Values:
+    ) -> Record:
         if sample_shape == ():
             return self._sample_one(key)
         total = prod(sample_shape)
         keys = jax.random.split(key, total)
         results = [self._sample_one(k) for k in keys]
-        # Stack: each result is Values(X=array(n,p), y=array(n,))
-        # → Values(X=array(*sample_shape, n, p), y=array(*sample_shape, n))
+        # Stack: each result is Record(X=array(n,p), y=array(n,))
+        # → Record(X=array(*sample_shape, n, p), y=array(*sample_shape, n))
         stacked: dict[str, jnp.ndarray] = {}
-        for f in self._values_data.fields():
+        for f in self._record_data.fields():
             arrs = jnp.stack([jnp.asarray(r[f]) for r in results])
             stacked[f] = arrs.reshape(*sample_shape, *arrs.shape[1:])
-        return Values(stacked)
+        return Record(stacked)
 
     def __repr__(self) -> str:
-        fields = ", ".join(self._values_data.fields())
+        fields = ", ".join(self._record_data.fields())
         return (
-            f"_ValuesBootstrapReplicateDistribution(n={self._n}, "
+            f"_RecordBootstrapReplicateDistribution(n={self._n}, "
             f"source_n={self._source_n}, fields=({fields}))"
         )

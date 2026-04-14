@@ -9,10 +9,10 @@ from probpipe import (
     JointGaussian,
     MultivariateNormal,
     EmpiricalDistribution,
-    Values,
-    ValuesDistribution,
+    Record,
+    RecordDistribution,
 )
-from probpipe.core._values_distribution import _ValuesDistributionView
+from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.node import WorkflowFunction
 from probpipe import condition_on, log_prob, mean, sample, variance
 
@@ -31,7 +31,7 @@ class TestConstruction:
             y=1,
         )
         assert isinstance(jg, JointGaussian)
-        assert isinstance(jg, ValuesDistribution)
+        assert isinstance(jg, RecordDistribution)
 
     def test_component_names(self):
         jg = JointGaussian(
@@ -99,7 +99,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(0)
         s = sample(jg, key=key)
-        assert isinstance(s, Values)
+        assert isinstance(s, Record)
         assert set(s.fields()) == {"x", "y"}
         assert s["x"].shape == (1,)
         assert s["y"].shape == (1,)
@@ -112,7 +112,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(1)
         s = sample(jg, key=key, sample_shape=(10,))
-        assert isinstance(s, Values)
+        assert isinstance(s, Record)
         assert s["x"].shape == (10, 1)
         assert s["y"].shape == (10, 1)
 
@@ -181,7 +181,7 @@ class TestMoments:
         m = jnp.array([1.0, 2.0, 3.0])
         jg = JointGaussian(mean=m, cov=jnp.eye(3), a=1, b=2)
         mean_vals = mean(jg)
-        assert isinstance(mean_vals, Values)
+        assert isinstance(mean_vals, Record)
         np.testing.assert_allclose(mean_vals["a"], jnp.array([1.0]), atol=1e-6)
         np.testing.assert_allclose(mean_vals["b"], jnp.array([2.0, 3.0]), atol=1e-6)
 
@@ -189,7 +189,7 @@ class TestMoments:
         c = jnp.array([[2.0, 0.5], [0.5, 3.0]])
         jg = JointGaussian(mean=jnp.zeros(2), cov=c, x=1, y=1)
         var_vals = variance(jg)
-        assert isinstance(var_vals, Values)
+        assert isinstance(var_vals, Record)
         np.testing.assert_allclose(var_vals["x"], jnp.array([2.0]), atol=1e-6)
         np.testing.assert_allclose(var_vals["y"], jnp.array([3.0]), atol=1e-6)
 
@@ -327,7 +327,7 @@ class TestConditionOn:
         # sd / sqrt(5000) ~ 0.006
         key = jax.random.PRNGKey(20)
         s = sample(cond, key=key, sample_shape=(5000,))
-        assert isinstance(s, Values)
+        assert isinstance(s, Record)
         np.testing.assert_allclose(float(jnp.mean(s["y"])), 2.7, atol=0.03)
 
     def test_dict_for_leaf_raises(self):

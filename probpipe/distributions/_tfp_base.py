@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..core.distribution import (
-    TFPValuesDistribution,
+    TFPRecordDistribution,
     _mc_expectation,
 )
 from ..core.protocols import (
@@ -23,12 +23,12 @@ from ..core.protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-from ..core.values import Values
+from ..core.record import Record
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 
 class TFPDistribution(
-    TFPValuesDistribution,
+    TFPRecordDistribution,
     SupportsSampling,
     SupportsLogProb,
     SupportsMean,
@@ -53,18 +53,18 @@ class TFPDistribution(
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
 
-    # -- values_template auto-generation ------------------------------------
+    # -- record_template auto-generation ------------------------------------
 
     @property
-    def values_template(self):
-        """Auto-build values_template from name + event_shape when named."""
-        tpl = getattr(self, "_values_template", None)
+    def record_template(self):
+        """Auto-build record_template from name + event_shape when named."""
+        tpl = getattr(self, "_record_template", None)
         if tpl is not None:
             return tpl
         name = getattr(self, "_name", None)
         if name is not None:
-            tpl = Values(**{name: jnp.zeros(self.event_shape)})
-            object.__setattr__(self, "_values_template", tpl)
+            tpl = Record(**{name: jnp.zeros(self.event_shape)})
+            object.__setattr__(self, "_record_template", tpl)
             return tpl
         return None
 
