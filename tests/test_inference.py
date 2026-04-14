@@ -71,9 +71,10 @@ class TestApproximateDistribution:
         assert two_chain_dist.algorithm == "test"
         assert two_chain_dist.source.metadata["algorithm"] == "test"
 
-    def test_auxiliary_is_datatree(self, two_chain_dist):
+    def test_auxiliary_is_inference_data(self, two_chain_dist):
         assert two_chain_dist.auxiliary is not None
-        assert hasattr(two_chain_dist.auxiliary, "children")
+        # arviz InferenceData (0.x has .groups(), 1.x DataTree has .children)
+        assert hasattr(two_chain_dist.auxiliary, "groups") or hasattr(two_chain_dist.auxiliary, "children")
 
     def test_inference_data_alias(self, two_chain_dist):
         assert two_chain_dist.inference_data is two_chain_dist.auxiliary
