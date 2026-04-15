@@ -1,4 +1,4 @@
-"""Tests for probpipe.core.record.NumericRecord and ArrayBackend."""
+"""Tests for probpipe.core._numeric_record.NumericRecord."""
 
 import jax
 import jax.numpy as jnp
@@ -6,62 +6,11 @@ import numpy as np
 import pytest
 
 from probpipe import NumericRecord, Record
-from probpipe.core._array_backend import (
-    ArrayBackend,
-    JaxBackend,
-    NumpyBackend,
-    detect_backend,
-)
 from probpipe.core.record import RecordTemplate
 
 
 # ---------------------------------------------------------------------------
-# ArrayBackend
-# ---------------------------------------------------------------------------
-
-
-class TestArrayBackend:
-    def test_numpy_backend_is_protocol_compliant(self):
-        assert isinstance(NumpyBackend(), ArrayBackend)
-
-    def test_jax_backend_is_protocol_compliant(self):
-        assert isinstance(JaxBackend(), ArrayBackend)
-
-    def test_detect_numpy(self):
-        backend = detect_backend(np.array(1.0))
-        assert isinstance(backend, NumpyBackend)
-
-    def test_detect_jax(self):
-        backend = detect_backend(jnp.array(1.0))
-        assert isinstance(backend, JaxBackend)
-
-    def test_detect_scalar_defaults_to_jax(self):
-        backend = detect_backend(1.0)
-        assert isinstance(backend, JaxBackend)
-
-    def test_numpy_operations(self):
-        b = NumpyBackend()
-        a = np.array([1.0, 2.0, 3.0])
-        assert b.ravel(a).shape == (3,)
-        assert b.reshape(a, (3, 1)).shape == (3, 1)
-        assert b.zeros((2, 3)).shape == (2, 3)
-        np.testing.assert_allclose(b.mean(a, axis=0), 2.0)
-        stacked = b.stack([a, a], axis=0)
-        assert stacked.shape == (2, 3)
-        catted = b.concatenate([a, a], axis=0)
-        assert catted.shape == (6,)
-
-    def test_jax_operations(self):
-        b = JaxBackend()
-        a = jnp.array([1.0, 2.0, 3.0])
-        assert b.ravel(a).shape == (3,)
-        assert b.reshape(a, (3, 1)).shape == (3, 1)
-        assert b.zeros((2, 3)).shape == (2, 3)
-        np.testing.assert_allclose(b.mean(a, axis=0), 2.0)
-
-
-# ---------------------------------------------------------------------------
-# NumericRecord construction
+# Construction
 # ---------------------------------------------------------------------------
 
 
@@ -99,25 +48,6 @@ class TestConstruction:
 
 
 # ---------------------------------------------------------------------------
-# Backend detection
-# ---------------------------------------------------------------------------
-
-
-class TestBackend:
-    def test_jax_arrays(self):
-        nr = NumericRecord(x=jnp.array(1.0))
-        assert isinstance(nr.backend, JaxBackend)
-
-    def test_numpy_arrays(self):
-        nr = NumericRecord(x=np.array(1.0))
-        assert isinstance(nr.backend, NumpyBackend)
-
-    def test_scalar_defaults_to_jax(self):
-        nr = NumericRecord(x=1.0)
-        assert isinstance(nr.backend, JaxBackend)
-
-
-# ---------------------------------------------------------------------------
 # Flatten / unflatten
 # ---------------------------------------------------------------------------
 
@@ -148,18 +78,11 @@ class TestFlattenUnflatten:
         np.testing.assert_allclose(nr.a, 1.0)
         np.testing.assert_allclose(nr.b, [2.0, 3.0, 4.0])
 
-    def test_unflatten_with_record(self):
-        template = NumericRecord(a=1.0, b=jnp.zeros(3))
-        flat = jnp.array([10.0, 20.0, 30.0, 40.0])
-        nr = NumericRecord.unflatten(flat, template=template)
-        assert isinstance(nr, NumericRecord)
-        np.testing.assert_allclose(nr.a, 10.0)
-        np.testing.assert_allclose(nr.b, [20.0, 30.0, 40.0])
-
-    def test_roundtrip(self):
+    def test_roundtrip_with_template(self):
+        tpl = RecordTemplate(r=(), K=(), phi=())
         nr = NumericRecord(r=1.8, K=70.0, phi=10.0)
         flat = nr.flatten()
-        nr2 = NumericRecord.unflatten(flat, template=nr)
+        nr2 = NumericRecord.unflatten(flat, template=tpl)
         np.testing.assert_allclose(float(nr2.r), 1.8)
         np.testing.assert_allclose(float(nr2.K), 70.0)
         np.testing.assert_allclose(float(nr2.phi), 10.0)
