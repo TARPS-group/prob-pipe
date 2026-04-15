@@ -92,6 +92,7 @@ from probpipe.distributions import (
 )
 from probpipe.core.record import Record, RecordTemplate
 from probpipe.core._numeric_record import NumericRecord
+from probpipe.core._record_array import RecordArray, NumericRecordArray
 from probpipe.core.node import WorkflowFunction, Module, workflow_function, workflow_method, abstract_workflow_method
 from probpipe.core.provenance import Provenance, provenance_ancestors, provenance_dag
 from probpipe.core.constraints import (
