@@ -114,7 +114,7 @@ class TestSampling:
         key = jax.random.PRNGKey(0)
         s = sample(je, key=key)
         assert isinstance(s, Record)
-        assert set(s.fields()) == {"x", "y"}
+        assert set(s.fields) == {"x", "y"}
         assert s["x"].shape == ()
         assert s["y"].shape == ()
 
@@ -297,7 +297,7 @@ class TestConditionOn:
         )
         cond = condition_on(je, x=jnp.array(1.0))
         s = sample(cond, key=jax.random.PRNGKey(0), sample_shape=(5,))
-        assert set(s.fields()) == {"y"}
+        assert set(s.fields) == {"y"}
         assert s["y"].shape == (5,)
 
     def test_condition_on_preserves_correlation(self):

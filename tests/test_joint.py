@@ -96,7 +96,7 @@ class TestProductDistribution:
         key = jax.random.PRNGKey(0)
         s = sample(joint_xy, key=key)
         assert isinstance(s, Record)
-        assert set(s.fields()) == {"x", "y"}
+        assert set(s.fields) == {"x", "y"}
 
     def test_sample_shapes_scalar(self, joint_xy):
         key = jax.random.PRNGKey(0)
@@ -149,7 +149,7 @@ class TestProductDistribution:
     # -- Dict-like interface (shared with Record) -----------------------------
 
     def test_fields_matches_component_names(self, joint_xy):
-        assert joint_xy.fields() == joint_xy.component_names
+        assert joint_xy.fields == joint_xy.component_names
 
     def test_contains_existing(self, joint_xy):
         assert "x" in joint_xy

@@ -26,7 +26,7 @@ from .protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-from .record import Record
+from .record import Record, RecordTemplate
 from ..custom_types import Array, PRNGKey
 
 if TYPE_CHECKING:
@@ -140,7 +140,7 @@ class _RecordDistributionView(Distribution, SupportsSampling, SupportsMean, Supp
         if template is None or key not in template:
             raise KeyError(
                 f"No field {key!r} in record_template "
-                f"(available: {template.fields() if template else ()})"
+                f"(available: {template.fields if template is not None else ()})"
             )
         # Bypass Distribution.__init__ validation (view name comes from
         # the field key, not a user-supplied argument).
@@ -155,6 +155,12 @@ class _RecordDistributionView(Distribution, SupportsSampling, SupportsMean, Supp
     @property
     def event_shape(self) -> tuple[int, ...]:
         f = self._template_field
+        if isinstance(f, tuple):
+            # RecordTemplate: field spec is a shape tuple
+            return f
+        if isinstance(f, RecordTemplate):
+            return ()
+        # Legacy Record template: field is an array
         return f.shape if not isinstance(f, Record) else ()
 
     # -- SupportsSampling ---------------------------------------------------
@@ -190,9 +196,12 @@ class _RecordDistributionView(Distribution, SupportsSampling, SupportsMean, Supp
         if isinstance(structured, Record):
             return structured[self._key]
         template = self._parent.record_template
-        if structured.ndim == 1:
-            return Record.unflatten(structured, template=template)[self._key]
-        return _unflatten_batched(structured, template)[self._key]
+        # _unflatten_batched handles both RecordTemplate and Record templates
+        flat_2d = jnp.atleast_2d(structured)
+        result = _unflatten_batched(flat_2d, template)
+        if structured.ndim < 2:
+            return result[self._key].squeeze(axis=0)
+        return result[self._key]
 
     def _field_draws(self) -> Array:
         """All draws for this field (requires parent to have a ``draws()`` method)."""
@@ -215,12 +224,18 @@ class _RecordDistributionView(Distribution, SupportsSampling, SupportsMean, Supp
 # ---------------------------------------------------------------------------
 
 
-def _unflatten_batched(flat_draws: Array, template: Record) -> Record:
+def _unflatten_batched(
+    flat_draws: Array, template: RecordTemplate | Record,
+) -> Record:
     """Unflatten a ``(num_draws, flat_size)`` array into a Record with a draw axis.
 
     Each field in the returned Record has shape ``(num_draws, *event_shape)``
     where ``event_shape`` comes from the corresponding field in *template*.
+
+    Accepts both :class:`RecordTemplate` and legacy :class:`Record` templates.
     """
+    from .._utils import prod
+
     if jnp.ndim(flat_draws) < 2:
         raise ValueError(
             f"_unflatten_batched expects at least 2-D input, "
@@ -228,16 +243,36 @@ def _unflatten_batched(flat_draws: Array, template: Record) -> Record:
         )
     fields: dict[str, jnp.ndarray | Record] = {}
     offset = 0
-    for name in template.fields():
-        tval = template[name]
-        if isinstance(tval, Record):
-            size = tval.flat_size
+    for name in template.fields:
+        spec = template[name]
+        if isinstance(spec, RecordTemplate):
+            # Nested template
+            size = sum(
+                prod(s) if s else 1
+                for s in spec.numeric_leaf_shapes.values()
+            )
             child_flat = flat_draws[:, offset:offset + size]
-            fields[name] = _unflatten_batched(child_flat, tval)
+            fields[name] = _unflatten_batched(child_flat, spec)
+            offset += size
+        elif isinstance(spec, tuple):
+            # RecordTemplate: spec is a shape tuple
+            size = prod(spec) if spec else 1
+            chunk = flat_draws[:, offset:offset + size]
+            if spec:
+                fields[name] = chunk.reshape(flat_draws.shape[0], *spec)
+            else:
+                fields[name] = chunk.squeeze(axis=-1)
+            offset += size
+        elif isinstance(spec, Record):
+            # Legacy Record template: nested Record
+            size = spec.flat_size
+            child_flat = flat_draws[:, offset:offset + size]
+            fields[name] = _unflatten_batched(child_flat, spec)
             offset += size
         else:
-            size = tval.size
-            event_shape = tval.shape
+            # Legacy Record template: array leaf
+            size = spec.size
+            event_shape = spec.shape
             chunk = flat_draws[:, offset:offset + size]
             fields[name] = chunk.reshape(flat_draws.shape[0], *event_shape)
             offset += size
@@ -249,23 +284,23 @@ def _unflatten_batched(flat_draws: Array, template: Record) -> Record:
 # ---------------------------------------------------------------------------
 
 
-def _build_record_template(components: dict) -> Record:
-    """Build a Record template from a component pytree.
+def _build_record_template(components: dict) -> RecordTemplate:
+    """Build a RecordTemplate from a component pytree.
 
-    Each ``ArrayDistribution`` leaf becomes a ``jnp.zeros(event_shape)``
-    placeholder.  Nested dicts become nested ``Record``.
+    Each ``ArrayDistribution`` leaf contributes its ``event_shape``.
+    Nested dicts become nested ``RecordTemplate``.
     """
     from ._array_distributions import ArrayDistribution
 
-    fields: dict[str, jnp.ndarray | Record] = {}
+    specs: dict[str, tuple[int, ...] | RecordTemplate] = {}
     for name, comp in components.items():
         if isinstance(comp, dict):
-            fields[name] = _build_record_template(comp)
+            specs[name] = _build_record_template(comp)
         elif isinstance(comp, ArrayDistribution):
-            fields[name] = jnp.zeros(comp.event_shape)
+            specs[name] = comp.event_shape
         else:
             raise TypeError(f"Unexpected component type: {type(comp).__name__}")
-    return Record(fields)
+    return RecordTemplate(specs)
 
 
 # ---------------------------------------------------------------------------
@@ -279,12 +314,24 @@ class RecordDistribution(Distribution[Record]):
     Provides named component access (``component_names``, ``__getitem__``,
     ``select()``) and Record-aware flatten / unflatten.  Does NOT impose
     TFP shape conventions (dtype, support, batch_shape) — those belong
-    on ``TFPShapeMixin`` and its consumers.
+    on ``NumericRecordDistribution`` and its consumers.
 
-    Concrete subclasses must set ``_record_template`` (a :class:`Record`
-    giving the named structure) and implement the relevant sampling /
-    log-prob protocols.
+    Concrete subclasses must set ``_record_template`` (a
+    :class:`~probpipe.core.record.RecordTemplate` describing the named
+    structure) and implement the relevant sampling / log-prob protocols.
     """
+
+    # -- Record template (owned here, NOT on Distribution base) -------------
+
+    @property
+    def record_template(self) -> RecordTemplate | None:
+        """Structural template describing this distribution's samples.
+
+        Returns a :class:`~probpipe.core.record.RecordTemplate` with
+        field names and per-field shapes, or ``None`` if no template
+        is set.
+        """
+        return getattr(self, "_record_template", None)
 
     # -- Named component access ---------------------------------------------
 
@@ -292,7 +339,7 @@ class RecordDistribution(Distribution[Record]):
     def component_names(self) -> tuple[str, ...]:
         """Field names from the record_template, or empty tuple."""
         tpl = self.record_template
-        return tpl.fields() if tpl is not None else ()
+        return tpl.fields if tpl is not None else ()
 
     def __getitem__(self, key: str) -> _RecordDistributionView:
         return _RecordDistributionView(self, key)
@@ -328,8 +375,9 @@ class RecordDistribution(Distribution[Record]):
 
     # -- Dict-like interface (mirrors Record) ---------------------------------
 
+    @property
     def fields(self) -> tuple[str, ...]:
-        """Field names, matching ``Record.fields()``."""
+        """Field names, matching ``Record.fields``."""
         return self.component_names
 
     def __contains__(self, name: str) -> bool:
@@ -364,6 +412,23 @@ class RecordDistribution(Distribution[Record]):
         tpl = self.record_template
         if tpl is None:
             raise RuntimeError("Cannot unflatten without record_template")
+        if isinstance(tpl, RecordTemplate):
+            # _unflatten_batched expects at least 2D; wrap and unwrap if 1D
+            if flat.ndim < 2:
+                flat_2d = jnp.atleast_2d(flat)
+                result = _unflatten_batched(flat_2d, tpl)
+                # Squeeze out the artificial leading dim from each leaf
+                def _squeeze_leaf(val):
+                    if isinstance(val, Record):
+                        return Record({
+                            n: _squeeze_leaf(val[n]) for n in val.fields
+                        })
+                    return val.squeeze(axis=0)
+                return Record({
+                    name: _squeeze_leaf(result[name])
+                    for name in result.fields
+                })
+            return _unflatten_batched(flat, tpl)
         return Record.unflatten(flat, template=tpl)
 
     def as_flat_distribution(self) -> FlattenedView:
@@ -380,7 +445,16 @@ class RecordDistribution(Distribution[Record]):
     def event_size(self) -> int:
         """Total number of scalar elements in one sample."""
         tpl = self.record_template
-        return tpl.flat_size if tpl is not None else 0
+        if tpl is None:
+            return 0
+        if isinstance(tpl, RecordTemplate):
+            from .._utils import prod
+            return sum(
+                prod(shape) if shape else 1
+                for shape in tpl.numeric_leaf_shapes.values()
+            )
+        # Legacy Record template fallback
+        return tpl.flat_size
 
     @property
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
@@ -388,8 +462,19 @@ class RecordDistribution(Distribution[Record]):
         tpl = self.record_template
         if tpl is None:
             return {}
+        if isinstance(tpl, RecordTemplate):
+            # Return top-level field shapes only; nested RecordTemplate → ()
+            result: dict[str, tuple[int, ...]] = {}
+            for name in tpl.fields:
+                spec = tpl[name]
+                if isinstance(spec, RecordTemplate):
+                    result[name] = ()
+                elif spec is not None:
+                    result[name] = spec
+            return result
+        # Legacy Record template fallback
         result: dict[str, tuple[int, ...]] = {}
-        for name in tpl.fields():
+        for name in tpl.fields:
             val = tpl[name]
             result[name] = val.shape if not isinstance(val, Record) else ()
         return result

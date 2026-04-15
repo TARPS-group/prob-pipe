@@ -101,7 +101,7 @@ class TestSampling:
         key = jax.random.PRNGKey(0)
         s = sample(joint, key=key)
         assert isinstance(s, Record)
-        assert set(s.fields()) == {"z", "x"}
+        assert set(s.fields) == {"z", "x"}
         assert s["z"].shape == ()
         assert s["x"].shape == ()
 
@@ -395,7 +395,7 @@ class TestConditionOn:
         assert cond2.component_names == ("y",)
         s = sample(cond2, sample_shape=(5,))
         assert isinstance(s, Record)
-        assert set(s.fields()) == {"y"}
+        assert set(s.fields) == {"y"}
         assert s["y"].shape == (5,)
 
     def test_raises_on_conditioning_all(self):

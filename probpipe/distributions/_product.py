@@ -196,7 +196,7 @@ class ProductDistribution(
         Accepts Record, dict, or flat array (auto-unflattened via template).
         """
         if isinstance(value, jnp.ndarray) and self._record_template is not None:
-            value = Record.unflatten(value, template=self._record_template)
+            value = self.unflatten_value(value)
         if isinstance(value, Record):
             value = value.to_dict()
         lp_tree = jax.tree.map(

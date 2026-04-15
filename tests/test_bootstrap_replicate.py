@@ -410,8 +410,8 @@ class TestValuesEmpiricalDistribution:
         emp = EmpiricalDistribution(values_data)
         tpl = emp.record_template
         assert tpl is not None
-        assert tpl["X"].shape == (3,)
-        assert tpl["y"].shape == ()
+        assert tpl["X"] == (3,)
+        assert tpl["y"] == ()
 
     def test_component_names(self, values_data):
         emp = EmpiricalDistribution(values_data)
@@ -506,8 +506,8 @@ class TestValuesBootstrapReplicateDistribution:
     def test_record_template(self, bootstrap):
         tpl = bootstrap.record_template
         assert tpl is not None
-        assert tpl["X"].shape == (20, 3)
-        assert tpl["y"].shape == (20,)
+        assert tpl["X"] == (20, 3)
+        assert tpl["y"] == (20,)
 
     def test_component_names(self, bootstrap):
         assert bootstrap.component_names == ("X", "y")

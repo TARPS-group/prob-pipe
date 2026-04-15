@@ -16,7 +16,7 @@ from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb, SupportsMean
 from ..custom_types import Array, ArrayLike
-from ..core.record import Record
+from ..core.record import Record, RecordTemplate
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
@@ -89,7 +89,7 @@ def _build_target_log_prob(dist: Distribution, observed: ArrayLike | Record | No
         # doesn't trigger Record's lazy _resolve (which causes tracer leaks).
         from ..core.record import Record
         if isinstance(data, Record):
-            data = Record({f: jnp.asarray(data[f]) for f in data.fields()})
+            data = Record({f: jnp.asarray(data[f]) for f in data.fields})
 
         def target_log_prob_fn(params):
             lp = dist._prior._log_prob(params)
@@ -257,11 +257,10 @@ def _get_prior(dist: Distribution) -> Distribution:
     return dist._prior if _is_simple_model(dist) else dist
 
 
-def _extract_record_template(dist: Distribution) -> Record | None:
-    """Return the Record template from *dist*'s prior, or ``None``."""
+def _extract_record_template(dist: Distribution) -> RecordTemplate | None:
+    """Return the RecordTemplate from *dist*'s prior, or ``None``."""
     prior = _get_prior(dist)
-    tpl = prior.record_template
-    return tpl if isinstance(tpl, Record) else None
+    return prior.record_template
 
 
 # ---------------------------------------------------------------------------

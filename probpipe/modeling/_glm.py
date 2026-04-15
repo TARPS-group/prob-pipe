@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from ..core.record import Record
+from ..core.record import Record, RecordTemplate
 from ..custom_types import Array, ArrayLike, PRNGKey
 from .._utils import _auto_key
 
@@ -23,7 +23,7 @@ def _coerce_array(x: ArrayLike | Record) -> jnp.ndarray:
     if isinstance(x, jnp.ndarray):
         return x
     if isinstance(x, Record):
-        fields = x.fields()
+        fields = x.fields
         if len(fields) == 1:
             return x[fields[0]]
         arrays = [jnp.asarray(x[f]) for f in fields]
@@ -75,9 +75,9 @@ class GLMLikelihood:
         self._key = jax.random.PRNGKey(seed)
 
     @property
-    def data_template(self) -> Record:
+    def data_template(self) -> RecordTemplate:
         """Named structure of GLM data: ``X`` (design matrix) and ``y`` (response)."""
-        return Record(X=jnp.zeros((0, 0)), y=jnp.zeros(0))
+        return RecordTemplate(X=(0, 0), y=(0,))
 
     def _extract_X_y(self, data):
         """Extract design matrix and response from data.

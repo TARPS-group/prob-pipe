@@ -23,7 +23,7 @@ from ..core.protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-from ..core.record import Record
+from ..core.record import Record, RecordTemplate
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 
@@ -63,7 +63,7 @@ class TFPDistribution(
             return tpl
         name = getattr(self, "_name", None)
         if name is not None:
-            tpl = Record(**{name: jnp.zeros(self.event_shape)})
+            tpl = RecordTemplate(**{name: self.event_shape})
             object.__setattr__(self, "_record_template", tpl)
             return tpl
         return None

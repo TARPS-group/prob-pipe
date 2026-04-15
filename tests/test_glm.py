@@ -7,7 +7,7 @@ import pytest
 import scipy.stats
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from probpipe import GLMLikelihood, MultivariateNormal, SimpleModel, Record, condition_on, mean
+from probpipe import GLMLikelihood, MultivariateNormal, SimpleModel, Record, RecordTemplate, condition_on, mean
 from probpipe.modeling import Likelihood, GenerativeLikelihood
 
 
@@ -144,8 +144,8 @@ class TestGLMLikelihoodDataTemplate:
 
     def test_data_template_fields(self, poisson_lik):
         tpl = poisson_lik.data_template
-        assert isinstance(tpl, Record)
-        assert tpl.fields() == ("X", "y")
+        assert isinstance(tpl, RecordTemplate)
+        assert tpl.fields == ("X", "y")
 
     def test_data_template_integrates_with_simple_model(self, poisson_lik):
         """SimpleModel merges GLM data_template into component_names."""
@@ -209,7 +209,7 @@ class TestGLMLikelihoodWithValues:
         draws = posterior.draws()
         if isinstance(draws, Record):
             # Prior has a name, so draws come back as a Record
-            flat = jnp.concatenate([draws[f] for f in draws.fields()], axis=-1)
+            flat = jnp.concatenate([draws[f] for f in draws.fields], axis=-1)
             assert flat.shape == (50, 2)
         else:
             assert draws.shape == (50, 2)

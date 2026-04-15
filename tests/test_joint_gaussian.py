@@ -100,7 +100,7 @@ class TestSampling:
         key = jax.random.PRNGKey(0)
         s = sample(jg, key=key)
         assert isinstance(s, Record)
-        assert set(s.fields()) == {"x", "y"}
+        assert set(s.fields) == {"x", "y"}
         assert s["x"].shape == (1,)
         assert s["y"].shape == (1,)
 

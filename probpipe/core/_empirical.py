@@ -39,7 +39,7 @@ from ._array_distributions import (
     BootstrapDistribution,
 )
 from ._record_distribution import RecordDistribution
-from .record import Record
+from .record import Record, RecordTemplate
 
 
 # ---------------------------------------------------------------------------
@@ -349,24 +349,24 @@ class ArrayEmpiricalDistribution(
 def _record_template_from_data(
     values_data: Record,
     leading_shape: tuple[int, ...] = (),
-) -> Record:
-    """Build a record_template from stored Record data.
+) -> RecordTemplate:
+    """Build a RecordTemplate from stored Record data.
 
-    Strips the first dimension (sample axis) from each field and
-    optionally prepends ``leading_shape``.
+    Strips the first dimension (sample axis) from each field to get
+    event shapes, optionally prepending ``leading_shape``.
     """
-    tpl_fields: dict[str, jnp.ndarray] = {}
-    for fname in values_data.fields():
+    specs: dict[str, tuple[int, ...]] = {}
+    for fname in values_data.fields:
         arr = jnp.asarray(values_data[fname])
-        tpl_fields[fname] = jnp.zeros((*leading_shape, *arr.shape[1:]))
-    return Record(tpl_fields)
+        specs[fname] = (*leading_shape, *arr.shape[1:])
+    return RecordTemplate(specs)
 
 
 def _index_record(values_data: Record, idx) -> Record:
     """Index all fields of a Record object with the same indices."""
     return Record({
         f: jnp.asarray(values_data[f])[idx]
-        for f in values_data.fields()
+        for f in values_data.fields
     })
 
 
@@ -374,7 +374,7 @@ def _fieldwise_op(values_data: Record, op: Callable) -> Record:
     """Apply an operation to each field of a Record object."""
     return Record({
         f: op(jnp.asarray(values_data[f]))
-        for f in values_data.fields()
+        for f in values_data.fields
     })
 
 
@@ -416,12 +416,12 @@ class _RecordEmpiricalDistribution(
         name: str | None = None,
     ):
         self._record_data = samples
-        first_field = samples[samples.fields()[0]]
+        first_field = samples[samples.fields[0]]
         n = jnp.asarray(first_field).shape[0]
         self._n_samples = n
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         if name is None:
-            name = "empirical(" + ",".join(samples.fields()) + ")"
+            name = "empirical(" + ",".join(samples.fields) + ")"
         # Skip EmpiricalDistribution.__init__ (different init pattern),
         # go directly to Distribution.__init__ for name registration.
         Distribution.__init__(self, name=name)
@@ -450,7 +450,7 @@ class _RecordEmpiricalDistribution(
             return self._sample_one(key)
         indices = self._w.choice(key, shape=(prod(sample_shape),))
         fields: dict[str, jnp.ndarray] = {}
-        for f in self._record_data.fields():
+        for f in self._record_data.fields:
             arr = jnp.asarray(self._record_data[f])
             fields[f] = arr[indices].reshape(*sample_shape, *arr.shape[1:])
         return Record(fields)
@@ -462,7 +462,7 @@ class _RecordEmpiricalDistribution(
         return _fieldwise_op(self._record_data, self._w.variance)
 
     def __repr__(self) -> str:
-        fields = ", ".join(self._record_data.fields())
+        fields = ", ".join(self._record_data.fields)
         return (
             f"_RecordEmpiricalDistribution(n={self._n_samples}, "
             f"fields=({fields}))"
@@ -806,7 +806,7 @@ class _RecordBootstrapReplicateDistribution(
             default_n = source.n
         elif isinstance(source, Record):
             self._record_data = source
-            first = jnp.asarray(source[source.fields()[0]])
+            first = jnp.asarray(source[source.fields[0]])
             default_n = first.shape[0]
             self._w = Weights.uniform(default_n)
         else:
@@ -838,13 +838,13 @@ class _RecordBootstrapReplicateDistribution(
         # Stack: each result is Record(X=array(n,p), y=array(n,))
         # → Record(X=array(*sample_shape, n, p), y=array(*sample_shape, n))
         stacked: dict[str, jnp.ndarray] = {}
-        for f in self._record_data.fields():
+        for f in self._record_data.fields:
             arrs = jnp.stack([jnp.asarray(r[f]) for r in results])
             stacked[f] = arrs.reshape(*sample_shape, *arrs.shape[1:])
         return Record(stacked)
 
     def __repr__(self) -> str:
-        fields = ", ".join(self._record_data.fields())
+        fields = ", ".join(self._record_data.fields)
         return (
             f"_RecordBootstrapReplicateDistribution(n={self._n}, "
             f"source_n={self._source_n}, fields=({fields}))"

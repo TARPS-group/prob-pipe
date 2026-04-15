@@ -16,11 +16,11 @@ from probpipe import Record
 class TestConstruction:
     def test_kwargs(self):
         v = Record(r=1.8, K=70.0, phi=10.0)
-        assert v.fields() == ("K", "phi", "r")  # sorted
+        assert v.fields == ("K", "phi", "r")  # sorted
 
     def test_dict_positional(self):
         v = Record({"a": 1.0, "b": 2.0})
-        assert v.fields() == ("a", "b")
+        assert v.fields == ("a", "b")
 
     def test_dict_and_kwargs_raises(self):
         with pytest.raises(ValueError, match="Cannot pass both"):
@@ -53,7 +53,7 @@ class TestConstruction:
 
     def test_from_dict(self):
         v = Record.from_dict({"a": 1.0, "b": 2.0})
-        assert v.fields() == ("a", "b")
+        assert v.fields == ("a", "b")
 
     def test_list_input(self):
         v = Record(x=[1.0, 2.0, 3.0])
@@ -81,7 +81,7 @@ class TestFieldAccess:
         np.testing.assert_allclose(float(v["params", "r"]), 1.8, rtol=1e-5)
 
     def test_fields(self, v):
-        assert v.fields() == ("K", "phi", "r")
+        assert v.fields == ("K", "phi", "r")
 
     def test_raw(self):
         arr = np.array([1.0, 2.0])
@@ -154,7 +154,7 @@ class TestImmutability:
         v1 = Record(a=1.0)
         v2 = Record(b=2.0)
         merged = v1.merge(v2)
-        assert merged.fields() == ("a", "b")
+        assert merged.fields == ("a", "b")
 
     def test_merge_overlap_raises(self):
         v1 = Record(a=1.0)
@@ -165,13 +165,13 @@ class TestImmutability:
     def test_without(self):
         v = Record(a=1.0, b=2.0, c=3.0)
         v2 = v.without("b")
-        assert v2.fields() == ("a", "c")
+        assert v2.fields == ("a", "c")
 
     def test_without_nonexistent_key(self):
         """Removing a key that doesn't exist silently keeps all fields."""
         v = Record(a=1.0, b=2.0)
         v2 = v.without("z")
-        assert v2.fields() == ("a", "b")
+        assert v2.fields == ("a", "b")
 
     def test_without_all_raises(self):
         v = Record(a=1.0)
@@ -272,7 +272,7 @@ class TestFlatten:
         v = Record(r=1.8, K=70.0, phi=10.0)
         flat = v.flatten()
         v2 = Record.unflatten(flat, template=v)
-        assert v2.fields() == v.fields()
+        assert v2.fields == v.fields
         np.testing.assert_allclose(float(v2.r), 1.8)
         np.testing.assert_allclose(float(v2.K), 70.0)
         np.testing.assert_allclose(float(v2.phi), 10.0)
@@ -319,7 +319,7 @@ class TestPyTree:
         leaves, treedef = jax.tree.flatten(v)
         v2 = jax.tree.unflatten(treedef, leaves)
         assert isinstance(v2, Record)
-        assert v2.fields() == v.fields()
+        assert v2.fields == v.fields
 
     def test_nested_tree_map(self):
         v = Record(params=Record(r=1.0, K=2.0), z=3.0)
@@ -441,7 +441,7 @@ class TestEnsure:
     def test_dict_coercion(self):
         v = Record.ensure({"a": 1.0, "b": 2.0})
         assert isinstance(v, Record)
-        assert v.fields() == ("a", "b")
+        assert v.fields == ("a", "b")
 
     def test_array_coercion(self):
         v = Record.ensure(jnp.array([1.0, 2.0]))

@@ -14,7 +14,7 @@ Usage::
     data = Record(counts=np.array([2, 1, 3, 0, 5]))
 
     params.r          # → jnp.array(1.8)
-    params.fields()   # → ('K', 'phi', 'r')
+    params.fields   # → ('K', 'phi', 'r')
     params.flatten()  # → jnp.array([70., 10., 1.8])
 
     jax.tree.map(jnp.log, params)   # leaf-wise transform
@@ -36,7 +36,7 @@ from ..custom_types import ArrayLike
 if TYPE_CHECKING:
     import xarray as xr
 
-__all__ = ["Record"]
+__all__ = ["Record", "RecordTemplate"]
 
 # Resolved field: JAX array for leaves, ``Record`` for nested structure.
 _ResolvedField: TypeAlias = "jnp.ndarray | Record"
@@ -171,6 +171,7 @@ class Record:
         resolved[name] = val
         return val
 
+    @property
     def fields(self) -> tuple[str, ...]:
         """Field names in sorted order."""
         return tuple(self._store.keys())
@@ -428,10 +429,10 @@ class Record:
     @staticmethod
     def zip(v1: Record, v2: Record) -> Record:
         """Stack matching fields from two Record along a new leading axis."""
-        if v1.fields() != v2.fields():
+        if v1.fields != v2.fields:
             raise ValueError(
                 f"Cannot zip Record with different fields: "
-                f"{v1.fields()} vs {v2.fields()}"
+                f"{v1.fields} vs {v2.fields}"
             )
         fields: dict[str, jnp.ndarray | Record] = {}
         for name in v1._store:
@@ -464,7 +465,7 @@ class Record:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Record):
             return NotImplemented
-        if self.fields() != other.fields():
+        if self.fields != other.fields:
             return False
         for name in self._store:
             a = self._resolve_field(name)
@@ -481,7 +482,208 @@ class Record:
 
     def __hash__(self) -> int:
         # Hash by field names only (like JAX pytree aux_data).
-        return hash(self.fields())
+        return hash(self.fields)
+
+
+# ---------------------------------------------------------------------------
+# RecordTemplate — structural skeleton
+# ---------------------------------------------------------------------------
+
+# Leaf spec: shape tuple for numeric fields, None for opaque leaves.
+_LeafSpec: TypeAlias = "tuple[int, ...] | None"
+_FieldSpec: TypeAlias = "_LeafSpec | RecordTemplate"
+
+
+class RecordTemplate:
+    """Structural description of a Record: field names, leaf shapes, nesting.
+
+    Stores the skeleton of a Record without data — field names, per-field
+    shapes (for numeric leaves) or ``None`` (for opaque leaves), and
+    optional nested ``RecordTemplate`` for hierarchical structure.
+
+    Inspired by JAX's ``PyTreeDef``: a template can reconstruct a Record
+    from flat data, and describes the expected structure for type-checking
+    and flattening.
+
+    Parameters
+    ----------
+    **field_specs
+        Named fields.  Each value is one of:
+
+        - ``tuple[int, ...]`` — shape of a numeric array leaf
+          (e.g., ``()`` for scalar, ``(3,)`` for 3-vector).
+        - ``None`` — opaque (non-array) leaf.
+        - ``RecordTemplate`` — nested sub-structure.
+
+    Examples
+    --------
+    ::
+
+        RecordTemplate(x=(), y=(3,))                    # two numeric fields
+        RecordTemplate(label=None, x=())                 # mixed
+        RecordTemplate(physics=RecordTemplate(force=(), mass=()), obs=())
+    """
+
+    __slots__ = ("_specs",)
+
+    def __init__(
+        self,
+        _dict: dict[str, _FieldSpec] | None = None,
+        /,
+        **field_specs: _FieldSpec,
+    ):
+        if _dict is not None:
+            if field_specs:
+                raise ValueError(
+                    "Cannot pass both positional dict and keyword arguments"
+                )
+            field_specs = _dict
+        if not field_specs:
+            raise ValueError("RecordTemplate requires at least one field")
+        # Validate specs
+        for name, spec in field_specs.items():
+            if spec is not None and not isinstance(spec, (tuple, RecordTemplate)):
+                raise TypeError(
+                    f"Field {name!r}: spec must be a shape tuple, None, "
+                    f"or RecordTemplate, got {type(spec).__name__}"
+                )
+            if isinstance(spec, tuple):
+                if not all(isinstance(d, int) and d >= 0 for d in spec):
+                    raise TypeError(
+                        f"Field {name!r}: shape must be a tuple of "
+                        f"non-negative ints, got {spec!r}"
+                    )
+        object.__setattr__(
+            self, "_specs", OrderedDict(sorted(field_specs.items()))
+        )
+
+    # -- Immutability -------------------------------------------------------
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise AttributeError("RecordTemplate is immutable")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("RecordTemplate is immutable")
+
+    # -- Field access -------------------------------------------------------
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        """Field names in sorted order."""
+        return tuple(self._specs.keys())
+
+    @property
+    def leaf_shapes(self) -> dict[str, tuple[int, ...] | None]:
+        """Per-field leaf shapes.  ``None`` for opaque (non-array) leaves.
+
+        For nested ``RecordTemplate`` fields, returns the nested
+        template's ``leaf_shapes`` (not the template itself).
+        """
+        result: dict[str, tuple[int, ...] | None] = {}
+        for name, spec in self._specs.items():
+            if isinstance(spec, RecordTemplate):
+                # Flatten nested template into dotted names
+                for sub_name, sub_shape in spec.leaf_shapes.items():
+                    result[f"{name}.{sub_name}"] = sub_shape
+            else:
+                result[name] = spec
+        return result
+
+    @property
+    def numeric_leaf_shapes(self) -> dict[str, tuple[int, ...]]:
+        """Per-field shapes for numeric leaves only (excludes opaque)."""
+        return {
+            name: shape
+            for name, shape in self.leaf_shapes.items()
+            if shape is not None
+        }
+
+    @property
+    def flat_size(self) -> int:
+        """Total number of scalar elements across all numeric leaves."""
+        from .._utils import prod
+        total = 0
+        for shape in self.numeric_leaf_shapes.values():
+            total += prod(shape) if shape else 1
+        return total
+
+    def __contains__(self, name: str) -> bool:
+        return name in self._specs
+
+    def __getitem__(self, name: str) -> _FieldSpec:
+        return self._specs[name]
+
+    def __len__(self) -> int:
+        return len(self._specs)
+
+    # -- Equality and hashing -----------------------------------------------
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, RecordTemplate):
+            return NotImplemented
+        return self._specs == other._specs
+
+    def __hash__(self) -> int:
+        def _spec_key(spec: _FieldSpec):
+            if spec is None:
+                return None
+            if isinstance(spec, tuple):
+                return spec
+            return hash(spec)  # RecordTemplate
+        return hash(tuple(
+            (name, _spec_key(spec)) for name, spec in self._specs.items()
+        ))
+
+    # -- Factory methods ----------------------------------------------------
+
+    @classmethod
+    def from_record(
+        cls,
+        record: Record,
+        *,
+        batch_shape: tuple[int, ...] = (),
+    ) -> RecordTemplate:
+        """Infer a template from an existing Record.
+
+        Parameters
+        ----------
+        record : Record
+            Source record whose fields define the template structure.
+        batch_shape : tuple of int
+            Leading dimensions to strip from field shapes to get event
+            shapes.  For a single-sample Record, use ``()`` (default).
+        """
+        n_batch = len(batch_shape)
+        specs: dict[str, _FieldSpec] = {}
+        for name in record.fields:
+            val = record[name]
+            if isinstance(val, Record):
+                specs[name] = cls.from_record(val, batch_shape=batch_shape)
+            elif hasattr(val, 'shape'):
+                # Numeric array — strip leading batch dims
+                full_shape = val.shape
+                if n_batch > 0:
+                    event_shape = full_shape[n_batch:]
+                else:
+                    event_shape = full_shape
+                specs[name] = event_shape
+            else:
+                # Opaque leaf (string, object, etc.)
+                specs[name] = None
+        return cls(specs)
+
+    # -- Repr ---------------------------------------------------------------
+
+    def __repr__(self) -> str:
+        parts = []
+        for name, spec in self._specs.items():
+            if isinstance(spec, RecordTemplate):
+                parts.append(f"{name}={spec!r}")
+            elif spec is None:
+                parts.append(f"{name}=None")
+            else:
+                parts.append(f"{name}={spec}")
+        return f"RecordTemplate({', '.join(parts)})"
 
 
 # ---------------------------------------------------------------------------
@@ -498,7 +700,7 @@ def _record_flatten(v: Record) -> tuple[list, tuple[str, ...]]:
             children.append(raw)
         else:
             children.append(v._resolve_field(name))
-    return children, v.fields()
+    return children, v.fields
 
 
 def _record_unflatten(aux: tuple[str, ...], children: list) -> Record:

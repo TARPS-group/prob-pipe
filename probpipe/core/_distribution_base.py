@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from xarray import DataTree
 
-    from .record import Record
+    from .record import RecordTemplate
 
 import jax
 import jax.numpy as jnp
@@ -95,15 +95,17 @@ class Distribution[T](ABC):
             self._validation_results: list[dict] = []
         return self._validation_results
 
-    # -- values template ----------------------------------------------------
+    # -- values template (deprecated on base; now lives on RecordDistribution)
+    # Kept here temporarily for backward compatibility during migration.
 
     @property
-    def record_template(self) -> Record | None:
-        """A :class:`~probpipe.core.record.Record` describing the named
-        structure of samples from this distribution, or ``None``.
+    def record_template(self) -> RecordTemplate | None:
+        """Structural template for this distribution's samples, or ``None``.
 
-        Set automatically from the ``name`` kwarg for named distributions
-        and from component structure for joint distributions.
+        .. deprecated::
+            This property is migrating to
+            :class:`~probpipe.core._record_distribution.RecordDistribution`.
+            Non-Record distributions should not rely on this.
         """
         return getattr(self, "_record_template", None)
 

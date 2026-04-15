@@ -268,7 +268,7 @@ class TFPRecordDistribution(RecordDistribution, TFPShapeMixin):
         to ``(*batch, *event_shape)`` to stay compatible with ``_log_prob``.
         """
         tpl = self.record_template
-        if tpl is not None and len(tpl.fields()) > 1:
+        if tpl is not None and len(tpl.fields) > 1:
             return super().unflatten_value(flat)
         flat = jnp.asarray(flat)
         es = self.event_shape

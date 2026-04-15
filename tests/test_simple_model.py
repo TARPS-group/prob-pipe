@@ -22,6 +22,7 @@ from probpipe import (
     SupportsLogProb,
     SupportsSampling,
     Record,
+    RecordTemplate,
     condition_on,
 )
 
@@ -237,11 +238,11 @@ class _ValuesAwareLikelihood:
 
     def log_likelihood(self, params, data):
         if isinstance(data, Record):
-            d = data[data.fields()[0]]
+            d = data[data.fields[0]]
         else:
             d = data
         if isinstance(params, Record):
-            p = params[params.fields()[0]]
+            p = params[params.fields[0]]
         else:
             p = params
         return -0.5 * jnp.sum((d - p) ** 2)
@@ -253,7 +254,7 @@ class TestSimpleModelWithValues:
     @pytest.fixture
     def prior_with_template(self):
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-        prior._record_template = Record(a=jnp.zeros(()), b=jnp.zeros(()))
+        prior._record_template = RecordTemplate(a=(), b=())
         return prior
 
     @pytest.fixture
@@ -308,7 +309,7 @@ class TestSimpleModelWithValues:
     def test_field_overlap_raises(self):
         """SimpleModel rejects overlapping prior and data field names."""
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-        prior._record_template = Record(X=jnp.zeros(()), y=jnp.zeros(()))
+        prior._record_template = RecordTemplate(X=(), y=())
 
         class _OverlapLikelihood:
             def log_likelihood(self, params, data):
@@ -316,7 +317,7 @@ class TestSimpleModelWithValues:
 
             @property
             def data_template(self):
-                return Record(X=jnp.zeros((0, 0)), y=jnp.zeros(0))
+                return RecordTemplate(X=(0, 0), y=(0,))
 
         with pytest.raises(ValueError, match="overlap"):
             SimpleModel(prior, _OverlapLikelihood())

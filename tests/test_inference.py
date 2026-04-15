@@ -146,7 +146,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_draws_has_correct_fields(self, posterior_with_template):
         draws = posterior_with_template.draws()
-        assert draws.fields() == ("K", "phi", "r")
+        assert draws.fields == ("K", "phi", "r")
 
     def test_draws_field_shapes(self, posterior_with_template):
         draws = posterior_with_template.draws()
@@ -379,7 +379,7 @@ class TestRWMH:
         if hasattr(raw_draws, 'fields'):
             # draws() returns a Record when prior has a name; flatten it
             raw_draws = jnp.concatenate(
-                [raw_draws[f] for f in raw_draws.fields()], axis=-1
+                [raw_draws[f] for f in raw_draws.fields], axis=-1
             )
         draws = np.asarray(raw_draws).reshape(-1, 2)
         np.testing.assert_allclose(draws.mean(0), analytical_mean, atol=0.08)
@@ -832,14 +832,14 @@ class TestEndToEndValuesPipeline:
         """record_template flows from named prior through to posterior."""
         tpl = posterior.record_template
         assert tpl is not None
-        assert tpl.fields() == ("params",)
-        assert tpl.params.shape == (2,)
+        assert tpl.fields == ("params",)
+        assert tpl["params"] == (2,)
 
     def test_draws_are_named_values(self, posterior):
         """draws() returns Record with correct field names and shapes."""
         draws = posterior.draws()
         assert isinstance(draws, Record)
-        assert draws.fields() == ("params",)
+        assert draws.fields == ("params",)
         assert draws.params.shape == (500, 2)
 
     def test_draws_values_correct(self, posterior):
@@ -929,7 +929,7 @@ class TestEndToEndValuesPipeline:
         )
         draws = post.draws()
         assert isinstance(draws, Record)
-        assert draws.fields() == ("a", "b", "c")
+        assert draws.fields == ("a", "b", "c")
         assert draws.a.shape == (200,)
 
         # Per-field views
