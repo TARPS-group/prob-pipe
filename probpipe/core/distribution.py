@@ -43,22 +43,24 @@ from ._record_distribution import (
 
 # -- _array_distributions ---------------------------------------------------
 from ._array_distributions import (
+    NumericRecordDistribution,
     TFPRecordDistribution,
     ArrayDistribution,
+    TFPShapeMixin,
     BootstrapDistribution,
     FlattenedView,
-    TFPShapeMixin,
     _mc_expectation,
     _vmap_sample,
 )
 
 # -- _empirical -------------------------------------------------------------
 from ._empirical import (
+    NumericEmpiricalDistribution,
     ArrayEmpiricalDistribution,
+    TFPEmpiricalDistribution,
     ArrayBootstrapReplicateDistribution,
     EmpiricalDistribution,
     BootstrapReplicateDistribution,
-    TFPEmpiricalDistribution,
 )
 
 # -- _broadcast_distributions -----------------------------------------------
@@ -94,13 +96,17 @@ __all__ = [
     "_RecordDistributionView",
     "_unflatten_batched",
     # Array hierarchy
+    "NumericRecordDistribution",
     "TFPRecordDistribution",
+    "TFPShapeMixin",
     "ArrayDistribution",
     "BootstrapDistribution",
     "FlattenedView",
     # Empirical
     "EmpiricalDistribution",
+    "NumericEmpiricalDistribution",
     "ArrayEmpiricalDistribution",
+    "TFPEmpiricalDistribution",
     # Joint bootstrap
     "BootstrapReplicateDistribution",
     "ArrayBootstrapReplicateDistribution",

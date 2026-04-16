@@ -28,11 +28,13 @@ from probpipe._weights import Weights
 from probpipe.core.distribution import (
     Distribution,
     RecordDistribution,
+    NumericRecordDistribution,
     TFPRecordDistribution,
     TFPShapeMixin,
     ArrayDistribution,
     FlattenedView,
     EmpiricalDistribution,
+    NumericEmpiricalDistribution,
     ArrayEmpiricalDistribution,
     TFPEmpiricalDistribution,
     BroadcastDistribution,

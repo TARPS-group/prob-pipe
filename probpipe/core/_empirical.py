@@ -2,7 +2,7 @@
 
 Provides:
   - ``EmpiricalDistribution[T]``        – Generic weighted empirical distribution.
-  - ``ArrayEmpiricalDistribution``       – Array specialization with moments.
+  - ``NumericEmpiricalDistribution``      – Numeric array specialization with moments.
   - ``_RecordEmpiricalDistribution``     – Record specialization with per-field moments.
   - ``BootstrapReplicateDistribution[T]``    – Bootstrap resampling over datasets.
   - ``ArrayBootstrapReplicateDistribution``  – Array specialization.
@@ -60,7 +60,7 @@ class EmpiricalDistribution[T](
 
     **Automatic array dispatch:** When *samples* is a numeric JAX or
     numpy array, ``EmpiricalDistribution(samples, ...)`` automatically
-    returns an :class:`ArrayEmpiricalDistribution` instance, which
+    returns a :class:`NumericEmpiricalDistribution` instance, which
     provides TFP-style shape semantics (``batch_shape``, ``event_shape``,
     ``flatten_value``, ``support``, etc.) and exact weighted moments.
     Pass a non-numeric sequence (e.g. a list of objects) to get the
@@ -90,7 +90,7 @@ class EmpiricalDistribution[T](
             if isinstance(samples, Record):
                 return object.__new__(_RecordEmpiricalDistribution)
             if _is_numeric_array(samples):
-                return object.__new__(ArrayEmpiricalDistribution)
+                return object.__new__(NumericEmpiricalDistribution)
         return object.__new__(cls)
 
     def __init__(
@@ -229,17 +229,17 @@ class EmpiricalDistribution[T](
 
 
 # ---------------------------------------------------------------------------
-# ArrayEmpiricalDistribution
+# NumericEmpiricalDistribution
 # ---------------------------------------------------------------------------
 
-class ArrayEmpiricalDistribution(
+class NumericEmpiricalDistribution(
     EmpiricalDistribution[Array],
     ArrayDistribution,
     SupportsMean,
     SupportsVariance,
     SupportsCovariance,
 ):
-    """Empirical distribution with full :class:`ArrayDistribution` shape semantics.
+    """Empirical distribution with full numeric shape semantics.
 
     Stores samples as a stacked JAX array for efficient vectorised
     operations (``jax.vmap``-based sampling and expectations).
@@ -685,10 +685,11 @@ class BootstrapReplicateDistribution[T](
         )
 
 
-# Alias: the planned Phase 4 name.  ArrayEmpiricalDistribution will be
 # phased out in favor of TFPEmpiricalDistribution once the full
 # RecordDistribution hierarchy is in place.
-TFPEmpiricalDistribution = ArrayEmpiricalDistribution
+# Backward compatibility aliases
+ArrayEmpiricalDistribution = NumericEmpiricalDistribution
+TFPEmpiricalDistribution = NumericEmpiricalDistribution
 
 
 class ArrayBootstrapReplicateDistribution(BootstrapReplicateDistribution[Array], ArrayDistribution):

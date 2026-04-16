@@ -1,13 +1,12 @@
-"""Distribution hierarchy with TFP shape semantics.
+"""Distribution hierarchy with numeric shape semantics.
 
 Provides:
-  - ``_vmap_sample()``           – Batched sampling via ``jax.vmap``.
-  - ``_mc_expectation()``        – Monte Carlo expectation helper.
-  - ``TFPShapeMixin``            – TFP shape conventions (dtype, support, batch_shape).
-  - ``TFPRecordDistribution``    – RecordDistribution + TFP shapes (base for all TFP dists).
-  - ``ArrayDistribution``        – Alias for ``TFPRecordDistribution`` (backward compat).
-  - ``BootstrapDistribution``    – MC error tracking via bootstrap resampling.
-  - ``FlattenedView``            – Wraps any distribution as a flat distribution.
+  - ``_vmap_sample()``               – Batched sampling via ``jax.vmap``.
+  - ``_mc_expectation()``            – Monte Carlo expectation helper.
+  - ``NumericRecordDistribution``    – RecordDistribution + numeric shapes (base for all numeric dists).
+  - ``BootstrapDistribution``        – MC error tracking via bootstrap resampling.
+  - ``FlattenedView``                – Wraps any distribution as a flat distribution.
+  - Backward-compat aliases: ``TFPShapeMixin``, ``TFPRecordDistribution``, ``ArrayDistribution``.
 """
 
 from __future__ import annotations
@@ -113,16 +112,31 @@ def _mc_expectation(
 
 
 # ---------------------------------------------------------------------------
-# TFPShapeMixin — TFP-specific shape conventions
+# NumericRecordDistribution — RecordDistribution + numeric shape semantics
 # ---------------------------------------------------------------------------
 
-class TFPShapeMixin:
-    """Mixin providing TFP-style shape conventions: dtype, support, batch_shape.
+class NumericRecordDistribution(RecordDistribution):
+    """Distribution over numeric arrays with Record support.
 
-    Used by both ``ArrayDistribution`` (for generative TFP distributions)
-    and ``TFPEmpiricalDistribution`` (for empirical distributions with
-    TFP shape semantics).  Does not inherit from any base class.
+    Extends :class:`RecordDistribution` with numeric-specific metadata:
+    dtype, support, batch_shape, event_shape.
+
+    Shape semantics follow TFP conventions:
+
+    * ``event_shape``  -- shape of a single draw (e.g. ``(d,)`` for a
+      *d*-dimensional vector distribution).
+    * ``batch_shape``  -- shape of independent-but-not-identically-distributed
+      parameter batches.
+
+    When ``record_template`` is set (named distribution), samples are
+    wrapped as :class:`~probpipe.Record`.  Otherwise, raw arrays are
+    returned for backward compatibility.
+
+    Standard distributions (Normal, Gamma, Poisson, etc.) inherit from
+    this class via :class:`TFPDistribution`.
     """
+
+    # -- dtype, support, batch_shape ----------------------------------------
 
     @property
     def dtype(self) -> jnp.dtype:
@@ -145,7 +159,7 @@ class TFPShapeMixin:
         return self.support
 
     @classmethod
-    def _check_support_compatible(cls, other: TFPShapeMixin) -> None:
+    def _check_support_compatible(cls, other: NumericRecordDistribution) -> None:
         """Raise ValueError if *other*'s support is incompatible with *cls*."""
         try:
             target_support = cls._default_support()
@@ -171,47 +185,12 @@ class TFPShapeMixin:
         """
         raise NotImplementedError
 
-
-# ---------------------------------------------------------------------------
-# TFPRecordDistribution — RecordDistribution + TFP shape semantics
-# ---------------------------------------------------------------------------
-
-class TFPRecordDistribution(RecordDistribution, TFPShapeMixin):
-    """Distribution with TFP-style shape semantics and Record support.
-
-    Combines :class:`RecordDistribution` (named component access,
-    Record-aware flatten/unflatten) with :class:`TFPShapeMixin` (dtype,
-    support, batch_shape).
-
-    Shape semantics follow TFP conventions:
-
-    * ``event_shape``  -- shape of a single draw (e.g. ``(d,)`` for a
-      *d*-dimensional vector distribution).
-    * ``batch_shape``  -- shape of independent-but-not-identically-distributed
-      parameter batches.
-
-    When ``record_template`` is set (named distribution), samples are
-    wrapped as :class:`~probpipe.Record`.  Otherwise, raw arrays are
-    returned for backward compatibility.
-
-    Standard distributions (Normal, Gamma, Poisson, etc.) inherit from
-    this class via :class:`TFPDistribution`.
-    """
-
-    # -- shape properties ---------------------------------------------------
+    # -- event_shape (abstract) ---------------------------------------------
 
     @property
     @abstractmethod
     def event_shape(self) -> tuple[int, ...]:
         ...
-
-    # dtype, support, _check_support_compatible, _default_support
-    # inherited from TFPShapeMixin.
-
-    # Concrete batch_shape default (no batching).
-    @property
-    def batch_shape(self) -> tuple[int, ...]:
-        return ()
 
     # -- Single-leaf pytree interface -----------------------------------------
 
@@ -277,13 +256,6 @@ class TFPRecordDistribution(RecordDistribution, TFPShapeMixin):
         batch_dims = flat.shape[:-1]
         return flat.reshape(*batch_dims, *es)
 
-    # support, _check_support_compatible, _default_support from TFPShapeMixin.
-
-    @property
-    def supports(self):
-        """Singular support constraint."""
-        return self.support
-
     def as_flat_distribution(self):
         """View this distribution as a flat distribution.
 
@@ -303,8 +275,10 @@ class TFPRecordDistribution(RecordDistribution, TFPShapeMixin):
         return f"{parts[0]}({', '.join(parts[1:])})"
 
 
-# Backward compatibility alias
-ArrayDistribution = TFPRecordDistribution
+# Backward compatibility aliases
+TFPRecordDistribution = NumericRecordDistribution
+TFPShapeMixin = NumericRecordDistribution
+ArrayDistribution = NumericRecordDistribution
 
 
 # ---------------------------------------------------------------------------
