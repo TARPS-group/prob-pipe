@@ -32,6 +32,10 @@ class TestConstruction:
         with pytest.raises(TypeError, match="numeric"):
             NumericRecord(label="hello")
 
+    def test_bool_rejected(self):
+        with pytest.raises(TypeError, match="numeric"):
+            NumericRecord(flag=True)
+
     def test_nested_record_not_numeric_raises(self):
         """Nested plain Record in NumericRecord raises."""
         inner = Record(x=1.0)

@@ -1,7 +1,7 @@
 """NumericRecord — Record subclass where every leaf is a numeric array.
 
-Adds ``flatten()`` / ``unflatten()`` for 1-D serialisation, which only
-make sense when all leaves are numeric arrays of the same kind.
+Adds ``unflatten()`` for 1-D deserialisation (``flatten()`` is inherited
+from ``Record``).
 """
 
 from __future__ import annotations
@@ -13,29 +13,30 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import ArrayLike
-from .record import Record, RecordTemplate
+from .record import Record, RecordTemplate, _record_flatten
 
 __all__ = ["NumericRecord"]
 
 
 def _is_numeric(val: Any) -> bool:
     """Check if a value is a numeric array or numeric scalar."""
+    # bool before int — bool is a subclass of int
+    if isinstance(val, bool):
+        return False
     if isinstance(val, (np.ndarray, jnp.ndarray)):
         return True
     if isinstance(val, (int, float, complex, np.integer, np.floating)):
         return True
-    if isinstance(val, (str, bytes, bool)):
+    if isinstance(val, (str, bytes)):
         return False
-    # Lists/tuples — will be converted by Record.__init__
-    if isinstance(val, (list, tuple)):
-        return True
     return hasattr(val, "shape") and hasattr(val, "dtype")
 
 
 class NumericRecord(Record):
     """Record where every leaf is a numeric array.
 
-    Adds ``flatten()`` / ``unflatten()`` for 1-D serialisation.
+    Inherits ``flatten()`` from ``Record`` and adds
+    ``unflatten()`` for 1-D deserialisation.
     Construction validates that all leaves are numeric.
 
     Parameters
@@ -75,22 +76,7 @@ class NumericRecord(Record):
                     f"values, got {type(raw).__name__}"
                 )
 
-    # -- Flatten / unflatten --------------------------------------------------
-
-    def flatten(self) -> jnp.ndarray:
-        """Concatenate all leaf arrays into a single 1-D vector.
-
-        Fields are traversed in sorted name order, depth-first for nested
-        NumericRecord.  Each leaf is raveled before concatenation.
-        """
-        parts = []
-        for field_name in self._store:
-            val = self._resolve_field(field_name)
-            if isinstance(val, NumericRecord):
-                parts.append(val.flatten())
-            else:
-                parts.append(jnp.ravel(val))
-        return jnp.concatenate(parts)
+    # -- Unflatten ------------------------------------------------------------
 
     @classmethod
     def unflatten(
@@ -146,20 +132,8 @@ class NumericRecord(Record):
 
 
 # ---------------------------------------------------------------------------
-# JAX PyTree registration
+# JAX PyTree registration — reuse Record's flatten, custom unflatten
 # ---------------------------------------------------------------------------
-
-
-def _numeric_record_flatten(v: NumericRecord) -> tuple[list, tuple[str, ...]]:
-    """Flatten NumericRecord for JAX pytree traversal."""
-    children = []
-    for field_name in v._store:
-        raw = v._store[field_name]
-        if isinstance(raw, Record):
-            children.append(raw)
-        else:
-            children.append(v._resolve_field(field_name))
-    return children, v.fields
 
 
 def _numeric_record_unflatten(
@@ -170,5 +144,5 @@ def _numeric_record_unflatten(
 
 
 jax.tree_util.register_pytree_node(
-    NumericRecord, _numeric_record_flatten, _numeric_record_unflatten
+    NumericRecord, _record_flatten, _numeric_record_unflatten
 )

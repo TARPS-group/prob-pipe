@@ -524,7 +524,7 @@ class RecordTemplate:
         RecordTemplate(physics=RecordTemplate(force=(), mass=()), obs=())
     """
 
-    __slots__ = ("_specs",)
+    __slots__ = ("_specs", "_fields", "_flat_size")
 
     def __init__(
         self,
@@ -553,9 +553,10 @@ class RecordTemplate:
                         f"Field {name!r}: shape must be a tuple of "
                         f"non-negative ints, got {spec!r}"
                     )
-        object.__setattr__(
-            self, "_specs", OrderedDict(sorted(field_specs.items()))
-        )
+        specs = OrderedDict(sorted(field_specs.items()))
+        object.__setattr__(self, "_specs", specs)
+        object.__setattr__(self, "_fields", tuple(specs.keys()))
+        object.__setattr__(self, "_flat_size", self._compute_flat_size())
 
     # -- Immutability -------------------------------------------------------
 
@@ -570,7 +571,7 @@ class RecordTemplate:
     @property
     def fields(self) -> tuple[str, ...]:
         """Field names in sorted order."""
-        return tuple(self._specs.keys())
+        return self._fields
 
     @property
     def leaf_shapes(self) -> dict[str, tuple[int, ...] | None]:
@@ -598,14 +599,21 @@ class RecordTemplate:
             if shape is not None
         }
 
+    def _compute_flat_size(self) -> int:
+        """Compute total scalar count across all numeric leaves."""
+        from .._utils import prod
+        total = 0
+        for spec in self._specs.values():
+            if isinstance(spec, RecordTemplate):
+                total += spec.flat_size
+            elif spec is not None:
+                total += prod(spec) if spec else 1
+        return total
+
     @property
     def flat_size(self) -> int:
         """Total number of scalar elements across all numeric leaves."""
-        from .._utils import prod
-        total = 0
-        for shape in self.numeric_leaf_shapes.values():
-            total += prod(shape) if shape else 1
-        return total
+        return self._flat_size
 
     def __contains__(self, name: str) -> bool:
         return name in self._specs

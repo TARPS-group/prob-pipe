@@ -8,7 +8,7 @@ adds numeric operations: ``flatten``, ``unflatten``, ``mean``, ``var``.
 from __future__ import annotations
 
 from collections import OrderedDict
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import jax
@@ -37,7 +37,7 @@ class RecordArray:
         Named values, each with shape ``(*batch_shape, *leaf_shape)``.
     """
 
-    __slots__ = ("_store", "_batch_shape", "_template")
+    __slots__ = ("_store", "_batch_shape", "_template", "_fields")
 
     def __init__(
         self,
@@ -61,11 +61,11 @@ class RecordArray:
                 f"Field names {sorted(fields)} do not match template "
                 f"fields {sorted(template.fields)}"
             )
-        object.__setattr__(
-            self, "_store", OrderedDict(sorted(fields.items()))
-        )
+        store = OrderedDict(sorted(fields.items()))
+        object.__setattr__(self, "_store", store)
         object.__setattr__(self, "_batch_shape", batch_shape)
         object.__setattr__(self, "_template", template)
+        object.__setattr__(self, "_fields", tuple(store.keys()))
 
     # -- Immutability -------------------------------------------------------
 
@@ -90,7 +90,7 @@ class RecordArray:
     @property
     def fields(self) -> tuple[str, ...]:
         """Field names in sorted order."""
-        return tuple(self._store.keys())
+        return self._fields
 
     # -- Field access -------------------------------------------------------
 
@@ -113,23 +113,10 @@ class RecordArray:
 
     def _get_record(self, index: int) -> Record:
         """Extract a single Record at a flat batch index."""
-        # Convert flat index to multi-dimensional index
         nd_index = np.unravel_index(index, self._batch_shape)
         fields: dict[str, Any] = {}
         for name in self._store:
-            val = self._store[name]
-            spec = self._template[name]
-            if isinstance(spec, RecordTemplate):
-                # Nested: extract sub-RecordArray then index
-                sub_batch = self._batch_shape
-                sub_ra = RecordArray(
-                    {sub_name: val[sub_name] for sub_name in spec.fields},
-                    batch_shape=sub_batch,
-                    template=spec,
-                )
-                fields[name] = sub_ra[index]
-            else:
-                fields[name] = val[nd_index]
+            fields[name] = self._store[name][nd_index]
         return Record(fields)
 
     def __contains__(self, name: str) -> bool:
@@ -188,8 +175,9 @@ class RecordArray:
                 field_parts.append(f"{name}=array(shape={val.shape})")
             else:
                 field_parts.append(f"{name}=...")
+        cls_name = type(self).__name__
         return (
-            f"RecordArray(batch_shape={self._batch_shape}, "
+            f"{cls_name}(batch_shape={self._batch_shape}, "
             f"{', '.join(field_parts)})"
         )
 
@@ -220,7 +208,6 @@ class NumericRecordArray(RecordArray):
         parts = []
         for name in self._store:
             val = self._store[name]
-            # Reshape to (*batch_shape, field_event_size)
             event_shape = val.shape[n_batch:]
             field_size = prod(event_shape)
             new_shape = self._batch_shape + (field_size,)
@@ -254,16 +241,10 @@ class NumericRecordArray(RecordArray):
         for name in template.fields:
             spec = template[name]
             if isinstance(spec, RecordTemplate):
-                size = spec.flat_size
-                chunk = flat[..., offset : offset + size]
-                # Recursively unflatten nested templates
-                sub_fields = cls._unflatten_nested(
-                    chunk, spec, batch_shape
+                raise NotImplementedError(
+                    "Nested RecordTemplate in NumericRecordArray.unflatten "
+                    "is not yet supported"
                 )
-                # Store nested fields with dotted access pattern
-                # For now, store as a sub-dict that gets wrapped
-                fields[name] = sub_fields
-                offset += size
             elif spec is None:
                 raise TypeError(
                     f"Cannot unflatten opaque field {name!r}"
@@ -276,89 +257,39 @@ class NumericRecordArray(RecordArray):
 
         return cls(fields, batch_shape=batch_shape, template=template)
 
-    @staticmethod
-    def _unflatten_nested(
-        flat_chunk: jnp.ndarray,
-        template: RecordTemplate,
-        batch_shape: tuple[int, ...],
-    ) -> jnp.ndarray:
-        """Unflatten a nested RecordTemplate chunk into a sub-RecordArray.
-
-        For now, returns the reshaped arrays as a dict; nested
-        RecordArray support will come in a future phase.
-        """
-        # TODO: return a nested NumericRecordArray once nesting is needed
-        raise NotImplementedError(
-            "Nested RecordTemplate in NumericRecordArray.unflatten "
-            "is not yet supported"
-        )
-
     # -- Reductions ---------------------------------------------------------
+
+    def _reduce(
+        self,
+        fn: Callable[[jnp.ndarray, int], jnp.ndarray],
+        axis: int = 0,
+    ) -> NumericRecordArray | Any:
+        """Apply a reduction function over a batch axis."""
+        from ._numeric_record import NumericRecord
+
+        new_batch = self._batch_shape[:axis] + self._batch_shape[axis + 1:]
+        fields = {name: fn(self._store[name], axis) for name in self._store}
+        if not new_batch:
+            return NumericRecord(fields)
+        return NumericRecordArray(
+            fields, batch_shape=new_batch, template=self._template
+        )
 
     def mean(self, axis: int = 0) -> Any:
         """Mean over a batch axis.
 
-        Parameters
-        ----------
-        axis : int
-            Batch axis to reduce.  Must be in ``range(len(batch_shape))``.
-
-        Returns
-        -------
-        NumericRecordArray or NumericRecord
-            If the result has no batch dimensions left, returns a
-            ``NumericRecord``.  Otherwise returns a
-            ``NumericRecordArray`` with one fewer batch dimension.
+        Returns ``NumericRecord`` if no batch dims remain, else
+        ``NumericRecordArray``.
         """
-        from ._numeric_record import NumericRecord
-
-        new_batch = self._batch_shape[:axis] + self._batch_shape[axis + 1 :]
-        fields: dict[str, jnp.ndarray] = {}
-        for name in self._store:
-            fields[name] = jnp.mean(self._store[name], axis=axis)
-
-        if not new_batch:
-            return NumericRecord(fields)
-        return NumericRecordArray(
-            fields, batch_shape=new_batch, template=self._template
-        )
+        return self._reduce(jnp.mean, axis)
 
     def var(self, axis: int = 0) -> Any:
         """Variance over a batch axis.
 
-        Parameters
-        ----------
-        axis : int
-            Batch axis to reduce.
-
-        Returns
-        -------
-        NumericRecordArray or NumericRecord
+        Returns ``NumericRecord`` if no batch dims remain, else
+        ``NumericRecordArray``.
         """
-        from ._numeric_record import NumericRecord
-
-        new_batch = self._batch_shape[:axis] + self._batch_shape[axis + 1 :]
-        fields: dict[str, jnp.ndarray] = {}
-        for name in self._store:
-            fields[name] = jnp.var(self._store[name], axis=axis)
-
-        if not new_batch:
-            return NumericRecord(fields)
-        return NumericRecordArray(
-            fields, batch_shape=new_batch, template=self._template
-        )
-
-    # -- Repr ---------------------------------------------------------------
-
-    def __repr__(self) -> str:
-        field_parts = []
-        for name in self._store:
-            val = self._store[name]
-            field_parts.append(f"{name}=array(shape={val.shape})")
-        return (
-            f"NumericRecordArray(batch_shape={self._batch_shape}, "
-            f"{', '.join(field_parts)})"
-        )
+        return self._reduce(jnp.var, axis)
 
 
 # ---------------------------------------------------------------------------
