@@ -31,7 +31,10 @@ from ._record_distribution import RecordDistribution
 from ._empirical import (
     ArrayEmpiricalDistribution,
     EmpiricalDistribution,
+    _RecordEmpiricalDistribution,
 )
+from ._record_array import RecordArray
+from .record import Record, RecordTemplate
 
 
 # ---------------------------------------------------------------------------
@@ -208,90 +211,34 @@ def _make_mixture_marginal(
     return obj
 
 
-class _RecordArrayMarginal(
-    RecordDistribution, SupportsSampling, SupportsMean, SupportsVariance,
-):
+class _RecordArrayMarginal(_RecordEmpiricalDistribution):
     """Output marginal when broadcast outputs are Records.
 
-    Wraps a :class:`RecordArray` and provides per-field weighted
-    mean, variance, and resampling.
+    Wraps a :class:`RecordArray` as a Record-valued empirical distribution
+    with per-field weighted mean, variance, and resampling.
     """
 
     def __init__(
         self,
-        record_array,
+        record_array: RecordArray,
         weights: Array | Weights | None = None,
         *,
         log_weights: Array | Weights | None = None,
         name: str | None = None,
     ):
-        from ._record_array import RecordArray
         if not isinstance(record_array, RecordArray):
             raise TypeError(
                 f"Expected RecordArray, got {type(record_array).__name__}"
             )
-        self._record_array = record_array
-        n = len(record_array)
-        self._w = Weights(n=n, weights=weights, log_weights=log_weights)
-        if name is None:
-            name = "record_array_marginal"
-        super().__init__(name=name)
+        # RecordArray is structurally a Record with batched fields; wrap it
+        # directly so _RecordEmpiricalDistribution sees one row per batch index.
+        samples = Record({f: record_array[f] for f in record_array.fields})
+        super().__init__(samples, weights=weights, log_weights=log_weights, name=name)
+        # Preserve the original template so event_shapes stay accurate
         self._record_template = record_array.template
-        self._approximate = True
-
-    _sampling_cost: str = "low"
-    _preferred_orchestration: str | None = None
-
-    @property
-    def n(self) -> int:
-        return len(self._record_array)
-
-    @property
-    def event_shape(self) -> tuple[int, ...]:
-        return (self._record_array.template.flat_size,)
-
-    def _mean(self):
-        from .record import Record
-        fields = {}
-        for f in self._record_array.fields:
-            fields[f] = self._w.mean(self._record_array[f])
-        return Record(fields)
-
-    def _variance(self):
-        from .record import Record
-        fields = {}
-        for f in self._record_array.fields:
-            fields[f] = self._w.variance(self._record_array[f])
-        return Record(fields)
-
-    def _sample_one(self, key):
-        idx = self._w.choice(key)
-        return self._record_array[idx]
-
-    def _sample(self, key, sample_shape=()):
-        from ._record_array import RecordArray
-        if sample_shape == ():
-            return self._sample_one(key)
-        n_draws = prod(sample_shape)
-        indices = self._w.choice(key, shape=(n_draws,))
-        fields = {}
-        for f in self._record_array.fields:
-            arr = self._record_array[f]
-            drawn = arr[indices]
-            if sample_shape != (n_draws,):
-                drawn = drawn.reshape(sample_shape + arr.shape[1:])
-            fields[f] = drawn
-        return RecordArray(
-            fields,
-            batch_shape=sample_shape,
-            template=self._record_array.template,
-        )
 
     def __repr__(self):
-        return (
-            f"MarginalizedBroadcastDistribution(record_array, "
-            f"n={self.n}, fields={self._record_array.fields})"
-        )
+        return f"MarginalizedBroadcastDistribution(n={self.n}, fields={self._record_data.fields})"
 
 
 class _ListMarginal[T](Distribution[T]):
@@ -353,37 +300,31 @@ def _make_marginal(
     if output_distributions is not None:
         return _make_mixture_marginal(output_distributions, weights, name=name)
 
-    # Already a RecordArray (e.g., from a distribution's _sample)
-    from ._record_array import RecordArray
     if isinstance(output_samples, RecordArray):
         return _RecordArrayMarginal(output_samples, weights, name=name)
 
-    # Record with batched leaves (e.g., from jax.vmap over a Record-returning fn)
-    from .record import Record, RecordTemplate
-    if isinstance(output_samples, Record):
-        first_field = output_samples[output_samples.fields[0]]
-        if hasattr(first_field, 'ndim') and first_field.ndim > 0:
-            n = first_field.shape[0]
-            tpl = RecordTemplate.from_record(output_samples, batch_shape=(n,))
-            fields = {f: output_samples[f] for f in output_samples.fields}
-            ra = RecordArray(fields, batch_shape=(n,), template=tpl)
-            return _RecordArrayMarginal(ra, weights, name=name)
+    # Record with batched leaves (e.g., from jax.vmap over a Record-returning fn).
+    # All fields must be arrays with a consistent leading batch dimension.
+    if isinstance(output_samples, Record) and output_samples.fields:
+        resolved = [output_samples[f] for f in output_samples.fields]
+        if all(hasattr(v, "ndim") and v.ndim > 0 for v in resolved):
+            n = resolved[0].shape[0]
+            if all(v.shape[0] == n for v in resolved):
+                tpl = RecordTemplate.from_record(output_samples, batch_shape=(n,))
+                fields = dict(zip(output_samples.fields, resolved))
+                ra = RecordArray(fields, batch_shape=(n,), template=tpl)
+                return _RecordArrayMarginal(ra, weights, name=name)
 
-    # Try stacking into an array
     if isinstance(output_samples, jnp.ndarray):
         return _ArrayMarginal(output_samples, weights, name=name)
 
     if isinstance(output_samples, list):
-        # Try stacking Records into a RecordArray
-        from .record import Record
         if output_samples and all(isinstance(r, Record) for r in output_samples):
-            from ._record_array import RecordArray
             try:
                 ra = RecordArray.stack(output_samples)
                 return _RecordArrayMarginal(ra, weights, name=name)
             except (ValueError, TypeError):
                 pass
-        # Try stacking into a flat array
         try:
             stacked = jnp.stack(
                 [jnp.asarray(r, dtype=jnp.float32) for r in output_samples], axis=0
