@@ -79,17 +79,17 @@ class TestFlattenUnflatten:
         flat = jnp.array([1.0, 2.0, 3.0, 4.0])
         nr = NumericRecord.unflatten(flat, template=tpl)
         assert isinstance(nr, NumericRecord)
-        np.testing.assert_allclose(nr.a, 1.0)
-        np.testing.assert_allclose(nr.b, [2.0, 3.0, 4.0])
+        np.testing.assert_allclose(nr["a"], 1.0)
+        np.testing.assert_allclose(nr["b"], [2.0, 3.0, 4.0])
 
     def test_roundtrip_with_template(self):
         tpl = RecordTemplate(r=(), K=(), phi=())
         nr = NumericRecord(r=1.8, K=70.0, phi=10.0)
         flat = nr.flatten()
         nr2 = NumericRecord.unflatten(flat, template=tpl)
-        np.testing.assert_allclose(float(nr2.r), 1.8)
-        np.testing.assert_allclose(float(nr2.K), 70.0)
-        np.testing.assert_allclose(float(nr2.phi), 10.0)
+        np.testing.assert_allclose(float(nr2["r"]), 1.8)
+        np.testing.assert_allclose(float(nr2["K"]), 70.0)
+        np.testing.assert_allclose(float(nr2["phi"]), 10.0)
 
     def test_roundtrip_nested_template(self):
         inner_tpl = RecordTemplate(x=(), y=(2,))
@@ -97,9 +97,9 @@ class TestFlattenUnflatten:
         flat = jnp.arange(6.0)  # x=0, y=[1,2], z=[3,4,5]
         nr = NumericRecord.unflatten(flat, template=outer_tpl)
         assert isinstance(nr["params"], NumericRecord)
-        np.testing.assert_allclose(nr.params.x, 0.0)
-        np.testing.assert_allclose(nr.params.y, [1.0, 2.0])
-        np.testing.assert_allclose(nr.z, [3.0, 4.0, 5.0])
+        np.testing.assert_allclose(nr["params"]["x"], 0.0)
+        np.testing.assert_allclose(nr["params"]["y"], [1.0, 2.0])
+        np.testing.assert_allclose(nr["z"], [3.0, 4.0, 5.0])
 
     def test_unflatten_opaque_raises(self):
         tpl = RecordTemplate(label=None, x=())
@@ -141,8 +141,8 @@ class TestPyTree:
         nr = NumericRecord(a=1.0, b=2.0)
         nr2 = jax.tree.map(lambda x: x * 2, nr)
         assert isinstance(nr2, NumericRecord)
-        np.testing.assert_allclose(float(nr2.a), 2.0)
-        np.testing.assert_allclose(float(nr2.b), 4.0)
+        np.testing.assert_allclose(float(nr2["a"]), 2.0)
+        np.testing.assert_allclose(float(nr2["b"]), 4.0)
 
     def test_tree_leaves(self):
         nr = NumericRecord(a=jnp.array(1.0), b=jnp.array(2.0))
@@ -161,7 +161,7 @@ class TestPyTree:
 
         @jax.jit
         def f(vals):
-            return vals.a + vals.b
+            return vals["a"] + vals["b"]
 
         result = f(nr)
         np.testing.assert_allclose(float(result), 3.0)
@@ -170,8 +170,8 @@ class TestPyTree:
         nr = NumericRecord(x=1.0)
 
         def f(vals):
-            return vals.x ** 2
+            return vals["x"] ** 2
 
         grads = jax.grad(f)(nr)
         assert isinstance(grads, NumericRecord)
-        np.testing.assert_allclose(float(grads.x), 2.0)
+        np.testing.assert_allclose(float(grads["x"]), 2.0)

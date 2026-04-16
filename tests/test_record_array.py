@@ -79,13 +79,13 @@ class TestRecordArrayAccess:
     def test_getitem_int(self, ra):
         r = ra[0]
         assert isinstance(r, Record)
-        np.testing.assert_allclose(r.x, [0, 1, 2])
-        np.testing.assert_allclose(r.y, 0.0)
+        np.testing.assert_allclose(r["x"], [0, 1, 2])
+        np.testing.assert_allclose(r["y"], 0.0)
 
     def test_getitem_int_last(self, ra):
         r = ra[9]
-        np.testing.assert_allclose(r.x, [27, 28, 29])
-        np.testing.assert_allclose(r.y, 9.0)
+        np.testing.assert_allclose(r["x"], [27, 28, 29])
+        np.testing.assert_allclose(r["y"], 9.0)
 
     def test_contains(self, ra):
         assert "x" in ra
@@ -263,13 +263,13 @@ class TestNumericRecordArrayReductions:
     def test_mean_returns_numeric_record(self, nra):
         m = nra.mean(axis=0)
         assert isinstance(m, NumericRecord)
-        assert m.x.shape == (3,)
-        assert m.y.shape == ()
+        assert m["x"].shape == (3,)
+        assert m["y"].shape == ()
 
     def test_mean_values(self, nra):
         m = nra.mean(axis=0)
-        np.testing.assert_allclose(m.y, 4.5)
-        np.testing.assert_allclose(m.x, [13.5, 14.5, 15.5])
+        np.testing.assert_allclose(m["y"], 4.5)
+        np.testing.assert_allclose(m["x"], [13.5, 14.5, 15.5])
 
     def test_var_returns_numeric_record(self, nra):
         v = nra.var(axis=0)
@@ -296,7 +296,7 @@ class TestNumericRecordArrayReductions:
         )
         m = nra.mean(axis=0).mean(axis=0)
         assert isinstance(m, NumericRecord)
-        np.testing.assert_allclose(m.x, 5.5)
+        np.testing.assert_allclose(m["x"], 5.5)
 
 
 # ---------------------------------------------------------------------------

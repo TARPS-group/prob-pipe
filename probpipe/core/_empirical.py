@@ -775,7 +775,7 @@ class _RecordBootstrapReplicateDistribution(
     with replacement from the source data, with the *same* row indices
     applied to all fields jointly.
 
-    Supports named field access (``bootstrap.X``, ``bootstrap["y"]``)
+    Supports named field access (``bootstrap["X"]``, ``bootstrap["y"]``)
     via :class:`~probpipe.core._record_distribution.RecordDistribution`,
     returning ``_RecordDistributionView`` instances that preserve
     correlation when used together in workflow function broadcasting.

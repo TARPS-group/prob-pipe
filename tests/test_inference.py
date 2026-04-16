@@ -732,8 +732,8 @@ class TestRecordDistributionProperties:
         np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])  # sorted: K, phi, r
         v2 = RecordDistribution.unflatten_value(posterior, flat)
         assert isinstance(v2, Record)
-        np.testing.assert_allclose(float(v2.K), 1.0)
-        np.testing.assert_allclose(float(v2.r), 3.0)
+        np.testing.assert_allclose(float(v2["K"]), 1.0)
+        np.testing.assert_allclose(float(v2["r"]), 3.0)
 
     def test_flatten_unflatten_roundtrip(self, posterior, template):
         from probpipe.core._record_distribution import RecordDistribution
@@ -742,8 +742,8 @@ class TestRecordDistributionProperties:
         assert flat.shape == (3,)
         v2 = RecordDistribution.unflatten_value(posterior, flat)
         assert isinstance(v2, Record)
-        np.testing.assert_allclose(float(v2.K), 1.0)
-        np.testing.assert_allclose(float(v2.r), 3.0)
+        np.testing.assert_allclose(float(v2["K"]), 1.0)
+        np.testing.assert_allclose(float(v2["r"]), 3.0)
 
     def test_unflatten_without_template_raises(self):
         from probpipe.core._record_distribution import RecordDistribution

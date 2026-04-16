@@ -287,18 +287,6 @@ class RecordDistribution(Distribution[Record]):
     def __getitem__(self, key: str) -> _RecordDistributionView:
         return _RecordDistributionView(self, key)
 
-    def __getattr__(self, name: str):
-        """Attribute access for named fields: ``dist.field_name`` → view."""
-        # Skip private attrs to avoid infinite recursion during __dict__ lookups
-        if name.startswith('_'):
-            raise AttributeError(name)
-        tpl = self.__dict__.get('_record_template')
-        if tpl is not None and name in tpl:
-            return self[name]
-        raise AttributeError(
-            f"'{type(self).__name__}' has no attribute {name!r}"
-        )
-
     def select(self, *fields: str, **mapping: str) -> dict[str, _RecordDistributionView]:
         """Select named fields as views for workflow function broadcasting.
 

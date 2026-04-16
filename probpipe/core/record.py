@@ -13,12 +13,12 @@ Usage::
     params = Record(r=1.8, K=70.0, phi=10.0)
     data = Record(counts=np.array([2, 1, 3, 0, 5]))
 
-    params.r          # → jnp.array(1.8)
-    params.fields   # → ('K', 'phi', 'r')
+    params["r"]       # → jnp.array(1.8)
+    params.fields     # → ('K', 'phi', 'r')
     params.flatten()  # → jnp.array([70., 10., 1.8])
 
     jax.tree.map(jnp.log, params)   # leaf-wise transform
-    jax.jit(lambda v: v.r + v.K)(params)  # JIT-compatible
+    jax.jit(lambda v: v["r"] + v["K"])(params)  # JIT-compatible
 """
 
 from __future__ import annotations
@@ -138,12 +138,6 @@ class Record:
         raise AttributeError("Record is immutable")
 
     # -- Field access -------------------------------------------------------
-
-    def __getattr__(self, name: str) -> _ResolvedField:
-        store = object.__getattribute__(self, "_store")
-        if name in store:
-            return self._resolve_field(name)
-        raise AttributeError(f"Record has no field {name!r}")
 
     def __getitem__(self, key: str | tuple[str, ...]) -> _ResolvedField:
         if isinstance(key, str):

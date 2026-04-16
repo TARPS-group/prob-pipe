@@ -230,7 +230,7 @@ def condition_on(
         condition_on(model, y_obs)
 
         # Named data kwargs — bundled into Record(X=..., y=...):
-        condition_on(model, X=bootstrap.X, y=bootstrap.y,
+        condition_on(model, X=bootstrap["X"], y=bootstrap["y"],
                      n_broadcast_samples=16)
 
     When named data kwargs are distribution views from the same parent,
