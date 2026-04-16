@@ -82,6 +82,27 @@ class TFPDistribution(
     def dtype(self) -> jnp.dtype:
         return self._tfp_dist.dtype
 
+    @property
+    def dtypes(self) -> dict[str, jnp.dtype]:
+        """Per-field dtypes (single field for TFPDistribution)."""
+        tpl = self.record_template
+        if tpl is not None:
+            return {name: self.dtype for name in tpl.fields}
+        return {}
+
+    @property
+    def support(self):
+        """The support of this distribution.  Override in subclasses."""
+        raise NotImplementedError(f"{type(self).__name__}.support")
+
+    @property
+    def supports(self) -> dict[str, any]:
+        """Per-field support constraints (single field for TFPDistribution)."""
+        tpl = self.record_template
+        if tpl is not None:
+            return {name: self.support for name in tpl.fields}
+        return {}
+
     # -- sampling & density -------------------------------------------------
 
     def _sample_one(self, key: PRNGKey) -> Array:

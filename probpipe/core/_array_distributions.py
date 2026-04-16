@@ -136,27 +136,36 @@ class NumericRecordDistribution(RecordDistribution):
     this class via :class:`TFPDistribution`.
     """
 
-    # -- dtype, support, batch_shape ----------------------------------------
+    # -- per-field metadata ---------------------------------------------------
 
     @property
-    def dtype(self) -> jnp.dtype:
-        """Array dtype of samples (default: float32)."""
-        return jnp.float32
+    def dtypes(self) -> dict[str, jnp.dtype]:
+        """Per-field dtypes.  Default: ``float32`` for every field."""
+        tpl = self.record_template
+        if tpl is not None:
+            return {name: jnp.float32 for name in tpl.fields}
+        return {}
+
+    @property
+    def supports(self) -> dict[str, Constraint]:
+        """Per-field support constraints.
+
+        Subclasses should override to provide meaningful constraints.
+        Default raises ``NotImplementedError``.
+        """
+        raise NotImplementedError(f"{type(self).__name__}.supports")
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
         """Batch shape (default: scalar, no batching)."""
         return ()
 
+    # Singular dtype kept as a default for subclasses that don't override.
+    # TFPDistribution overrides with self._tfp_dist.dtype.
     @property
-    def support(self) -> Constraint:
-        """The support of this distribution (set of values with non-zero density)."""
-        raise NotImplementedError(f"{type(self).__name__}.support")
-
-    @property
-    def supports(self) -> Constraint:
-        """Singular support (alias for ``support``)."""
-        return self.support
+    def dtype(self) -> jnp.dtype:
+        """Default dtype for samples (float32)."""
+        return jnp.float32
 
     @classmethod
     def _check_support_compatible(cls, other: NumericRecordDistribution) -> None:

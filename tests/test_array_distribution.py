@@ -255,11 +255,22 @@ class TestFlattenedView:
 # ---------------------------------------------------------------------------
 
 class TestSupports:
-    def test_supports_delegates_to_support(self, scalar_normal):
-        """For ArrayDistribution, supports should equal support."""
+    def test_supports_is_per_field_dict(self, scalar_normal):
+        """supports returns a per-field dict of constraints."""
         from probpipe import real
-        assert scalar_normal.supports == scalar_normal.support
-        assert scalar_normal.supports == real
+        result = scalar_normal.supports
+        assert isinstance(result, dict)
+        assert len(result) == 1
+        # The single field's constraint should match .support
+        assert list(result.values())[0] == scalar_normal.support
+        assert list(result.values())[0] == real
+
+    def test_dtypes_is_per_field_dict(self, scalar_normal):
+        """dtypes returns a per-field dict of dtypes."""
+        result = scalar_normal.dtypes
+        assert isinstance(result, dict)
+        assert len(result) == 1
+        assert list(result.values())[0] == scalar_normal.dtype
 
 
 # ---------------------------------------------------------------------------
