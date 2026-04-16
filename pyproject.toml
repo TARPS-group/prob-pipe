@@ -21,9 +21,12 @@ dependencies = [
   "jax>=0.8.1,<0.9",
   "jaxlib>=0.8.1,<0.9",
   "tfp-nightly>=0.26.0.dev20260318",
-  # sbijax currently pins arviz==1.0, but pymc and nutpie both require
-  # arviz<1.0. Until pymc/nutpie catch up, allow the older range so the
-  # [pymc] / [nutpie] extras work; [sbi] installs pin arviz==1.0 explicitly.
+  # sbijax 0.3.6 hard-pins arviz==1.0.0, but no released pymc yet accepts
+  # arviz 1.0 (the switch landed on pymc's v6 branch in pymc-devs/pymc#8019
+  # but 6.0 is unreleased as of 2026-04-16), and nutpie has not caught up
+  # either. We stay on arviz<1.0 for the [pymc] / [nutpie] extras; CI
+  # installs sbijax with --no-deps to bypass its strict pin. Revisit when
+  # pymc 6.0 ships.
   "arviz>=0.13,<1.0",
 ]
 
