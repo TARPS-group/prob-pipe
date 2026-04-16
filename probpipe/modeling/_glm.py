@@ -14,18 +14,19 @@ __all__ = ["GLMLikelihood"]
 
 
 def _coerce_array(x: ArrayLike | Record) -> jnp.ndarray:
-    """Extract a JAX array from a Record field or raw array-like.
+    """Extract a JAX array from a Record, RecordArray, or raw array-like.
 
-    Single-field Record: extract the field.
-    Multi-field Record with scalar fields: stack into a vector
-    (preserving any leading batch dimensions).
+    Single-field Record/RecordArray: extract the field.
+    Multi-field: stack fields into a vector (preserving leading batch dims).
     """
+    from .._utils import prod
+    from ..core._record_array import RecordArray
     if isinstance(x, jnp.ndarray):
         return x
-    if isinstance(x, Record):
+    if isinstance(x, (Record, RecordArray)):
         fields = x.fields
         if len(fields) == 1:
-            return x[fields[0]]
+            return jnp.asarray(x[fields[0]])
         arrays = [jnp.asarray(x[f]) for f in fields]
         return jnp.stack(arrays, axis=-1)
     return jnp.asarray(x)

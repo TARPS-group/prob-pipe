@@ -147,8 +147,7 @@ full public API surface.
 | `Record` | Named, immutable, lazy, JAX-pytree container for structured non-random values; `select()` for workflow function splatting |
 | `RecordDistribution` | Record-based distribution base; `component_names`, `__getitem__` → `_RecordDistributionView`, `select()` for correlated broadcasting |
 | `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
-| `TFPShapeMixin` | Mixin providing TFP shape conventions (`dtype`, `support`, `batch_shape`); shared by `ArrayDistribution` and `TFPEmpiricalDistribution` |
-| `ArrayDistribution` | Single-array distribution with TFP shape semantics (`TFPShapeMixin`); base for all TFP-backed distributions |
+| `NumericRecordDistribution` | Numeric-array distribution base; per-field `dtypes`, `supports`, `event_shapes`; base for all TFP-backed distributions (aliases: `ArrayDistribution`, `TFPRecordDistribution`) |
 | `WorkflowFunction` | Orchestration-aware function wrapper; groups views by parent for correlated broadcasting |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
@@ -208,19 +207,19 @@ converters should be above concrete-type converters.
 Some distribution families have a generic base and an array-specific
 subclass:
 
-- `EmpiricalDistribution[T]` / `ArrayEmpiricalDistribution`
+- `EmpiricalDistribution[T]` / `NumericEmpiricalDistribution`
 - `BootstrapReplicateDistribution[T]` / `ArrayBootstrapReplicateDistribution`
 
 The generic base carries only type-agnostic features (sampling, expectation).
-The array variant adds `event_shape`, `dim`, `dtype`, `support`, and moment
+The numeric variant adds `event_shape`, `dim`, `dtype`, `support`, and moment
 protocols (`SupportsMean`, `SupportsVariance`, `SupportsCovariance`).
 
 **Automatic factory dispatch:** Constructing a generic base with a numeric
-array automatically returns the array-specific subclass:
+array automatically returns the numeric-specific subclass:
 
 ```python
 EmpiricalDistribution(jnp.ones((100, 3)))
-# → returns ArrayEmpiricalDistribution
+# → returns NumericEmpiricalDistribution
 
 BootstrapReplicateDistribution(jnp.ones((50, 2)))
 # → returns ArrayBootstrapReplicateDistribution
@@ -228,8 +227,8 @@ BootstrapReplicateDistribution(jnp.ones((50, 2)))
 
 This is implemented via `__new__` on the generic base classes.  Non-numeric
 inputs (e.g. lists of objects, numpy object arrays) remain as the generic
-base class.  Calling the array subclass directly (e.g.
-`ArrayEmpiricalDistribution(...)`) is unaffected by the dispatch.
+base class.  Calling the numeric subclass directly (e.g.
+`NumericEmpiricalDistribution(...)`) is unaffected by the dispatch.
 
 ---
 

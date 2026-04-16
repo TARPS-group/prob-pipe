@@ -64,9 +64,9 @@ model = SimpleModel(prior, likelihood)
 
 # --- 2. Condition on data (auto-selects NUTS) ---
 posterior = condition_on(model, y)
-draws = posterior.draws()            # Record(intercept=..., slope=...)
-draws.intercept.mean()               # -0.93  (true: -1.0)
-draws.slope.mean()                   #  2.18  (true:  2.0)
+draws = posterior.draws()            # NumericRecordArray(intercept=..., slope=...)
+draws["intercept"].mean()            # -0.93  (true: -1.0)
+draws["slope"].mean()                #  2.18  (true:  2.0)
 
 # --- 3. Propagate uncertainty through a prediction ---
 @workflow_function

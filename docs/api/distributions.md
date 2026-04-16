@@ -4,6 +4,14 @@
 
 ::: probpipe.core.record.Record
 
+::: probpipe.core.record.RecordTemplate
+
+::: probpipe.core._numeric_record.NumericRecord
+
+::: probpipe.core._record_array.RecordArray
+
+::: probpipe.core._record_array.NumericRecordArray
+
 ::: probpipe.core._record_distribution.RecordDistribution
 
 ::: probpipe.core._record_distribution._RecordDistributionView
@@ -12,17 +20,13 @@
 
 ::: probpipe.core._distribution_base.Distribution
 
-::: probpipe.core._array_distributions.TFPRecordDistribution
-
-::: probpipe.core._array_distributions.ArrayDistribution
-
-::: probpipe.core._array_distributions.TFPShapeMixin
+::: probpipe.core._array_distributions.NumericRecordDistribution
 
 ::: probpipe.distributions._tfp_base.TFPDistribution
 
 ::: probpipe.core._empirical.EmpiricalDistribution
 
-::: probpipe.core._empirical.ArrayEmpiricalDistribution
+::: probpipe.core._empirical.NumericEmpiricalDistribution
 
 ::: probpipe.core._array_distributions.BootstrapDistribution
 
