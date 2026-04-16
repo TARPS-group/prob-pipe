@@ -590,6 +590,106 @@ class TestEmptyComponentsValidation:
             ProductDistribution()
 
 
+# ---------------------------------------------------------------------------
+# Positional args + auto-rename
+# ---------------------------------------------------------------------------
+
+
+class TestPositionalAndAutoRename:
+    """ProductDistribution accepts positional args and auto-renames on kwarg mismatch."""
+
+    def test_positional_args(self):
+        """Positional args use each distribution's .name as the key."""
+        nx = Normal(loc=0.0, scale=1.0, name="x")
+        ny = Normal(loc=1.0, scale=2.0, name="y")
+        joint = ProductDistribution(nx, ny)
+        assert joint.component_names == ("x", "y")
+
+    def test_positional_sample(self):
+        nx = Normal(loc=0.0, scale=1.0, name="x")
+        ny = Normal(loc=1.0, scale=2.0, name="y")
+        joint = ProductDistribution(nx, ny)
+        s = joint._sample(jax.random.PRNGKey(0))
+        assert "x" in s
+        assert "y" in s
+
+    def test_keyword_auto_rename(self):
+        """Keyword arg key overrides the distribution's name."""
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        joint = ProductDistribution(growth_rate=n)
+        assert joint.component_names == ("growth_rate",)
+        # The stored component should have the new name
+        comp = joint.components["growth_rate"]
+        assert comp.name == "growth_rate"
+
+    def test_auto_rename_preserves_provenance(self):
+        """Auto-renamed component tracks provenance back to the original."""
+        from probpipe.core.provenance import Provenance
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        joint = ProductDistribution(growth_rate=n)
+        comp = joint.components["growth_rate"]
+        assert comp.source is not None
+        assert comp.source.operation == "renamed"
+        assert comp.source.parents == (n,)
+        assert comp.source.metadata["old_name"] == "x"
+        assert comp.source.metadata["new_name"] == "growth_rate"
+
+    def test_auto_rename_samples_correctly(self):
+        """Auto-renamed component samples from the same distribution."""
+        n = Normal(loc=5.0, scale=0.01, name="x")
+        joint = ProductDistribution(mu=n)
+        s = joint._sample(jax.random.PRNGKey(0), (100,))
+        np.testing.assert_allclose(s["mu"].mean(), 5.0, atol=0.1)
+
+    def test_mixed_positional_and_keyword(self):
+        nx = Normal(loc=0.0, scale=1.0, name="x")
+        ny = Normal(loc=1.0, scale=2.0, name="orig")
+        joint = ProductDistribution(nx, renamed_y=ny)
+        assert set(joint.component_names) == {"x", "renamed_y"}
+
+    def test_positional_unnamed_raises(self):
+        """Positional args without a name should raise."""
+        # Construct a minimal dist without a name — hard since name is required.
+        # Instead, test duplicate detection.
+        nx = Normal(loc=0.0, scale=1.0, name="x")
+        with pytest.raises(ValueError, match="Duplicate"):
+            ProductDistribution(nx, x=Normal(loc=1.0, scale=1.0, name="x"))
+
+    def test_keyword_same_name_no_rename(self):
+        """When keyword matches the name, no rename occurs."""
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        joint = ProductDistribution(x=n)
+        # Should be the exact same object (no copy)
+        assert joint.components["x"] is n
+
+    def test_renamed_method_directly(self):
+        """Distribution.renamed() returns a copy with new name."""
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        n2 = n.renamed("y")
+        assert n2.name == "y"
+        assert n.name == "x"  # original unchanged
+        assert n2.source.operation == "renamed"
+        assert n2.source.parents == (n,)
+        # Sampling still works
+        s = n2._sample(jax.random.PRNGKey(0), (10,))
+        assert s.shape == (10,)
+
+    def test_nested_dict_auto_rename(self):
+        """Nested dict components auto-rename leaf distributions."""
+        joint = ProductDistribution(
+            physics={
+                "force": Normal(loc=0.0, scale=1.0, name="f"),
+                "mass": Gamma(concentration=2.0, rate=1.0, name="m"),
+            },
+            observation=Normal(loc=0.0, scale=0.1, name="observation"),
+        )
+        assert "physics" in joint.component_names
+        assert "observation" in joint.component_names
+        # Nested leaves should have been renamed
+        force_comp = joint.components["physics"]["force"]
+        assert force_comp.name == "force"
+
+
 class TestDistributionViewFromDistribution:
 
     def test_from_distribution_raises(self, joint_xy):

@@ -97,16 +97,39 @@ def _product_class_for_components(components: dict) -> type:
     return cls
 
 
-def _validate_nested_names(parent_key: str, d: dict) -> None:
-    """Recursively validate that leaf distribution names match their dict keys."""
+def _validate_nested_names(parent_key: str, d: dict) -> dict:
+    """Recursively auto-rename nested leaf distributions to match their dict keys."""
+    result = {}
     for key, val in d.items():
         if isinstance(val, dict):
-            _validate_nested_names(key, val)
+            result[key] = _validate_nested_names(key, val)
         elif hasattr(val, "name") and val.name != key:
+            result[key] = val.renamed(key)
+        else:
+            result[key] = val
+    return result
+
+
+def _merge_positional_and_keyword(
+    positional: tuple, keyword: dict,
+) -> dict:
+    """Merge positional distributions (keyed by .name) with keyword components."""
+    components = {}
+    for dist in positional:
+        if not hasattr(dist, "name") or not dist.name:
             raise ValueError(
-                f"Component name mismatch inside '{parent_key}': "
-                f"keyword '{key}' but distribution has name='{val.name}'"
+                "Positional arguments to ProductDistribution must be "
+                "named distributions (have a non-empty .name attribute)"
             )
+        key = dist.name
+        if key in components or key in keyword:
+            raise ValueError(
+                f"Duplicate component name {key!r}: appears in both "
+                "positional and keyword arguments"
+            )
+        components[key] = dist
+    components.update(keyword)
+    return components
 
 
 # ---------------------------------------------------------------------------
@@ -130,43 +153,65 @@ class ProductDistribution(
 
     Parameters
     ----------
+    *positional : ArrayDistribution
+        Named distributions.  Each distribution's ``.name`` is used as
+        the component key.
     name : str, optional
-        Distribution name.
+        Distribution name for the joint.
     **components : ArrayDistribution or dict
-        Named independent component distributions.  Record may be
+        Named independent component distributions.  Values may be
         ``ArrayDistribution`` instances (leaves) or nested dicts
         whose leaves are ``ArrayDistribution`` instances.
+        When a keyword key differs from the distribution's name, the
+        distribution is automatically renamed (via ``renamed()``) to
+        match the key.
+
+    Examples
+    --------
+    ::
+
+        # Positional — uses each distribution's name as the key:
+        ProductDistribution(Normal(0, 1, name="x"), Gamma(2, 1, name="y"))
+
+        # Keyword — auto-renames if the key differs:
+        ProductDistribution(growth_rate=Normal(0, 1, name="x"))
+
+        # Mixed:
+        ProductDistribution(Normal(0, 1, name="x"), scale=Gamma(2, 1, name="y"))
     """
 
     _sampling_cost = "low"
     _preferred_orchestration = None
 
-    def __new__(cls, *, name: str | None = None, **components):
+    def __new__(cls, *positional, name: str | None = None, **components):
+        components = _merge_positional_and_keyword(positional, components)
         if not components:
             return object.__new__(cls)
         actual_cls = _product_class_for_components(components)
         return object.__new__(actual_cls)
 
-    def __init__(self, *, name: str | None = None, **components):
+    def __init__(self, *positional, name: str | None = None, **components):
+        components = _merge_positional_and_keyword(positional, components)
         if not components:
             raise ValueError("ProductDistribution requires at least one component.")
+        # Auto-rename components whose name doesn't match the keyword key
+        resolved: dict[str, Any] = {}
         for key, comp in components.items():
             if isinstance(comp, dict):
-                _validate_nested_names(key, comp)
+                resolved[key] = _validate_nested_names(key, comp)
             elif comp.name != key:
-                raise ValueError(
-                    f"Component name mismatch: keyword '{key}' but "
-                    f"distribution has name='{comp.name}'"
-                )
-        for leaf in jax.tree.leaves(components):
+                resolved[key] = comp.renamed(key)
+            else:
+                resolved[key] = comp
+        for leaf in jax.tree.leaves(resolved):
             if not isinstance(leaf, ArrayDistribution):
                 raise TypeError(
                     f"All leaf components must be ArrayDistribution, "
                     f"got {type(leaf).__name__}"
                 )
-        self._components = dict(components)
+        self._components = resolved
         if name is None:
-            name = "product(" + ",".join(sorted(components.keys())) + ")"
+            name = "product(" + ",".join(sorted(resolved.keys())) + ")"
         super().__init__(name=name)
         self._record_template = _build_record_template(self._components)
 
@@ -295,8 +340,8 @@ class TFPProductDistribution(ProductDistribution):
     for interop with SBI and other TFP-dependent subsystems.
     """
 
-    def __init__(self, *, name: str | None = None, **components):
-        super().__init__(name=name, **components)
+    def __init__(self, *positional, name: str | None = None, **components):
+        super().__init__(*positional, name=name, **components)
         self._build_tfp_dist()
 
     def _build_tfp_dist(self):

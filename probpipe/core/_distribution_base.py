@@ -142,6 +142,34 @@ class Distribution[T](ABC):
         self._source = source
         return self
 
+    def renamed(self, new_name: str) -> Distribution:
+        """Return a shallow copy with a different name.
+
+        The copy shares all internal state but has a new ``name``.
+        Provenance is tracked: the copy's ``source`` records the rename
+        operation and points to the original as parent.
+
+        Any cached ``record_template`` is cleared so it regenerates
+        with the new name (relevant for ``TFPDistribution``).
+        """
+        import copy as _copy
+
+        clone = _copy.copy(self)
+        object.__setattr__(clone, "_name", new_name)
+        # Clear cached record_template so it regenerates with new name
+        if hasattr(clone, "_record_template"):
+            object.__setattr__(clone, "_record_template", None)
+        # Reset source so we can attach rename provenance
+        object.__setattr__(clone, "_source", None)
+        clone.with_source(
+            Provenance(
+                "renamed",
+                parents=(self,),
+                metadata={"old_name": self.name, "new_name": new_name},
+            )
+        )
+        return clone
+
     # -- repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
