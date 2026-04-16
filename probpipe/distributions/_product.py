@@ -97,12 +97,12 @@ def _product_class_for_components(components: dict) -> type:
     return cls
 
 
-def _validate_nested_names(parent_key: str, d: dict) -> dict:
+def _resolve_nested_names(parent_key: str, d: dict) -> dict:
     """Recursively auto-rename nested leaf distributions to match their dict keys."""
     result = {}
     for key, val in d.items():
         if isinstance(val, dict):
-            result[key] = _validate_nested_names(key, val)
+            result[key] = _resolve_nested_names(key, val)
         elif hasattr(val, "name") and val.name != key:
             result[key] = val.renamed(key)
         else:
@@ -194,11 +194,10 @@ class ProductDistribution(
         components = _merge_positional_and_keyword(positional, components)
         if not components:
             raise ValueError("ProductDistribution requires at least one component.")
-        # Auto-rename components whose name doesn't match the keyword key
         resolved: dict[str, Any] = {}
         for key, comp in components.items():
             if isinstance(comp, dict):
-                resolved[key] = _validate_nested_names(key, comp)
+                resolved[key] = _resolve_nested_names(key, comp)
             elif comp.name != key:
                 resolved[key] = comp.renamed(key)
             else:

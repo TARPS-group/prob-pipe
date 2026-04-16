@@ -8,6 +8,7 @@ Provides:
 
 from __future__ import annotations
 
+import copy as _copy
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
@@ -147,19 +148,14 @@ class Distribution[T](ABC):
 
         The copy shares all internal state but has a new ``name``.
         Provenance is tracked: the copy's ``source`` records the rename
-        operation and points to the original as parent.
-
-        Any cached ``record_template`` is cleared so it regenerates
-        with the new name (relevant for ``TFPDistribution``).
+        operation and points to the original as parent.  Any cached
+        ``record_template`` is cleared so it regenerates with the new
+        name (relevant for ``TFPDistribution``).
         """
-        import copy as _copy
-
         clone = _copy.copy(self)
         object.__setattr__(clone, "_name", new_name)
-        # Clear cached record_template so it regenerates with new name
-        if hasattr(clone, "_record_template"):
-            object.__setattr__(clone, "_record_template", None)
-        # Reset source so we can attach rename provenance
+        object.__setattr__(clone, "_record_template", None)
+        # Bypass write-once guard so rename provenance can be attached
         object.__setattr__(clone, "_source", None)
         clone.with_source(
             Provenance(

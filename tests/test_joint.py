@@ -647,13 +647,16 @@ class TestPositionalAndAutoRename:
         joint = ProductDistribution(nx, renamed_y=ny)
         assert set(joint.component_names) == {"x", "renamed_y"}
 
-    def test_positional_unnamed_raises(self):
-        """Positional args without a name should raise."""
-        # Construct a minimal dist without a name — hard since name is required.
-        # Instead, test duplicate detection.
+    def test_positional_duplicate_raises(self):
+        """Duplicate names across positional and keyword args raise."""
         nx = Normal(loc=0.0, scale=1.0, name="x")
         with pytest.raises(ValueError, match="Duplicate"):
             ProductDistribution(nx, x=Normal(loc=1.0, scale=1.0, name="x"))
+
+    def test_positional_non_distribution_raises(self):
+        """Positional args without a .name attribute raise."""
+        with pytest.raises(ValueError, match="named distributions"):
+            ProductDistribution(object())
 
     def test_keyword_same_name_no_rename(self):
         """When keyword matches the name, no rename occurs."""
