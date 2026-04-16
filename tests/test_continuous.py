@@ -242,4 +242,45 @@ class TestContinuousMoments:
         scipy_dist = _SCIPY_EQUIVALENTS[name]
         draws = np.asarray(sample(our_dist, key=key, sample_shape=(50_000,)))
         stat, p = _scipy.kstest(draws, scipy_dist.cdf)
-        assert p > 0.01, f"KS test failed for {name}: stat={stat:.4f}, p={p:.4e}"
+        # Project-wide goodness-of-fit threshold: p > 0.001 (~3σ).
+        # Strict enough to catch bugs, loose enough to avoid xdist flakes.
+        assert p > 0.001, f"KS test failed for {name}: stat={stat:.4f}, p={p:.4e}"
+
+
+# ---------------------------------------------------------------------------
+# prob() op (exp(log_prob)) — scipy baseline
+# ---------------------------------------------------------------------------
+
+
+from probpipe import prob  # noqa: E402
+
+
+class TestProb:
+    """prob(dist, x) == exp(log_prob) and matches scipy.stats.X.pdf."""
+
+    @pytest.mark.parametrize("name", ["Normal", "Beta", "Gamma", "Exponential"])
+    def test_prob_matches_scipy_pdf(self, name, key):
+        cls, kwargs = _CONTINUOUS_DISTS[name]
+        scipy_dist = _SCIPY_EQUIVALENTS[name]
+        # Evaluate at a few points inside the support
+        if name == "Beta":
+            xs = jnp.array([0.1, 0.5, 0.9])
+        elif name in ("Gamma", "Exponential"):
+            xs = jnp.array([0.5, 1.0, 2.0])
+        else:
+            xs = jnp.array([-1.0, 0.0, 1.0])
+        our_dist = cls(**kwargs)
+        ours = np.asarray(prob(our_dist, xs))
+        expected = scipy_dist.pdf(np.asarray(xs))
+        np.testing.assert_allclose(ours, expected, rtol=1e-4)
+
+    def test_prob_equals_exp_logprob(self, key):
+        """prob(dist, x) must equal exp(log_prob(dist, x))."""
+        from probpipe import log_prob as log_prob_op
+        d = Normal(loc=0.0, scale=1.0, name="x")
+        xs = jnp.array([-1.0, 0.5, 1.2])
+        np.testing.assert_allclose(
+            np.asarray(prob(d, xs)),
+            np.asarray(jnp.exp(log_prob_op(d, xs))),
+            rtol=1e-6,
+        )

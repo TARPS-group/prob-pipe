@@ -31,6 +31,17 @@ class TestConstraints:
     def test_real_check(self):
         assert jnp.all(real.check(jnp.array([-1.0, 0.0, 1.0])))
 
+    def test_real_check_extreme_values(self):
+        """real accepts any finite float, including extreme magnitudes."""
+        assert jnp.all(real.check(jnp.array([-1e30, -1.0, 0.0, 1.0, 1e30])))
+
+    def test_real_check_rejects_nonfinite(self):
+        """NaN / inf are outside the real support (finite floats)."""
+        # Real constraint on NaN/inf: must return False per row.
+        assert not bool(real.check(jnp.asarray(float("nan"))))
+        assert not bool(real.check(jnp.asarray(float("inf"))))
+        assert not bool(real.check(jnp.asarray(float("-inf"))))
+
     def test_positive_check(self):
         assert jnp.all(positive.check(jnp.array([0.1, 1.0, 100.0])))
         assert not jnp.all(positive.check(jnp.array([-1.0, 0.0, 1.0])))

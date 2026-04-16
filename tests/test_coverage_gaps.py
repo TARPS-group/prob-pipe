@@ -1,4 +1,9 @@
-"""Tests to improve code coverage for distribution protocols, ops, and helpers.
+"""Regression tests for narrow code paths added to close historical coverage gaps.
+
+Each test in this file targets a specific observable behavior that was
+discovered to be missing coverage (weighted paths, error branches on
+unsupported protocols, repr/alias fall-throughs).  Tests include real
+value/shape assertions — they are not coverage-only touches.
 
 Covers:
 - BootstrapDistribution: weighted sampling, variance, repr, support, evaluations

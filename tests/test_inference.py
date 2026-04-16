@@ -145,6 +145,8 @@ class TestApproximateDistributionValuesTemplate:
     def test_draws_returns_values(self, posterior_with_template):
         draws = posterior_with_template.draws()
         assert isinstance(draws, (Record, RecordArray))
+        assert draws.fields == ("K", "phi", "r")
+        assert draws["r"].shape == (100,)
 
     def test_draws_has_correct_fields(self, posterior_with_template):
         draws = posterior_with_template.draws()
@@ -379,13 +381,18 @@ class TestRWMH:
 
         raw_draws = result.draws()
         if hasattr(raw_draws, 'fields'):
-            # draws() returns a Record when prior has a name; flatten it
             raw_draws = jnp.concatenate(
                 [raw_draws[f] for f in raw_draws.fields], axis=-1
             )
         draws = np.asarray(raw_draws).reshape(-1, 2)
-        np.testing.assert_allclose(draws.mean(0), analytical_mean, atol=0.08)
-        np.testing.assert_allclose(draws.var(0, ddof=1), [analytical_var] * 2, atol=0.1)
+        # MC standard error: posterior_sd / sqrt(effective_n).
+        # RWMH on this 2D target with step_size=0.3 has heavy autocorrelation,
+        # so effective_n << 8000. Assume n_eff ~ 300 conservatively.
+        n_eff = 300
+        mc_se_mean = 4.0 * np.sqrt(analytical_var / n_eff)
+        np.testing.assert_allclose(draws.mean(0), analytical_mean, atol=mc_se_mean)
+        mc_se_var = 4.0 * np.sqrt(2.0 * analytical_var ** 2 / (n_eff - 1))
+        np.testing.assert_allclose(draws.var(0, ddof=1), [analytical_var] * 2, atol=mc_se_var)
 
     def test_requires_log_prob(self):
         """RWMH raises for distributions without SupportsLogProb and no conversion path."""

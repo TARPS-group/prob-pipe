@@ -647,3 +647,69 @@ class TestMakeMarginalEdgeCases:
         """Name propagates."""
         m = _make_marginal(jnp.ones((5, 2)), None, name="test_output")
         assert m._name == "test_output"
+
+
+# ---------------------------------------------------------------------------
+# _RecordArrayMarginal (Record-returning WorkflowFunctions)
+# ---------------------------------------------------------------------------
+
+
+from probpipe import Record, RecordArray, ProductDistribution  # noqa: E402
+from probpipe.core._broadcast_distributions import _RecordArrayMarginal  # noqa: E402
+from probpipe.core.node import workflow_function  # noqa: E402
+from probpipe import mean, variance, sample  # noqa: E402
+
+
+class TestRecordArrayMarginal:
+    """Record-returning WorkflowFunction outputs should be RecordArrayMarginal,
+    not _ListMarginal, and must support mean/variance/sample."""
+
+    @pytest.fixture
+    def record_workflow(self):
+        @workflow_function
+        def transform(x, y):
+            return Record(sum=x + y, diff=x - y)
+        return transform
+
+    @pytest.fixture
+    def prior(self):
+        return ProductDistribution(
+            Normal(loc=1.0, scale=0.1, name="x"),
+            Normal(loc=2.0, scale=0.1, name="y"),
+        )
+
+    def test_record_output_produces_record_array_marginal(
+        self, record_workflow, prior,
+    ):
+        result = record_workflow(**prior.select("x", "y"))
+        assert isinstance(result, _RecordArrayMarginal)
+
+    def test_mean_per_field(self, record_workflow, prior):
+        result = record_workflow(**prior.select("x", "y"))
+        m = mean(result)
+        assert isinstance(m, Record)
+        # sum = x + y ~ N(3, sqrt(0.02)); diff = x - y ~ N(-1, sqrt(0.02))
+        mc_se = 3.0 * np.sqrt(0.02) / np.sqrt(128)
+        np.testing.assert_allclose(float(m["sum"]), 3.0, atol=mc_se)
+        np.testing.assert_allclose(float(m["diff"]), -1.0, atol=mc_se)
+
+    def test_variance_per_field(self, record_workflow, prior):
+        result = record_workflow(**prior.select("x", "y"))
+        v = variance(result)
+        assert isinstance(v, Record)
+        # Var(x+y) = Var(x) + Var(y) = 0.02 when jointly sampled independently.
+        # Allow for MC SE on variance: ~ 2 * var / sqrt(n) = 2 * 0.02 / sqrt(128).
+        np.testing.assert_allclose(float(v["sum"]), 0.02, atol=0.02)
+        np.testing.assert_allclose(float(v["diff"]), 0.02, atol=0.02)
+
+    def test_sample_returns_record(self, record_workflow, prior, key):
+        result = record_workflow(**prior.select("x", "y"))
+        s = sample(result, key=key, sample_shape=(5,))
+        assert "sum" in s
+        assert s["sum"].shape == (5,)
+        assert s["diff"].shape == (5,)
+
+    def test_repr_mentions_fields(self, record_workflow, prior):
+        result = record_workflow(**prior.select("x", "y"))
+        r = repr(result)
+        assert "sum" in r and "diff" in r

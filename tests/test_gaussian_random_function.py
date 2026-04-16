@@ -1525,3 +1525,42 @@ class TestMonteCarlo:
             Y_h.mean(axis=0), pred_mean, atol=self.MC_ATOL_MEAN
         )
         np.testing.assert_allclose(emp_cov, pred_cov, atol=self.MC_ATOL_VAR)
+
+
+# ---------------------------------------------------------------------------
+# Independent kernel baselines (scipy.spatial.distance)
+# ---------------------------------------------------------------------------
+
+
+class TestRBFKernelBaseline:
+    """Validate the RBF kernel against scipy.spatial.distance.cdist.
+
+    A regression here would indicate the kernel implementation drifted
+    from the standard squared-exponential form K(x, y) = var * exp(-||x-y||^2 / (2*ell^2)).
+    """
+
+    def test_rbf_matches_scipy_unit(self):
+        from scipy.spatial.distance import cdist
+        rng = np.random.default_rng(0)
+        X = rng.standard_normal((7, 2)).astype(np.float32)
+        K = np.asarray(_rbf_kernel(jnp.asarray(X), jnp.asarray(X)))
+        sq_dist = cdist(X, X, "sqeuclidean")
+        expected = np.exp(-0.5 * sq_dist)
+        np.testing.assert_allclose(K, expected, atol=1e-5)
+
+    def test_rbf_matches_scipy_with_hyperparams(self):
+        from scipy.spatial.distance import cdist
+        rng = np.random.default_rng(1)
+        X = rng.standard_normal((5, 3)).astype(np.float32)
+        ls = 2.0
+        var = 3.5
+        K = np.asarray(_rbf_kernel(jnp.asarray(X), jnp.asarray(X),
+                                   lengthscale=ls, variance=var))
+        sq_dist = cdist(X, X, "sqeuclidean")
+        expected = var * np.exp(-0.5 * sq_dist / ls ** 2)
+        np.testing.assert_allclose(K, expected, atol=1e-5)
+
+    def test_rbf_diagonal_equals_variance(self):
+        X = jnp.asarray([[0.0, 1.0], [2.0, 3.0]])
+        K = _rbf_kernel(X, X, variance=2.5)
+        np.testing.assert_allclose(np.diag(np.asarray(K)), [2.5, 2.5], atol=1e-6)

@@ -280,6 +280,75 @@ class TestConditionOn:
         cond_var = variance(cond)
         np.testing.assert_allclose(float(cond_var["y"][0]), 0.36, atol=1e-5)
 
+    def test_conditional_covariance_schur_complement_3var(self):
+        """Conditional covariance matches the Schur complement formula.
+
+        For a 3-variable joint N(mu, Sigma) partitioned as (a, b | c) where
+        c is conditioned on, the conditional Sigma_{ab|c} equals the 2x2
+        Schur complement Sigma_ab - Sigma_{ab,c} Sigma_cc^{-1} Sigma_{c,ab}.
+        """
+        mu = np.array([0.0, 1.0, -1.0])
+        # 3x3 positive-definite covariance with nontrivial cross terms
+        cov_np = np.array(
+            [[1.00, 0.30, 0.20],
+             [0.30, 2.00, 0.50],
+             [0.20, 0.50, 1.50]],
+            dtype=np.float32,
+        )
+        jg = JointGaussian(
+            mean=jnp.asarray(mu), cov=jnp.asarray(cov_np),
+            a=1, b=1, c=1,
+        )
+
+        # Condition on c = 0.5.
+        cond = condition_on(jg, c=jnp.array([0.5]))
+
+        # Analytical Schur complement: indices a,b = 0,1; c = 2.
+        Sigma_ab = cov_np[:2, :2]
+        Sigma_abc = cov_np[:2, 2:3]
+        Sigma_cc = cov_np[2:3, 2:3]
+        expected_cond_cov = Sigma_ab - Sigma_abc @ np.linalg.inv(Sigma_cc) @ Sigma_abc.T
+
+        # ProbPipe stores per-component marginal variance, so compare diagonals.
+        cond_var = variance(cond)
+        np.testing.assert_allclose(
+            float(cond_var["a"][0]), expected_cond_cov[0, 0], atol=1e-5,
+        )
+        np.testing.assert_allclose(
+            float(cond_var["b"][0]), expected_cond_cov[1, 1], atol=1e-5,
+        )
+
+    def test_conditional_mean_vs_scipy(self):
+        """Conditional mean matches scipy.stats.multivariate_normal pdf-based
+        reasoning via the Gaussian formula computed with numpy."""
+        mu = np.array([0.5, -0.3, 1.2])
+        cov_np = np.array(
+            [[1.0, 0.2, 0.1],
+             [0.2, 1.5, 0.4],
+             [0.1, 0.4, 0.8]],
+            dtype=np.float32,
+        )
+        jg = JointGaussian(
+            mean=jnp.asarray(mu), cov=jnp.asarray(cov_np),
+            x=1, y=1, z=1,
+        )
+        # Condition on y = 2.0
+        y_obs = 2.0
+        cond = condition_on(jg, y=jnp.array([y_obs]))
+        cond_mean = mean(cond)
+
+        # Analytical: for joint N(mu, Sigma) conditioning on y_idx=1:
+        # mu_{x,z|y} = mu_{x,z} + Sigma_{xz,y} Sigma_yy^{-1} (y_obs - mu_y)
+        other_idx = [0, 2]
+        y_idx = [1]
+        Sigma_oy = cov_np[np.ix_(other_idx, y_idx)]
+        Sigma_yy = cov_np[np.ix_(y_idx, y_idx)]
+        mu_o = mu[other_idx]
+        mu_y = mu[y_idx]
+        expected = mu_o + (Sigma_oy @ np.linalg.inv(Sigma_yy) @ (np.array([y_obs]) - mu_y)).ravel()
+        np.testing.assert_allclose(float(cond_mean["x"][0]), expected[0], atol=1e-5)
+        np.testing.assert_allclose(float(cond_mean["z"][0]), expected[1], atol=1e-5)
+
     def test_conditioning_reduces_dimensions(self):
         jg = JointGaussian(
             mean=jnp.array([0.0, 1.0, 2.0, 3.0]),

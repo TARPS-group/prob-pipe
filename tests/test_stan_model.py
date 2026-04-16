@@ -262,3 +262,60 @@ class TestStanModelImportError:
         with patch.dict("sys.modules", {"bridgestan": None}):
             with pytest.raises(ImportError, match="pip install bridgestan"):
                 StanModel("test.stan")
+
+
+# ---------------------------------------------------------------------------
+# Real BridgeStan integration (requires a compiled Stan program)
+# ---------------------------------------------------------------------------
+
+
+_bs = pytest.importorskip("bridgestan")
+
+
+@pytest.fixture(scope="module")
+def tmp_stan_model(tmp_path_factory):
+    """Compile a trivial Stan program once per module for integration tests.
+
+    The model is Normal(mu, 1) with a unit-variance prior on mu.  This
+    gives an analytically tractable log_density for verifying StanModel
+    behaviour against first principles.
+    """
+    tmp_dir = tmp_path_factory.mktemp("stan_models")
+    stan_file = tmp_dir / "normal_mean.stan"
+    stan_file.write_text(
+        """
+        parameters { real mu; }
+        model { mu ~ normal(0, 1); }
+        """
+    )
+    try:
+        bs_model = _bs.StanModel(str(stan_file))
+    except Exception as exc:
+        pytest.skip(f"Stan compilation unavailable: {exc}")
+    model = object.__new__(StanModel)
+    model._stan_file = str(stan_file)
+    model._stan_data = None
+    model._name_str = "normal_mean"
+    model._bs_model = bs_model
+    model._num_params = 1
+    return model
+
+
+class TestStanModelIntegration:
+    """Minimal real-backend checks against a compiled Stan program."""
+
+    def test_event_shape(self, tmp_stan_model):
+        assert tmp_stan_model.event_shape == (1,)
+
+    def test_log_prob_matches_analytical(self, tmp_stan_model):
+        """Stan's log_density for mu ~ N(0, 1) equals -0.5 * mu^2 + const."""
+        for mu in [-1.0, 0.0, 0.5, 2.0]:
+            lp = float(tmp_stan_model._log_prob(jnp.asarray([mu])))
+            # Stan drops the normalizing constant (log(2*pi)/2), so lp = -mu^2/2
+            np.testing.assert_allclose(lp, -0.5 * mu * mu, atol=1e-5)
+
+    def test_constrain_identity_for_real(self, tmp_stan_model):
+        """For unconstrained real parameters, constrain is the identity."""
+        x = np.array([1.23])
+        constrained = tmp_stan_model._bs_model.param_constrain(x)
+        np.testing.assert_allclose(constrained, x)

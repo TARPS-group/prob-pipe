@@ -36,6 +36,19 @@ class TestConstruction:
         with pytest.raises(TypeError, match="numeric"):
             NumericRecord(flag=True)
 
+    def test_bytes_rejected(self):
+        with pytest.raises(TypeError, match="numeric"):
+            NumericRecord(label=b"binary")
+
+    def test_list_of_strings_rejected(self):
+        """Lists must contain numbers, not strings."""
+        with pytest.raises(TypeError, match="numeric"):
+            NumericRecord(tags=["a", "b"])
+
+    def test_none_rejected(self):
+        with pytest.raises(TypeError, match="numeric"):
+            NumericRecord(missing=None)
+
     def test_nested_record_not_numeric_raises(self):
         """Nested plain Record in NumericRecord raises."""
         inner = Record(x=1.0)

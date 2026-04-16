@@ -237,3 +237,50 @@ class TestTransformedProtocolDuckTyping:
         emp = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
         td = TransformedDistribution(emp, tfb.Exp())
         assert not isinstance(td, SupportsLogProb)
+
+
+# ---------------------------------------------------------------------------
+# Bijector correctness (identity + change-of-variables)
+# ---------------------------------------------------------------------------
+
+
+class TestBijectorCorrectness:
+    """Validate that TransformedDistribution applies bijector math correctly."""
+
+    def test_identity_preserves_moments(self, key):
+        """Identity bijector: moments and log_prob are unchanged."""
+        import numpy as np
+        base = Normal(loc=2.0, scale=0.5, name="x")
+        td = TransformedDistribution(base, tfb.Identity())
+        # Moments
+        np.testing.assert_allclose(float(mean(td)), float(mean(base)), atol=1e-6)
+        np.testing.assert_allclose(float(variance(td)), float(variance(base)), atol=1e-6)
+        # Samples from the same key match
+        s_base = sample(base, key=key, sample_shape=(100,))
+        s_td = sample(td, key=key, sample_shape=(100,))
+        np.testing.assert_allclose(np.asarray(s_base), np.asarray(s_td), atol=1e-6)
+        # log_prob matches
+        xs = jnp.array([-1.0, 0.0, 1.0, 2.5])
+        np.testing.assert_allclose(
+            np.asarray(log_prob(td, xs)),
+            np.asarray(log_prob(base, xs)),
+            atol=1e-5,
+        )
+
+    def test_log_prob_jacobian_matches_tfp_direct(self, key):
+        """log_prob uses the correct Jacobian change-of-variables.
+
+        Compare against tfp.TransformedDistribution computed directly.
+        """
+        import numpy as np
+        import tensorflow_probability.substrates.jax.distributions as tfd
+        base = Normal(loc=0.0, scale=1.0, name="x")
+        bijector = tfb.Exp()
+        td = TransformedDistribution(base, bijector)
+        tfp_ref = tfd.TransformedDistribution(distribution=base._tfp_dist, bijector=bijector)
+        ys = jnp.array([0.1, 1.0, 5.0])
+        np.testing.assert_allclose(
+            np.asarray(log_prob(td, ys)),
+            np.asarray(tfp_ref.log_prob(ys)),
+            rtol=1e-5, atol=1e-6,
+        )

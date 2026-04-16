@@ -55,6 +55,32 @@ class TestRecordArrayConstruction:
         with pytest.raises(ValueError, match="at least one"):
             RecordArray(batch_shape=(5,), template=tpl)
 
+    def test_zero_length_batch(self):
+        """batch_shape=(0,) is a valid edge case (no samples)."""
+        tpl = RecordTemplate(x=())
+        ra = RecordArray(x=jnp.zeros(0), batch_shape=(0,), template=tpl)
+        assert ra.batch_shape == (0,)
+        assert len(ra) == 0
+        assert ra["x"].shape == (0,)
+
+    def test_flatten_preserves_nan(self):
+        """flatten() must not silently replace NaN (numerical stability)."""
+        tpl = RecordTemplate(a=(), b=(2,))
+        nra = NumericRecordArray(
+            a=jnp.array([jnp.nan, 1.0]),
+            b=jnp.array([[jnp.inf, -jnp.inf], [0.0, jnp.nan]]),
+            batch_shape=(2,),
+            template=tpl,
+        )
+        flat = nra.flatten()
+        # flat[0] = [nan, inf, -inf]; flat[1] = [1.0, 0.0, nan]
+        row0 = np.asarray(flat[0])
+        row1 = np.asarray(flat[1])
+        assert np.isnan(row0[0])
+        assert np.isposinf(row0[1])
+        assert np.isneginf(row0[2])
+        assert np.isnan(row1[2])
+
 
 # ---------------------------------------------------------------------------
 # RecordArray field access

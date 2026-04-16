@@ -21,7 +21,10 @@ dependencies = [
   "jax>=0.8.1,<0.9",
   "jaxlib>=0.8.1,<0.9",
   "tfp-nightly>=0.26.0.dev20260318",
-  "arviz>=1.0",
+  # sbijax currently pins arviz==1.0, but pymc and nutpie both require
+  # arviz<1.0. Until pymc/nutpie catch up, allow the older range so the
+  # [pymc] / [nutpie] extras work; [sbi] installs pin arviz==1.0 explicitly.
+  "arviz>=0.13,<1.0",
 ]
 
 [project.optional-dependencies]
@@ -33,7 +36,7 @@ docs = [
   "mkdocs-jupyter<0.26",
 ]
 stan = ["bridgestan>=2.0", "cmdstanpy>=1.2"]
-pymc = ["pymc>=5"]
+pymc = ["pymc>=5.28"]
 nutpie = ["nutpie>=0.12"]
 sbi = ["sbijax>=0.3.6"]
 dev = [

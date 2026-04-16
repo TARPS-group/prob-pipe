@@ -352,7 +352,18 @@ class TestBroadcastingReconnection:
         )
 
     def test_joint_views_sampled_together_loop(self):
-        """Two views from same parent passed to workflow -> sampled jointly."""
+        """Two views from same parent passed to workflow -> sampled jointly.
+
+        Independent and joint sampling produce the same a+b mean (10.0),
+        so only variance discriminates between them. Joint and independent
+        sampling both give Var(a+b) = Var(a) + Var(b) = 2 here because
+        x and y are independent components of the product — but the samples
+        must come from *paired* draws (same draw index for a and b) rather
+        than independent draws, which the variance alone can't verify.
+        We check the variance is finite and in range as a sanity check, and
+        defer the true identity check to ``test_same_view_twice_*`` tests
+        where a = b is expected.
+        """
         joint = ProductDistribution(
             x=Normal(loc=0.0, scale=1.0, name="x"),
             y=Normal(loc=10.0, scale=1.0, name="y"),
@@ -360,9 +371,14 @@ class TestBroadcastingReconnection:
         wf = self._make_add_workflow("loop")
         result = wf(a=joint["x"], b=joint["y"])
         assert hasattr(result, "samples")
-        # x ~ N(0,1), y ~ N(10,1) => a+b ~ N(10, sqrt(2))
+        # x ~ N(0,1), y ~ N(10,1), independent => a+b ~ N(10, sqrt(2))
+        # With n=128 (default broadcast), MC SE on mean ~ sqrt(2)/sqrt(128) ~ 0.125
         mean_val = float(jnp.mean(result.samples))
-        assert abs(mean_val - 10.0) < 2.0
+        var_val = float(jnp.var(result.samples))
+        # Mean: 3 * MC SE tolerance
+        np.testing.assert_allclose(mean_val, 10.0, atol=3 * np.sqrt(2) / np.sqrt(128))
+        # Variance: 2.0 for independent components (loose since var of var is larger)
+        np.testing.assert_allclose(var_val, 2.0, atol=0.8)
 
     def test_same_view_twice_gives_identical_values_loop(self):
         """If joint['x'] is passed to both args, they get the same values (loop)."""
@@ -691,6 +707,26 @@ class TestPositionalAndAutoRename:
         # Nested leaves should have been renamed
         force_comp = joint.components["physics"]["force"]
         assert force_comp.name == "force"
+
+    def test_rename_preserves_sampling_statistics(self):
+        """Auto-renamed component samples identically to the original."""
+        original = Normal(loc=3.0, scale=0.5, name="x")
+        joint = ProductDistribution(mu=original)
+        renamed = joint.components["mu"]
+
+        key = jax.random.PRNGKey(123)
+        s_orig = original._sample(key, (5000,))
+        s_renamed = renamed._sample(key, (5000,))
+        np.testing.assert_allclose(np.asarray(s_orig), np.asarray(s_renamed),
+                                   atol=1e-6)
+
+    def test_rename_traversable_via_provenance_ancestors(self):
+        """The original distribution is in the renamed component's ancestors."""
+        from probpipe.core.provenance import provenance_ancestors
+        original = Normal(loc=0.0, scale=1.0, name="x")
+        joint = ProductDistribution(renamed_x=original)
+        renamed = joint.components["renamed_x"]
+        assert original in provenance_ancestors(renamed)
 
 
 class TestDistributionViewFromDistribution:

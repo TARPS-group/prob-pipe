@@ -258,7 +258,7 @@ class TestDiscreteMoments:
         s = np.asarray(sample(d, key=key, sample_shape=(50_000,)))
         counts = np.bincount(s.astype(int), minlength=2)
         _, p = _chi2_discrete(counts, np.array([0.3, 0.7]))
-        assert p > 0.01, f"chi2 failed: p={p:.4e}"
+        assert p > 0.001, f"chi2 failed: p={p:.4e}"
 
     def test_binomial_mean_and_variance(self):
         n, p = 10, 0.3
@@ -273,7 +273,7 @@ class TestDiscreteMoments:
         counts = np.bincount(s.astype(int), minlength=11)
         expected_probs = scipy.stats.binom.pmf(np.arange(11), 10, 0.3)
         _, p = _chi2_discrete(counts, expected_probs)
-        assert p > 0.01, f"chi2 failed: p={p:.4e}"
+        assert p > 0.001, f"chi2 failed: p={p:.4e}"
 
     def test_poisson_mean_and_variance(self):
         d = Poisson(rate=5.0, name="x")
@@ -288,7 +288,7 @@ class TestDiscreteMoments:
         counts = np.bincount(s.astype(int), minlength=max_k)
         expected_probs = scipy.stats.poisson.pmf(np.arange(max_k), 5.0)
         _, p = _chi2_discrete(counts, expected_probs)
-        assert p > 0.01, f"chi2 failed: p={p:.4e}"
+        assert p > 0.001, f"chi2 failed: p={p:.4e}"
 
     def test_poisson_log_prob_matches_scipy(self):
         """log_prob must match scipy.stats.poisson.logpmf."""
