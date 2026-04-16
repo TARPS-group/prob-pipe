@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..core.distribution import (
-    TFPRecordDistribution,
+    NumericRecordDistribution,
     _mc_expectation,
 )
 from ..core.protocols import (
@@ -28,7 +28,7 @@ from ..custom_types import Array, ArrayLike, PRNGKey
 
 
 class TFPDistribution(
-    TFPRecordDistribution,
+    NumericRecordDistribution,
     SupportsSampling,
     SupportsLogProb,
     SupportsMean,

@@ -24,7 +24,7 @@ except ImportError:
 
 from ..custom_types import PRNGKey, Array
 from .distribution import (
-    ArrayDistribution,
+    NumericRecordDistribution,
     BroadcastDistribution,
     Distribution,
     EmpiricalDistribution,
@@ -487,7 +487,7 @@ class WorkflowFunction(Node):
                 continue
             # Auto-convert external distribution types to ProbPipe
             if not isinstance(value, Distribution):
-                values[name] = converter_registry.convert(value, ArrayDistribution)
+                values[name] = converter_registry.convert(value, NumericRecordDistribution)
                 value = values[name]
             broadcast.append(name)
         return broadcast

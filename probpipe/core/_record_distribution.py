@@ -3,7 +3,7 @@
 Provides the named-component layer (``component_names``, ``__getitem__``,
 ``select()``) and Record-aware flatten/unflatten, without imposing TFP
 shape conventions (dtype, support, batch_shape).  Those live on
-``TFPShapeMixin`` and its consumers.
+``NumericRecordDistribution`` and its consumers.
 
 ``_RecordDistributionView`` is the lightweight component reference,
 analogous to the former ``DistributionView`` but for any distribution
@@ -230,16 +230,16 @@ class _RecordDistributionView(Distribution, SupportsSampling, SupportsMean, Supp
 def _build_record_template(components: dict) -> RecordTemplate:
     """Build a RecordTemplate from a component pytree.
 
-    Each ``ArrayDistribution`` leaf contributes its ``event_shape``.
+    Each ``NumericRecordDistribution`` leaf contributes its ``event_shape``.
     Nested dicts become nested ``RecordTemplate``.
     """
-    from ._array_distributions import ArrayDistribution
+    from ._array_distributions import NumericRecordDistribution
 
     specs: dict[str, tuple[int, ...] | RecordTemplate] = {}
     for name, comp in components.items():
         if isinstance(comp, dict):
             specs[name] = _build_record_template(comp)
-        elif isinstance(comp, ArrayDistribution):
+        elif isinstance(comp, NumericRecordDistribution):
             specs[name] = comp.event_shape
         else:
             raise TypeError(f"Unexpected component type: {type(comp).__name__}")
@@ -356,7 +356,7 @@ class RecordDistribution(Distribution[Record]):
         return NumericRecordArray.unflatten(flat, template=tpl)
 
     def as_flat_distribution(self) -> FlattenedView:
-        """View this distribution as a flat ``ArrayDistribution``.
+        """View this distribution as a flat ``NumericRecordDistribution``.
 
         Returns a :class:`~probpipe.core._array_distributions.FlattenedView`
         with ``event_shape = (event_size,)`` for algorithms expecting

@@ -13,7 +13,7 @@ from .._utils import prod
 
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..core.distribution import (
-    ArrayDistribution,
+    NumericRecordDistribution,
     _mc_expectation,
 )
 from ..core._record_distribution import RecordDistribution, _build_record_template

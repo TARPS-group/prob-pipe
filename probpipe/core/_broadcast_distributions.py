@@ -29,7 +29,7 @@ from .._weights import Weights
 from ._distribution_base import Distribution
 from ._record_distribution import RecordDistribution
 from ._empirical import (
-    ArrayEmpiricalDistribution,
+    NumericEmpiricalDistribution,
     EmpiricalDistribution,
     _RecordEmpiricalDistribution,
 )
@@ -46,10 +46,10 @@ from .record import Record, RecordTemplate
 # ---------------------------------------------------------------------------
 
 
-class _ArrayMarginal(ArrayEmpiricalDistribution):
+class _ArrayMarginal(NumericEmpiricalDistribution):
     """Output marginal when broadcast outputs are stackable arrays.
 
-    Inherits from :class:`ArrayEmpiricalDistribution` for weighted
+    Inherits from :class:`NumericEmpiricalDistribution` for weighted
     resampling and exact weighted moments.
     """
 
@@ -364,7 +364,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
        ``BroadcastDistribution`` does **not** inherit from
        :class:`~probpipe.distributions.joint.JointDistribution`.
        ``JointDistribution`` requires all leaves to be
-       ``ArrayDistribution`` instances with TFP shape semantics
+       ``NumericRecordDistribution`` instances with TFP shape semantics
        (``batch_shape``, ``event_shape``), but a broadcast output can be
        any type — arrays, distributions, strings, etc. — and input
        samples are plain arrays without distribution metadata.  The two

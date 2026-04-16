@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import ArrayLike
-from ..core._array_distributions import ArrayDistribution
+from ..core._array_distributions import NumericRecordDistribution
 from ..core.record import Record
 from ..core._record_distribution import RecordDistribution
 
@@ -94,7 +94,7 @@ def _component_key_paths(components) -> tuple:
     Parameters
     ----------
     components : dict
-        A (possibly nested) dict whose leaves are ArrayDistribution.
+        A (possibly nested) dict whose leaves are NumericRecordDistribution.
 
     Returns
     -------
@@ -102,9 +102,9 @@ def _component_key_paths(components) -> tuple:
         Leaf identifiers.  Plain strings if the dict is flat; tuples
         of strings if any nesting is present.
     """
-    # Check if the dict is flat (all values are ArrayDistribution leaves)
+    # Check if the dict is flat (all values are NumericRecordDistribution leaves)
     is_flat = isinstance(components, dict) and all(
-        isinstance(v, ArrayDistribution) for v in components.values()
+        isinstance(v, NumericRecordDistribution) for v in components.values()
     )
     if is_flat:
         return tuple(components.keys())
@@ -133,7 +133,7 @@ def _collect_observed_leaves(
     """Recursively walk an observed-value tree, validating against the component tree.
 
     For each leaf (non-dict) value in *obs_tree*, verifies that the
-    corresponding node in *comp_tree* is an ``ArrayDistribution``
+    corresponding node in *comp_tree* is an ``NumericRecordDistribution``
     (not an internal dict node), and records the ``(key_path, value)``
     pair in *out*.
 
@@ -175,7 +175,7 @@ def _collect_observed_leaves(
 
         if isinstance(obs_val, dict):
             # User provided a nested dict — component must also be a dict
-            if isinstance(comp_node, ArrayDistribution):
+            if isinstance(comp_node, NumericRecordDistribution):
                 raise TypeError(
                     f"Key path '{path_str}' resolves to a component "
                     f"distribution ({type(comp_node).__name__}), but a "
@@ -201,7 +201,7 @@ def _collect_observed_leaves(
                     f"component distributions, e.g.: "
                     f"condition_on({key}={{'{leaf_names[0]}': ...}})"
                 )
-            if not isinstance(comp_node, ArrayDistribution):
+            if not isinstance(comp_node, NumericRecordDistribution):
                 raise TypeError(
                     f"Key path '{path_str}' resolves to "
                     f"{type(comp_node).__name__}, not a component "
@@ -219,7 +219,7 @@ def _parse_condition_args(
 
     Normalizes both calling conventions (positional dict and kwargs)
     into a flat mapping ``{key_path: observed_value}`` where each
-    key path addresses a leaf ``ArrayDistribution`` in the component
+    key path addresses a leaf ``NumericRecordDistribution`` in the component
     pytree.
 
     Parameters
@@ -279,7 +279,7 @@ def _prune_leaves(tree: dict, remove_paths: set[KeyPath], prefix: tuple = ()) ->
     Parameters
     ----------
     tree : dict
-        The component pytree (nested dict of ``ArrayDistribution`` leaves).
+        The component pytree (nested dict of ``NumericRecordDistribution`` leaves).
     remove_paths : set[KeyPath]
         Set of key paths to remove.
     prefix : tuple

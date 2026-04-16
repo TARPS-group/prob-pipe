@@ -12,7 +12,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ._tfp_base import TFPDistribution
 from ..core.distribution import (
-    ArrayDistribution,
+    NumericRecordDistribution,
 )
 from ..core.provenance import Provenance
 from ..core.constraints import (
@@ -44,7 +44,7 @@ _BIJECTOR_SUPPORT_MAP: dict[str, Constraint] = {
 _TRANSFORMED_CLASS_CACHE: dict[frozenset[str], type] = {}
 
 
-def _transformed_class_for_base(base: ArrayDistribution) -> type:
+def _transformed_class_for_base(base: NumericRecordDistribution) -> type:
     """Return a TransformedDistribution subclass whose protocol bases
     match what the base distribution supports."""
     protocols: set[str] = set()
@@ -76,7 +76,7 @@ def _transformed_class_for_base(base: ArrayDistribution) -> type:
     return cls
 
 
-class TransformedDistribution(ArrayDistribution, SupportsSampling):
+class TransformedDistribution(NumericRecordDistribution, SupportsSampling):
     """
     Distribution formed by applying a TFP bijector to a base distribution.
 
@@ -102,7 +102,7 @@ class TransformedDistribution(ArrayDistribution, SupportsSampling):
 
     def __new__(
         cls,
-        base: ArrayDistribution,
+        base: NumericRecordDistribution,
         bijector: tfb.Bijector,
         *,
         name: str | None = None,
@@ -112,7 +112,7 @@ class TransformedDistribution(ArrayDistribution, SupportsSampling):
 
     def __init__(
         self,
-        base: ArrayDistribution,
+        base: NumericRecordDistribution,
         bijector: tfb.Bijector,
         *,
         name: str | None = None,
@@ -146,7 +146,7 @@ class TransformedDistribution(ArrayDistribution, SupportsSampling):
     # -- convenient accessors -----------------------------------------------
 
     @property
-    def base(self) -> ArrayDistribution:
+    def base(self) -> NumericRecordDistribution:
         """The untransformed base distribution."""
         return self._base
 

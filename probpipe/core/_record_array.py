@@ -35,6 +35,12 @@ class RecordArray:
         Structural description of each element.
     **fields
         Named values, each with shape ``(*batch_shape, *leaf_shape)``.
+
+    Notes
+    -----
+    Construct from a list of Records with :meth:`RecordArray.stack`.
+    Indexing is either integer (``arr[i]`` → single :class:`Record`) or
+    field name (``arr["x"]`` → batched leaf array).
     """
 
     __slots__ = ("_store", "_batch_shape", "_template", "_fields")

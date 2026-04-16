@@ -22,7 +22,7 @@ from probpipe.distributions import (
     Pareto,
     TruncatedNormal,
 )
-from probpipe import ArrayDistribution, log_prob, mean, sample, variance
+from probpipe import NumericRecordDistribution, log_prob, mean, sample, variance
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ def continuous_dist(request):
 
 class TestContinuousGeneric:
     def test_is_distribution(self, continuous_dist):
-        assert isinstance(continuous_dist, ArrayDistribution)
+        assert isinstance(continuous_dist, NumericRecordDistribution)
 
     def test_event_shape(self, continuous_dist):
         assert isinstance(continuous_dist.event_shape, tuple)

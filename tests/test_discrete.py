@@ -13,7 +13,7 @@ from probpipe.distributions import (
     Categorical,
     NegativeBinomial,
 )
-from probpipe import ArrayDistribution, log_prob, mean, sample, variance
+from probpipe import NumericRecordDistribution, log_prob, mean, sample, variance
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ def discrete_dist(request):
 
 class TestGeneric:
     def test_is_distribution(self, discrete_dist):
-        assert isinstance(discrete_dist, ArrayDistribution)
+        assert isinstance(discrete_dist, NumericRecordDistribution)
 
     def test_event_shape(self, discrete_dist):
         assert isinstance(discrete_dist.event_shape, tuple)

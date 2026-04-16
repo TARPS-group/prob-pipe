@@ -21,7 +21,7 @@ import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from probpipe import (
-    ArrayEmpiricalDistribution,
+    NumericEmpiricalDistribution,
     BootstrapDistribution,
     EmpiricalDistribution,
     Normal,
@@ -168,12 +168,12 @@ class TestEmpiricalSubsampling:
         assert jnp.isfinite(result)
 
     def test_weighted_cov(self):
-        """Weighted ArrayEmpiricalDistribution covariance."""
+        """Weighted NumericEmpiricalDistribution covariance."""
         key = jax.random.PRNGKey(0)
         samples = jax.random.normal(key, (50, 2))
         weights = jax.random.uniform(jax.random.PRNGKey(1), (50,))
         weights = weights / jnp.sum(weights)
-        ed = ArrayEmpiricalDistribution(samples, weights=weights)
+        ed = NumericEmpiricalDistribution(samples, weights=weights)
         C = cov(ed)
         assert C.shape == (2, 2)
         assert jnp.all(jnp.isfinite(C))
@@ -213,9 +213,9 @@ class TestOpsErrorPaths:
     """Cover TypeError error paths in ops for unsupported protocols."""
 
     def test_prob_requires_log_prob(self):
-        from probpipe import ArrayDistribution
+        from probpipe import NumericRecordDistribution
 
-        class NoLogProbNoSampleDist(ArrayDistribution):
+        class NoLogProbNoSampleDist(NumericRecordDistribution):
             """Has neither SupportsLogProb nor SupportsSampling."""
 
             @property
@@ -227,9 +227,9 @@ class TestOpsErrorPaths:
             prob(d, jnp.float32(0.0))
 
     def test_expectation_requires_protocol(self):
-        from probpipe import ArrayDistribution
+        from probpipe import NumericRecordDistribution
 
-        class MinimalDist(ArrayDistribution):
+        class MinimalDist(NumericRecordDistribution):
             @property
             def event_shape(self):
                 return ()
@@ -239,9 +239,9 @@ class TestOpsErrorPaths:
             expectation(d, lambda x: x)
 
     def test_mean_requires_protocol(self):
-        from probpipe import ArrayDistribution
+        from probpipe import NumericRecordDistribution
 
-        class MinimalDist(ArrayDistribution):
+        class MinimalDist(NumericRecordDistribution):
             @property
             def event_shape(self):
                 return ()
@@ -251,9 +251,9 @@ class TestOpsErrorPaths:
             mean(d)
 
     def test_variance_requires_protocol(self):
-        from probpipe import ArrayDistribution
+        from probpipe import NumericRecordDistribution
 
-        class MinimalDist(ArrayDistribution):
+        class MinimalDist(NumericRecordDistribution):
             @property
             def event_shape(self):
                 return ()
@@ -263,9 +263,9 @@ class TestOpsErrorPaths:
             variance(d)
 
     def test_cov_requires_protocol(self):
-        from probpipe import ArrayDistribution
+        from probpipe import NumericRecordDistribution
 
-        class MinimalDist(ArrayDistribution):
+        class MinimalDist(NumericRecordDistribution):
             @property
             def event_shape(self):
                 return ()
@@ -287,7 +287,7 @@ class TestTransformedNonTFP:
     def td(self):
         key = jax.random.PRNGKey(0)
         samples = jax.random.normal(key, (100, 2))
-        emp = ArrayEmpiricalDistribution(samples)
+        emp = NumericEmpiricalDistribution(samples)
         return TransformedDistribution(emp, tfb.Exp())
 
     def test_base_property(self, td):
@@ -337,9 +337,9 @@ class TestCovarianceRequiresProtocol:
         should raise TypeError from the cov op."""
         from probpipe.core.distribution import _mc_expectation, _vmap_sample
         from probpipe.core.protocols import SupportsSampling, SupportsExpectation
-        from probpipe import ArrayDistribution, cov
+        from probpipe import NumericRecordDistribution, cov
 
-        class NoCovDist(ArrayDistribution, SupportsSampling, SupportsExpectation):
+        class NoCovDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"
             _preferred_orchestration = None
 

@@ -396,9 +396,9 @@ class TestRWMH:
 
     def test_requires_log_prob(self):
         """RWMH raises for distributions without SupportsLogProb and no conversion path."""
-        from probpipe import ArrayDistribution
+        from probpipe import NumericRecordDistribution
 
-        class NoLogProbNoSample(ArrayDistribution):
+        class NoLogProbNoSample(NumericRecordDistribution):
             @property
             def event_shape(self):
                 return (2,)
@@ -435,10 +435,10 @@ class TestRWMH:
 
     def test_non_supports_mean_init(self):
         """RWMH falls back to zeros init when dist has no SupportsMean."""
-        from probpipe import ArrayDistribution
+        from probpipe import NumericRecordDistribution
         from probpipe.core.protocols import SupportsLogProb
 
-        class LogProbOnlyDist(ArrayDistribution, SupportsLogProb):
+        class LogProbOnlyDist(NumericRecordDistribution, SupportsLogProb):
             @property
             def event_shape(self):
                 return (2,)
@@ -467,10 +467,10 @@ class TestRWMH:
 
     def test_mean_exception_fallback(self):
         """RWMH falls back to zeros init when _mean() raises."""
-        from probpipe import ArrayDistribution
+        from probpipe import NumericRecordDistribution
         from probpipe.core.protocols import SupportsLogProb, SupportsMean
 
-        class BrokenMeanLogProbDist(ArrayDistribution, SupportsLogProb, SupportsMean):
+        class BrokenMeanLogProbDist(NumericRecordDistribution, SupportsLogProb, SupportsMean):
             @property
             def event_shape(self):
                 return (2,)

@@ -19,7 +19,7 @@ import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..core._array_distributions import (
-    ArrayDistribution,
+    NumericRecordDistribution,
     _mc_expectation,
 )
 from ..core.provenance import Provenance
@@ -153,15 +153,15 @@ class ProductDistribution(
 
     Parameters
     ----------
-    *positional : ArrayDistribution
+    *positional : NumericRecordDistribution
         Named distributions.  Each distribution's ``.name`` is used as
         the component key.
     name : str, optional
         Distribution name for the joint.
-    **components : ArrayDistribution or dict
+    **components : NumericRecordDistribution or dict
         Named independent component distributions.  Values may be
-        ``ArrayDistribution`` instances (leaves) or nested dicts
-        whose leaves are ``ArrayDistribution`` instances.
+        ``NumericRecordDistribution`` instances (leaves) or nested dicts
+        whose leaves are ``NumericRecordDistribution`` instances.
         When a keyword key differs from the distribution's name, the
         distribution is automatically renamed (via ``renamed()``) to
         match the key.
@@ -203,9 +203,9 @@ class ProductDistribution(
             else:
                 resolved[key] = comp
         for leaf in jax.tree.leaves(resolved):
-            if not isinstance(leaf, ArrayDistribution):
+            if not isinstance(leaf, NumericRecordDistribution):
                 raise TypeError(
-                    f"All leaf components must be ArrayDistribution, "
+                    f"All leaf components must be NumericRecordDistribution, "
                     f"got {type(leaf).__name__}"
                 )
         self._components = resolved
@@ -222,8 +222,18 @@ class ProductDistribution(
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
         """Draw independent samples from each component.
 
-        Returns ``Record`` for single samples, ``NumericRecordArray``
-        for batched samples.
+        Parameters
+        ----------
+        key : PRNGKey
+            JAX PRNG key for sampling.
+        sample_shape : tuple of int, optional
+            Leading shape for independent draws. ``()`` draws a single sample.
+
+        Returns
+        -------
+        Record or NumericRecordArray
+            ``Record`` when ``sample_shape == ()``,
+            ``NumericRecordArray`` with ``batch_shape == sample_shape`` otherwise.
         """
         from ..core._record_array import NumericRecordArray
         sorted_names = sorted(self._components.keys())
@@ -290,7 +300,7 @@ class ProductDistribution(
     @property
     def components(self):
         """Read-only view of the component distributions."""
-        if all(isinstance(v, ArrayDistribution) for v in self._components.values()):
+        if all(isinstance(v, NumericRecordDistribution) for v in self._components.values()):
             return MappingProxyType(self._components)
         return self._components
 
@@ -314,7 +324,7 @@ class ProductDistribution(
 
     def __repr__(self) -> str:
         comp_str = ", ".join(
-            f"{k}={type(v).__name__}" if isinstance(v, ArrayDistribution)
+            f"{k}={type(v).__name__}" if isinstance(v, NumericRecordDistribution)
             else f"{k}={{...}}"
             for k, v in self._components.items()
         )

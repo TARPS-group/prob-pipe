@@ -12,7 +12,7 @@ from probpipe import (
     Categorical,
     MultivariateNormal,
     EmpiricalDistribution,
-    ArrayEmpiricalDistribution,
+    NumericEmpiricalDistribution,
     BootstrapDistribution,
     TransformedDistribution,
     ProductDistribution,
@@ -187,7 +187,7 @@ class TestSupportsMean:
 
     def test_array_empirical(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 2))
-        dist = ArrayEmpiricalDistribution(samples)
+        dist = NumericEmpiricalDistribution(samples)
         assert isinstance(dist, SupportsMean)
         assert isinstance(dist, SupportsVariance)
         assert isinstance(dist, SupportsCovariance)

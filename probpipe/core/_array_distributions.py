@@ -6,7 +6,6 @@ Provides:
   - ``NumericRecordDistribution``    – RecordDistribution + numeric shapes (base for all numeric dists).
   - ``BootstrapDistribution``        – MC error tracking via bootstrap resampling.
   - ``FlattenedView``                – Wraps any distribution as a flat distribution.
-  - Backward-compat aliases: ``TFPShapeMixin``, ``TFPRecordDistribution``, ``ArrayDistribution``.
 """
 
 from __future__ import annotations
@@ -291,17 +290,12 @@ class NumericRecordDistribution(RecordDistribution):
         return f"{parts[0]}({', '.join(parts[1:])})"
 
 
-# Backward compatibility aliases
-TFPRecordDistribution = NumericRecordDistribution
-TFPShapeMixin = NumericRecordDistribution
-ArrayDistribution = NumericRecordDistribution
-
 
 # ---------------------------------------------------------------------------
 # BootstrapDistribution
 # ---------------------------------------------------------------------------
 
-class BootstrapDistribution(ArrayDistribution, SupportsSampling, SupportsMean, SupportsVariance):
+class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, SupportsMean, SupportsVariance):
     """Distribution over bootstrap-resampled means of a statistic.
 
     Given *n* evaluations ``f(x_1), ..., f(x_n)`` where ``x_i ~ P``,
@@ -411,19 +405,19 @@ class BootstrapDistribution(ArrayDistribution, SupportsSampling, SupportsMean, S
         return f"BootstrapDistribution(n={self._n}, event_shape={self.event_shape})"
 
 # ---------------------------------------------------------------------------
-# FlattenedView — wrap any distribution as a flat ArrayDistribution
+# FlattenedView — wrap any distribution as a flat NumericRecordDistribution
 # ---------------------------------------------------------------------------
 
-class FlattenedView(ArrayDistribution, SupportsSampling, SupportsLogProb):
-    """Wraps a distribution as a flat ``ArrayDistribution``.
+class FlattenedView(NumericRecordDistribution, SupportsSampling, SupportsLogProb):
+    """Wraps a distribution as a flat ``NumericRecordDistribution``.
 
     Sampling produces flat vectors of shape ``(event_size,)``, and
     ``_log_prob`` accepts flat vectors and delegates to the wrapped
     distribution after unflattening.
 
     This is the primary interoperability mechanism: any algorithm written
-    for ``ArrayDistribution`` works with ``RecordDistribution`` or
-    ``ArrayDistribution`` via ``dist.as_flat_distribution()``.
+    for ``NumericRecordDistribution`` works with ``RecordDistribution`` or
+    ``NumericRecordDistribution`` via ``dist.as_flat_distribution()``.
     """
 
     _sampling_cost: str = "low"

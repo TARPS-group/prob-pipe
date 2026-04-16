@@ -35,7 +35,7 @@ from . import _distribution_base as _base
 from .._utils import _auto_key
 from ._distribution_base import Distribution
 from ._array_distributions import (
-    ArrayDistribution,
+    NumericRecordDistribution,
     BootstrapDistribution,
 )
 from ._record_distribution import RecordDistribution
@@ -234,7 +234,7 @@ class EmpiricalDistribution[T](
 
 class NumericEmpiricalDistribution(
     EmpiricalDistribution[Array],
-    ArrayDistribution,
+    NumericRecordDistribution,
     SupportsMean,
     SupportsVariance,
     SupportsCovariance,
@@ -246,7 +246,7 @@ class NumericEmpiricalDistribution(
 
     Inherits weight management from :class:`EmpiricalDistribution` and
     adds TFP-style shape properties (``batch_shape``, ``flatten_value``,
-    ``unflatten_value``, ``support``, etc.) via :class:`ArrayDistribution`,
+    ``unflatten_value``, ``support``, etc.) via :class:`NumericRecordDistribution`,
     plus exact weighted moments (mean, variance, covariance).
 
     Parameters
@@ -685,22 +685,16 @@ class BootstrapReplicateDistribution[T](
         )
 
 
-# phased out in favor of TFPEmpiricalDistribution once the full
-# RecordDistribution hierarchy is in place.
-# Backward compatibility aliases
-ArrayEmpiricalDistribution = NumericEmpiricalDistribution
-TFPEmpiricalDistribution = NumericEmpiricalDistribution
 
-
-class ArrayBootstrapReplicateDistribution(BootstrapReplicateDistribution[Array], ArrayDistribution):
-    """Joint bootstrap distribution with full :class:`ArrayDistribution` shape semantics.
+class ArrayBootstrapReplicateDistribution(BootstrapReplicateDistribution[Array], NumericRecordDistribution):
+    """Joint bootstrap distribution with full :class:`NumericRecordDistribution` shape semantics.
 
     Inherits all functionality from :class:`BootstrapReplicateDistribution` and adds
     TFP-style shape properties (``batch_shape``, ``event_shape``, ``support``,
-    etc.) via :class:`ArrayDistribution`.
+    etc.) via :class:`NumericRecordDistribution`.
 
     Use this instead of :class:`BootstrapReplicateDistribution` when the distribution
-    must interoperate with code that requires :class:`ArrayDistribution` instances.
+    must interoperate with code that requires :class:`NumericRecordDistribution` instances.
     """
 
     def __init__(

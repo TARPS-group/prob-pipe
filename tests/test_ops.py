@@ -9,7 +9,7 @@ import scipy.stats
 from probpipe import (
     Normal,
     MultivariateNormal,
-    ArrayEmpiricalDistribution,
+    NumericEmpiricalDistribution,
     EmpiricalDistribution,
     BootstrapDistribution,
     ProductDistribution,
@@ -35,7 +35,7 @@ def mvn():
 @pytest.fixture
 def empirical():
     samples = jax.random.normal(jax.random.PRNGKey(0), (200, 2))
-    return ArrayEmpiricalDistribution(samples)
+    return NumericEmpiricalDistribution(samples)
 
 
 @pytest.fixture
@@ -144,9 +144,9 @@ class TestMean:
     def test_raises_without_supports_mean(self):
         """mean op raises TypeError for distributions without SupportsMean."""
         from probpipe.core.protocols import SupportsSampling, SupportsExpectation
-        from probpipe.core.distribution import _vmap_sample, _mc_expectation, ArrayDistribution
+        from probpipe.core.distribution import _vmap_sample, _mc_expectation, NumericRecordDistribution
 
-        class NoMeanDist(ArrayDistribution, SupportsSampling, SupportsExpectation):
+        class NoMeanDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"
             _preferred_orchestration = None
             @property

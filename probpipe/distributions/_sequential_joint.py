@@ -15,7 +15,7 @@ import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..core.distribution import (
-    ArrayDistribution,
+    NumericRecordDistribution,
     _mc_expectation,
 )
 from ..core._record_distribution import RecordDistribution, _build_record_template
@@ -66,12 +66,12 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
         self,
         *,
         name: str | None = None,
-        **components: ArrayDistribution | callable,
+        **components: NumericRecordDistribution | callable,
     ):
         if not components:
             raise ValueError("SequentialJointDistribution requires at least one component.")
 
-        self._raw_components: dict[str, ArrayDistribution | callable] = dict(components)
+        self._raw_components: dict[str, NumericRecordDistribution | callable] = dict(components)
         if name is None:
             name = "sequential(" + ",".join(components.keys()) + ")"
         super().__init__(name=name)
@@ -84,7 +84,7 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
         # Validate ordering: callable args must reference earlier names
         seen: list[str] = []
         for cname, comp in self._raw_components.items():
-            if callable(comp) and not isinstance(comp, ArrayDistribution):
+            if callable(comp) and not isinstance(comp, NumericRecordDistribution):
                 params = list(inspect.signature(comp).parameters.keys())
                 for p in params:
                     if p not in seen:
@@ -100,11 +100,11 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
         # and compute event shapes / slices
         proto_key = jax.random.PRNGKey(0)
         proto_structured = self._sample_sequential(proto_key, ())
-        self._proto_components: dict[str, ArrayDistribution] = {}
+        self._proto_components: dict[str, NumericRecordDistribution] = {}
 
-        resolved: dict[str, ArrayDistribution] = {}
+        resolved: dict[str, NumericRecordDistribution] = {}
         for cname, comp in self._raw_components.items():
-            if isinstance(comp, ArrayDistribution):
+            if isinstance(comp, NumericRecordDistribution):
                 resolved[cname] = comp
             else:
                 # Resolve the callable with zero-valued parents to get shape info
@@ -193,7 +193,7 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
                 # Conditioned component: broadcast fixed value to sample_shape
                 val = self._conditioned_values[cname]
                 sampled[cname] = jnp.broadcast_to(val, sample_shape + val.shape)
-            elif isinstance(comp, ArrayDistribution):
+            elif isinstance(comp, NumericRecordDistribution):
                 # Root distribution: sample with sample_shape
                 sampled[cname] = comp._sample(subkey, sample_shape)
             else:
@@ -254,7 +254,7 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
             if components == "unconditioned" and cname in self._conditioned_names:
                 continue
             val = structured[cname]
-            if isinstance(comp, ArrayDistribution):
+            if isinstance(comp, NumericRecordDistribution):
                 lp = comp._log_prob(val)
             else:
                 sig = inspect.signature(comp)
@@ -391,7 +391,7 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
     def __repr__(self) -> str:
         parts = []
         for k, v in self._raw_components.items():
-            if isinstance(v, ArrayDistribution):
+            if isinstance(v, NumericRecordDistribution):
                 parts.append(f"{k}={type(v).__name__}")
             else:
                 parts.append(f"{k}=<callable>")

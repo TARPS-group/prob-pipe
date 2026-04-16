@@ -8,8 +8,8 @@ import pytest
 
 import probpipe.core.distribution as dist_mod
 from probpipe import (
-    ArrayDistribution,
-    ArrayEmpiricalDistribution,
+    NumericRecordDistribution,
+    NumericEmpiricalDistribution,
     EmpiricalDistribution,
     BootstrapDistribution,
     Normal,
@@ -289,7 +289,7 @@ class TestExpectationEmpirical:
 
     def test_matches_mean_method(self):
         samples = jnp.array([1.0, 3.0, 5.0, 7.0])
-        d = ArrayEmpiricalDistribution(samples)
+        d = NumericEmpiricalDistribution(samples)
         ex = expectation(d, lambda x: x)
         np.testing.assert_allclose(float(ex), float(mean(d)), atol=1e-6)
 
@@ -342,7 +342,7 @@ class TestMCFallbackMethods:
         np.testing.assert_allclose(float(result), 4.0, atol=1e-6)
 
     def test_empirical_mean_still_exact(self):
-        d = ArrayEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
+        d = NumericEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
         result = mean(d)
         assert isinstance(result, jnp.ndarray)
         np.testing.assert_allclose(float(result), 2.0, atol=1e-6)
@@ -390,7 +390,7 @@ class TestIsApproximate:
 
     def test_from_distribution_to_empirical(self):
         d = Normal(loc=0.0, scale=1.0, name="x")
-        d2 = from_distribution(d, ArrayEmpiricalDistribution)
+        d2 = from_distribution(d, NumericEmpiricalDistribution)
         assert d2.is_approximate
 
 

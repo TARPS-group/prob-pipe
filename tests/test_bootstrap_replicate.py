@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    ArrayDistribution,
+    NumericRecordDistribution,
     ArrayBootstrapReplicateDistribution,
     BootstrapDistribution,
     Distribution,
@@ -82,18 +82,18 @@ class TestProtocol:
         # Factory dispatch: numeric arrays → ArrayBootstrapReplicateDistribution
         dist = BootstrapReplicateDistribution(jnp.ones((5, 2)))
         assert isinstance(dist, Distribution)
-        assert isinstance(dist, ArrayDistribution)
+        assert isinstance(dist, NumericRecordDistribution)
         assert isinstance(dist, ArrayBootstrapReplicateDistribution)
 
     def test_generic_object_is_not_array(self):
         # Non-numeric (object) source stays as base class
         dist = BootstrapReplicateDistribution(["a", "b", "c"])
         assert isinstance(dist, Distribution)
-        assert not isinstance(dist, ArrayDistribution)
+        assert not isinstance(dist, NumericRecordDistribution)
 
     def test_array_is_array_distribution(self):
         dist = ArrayBootstrapReplicateDistribution(jnp.ones((5, 2)))
-        assert isinstance(dist, ArrayDistribution)
+        assert isinstance(dist, NumericRecordDistribution)
         assert isinstance(dist, BootstrapReplicateDistribution)
         assert isinstance(dist, Distribution)
 

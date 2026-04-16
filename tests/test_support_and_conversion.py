@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import pytest
 from probpipe import from_distribution
 from probpipe import (
-    ArrayDistribution, ArrayEmpiricalDistribution, EmpiricalDistribution,
+    NumericRecordDistribution, NumericEmpiricalDistribution, EmpiricalDistribution,
     Provenance,
 )
 from probpipe.distributions import (
@@ -146,7 +146,7 @@ class TestDistributionSupport:
         assert MultivariateNormal(jnp.zeros(2), cov=jnp.eye(2), name="z").support == real
 
     def test_empirical_support(self):
-        ed = ArrayEmpiricalDistribution(jnp.ones((5, 2)))
+        ed = NumericEmpiricalDistribution(jnp.ones((5, 2)))
         assert ed.support == real
 
 
@@ -223,7 +223,7 @@ class TestFromDistribution:
     # -- multivariate --
     def test_mvn_from_empirical(self, key):
         samples = jax.random.normal(key, (100, 3))
-        ed = ArrayEmpiricalDistribution(samples)
+        ed = NumericEmpiricalDistribution(samples)
         mvn = from_distribution(ed, MultivariateNormal)
         assert mvn.dim == 3
 
@@ -249,5 +249,5 @@ class TestFromDistribution:
     # -- empirical from anything --
     def test_empirical_from_normal(self, key):
         n = Normal(loc=0.0, scale=1.0, name="n")
-        ed = from_distribution(n, ArrayEmpiricalDistribution, key=key, num_samples=100)
+        ed = from_distribution(n, NumericEmpiricalDistribution, key=key, num_samples=100)
         assert ed.n == 100

@@ -81,7 +81,7 @@ class RandomFunction[X, Y](Distribution[Callable[[X], Y]]):
 class ArrayRandomFunction(RandomFunction[Array, Array]):
     """A random function mapping arrays to arrays.
 
-    Follows the shape semantics as implemented in ``ArrayDistribution``.
+    Follows the shape semantics as implemented in ``NumericRecordDistribution``.
     Given prediction input ``X`` with shape ``(*extra_batch, n, *input_shape)``,
     where ``n`` is the number of input points:
 
@@ -164,7 +164,7 @@ class ArrayRandomFunction(RandomFunction[Array, Array]):
 
         Returns
         -------
-        ArrayDistribution
+        NumericRecordDistribution
             A distribution whose ``batch_shape`` and ``event_shape`` follow
             the shape table in the class docstring.
         """

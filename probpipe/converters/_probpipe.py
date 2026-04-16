@@ -23,7 +23,7 @@ from ..custom_types import PRNGKey
 from .._utils import _auto_key
 from ..core.constraints import _supports_compatible
 from ..core.distribution import (
-    ArrayEmpiricalDistribution,
+    NumericEmpiricalDistribution,
     Distribution,
 )
 from ..core.provenance import Provenance
@@ -333,7 +333,7 @@ def _convert_to_multivariatenormal(source, key, **kw):
     name = kw.get("name") or source.name
     if isinstance(source, MultivariateNormal):
         return source
-    if isinstance(source, ArrayEmpiricalDistribution):
+    if isinstance(source, NumericEmpiricalDistribution):
         loc = source._mean()
         cov_mat = source._cov()
         r = MultivariateNormal(loc=loc, cov=cov_mat, name=name)
@@ -425,14 +425,14 @@ def _convert_to_vonmisesfisher(source, key, **kw):
 
 
 def _convert_to_empirical(source, key, **kw):
-    """Convert any distribution to ArrayEmpiricalDistribution by sampling."""
-    if isinstance(source, ArrayEmpiricalDistribution):
+    """Convert any distribution to NumericEmpiricalDistribution by sampling."""
+    if isinstance(source, NumericEmpiricalDistribution):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
     if key is None:
         key = _auto_key()
     samples = source._sample(key, (num_samples,))
-    r = ArrayEmpiricalDistribution(samples, name=kw.get("name") or source.name)
+    r = NumericEmpiricalDistribution(samples, name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source))
     return r
 
@@ -440,7 +440,7 @@ def _convert_to_empirical(source, key, **kw):
 def _convert_to_kde(source, key, **kw):
     """Convert any distribution to a KDEDistribution.
 
-    If the source is an ``ArrayEmpiricalDistribution`` (or subclass),
+    If the source is an ``NumericEmpiricalDistribution`` (or subclass),
     the stored samples and weights are reused directly.  Otherwise,
     samples are drawn from the source.
     """
@@ -452,7 +452,7 @@ def _convert_to_kde(source, key, **kw):
     bandwidth = kw.pop("bandwidth", None)
     name = kw.get("name") or source.name
 
-    if isinstance(source, ArrayEmpiricalDistribution):
+    if isinstance(source, NumericEmpiricalDistribution):
         r = KDEDistribution(
             source._samples, weights=source._w, bandwidth=bandwidth, name=name,
         )
@@ -501,7 +501,7 @@ def _build_dispatch_table() -> dict[str, callable]:
         "VonMisesFisher": _convert_to_vonmisesfisher,
         "EmpiricalDistribution": _convert_to_empirical,
         "NumericEmpiricalDistribution": _convert_to_empirical,
-        "ArrayEmpiricalDistribution": _convert_to_empirical,
+        "NumericEmpiricalDistribution": _convert_to_empirical,
         "KDEDistribution": _convert_to_kde,
     }
 

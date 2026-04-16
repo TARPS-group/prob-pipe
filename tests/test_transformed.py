@@ -12,7 +12,7 @@ from probpipe.distributions import (
     Normal,
     MultivariateNormal,
 )
-from probpipe import ArrayDistribution, EmpiricalDistribution
+from probpipe import NumericRecordDistribution, EmpiricalDistribution
 from probpipe.core.constraints import (
     real,
     positive,
@@ -202,7 +202,7 @@ class TestNameAndRepr:
 
     def test_is_distribution(self):
         td = TransformedDistribution(Normal(0.0, 1.0, name="x"), tfb.Exp())
-        assert isinstance(td, ArrayDistribution)
+        assert isinstance(td, NumericRecordDistribution)
 
     def test_dtype(self):
         td = TransformedDistribution(Normal(0.0, 1.0, name="x"), tfb.Exp())
@@ -225,14 +225,14 @@ class TestTransformedProtocolDuckTyping:
         assert isinstance(td, SupportsMean)
 
     def test_empirical_base_has_mean(self):
-        """ArrayEmpiricalDistribution supports SupportsMean → transformed does too."""
+        """NumericEmpiricalDistribution supports SupportsMean → transformed does too."""
         from probpipe import SupportsMean
         emp = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
         td = TransformedDistribution(emp, tfb.Exp())
         assert isinstance(td, SupportsMean)
 
     def test_empirical_base_no_log_prob(self):
-        """ArrayEmpiricalDistribution lacks SupportsLogProb → transformed lacks it."""
+        """NumericEmpiricalDistribution lacks SupportsLogProb → transformed lacks it."""
         from probpipe import SupportsLogProb
         emp = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
         td = TransformedDistribution(emp, tfb.Exp())

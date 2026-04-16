@@ -16,8 +16,8 @@ from .._utils import prod
 from ..custom_types import Array, ArrayLike, PRNGKey
 from .._weights import Weights
 from ..core.distribution import (
-    ArrayDistribution,
-    ArrayEmpiricalDistribution,
+    NumericRecordDistribution,
+    NumericEmpiricalDistribution,
     _mc_expectation,
 )
 from ..core._record_distribution import RecordDistribution, _build_record_template
@@ -104,11 +104,11 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsLogProb, Supp
         super().__init__(name=name)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
 
-        # Build _components as ArrayEmpiricalDistribution per component
-        # (JointDistribution requires ArrayDistribution leaves for shape introspection)
-        comp_dists: dict[str, ArrayEmpiricalDistribution] = {}
+        # Build _components as NumericEmpiricalDistribution per component
+        # (JointDistribution requires NumericRecordDistribution leaves for shape introspection)
+        comp_dists: dict[str, NumericEmpiricalDistribution] = {}
         for cname, arr in self._joint_samples.items():
-            comp_dists[cname] = ArrayEmpiricalDistribution(
+            comp_dists[cname] = NumericEmpiricalDistribution(
                 arr, weights=self._w, name=cname,
             )
         self._components = comp_dists

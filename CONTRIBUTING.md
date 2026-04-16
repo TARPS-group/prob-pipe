@@ -130,6 +130,11 @@ full public API surface.
    `select()` for workflow function splatting, and JAX pytree
    traversal.  The full pipeline (prior → inference → posterior
    predictive) produces named, provenance-tracked objects at every step.
+   **Field access is bracket-only**: use `record["x"]`, `array["x"]`,
+   `dist["x"]`.  Attribute access (`__getattr__`) was removed from
+   `Record` and `RecordDistribution` because it shadowed methods and
+   properties like `.mean`, `.var`, `.fields`, `.flatten`, and produced
+   confusing errors.
 6. **Every distribution is named** — `Distribution.__init__` requires a
    non-empty `name: str`.  Leaf distributions (Normal, Gamma, etc.)
    require an explicit `name=` at construction.  Composite distributions
@@ -147,7 +152,7 @@ full public API surface.
 | `Record` | Named, immutable, lazy, JAX-pytree container for structured non-random values; `select()` for workflow function splatting |
 | `RecordDistribution` | Record-based distribution base; `component_names`, `__getitem__` → `_RecordDistributionView`, `select()` for correlated broadcasting |
 | `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
-| `NumericRecordDistribution` | Numeric-array distribution base; per-field `dtypes`, `supports`, `event_shapes`; base for all TFP-backed distributions (aliases: `ArrayDistribution`, `TFPRecordDistribution`) |
+| `NumericRecordDistribution` | Numeric-array distribution base; per-field `dtypes`, `supports`, `event_shapes`; base for all TFP-backed distributions |
 | `WorkflowFunction` | Orchestration-aware function wrapper; groups views by parent for correlated broadcasting |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |

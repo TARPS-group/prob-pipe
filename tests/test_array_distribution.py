@@ -1,4 +1,4 @@
-"""Tests for ArrayDistribution, FlattenedView, and shape semantics."""
+"""Tests for NumericRecordDistribution, FlattenedView, and shape semantics."""
 
 import jax
 import jax.numpy as jnp
@@ -8,8 +8,8 @@ import pytest
 
 from probpipe import (
     Distribution,
-    ArrayDistribution,
-    ArrayEmpiricalDistribution,
+    NumericRecordDistribution,
+    NumericEmpiricalDistribution,
     FlattenedView,
     Normal,
     MultivariateNormal,
@@ -58,16 +58,16 @@ def matrix_mvn():
 
 class TestHierarchy:
     def test_arraydist_is_pytreearraydist(self, scalar_normal):
-        assert isinstance(scalar_normal, ArrayDistribution)
+        assert isinstance(scalar_normal, NumericRecordDistribution)
 
     def test_arraydist_is_distribution(self, scalar_normal):
         assert isinstance(scalar_normal, Distribution)
 
     def test_pytreearraydist_is_distribution(self, scalar_normal):
-        """ArrayDistribution inherits ArrayDistribution which inherits Distribution."""
+        """NumericRecordDistribution inherits NumericRecordDistribution which inherits Distribution."""
         assert isinstance(scalar_normal, Distribution)
-        assert isinstance(scalar_normal, ArrayDistribution)
-        assert isinstance(scalar_normal, ArrayDistribution)
+        assert isinstance(scalar_normal, NumericRecordDistribution)
+        assert isinstance(scalar_normal, NumericRecordDistribution)
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +116,7 @@ class TestDistributionBase:
 
 
 # ---------------------------------------------------------------------------
-# ArrayDistribution trivial pytree interface
+# NumericRecordDistribution trivial pytree interface
 # ---------------------------------------------------------------------------
 
 class TestArrayDistributionPyTreeInterface:
@@ -150,7 +150,7 @@ class TestArrayDistributionPyTreeInterface:
 
 
 # ---------------------------------------------------------------------------
-# flatten_value / unflatten_value on ArrayDistribution
+# flatten_value / unflatten_value on NumericRecordDistribution
 # ---------------------------------------------------------------------------
 
 class TestArrayDistFlattenUnflatten:
@@ -189,7 +189,7 @@ class TestFlattenedView:
     def test_as_flat_returns_flattened_view(self, vector_mvn):
         flat_dist = vector_mvn.as_flat_distribution()
         assert isinstance(flat_dist, FlattenedView)
-        assert isinstance(flat_dist, ArrayDistribution)
+        assert isinstance(flat_dist, NumericRecordDistribution)
 
     def test_event_shape(self, vector_mvn):
         flat_dist = vector_mvn.as_flat_distribution()
@@ -280,7 +280,7 @@ class TestSupports:
 class TestFlattenedViewEmpirical:
     def test_empirical_flatten_roundtrip(self, key):
         samples = jax.random.normal(key, shape=(100, 5))
-        emp = ArrayEmpiricalDistribution(samples)
+        emp = NumericEmpiricalDistribution(samples)
 
         flat_dist = emp.as_flat_distribution()
         assert flat_dist.event_shape == (5,)

@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 import jax.numpy as jnp
 
-from ..core.distribution import ArrayEmpiricalDistribution, Distribution
+from ..core.distribution import NumericEmpiricalDistribution, Distribution
 from ..core._record_distribution import _RecordDistributionView
 from ..core.provenance import Provenance
 from ..core.record import Record, RecordTemplate
@@ -24,7 +24,7 @@ __all__ = ["ApproximateDistribution", "make_posterior"]
 # ---------------------------------------------------------------------------
 
 
-class ApproximateDistribution(ArrayEmpiricalDistribution):
+class ApproximateDistribution(NumericEmpiricalDistribution):
     """Empirical distribution with chain structure.
 
     Stores per-chain sample arrays for chain-structured access via

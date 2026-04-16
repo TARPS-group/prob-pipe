@@ -10,7 +10,7 @@ from probpipe import (
     Gamma,
     ProductDistribution,
     EmpiricalDistribution,
-    ArrayDistribution,
+    NumericRecordDistribution,
     RecordDistribution,
 )
 from probpipe.core._record_distribution import _RecordDistributionView
@@ -68,8 +68,8 @@ class TestProductDistribution:
 
     def test_isinstance_record_distribution(self, joint_xy):
         assert isinstance(joint_xy, RecordDistribution)
-        assert not isinstance(joint_xy, ArrayDistribution)
-        assert not isinstance(joint_xy, ArrayDistribution)
+        assert not isinstance(joint_xy, NumericRecordDistribution)
+        assert not isinstance(joint_xy, NumericRecordDistribution)
 
     def test_event_shapes(self, joint_xy):
         assert joint_xy.event_shapes == {"x": (), "y": ()}
@@ -796,8 +796,8 @@ class TestNestedProductDistribution:
     def test_isinstance(self, nested_joint):
         assert isinstance(nested_joint, ProductDistribution)
         assert isinstance(nested_joint, RecordDistribution)
-        assert not isinstance(nested_joint, ArrayDistribution)
-        assert not isinstance(nested_joint, ArrayDistribution)
+        assert not isinstance(nested_joint, NumericRecordDistribution)
+        assert not isinstance(nested_joint, NumericRecordDistribution)
 
     def test_event_shapes_nested(self, nested_joint):
         es = nested_joint.event_shapes

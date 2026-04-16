@@ -13,7 +13,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 from ._tfp_base import TFPDistribution
 from .._utils import _auto_key
 from ..core.distribution import (
-    ArrayDistribution,
+    NumericRecordDistribution,
     EmpiricalDistribution,
 )
 from ..core.provenance import Provenance

@@ -10,7 +10,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 from probpipe import (
     Normal, Beta, Gamma, Exponential, MultivariateNormal,
     Bernoulli, Poisson, Categorical,
-    ArrayEmpiricalDistribution, EmpiricalDistribution, ArrayDistribution,
+    NumericEmpiricalDistribution, EmpiricalDistribution, NumericRecordDistribution,
     converter_registry, ConversionInfo, ConversionMethod, Converter,
     from_distribution,
 )
@@ -91,8 +91,8 @@ class TestProbPipeConverter:
 
     def test_to_empirical(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        emp = converter_registry.convert(n, ArrayEmpiricalDistribution, num_samples=100)
-        assert isinstance(emp, ArrayEmpiricalDistribution)
+        emp = converter_registry.convert(n, NumericEmpiricalDistribution, num_samples=100)
+        assert isinstance(emp, NumericEmpiricalDistribution)
         assert emp.n == 100
 
     def test_provenance_attached(self):
@@ -204,8 +204,8 @@ class TestAllCrossFamilyConversions:
 
     def test_wishart_to_empirical(self):
         w = Wishart(df=5.0, scale_tril=jnp.eye(2), name="w")
-        result = converter_registry.convert(w, ArrayEmpiricalDistribution, num_samples=50)
-        assert isinstance(result, ArrayEmpiricalDistribution)
+        result = converter_registry.convert(w, NumericEmpiricalDistribution, num_samples=50)
+        assert isinstance(result, NumericEmpiricalDistribution)
         assert result.n == 50
 
     def test_vonmisesfisher_same_class(self):
@@ -216,7 +216,7 @@ class TestAllCrossFamilyConversions:
 
     def test_mvn_from_empirical(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
-        emp = ArrayEmpiricalDistribution(samples)
+        emp = NumericEmpiricalDistribution(samples)
         result = converter_registry.convert(emp, MultivariateNormal)
         assert isinstance(result, MultivariateNormal)
         assert result.loc.shape == (3,)
@@ -279,11 +279,11 @@ class TestTFPConverter:
         assert result.source.operation == "convert_from_tfp"
 
     def test_unknown_tfp_to_empirical(self):
-        """Unknown TFP types fall back to sampling → ArrayEmpiricalDistribution."""
+        """Unknown TFP types fall back to sampling → NumericEmpiricalDistribution."""
         # Use a TFP distribution we haven't mapped
         tfp_dist = tfd.VonMises(loc=0.0, concentration=1.0)
-        result = converter_registry.convert(tfp_dist, ArrayEmpiricalDistribution, num_samples=50)
-        assert isinstance(result, ArrayEmpiricalDistribution)
+        result = converter_registry.convert(tfp_dist, NumericEmpiricalDistribution, num_samples=50)
+        assert isinstance(result, NumericEmpiricalDistribution)
         assert result.n == 50
 
     def test_probpipe_mvn_to_tfp(self):
@@ -464,8 +464,8 @@ class TestScipyConverter:
         """Unknown scipy distribution type falls back to sampling."""
         import scipy.stats as ss
         # Use a scipy distribution we haven't mapped (e.g., chi2)
-        result = converter_registry.convert(ss.chi2(df=3), ArrayEmpiricalDistribution, num_samples=100)
-        assert isinstance(result, ArrayEmpiricalDistribution)
+        result = converter_registry.convert(ss.chi2(df=3), NumericEmpiricalDistribution, num_samples=100)
+        assert isinstance(result, NumericEmpiricalDistribution)
         assert result.n == 100
 
     def test_scipy_check_unknown_type(self):
@@ -552,14 +552,14 @@ class TestFromDistributionDelegation:
 
     def test_from_distribution_to_empirical(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        emp = from_distribution(n, ArrayEmpiricalDistribution, num_samples=50)
-        assert isinstance(emp, ArrayEmpiricalDistribution)
+        emp = from_distribution(n, NumericEmpiricalDistribution, num_samples=50)
+        assert isinstance(emp, NumericEmpiricalDistribution)
         assert emp.n == 50
 
     def test_empirical_to_empirical_returns_source(self):
         samples = jnp.array([[1.0], [2.0], [3.0]])
-        emp = ArrayEmpiricalDistribution(samples, name="orig")
-        emp2 = from_distribution(emp, ArrayEmpiricalDistribution)
+        emp = NumericEmpiricalDistribution(samples, name="orig")
+        emp2 = from_distribution(emp, NumericEmpiricalDistribution)
         # Same-class: returns source directly
         assert emp2 is emp
 
@@ -583,9 +583,9 @@ class TestBootstrapMetadata:
         assert "var_bootstrap" not in meta
 
     def test_empirical_moments_have_bootstrap(self):
-        """ArrayEmpiricalDistribution uses MC for mean/var, producing bootstrap metadata."""
+        """NumericEmpiricalDistribution uses MC for mean/var, producing bootstrap metadata."""
         samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
-        emp = ArrayEmpiricalDistribution(samples[:, None])
+        emp = NumericEmpiricalDistribution(samples[:, None])
         result = converter_registry.convert(emp, Normal)
         assert result.source is not None
         # EmpiricalDistribution._mean()/_variance() return plain arrays;
@@ -646,11 +646,11 @@ class TestProtocolConversion:
         assert result is n
 
     def test_scalar_empirical_to_supports_log_prob(self):
-        """Scalar ArrayEmpiricalDistribution converts to KDE via SupportsLogProb."""
+        """Scalar NumericEmpiricalDistribution converts to KDE via SupportsLogProb."""
         from probpipe.distributions.kde import KDEDistribution
 
         samples = jax.random.normal(jax.random.PRNGKey(0), (300,))
-        emp = ArrayEmpiricalDistribution(samples)
+        emp = NumericEmpiricalDistribution(samples)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
@@ -660,11 +660,11 @@ class TestProtocolConversion:
         )
 
     def test_multivariate_empirical_to_supports_log_prob(self):
-        """Multivariate ArrayEmpiricalDistribution converts to KDE via SupportsLogProb."""
+        """Multivariate NumericEmpiricalDistribution converts to KDE via SupportsLogProb."""
         from probpipe.distributions.kde import KDEDistribution
 
         samples = jax.random.normal(jax.random.PRNGKey(1), (300, 4))
-        emp = ArrayEmpiricalDistribution(samples)
+        emp = NumericEmpiricalDistribution(samples)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
@@ -682,7 +682,7 @@ class TestProtocolConversion:
     def test_check_protocol_needs_conversion(self):
         """check() returns feasible when conversion is possible."""
         samples = jax.random.normal(jax.random.PRNGKey(2), (100,))
-        emp = ArrayEmpiricalDistribution(samples)
+        emp = NumericEmpiricalDistribution(samples)
         info = converter_registry.check(emp, SupportsLogProb)
         assert info.feasible
         assert info.method == ConversionMethod.MOMENT_MATCH
@@ -692,7 +692,7 @@ class TestProtocolConversion:
         from probpipe.core.protocols import SupportsConditioning
 
         samples = jax.random.normal(jax.random.PRNGKey(3), (50,))
-        emp = ArrayEmpiricalDistribution(samples)
+        emp = NumericEmpiricalDistribution(samples)
         # SupportsConditioning is not registered as a protocol target
         # and EmpiricalDistribution does not satisfy it
         with pytest.raises(TypeError):
@@ -701,14 +701,14 @@ class TestProtocolConversion:
     def test_from_distribution_with_protocol(self):
         """from_distribution() works with protocol targets."""
         samples = jax.random.normal(jax.random.PRNGKey(4), (200,))
-        emp = ArrayEmpiricalDistribution(samples)
+        emp = NumericEmpiricalDistribution(samples)
         result = from_distribution(emp, SupportsLogProb)
         assert isinstance(result, SupportsLogProb)
 
     def test_protocol_conversion_preserves_provenance(self):
         """Protocol-based conversion attaches provenance."""
         samples = jax.random.normal(jax.random.PRNGKey(5), (200,))
-        emp = ArrayEmpiricalDistribution(samples, name="posterior")
+        emp = NumericEmpiricalDistribution(samples, name="posterior")
         result = converter_registry.convert(emp, SupportsLogProb)
         assert result.source is not None
         assert emp in result.source.parents
@@ -801,7 +801,7 @@ class TestKDEDistribution:
     def test_convert_empirical_to_kde(self):
         """from_distribution(empirical, KDEDistribution) works."""
         samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
-        emp = ArrayEmpiricalDistribution(samples)
+        emp = NumericEmpiricalDistribution(samples)
         kde = converter_registry.convert(emp, KDEDistribution)
         assert isinstance(kde, KDEDistribution)
         assert kde.n == 200
