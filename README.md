@@ -10,28 +10,28 @@ ProbPipe is a Python framework for building scalable probabilistic pipelines wit
 
 Most workflows for probabilistic inference can be described in terms of **distributions**, **fixed values** (data, hyperparameters, covariates), and **operations** that transform distributions. Implementing these workflows, however, is harder than describing them:
 
-1. **Algorithmic challenges** -- there are many possible algorithms for common operations, with varying trade-offs that need to be explored in a problem-specific manner. A posterior could be approximated using different MCMC algorithms, variational inference, or sequential Monte Carlo.
-2. **Representational challenges** -- algorithms require -- and output -- specific formats for both distributions and fixed values that are not always compatible with other parts of the workflow. Fixed values may be named parameter vectors, covariate matrices, or structured observations -- and different algorithms expect different representations.
+1. **Algorithmic challenges.** There are many possible algorithms for common operations, with varying trade-offs that need to be explored in a problem-specific manner. A posterior could be approximated using different MCMC algorithms, variational inference, or sequential Monte Carlo.
+2. **Representational challenges.** Algorithms expect (and produce) specific formats for distributions and fixed values, and those formats are not always compatible with other parts of the workflow. Fixed values may be named parameter vectors, covariate matrices, or structured observations, and different algorithms expect different representations.
 
 ### Simplification via abstraction
 
 ProbPipe addresses these challenges through a single design principle: **simplification via abstraction**. There are just three core types:
 
-- **`Distribution`** -- the universal representation of random quantities (priors, posteriors, data-generating processes). A distribution's capabilities are declared via protocols (`SupportsSampling`, `SupportsLogProb`, ...), and ProbPipe converts between representations as needed.
-- **`Record`** -- the universal container for non-random structured data (observed datasets, hyperparameters, design matrices). `Record` is the deterministic counterpart of `Distribution`.
-- **`WorkflowFunction`** -- operations that take distributions or fixed values as input and return distributions or fixed values as output. Decorate any function with `@workflow_function` and ProbPipe automatically propagates uncertainty: pass a `Distribution` where the function expects a concrete value, and the output becomes a `Distribution` over results.
+- **`Distribution`**: the universal representation of random quantities (priors, posteriors, data-generating processes). A distribution's capabilities are declared via protocols (`SupportsSampling`, `SupportsLogProb`, ...), and ProbPipe converts between representations as needed.
+- **`Record`**: the universal container for non-random structured data (observed datasets, hyperparameters, design matrices). `Record` is the deterministic counterpart of `Distribution`.
+- **`WorkflowFunction`**: operations that take distributions or fixed values as input and return distributions or fixed values as output. Decorate any function with `@workflow_function` and ProbPipe automatically propagates uncertainty: pass a `Distribution` where the function expects a concrete value, and the output becomes a `Distribution` over results.
 
-`Distribution` and `Record` follow the same syntax for accessing their components and passing those components into a `WorkflowFunction`, so they can easily be interchanged. Both support **named fields** and a **`select()`** method for splatting (e.g., `predict(**posterior.select("intercept", "slope"))`). The implementation details -- algorithms, data and distribution representations -- are invisible to the user, while remaining fully configurable when control is needed.
+`Distribution` and `Record` follow the same syntax for accessing their components and passing those components into a `WorkflowFunction`, so they can easily be interchanged. Both support **named fields** and a **`select()`** method for splatting (e.g., `predict(**posterior.select("intercept", "slope"))`). Implementation details (algorithms, data and distribution representations) are invisible to the user, while remaining fully configurable when control is needed.
 
 ### Built-in operations
 
-ProbPipe provides a set of built-in **ops** -- special workflow functions that dispatch based on a distribution's protocols:
+ProbPipe provides a set of built-in **ops**, special workflow functions that dispatch based on a distribution's protocols:
 
-- **`condition_on`** -- condition a model on observed data, automatically selecting the best inference algorithm (or specify one with `method=`).
-- **`mean`**, **`variance`**, **`cov`**, **`expectation`** -- compute distributional summaries, with automatic Monte Carlo fallback when exact computation is unavailable.
-- **`sample`**, **`log_prob`** -- draw samples or evaluate densities through a uniform interface.
-- **`from_distribution`** -- convert between distribution representations via the converter registry.
-- **`predictive_check`** -- built-in prior and posterior predictive checking.
+- **`condition_on`**: condition a model on observed data, automatically selecting the best inference algorithm (or specify one with `method=`).
+- **`mean`**, **`variance`**, **`cov`**, **`expectation`**: compute distributional summaries, with automatic Monte Carlo fallback when exact computation is unavailable.
+- **`sample`**, **`log_prob`**: draw samples or evaluate densities through a uniform interface.
+- **`from_distribution`**: convert between distribution representations via the converter registry.
+- **`predictive_check`**: built-in prior and posterior predictive checking.
 
 **[Documentation](https://tarps-group.github.io/prob-pipe/)** | **[Getting Started Tutorial](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** | **[API Reference](https://tarps-group.github.io/prob-pipe/)**
 
@@ -97,12 +97,12 @@ plt.xlabel('x'); plt.ylabel('P(y = 1 | x)'); plt.legend(fontsize=8)
 
 ## Key Features
 
-- **Protocol-based dispatch** -- a distribution's capabilities are declared via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsMean`, ...). Operations like `condition_on` and `from_distribution` use these protocols to auto-select the best algorithm from a pluggable registry. Override with `method=` when you want control.
-- **Multiple backends** -- the inference registry spans TFP (NUTS, HMC, RWMH), nutpie, CmdStan, PyMC (NUTS, ADVI), and simulation-based inference (SMC-ABC via sbijax). Swap backends without changing model code.
-- **Automatic distribution conversion** -- a converter registry converts between distribution representations (e.g., MCMC samples to KDE) as needed, using protocol-based dispatch analogous to `condition_on`.
-- **JAX-native** -- distributions and workflow functions are compatible with JAX (`vmap`, `jit`, `grad`), with built-in support for TFP distributions.
-- **Provenance tracking** -- each distribution records how it was created (algorithm, parents, metadata), enabling full lineage tracing from any result back to its inputs.
-- **Prefect orchestration** -- distribute pipeline steps across machines and CPUs without code changes.
+- **Protocol-based dispatch.** A distribution's capabilities are declared via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsMean`, ...). Operations like `condition_on` and `from_distribution` use these protocols to auto-select the best algorithm from a pluggable registry. Override with `method=` when you want control.
+- **Multiple backends.** The inference registry spans TFP (NUTS, HMC, RWMH), nutpie, CmdStan, PyMC (NUTS, ADVI), and simulation-based inference (SMC-ABC via sbijax). Swap backends without changing model code.
+- **Automatic distribution conversion.** A converter registry converts between distribution representations (e.g., MCMC samples to KDE) as needed, using protocol-based dispatch analogous to `condition_on`.
+- **JAX-native.** Distributions and workflow functions are compatible with JAX (`vmap`, `jit`, `grad`), with built-in support for TFP distributions.
+- **Provenance tracking.** Each distribution records how it was created (algorithm, parents, metadata), enabling full lineage tracing from any result back to its inputs.
+- **Prefect orchestration.** Distribute pipeline steps across machines and CPUs without code changes.
 
 ## Installation
 
@@ -128,8 +128,8 @@ pip install .[nutpie]    # nutpie Markov chain Monte Carlo (MCMC) sampler
 
 ## Next Steps
 
-- **[Getting Started Tutorial](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** -- iterative Bayesian model building with ProbPipe
-- **[API Reference](https://tarps-group.github.io/prob-pipe/)** -- full class and function documentation
+- **[Getting Started Tutorial](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)**: iterative Bayesian model building with ProbPipe
+- **[API Reference](https://tarps-group.github.io/prob-pipe/)**: full class and function documentation
 
 ## Contributing
 
