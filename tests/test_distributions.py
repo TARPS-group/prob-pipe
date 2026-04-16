@@ -603,14 +603,20 @@ class TestDistributionCoverageGaps:
 
         assert Scalar(name="s").batch_shape == ()
 
-    def test_dtype_default(self):
-        """ArrayDistribution.dtype defaults to float32."""
+    def test_dtype_none_without_template(self):
+        """NumericRecordDistribution.dtype is None when no template is set."""
         class Scalar(ArrayDistribution):
             @property
             def event_shape(self):
                 return ()
 
-        assert Scalar(name="s").dtype == jnp.float32
+        assert Scalar(name="s").dtype is None
+
+    def test_dtype_uniform_with_template(self):
+        """NumericRecordDistribution.dtype is the common dtype when all fields match."""
+        from probpipe import Normal
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        assert n.dtype == n._tfp_dist.dtype
 
     def test_repr_with_batch_shape(self):
         """TFPDistribution repr includes batch_shape when non-trivial."""

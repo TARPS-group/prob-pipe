@@ -160,12 +160,17 @@ class NumericRecordDistribution(RecordDistribution):
         """Batch shape (default: scalar, no batching)."""
         return ()
 
-    # Singular dtype kept as a default for subclasses that don't override.
-    # TFPDistribution overrides with self._tfp_dist.dtype.
     @property
-    def dtype(self) -> jnp.dtype:
-        """Default dtype for samples (float32)."""
-        return jnp.float32
+    def dtype(self) -> jnp.dtype | None:
+        """Scalar dtype if all fields share one, else ``None``.
+
+        Subclasses like ``TFPDistribution`` override with a concrete dtype.
+        """
+        per_field = self.dtypes
+        if not per_field:
+            return None
+        unique = set(per_field.values())
+        return unique.pop() if len(unique) == 1 else None
 
     @classmethod
     def _check_support_compatible(cls, other: NumericRecordDistribution) -> None:
