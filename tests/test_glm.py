@@ -207,12 +207,8 @@ class TestGLMLikelihoodWithValues:
         # Prior has no record_template, so draws are raw arrays.
         # Named draws require prior._record_template to be set.
         draws = posterior.draws()
-        if isinstance(draws, Record):
-            # Prior has a name, so draws come back as a Record
-            flat = jnp.concatenate([draws[f] for f in draws.fields], axis=-1)
-            assert flat.shape == (50, 2)
-        else:
-            assert draws.shape == (50, 2)
+        flat = posterior.flatten_value(draws)
+        assert flat.shape == (50, 2)
 
 
 class TestIncrementalConditionerAutoConvert:

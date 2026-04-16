@@ -11,6 +11,7 @@ from probpipe import (
     EmpiricalDistribution,
     Record,
     RecordDistribution,
+    RecordArray,
 )
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.node import WorkflowFunction
@@ -99,7 +100,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(0)
         s = sample(jg, key=key)
-        assert isinstance(s, Record)
+        assert isinstance(s, (Record, RecordArray))
         assert set(s.fields) == {"x", "y"}
         assert s["x"].shape == (1,)
         assert s["y"].shape == (1,)
@@ -112,7 +113,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(1)
         s = sample(jg, key=key, sample_shape=(10,))
-        assert isinstance(s, Record)
+        assert isinstance(s, (Record, RecordArray))
         assert s["x"].shape == (10, 1)
         assert s["y"].shape == (10, 1)
 
@@ -327,7 +328,7 @@ class TestConditionOn:
         # sd / sqrt(5000) ~ 0.006
         key = jax.random.PRNGKey(20)
         s = sample(cond, key=key, sample_shape=(5000,))
-        assert isinstance(s, Record)
+        assert isinstance(s, (Record, RecordArray))
         np.testing.assert_allclose(float(jnp.mean(s["y"])), 2.7, atol=0.03)
 
     def test_dict_for_leaf_raises(self):

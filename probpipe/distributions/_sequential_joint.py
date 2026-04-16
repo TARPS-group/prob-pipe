@@ -29,8 +29,6 @@ from ..core.protocols import (
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
-    _flatten_record_batched,
-    _unflatten_record_batched,
 )
 
 
@@ -169,13 +167,7 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
         """Per-component event shapes from component distributions."""
         return {k: v.event_shape for k, v in self._components.items()}
 
-    def flatten_value(self, value: Record) -> Array:
-        """Flatten a (possibly batched) Record to ``(*leading, event_size)``."""
-        return _flatten_record_batched(value, self.event_shapes)
-
-    def unflatten_value(self, flat: Array) -> Record:
-        """Reconstruct a Record from a flat ``(*leading, event_size)`` array."""
-        return _unflatten_record_batched(flat, self.event_shapes)
+    # flatten_value / unflatten_value inherited from RecordDistribution
 
     @property
     def components(self):
@@ -223,9 +215,16 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
         self,
         key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
-    ) -> Record:
+    ):
+        from ..core._record_array import NumericRecordArray
         full = self._sample_sequential(key, sample_shape)
-        return Record({k: v for k, v in full.items() if k not in self._conditioned_names})
+        fields = {k: v for k, v in full.items() if k not in self._conditioned_names}
+        if sample_shape:
+            return NumericRecordArray(
+                fields, batch_shape=sample_shape,
+                template=self.record_template,
+            )
+        return Record(fields)
 
     def _eval_log_prob(self, value, *, components: str) -> Array:
         """Evaluate log-density over selected components.

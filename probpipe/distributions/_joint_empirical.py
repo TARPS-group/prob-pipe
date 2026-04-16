@@ -33,8 +33,6 @@ from ..core.protocols import (
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
-    _flatten_record_batched,
-    _unflatten_record_batched,
 )
 
 
@@ -140,13 +138,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsLogProb, Supp
         """Per-component event shapes from component distributions."""
         return {k: v.event_shape for k, v in self._components.items()}
 
-    def flatten_value(self, value: Record) -> Array:
-        """Flatten a (possibly batched) Record to ``(*leading, event_size)``."""
-        return _flatten_record_batched(value, self.event_shapes)
-
-    def unflatten_value(self, flat: Array) -> Record:
-        """Reconstruct a Record from a flat ``(*leading, event_size)`` array."""
-        return _unflatten_record_batched(flat, self.event_shapes)
+    # flatten_value / unflatten_value inherited from RecordDistribution
 
     @property
     def components(self):
@@ -160,13 +152,14 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsLogProb, Supp
         self,
         key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
-    ) -> Record:
+    ):
         return self._sample_joint_rows(key, sample_shape)
 
     def _sample_joint_rows(
         self, key: PRNGKey, sample_shape: tuple[int, ...]
-    ) -> Record:
+    ):
         """Resample rows jointly, preserving correlation."""
+        from ..core._record_array import NumericRecordArray
         n_draws = prod(sample_shape)
         indices = self._w.choice(key, shape=(n_draws,))
         result = {}
@@ -176,6 +169,11 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsLogProb, Supp
                 result[cname] = drawn.reshape(sample_shape + arr.shape[1:])
             else:
                 result[cname] = drawn.squeeze(axis=0)
+        if sample_shape:
+            return NumericRecordArray(
+                result, batch_shape=sample_shape,
+                template=self.record_template,
+            )
         return Record(result)
 
     def _log_prob(self, value) -> Array:

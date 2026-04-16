@@ -38,7 +38,6 @@ def __getattr__(name: str):
 from ._record_distribution import (
     RecordDistribution,
     _RecordDistributionView,
-    _unflatten_batched,
 )
 
 # -- _array_distributions ---------------------------------------------------
@@ -94,7 +93,6 @@ __all__ = [
     # Record distribution
     "RecordDistribution",
     "_RecordDistributionView",
-    "_unflatten_batched",
     # Array hierarchy
     "NumericRecordDistribution",
     "TFPRecordDistribution",

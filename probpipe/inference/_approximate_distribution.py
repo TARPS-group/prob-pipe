@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 import jax.numpy as jnp
 
-from ..core.distribution import ArrayEmpiricalDistribution, Distribution, _unflatten_batched
+from ..core.distribution import ArrayEmpiricalDistribution, Distribution
 from ..core._record_distribution import _RecordDistributionView
 from ..core.provenance import Provenance
 from ..core.record import Record, RecordTemplate
@@ -155,7 +155,8 @@ class ApproximateDistribution(ArrayEmpiricalDistribution):
             samples = jnp.concatenate(parts, axis=0)
 
         if self.record_template is not None:
-            return _unflatten_batched(samples, self.record_template)
+            from ..core._record_array import NumericRecordArray
+            return NumericRecordArray.unflatten(samples, template=self.record_template)
         return samples
 
     def __repr__(self) -> str:
@@ -179,7 +180,7 @@ def make_posterior(
     algorithm: str,
     *,
     auxiliary: DataTree | None = None,
-    record_template: RecordTemplate | Record | None = None,
+    record_template: RecordTemplate | None = None,
     **meta: Any,
 ) -> ApproximateDistribution:
     """Build an ApproximateDistribution with provenance.
@@ -195,7 +196,7 @@ def make_posterior(
     auxiliary : DataTree or None
         Pre-built auxiliary DataTree (diagnostics, sample stats, warmup).
         Inference methods are responsible for building this.
-    record_template : RecordTemplate, Record, or None
+    record_template : RecordTemplate or None
         If provided, ``draws()`` returns named ``Record``.
     **meta
         Additional metadata stored in provenance.

@@ -18,6 +18,8 @@ from probpipe import (
     Normal,
     ProductDistribution,
     Record,
+    RecordArray,
+    RecordTemplate,
     mean,
     sample,
     variance,
@@ -128,7 +130,7 @@ class TestApproximateDistributionValuesTemplate:
 
     @pytest.fixture
     def template(self):
-        return Record(r=jnp.array(0.0), K=jnp.array(0.0), phi=jnp.array(0.0))
+        return RecordTemplate(r=(), K=(), phi=())
 
     @pytest.fixture
     def posterior_with_template(self, template):
@@ -142,7 +144,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_draws_returns_values(self, posterior_with_template):
         draws = posterior_with_template.draws()
-        assert isinstance(draws, Record)
+        assert isinstance(draws, (Record, RecordArray))
 
     def test_draws_has_correct_fields(self, posterior_with_template):
         draws = posterior_with_template.draws()
@@ -150,22 +152,22 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_draws_field_shapes(self, posterior_with_template):
         draws = posterior_with_template.draws()
-        assert draws.r.shape == (100,)
-        assert draws.K.shape == (100,)
-        assert draws.phi.shape == (100,)
+        assert draws["r"].shape == (100,)
+        assert draws["K"].shape == (100,)
+        assert draws["phi"].shape == (100,)
 
     def test_draws_values_match_raw(self, posterior_with_template):
         """Named draws must contain the same data as raw flat draws."""
         raw = posterior_with_template.draws()
         # Reconstruct flat from named
-        flat = jnp.stack([raw.K, raw.phi, raw.r], axis=-1)  # sorted order
+        flat = jnp.stack([raw["K"], raw["phi"], raw["r"]], axis=-1)  # sorted order
         chain = posterior_with_template.chains[0]
         np.testing.assert_allclose(flat, chain, atol=1e-6)
 
     def test_draws_single_chain_returns_values(self, posterior_with_template):
         draws = posterior_with_template.draws(chain=0)
-        assert isinstance(draws, Record)
-        assert draws.r.shape == (100,)
+        assert isinstance(draws, (Record, RecordArray))
+        assert draws["r"].shape == (100,)
 
     def test_without_template_returns_array(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 3))
@@ -180,9 +182,9 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_array_shaped_fields(self):
         """Template with non-scalar fields unflattens correctly."""
-        template = Record(
-            mean=jnp.zeros(3),
-            cov=jnp.zeros((2, 2)),
+        template = RecordTemplate(
+            mean=(3,),
+            cov=(2, 2),
         )
         flat_size = 3 + 4  # 3 + 2*2
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, flat_size))
@@ -192,12 +194,12 @@ class TestApproximateDistributionValuesTemplate:
             record_template=template,
         )
         draws = post.draws()
-        assert draws.mean.shape == (20, 3)
-        assert draws.cov.shape == (20, 2, 2)
+        assert draws["mean"].shape == (20, 3)
+        assert draws["cov"].shape == (20, 2, 2)
 
     def test_draws_with_warmup_and_template(self):
         """draws(include_warmup=True) returns Record when template is set."""
-        template = Record(a=jnp.array(0.0), b=jnp.array(0.0))
+        template = RecordTemplate(a=(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
         warmup = jax.random.normal(jax.random.PRNGKey(1), (10, 2))
         auxiliary = _build_mcmc_datatree([chain], warmup_chains=[warmup])
@@ -207,15 +209,15 @@ class TestApproximateDistributionValuesTemplate:
             auxiliary=auxiliary, record_template=template,
         )
         draws = post.draws(include_warmup=True)
-        assert isinstance(draws, Record)
-        assert draws.a.shape == (60,)  # 10 warmup + 50 draws
-        assert draws.b.shape == (60,)
+        assert isinstance(draws, (Record, RecordArray))
+        assert draws["a"].shape == (60,)  # 10 warmup + 50 draws
+        assert draws["b"].shape == (60,)
 
     def test_nested_record_template_unflatten(self):
         """Nested Record template unflattens draws into nested structure."""
-        template = Record(
-            params=Record(a=jnp.array(0.0), b=jnp.array(0.0)),
-            scale=jnp.array(0.0),
+        template = RecordTemplate(
+            params=RecordTemplate(a=(), b=()),
+            scale=(),
         )
         flat_size = 3  # a + b + scale
         chain = jax.random.normal(jax.random.PRNGKey(0), (30, flat_size))
@@ -225,11 +227,11 @@ class TestApproximateDistributionValuesTemplate:
             record_template=template,
         )
         draws = post.draws()
-        assert isinstance(draws, Record)
-        assert isinstance(draws.params, Record)
-        assert draws.params.a.shape == (30,)
-        assert draws.params.b.shape == (30,)
-        assert draws.scale.shape == (30,)
+        assert isinstance(draws, (Record, RecordArray))
+        assert isinstance(draws["params"], (Record, RecordArray))
+        assert draws["params"]["a"].shape == (30,)
+        assert draws["params"]["b"].shape == (30,)
+        assert draws["scale"].shape == (30,)
 
     def test_without_warmup(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
@@ -502,7 +504,7 @@ class TestRecordDistributionView:
 
     @pytest.fixture
     def template(self):
-        return Record(K=jnp.array(0.0), phi=jnp.array(0.0), r=jnp.array(0.0))
+        return RecordTemplate(K=(), phi=(), r=())
 
     @pytest.fixture
     def posterior(self, template):
@@ -540,7 +542,7 @@ class TestRecordDistributionView:
         assert view.event_shape == ()
 
     def test_view_event_shape_vector(self):
-        template = Record(vec=jnp.zeros(5), scalar=jnp.array(0.0))
+        template = RecordTemplate(vec=(5,), scalar=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 6))
         prior = MultivariateNormal(loc=jnp.zeros(6), cov=jnp.eye(6), name="z")
         post = make_posterior([chain], parents=(prior,), algorithm="test",
@@ -552,14 +554,14 @@ class TestRecordDistributionView:
         view = posterior["K"]
         draws = posterior.draws()
         np.testing.assert_allclose(
-            float(view._mean()), float(jnp.mean(draws.K)), atol=1e-5
+            float(view._mean()), float(jnp.mean(draws["K"])), atol=1e-5
         )
 
     def test_view_variance(self, posterior):
         view = posterior["K"]
         draws = posterior.draws()
         np.testing.assert_allclose(
-            float(view._variance()), float(jnp.var(draws.K)), atol=1e-5
+            float(view._variance()), float(jnp.var(draws["K"])), atol=1e-5
         )
 
     def test_view_sample(self, posterior):
@@ -591,7 +593,7 @@ class TestRecordDistributionView:
         """_mean() falls back to _field_draws() when parent lacks SupportsMean."""
         # ApproximateDistribution IS SupportsMean, so we test the fallback
         # by checking the empirical mean matches the draws directly.
-        template = Record(a=jnp.array(0.0), b=jnp.array(0.0))
+        template = RecordTemplate(a=(), b=())
         chain = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         post = make_posterior([chain], parents=(prior,), algorithm="test",
@@ -635,7 +637,7 @@ class TestViewProtocolDuckTyping:
     def test_view_from_posterior_not_isinstance_log_prob(self):
         """ApproximateDistribution lacks SupportsLogProb → view doesn't have it."""
         from probpipe import SupportsLogProb
-        template = Record(a=jnp.array(0.0), b=jnp.array(0.0))
+        template = RecordTemplate(a=(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         post = make_posterior([chain], parents=(prior,), algorithm="test",
@@ -649,7 +651,7 @@ class TestViewProtocolDuckTyping:
         joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
         assert isinstance(joint["x"], SupportsSampling)
 
-        template = Record(a=jnp.array(0.0))
+        template = RecordTemplate(a=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
         prior = Normal(0, 1, name="x")
         post = make_posterior([chain], parents=(prior,), algorithm="test",
@@ -690,7 +692,7 @@ class TestViewProtocolDuckTyping:
         assert isinstance(view_with, SupportsLogProb)
 
         # ApproximateDistribution parent → isinstance False
-        template = Record(a=jnp.array(0.0))
+        template = RecordTemplate(a=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 1))
         prior = Normal(0, 1, name="x")
         post = make_posterior([chain], parents=(prior,), algorithm="test",
@@ -711,7 +713,7 @@ class TestRecordDistributionProperties:
 
     @pytest.fixture
     def template(self):
-        return Record(K=jnp.array(0.0), phi=jnp.array(0.0), r=jnp.array(0.0))
+        return RecordTemplate(K=(), phi=(), r=())
 
     @pytest.fixture
     def posterior(self, template):
@@ -838,9 +840,9 @@ class TestEndToEndValuesPipeline:
     def test_draws_are_named_values(self, posterior):
         """draws() returns Record with correct field names and shapes."""
         draws = posterior.draws()
-        assert isinstance(draws, Record)
+        assert isinstance(draws, (Record, RecordArray))
         assert draws.fields == ("params",)
-        assert draws.params.shape == (500, 2)
+        assert draws["params"].shape == (500, 2)
 
     def test_draws_values_correct(self, posterior):
         """Posterior mean and std match analytical conjugate values."""
@@ -850,8 +852,8 @@ class TestEndToEndValuesPipeline:
         # Posterior var  = sigma_prior^2 * sigma_lik^2 / (sigma_lik^2 + sigma_prior^2)
         #                = 10/11 ≈ 0.909
         draws = posterior.draws()
-        post_mean = np.asarray(draws.params.mean(axis=0))
-        post_std = np.asarray(draws.params.std(axis=0))
+        post_mean = np.asarray(draws["params"].mean(axis=0))
+        post_std = np.asarray(draws["params"].std(axis=0))
         analytical_mean = np.array([10 / 11, 20 / 11])
         analytical_std = np.sqrt(10 / 11)
         np.testing.assert_allclose(post_mean, analytical_mean, atol=0.15)
@@ -867,7 +869,7 @@ class TestEndToEndValuesPipeline:
         draws = posterior.draws()
         np.testing.assert_allclose(
             np.asarray(view._mean()),
-            np.asarray(draws.params.mean(axis=0)),
+            np.asarray(draws["params"].mean(axis=0)),
             atol=1e-5,
         )
         # Analytical check: view._mean() near analytical posterior mean
@@ -919,7 +921,7 @@ class TestEndToEndValuesPipeline:
 
     def test_multi_field_posterior(self):
         """Posterior with multiple named scalar fields."""
-        template = Record(a=jnp.array(0.0), b=jnp.array(0.0), c=jnp.array(0.0))
+        template = RecordTemplate(a=(), b=(), c=())
         # 3 scalar fields → flat draw vectors of size 3
         chain = jax.random.normal(jax.random.PRNGKey(0), (200, 3))
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
@@ -928,16 +930,16 @@ class TestEndToEndValuesPipeline:
             record_template=template,
         )
         draws = post.draws()
-        assert isinstance(draws, Record)
+        assert isinstance(draws, (Record, RecordArray))
         assert draws.fields == ("a", "b", "c")
-        assert draws.a.shape == (200,)
+        assert draws["a"].shape == (200,)
 
         # Per-field views
         view_a = post["a"]
         view_b = post["b"]
         assert isinstance(view_a, _RecordDistributionView)
         np.testing.assert_allclose(
-            float(view_a._mean()), float(draws.a.mean()), atol=1e-5
+            float(view_a._mean()), float(draws["a"].mean()), atol=1e-5
         )
 
         # Select multiple fields

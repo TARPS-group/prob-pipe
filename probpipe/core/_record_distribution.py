@@ -191,92 +191,35 @@ class _RecordDistributionView(Distribution, SupportsSampling, SupportsMean, Supp
 
     # -- Internals ----------------------------------------------------------
 
-    def _extract(self, structured: Array) -> Array:
-        """Extract this field from a parent sample (flat array or Record)."""
-        if isinstance(structured, Record):
+    def _extract(self, structured) -> Array:
+        """Extract this field from a parent sample (Record, NumericRecordArray, or flat array)."""
+        from ._record_array import RecordArray
+        if isinstance(structured, (Record, RecordArray)):
             return structured[self._key]
-        template = self._parent.record_template
-        # _unflatten_batched handles both RecordTemplate and Record templates
-        flat_2d = jnp.atleast_2d(structured)
-        result = _unflatten_batched(flat_2d, template)
-        if structured.ndim < 2:
-            return result[self._key].squeeze(axis=0)
-        return result[self._key]
+        # Flat array — unflatten via parent's unflatten_value
+        result = self._parent.unflatten_value(jnp.asarray(structured))
+        if isinstance(result, (Record, RecordArray)):
+            return result[self._key]
+        return result
 
     def _field_draws(self) -> Array:
         """All draws for this field (requires parent to have a ``draws()`` method)."""
+        from ._record_array import RecordArray
         draws = self._parent.draws()
-        if isinstance(draws, Record):
+        if isinstance(draws, (Record, RecordArray)):
             return jnp.asarray(draws[self._key])
-        return jnp.asarray(
-            _unflatten_batched(draws, self._parent.record_template)[self._key]
+        # Flat array draws — unflatten
+        from ._record_array import NumericRecordArray
+        result = NumericRecordArray.unflatten(
+            jnp.asarray(draws), template=self._parent.record_template
         )
+        return jnp.asarray(result[self._key])
 
     def __repr__(self) -> str:
         return (
             f"_RecordDistributionView(parent={type(self._parent).__name__}, "
             f"field={self._key!r})"
         )
-
-
-# ---------------------------------------------------------------------------
-# Batched unflatten helper
-# ---------------------------------------------------------------------------
-
-
-def _unflatten_batched(
-    flat_draws: Array, template: RecordTemplate | Record,
-) -> Record:
-    """Unflatten a ``(num_draws, flat_size)`` array into a Record with a draw axis.
-
-    Each field in the returned Record has shape ``(num_draws, *event_shape)``
-    where ``event_shape`` comes from the corresponding field in *template*.
-
-    Accepts both :class:`RecordTemplate` and legacy :class:`Record` templates.
-    """
-    from .._utils import prod
-
-    if jnp.ndim(flat_draws) < 2:
-        raise ValueError(
-            f"_unflatten_batched expects at least 2-D input, "
-            f"got shape {jnp.shape(flat_draws)}"
-        )
-    fields: dict[str, jnp.ndarray | Record] = {}
-    offset = 0
-    for name in template.fields:
-        spec = template[name]
-        if isinstance(spec, RecordTemplate):
-            # Nested template
-            size = sum(
-                prod(s) if s else 1
-                for s in spec.numeric_leaf_shapes.values()
-            )
-            child_flat = flat_draws[:, offset:offset + size]
-            fields[name] = _unflatten_batched(child_flat, spec)
-            offset += size
-        elif isinstance(spec, tuple):
-            # RecordTemplate: spec is a shape tuple
-            size = prod(spec) if spec else 1
-            chunk = flat_draws[:, offset:offset + size]
-            if spec:
-                fields[name] = chunk.reshape(flat_draws.shape[0], *spec)
-            else:
-                fields[name] = chunk.squeeze(axis=-1)
-            offset += size
-        elif isinstance(spec, Record):
-            # Legacy Record template: nested Record
-            size = spec.flat_size
-            child_flat = flat_draws[:, offset:offset + size]
-            fields[name] = _unflatten_batched(child_flat, spec)
-            offset += size
-        else:
-            # Legacy Record template: array leaf
-            size = spec.size
-            event_shape = spec.shape
-            chunk = flat_draws[:, offset:offset + size]
-            fields[name] = chunk.reshape(flat_draws.shape[0], *event_shape)
-            offset += size
-    return Record(fields)
 
 
 # ---------------------------------------------------------------------------
@@ -403,33 +346,26 @@ class RecordDistribution(Distribution[Record]):
 
     # -- Flatten / unflatten ------------------------------------------------
 
-    def flatten_value(self, value: Record) -> Array:
-        """Flatten a Record sample to a 1-D array."""
-        return value.flatten()
+    def flatten_value(self, value) -> Array:
+        """Flatten a Record or NumericRecordArray sample to a flat array."""
+        from ._record_array import NumericRecordArray
+        if isinstance(value, NumericRecordArray):
+            return value.flatten()
+        if isinstance(value, Record):
+            return value.flatten()
+        return value
 
-    def unflatten_value(self, flat: Array) -> Record:
-        """Reconstruct a Record from a flat array using the template."""
+    def unflatten_value(self, flat: Array):
+        """Reconstruct a NumericRecord or NumericRecordArray from a flat array."""
+        from ._numeric_record import NumericRecord
+        from ._record_array import NumericRecordArray
         tpl = self.record_template
         if tpl is None:
             raise RuntimeError("Cannot unflatten without record_template")
-        if isinstance(tpl, RecordTemplate):
-            # _unflatten_batched expects at least 2D; wrap and unwrap if 1D
-            if flat.ndim < 2:
-                flat_2d = jnp.atleast_2d(flat)
-                result = _unflatten_batched(flat_2d, tpl)
-                # Squeeze out the artificial leading dim from each leaf
-                def _squeeze_leaf(val):
-                    if isinstance(val, Record):
-                        return Record({
-                            n: _squeeze_leaf(val[n]) for n in val.fields
-                        })
-                    return val.squeeze(axis=0)
-                return Record({
-                    name: _squeeze_leaf(result[name])
-                    for name in result.fields
-                })
-            return _unflatten_batched(flat, tpl)
-        return Record.unflatten(flat, template=tpl)
+        flat = jnp.asarray(flat)
+        if flat.ndim < 2:
+            return NumericRecord.unflatten(flat, template=tpl)
+        return NumericRecordArray.unflatten(flat, template=tpl)
 
     def as_flat_distribution(self) -> FlattenedView:
         """View this distribution as a flat ``ArrayDistribution``.

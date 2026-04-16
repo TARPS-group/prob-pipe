@@ -10,6 +10,7 @@ from probpipe import (
     EmpiricalDistribution,
     Record,
     RecordDistribution,
+    RecordArray,
 )
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.node import WorkflowFunction
@@ -113,7 +114,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(0)
         s = sample(je, key=key)
-        assert isinstance(s, Record)
+        assert isinstance(s, (Record, RecordArray))
         assert set(s.fields) == {"x", "y"}
         assert s["x"].shape == ()
         assert s["y"].shape == ()
@@ -125,7 +126,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(1)
         s = sample(je, key=key, sample_shape=(10,))
-        assert isinstance(s, Record)
+        assert isinstance(s, (Record, RecordArray))
         assert s["x"].shape == (10,)
         assert s["y"].shape == (10,)
 

@@ -15,6 +15,7 @@ from probpipe import (
 )
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.record import Record
+from probpipe.core._record_array import RecordArray
 from probpipe.core.node import WorkflowFunction
 from probpipe import condition_on, from_distribution, log_prob, mean, sample, variance
 
@@ -95,7 +96,7 @@ class TestProductDistribution:
     def test_sample_returns_values(self, joint_xy):
         key = jax.random.PRNGKey(0)
         s = sample(joint_xy, key=key)
-        assert isinstance(s, Record)
+        assert isinstance(s, (Record, RecordArray))
         assert set(s.fields) == {"x", "y"}
 
     def test_sample_shapes_scalar(self, joint_xy):
@@ -194,7 +195,7 @@ class TestFlattenUnflatten:
     def test_roundtrip_scalar_components(self, joint_xy):
         key = jax.random.PRNGKey(60)
         s = sample(joint_xy, key=key)
-        assert isinstance(s, Record)
+        assert isinstance(s, (Record, RecordArray))
         flat = joint_xy.flatten_value(s)
         assert flat.shape == (2,)
         recovered = joint_xy.unflatten_value(flat)
@@ -205,7 +206,7 @@ class TestFlattenUnflatten:
     def test_roundtrip_mixed_components(self, joint_xz):
         key = jax.random.PRNGKey(61)
         s = sample(joint_xz, key=key)
-        assert isinstance(s, Record)
+        assert isinstance(s, (Record, RecordArray))
         flat = joint_xz.flatten_value(s)
         assert flat.shape == (4,)
         recovered = joint_xz.unflatten_value(flat)
@@ -216,7 +217,7 @@ class TestFlattenUnflatten:
     def test_roundtrip_no_batch_dim(self, joint_xy):
         key = jax.random.PRNGKey(62)
         s = sample(joint_xy, key=key)
-        assert isinstance(s, Record)
+        assert isinstance(s, (Record, RecordArray))
         flat = joint_xy.flatten_value(s)
         assert flat.shape == (2,)
         recovered = joint_xy.unflatten_value(flat)
@@ -297,7 +298,6 @@ class TestConditionOn:
         cond = condition_on(joint_xy, x=jnp.array(2.0))
         key = jax.random.PRNGKey(20)
         s = sample(cond, key=key, sample_shape=(10,))
-        assert isinstance(s, Record)
         assert "x" not in s
         assert "y" in s
 
@@ -684,7 +684,7 @@ class TestNestedProductDistribution:
     def test_sample_returns_nested_values(self, nested_joint):
         key = jax.random.PRNGKey(1)
         s = sample(nested_joint, key=key)
-        assert isinstance(s, Record)
+        assert isinstance(s, (Record, RecordArray))
         assert isinstance(s["physics"], Record)
         assert "force" in s["physics"]
         assert "mass" in s["physics"]
@@ -751,7 +751,7 @@ class TestNestedProductDistribution:
     def test_flatten_unflatten_roundtrip(self, nested_joint):
         key = jax.random.PRNGKey(20)
         s = sample(nested_joint, key=key)
-        assert isinstance(s, Record)
+        assert isinstance(s, (Record, RecordArray))
         flat = nested_joint.flatten_value(s)
         assert flat.shape == (3,)
         recovered = nested_joint.unflatten_value(flat)
@@ -830,7 +830,7 @@ class TestNestedProductDistribution:
         )
         key = jax.random.PRNGKey(50)
         s = sample(cond, key=key, sample_shape=(5,))
-        assert isinstance(s, Record)
+        assert isinstance(s, (Record, RecordArray))
         assert "physics" in s
         assert isinstance(s["physics"], Record)
         assert "mass" in s["physics"]
@@ -1001,7 +1001,7 @@ class TestNestedWithMVN:
     def test_sample_and_flatten(self, nested_mvn):
         key = jax.random.PRNGKey(50)
         s = sample(nested_mvn, key=key, sample_shape=(5,))
-        assert isinstance(s, Record)
+        assert isinstance(s, (Record, RecordArray))
         assert isinstance(s["group"], Record)
         assert s["group"]["position"].shape == (5, 2)
         assert s["group"]["scale"].shape == (5,)

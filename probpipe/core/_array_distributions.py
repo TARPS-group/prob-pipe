@@ -235,14 +235,15 @@ class NumericRecordDistribution(RecordDistribution):
         return prod(self.event_shape)
 
     def flatten_value(self, value) -> Array:
-        """Flatten a sample (Record or array) to a flat trailing axis.
+        """Flatten a sample (Record, NumericRecordArray, or array) to flat trailing axis.
 
-        When *value* is a :class:`Record`, delegates to
-        ``RecordDistribution.flatten_value``.  Otherwise flattens event
-        dimensions of a raw array, preserving leading batch/sample dims.
+        Delegates to ``RecordDistribution.flatten_value`` for Record-like
+        inputs.  For raw arrays, flattens event dimensions preserving
+        leading batch/sample dims.
         """
         from .record import Record as _Values
-        if isinstance(value, _Values):
+        from ._record_array import NumericRecordArray
+        if isinstance(value, (NumericRecordArray, _Values)):
             return super().flatten_value(value)
         value = jnp.asarray(value)
         es = self.event_shape
@@ -254,11 +255,12 @@ class NumericRecordDistribution(RecordDistribution):
         return value.reshape(*batch_dims, n_event)
 
     def unflatten_value(self, flat: ArrayLike):
-        """Unflatten a flat trailing axis back to event dimensions or Record.
+        """Unflatten a flat trailing axis back to event dims, Record, or NumericRecordArray.
 
-        When ``record_template`` is set and has multiple fields, returns
-        a :class:`Record`.  For single-field leaf distributions, reshapes
-        to ``(*batch, *event_shape)`` to stay compatible with ``_log_prob``.
+        When ``record_template`` is set with multiple fields, delegates
+        to ``RecordDistribution.unflatten_value`` (returns NumericRecord
+        or NumericRecordArray).  For single-field leaf distributions,
+        reshapes to ``(*batch, *event_shape)`` for ``_log_prob`` compat.
         """
         tpl = self.record_template
         if tpl is not None and len(tpl.fields) > 1:

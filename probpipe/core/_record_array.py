@@ -94,12 +94,6 @@ class RecordArray:
 
     # -- Field access -------------------------------------------------------
 
-    def __getattr__(self, name: str) -> Any:
-        store = object.__getattribute__(self, "_store")
-        if name in store:
-            return store[name]
-        raise AttributeError(f"RecordArray has no field {name!r}")
-
     def __getitem__(self, key: str | int) -> Any:
         if isinstance(key, str):
             if key not in self._store:
@@ -241,10 +235,12 @@ class NumericRecordArray(RecordArray):
         for name in template.fields:
             spec = template[name]
             if isinstance(spec, RecordTemplate):
-                raise NotImplementedError(
-                    "Nested RecordTemplate in NumericRecordArray.unflatten "
-                    "is not yet supported"
+                size = spec.flat_size
+                chunk = flat[..., offset : offset + size]
+                fields[name] = cls.unflatten(
+                    chunk, template=spec, batch_shape=batch_shape,
                 )
+                offset += size
             elif spec is None:
                 raise TypeError(
                     f"Cannot unflatten opaque field {name!r}"

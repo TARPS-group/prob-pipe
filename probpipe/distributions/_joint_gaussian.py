@@ -30,8 +30,6 @@ from ..core.protocols import (
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
-    _flatten_record_batched,
-    _unflatten_record_batched,
 )
 
 
@@ -139,13 +137,7 @@ class JointGaussian(RecordDistribution, SupportsSampling, SupportsLogProb, Suppo
         """Per-component event shapes."""
         return {k: (v,) for k, v in self._component_shapes.items()}
 
-    def flatten_value(self, value: Record) -> Array:
-        """Flatten a (possibly batched) Record to ``(*leading, event_size)``."""
-        return _flatten_record_batched(value, self.event_shapes)
-
-    def unflatten_value(self, flat: Array) -> Record:
-        """Reconstruct a Record from a flat ``(*leading, event_size)`` array."""
-        return _unflatten_record_batched(flat, self.event_shapes)
+    # flatten_value / unflatten_value inherited from RecordDistribution
 
     @property
     def components(self):
@@ -156,28 +148,35 @@ class JointGaussian(RecordDistribution, SupportsSampling, SupportsLogProb, Suppo
         from .multivariate import MultivariateNormal as MVN
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")
         flat = full_mvn._sample(key)
-        return self._unflatten_flat_vec(flat)
+        return self._unflatten_flat_vec(flat, sample_shape=())
 
     def _sample(
         self,
         key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
-    ) -> Record:
+    ):
         from .multivariate import MultivariateNormal as MVN
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")
         flat = full_mvn._sample(key, sample_shape)
-        return self._unflatten_flat_vec(flat)
+        return self._unflatten_flat_vec(flat, sample_shape=sample_shape)
 
-    def _unflatten_flat_vec(self, flat: Array) -> Record:
+    def _unflatten_flat_vec(self, flat: Array, sample_shape: tuple[int, ...] = ()):
         """Split a flat Gaussian sample vector into per-component arrays."""
+        from ..core._record_array import NumericRecordArray
         result = {}
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = flat[..., sl]
+        if sample_shape:
+            return NumericRecordArray(
+                result, batch_shape=sample_shape,
+                template=self.record_template,
+            )
         return Record(result)
 
     def _log_prob(self, value) -> Array:
-        if not isinstance(value, Record):
+        from ..core._record_array import RecordArray
+        if not isinstance(value, (Record, RecordArray)):
             value = Record(value)
         from .multivariate import MultivariateNormal as MVN
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")

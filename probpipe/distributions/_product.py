@@ -175,8 +175,13 @@ class ProductDistribution(
     def _sample_one(self, key: PRNGKey) -> Record:
         return self._sample(key)
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Record:
-        """Draw independent samples from each component, returning Record."""
+    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
+        """Draw independent samples from each component.
+
+        Returns ``Record`` for single samples, ``NumericRecordArray``
+        for batched samples.
+        """
+        from ..core._record_array import NumericRecordArray
         sorted_names = sorted(self._components.keys())
         keys = jax.random.split(key, len(sorted_names))
         fields: dict[str, jnp.ndarray | Record] = {}
@@ -186,6 +191,11 @@ class ProductDistribution(
                 fields[name] = _sample_nested(comp, subkey, sample_shape)
             else:
                 fields[name] = comp._sample(subkey, sample_shape)
+        if sample_shape:
+            return NumericRecordArray(
+                fields, batch_shape=sample_shape,
+                template=self.record_template,
+            )
         return Record(fields)
 
     # -- Log-prob -----------------------------------------------------------
@@ -195,10 +205,20 @@ class ProductDistribution(
 
         Accepts Record, dict, or flat array (auto-unflattened via template).
         """
+        from ..core._record_array import RecordArray
         if isinstance(value, jnp.ndarray) and self._record_template is not None:
             value = self.unflatten_value(value)
+        if isinstance(value, RecordArray):
+            value = {k: v for k, v in value.items()}
         if isinstance(value, Record):
             value = value.to_dict()
+        # Recursively convert nested Record values to dicts
+        def _to_dict(v):
+            if isinstance(v, Record):
+                return v.to_dict()
+            return v
+        if isinstance(value, dict):
+            value = {k: _to_dict(v) for k, v in value.items()}
         lp_tree = jax.tree.map(
             lambda dist, val: dist._log_prob(jnp.asarray(val)),
             self._components,

@@ -72,10 +72,8 @@ class TestRecordArrayAccess:
             template=tpl,
         )
 
-    def test_getattr(self, ra):
-        assert ra.x.shape == (10, 3)
-
     def test_getitem_str(self, ra):
+        assert ra["x"].shape == (10, 3)
         assert ra["y"].shape == (10,)
 
     def test_getitem_int(self, ra):
@@ -98,10 +96,6 @@ class TestRecordArrayAccess:
 
     def test_keys(self, ra):
         assert list(ra.keys()) == ["x", "y"]
-
-    def test_missing_attr_raises(self, ra):
-        with pytest.raises(AttributeError, match="no field"):
-            ra.nonexistent
 
     def test_missing_key_raises(self, ra):
         with pytest.raises(KeyError):
@@ -215,8 +209,8 @@ class TestNumericRecordArrayFlatten:
         )
         flat = nra.flatten()
         nra2 = NumericRecordArray.unflatten(flat, template=tpl)
-        np.testing.assert_allclose(nra2.x, nra.x)
-        np.testing.assert_allclose(nra2.y, nra.y)
+        np.testing.assert_allclose(nra2["x"], nra["x"])
+        np.testing.assert_allclose(nra2["y"], nra["y"])
 
     def test_unflatten_infers_batch(self):
         tpl = RecordTemplate(a=(), b=(2,))
@@ -240,9 +234,9 @@ class TestNumericRecordArrayFlatten:
         tpl = RecordTemplate(a=(), b=(), c=())
         flat = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
         nra = NumericRecordArray.unflatten(flat, template=tpl)
-        np.testing.assert_allclose(nra.a, [1.0, 4.0])
-        np.testing.assert_allclose(nra.b, [2.0, 5.0])
-        np.testing.assert_allclose(nra.c, [3.0, 6.0])
+        np.testing.assert_allclose(nra["a"], [1.0, 4.0])
+        np.testing.assert_allclose(nra["b"], [2.0, 5.0])
+        np.testing.assert_allclose(nra["c"], [3.0, 6.0])
 
     def test_unflatten_opaque_raises(self):
         tpl = RecordTemplate(label=None, x=())
@@ -291,7 +285,7 @@ class TestNumericRecordArrayReductions:
         m = nra.mean(axis=0)
         assert isinstance(m, NumericRecordArray)
         assert m.batch_shape == (4,)
-        np.testing.assert_allclose(m.x, [4.0, 5.0, 6.0, 7.0])
+        np.testing.assert_allclose(m["x"], [4.0, 5.0, 6.0, 7.0])
 
     def test_mean_then_mean_collapses(self):
         tpl = RecordTemplate(x=())
@@ -321,7 +315,7 @@ class TestRecordArrayPyTree:
         )
         nra2 = jax.tree.map(lambda a: a * 3, nra)
         assert isinstance(nra2, NumericRecordArray)
-        np.testing.assert_allclose(nra2.x, 3.0 * jnp.ones((5, 2)))
+        np.testing.assert_allclose(nra2["x"], 3.0 * jnp.ones((5, 2)))
 
     def test_tree_leaves(self):
         tpl = RecordTemplate(a=(), b=(3,))
@@ -345,7 +339,7 @@ class TestRecordArrayPyTree:
         nra2 = jax.tree.unflatten(treedef, leaves)
         assert isinstance(nra2, NumericRecordArray)
         assert nra2.batch_shape == (5,)
-        np.testing.assert_allclose(nra2.x, nra.x)
+        np.testing.assert_allclose(nra2["x"], nra["x"])
 
     def test_jit(self):
         tpl = RecordTemplate(x=(2,))
@@ -357,7 +351,7 @@ class TestRecordArrayPyTree:
 
         @jax.jit
         def f(arr):
-            return jnp.sum(arr.x)
+            return jnp.sum(arr["x"])
 
         result = f(nra)
         np.testing.assert_allclose(result, 10.0)
