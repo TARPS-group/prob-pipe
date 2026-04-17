@@ -405,3 +405,86 @@ class TestRepr:
         )
         r = repr(nra)
         assert "NumericRecordArray" in r
+
+
+# ---------------------------------------------------------------------------
+# Design-decision enforcement
+# ---------------------------------------------------------------------------
+
+
+class TestNumericIndexingReturnsNumericRecord:
+    """``NumericRecordArray`` indexing must preserve the numeric guarantee."""
+
+    def test_int_index_returns_numeric_record(self):
+        from probpipe import NumericRecord
+        tpl = RecordTemplate(x=(3,), y=())
+        nra = NumericRecordArray(
+            x=jnp.arange(30.0).reshape(10, 3),
+            y=jnp.arange(10.0),
+            batch_shape=(10,), template=tpl,
+        )
+        elem = nra[0]
+        assert isinstance(elem, NumericRecord)
+        # NumericRecord guarantees jnp.ndarray leaves.
+        assert isinstance(elem["x"], jnp.ndarray)
+        assert isinstance(elem["y"], jnp.ndarray)
+
+    def test_int_index_on_recordarray_returns_record(self):
+        """The base RecordArray returns plain Record, not NumericRecord."""
+        from probpipe import Record
+        tpl = RecordTemplate(x=(3,))
+        ra = RecordArray(
+            x=jnp.arange(30.0).reshape(10, 3),
+            batch_shape=(10,), template=tpl,
+        )
+        elem = ra[0]
+        assert type(elem) is Record
+
+
+class TestRecordArrayEquality:
+    """Explicit coverage for the newly-added ``__eq__`` / ``__hash__``."""
+
+    def test_equal_same_contents(self):
+        tpl = RecordTemplate(x=())
+        a = RecordArray(x=jnp.arange(3.0), batch_shape=(3,), template=tpl)
+        b = RecordArray(x=jnp.arange(3.0), batch_shape=(3,), template=tpl)
+        assert a == b
+
+    def test_unequal_values(self):
+        tpl = RecordTemplate(x=())
+        a = RecordArray(x=jnp.arange(3.0), batch_shape=(3,), template=tpl)
+        b = RecordArray(x=jnp.arange(3.0) + 1, batch_shape=(3,), template=tpl)
+        assert a != b
+
+    def test_unequal_batch_shape(self):
+        tpl = RecordTemplate(x=())
+        a = RecordArray(x=jnp.zeros(3), batch_shape=(3,), template=tpl)
+        b = RecordArray(x=jnp.zeros((1, 3)), batch_shape=(1, 3), template=tpl)
+        assert a != b
+
+    def test_unequal_template(self):
+        a = RecordArray(x=jnp.zeros(3), batch_shape=(3,),
+                        template=RecordTemplate(x=()))
+        b = RecordArray(x=jnp.zeros((3, 2)), batch_shape=(3,),
+                        template=RecordTemplate(x=(2,)))
+        assert a != b
+
+    def test_type_mismatch_notimplemented(self):
+        """RecordArray != NumericRecordArray even with matching data."""
+        tpl = RecordTemplate(x=())
+        ra = RecordArray(x=jnp.zeros(3), batch_shape=(3,), template=tpl)
+        nra = NumericRecordArray(x=jnp.zeros(3), batch_shape=(3,), template=tpl)
+        assert ra != nra
+
+    def test_hash_structural(self):
+        """Same class + batch_shape + fields + template → same hash."""
+        tpl = RecordTemplate(x=())
+        a = RecordArray(x=jnp.zeros(3), batch_shape=(3,), template=tpl)
+        b = RecordArray(x=jnp.ones(3), batch_shape=(3,), template=tpl)
+        assert hash(a) == hash(b)
+
+    def test_hash_differs_by_batch_shape(self):
+        tpl = RecordTemplate(x=())
+        a = RecordArray(x=jnp.zeros(3), batch_shape=(3,), template=tpl)
+        b = RecordArray(x=jnp.zeros((1, 3)), batch_shape=(1, 3), template=tpl)
+        assert hash(a) != hash(b)

@@ -45,6 +45,9 @@ def _get_init_state(
         try:
             m = dist._mean()
             if isinstance(m, Record):
+                from ..core._numeric_record import NumericRecord
+                if not isinstance(m, NumericRecord):
+                    m = NumericRecord.from_record(m)
                 m = m.flatten()
             return jnp.atleast_1d(jnp.asarray(m, dtype=jnp.float32))
         except Exception:
@@ -85,8 +88,10 @@ def _build_target_log_prob(dist: Distribution, observed: ArrayLike | Record | No
     """
     if _is_simple_model(dist):
         data = observed
-        # Pre-resolve Record fields to raw arrays so that JAX tracing
-        # doesn't trigger Record's lazy _resolve (which causes tracer leaks).
+        # Records now store values verbatim (no lazy conversion), so we
+        # no longer have to pre-resolve to avoid tracer leaks. Left as a
+        # no-op Record rebuild for backwards-compatible safety under JIT
+        # if callers pass in non-JAX array leaves (e.g. numpy).
         from ..core.record import Record
         if isinstance(data, Record):
             data = Record({f: jnp.asarray(data[f]) for f in data.fields})

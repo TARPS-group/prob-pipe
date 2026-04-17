@@ -32,9 +32,15 @@ class TestConstruction:
         with pytest.raises(TypeError, match="numeric"):
             NumericRecord(label="hello")
 
-    def test_bool_rejected(self):
-        with pytest.raises(TypeError, match="numeric"):
-            NumericRecord(flag=True)
+    def test_bool_accepted(self):
+        """Python ``bool`` is a numeric leaf (JAX treats it as dtype bool)."""
+        import jax.numpy as jnp
+        v = NumericRecord(flag=True)
+        assert v["flag"].dtype == jnp.bool_
+        # ``bool`` array fields also work.
+        import numpy as np
+        v2 = NumericRecord(mask=np.array([True, False, True]))
+        assert v2["mask"].dtype == jnp.bool_
 
     def test_bytes_rejected(self):
         with pytest.raises(TypeError, match="numeric"):
@@ -62,6 +68,75 @@ class TestConstruction:
     def test_is_record(self):
         nr = NumericRecord(x=1.0)
         assert isinstance(nr, Record)
+
+    def test_coerces_python_scalar_to_jax_array(self):
+        """Every leaf is a jnp.ndarray after construction (uniform type)."""
+        nr = NumericRecord(a=1.0, b=2)
+        assert isinstance(nr["a"], jnp.ndarray)
+        assert isinstance(nr["b"], jnp.ndarray)
+
+    def test_coerces_numpy_to_jax_array(self):
+        nr = NumericRecord(x=np.array([1.0, 2.0]))
+        assert isinstance(nr["x"], jnp.ndarray)
+
+    def test_jax_array_passthrough(self):
+        """An existing jnp.ndarray is stored without conversion or copy."""
+        arr = jnp.array([1.0, 2.0])
+        nr = NumericRecord(x=arr)
+        assert nr["x"] is arr
+
+    def test_xarray_accepted_and_coerced(self):
+        """xarray.DataArray wraps numeric data and is accepted, but it is
+        coerced to ``jnp.ndarray`` at construction — labels / coords are
+        dropped. Use a plain ``Record`` if you need to preserve xarray
+        metadata."""
+        xr = pytest.importorskip("xarray")
+        da = xr.DataArray(
+            [1.0, 2.0, 3.0], dims=["time"], coords={"time": [10, 20, 30]},
+        )
+        nr = NumericRecord(y=da)
+        assert isinstance(nr["y"], jnp.ndarray)
+        np.testing.assert_allclose(nr["y"], [1.0, 2.0, 3.0])
+
+
+# ---------------------------------------------------------------------------
+# Design-decision enforcement
+# ---------------------------------------------------------------------------
+
+
+class TestDesignDecisions:
+    """Explicit guards against regressions of design decisions.
+
+    These tests fail loudly if someone re-introduces behavior that
+    the Record/NumericRecord split was specifically created to avoid.
+    """
+
+    def test_record_has_no_flatten(self):
+        """Numeric-only APIs live on NumericRecord, not Record."""
+        r = Record(a=1.0)
+        assert not hasattr(r, "flatten")
+
+    def test_record_has_no_unflatten(self):
+        assert not hasattr(Record, "unflatten")
+
+    def test_record_has_no_flat_size(self):
+        r = Record(a=1.0)
+        assert not hasattr(r, "flat_size")
+
+    def test_record_has_no_zip(self):
+        assert not hasattr(Record, "zip")
+
+    def test_record_has_no_resolve_field(self):
+        r = Record(a=1.0)
+        assert not hasattr(r, "_resolve_field")
+
+    def test_record_has_no_resolved_cache(self):
+        r = Record(a=1.0)
+        assert not hasattr(r, "_resolved")
+
+    def test_record_has_no_coords_slot(self):
+        r = Record(a=1.0)
+        assert not hasattr(r, "_coords")
 
 
 # ---------------------------------------------------------------------------

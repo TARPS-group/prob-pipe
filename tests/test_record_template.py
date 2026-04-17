@@ -233,7 +233,8 @@ class TestFromRecord:
         assert tpl["y"] == ()
 
     def test_roundtrip_flat_size(self):
-        r = Record(a=1.0, b=jnp.zeros(4), c=jnp.zeros((2, 3)))
+        from probpipe.core._numeric_record import NumericRecord
+        r = NumericRecord(a=1.0, b=jnp.zeros(4), c=jnp.zeros((2, 3)))
         tpl = RecordTemplate.from_record(r)
         assert tpl.flat_size == r.flat_size
 

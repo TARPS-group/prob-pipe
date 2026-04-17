@@ -30,26 +30,33 @@ class TestConstruction:
         with pytest.raises(ValueError, match="at least one"):
             Record()
 
-    def test_numpy_arrays(self):
+    def test_stores_values_verbatim(self):
         arr = np.array([1.0, 2.0, 3.0])
         v = Record(x=arr)
-        assert isinstance(v.raw("x"), np.ndarray)
+        # Record no longer performs any conversion — stored as-is.
+        assert v["x"] is arr
+
+    def test_accepts_opaque_leaves(self):
+        v = Record(label="horseshoe", x=1.0)
+        assert v["label"] == "horseshoe"
+        assert v["x"] == 1.0
 
     def test_jax_arrays(self):
         arr = jnp.array([1.0, 2.0])
         v = Record(x=arr)
-        assert isinstance(v["x"], jnp.ndarray)
+        assert v["x"] is arr
 
     def test_scalars(self):
         v = Record(a=1, b=2.5, c=True)
-        assert v["a"].shape == ()
-        assert float(v["b"]) == 2.5
+        assert v["a"] == 1
+        assert v["b"] == 2.5
+        assert v["c"] is True
 
     def test_nested(self):
         inner = Record(x=1.0, y=2.0)
         outer = Record(params=inner, z=3.0)
         assert isinstance(outer["params"], Record)
-        assert float(outer["params"]["x"]) == 1.0
+        assert outer["params"]["x"] == 1.0
 
     def test_from_dict(self):
         v = Record.from_dict({"a": 1.0, "b": 2.0})
@@ -57,7 +64,8 @@ class TestConstruction:
 
     def test_list_input(self):
         v = Record(x=[1.0, 2.0, 3.0])
-        assert v["x"].shape == (3,)
+        # Stored as-is — caller decides conversion.
+        assert v["x"] == [1.0, 2.0, 3.0]
 
 
 # ---------------------------------------------------------------------------
@@ -70,9 +78,6 @@ class TestFieldAccess:
     def v(self):
         return Record(r=1.8, K=70.0, phi=10.0)
 
-    def test_attribute(self, v):
-        np.testing.assert_allclose(float(v["r"]), 1.8, rtol=1e-5)
-
     def test_item(self, v):
         np.testing.assert_allclose(float(v["K"]), 70.0, rtol=1e-5)
 
@@ -82,11 +87,6 @@ class TestFieldAccess:
 
     def test_fields(self, v):
         assert v.fields == ("K", "phi", "r")
-
-    def test_raw(self):
-        arr = np.array([1.0, 2.0])
-        v = Record(x=arr)
-        assert v.raw("x") is arr
 
     def test_len(self, v):
         assert len(v) == 3
@@ -138,8 +138,8 @@ class TestImmutability:
     def test_replace(self):
         v = Record(a=1.0, b=2.0)
         v2 = v.replace(b=3.0)
-        assert float(v["b"]) == 2.0  # original unchanged
-        assert float(v2["b"]) == 3.0
+        assert v["b"] == 2.0  # original unchanged
+        assert v2["b"] == 3.0
 
     def test_replace_nonexistent_raises(self):
         v = Record(a=1.0)
@@ -176,45 +176,32 @@ class TestImmutability:
 
 
 # ---------------------------------------------------------------------------
-# Lazy resolution
+# Storage policy (no auto-conversion)
 # ---------------------------------------------------------------------------
 
 
-class TestLazyResolution:
-    def test_numpy_resolves_to_jax(self):
+class TestStorage:
+    def test_numpy_stored_verbatim(self):
         arr = np.array([1.0, 2.0])
         v = Record(x=arr)
-        result = v["x"]
-        assert isinstance(result, jnp.ndarray)
-        np.testing.assert_allclose(result, arr)
+        assert v["x"] is arr
+        assert isinstance(v["x"], np.ndarray)
 
-    def test_scalar_resolves_to_jax(self):
+    def test_scalar_stored_verbatim(self):
         v = Record(x=42.0)
-        result = v["x"]
-        assert isinstance(result, jnp.ndarray)
-        assert result.shape == ()
+        assert v["x"] == 42.0
+        assert isinstance(v["x"], float)
 
-    def test_jax_passthrough(self):
+    def test_jax_stored_verbatim(self):
         arr = jnp.array([1.0, 2.0])
         v = Record(x=arr)
-        assert v["x"] is arr  # no copy
+        assert v["x"] is arr
 
-    def test_resolution_cached(self):
-        arr = np.array([1.0, 2.0])
-        v = Record(x=arr)
-        r1 = v["x"]
-        r2 = v["x"]
-        assert r1 is r2  # same object
+    def test_string_stored_verbatim(self):
+        v = Record(x="hello", y=1.0)
+        assert v["x"] == "hello"
 
-    def test_xarray_resolves(self):
-        xr = pytest.importorskip("xarray")
-        da = xr.DataArray([1.0, 2.0, 3.0], dims=["time"])
-        v = Record(y=da)
-        result = v["y"]
-        assert isinstance(result, jnp.ndarray)
-        np.testing.assert_allclose(result, [1.0, 2.0, 3.0])
-
-    def test_xarray_coords_preserved(self):
+    def test_xarray_stored_verbatim(self):
         xr = pytest.importorskip("xarray")
         da = xr.DataArray(
             [1.0, 2.0, 3.0],
@@ -222,74 +209,10 @@ class TestLazyResolution:
             coords={"time": [10, 20, 30]},
         )
         v = Record(y=da)
-        assert v._coords is not None
-        assert "y" in v._coords
-        assert v._coords["y"]["dims"] == ("time",)
-
-
-# ---------------------------------------------------------------------------
-# Flatten / unflatten
-# ---------------------------------------------------------------------------
-
-
-class TestFlatten:
-    def test_flat_size_scalars(self):
-        v = Record(a=1.0, b=2.0, c=3.0)
-        assert v.flat_size == 3
-
-    def test_flat_size_arrays(self):
-        v = Record(x=jnp.zeros(5), y=jnp.zeros((2, 3)))
-        assert v.flat_size == 11
-
-    def test_flat_size_nested(self):
-        v = Record(params=Record(r=1.0, K=2.0), obs=Record(y=jnp.zeros(4)))
-        assert v.flat_size == 6
-
-    def test_flatten_scalars(self):
-        v = Record(a=1.0, b=2.0, c=3.0)
-        flat = v.flatten()
-        assert flat.shape == (3,)
-        # Sorted order: a=1, b=2, c=3
-        np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])
-
-    def test_flatten_arrays(self):
-        v = Record(x=jnp.array([1.0, 2.0]), y=jnp.array([3.0]))
-        flat = v.flatten()
-        # Sorted: x first, then y
-        np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])
-
-    def test_flatten_nested(self):
-        v = Record(a=Record(x=1.0, y=2.0), b=3.0)
-        flat = v.flatten()
-        # a.x=1, a.y=2, b=3
-        np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])
-
-    def test_unflatten_roundtrip(self):
-        v = Record(r=1.8, K=70.0, phi=10.0)
-        flat = v.flatten()
-        v2 = Record.unflatten(flat, template=v)
-        assert v2.fields == v.fields
-        np.testing.assert_allclose(float(v2["r"]), 1.8)
-        np.testing.assert_allclose(float(v2["K"]), 70.0)
-        np.testing.assert_allclose(float(v2["phi"]), 10.0)
-
-    def test_unflatten_nested_roundtrip(self):
-        v = Record(
-            params=Record(r=1.0, K=2.0),
-            obs=Record(y=jnp.array([3.0, 4.0, 5.0])),
-        )
-        flat = v.flatten()
-        v2 = Record.unflatten(flat, template=v)
-        np.testing.assert_allclose(float(v2["params"]["r"]), 1.0)
-        np.testing.assert_allclose(float(v2["params"]["K"]), 2.0)
-        np.testing.assert_allclose(v2["obs"]["y"], [3.0, 4.0, 5.0])
-
-    def test_unflatten_preserves_shapes(self):
-        v = Record(mat=jnp.zeros((2, 3)), vec=jnp.zeros(4))
-        flat = v.flatten()
-        v2 = Record.unflatten(flat, template=v)
-        assert v2["mat"].shape == (2, 3)
-        assert v2["vec"].shape == (4,)
+        # DataArray is preserved, coords and all.
+        assert v["y"] is da
+        assert v["y"].dims == ("time",)
+        np.testing.assert_array_equal(v["y"].coords["time"].values, [10, 20, 30])
 
 
 # ---------------------------------------------------------------------------
@@ -302,8 +225,8 @@ class TestPyTree:
         v = Record(a=1.0, b=2.0)
         v2 = jax.tree.map(lambda x: x * 2, v)
         assert isinstance(v2, Record)
-        np.testing.assert_allclose(float(v2["a"]), 2.0)
-        np.testing.assert_allclose(float(v2["b"]), 4.0)
+        assert v2["a"] == 2.0
+        assert v2["b"] == 4.0
 
     def test_tree_leaves(self):
         v = Record(a=jnp.array(1.0), b=jnp.array(2.0))
@@ -322,8 +245,8 @@ class TestPyTree:
         v2 = jax.tree.map(lambda x: x + 10, v)
         assert isinstance(v2, Record)
         assert isinstance(v2["params"], Record)
-        np.testing.assert_allclose(float(v2["params"]["r"]), 11.0)
-        np.testing.assert_allclose(float(v2["z"]), 13.0)
+        assert v2["params"]["r"] == 11.0
+        assert v2["z"] == 13.0
 
     def test_jit(self):
         v = Record(a=1.0, b=2.0)
@@ -373,12 +296,15 @@ class TestPyTree:
 
 
 class TestConversion:
-    def test_to_dict(self):
-        v = Record(a=1.0, b=np.array([2.0, 3.0]))
+    def test_to_dict_verbatim(self):
+        arr = np.array([2.0, 3.0])
+        v = Record(a=1.0, b=arr)
         d = v.to_dict()
         assert isinstance(d, dict)
         assert set(d.keys()) == {"a", "b"}
-        assert isinstance(d["a"], jnp.ndarray)
+        # No coercion — values returned as stored.
+        assert d["a"] == 1.0
+        assert d["b"] is arr
 
     def test_to_numpy(self):
         v = Record(a=jnp.array(1.0), b=jnp.array([2.0]))
@@ -386,11 +312,17 @@ class TestConversion:
         assert isinstance(d["a"], np.ndarray)
         assert isinstance(d["b"], np.ndarray)
 
+    def test_to_numpy_preserves_opaque(self):
+        v = Record(label="x", y=np.array([1.0, 2.0]))
+        d = v.to_numpy()
+        assert d["label"] == "x"
+        assert isinstance(d["y"], np.ndarray)
+
     def test_to_dict_nested(self):
         v = Record(inner=Record(x=1.0), y=2.0)
         d = v.to_dict()
         assert isinstance(d["inner"], dict)
-        assert float(d["inner"]["x"]) == 1.0
+        assert d["inner"]["x"] == 1.0
 
     def test_to_datatree(self):
         xr = pytest.importorskip("xarray")
@@ -398,6 +330,34 @@ class TestConversion:
         dt = v.to_datatree()
         np.testing.assert_allclose(dt["/x"]["x"].values, [1.0, 2.0])
         np.testing.assert_allclose(float(dt["/y"]["y"].values), 3.0)
+
+    def test_to_datatree_preserves_xarray_coords(self):
+        xr = pytest.importorskip("xarray")
+        da = xr.DataArray(
+            [1.0, 2.0, 3.0], dims=["time"],
+            coords={"time": [10, 20, 30]},
+        )
+        v = Record(y=da)
+        dt = v.to_datatree()
+        y_out = dt["/y"]["y"]
+        np.testing.assert_array_equal(y_out.coords["time"].values, [10, 20, 30])
+
+    def test_to_datatree_loses_coords_when_leaf_converted(self):
+        """Coord fidelity is only as good as the leaf survives transforms.
+
+        If the user applies a function that converts the leaf to a plain
+        JAX array (e.g., ``jnp.asarray``), the xarray structure is gone
+        and ``to_datatree`` wraps it as a bare DataArray.
+        """
+        xr = pytest.importorskip("xarray")
+        da = xr.DataArray(
+            [1.0, 2.0, 3.0], dims=["time"], coords={"time": [10, 20, 30]},
+        )
+        v = Record(y=da)
+        # A real numeric transform: materialize to JAX array.
+        v_t = v.map(lambda x: jnp.asarray(x))
+        dt = v_t.to_datatree()
+        assert "time" not in dt["/y"]["y"].coords
 
     def test_from_datatree_roundtrip(self):
         xr = pytest.importorskip("xarray")
@@ -409,7 +369,7 @@ class TestConversion:
         dt = xr.DataTree.from_dict({"/root": ds})
         v = Record.from_datatree(dt["root"])
         assert "y" in v
-        np.testing.assert_allclose(v["y"], [1.0, 2.0, 3.0])
+        np.testing.assert_allclose(np.asarray(v["y"]), [1.0, 2.0, 3.0])
 
     def test_from_datatree_nested(self):
         """from_datatree reconstructs nested Record from child groups."""
@@ -419,9 +379,9 @@ class TestConversion:
         dt = outer.to_datatree()
         roundtripped = Record.from_datatree(dt)
         assert isinstance(roundtripped["params"], Record)
-        np.testing.assert_allclose(float(roundtripped["params"]["a"]), 1.0)
-        np.testing.assert_allclose(float(roundtripped["params"]["b"]), 2.0)
-        np.testing.assert_allclose(float(roundtripped["z"]), 3.0)
+        np.testing.assert_allclose(float(np.asarray(roundtripped["params"]["a"])), 1.0)
+        np.testing.assert_allclose(float(np.asarray(roundtripped["params"]["b"])), 2.0)
+        np.testing.assert_allclose(float(np.asarray(roundtripped["z"])), 3.0)
 
 
 # ---------------------------------------------------------------------------
@@ -443,7 +403,7 @@ class TestEnsure:
         v = Record.ensure(jnp.array([1.0, 2.0]))
         assert isinstance(v, Record)
         assert "data" in v
-        np.testing.assert_allclose(v["data"], [1.0, 2.0])
+        np.testing.assert_allclose(np.asarray(v["data"]), [1.0, 2.0])
 
     def test_numpy_coercion(self):
         v = Record.ensure(np.array([1.0]))
@@ -460,34 +420,25 @@ class TestLeafOps:
     def test_map(self):
         v = Record(a=2.0, b=3.0)
         v2 = v.map(lambda x: x ** 2)
-        np.testing.assert_allclose(float(v2["a"]), 4.0)
-        np.testing.assert_allclose(float(v2["b"]), 9.0)
+        assert v2["a"] == 4.0
+        assert v2["b"] == 9.0
+
+    def test_map_preserves_class(self):
+        """map on a Record returns a Record."""
+        v = Record(a=2.0, b=3.0)
+        assert type(v.map(lambda x: x + 1)) is Record
 
     def test_map_nested(self):
         v = Record(inner=Record(x=2.0), y=3.0)
         v2 = v.map(lambda x: x + 1)
-        np.testing.assert_allclose(float(v2["inner"]["x"]), 3.0)
-        np.testing.assert_allclose(float(v2["y"]), 4.0)
+        assert v2["inner"]["x"] == 3.0
+        assert v2["y"] == 4.0
 
     def test_map_with_names(self):
         v = Record(a=1.0, b=2.0)
         names_seen = []
         v.map_with_names(lambda n, x: names_seen.append(n) or x)
         assert names_seen == ["a", "b"]
-
-    def test_zip(self):
-        v1 = Record(a=1.0, b=2.0)
-        v2 = Record(a=10.0, b=20.0)
-        zipped = Record.zip(v1, v2)
-        # zip stacks along a new leading axis
-        np.testing.assert_allclose(zipped["a"], [1.0, 10.0])
-        np.testing.assert_allclose(zipped["b"], [2.0, 20.0])
-
-    def test_zip_mismatched_raises(self):
-        v1 = Record(a=1.0)
-        v2 = Record(b=2.0)
-        with pytest.raises(ValueError, match="different fields"):
-            Record.zip(v1, v2)
 
 
 # ---------------------------------------------------------------------------
@@ -528,8 +479,100 @@ class TestReprAndEquality:
         v2 = Record(b=1.0)
         assert v1 != v2
 
-    def test_hash_by_fields(self):
-        v1 = Record(a=1.0, b=2.0)
-        v2 = Record(a=99.0, b=99.0)
-        # Same field names → same hash (structural hash, not value hash)
+    def test_hash_includes_shape(self):
+        """Records with the same field names but different shapes should
+        hash differently (follow-up to review comment #10)."""
+        v1 = Record(a=jnp.zeros(3))
+        v2 = Record(a=jnp.zeros(5))
+        assert hash(v1) != hash(v2)
+
+    def test_hash_excludes_value(self):
+        """Records with the same shape+dtype but different values hash
+        the same (structural hash)."""
+        v1 = Record(a=jnp.zeros(3))
+        v2 = Record(a=jnp.ones(3))
         assert hash(v1) == hash(v2)
+
+    def test_hash_distinguishes_dtype(self):
+        """Records with the same shape but different dtype hash differently."""
+        v1 = Record(a=jnp.zeros(3, dtype=jnp.float32))
+        v2 = Record(a=jnp.zeros(3, dtype=jnp.int32))
+        assert hash(v1) != hash(v2)
+
+    def test_eq_type_strict(self):
+        """Record == NumericRecord is False even with identical fields."""
+        from probpipe import NumericRecord
+        r = Record(a=1.0, b=2.0)
+        nr = NumericRecord(a=1.0, b=2.0)
+        assert r != nr
+
+
+# ---------------------------------------------------------------------------
+# Design-decision enforcement
+# ---------------------------------------------------------------------------
+
+
+class TestDesignDecisions:
+    """Explicit guards against regressions in the storage / API split.
+
+    ``Record`` is a pure container: no automatic conversion, no numeric
+    operations, no caching. Numeric operations live on ``NumericRecord``.
+    """
+
+    def test_record_does_not_auto_convert_numpy(self):
+        arr = np.array([1.0, 2.0])
+        assert Record(x=arr)["x"] is arr
+
+    def test_record_does_not_auto_convert_scalar(self):
+        v = Record(x=0.5)
+        assert type(v["x"]) is float
+
+    def test_record_does_not_auto_convert_xarray(self):
+        xr = pytest.importorskip("xarray")
+        da = xr.DataArray([1.0, 2.0])
+        assert Record(y=da)["y"] is da
+
+    def test_record_accepts_heterogeneous_leaves(self):
+        """Strings and numbers co-exist in a plain Record."""
+        v = Record(label="x", count=1.0, array=jnp.zeros(3))
+        assert v["label"] == "x"
+        assert v["count"] == 1.0
+        assert v["array"].shape == (3,)
+
+    def test_record_has_no_numeric_api(self):
+        """``flatten`` / ``unflatten`` / ``flat_size`` / ``zip`` live on
+        ``NumericRecord``, not ``Record``."""
+        v = Record(a=1.0)
+        for attr in ("flatten", "unflatten", "flat_size", "zip"):
+            assert not hasattr(v, attr), f"Record should not have {attr!r}"
+        # Class-level check for the classmethods that are no longer present.
+        for attr in ("unflatten", "zip"):
+            assert not hasattr(Record, attr), f"Record should not have class-level {attr!r}"
+
+    def test_record_has_no_lazy_cache(self):
+        """No ``_resolved`` / ``_coords`` slots; ``_store`` is the single source."""
+        v = Record(a=1.0)
+        for attr in ("_resolved", "_coords", "_resolve_field"):
+            assert not hasattr(v, attr), f"Record should not have {attr!r}"
+
+    def test_map_preserves_class(self):
+        """``Record.map`` on a Record returns a Record."""
+        v = Record(a=1.0, b=2.0)
+        assert type(v.map(lambda x: x + 1)) is Record
+
+    def test_map_preserves_numeric_record_class(self):
+        """``Record.map`` on a NumericRecord returns a NumericRecord,
+        provided the mapped values remain numeric (validated by
+        NumericRecord.__init__)."""
+        from probpipe import NumericRecord
+        nr = NumericRecord(a=1.0, b=2.0)
+        out = nr.map(lambda x: x * 2)
+        assert type(out) is NumericRecord
+
+    def test_map_rejects_non_numeric_on_numeric_record(self):
+        """Mapping a NumericRecord leaf to a string must raise at
+        reconstruction (numeric leaves are a class invariant)."""
+        from probpipe import NumericRecord
+        nr = NumericRecord(a=1.0, b=2.0)
+        with pytest.raises(TypeError, match="numeric"):
+            nr.map(lambda x: "not numeric")

@@ -335,12 +335,20 @@ class RecordDistribution(Distribution[Record]):
     # -- Flatten / unflatten ------------------------------------------------
 
     def flatten_value(self, value) -> Array:
-        """Flatten a Record or NumericRecordArray sample to a flat array."""
+        """Flatten a NumericRecord or NumericRecordArray sample to a flat array.
+
+        The flatten operation is numeric-only, so ``Record`` inputs must
+        be convertible to ``NumericRecord`` (all leaves numeric). Raw
+        arrays are returned unchanged.
+        """
+        from ._numeric_record import NumericRecord
         from ._record_array import NumericRecordArray
         if isinstance(value, NumericRecordArray):
             return value.flatten()
-        if isinstance(value, Record):
+        if isinstance(value, NumericRecord):
             return value.flatten()
+        if isinstance(value, Record):
+            return NumericRecord.from_record(value).flatten()
         return value
 
     def unflatten_value(self, flat: Array):

@@ -149,7 +149,11 @@ full public API surface.
 | Abstraction | Description |
 |-------------|-------------|
 | `Distribution[T]` | Generic base parameterized by value type; provides `record_template` and `auxiliary` properties |
-| `Record` | Named, immutable, lazy, JAX-pytree container for structured non-random values; `select()` for workflow function splatting |
+| `Record` | Named, immutable, JAX-pytree container for structured non-random values; leaves stored verbatim (no coercion); `select()` for workflow function splatting |
+| `NumericRecord` (subclass of `Record`) | Adds numeric-leaf validation at construction plus `flatten` / `unflatten` / `flat_size`; coerces scalar / numpy leaves to `jnp.ndarray` |
+| `RecordArray` | Batch of `Record` elements with a `RecordTemplate`; integer index → element, field index → batched array |
+| `NumericRecordArray` (subclass of `RecordArray`) | Batch of `NumericRecord` elements; adds `flatten` / `mean` / `var` |
+| `RecordTemplate` | Structural skeleton (field names, per-field shapes or `None`); enables `NumericRecord.unflatten` without an example instance |
 | `RecordDistribution` | Record-based distribution base; `component_names`, `__getitem__` → `_RecordDistributionView`, `select()` for correlated broadcasting |
 | `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
 | `NumericRecordDistribution` | Numeric-array distribution base; per-field `dtypes`, `supports`, `event_shapes`; base for all TFP-backed distributions |

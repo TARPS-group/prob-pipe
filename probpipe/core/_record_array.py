@@ -111,13 +111,20 @@ class RecordArray:
             f"key must be str or int, got {type(key).__name__}"
         )
 
+    _record_cls: type = Record
+    """Class used to materialise a single element via integer indexing.
+
+    Overridden on :class:`NumericRecordArray` so element extraction
+    returns a :class:`NumericRecord` (preserving the numeric guarantee).
+    """
+
     def _get_record(self, index: int) -> Record:
         """Extract a single Record at a flat batch index."""
         nd_index = np.unravel_index(index, self._batch_shape)
         fields: dict[str, Any] = {}
         for name in self._store:
             fields[name] = self._store[name][nd_index]
-        return Record(fields)
+        return self._record_cls(fields)
 
     def __contains__(self, name: str) -> bool:
         return name in self._store
@@ -165,6 +172,36 @@ class RecordArray:
             fields[name] = jnp.stack(field_vals, axis=0)
         return cls(fields, batch_shape=(len(records),), template=template)
 
+    # -- Equality / hash ----------------------------------------------------
+
+    def __eq__(self, other: object) -> bool:
+        if type(self) is not type(other):
+            return NotImplemented
+        if self._batch_shape != other._batch_shape:
+            return False
+        if self._fields != other._fields:
+            return False
+        if self._template != other._template:
+            return False
+        for name, a in self._store.items():
+            b = other._store[name]
+            try:
+                if not bool(jnp.array_equal(a, b)):
+                    return False
+            except Exception:
+                if a is not b:
+                    return False
+        return True
+
+    def __hash__(self) -> int:
+        # Hash on structure: class, batch shape, field names, template.
+        # Leaf contents are intentionally not hashed — arrays are not
+        # natively hashable and RecordArray instances are typically used
+        # as pytree children rather than dict keys.
+        return hash(
+            (type(self).__name__, self._batch_shape, self._fields, self._template)
+        )
+
     # -- Repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
@@ -196,6 +233,13 @@ class NumericRecordArray(RecordArray):
     """
 
     __slots__ = ()
+
+    # Integer indexing (``arr[i]``) returns a NumericRecord so the numeric
+    # guarantee is preserved through slicing.
+    @property
+    def _record_cls(self) -> type:  # type: ignore[override]
+        from ._numeric_record import NumericRecord
+        return NumericRecord
 
     # -- Flatten / unflatten ------------------------------------------------
 
