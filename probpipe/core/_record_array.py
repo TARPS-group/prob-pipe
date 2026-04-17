@@ -17,6 +17,7 @@ import numpy as np
 
 from .._utils import prod
 from ..custom_types import ArrayLike
+from ._numeric_record import NumericRecord
 from .record import Record, RecordTemplate
 
 __all__ = ["RecordArray", "NumericRecordArray"]
@@ -264,9 +265,8 @@ class NumericRecordArray(RecordArray):
     __slots__ = ()
 
     # Integer indexing (``arr[i]``) returns a NumericRecord so the numeric
-    # guarantee is preserved through slicing. Set at module load in
-    # _numeric_record.py to avoid a circular import here.
-    _record_cls: type = Record  # overridden below
+    # guarantee is preserved through slicing.
+    _record_cls: type = NumericRecord
 
     @classmethod
     def _validate_fields(
@@ -385,8 +385,6 @@ class NumericRecordArray(RecordArray):
         axis: int = 0,
     ) -> NumericRecordArray | Any:
         """Apply a reduction function over a batch axis."""
-        from ._numeric_record import NumericRecord
-
         new_batch = self._batch_shape[:axis] + self._batch_shape[axis + 1:]
         fields = {name: fn(self._store[name], axis) for name in self._store}
         if not new_batch:
