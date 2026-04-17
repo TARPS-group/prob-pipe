@@ -100,46 +100,6 @@ class TestConstruction:
 
 
 # ---------------------------------------------------------------------------
-# Design-decision enforcement
-# ---------------------------------------------------------------------------
-
-
-class TestDesignDecisions:
-    """Explicit guards against regressions of design decisions.
-
-    These tests fail loudly if someone re-introduces behavior that
-    the Record/NumericRecord split was specifically created to avoid.
-    """
-
-    def test_record_has_no_flatten(self):
-        """Numeric-only APIs live on NumericRecord, not Record."""
-        r = Record(a=1.0)
-        assert not hasattr(r, "flatten")
-
-    def test_record_has_no_unflatten(self):
-        assert not hasattr(Record, "unflatten")
-
-    def test_record_has_no_flat_size(self):
-        r = Record(a=1.0)
-        assert not hasattr(r, "flat_size")
-
-    def test_record_has_no_zip(self):
-        assert not hasattr(Record, "zip")
-
-    def test_record_has_no_resolve_field(self):
-        r = Record(a=1.0)
-        assert not hasattr(r, "_resolve_field")
-
-    def test_record_has_no_resolved_cache(self):
-        r = Record(a=1.0)
-        assert not hasattr(r, "_resolved")
-
-    def test_record_has_no_coords_slot(self):
-        r = Record(a=1.0)
-        assert not hasattr(r, "_coords")
-
-
-# ---------------------------------------------------------------------------
 # Flatten / unflatten
 # ---------------------------------------------------------------------------
 

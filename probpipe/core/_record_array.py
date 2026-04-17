@@ -68,10 +68,30 @@ class RecordArray:
                 f"fields {sorted(template.fields)}"
             )
         store = OrderedDict(sorted(fields.items()))
+        # Subclass validation hook. Runs after sort / name-check so
+        # subclasses (e.g. NumericRecordArray) see a canonicalised view
+        # of the leaves. Raises from ``_validate_fields`` propagate.
+        store = type(self)._validate_fields(store, batch_shape, template)
         object.__setattr__(self, "_store", store)
         object.__setattr__(self, "_batch_shape", batch_shape)
         object.__setattr__(self, "_template", template)
         object.__setattr__(self, "_fields", tuple(store.keys()))
+
+    @classmethod
+    def _validate_fields(
+        cls,
+        store: "OrderedDict[str, Any]",
+        batch_shape: tuple[int, ...],
+        template: RecordTemplate,
+    ) -> "OrderedDict[str, Any]":
+        """Hook for subclasses to validate / coerce leaves at construction.
+
+        The base implementation is a no-op — ``RecordArray`` accepts any
+        leaves, matching the permissive storage policy of ``Record``.
+        Subclasses may return a new ``OrderedDict`` with coerced values
+        or raise ``TypeError`` / ``ValueError`` on invalid input.
+        """
+        return store
 
     # -- Immutability -------------------------------------------------------
 
@@ -175,6 +195,10 @@ class RecordArray:
     # -- Equality / hash ----------------------------------------------------
 
     def __eq__(self, other: object) -> bool:
+        # Identity fast-path preserves reflexivity when leaves contain
+        # NaN (``jnp.array_equal`` treats NaN != NaN).
+        if self is other:
+            return True
         if type(self) is not type(other):
             return NotImplemented
         if self._batch_shape != other._batch_shape:
@@ -193,14 +217,15 @@ class RecordArray:
                     return False
         return True
 
-    def __hash__(self) -> int:
-        # Hash on structure: class, batch shape, field names, template.
-        # Leaf contents are intentionally not hashed — arrays are not
-        # natively hashable and RecordArray instances are typically used
-        # as pytree children rather than dict keys.
-        return hash(
-            (type(self).__name__, self._batch_shape, self._fields, self._template)
-        )
+    # RecordArray is intentionally unhashable. ``__eq__`` compares leaf
+    # arrays elementwise; a value-based hash would require materialising
+    # every byte (prohibitive for large posterior batches) and would
+    # crash inside JIT / vmap because traced arrays are not hashable by
+    # content. We follow the NumPy precedent of making array-carrying
+    # containers unhashable rather than silently O(n). If you need a
+    # structural key, use ``(type(ra), ra.batch_shape, ra.fields,
+    # ra.template)`` explicitly.
+    __hash__ = None
 
     # -- Repr ---------------------------------------------------------------
 
@@ -228,6 +253,10 @@ class NumericRecordArray(RecordArray):
     """Batch of NumericRecords — all leaves are numeric arrays.
 
     Adds ``flatten``/``unflatten``, ``mean``, ``var`` operations.
+    Construction validates that every leaf has a numeric dtype and
+    shape ``(*batch_shape, *event_shape)`` matching the template, so
+    pytree round-trips (``jax.tree.map``) cannot silently produce a
+    ``NumericRecordArray`` with non-numeric or ill-shaped leaves.
 
     Each field has shape ``(*batch_shape, *event_shape)``.
     """
@@ -235,11 +264,56 @@ class NumericRecordArray(RecordArray):
     __slots__ = ()
 
     # Integer indexing (``arr[i]``) returns a NumericRecord so the numeric
-    # guarantee is preserved through slicing.
-    @property
-    def _record_cls(self) -> type:  # type: ignore[override]
-        from ._numeric_record import NumericRecord
-        return NumericRecord
+    # guarantee is preserved through slicing. Set at module load in
+    # _numeric_record.py to avoid a circular import here.
+    _record_cls: type = Record  # overridden below
+
+    @classmethod
+    def _validate_fields(
+        cls,
+        store: "OrderedDict[str, Any]",
+        batch_shape: tuple[int, ...],
+        template: RecordTemplate,
+    ) -> "OrderedDict[str, Any]":
+        """Require numeric dtype and matching event shape on every leaf.
+
+        Raises ``TypeError`` if a leaf is non-numeric, ``ValueError`` if
+        its shape is not ``(*batch_shape, *event_shape)`` for the
+        corresponding template entry. Fields whose template spec is a
+        nested ``RecordTemplate`` are forwarded as-is — the nested
+        element is allowed to be a ``Record`` / ``NumericRecord`` /
+        ``RecordArray`` and is validated at its own construction site.
+        """
+        out: "OrderedDict[str, Any]" = OrderedDict()
+        for name, raw in store.items():
+            spec = template[name]
+            # Nested structure: skip numeric validation, let the nested
+            # type enforce its own invariant.
+            if isinstance(spec, RecordTemplate):
+                out[name] = raw
+                continue
+            if not hasattr(raw, "dtype") or not hasattr(raw, "shape"):
+                raise TypeError(
+                    f"NumericRecordArray: field {name!r} must be a "
+                    f"numeric array, got {type(raw).__name__}"
+                )
+            kind = getattr(raw.dtype, "kind", None)
+            if kind not in {"b", "i", "u", "f", "c"}:
+                raise TypeError(
+                    f"NumericRecordArray: field {name!r} has non-numeric "
+                    f"dtype {raw.dtype!r}"
+                )
+            event_shape = () if spec is None else tuple(spec)
+            expected = tuple(batch_shape) + event_shape
+            actual = tuple(raw.shape)
+            if actual != expected:
+                raise ValueError(
+                    f"NumericRecordArray: field {name!r} has shape "
+                    f"{actual}, expected {expected} "
+                    f"(batch_shape={batch_shape}, event_shape={event_shape})"
+                )
+            out[name] = jnp.asarray(raw)
+        return out
 
     # -- Flatten / unflatten ------------------------------------------------
 

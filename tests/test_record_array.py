@@ -113,6 +113,31 @@ class TestRecordArrayAccess:
         np.testing.assert_allclose(r["x"], [27, 28, 29])
         np.testing.assert_allclose(r["y"], 9.0)
 
+    def test_getitem_int_on_recordarray_returns_record(self):
+        """The base ``RecordArray`` materialises elements as ``Record``."""
+        tpl = RecordTemplate(x=(3,))
+        ra = RecordArray(
+            x=jnp.arange(30.0).reshape(10, 3),
+            batch_shape=(10,), template=tpl,
+        )
+        assert type(ra[0]) is Record
+
+    def test_getitem_int_on_numeric_recordarray_returns_numeric_record(self):
+        """``NumericRecordArray[int]`` must return a ``NumericRecord`` so
+        the numeric invariant survives slicing (fix for PR #123 review
+        comment #4)."""
+        from probpipe import NumericRecord
+        tpl = RecordTemplate(x=(3,), y=())
+        nra = NumericRecordArray(
+            x=jnp.arange(30.0).reshape(10, 3),
+            y=jnp.arange(10.0),
+            batch_shape=(10,), template=tpl,
+        )
+        elem = nra[0]
+        assert type(elem) is NumericRecord
+        assert isinstance(elem["x"], jnp.ndarray)
+        assert isinstance(elem["y"], jnp.ndarray)
+
     def test_contains(self, ra):
         assert "x" in ra
         assert "z" not in ra
@@ -408,42 +433,11 @@ class TestRepr:
 
 
 # ---------------------------------------------------------------------------
-# Design-decision enforcement
+# Equality / hashability
 # ---------------------------------------------------------------------------
 
 
-class TestNumericIndexingReturnsNumericRecord:
-    """``NumericRecordArray`` indexing must preserve the numeric guarantee."""
-
-    def test_int_index_returns_numeric_record(self):
-        from probpipe import NumericRecord
-        tpl = RecordTemplate(x=(3,), y=())
-        nra = NumericRecordArray(
-            x=jnp.arange(30.0).reshape(10, 3),
-            y=jnp.arange(10.0),
-            batch_shape=(10,), template=tpl,
-        )
-        elem = nra[0]
-        assert isinstance(elem, NumericRecord)
-        # NumericRecord guarantees jnp.ndarray leaves.
-        assert isinstance(elem["x"], jnp.ndarray)
-        assert isinstance(elem["y"], jnp.ndarray)
-
-    def test_int_index_on_recordarray_returns_record(self):
-        """The base RecordArray returns plain Record, not NumericRecord."""
-        from probpipe import Record
-        tpl = RecordTemplate(x=(3,))
-        ra = RecordArray(
-            x=jnp.arange(30.0).reshape(10, 3),
-            batch_shape=(10,), template=tpl,
-        )
-        elem = ra[0]
-        assert type(elem) is Record
-
-
-class TestRecordArrayEquality:
-    """Explicit coverage for the newly-added ``__eq__`` / ``__hash__``."""
-
+class TestEquality:
     def test_equal_same_contents(self):
         tpl = RecordTemplate(x=())
         a = RecordArray(x=jnp.arange(3.0), batch_shape=(3,), template=tpl)
@@ -469,22 +463,122 @@ class TestRecordArrayEquality:
                         template=RecordTemplate(x=(2,)))
         assert a != b
 
-    def test_type_mismatch_notimplemented(self):
-        """RecordArray != NumericRecordArray even with matching data."""
+    def test_recordarray_not_equal_to_numeric_recordarray(self):
+        """Type-strict equality: different concrete classes are not equal
+        even when contents match."""
         tpl = RecordTemplate(x=())
         ra = RecordArray(x=jnp.zeros(3), batch_shape=(3,), template=tpl)
         nra = NumericRecordArray(x=jnp.zeros(3), batch_shape=(3,), template=tpl)
         assert ra != nra
 
-    def test_hash_structural(self):
-        """Same class + batch_shape + fields + template → same hash."""
+    def test_self_equality_with_nan(self):
+        """Regression for PR #123 review comment (f-ii): ``a == a`` must
+        hold even when leaves contain NaN. Without the identity fast
+        path ``jnp.array_equal`` treats NaN != NaN and self-equality
+        returns False."""
         tpl = RecordTemplate(x=())
-        a = RecordArray(x=jnp.zeros(3), batch_shape=(3,), template=tpl)
-        b = RecordArray(x=jnp.ones(3), batch_shape=(3,), template=tpl)
-        assert hash(a) == hash(b)
+        ra = RecordArray(
+            x=jnp.array([jnp.nan, 1.0, jnp.nan]),
+            batch_shape=(3,), template=tpl,
+        )
+        assert ra == ra
 
-    def test_hash_differs_by_batch_shape(self):
+
+class TestUnhashable:
+    """``RecordArray`` is intentionally unhashable (mirrors NumPy).
+
+    Rationale: ``__eq__`` compares leaves elementwise, so any
+    consistent ``__hash__`` would have to materialise every byte (and
+    crash inside ``jit`` / ``vmap``). Users who need a structural key
+    build one explicitly from ``(type(ra), ra.batch_shape, ra.fields,
+    ra.template)``.
+    """
+
+    def test_recordarray_unhashable(self):
         tpl = RecordTemplate(x=())
-        a = RecordArray(x=jnp.zeros(3), batch_shape=(3,), template=tpl)
-        b = RecordArray(x=jnp.zeros((1, 3)), batch_shape=(1, 3), template=tpl)
-        assert hash(a) != hash(b)
+        ra = RecordArray(x=jnp.zeros(3), batch_shape=(3,), template=tpl)
+        with pytest.raises(TypeError, match="unhashable"):
+            hash(ra)
+
+    def test_numeric_recordarray_unhashable(self):
+        tpl = RecordTemplate(x=())
+        nra = NumericRecordArray(x=jnp.zeros(3), batch_shape=(3,), template=tpl)
+        with pytest.raises(TypeError, match="unhashable"):
+            hash(nra)
+
+    def test_cannot_be_used_as_dict_key(self):
+        tpl = RecordTemplate(x=())
+        ra = RecordArray(x=jnp.zeros(3), batch_shape=(3,), template=tpl)
+        with pytest.raises(TypeError, match="unhashable"):
+            {ra: 1}
+
+
+# ---------------------------------------------------------------------------
+# Numeric-leaf validation on NumericRecordArray
+# ---------------------------------------------------------------------------
+
+
+class TestNumericRecordArrayValidation:
+    """Regression for PR #123 review comment (c) on a8be0b3.
+
+    Before the fix, ``NumericRecordArray.__init__`` inherited
+    ``RecordArray.__init__`` unchanged and did no leaf-type check, so
+    non-numeric leaves (from direct construction or from
+    ``jax.tree.map`` returning strings) produced silently-corrupt
+    instances that only failed downstream.
+    """
+
+    def test_rejects_list_leaf(self):
+        tpl = RecordTemplate(x=(2,))
+        with pytest.raises(TypeError, match="numeric"):
+            NumericRecordArray(
+                {"x": ["a", "b"]}, batch_shape=(), template=tpl,
+            )
+
+    def test_rejects_object_dtype_array(self):
+        tpl = RecordTemplate(x=())
+        arr = np.array(["a", "b"], dtype=object)
+        with pytest.raises(TypeError, match="numeric"):
+            NumericRecordArray({"x": arr}, batch_shape=(2,), template=tpl)
+
+    def test_rejects_wrong_shape(self):
+        """Leaf shape must match ``(*batch_shape, *event_shape)``."""
+        tpl = RecordTemplate(x=(3,))
+        with pytest.raises(ValueError, match="shape"):
+            NumericRecordArray(
+                {"x": jnp.zeros((5, 2))},  # expected (5, 3)
+                batch_shape=(5,), template=tpl,
+            )
+
+    def test_tree_map_to_string_rejected(self):
+        """``jax.tree.map(lambda x: "hi", nra)`` must raise at
+        unflatten time rather than produce a corrupt NumericRecordArray."""
+        tpl = RecordTemplate(x=())
+        nra = NumericRecordArray(
+            x=jnp.arange(3.0), batch_shape=(3,), template=tpl,
+        )
+        with pytest.raises(TypeError, match="numeric"):
+            jax.tree.map(lambda x: "hi", nra)
+
+    def test_accepts_numpy_leaf_and_coerces_to_jnp(self):
+        tpl = RecordTemplate(x=())
+        nra = NumericRecordArray(
+            x=np.arange(3.0), batch_shape=(3,), template=tpl,
+        )
+        assert isinstance(nra["x"], jnp.ndarray)
+
+    def test_nested_template_field_allowed(self):
+        """Fields whose template spec is a nested ``RecordTemplate`` are
+        allowed to hold a Record / RecordArray leaf without triggering
+        the numeric-dtype check. This is how nested ProductDistributions
+        materialise samples."""
+        from probpipe import Record
+        inner_tpl = RecordTemplate(x=(), y=())
+        outer_tpl = RecordTemplate(physics=inner_tpl, obs=(3,))
+        inner = Record(x=1.0, y=2.0)
+        nra = NumericRecordArray(
+            {"physics": inner, "obs": jnp.zeros(3)},
+            batch_shape=(),
+            template=outer_tpl,
+        )
+        assert nra["physics"] is inner

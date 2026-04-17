@@ -257,32 +257,40 @@ class Record:
     # -- Immutable updates --------------------------------------------------
 
     def replace(self, **updates: ArrayLike | Record) -> Record:
-        """Return a new Record with specified fields replaced."""
+        """Return a new Record with specified fields replaced.
+
+        Returns an instance of ``type(self)`` so that subclasses
+        (``NumericRecord``) preserve their class through the update.
+        """
         new = dict(self._store)
         for k, v in updates.items():
             if k not in new:
                 raise KeyError(f"Cannot replace non-existent field {k!r}")
             new[k] = v
-        return Record(new)
+        return type(self)(new)
 
     def merge(self, other: Record) -> Record:
         """Return a new Record combining fields from self and other.
 
-        Raises ``ValueError`` if any field names overlap.
+        Raises ``ValueError`` if any field names overlap. Returns an
+        instance of ``type(self)``.
         """
         overlap = set(self._store) & set(other._store)
         if overlap:
             raise ValueError(f"Overlapping field names: {overlap}")
         combined = dict(self._store)
         combined.update(other._store)
-        return Record(combined)
+        return type(self)(combined)
 
     def without(self, *names: str) -> Record:
-        """Return a new Record with the specified fields removed."""
+        """Return a new Record with the specified fields removed.
+
+        Returns an instance of ``type(self)``.
+        """
         new = {k: v for k, v in self._store.items() if k not in names}
         if not new:
             raise ValueError("Cannot remove all fields from Record")
-        return Record(new)
+        return type(self)(new)
 
     # -- Backend conversion -------------------------------------------------
 
@@ -428,6 +436,10 @@ class Record:
     # -- Equality / hash ----------------------------------------------------
 
     def __eq__(self, other: object) -> bool:
+        # Identity fast-path: self-equality must return True even when
+        # leaves contain NaN (``jnp.array_equal`` treats NaN != NaN).
+        if self is other:
+            return True
         if type(self) is not type(other):
             return NotImplemented
         if self.fields != other.fields:
@@ -452,18 +464,24 @@ class Record:
         return True
 
     def __hash__(self) -> int:
-        # Hash on structure: class, field names, and per-field shape+dtype
-        # signatures when available. This keeps Record hashable as JAX
-        # pytree aux data while ensuring templates with the same names but
-        # different leaf shapes don't collide.
+        # Structural hash: class, field names, and per-field shape+dtype.
+        # Numeric leaves are coerced via ``jnp.asarray`` first so a bare
+        # Python scalar and its array wrapping hash identically
+        # (``Record(a=1.0)`` and ``Record(a=jnp.asarray(1.0))`` compare
+        # equal under ``__eq__`` and must therefore hash the same).
+        # Non-numeric (opaque) leaves use ``type(val)`` as the signature
+        # so identical types collide while different types don't.
         parts: list[Any] = [type(self).__name__]
         for name, val in self._store.items():
             if isinstance(val, Record):
                 parts.append((name, hash(val)))
-            else:
-                shape = getattr(val, "shape", None)
-                dtype = getattr(val, "dtype", None)
-                parts.append((name, shape, str(dtype) if dtype is not None else None))
+                continue
+            try:
+                arr = jnp.asarray(val)
+            except (TypeError, ValueError):
+                parts.append((name, "opaque", type(val).__name__))
+                continue
+            parts.append((name, tuple(arr.shape), str(arr.dtype)))
         return hash(tuple(parts))
 
 

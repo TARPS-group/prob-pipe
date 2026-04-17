@@ -218,3 +218,12 @@ def _numeric_record_unflatten(
 jax.tree_util.register_pytree_node(
     NumericRecord, _record_flatten, _numeric_record_unflatten
 )
+
+
+# Wire ``NumericRecordArray._record_cls`` to ``NumericRecord`` at module
+# load so integer indexing (``nra[i]``) returns a ``NumericRecord``
+# rather than a plain ``Record``. This is assigned here (rather than in
+# ``_record_array.py``) to avoid a circular import.
+from ._record_array import NumericRecordArray  # noqa: E402
+NumericRecordArray._record_cls = NumericRecord
+del NumericRecordArray

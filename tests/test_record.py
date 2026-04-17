@@ -174,6 +174,25 @@ class TestImmutability:
         with pytest.raises(ValueError, match="Cannot remove all"):
             v.without("a")
 
+    # replace / merge / without must preserve the subclass (regression
+    # for review comment (b) on a8be0b3: NumericRecord was silently
+    # downgraded to Record by these methods).
+
+    def test_replace_preserves_numeric_record(self):
+        from probpipe import NumericRecord
+        nr = NumericRecord(a=1.0, b=2.0)
+        assert type(nr.replace(a=3.0)) is NumericRecord
+
+    def test_merge_preserves_numeric_record(self):
+        from probpipe import NumericRecord
+        nr = NumericRecord(a=1.0)
+        assert type(nr.merge(NumericRecord(b=2.0))) is NumericRecord
+
+    def test_without_preserves_numeric_record(self):
+        from probpipe import NumericRecord
+        nr = NumericRecord(a=1.0, b=2.0)
+        assert type(nr.without("a")) is NumericRecord
+
 
 # ---------------------------------------------------------------------------
 # Storage policy (no auto-conversion)
@@ -181,6 +200,13 @@ class TestImmutability:
 
 
 class TestStorage:
+    """Record stores leaves verbatim — no coercion at construction.
+
+    Together these tests pin down the storage policy: any time a new
+    leaf type (or conversion layer) is added to ``Record``, one of
+    these assertions will be the first to fail.
+    """
+
     def test_numpy_stored_verbatim(self):
         arr = np.array([1.0, 2.0])
         v = Record(x=arr)
@@ -201,6 +227,13 @@ class TestStorage:
         v = Record(x="hello", y=1.0)
         assert v["x"] == "hello"
 
+    def test_heterogeneous_leaves(self):
+        """Strings, numbers, and arrays co-exist in a plain Record."""
+        v = Record(label="x", count=1.0, array=jnp.zeros(3))
+        assert v["label"] == "x"
+        assert v["count"] == 1.0
+        assert v["array"].shape == (3,)
+
     def test_xarray_stored_verbatim(self):
         xr = pytest.importorskip("xarray")
         da = xr.DataArray(
@@ -213,6 +246,24 @@ class TestStorage:
         assert v["y"] is da
         assert v["y"].dims == ("time",)
         np.testing.assert_array_equal(v["y"].coords["time"].values, [10, 20, 30])
+
+
+class TestNumericAPIOnRecord:
+    """Numeric-only APIs live on NumericRecord, not on Record.
+
+    A single focused test — if someone tries to re-add ``flatten`` or
+    similar to ``Record`` (rather than ``NumericRecord``), this fails.
+    Implementation-detail attributes like ``_resolved`` / ``_coords``
+    are intentionally not checked here: they are private and covered
+    indirectly by the storage-verbatim tests above.
+    """
+
+    def test_numeric_ops_absent_from_record(self):
+        v = Record(a=1.0)
+        for attr in ("flatten", "unflatten", "flat_size", "zip"):
+            assert not hasattr(v, attr), f"Record should not expose {attr!r}"
+        assert not hasattr(Record, "unflatten")
+        assert not hasattr(Record, "zip")
 
 
 # ---------------------------------------------------------------------------
@@ -423,10 +474,26 @@ class TestLeafOps:
         assert v2["a"] == 4.0
         assert v2["b"] == 9.0
 
-    def test_map_preserves_class(self):
-        """map on a Record returns a Record."""
+    def test_map_returns_same_class(self):
+        """``map`` on a plain Record returns a Record."""
         v = Record(a=2.0, b=3.0)
         assert type(v.map(lambda x: x + 1)) is Record
+
+    def test_map_preserves_numeric_record(self):
+        """``map`` on a NumericRecord returns a NumericRecord as long as
+        the mapped values remain numeric (validated by ``__init__``)."""
+        from probpipe import NumericRecord
+        nr = NumericRecord(a=1.0, b=2.0)
+        out = nr.map(lambda x: x * 2)
+        assert type(out) is NumericRecord
+
+    def test_map_on_numeric_record_rejects_non_numeric_output(self):
+        """A map that returns a string violates the NumericRecord
+        invariant and must fail loudly at reconstruction."""
+        from probpipe import NumericRecord
+        nr = NumericRecord(a=1.0, b=2.0)
+        with pytest.raises(TypeError, match="numeric"):
+            nr.map(lambda x: "not numeric")
 
     def test_map_nested(self):
         v = Record(inner=Record(x=2.0), y=3.0)
@@ -506,73 +573,39 @@ class TestReprAndEquality:
         nr = NumericRecord(a=1.0, b=2.0)
         assert r != nr
 
+    # Hash / eq contract: ``a == b`` must imply ``hash(a) == hash(b)``.
+    # Regression for review comment (a) on a8be0b3 — ``__hash__`` used
+    # to read raw ``.shape`` / ``.dtype`` while ``__eq__`` coerced via
+    # ``jnp.asarray``, so Record(a=1.0) == Record(a=jnp.asarray(1.0))
+    # but the hashes differed.
 
-# ---------------------------------------------------------------------------
-# Design-decision enforcement
-# ---------------------------------------------------------------------------
+    def test_hash_eq_contract_scalar_vs_zero_d_array(self):
+        r1 = Record(a=1.0)
+        r2 = Record(a=jnp.asarray(1.0))
+        assert r1 == r2
+        assert hash(r1) == hash(r2)
 
+    def test_hash_eq_contract_python_int_vs_numpy(self):
+        r1 = Record(a=1)
+        r2 = Record(a=np.asarray(1))
+        assert r1 == r2
+        assert hash(r1) == hash(r2)
 
-class TestDesignDecisions:
-    """Explicit guards against regressions in the storage / API split.
+    def test_hash_eq_contract_opaque_leaf(self):
+        """Two Records with the same string leaves must hash the same."""
+        r1 = Record(label="x", count=1.0)
+        r2 = Record(label="x", count=1.0)
+        assert r1 == r2
+        assert hash(r1) == hash(r2)
 
-    ``Record`` is a pure container: no automatic conversion, no numeric
-    operations, no caching. Numeric operations live on ``NumericRecord``.
-    """
+    # Regression for (f-ii): self-equality must hold even when leaves
+    # contain NaN. ``jnp.array_equal`` treats NaN != NaN, so we need an
+    # identity fast-path.
 
-    def test_record_does_not_auto_convert_numpy(self):
-        arr = np.array([1.0, 2.0])
-        assert Record(x=arr)["x"] is arr
+    def test_self_equality_with_nan(self):
+        r = Record(x=jnp.array([jnp.nan, 1.0, jnp.nan]))
+        assert r == r
 
-    def test_record_does_not_auto_convert_scalar(self):
-        v = Record(x=0.5)
-        assert type(v["x"]) is float
-
-    def test_record_does_not_auto_convert_xarray(self):
-        xr = pytest.importorskip("xarray")
-        da = xr.DataArray([1.0, 2.0])
-        assert Record(y=da)["y"] is da
-
-    def test_record_accepts_heterogeneous_leaves(self):
-        """Strings and numbers co-exist in a plain Record."""
-        v = Record(label="x", count=1.0, array=jnp.zeros(3))
-        assert v["label"] == "x"
-        assert v["count"] == 1.0
-        assert v["array"].shape == (3,)
-
-    def test_record_has_no_numeric_api(self):
-        """``flatten`` / ``unflatten`` / ``flat_size`` / ``zip`` live on
-        ``NumericRecord``, not ``Record``."""
-        v = Record(a=1.0)
-        for attr in ("flatten", "unflatten", "flat_size", "zip"):
-            assert not hasattr(v, attr), f"Record should not have {attr!r}"
-        # Class-level check for the classmethods that are no longer present.
-        for attr in ("unflatten", "zip"):
-            assert not hasattr(Record, attr), f"Record should not have class-level {attr!r}"
-
-    def test_record_has_no_lazy_cache(self):
-        """No ``_resolved`` / ``_coords`` slots; ``_store`` is the single source."""
-        v = Record(a=1.0)
-        for attr in ("_resolved", "_coords", "_resolve_field"):
-            assert not hasattr(v, attr), f"Record should not have {attr!r}"
-
-    def test_map_preserves_class(self):
-        """``Record.map`` on a Record returns a Record."""
-        v = Record(a=1.0, b=2.0)
-        assert type(v.map(lambda x: x + 1)) is Record
-
-    def test_map_preserves_numeric_record_class(self):
-        """``Record.map`` on a NumericRecord returns a NumericRecord,
-        provided the mapped values remain numeric (validated by
-        NumericRecord.__init__)."""
-        from probpipe import NumericRecord
-        nr = NumericRecord(a=1.0, b=2.0)
-        out = nr.map(lambda x: x * 2)
-        assert type(out) is NumericRecord
-
-    def test_map_rejects_non_numeric_on_numeric_record(self):
-        """Mapping a NumericRecord leaf to a string must raise at
-        reconstruction (numeric leaves are a class invariant)."""
-        from probpipe import NumericRecord
-        nr = NumericRecord(a=1.0, b=2.0)
-        with pytest.raises(TypeError, match="numeric"):
-            nr.map(lambda x: "not numeric")
+    def test_self_equality_with_nan_nested(self):
+        r = Record(inner=Record(x=jnp.array([jnp.nan])), y=jnp.nan)
+        assert r == r
