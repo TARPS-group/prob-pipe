@@ -51,24 +51,6 @@ def _is_numeric_leaf(val: Any) -> bool:
     return False
 
 
-def _coerce_leaf(val: Any, *, field_name: str, cls_name: str) -> jnp.ndarray:
-    """Convert a validated numeric leaf to ``jnp.ndarray``.
-
-    Validation should already have happened via :func:`_is_numeric_leaf`;
-    this function simply performs the actual conversion with a useful
-    error message if it fails.
-    """
-    if isinstance(val, jnp.ndarray):
-        return val
-    try:
-        return jnp.asarray(val)
-    except Exception as exc:  # pragma: no cover — defensive
-        raise TypeError(
-            f"{cls_name}: field {field_name!r} passed numeric-leaf check "
-            f"but could not be converted to jnp.ndarray ({type(val).__name__}: {exc})"
-        ) from exc
-
-
 class NumericRecord(Record):
     """``Record`` where every leaf is a numeric array.
 
@@ -85,6 +67,13 @@ class NumericRecord(Record):
         ``numpy``), a numeric Python scalar (``int``, ``float``,
         ``complex``, ``bool``), or a nested ``NumericRecord``. Non-numeric
         values raise ``TypeError`` at construction time.
+
+    Notes
+    -----
+    Validation and coercion happen *before* the underlying ``Record`` is
+    constructed, so ``_store`` is populated exactly once and remains
+    immutable from the moment ``__init__`` returns — consistent with the
+    ``__slots__`` + ``__setattr__`` guard on the base class.
     """
 
     __slots__ = ("_flat_size",)
@@ -97,12 +86,40 @@ class NumericRecord(Record):
         name: str | None = None,
         **fields: ArrayLike | NumericRecord,
     ):
-        super().__init__(_dict, name=name, **fields)
-        # Validate + coerce leaves in-place in _store so downstream
-        # accessors return jnp.ndarray uniformly.
-        store = self._store
-        cls_name = type(self).__name__
-        for field_name, raw in list(store.items()):
+        # Build the validated + coerced field dict *before* Record's
+        # __init__ runs, so ``_store`` is populated exactly once and the
+        # "constructed once, never touched" invariant implied by
+        # ``__slots__`` + the ``__setattr__`` guard holds.
+        if _dict is not None:
+            if fields:
+                raise ValueError(
+                    "Cannot pass both positional dict and keyword arguments"
+                )
+            raw_fields = _dict
+        else:
+            raw_fields = fields
+        validated = self._validate_and_coerce(raw_fields)
+        super().__init__(validated, name=name)
+        # Cache flat_size — leaves are immutable arrays after construction.
+        total = 0
+        for val in self._store.values():
+            if isinstance(val, NumericRecord):
+                total += val.flat_size
+            else:
+                total += int(val.size)
+        object.__setattr__(self, "_flat_size", total)
+
+    @classmethod
+    def _validate_and_coerce(
+        cls, raw_fields: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Return a new dict with every leaf validated and (if numeric)
+        coerced to ``jnp.ndarray``. Raises ``TypeError`` on non-numeric
+        input with a message that names the offending field and its type.
+        """
+        cls_name = cls.__name__
+        out: dict[str, Any] = {}
+        for field_name, raw in raw_fields.items():
             if isinstance(raw, Record):
                 if not isinstance(raw, NumericRecord):
                     raise TypeError(
@@ -110,6 +127,7 @@ class NumericRecord(Record):
                         f"{type(raw).__name__}; nested records must be "
                         f"NumericRecord (got fields {raw.fields})"
                     )
+                out[field_name] = raw
                 continue
             if not _is_numeric_leaf(raw):
                 raise TypeError(
@@ -117,17 +135,8 @@ class NumericRecord(Record):
                     f"array, numeric scalar, or nested NumericRecord, got "
                     f"{type(raw).__name__}"
                 )
-            store[field_name] = _coerce_leaf(
-                raw, field_name=field_name, cls_name=cls_name,
-            )
-        # Cache flat_size — leaves are immutable arrays after construction.
-        total = 0
-        for val in store.values():
-            if isinstance(val, NumericRecord):
-                total += val.flat_size
-            else:
-                total += int(val.size)
-        object.__setattr__(self, "_flat_size", total)
+            out[field_name] = raw if isinstance(raw, jnp.ndarray) else jnp.asarray(raw)
+        return out
 
     # -- Flat-array conversion ----------------------------------------------
 

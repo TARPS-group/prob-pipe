@@ -89,8 +89,10 @@ class RecordArray:
 
         The base implementation is a no-op — ``RecordArray`` accepts any
         leaves, matching the permissive storage policy of ``Record``.
-        Subclasses may return a new ``OrderedDict`` with coerced values
-        or raise ``TypeError`` / ``ValueError`` on invalid input.
+
+        Subclasses may return a new ``OrderedDict`` with the same keys
+        (in the same sorted order) and optionally coerced values, or
+        raise ``TypeError`` / ``ValueError`` on invalid input.
         """
         return store
 

@@ -79,6 +79,12 @@ such as ``xarray.DataArray`` or ``pandas.Series``). Non-numeric
 leaves raise ``TypeError`` at construction time with a message that
 names the offending field and its type.
 
+A side effect of the no-coercion policy: Python ``list`` / ``tuple``
+leaves have no ``.shape`` or ``.dtype``, so :meth:`RecordTemplate.from_record`
+sees them as opaque (``None``) — even if they contain numbers.
+Wrap numeric lists in ``np.asarray`` or ``jnp.asarray`` before
+storing them if you want a numeric template entry.
+
 Coord / label lifecycle
 -----------------------
 
@@ -312,6 +318,13 @@ class Record:
 
         Each numeric leaf is converted via ``np.asarray``. Non-numeric
         leaves (strings, opaque objects) are returned as-is.
+
+        Notes
+        -----
+        xarray coord metadata is not preserved: an ``xr.DataArray``
+        leaf becomes a plain numpy array with its dims / coords / attrs
+        stripped. Use :meth:`to_datatree` instead to keep the xarray
+        structure.
         """
         result: dict[str, Any] = {}
         for name, val in self._store.items():
@@ -665,6 +678,15 @@ class RecordTemplate:
         batch_shape : tuple of int
             Leading dimensions to strip from field shapes to get event
             shapes.  For a single-sample Record, use ``()`` (default).
+
+        Notes
+        -----
+        A Python ``list`` or ``tuple`` leaf has no ``.shape`` / ``.dtype``
+        and is treated as opaque (``None``) even if it contains numbers.
+        Wrap it in ``np.asarray(...)`` or ``jnp.asarray(...)`` before
+        putting it in the Record if you want a numeric template entry.
+        Downstream operations that call ``NumericRecord.unflatten`` will
+        otherwise raise on the opaque field.
         """
         n_batch = len(batch_shape)
         specs: dict[str, _FieldSpec] = {}

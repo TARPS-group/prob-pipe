@@ -238,6 +238,24 @@ class TestFromRecord:
         tpl = RecordTemplate.from_record(r)
         assert tpl.flat_size == r.flat_size
 
+    def test_list_leaf_is_opaque(self):
+        """A Python list leaf has no .shape / .dtype, so the field is
+        recorded as opaque (``None``) even when it contains numbers.
+        Users should wrap lists in np.asarray/jnp.asarray for a numeric
+        template entry — this test pins down that behavior so the
+        documented guidance stays in sync with the implementation."""
+        r = Record(xs=[1.0, 2.0, 3.0])
+        tpl = RecordTemplate.from_record(r)
+        assert tpl["xs"] is None
+
+    def test_list_leaf_after_asarray_is_numeric(self):
+        """The opposite end of the list-leaf story: wrapping the list
+        in ``np.asarray`` produces a numeric template entry."""
+        import numpy as np
+        r = Record(xs=np.asarray([1.0, 2.0, 3.0]))
+        tpl = RecordTemplate.from_record(r)
+        assert tpl["xs"] == (3,)
+
 
 # ---------------------------------------------------------------------------
 # Repr
