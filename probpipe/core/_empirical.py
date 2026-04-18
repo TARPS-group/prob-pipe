@@ -158,11 +158,6 @@ class EmpiricalDistribution[T](
 
     # -- sampling -----------------------------------------------------------
 
-    def _sample_one(self, key: PRNGKey) -> T:
-        """Draw a single sample (with replacement according to weights)."""
-        idx = self._w.choice(key)
-        return self._samples[idx]
-
     def _sample(
         self,
         key: PRNGKey,
@@ -177,7 +172,8 @@ class EmpiricalDistribution[T](
         ``sample_shape``.
         """
         if sample_shape == ():
-            return self._sample_one(key)
+            idx = self._w.choice(key)
+            return self._samples[idx]
         n_draws = prod(sample_shape)
         indices = self._w.choice(key, shape=(n_draws,))
         draws = self._samples[indices]
@@ -437,17 +433,14 @@ class _RecordEmpiricalDistribution(
         """The stored Record data."""
         return self._record_data
 
-    def _sample_one(self, key: PRNGKey) -> Record:
-        idx = self._w.choice(key)
-        return _index_record(self._record_data, idx)
-
     def _sample(
         self,
         key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Record:
         if sample_shape == ():
-            return self._sample_one(key)
+            idx = self._w.choice(key)
+            return _index_record(self._record_data, idx)
         indices = self._w.choice(key, shape=(prod(sample_shape),))
         fields: dict[str, jnp.ndarray] = {}
         for f in self._record_data.fields:
@@ -608,15 +601,15 @@ class BootstrapReplicateDistribution[T](
         """True when all source observations have equal weight."""
         return self._w.is_uniform
 
-    def _sample_one(self, key: PRNGKey) -> Any:
-        """Draw a single bootstrapped dataset."""
-        idx = self._w.choice(key, shape=(self._n,))
-        return self._data[idx]
-
     @property
     def _is_object_data(self) -> bool:
         """True when source data is stored as a numpy object array."""
         return isinstance(self._data, np.ndarray) and self._data.dtype == object
+
+    def _one_bootstrap(self, key: PRNGKey) -> Any:
+        """Draw a single bootstrapped dataset."""
+        idx = self._w.choice(key, shape=(self._n,))
+        return self._data[idx]
 
     def _sample(
         self,
@@ -625,16 +618,16 @@ class BootstrapReplicateDistribution[T](
     ) -> Any:
         """Draw bootstrap datasets."""
         if sample_shape == ():
-            return self._sample_one(key)
+            return self._one_bootstrap(key)
 
         total = prod(sample_shape)
         keys = jax.random.split(key, total)
         if self._is_object_data:
             results = np.empty(total, dtype=object)
             for i in range(total):
-                results[i] = self._sample_one(keys[i])
+                results[i] = self._one_bootstrap(keys[i])
             return results.reshape(sample_shape)
-        results = jax.vmap(self._sample_one)(keys)
+        results = jax.vmap(self._one_bootstrap)(keys)
         return results.reshape(*sample_shape, *results.shape[1:])
 
     # -- expectation --------------------------------------------------------
@@ -816,7 +809,8 @@ class _RecordBootstrapReplicateDistribution(
             self._record_data, leading_shape=(self._n,),
         )
 
-    def _sample_one(self, key: PRNGKey) -> Record:
+    def _one_bootstrap(self, key: PRNGKey) -> Record:
+        """Draw a single bootstrapped Record (one resampled dataset)."""
         idx = self._w.choice(key, shape=(self._n,))
         return _index_record(self._record_data, idx)
 
@@ -826,10 +820,10 @@ class _RecordBootstrapReplicateDistribution(
         sample_shape: tuple[int, ...] = (),
     ) -> Record:
         if sample_shape == ():
-            return self._sample_one(key)
+            return self._one_bootstrap(key)
         total = prod(sample_shape)
         keys = jax.random.split(key, total)
-        results = [self._sample_one(k) for k in keys]
+        results = [self._one_bootstrap(k) for k in keys]
         # Stack: each result is Record(X=array(n,p), y=array(n,))
         # → Record(X=array(*sample_shape, n, p), y=array(*sample_shape, n))
         stacked: dict[str, jnp.ndarray] = {}

@@ -78,15 +78,10 @@ def _view_class_for_parent(parent: Distribution) -> type[_RecordDistributionView
     if "sample" in protocols:
         extra_bases.append(SupportsSampling)
 
-        def _sample_one(self, key: PRNGKey) -> Array:
-            structured = self._parent._sample(key)
-            return self._extract(structured)
-
         def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
             structured = self._parent._sample(key, sample_shape)
             return self._extract(structured)
 
-        extra_methods["_sample_one"] = _sample_one
         extra_methods["_sample"] = _sample
 
     if "mean" in protocols:

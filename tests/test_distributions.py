@@ -472,7 +472,7 @@ class TestDistributionABC:
     def test_mean_requires_supports_mean(self):
         """mean op raises TypeError for distributions without SupportsMean."""
         from probpipe.core.protocols import SupportsSampling, SupportsExpectation
-        from probpipe.core.distribution import _vmap_sample, _mc_expectation
+        from probpipe.core.distribution import _mc_expectation
 
         class MinimalDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"
@@ -480,10 +480,8 @@ class TestDistributionABC:
             @property
             def event_shape(self):
                 return (1,)
-            def _sample_one(self, key):
-                return jnp.zeros((1,))
             def _sample(self, key, sample_shape=()):
-                return _vmap_sample(self, key, sample_shape)
+                return jnp.zeros(sample_shape + (1,))
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
                 return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
         d = MinimalDist(name="minimal")
@@ -493,7 +491,7 @@ class TestDistributionABC:
     def test_variance_requires_supports_variance(self):
         """variance op raises TypeError for distributions without SupportsVariance."""
         from probpipe.core.protocols import SupportsSampling, SupportsExpectation
-        from probpipe.core.distribution import _vmap_sample, _mc_expectation
+        from probpipe.core.distribution import _mc_expectation
 
         class MinimalDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"
@@ -501,10 +499,8 @@ class TestDistributionABC:
             @property
             def event_shape(self):
                 return (1,)
-            def _sample_one(self, key):
-                return jnp.zeros((1,))
             def _sample(self, key, sample_shape=()):
-                return _vmap_sample(self, key, sample_shape)
+                return jnp.zeros(sample_shape + (1,))
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
                 return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
         d = MinimalDist(name="minimal")

@@ -109,9 +109,9 @@ class TestSampling:
         data = jnp.arange(30.0).reshape(10, 3)
         return BootstrapReplicateDistribution(data)
 
-    def test_sample_one_shape(self, dist):
+    def test_sample_empty_shape(self, dist):
         key = jax.random.PRNGKey(0)
-        s = dist._sample_one(key)
+        s = dist._sample(key, ())
         assert s.shape == (10, 3)
 
     def test_sample_no_shape(self, dist):
@@ -136,7 +136,7 @@ class TestSampling:
     def test_samples_are_rows_of_data(self, dist):
         """Each row of a bootstrap sample should be a row from the original data."""
         key = jax.random.PRNGKey(5)
-        s = dist._sample_one(key)
+        s = dist._sample(key, ())
         data = jnp.arange(30.0).reshape(10, 3)
         # Each row in s should appear in data
         for i in range(s.shape[0]):
@@ -162,7 +162,7 @@ class TestSampling:
         weights = jnp.array([0.0, 0.0, 1.0])  # all weight on last row
         emp = EmpiricalDistribution(data, weights=weights)
         dist = BootstrapReplicateDistribution(emp)
-        s = dist._sample_one(jax.random.PRNGKey(0))
+        s = dist._sample(jax.random.PRNGKey(0), ())
         # All rows should be [2.0]
         np.testing.assert_allclose(s, jnp.full((3, 1), 2.0))
 

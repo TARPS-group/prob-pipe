@@ -207,13 +207,6 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
 
         return sampled
 
-    def _sample_one(self, key: PRNGKey) -> Record:
-        # Joint convention: ``_sample_one`` returns the same object as
-        # ``_sample(key, ())`` — a single unbatched ``Record``. We
-        # delegate rather than duplicate the unconditioned-filtering
-        # logic so the two entry points can't drift apart.
-        return self._sample(key, ())
-
     def _sample(
         self,
         key: PRNGKey,

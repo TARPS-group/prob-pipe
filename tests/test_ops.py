@@ -144,7 +144,7 @@ class TestMean:
     def test_raises_without_supports_mean(self):
         """mean op raises TypeError for distributions without SupportsMean."""
         from probpipe.core.protocols import SupportsSampling, SupportsExpectation
-        from probpipe.core.distribution import _vmap_sample, _mc_expectation, NumericRecordDistribution
+        from probpipe.core.distribution import _mc_expectation, NumericRecordDistribution
 
         class NoMeanDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"
@@ -152,10 +152,8 @@ class TestMean:
             @property
             def event_shape(self):
                 return ()
-            def _sample_one(self, key):
-                return jax.random.normal(key)
             def _sample(self, key, sample_shape=()):
-                return _vmap_sample(self, key, sample_shape)
+                return jax.random.normal(key, sample_shape)
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
                 return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
 

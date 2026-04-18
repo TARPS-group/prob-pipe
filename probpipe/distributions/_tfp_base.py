@@ -105,10 +105,6 @@ class TFPDistribution(
 
     # -- sampling & density -------------------------------------------------
 
-    def _sample_one(self, key: PRNGKey) -> Array:
-        """Draw a single sample from the TFP distribution."""
-        return self._tfp_dist.sample(seed=key)
-
     def _sample(
         self,
         key: PRNGKey,

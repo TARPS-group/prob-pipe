@@ -97,8 +97,8 @@ class SupportsSampling(Protocol):
     """Distribution that can produce samples via ``_sample(key, sample_shape)``.
 
     Only requires ``_sample(key, sample_shape)``; concrete classes choose
-    their own implementation strategy (vmap over ``_sample_one``, TFP
-    batched sampling, index resampling, etc.).
+    their own implementation strategy (TFP batched sampling, index
+    resampling, vmap over a local single-draw helper, etc.).
 
     Does NOT extend :class:`SupportsExpectation` — not all samplable
     distributions support array-valued expectations (e.g., random functions).
@@ -116,9 +116,10 @@ class SupportsSampling(Protocol):
     ``RecordDistribution`` ``Record`` / ``NumericRecord``  ``NumericRecordArray(batch_shape=sample_shape)``
     =====================  =======================  =========================================
 
-    ``_sample_one(key)`` is equivalent to ``_sample(key, ())``; concrete
-    subclasses should implement it as a one-line delegation to avoid
-    drift between the two entry points.
+    To draw a single sample, call ``_sample(key, ())``. Implementations
+    that find it clearer to factor out a single-draw helper should
+    define it as a private method (e.g. ``_one_bootstrap``) and have
+    ``_sample`` dispatch on ``sample_shape`` internally.
     """
 
     _sampling_cost: ClassVar[str]  # "low", "medium", "high"

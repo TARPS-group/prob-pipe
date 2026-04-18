@@ -85,7 +85,7 @@ class TestBootstrapDistributionCoverage:
         sample_var = float(jnp.var(evals))
         assert float(v) < sample_var
 
-    def test_weighted_sample_one(self):
+    def test_weighted_sample_unbatched(self):
         evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
         weights = jnp.array([0.1, 0.2, 0.3, 0.2, 0.2])
         bd = BootstrapDistribution(evals, weights=weights)
@@ -94,7 +94,7 @@ class TestBootstrapDistributionCoverage:
         assert s.shape == ()
         assert jnp.isfinite(s)
 
-    def test_unweighted_sample_one(self):
+    def test_unweighted_sample_unbatched(self):
         evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
         bd = BootstrapDistribution(evals)
         key = jax.random.PRNGKey(42)
@@ -299,7 +299,7 @@ class TestTransformedNonTFP:
     def test_event_shape(self, td):
         assert td.event_shape == (2,)
 
-    def test_sample_one(self, td):
+    def test_sample_unbatched(self, td):
         key = jax.random.PRNGKey(0)
         s = sample(td, key=key)
         assert s.shape == (2,)
@@ -335,7 +335,7 @@ class TestCovarianceRequiresProtocol:
     def test_cov_raises_without_supports_covariance(self):
         """A distribution with SupportsExpectation but not SupportsCovariance
         should raise TypeError from the cov op."""
-        from probpipe.core.distribution import _mc_expectation, _vmap_sample
+        from probpipe.core.distribution import _mc_expectation
         from probpipe.core.protocols import SupportsSampling, SupportsExpectation
         from probpipe import NumericRecordDistribution, cov
 
@@ -347,11 +347,8 @@ class TestCovarianceRequiresProtocol:
             def event_shape(self):
                 return (2,)
 
-            def _sample_one(self, key):
-                return jax.random.normal(key, (2,))
-
             def _sample(self, key, sample_shape=()):
-                return _vmap_sample(self, key, sample_shape)
+                return jax.random.normal(key, sample_shape + (2,))
 
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
                 return _mc_expectation(

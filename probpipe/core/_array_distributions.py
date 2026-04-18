@@ -47,25 +47,31 @@ def _vmap_sample(
     key: PRNGKey,
     sample_shape: tuple[int, ...] = (),
 ) -> Any:
-    """Draw samples via ``jax.vmap`` over ``dist._sample_one``.
+    """Draw samples via ``jax.vmap`` over ``dist._sample(key, ())``.
 
-    Suitable for any distribution whose ``_sample_one(key)`` draws a
-    single sample as an array or pytree of arrays.
+    Convenience for distributions whose ``_sample`` implementation is
+    naturally a single-draw function: call this helper from ``_sample``
+    and it will handle the ``sample_shape`` prefix by splitting keys
+    and vmap-ing over the single-draw path.
 
     Parameters
     ----------
     dist
-        Distribution with a ``_sample_one(key)`` method.
+        Distribution whose ``_sample(key, ())`` draws one unbatched
+        sample (array or pytree of arrays).
     key : PRNGKey
         JAX PRNG key.
     sample_shape : tuple of int
         Shape prefix for independent draws.
     """
+    def _one(k: PRNGKey) -> Any:
+        return dist._sample(k, ())
+
     if sample_shape == ():
-        return dist._sample_one(key)
+        return _one(key)
     n = prod(sample_shape)
     keys = jax.random.split(key, n)
-    flat_samples = jax.vmap(dist._sample_one)(keys)
+    flat_samples = jax.vmap(_one)(keys)
     return jax.tree.map(
         lambda x: x.reshape(*sample_shape, *x.shape[1:]),
         flat_samples,
@@ -361,25 +367,20 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
         sample_var = self._w.variance(self._evaluations)
         return sample_var / self._w.effective_sample_size
 
-    def _sample_one(self, key: PRNGKey) -> Array:
-        """Draw a single bootstrap resample of the mean."""
-        idx = self._w.choice(key, shape=(self._n,))
-        return jnp.mean(self._evaluations[idx], axis=0)
-
     def _sample(
         self,
         key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         """Draw bootstrap resamples of the mean."""
-        if sample_shape == ():
-            return self._sample_one(key)
-        total = prod(sample_shape)
-        keys = jax.random.split(key, total)
-
         def _one_resample(k):
             idx = self._w.choice(k, shape=(self._n,))
             return jnp.mean(self._evaluations[idx], axis=0)
+
+        if sample_shape == ():
+            return _one_resample(key)
+        total = prod(sample_shape)
+        keys = jax.random.split(key, total)
 
         results = jax.vmap(_one_resample)(keys)
         return results.reshape(sample_shape + self.event_shape)
@@ -436,15 +437,10 @@ def _flattened_view_class_for_base(base: Distribution) -> type:
     if "sample" in protocols:
         extra_bases.append(SupportsSampling)
 
-        def _sample_one(self, key: PRNGKey) -> Array:
-            pytree_sample = self._base._sample_one(key)
-            return self._base.flatten_value(pytree_sample)
-
         def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
             pytree_samples = self._base._sample(key, sample_shape)
             return self._base.flatten_value(pytree_samples)
 
-        extra_methods["_sample_one"] = _sample_one
         extra_methods["_sample"] = _sample
 
     if "log_prob" in protocols:

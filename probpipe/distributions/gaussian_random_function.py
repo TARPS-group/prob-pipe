@@ -382,25 +382,6 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
 
     # -- Function sampling (finite-dimensional) -----------------------------
 
-    def _sample_one(self, key: PRNGKey) -> Callable[[ArrayLike], Array]:
-        """Draw a single function realization via weight-space sampling.
-
-        Returns a callable ``f(X) -> Array`` that evaluates the linear
-        model at arbitrary inputs using a single weight draw.
-        """
-        w = self._weights._sample(key)  # (d_w,)
-        bias = self._bias
-
-        # Capture feature_map in closure for consistency across calls.
-        feature_map = self._feature_map
-
-        def f(X: ArrayLike) -> Array:
-            X = jnp.asarray(X, dtype=jnp.float32)
-            phi = feature_map(X)  # (*eb, n, [*out,] d_w)
-            return bias + jnp.einsum("...w,w->...", phi, w)
-
-        return f
-
     def _sample(
         self,
         key: PRNGKey,
@@ -408,13 +389,27 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
     ) -> Callable[[ArrayLike], Array]:
         """Draw function realization(s) via weight-space sampling.
 
-        When ``sample_shape`` is non-empty, returns a single callable
-        that evaluates all draws at once, accepting ``X`` with shape
+        For ``sample_shape == ()`` returns a single callable
+        ``f(X) -> Array`` that evaluates the linear model at arbitrary
+        inputs using a single weight draw.
+
+        For non-empty ``sample_shape`` returns a single callable that
+        evaluates all draws at once, accepting ``X`` with shape
         ``(*extra_batch, n, *input_shape)`` and returning array of shape
         ``(*sample_shape, *extra_batch, n, *output_shape)``.
         """
+        bias = self._bias
+        feature_map = self._feature_map
+
         if sample_shape == ():
-            return self._sample_one(key)
+            w = self._weights._sample(key)  # (d_w,)
+
+            def f_one(X: ArrayLike) -> Array:
+                X = jnp.asarray(X, dtype=jnp.float32)
+                phi = feature_map(X)  # (*eb, n, [*out,] d_w)
+                return bias + jnp.einsum("...w,w->...", phi, w)
+
+            return f_one
         n_samples = prod(sample_shape)
         w_samples = self._weights._sample(key, sample_shape=(n_samples,))  # (n, d_w)
         bias = self._bias

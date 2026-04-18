@@ -144,11 +144,6 @@ class JointGaussian(RecordDistribution, SupportsSampling, SupportsLogProb, Suppo
         """Read-only view of the component distributions."""
         return MappingProxyType(self._components)
 
-    def _sample_one(self, key: PRNGKey) -> Record:
-        # Joint convention: ``_sample_one`` returns the same object as
-        # ``_sample(key, ())`` — a single unbatched ``Record``.
-        return self._sample(key, ())
-
     def _sample(
         self,
         key: PRNGKey,

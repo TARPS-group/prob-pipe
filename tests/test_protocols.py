@@ -331,9 +331,6 @@ class TestFlattenedViewDynamicProtocols:
             def event_shape(self):
                 return ()
 
-            def _sample_one(self, key):
-                return jnp.asarray(0.0)
-
             def _sample(self, key, sample_shape=()):
                 return jax.random.normal(key, sample_shape)
 
@@ -353,8 +350,8 @@ class TestSampleReturnTypeConvention:
 
     - Numeric distributions return ``Array`` (sample_shape + event_shape).
     - Record-based joints return ``Record`` / ``NumericRecord`` for an
-      unbatched draw and ``NumericRecordArray`` for a batched draw.
-    - ``_sample_one(key)`` must be equivalent to ``_sample(key, ())``.
+      unbatched draw (``sample_shape == ()``) and ``NumericRecordArray``
+      for a batched draw.
     """
 
     def test_numeric_distribution_returns_array(self):
@@ -381,23 +378,22 @@ class TestSampleReturnTypeConvention:
         assert isinstance(s1, NumericRecordArray)
         assert s1.batch_shape == (5,)
 
-    def test_sample_one_matches_sample_empty(self):
-        """Every joint's ``_sample_one(key)`` must equal
-        ``_sample(key, ())`` (same type, same fields, same values)."""
-        from probpipe import Record
-        k = jax.random.PRNGKey(42)
-
-        # ProductDistribution
-        dist = ProductDistribution(
-            a=Normal(loc=0.0, scale=1.0, name="a"),
-            b=Normal(loc=0.0, scale=1.0, name="b"),
-        )
-        s_one = dist._sample_one(k)
-        s_zero = dist._sample(k, ())
-        assert type(s_one) is type(s_zero)
-        assert s_one.fields == s_zero.fields
-        for f in s_one.fields:
-            assert float(s_one[f]) == float(s_zero[f])
+    def test_no_distribution_exposes_sample_one(self):
+        """``_sample_one`` was removed from the distribution surface —
+        ``_sample(key, ())`` is the sole entry point for a single draw."""
+        distributions = [
+            Normal(loc=0.0, scale=1.0, name="x"),
+            ProductDistribution(
+                a=Normal(loc=0.0, scale=1.0, name="a"),
+                b=Normal(loc=0.0, scale=1.0, name="b"),
+            ),
+            NumericEmpiricalDistribution(jnp.arange(5.0)),
+            BootstrapDistribution(jnp.arange(5.0)),
+        ]
+        for d in distributions:
+            assert not hasattr(d, "_sample_one"), (
+                f"{type(d).__name__} should not expose _sample_one"
+            )
 
     def test_joint_empirical_return_types(self):
         import numpy as np

@@ -80,8 +80,7 @@ class TestDistributionBase:
     def test_log_prob_raises_by_default(self):
         """Distribution[T] without SupportsLogProb raises TypeError."""
         class StubDist(Distribution):
-            def _sample_one(self, key):
-                return jnp.array(0.0)
+            pass
         d = StubDist(name="stub")
         with pytest.raises(TypeError, match="does not support log_prob"):
             log_prob(d, jnp.array(0.0))

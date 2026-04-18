@@ -38,7 +38,7 @@ class RandomFunction[X, Y](Distribution[Callable[[X], Y]]):
     drawing an entire function realization may be impossible or require
     approximation. Finite-dimensional subclasses that support sampling
     should inherit :class:`SupportsSampling` and implement
-    ``_sample_one`` and ``_sample``.
+    ``_sample(key, sample_shape)``.
 
     This class is generic in ``X`` (input type) and ``Y`` (output type).
     """
