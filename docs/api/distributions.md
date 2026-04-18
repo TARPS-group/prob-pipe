@@ -14,8 +14,6 @@
 
 ::: probpipe.core._record_distribution.RecordDistribution
 
-::: probpipe.core._record_distribution._RecordDistributionView
-
 ## Base Classes
 
 ::: probpipe.core._distribution_base.Distribution
