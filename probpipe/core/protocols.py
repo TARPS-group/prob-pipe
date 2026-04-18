@@ -103,6 +103,22 @@ class SupportsSampling(Protocol):
     Does NOT extend :class:`SupportsExpectation` — not all samplable
     distributions support array-valued expectations (e.g., random functions).
     Classes that support both should inherit both protocols.
+
+    Return-type convention
+    ----------------------
+    The shape of the return value depends on whether the distribution
+    emits structured samples and whether the caller asks for a batch:
+
+    =====================  =======================  =========================================
+    Distribution kind      ``sample_shape == ()``   ``sample_shape == (S1, S2, ...)``
+    =====================  =======================  =========================================
+    Numeric (raw array)    ``Array[*event_shape]``  ``Array[*sample_shape, *event_shape]``
+    ``RecordDistribution`` ``Record`` / ``NumericRecord``  ``NumericRecordArray(batch_shape=sample_shape)``
+    =====================  =======================  =========================================
+
+    ``_sample_one(key)`` is equivalent to ``_sample(key, ())``; concrete
+    subclasses should implement it as a one-line delegation to avoid
+    drift between the two entry points.
     """
 
     _sampling_cost: ClassVar[str]  # "low", "medium", "high"
@@ -125,8 +141,7 @@ class SupportsSampling(Protocol):
         Returns
         -------
         Any
-            A single sample when ``sample_shape == ()``, or a batched
-            representation when ``sample_shape`` is non-empty.
+            See class-level "Return-type convention".
         """
         ...
 

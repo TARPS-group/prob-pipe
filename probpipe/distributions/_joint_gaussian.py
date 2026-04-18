@@ -145,10 +145,9 @@ class JointGaussian(RecordDistribution, SupportsSampling, SupportsLogProb, Suppo
         return MappingProxyType(self._components)
 
     def _sample_one(self, key: PRNGKey) -> Record:
-        from .multivariate import MultivariateNormal as MVN
-        full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")
-        flat = full_mvn._sample(key)
-        return self._unflatten_flat_vec(flat, sample_shape=())
+        # Joint convention: ``_sample_one`` returns the same object as
+        # ``_sample(key, ())`` — a single unbatched ``Record``.
+        return self._sample(key, ())
 
     def _sample(
         self,

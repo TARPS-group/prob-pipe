@@ -217,7 +217,9 @@ class ProductDistribution(
     # -- Sampling (returns Record) ------------------------------------------
 
     def _sample_one(self, key: PRNGKey) -> Record:
-        return self._sample(key)
+        # Joint convention: ``_sample_one`` returns the same object as
+        # ``_sample(key, ())`` — a single unbatched ``Record``.
+        return self._sample(key, ())
 
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
         """Draw independent samples from each component.

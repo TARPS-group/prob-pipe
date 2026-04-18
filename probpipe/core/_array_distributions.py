@@ -408,7 +408,65 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
 # FlattenedView — wrap any distribution as a flat NumericRecordDistribution
 # ---------------------------------------------------------------------------
 
-class FlattenedView(NumericRecordDistribution, SupportsSampling, SupportsLogProb):
+_FLATTENED_VIEW_CLASS_CACHE: dict[frozenset[str], type] = {}
+
+
+def _flattened_view_class_for_base(base: Distribution) -> type:
+    """Return a ``FlattenedView`` subclass whose protocol bases match the
+    capabilities of *base*.
+
+    ``FlattenedView`` only delegates sampling and log-prob; those are the
+    only protocols that make sense to inherit. A ``FlattenedView`` over
+    a log-prob-only base should not advertise ``SupportsSampling``, and
+    vice versa.
+    """
+    protocols: set[str] = set()
+    if isinstance(base, SupportsSampling):
+        protocols.add("sample")
+    if isinstance(base, SupportsLogProb):
+        protocols.add("log_prob")
+
+    key = frozenset(protocols)
+    if key in _FLATTENED_VIEW_CLASS_CACHE:
+        return _FLATTENED_VIEW_CLASS_CACHE[key]
+
+    extra_bases: list[type] = []
+    extra_methods: dict[str, object] = {}
+
+    if "sample" in protocols:
+        extra_bases.append(SupportsSampling)
+
+        def _sample_one(self, key: PRNGKey) -> Array:
+            pytree_sample = self._base._sample_one(key)
+            return self._base.flatten_value(pytree_sample)
+
+        def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+            pytree_samples = self._base._sample(key, sample_shape)
+            return self._base.flatten_value(pytree_samples)
+
+        extra_methods["_sample_one"] = _sample_one
+        extra_methods["_sample"] = _sample
+
+    if "log_prob" in protocols:
+        extra_bases.append(SupportsLogProb)
+
+        def _log_prob(self, x: ArrayLike) -> Array:
+            x = jnp.asarray(x)
+            value = self._base.unflatten_value(x)
+            return self._base._log_prob(value)
+
+        extra_methods["_log_prob"] = _log_prob
+
+    if not extra_bases:
+        _FLATTENED_VIEW_CLASS_CACHE[key] = FlattenedView
+        return FlattenedView
+
+    new_cls = type("FlattenedView", (FlattenedView, *extra_bases), extra_methods)
+    _FLATTENED_VIEW_CLASS_CACHE[key] = new_cls
+    return new_cls
+
+
+class FlattenedView(NumericRecordDistribution):
     """Wraps a distribution as a flat ``NumericRecordDistribution``.
 
     Sampling produces flat vectors of shape ``(event_size,)``, and
@@ -418,10 +476,19 @@ class FlattenedView(NumericRecordDistribution, SupportsSampling, SupportsLogProb
     This is the primary interoperability mechanism: any algorithm written
     for ``NumericRecordDistribution`` works with ``RecordDistribution`` or
     ``NumericRecordDistribution`` via ``dist.as_flat_distribution()``.
+
+    **Dynamic protocol support:** the view's ``isinstance`` compliance
+    matches the base's capabilities — a log-prob-only base produces a
+    ``FlattenedView`` that is not ``SupportsSampling``, and a
+    sampling-only base produces one that is not ``SupportsLogProb``.
     """
 
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
+
+    def __new__(cls, base: Distribution):
+        actual_cls = _flattened_view_class_for_base(base)
+        return object.__new__(actual_cls)
 
     def __init__(self, base: Distribution):
         self._base = base
@@ -433,23 +500,6 @@ class FlattenedView(NumericRecordDistribution, SupportsSampling, SupportsLogProb
     @property
     def batch_shape(self) -> tuple[int, ...]:
         return getattr(self._base, "batch_shape", ())
-
-    def _sample_one(self, key: PRNGKey) -> Array:
-        pytree_sample = self._base._sample_one(key)
-        return self._base.flatten_value(pytree_sample)
-
-    def _sample(
-        self,
-        key: PRNGKey,
-        sample_shape: tuple[int, ...] = (),
-    ) -> Array:
-        pytree_samples = self._base._sample(key, sample_shape)
-        return self._base.flatten_value(pytree_samples)
-
-    def _log_prob(self, x: ArrayLike) -> Array:
-        x = jnp.asarray(x)
-        value = self._base.unflatten_value(x)
-        return self._base._log_prob(value)
 
     def _expectation(
         self,

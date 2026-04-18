@@ -113,22 +113,58 @@ class _MixtureMarginal[T](Distribution[T]):
 # -- Mixture protocol mixins (combined dynamically) -------------------------
 
 class _MixtureSampling:
-    """SupportsSampling mixin for mixture marginals."""
+    """SupportsSampling mixin for mixture marginals.
+
+    Returns a raw ``Array`` when component samples are arrays (the
+    common case — broadcasting a numeric function over a distribution
+    of inputs), and a ``RecordArray`` when component samples are
+    ``Record``-valued (e.g., broadcasting a ``Record``-returning
+    ``WorkflowFunction``). Opaque / non-stackable component outputs
+    raise a ``TypeError`` with the component types listed.
+    """
 
     _sampling_cost: str = "medium"
     _preferred_orchestration: str | None = None
 
     def _sample(self, key, sample_shape=()):
+        from ._record_array import RecordArray
+        from .record import Record
+
         n_draws = prod(sample_shape) if sample_shape else 1
         key1, key2 = jax.random.split(key)
         indices = self._w.choice(key1, shape=(n_draws,))
         keys = jax.random.split(key2, n_draws)
 
-        results = []
-        for i in range(n_draws):
-            comp = self._components[int(indices[i])]
-            results.append(comp._sample(keys[i], ()))
-        stacked = jnp.stack(results, axis=0)
+        results = [
+            self._components[int(indices[i])]._sample(keys[i], ())
+            for i in range(n_draws)
+        ]
+
+        # Dispatch on result type so a mixture of Record-returning
+        # distributions produces a RecordArray rather than crashing in
+        # jnp.stack. Scalars / arrays stay on the numeric path.
+        if all(isinstance(r, Record) for r in results):
+            stacked_ra = RecordArray.stack(results)
+            if sample_shape == ():
+                return stacked_ra[0]
+            # Reshape the leading batch axis to sample_shape.
+            fields = {
+                name: stacked_ra[name].reshape(sample_shape + stacked_ra[name].shape[1:])
+                for name in stacked_ra.fields
+            }
+            return type(stacked_ra)(
+                fields, batch_shape=sample_shape, template=stacked_ra.template,
+            )
+
+        try:
+            stacked = jnp.stack(results, axis=0)
+        except (TypeError, ValueError) as exc:
+            types_seen = sorted({type(r).__name__ for r in results})
+            raise TypeError(
+                f"_MixtureSampling cannot stack component samples of "
+                f"types {types_seen}; mixture marginals support numeric "
+                f"arrays and Record values only."
+            ) from exc
         if sample_shape == ():
             return stacked[0]
         return stacked.reshape(sample_shape + stacked.shape[1:])

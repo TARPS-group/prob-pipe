@@ -47,13 +47,22 @@ def _view_class_for_parent(parent: Distribution) -> type[_RecordDistributionView
     """Return a ``_RecordDistributionView`` subclass whose protocol bases
     match the capabilities of *parent*.
 
-    Dynamic subclasses are cached by protocol signature so each unique
-    combination is created only once.  The subclass has concrete
-    implementations of the delegated protocol methods at the **class**
-    level, which means ``isinstance(view, SupportsLogProb)`` works
-    correctly with ``@runtime_checkable`` protocols.
+    The view only claims to implement a protocol when the underlying
+    parent implements it — otherwise ``isinstance(view, SupportsFoo)``
+    would lie, and dispatch code that checks the protocol would hand
+    the view work the parent can't satisfy.  All protocol methods
+    (sampling, mean, variance, log-prob, covariance) are therefore
+    added dynamically here, not on the base class. The cache key is
+    the set of supported protocol names, so each unique combination
+    produces one subclass.
     """
     protocols: set[str] = set()
+    if isinstance(parent, SupportsSampling):
+        protocols.add("sample")
+    if isinstance(parent, SupportsMean):
+        protocols.add("mean")
+    if isinstance(parent, SupportsVariance):
+        protocols.add("variance")
     if isinstance(parent, SupportsLogProb):
         protocols.add("log_prob")
     if isinstance(parent, SupportsCovariance):
@@ -65,6 +74,43 @@ def _view_class_for_parent(parent: Distribution) -> type[_RecordDistributionView
 
     extra_bases: list[type] = []
     extra_methods: dict[str, object] = {}
+
+    if "sample" in protocols:
+        extra_bases.append(SupportsSampling)
+
+        def _sample_one(self, key: PRNGKey) -> Array:
+            structured = self._parent._sample(key)
+            return self._extract(structured)
+
+        def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
+            structured = self._parent._sample(key, sample_shape)
+            return self._extract(structured)
+
+        extra_methods["_sample_one"] = _sample_one
+        extra_methods["_sample"] = _sample
+
+    if "mean" in protocols:
+        extra_bases.append(SupportsMean)
+
+        def _mean(self) -> Array:
+            m = self._parent._mean()
+            if isinstance(m, Record):
+                return m[self._key]
+            # Parent returned a flat array — fall back to empirical mean
+            # over draws for just this field. Requires the parent to
+            # expose ``draws()`` (all ApproximateDistribution subclasses do).
+            return self._field_draws().mean(axis=0)
+        extra_methods["_mean"] = _mean
+
+    if "variance" in protocols:
+        extra_bases.append(SupportsVariance)
+
+        def _variance(self) -> Array:
+            v = self._parent._variance()
+            if isinstance(v, Record):
+                return v[self._key]
+            return self._field_draws().var(axis=0)
+        extra_methods["_variance"] = _variance
 
     if "log_prob" in protocols:
         extra_bases.append(SupportsLogProb)
@@ -105,20 +151,21 @@ def _view_class_for_parent(parent: Distribution) -> type[_RecordDistributionView
 # ---------------------------------------------------------------------------
 
 
-class _RecordDistributionView(Distribution, SupportsSampling, SupportsMean, SupportsVariance):
+class _RecordDistributionView(Distribution):
     """Lightweight reference to a single named field of a Record-based distribution.
 
     The Record-world analog of
-    :class:`~probpipe.core._joint.DistributionView`.  Preserves
+    :class:`~probpipe.core._joint.DistributionView`. Preserves
     correlation when multiple views from the same parent are used in
     :class:`~probpipe.core.node.WorkflowFunction` broadcasting.
 
-    **Dynamic protocol support:** The view's ``isinstance`` protocol
-    compliance matches the parent's capabilities.  When the parent
-    supports ``SupportsLogProb``, the view does too (via a cached
-    dynamic subclass).  Use :func:`_view_class_for_parent` or call
-    ``_RecordDistributionView(parent, key)`` — the ``__new__`` method
-    selects the right subclass automatically.
+    **Dynamic protocol support:** this base class intentionally does
+    not inherit any ``SupportsFoo`` protocols. Each concrete instance
+    is a cached subclass built by :func:`_view_class_for_parent`, which
+    mixes in only the protocols the parent actually implements. Calling
+    ``_RecordDistributionView(parent, key)`` routes through ``__new__``
+    and picks the right subclass automatically, so
+    ``isinstance(view, SupportsSampling)`` is True iff the parent is.
 
     Parameters
     ----------
@@ -163,32 +210,6 @@ class _RecordDistributionView(Distribution, SupportsSampling, SupportsMean, Supp
         # Legacy Record template: field is an array
         return f.shape if not isinstance(f, Record) else ()
 
-    # -- SupportsSampling ---------------------------------------------------
-
-    def _sample_one(self, key: PRNGKey) -> Array:
-        structured = self._parent._sample(key)
-        return self._extract(structured)
-
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
-        structured = self._parent._sample(key, sample_shape)
-        return self._extract(structured)
-
-    # -- SupportsMean / SupportsVariance ------------------------------------
-
-    def _mean(self) -> Array:
-        if isinstance(self._parent, SupportsMean):
-            m = self._parent._mean()
-            if isinstance(m, Record):
-                return m[self._key]
-        return self._field_draws().mean(axis=0)
-
-    def _variance(self) -> Array:
-        if isinstance(self._parent, SupportsVariance):
-            v = self._parent._variance()
-            if isinstance(v, Record):
-                return v[self._key]
-        return self._field_draws().var(axis=0)
-
     # -- Internals ----------------------------------------------------------
 
     def _extract(self, structured) -> Array:
@@ -203,15 +224,22 @@ class _RecordDistributionView(Distribution, SupportsSampling, SupportsMean, Supp
         return result
 
     def _field_draws(self) -> Array:
-        """All draws for this field (requires parent to have a ``draws()`` method)."""
-        from ._record_array import RecordArray
+        """All draws for this field (requires parent to have a ``draws()`` method).
+
+        Used by the dynamically-installed ``_mean`` / ``_variance`` when
+        the parent's own ``_mean()`` / ``_variance()`` returns a flat
+        array rather than a ``Record``. Only reachable when the parent
+        is ``SupportsMean`` / ``SupportsVariance`` (so the method is
+        present on the dynamic subclass at all), and such parents in
+        practice are ``ApproximateDistribution`` subclasses that do
+        expose ``draws()``.
+        """
+        from ._record_array import RecordArray, NumericRecordArray
         draws = self._parent.draws()
         if isinstance(draws, (Record, RecordArray)):
             return jnp.asarray(draws[self._key])
-        # Flat array draws — unflatten
-        from ._record_array import NumericRecordArray
         result = NumericRecordArray.unflatten(
-            jnp.asarray(draws), template=self._parent.record_template
+            jnp.asarray(draws), template=self._parent.record_template,
         )
         return jnp.asarray(result[self._key])
 
