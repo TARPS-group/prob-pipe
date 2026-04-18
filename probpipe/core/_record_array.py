@@ -17,8 +17,8 @@ import numpy as np
 
 from .._utils import prod
 from ..custom_types import ArrayLike
-from ._numeric_record import NumericRecord
-from .record import Record, RecordTemplate
+from ._numeric_record import NumericRecord, _NUMERIC_DTYPE_KINDS
+from .record import Record, RecordTemplate, _spec_size
 
 __all__ = ["RecordArray", "NumericRecordArray"]
 
@@ -44,7 +44,7 @@ class RecordArray:
     field name (``arr["x"]`` → batched leaf array).
     """
 
-    __slots__ = ("_store", "_batch_shape", "_template", "_fields")
+    __slots__ = ("_store", "_batch_shape", "_template")
 
     def __init__(
         self,
@@ -76,7 +76,6 @@ class RecordArray:
         object.__setattr__(self, "_store", store)
         object.__setattr__(self, "_batch_shape", batch_shape)
         object.__setattr__(self, "_template", template)
-        object.__setattr__(self, "_fields", tuple(store.keys()))
 
     @classmethod
     def _validate_fields(
@@ -119,7 +118,7 @@ class RecordArray:
     @property
     def fields(self) -> tuple[str, ...]:
         """Field names in sorted order."""
-        return self._fields
+        return tuple(self._store.keys())
 
     # -- Field access -------------------------------------------------------
 
@@ -206,7 +205,7 @@ class RecordArray:
             return NotImplemented
         if self._batch_shape != other._batch_shape:
             return False
-        if self._fields != other._fields:
+        if self.fields != other.fields:
             return False
         if self._template != other._template:
             return False
@@ -294,13 +293,16 @@ class NumericRecordArray(RecordArray):
             if isinstance(spec, RecordTemplate):
                 out[name] = raw
                 continue
+            # Batched numeric leaves must expose dtype + shape. Plain
+            # Python scalars / strings / lists never do, so this is the
+            # one check we need to reject them as a batched field.
             if not hasattr(raw, "dtype") or not hasattr(raw, "shape"):
                 raise TypeError(
                     f"NumericRecordArray: field {name!r} must be a "
                     f"numeric array, got {type(raw).__name__}"
                 )
             kind = getattr(raw.dtype, "kind", None)
-            if kind not in {"b", "i", "u", "f", "c"}:
+            if kind not in _NUMERIC_DTYPE_KINDS:
                 raise TypeError(
                     f"NumericRecordArray: field {name!r} has non-numeric "
                     f"dtype {raw.dtype!r}"
@@ -360,22 +362,15 @@ class NumericRecordArray(RecordArray):
         offset = 0
         for name in template.fields:
             spec = template[name]
+            size = _spec_size(spec)
+            chunk = flat[..., offset : offset + size]
             if isinstance(spec, RecordTemplate):
-                size = spec.flat_size
-                chunk = flat[..., offset : offset + size]
                 fields[name] = cls.unflatten(
                     chunk, template=spec, batch_shape=batch_shape,
                 )
-                offset += size
-            elif spec is None:
-                raise TypeError(
-                    f"Cannot unflatten opaque field {name!r}"
-                )
             else:
-                size = prod(spec) if spec else 1
-                chunk = flat[..., offset : offset + size]
                 fields[name] = jnp.reshape(chunk, batch_shape + spec)
-                offset += size
+            offset += size
 
         return cls(fields, batch_shape=batch_shape, template=template)
 

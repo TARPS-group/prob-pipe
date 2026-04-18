@@ -537,7 +537,7 @@ class RecordTemplate:
         RecordTemplate(physics=RecordTemplate(force=(), mass=()), obs=())
     """
 
-    __slots__ = ("_specs", "_fields", "_flat_size")
+    __slots__ = ("_specs", "_flat_size")
 
     def __init__(
         self,
@@ -568,7 +568,6 @@ class RecordTemplate:
                     )
         specs = OrderedDict(sorted(field_specs.items()))
         object.__setattr__(self, "_specs", specs)
-        object.__setattr__(self, "_fields", tuple(specs.keys()))
         object.__setattr__(self, "_flat_size", self._compute_flat_size())
 
     # -- Immutability -------------------------------------------------------
@@ -584,7 +583,7 @@ class RecordTemplate:
     @property
     def fields(self) -> tuple[str, ...]:
         """Field names in sorted order."""
-        return self._fields
+        return tuple(self._specs.keys())
 
     @property
     def leaf_shapes(self) -> dict[str, tuple[int, ...] | None]:
@@ -724,6 +723,29 @@ class RecordTemplate:
             else:
                 parts.append(f"{name}={spec}")
         return f"RecordTemplate({', '.join(parts)})"
+
+
+# ---------------------------------------------------------------------------
+# Template walking helpers
+# ---------------------------------------------------------------------------
+
+
+def _spec_size(spec: _FieldSpec) -> int:
+    """Number of scalar elements a leaf-spec stands for.
+
+    Shared by ``NumericRecord.unflatten`` and ``NumericRecordArray.unflatten``
+    when walking a template and slicing a flat buffer. Opaque fields
+    (``spec is None``) have no flat size and raise.
+    """
+    if isinstance(spec, RecordTemplate):
+        return spec.flat_size
+    if spec is None:
+        raise TypeError(
+            "opaque template fields (shape=None) have no flat size; "
+            "unflatten is only defined for numeric-leaf fields."
+        )
+    from .._utils import prod
+    return prod(spec) if spec else 1
 
 
 # ---------------------------------------------------------------------------

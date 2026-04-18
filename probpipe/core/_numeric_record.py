@@ -21,11 +21,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .._utils import prod
 from ..custom_types import ArrayLike
-from .record import Record, RecordTemplate, _record_flatten
+from .record import Record, RecordTemplate, _record_flatten, _spec_size
 
-__all__ = ["NumericRecord"]
+__all__ = ["NumericRecord", "_is_numeric_leaf", "_NUMERIC_DTYPE_KINDS"]
 
 
 # Scalar types accepted as numeric leaves. ``bool`` is intentionally
@@ -33,21 +32,25 @@ __all__ = ["NumericRecord"]
 # participate in arithmetic as 0/1.
 _NUMERIC_SCALARS = (bool, int, float, complex, np.integer, np.floating, np.bool_)
 
+# dtype.kind codes for numeric arrays: b=bool, i=int, u=uint, f=float,
+# c=complex. Shared with ``NumericRecordArray._validate_fields`` so the
+# two validation sites stay in lockstep.
+_NUMERIC_DTYPE_KINDS = frozenset("biufc")
+
 
 def _is_numeric_leaf(val: Any) -> bool:
-    """True if *val* is a numeric array or numeric scalar."""
-    if isinstance(val, (np.ndarray, jnp.ndarray)):
-        return True
-    if isinstance(val, _NUMERIC_SCALARS):
-        return True
+    """True if *val* is a numeric array or numeric scalar.
+
+    Rejects object-dtype arrays, string-like scalars, and opaque types
+    that don't expose ``dtype`` / ``shape``.
+    """
     if isinstance(val, (str, bytes)):
         return False
-    # Anything else that quacks like an array: require both shape and dtype
-    # attributes, and reject non-numeric dtypes (e.g. numpy object arrays).
-    if hasattr(val, "shape") and hasattr(val, "dtype"):
-        dtype = val.dtype
-        kind = getattr(dtype, "kind", None)
-        return kind in {"b", "i", "u", "f", "c"}
+    if isinstance(val, _NUMERIC_SCALARS):
+        return True
+    if hasattr(val, "dtype") and hasattr(val, "shape"):
+        kind = getattr(val.dtype, "kind", None)
+        return kind in _NUMERIC_DTYPE_KINDS
     return False
 
 
@@ -181,22 +184,13 @@ class NumericRecord(Record):
 
         for field_name in template.fields:
             spec = template[field_name]
+            size = _spec_size(spec)
+            chunk = flat[offset : offset + size]
             if isinstance(spec, RecordTemplate):
-                size = spec.flat_size
-                child_flat = flat[offset : offset + size]
-                fields[field_name] = cls.unflatten(child_flat, template=spec)
-                offset += size
-            elif spec is None:
-                raise TypeError(
-                    f"Cannot unflatten opaque field {field_name!r} from a "
-                    f"flat array: template has shape=None (non-numeric "
-                    f"leaf). Opaque fields are only supported on Record, "
-                    f"not NumericRecord."
-                )
+                fields[field_name] = cls.unflatten(chunk, template=spec)
             else:
-                size = prod(spec) if spec else 1
-                fields[field_name] = flat[offset : offset + size].reshape(spec)
-                offset += size
+                fields[field_name] = chunk.reshape(spec)
+            offset += size
 
         return cls(fields)
 
