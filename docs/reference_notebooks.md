@@ -5,6 +5,7 @@ These notebooks provide in-depth coverage of specific ProbPipe features. For a g
 | Notebook | Description |
 |----------|-------------|
 | [Distributions](examples/01_distributions.ipynb) | Distribution basics, shape semantics, support checking, and moment-matching conversion between distribution types. |
+| [Records and the Record family](examples/02_records.ipynb) | `Record`, `NumericRecord`, `RecordArray`, `NumericRecordArray`, `RecordTemplate` — the structured-value containers that flow through every ProbPipe workflow. |
 | [Transformations](examples/02_transformations.ipynb) | Bijector-based transforms (Exp, Sigmoid, Softplus), chaining transforms, and transforming empirical distributions. |
 | [Joint Distributions](examples/03_joint_distributions.ipynb) | Composing marginals into joint distributions, autoregressive dependence, exact Gaussian conditioning, and correlated broadcasting. |
 | [Broadcasting](examples/04_broadcasting.ipynb) | Automatic uncertainty propagation, empirical enumeration, cartesian products, backend auto-detection, and seeded reproducibility. |
