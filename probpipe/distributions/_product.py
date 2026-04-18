@@ -30,6 +30,7 @@ from ..core._record_distribution import (
     _build_record_template,
 )
 from ..core.protocols import (
+    protocols_supported_by_all,
     SupportsConditioning,
     SupportsLogProb,
     SupportsMean,
@@ -47,7 +48,7 @@ from ._joint_utils import (
 # Dynamic protocol factory for ProductDistribution
 # ---------------------------------------------------------------------------
 
-_PRODUCT_CLASS_CACHE: dict[frozenset[str], type] = {}
+_PRODUCT_CLASS_CACHE: dict[tuple[frozenset[type], bool], type] = {}
 
 
 def _product_class_for_components(components: dict) -> type:
@@ -62,30 +63,16 @@ def _product_class_for_components(components: dict) -> type:
     """
     leaves = jax.tree.leaves(components)
 
-    protocols: set[str] = set()
-    if all(isinstance(l, SupportsLogProb) for l in leaves):
-        protocols.add("log_prob")
-    if all(isinstance(l, SupportsMean) for l in leaves):
-        protocols.add("mean")
-    if all(isinstance(l, SupportsVariance) for l in leaves):
-        protocols.add("variance")
+    extra_bases = protocols_supported_by_all(
+        leaves, (SupportsLogProb, SupportsMean, SupportsVariance),
+    )
     all_tfp = all(hasattr(l, "_tfp_dist") for l in leaves)
-    if all_tfp:
-        protocols.add("tfp")
 
-    key = frozenset(protocols)
+    key = (frozenset(extra_bases), all_tfp)
     if key in _PRODUCT_CLASS_CACHE:
         return _PRODUCT_CLASS_CACHE[key]
 
     base = TFPProductDistribution if all_tfp else ProductDistribution
-
-    extra_bases: list[type] = []
-    if "log_prob" in protocols:
-        extra_bases.append(SupportsLogProb)
-    if "mean" in protocols:
-        extra_bases.append(SupportsMean)
-    if "variance" in protocols:
-        extra_bases.append(SupportsVariance)
 
     if not extra_bases:
         _PRODUCT_CLASS_CACHE[key] = base

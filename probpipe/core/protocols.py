@@ -245,6 +245,22 @@ class SupportsConditioning(Protocol):
     def _condition_on(self, observed: Any, /, **kwargs: Any) -> Any: ...
 
 
+def protocols_supported_by_all(
+    leaves: list, candidates: tuple[type, ...],
+) -> tuple[type, ...]:
+    """Return the subset of *candidates* that every leaf satisfies.
+
+    Used by dynamic-protocol factories (``ProductDistribution``,
+    ``SequentialJointDistribution``, ``TransformedDistribution``,
+    ``_RecordDistributionView``, ``FlattenedView``) when building a
+    cached subclass whose protocol bases track the capabilities of the
+    underlying distribution(s). Pass in the leaves to check and the
+    tuple of ``SupportsFoo`` protocols to test against; get back the
+    protocols that are satisfied by every leaf, in the given order.
+    """
+    return tuple(p for p in candidates if all(isinstance(l, p) for l in leaves))
+
+
 __all__ = [
     "compute_expectation",
     "SupportsExpectation",
@@ -255,4 +271,5 @@ __all__ = [
     "SupportsVariance",
     "SupportsCovariance",
     "SupportsConditioning",
+    "protocols_supported_by_all",
 ]

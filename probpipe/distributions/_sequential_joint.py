@@ -27,6 +27,7 @@ from ..core.protocols import (
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
+    protocols_supported_by_all,
 )
 from ._joint_utils import (
     KeyPath,
@@ -51,26 +52,14 @@ def _sequential_class_for_components(components: dict) -> type:
     are included only when every leaf component satisfies the corresponding
     protocol.
     """
-    leaves = list(components.values())
-    protocols: set[str] = set()
-    if all(isinstance(c, SupportsLogProb) for c in leaves):
-        protocols.add("log_prob")
-    if all(isinstance(c, SupportsMean) for c in leaves):
-        protocols.add("mean")
-    if all(isinstance(c, SupportsVariance) for c in leaves):
-        protocols.add("variance")
+    extra_bases = protocols_supported_by_all(
+        list(components.values()),
+        (SupportsLogProb, SupportsMean, SupportsVariance),
+    )
 
-    key = frozenset(protocols)
+    key = frozenset(extra_bases)
     if key in _SEQUENTIAL_CLASS_CACHE:
         return _SEQUENTIAL_CLASS_CACHE[key]
-
-    extra_bases: list[type] = []
-    if "log_prob" in protocols:
-        extra_bases.append(SupportsLogProb)
-    if "mean" in protocols:
-        extra_bases.append(SupportsMean)
-    if "variance" in protocols:
-        extra_bases.append(SupportsVariance)
 
     if not extra_bases:
         _SEQUENTIAL_CLASS_CACHE[key] = SequentialJointDistribution

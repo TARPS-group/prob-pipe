@@ -20,8 +20,8 @@ array, the class dispatches in ``__new__`` to ``NumericJointEmpirical``
 from __future__ import annotations
 
 from types import MappingProxyType
+from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 from .._utils import prod, _is_numeric_array
@@ -193,25 +193,40 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
         return self._sample_joint_rows(key, sample_shape)
 
     def _sample_joint_rows(self, key: PRNGKey, sample_shape: tuple[int, ...]):
-        """Resample rows jointly. Subclasses may override to return a
-        typed container (e.g. ``NumericRecordArray``)."""
+        """Resample rows jointly, preserving per-row correlation.
+
+        The generic base returns a ``Record`` regardless of
+        ``sample_shape`` (with batched fields for non-empty shapes).
+        Subclasses override to return a typed batched container (e.g.
+        ``NumericRecordArray``) when the leaves are numeric.
+        """
+        return Record(self._resample_rows(key, sample_shape))
+
+    def _resample_rows(
+        self, key: PRNGKey, sample_shape: tuple[int, ...],
+    ) -> dict[str, Any]:
+        """Draw ``prod(sample_shape)`` row indices and slice each field.
+
+        Used by both :class:`JointEmpirical` and
+        :class:`NumericJointEmpirical` so that the index-and-slice logic
+        lives in one place.
+        """
         n_draws = prod(sample_shape)
         indices = self._w.choice(key, shape=(n_draws,))
-        result = {}
+        result: dict[str, Any] = {}
         for cname, arr in self._joint_samples.items():
             drawn = arr[indices]
             if sample_shape:
-                # Reshape only if the underlying array supports it
-                # (numeric arrays do; numpy object arrays don't always).
                 try:
                     result[cname] = drawn.reshape(sample_shape + arr.shape[1:])
                 except (TypeError, ValueError):
+                    # Non-numeric object arrays don't always support reshape.
                     result[cname] = drawn
             else:
-                result[cname] = drawn[0] if drawn.shape and drawn.shape[0] == 1 else drawn
-        if not sample_shape:
-            return Record(result)
-        return Record(result)
+                result[cname] = (
+                    drawn[0] if drawn.shape and drawn.shape[0] == 1 else drawn
+                )
+        return result
 
     # -- Conditioning -------------------------------------------------------
 
@@ -323,15 +338,7 @@ class NumericJointEmpirical(JointEmpirical, SupportsLogProb, SupportsMean, Suppo
 
     def _sample_joint_rows(self, key: PRNGKey, sample_shape: tuple[int, ...]):
         from ..core._record_array import NumericRecordArray
-        n_draws = prod(sample_shape)
-        indices = self._w.choice(key, shape=(n_draws,))
-        result: dict[str, Array] = {}
-        for cname, arr in self._joint_samples.items():
-            drawn = arr[indices]
-            if sample_shape:
-                result[cname] = drawn.reshape(sample_shape + arr.shape[1:])
-            else:
-                result[cname] = drawn.squeeze(axis=0)
+        result = self._resample_rows(key, sample_shape)
         if sample_shape:
             return NumericRecordArray(
                 result, batch_shape=sample_shape,
