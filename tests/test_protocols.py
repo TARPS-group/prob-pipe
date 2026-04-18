@@ -339,6 +339,33 @@ class TestFlattenedViewDynamicProtocols:
         assert isinstance(flat, SupportsSampling)
         assert not isinstance(flat, SupportsLogProb)
 
+    def test_flattened_view_over_log_prob_only_base(self):
+        """A log-prob-only base produces a FlattenedView that isn't
+        ``SupportsSampling`` (reverse direction of the sampling-only test)."""
+        import jax.numpy as jnp
+        from probpipe.core._array_distributions import (
+            FlattenedView, NumericRecordDistribution,
+        )
+        from probpipe.core.record import RecordTemplate
+
+        class _LogProbOnlyBase(NumericRecordDistribution, SupportsLogProb):
+            record_template = RecordTemplate(x=())
+
+            def __init__(self):
+                self._name = "lpo_base"
+
+            @property
+            def event_shape(self):
+                return ()
+
+            def _log_prob(self, x):
+                return jnp.asarray(0.0)
+
+        base = _LogProbOnlyBase()
+        flat = FlattenedView(base)
+        assert isinstance(flat, SupportsLogProb)
+        assert not isinstance(flat, SupportsSampling)
+
 
 # ---------------------------------------------------------------------------
 # Sample / sample_one return-type convention
@@ -524,6 +551,20 @@ class TestSequentialJointDynamicProtocols:
         assert isinstance(joint, SupportsVariance)
         assert isinstance(joint, SupportsConditioning)
 
+    def test_bootstrap_component_drops_log_prob(self):
+        """``BootstrapDistribution`` lacks ``SupportsLogProb``; a
+        sequential joint containing one should not claim it."""
+        boot = BootstrapDistribution(jnp.array([1.0, 2.0, 3.0]), name="boot")
+        joint = SequentialJointDistribution(
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            b=lambda z: boot,
+        )
+        # Sampling and conditioning always available.
+        assert isinstance(joint, SupportsSampling)
+        assert isinstance(joint, SupportsConditioning)
+        # MRO-level claims reflect missing log-prob on a component.
+        assert SupportsLogProb not in type(joint).__mro__
+
 
 class TestJointEmpiricalDispatch:
     """JointEmpirical auto-dispatches to NumericJointEmpirical for numeric data."""
@@ -544,6 +585,25 @@ class TestJointEmpiricalDispatch:
                 labels=np.array(["a", "b", "c"], dtype=object),
                 y=jnp.zeros(3),
             )
+
+    def test_generic_non_numeric_lacks_numeric_protocols(self):
+        """``JointEmpirical`` with object-dtype fields stays on the
+        generic base class and must not claim the numeric protocols."""
+        import numpy as np
+        from probpipe import JointEmpirical, NumericJointEmpirical
+        je = JointEmpirical(
+            labels=np.array(["a", "b", "c"], dtype=object),
+            ids=np.array([0, 1, 2]),
+        )
+        assert type(je) is JointEmpirical
+        assert not isinstance(je, NumericJointEmpirical)
+        # Sampling + conditioning still available on the generic base.
+        assert isinstance(je, SupportsSampling)
+        assert isinstance(je, SupportsConditioning)
+        # Numeric protocols are not on the base class.
+        assert SupportsLogProb not in type(je).__mro__
+        assert SupportsMean not in type(je).__mro__
+        assert SupportsVariance not in type(je).__mro__
 
 
 class TestSimpleGenerativeModelSampling:

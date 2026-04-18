@@ -66,6 +66,12 @@ class TestProtocols:
     def test_is_not_supports_log_prob(self, model):
         assert not isinstance(model, SupportsLogProb)
 
+    def test_is_supports_sampling(self, model):
+        """SimpleGenerativeModel now advertises SupportsSampling (joint draw:
+        sample prior, call likelihood.generate_data)."""
+        from probpipe.core.protocols import SupportsSampling
+        assert isinstance(model, SupportsSampling)
+
     def test_simulator_is_generative_likelihood(self, simulator):
         assert isinstance(simulator, GenerativeLikelihood)
 
