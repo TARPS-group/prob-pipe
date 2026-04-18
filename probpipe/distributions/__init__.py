@@ -27,6 +27,7 @@ from .joint import (
     ProductDistribution,
     SequentialJointDistribution,
     JointEmpirical,
+    NumericJointEmpirical,
     JointGaussian,
 )
 from .multivariate import (
@@ -73,6 +74,7 @@ __all__ = [
     "ProductDistribution",
     "SequentialJointDistribution",
     "JointEmpirical",
+    "NumericJointEmpirical",
     "JointGaussian",
     # Multivariate
     "MultivariateNormal",

@@ -46,37 +46,99 @@ _TRANSFORMED_CLASS_CACHE: dict[frozenset[str], type] = {}
 
 def _transformed_class_for_base(base: NumericRecordDistribution) -> type:
     """Return a TransformedDistribution subclass whose protocol bases
-    match what the base distribution supports."""
-    protocols: set[str] = set()
-    if isinstance(base, SupportsLogProb):
-        protocols.add("log_prob")
-    if isinstance(base, SupportsMean):
-        protocols.add("mean")
-    if isinstance(base, SupportsVariance):
-        protocols.add("variance")
+    match what the base distribution supports.
 
-    key = frozenset(protocols)
+    ``_sample``, ``_log_prob``, ``_mean``, ``_variance`` are installed
+    on the dynamic subclass (not the base class) so that ``isinstance``
+    checks against the ``SupportsFoo`` protocols are accurate: an
+    instance only has the method when its base actually supports the
+    corresponding protocol. ``_mean`` / ``_variance`` use a Monte Carlo
+    fallback, which requires sampling.
+    """
+    supports_sample = isinstance(base, SupportsSampling)
+    supports_log_prob = isinstance(base, SupportsLogProb)
+    supports_mean = isinstance(base, SupportsMean) or supports_sample
+    supports_variance = isinstance(base, SupportsVariance) or supports_sample
+
+    signature = (supports_sample, supports_log_prob, supports_mean, supports_variance)
+    key = frozenset(
+        name for name, flag in zip(
+            ("sample", "log_prob", "mean", "variance"), signature,
+        ) if flag
+    )
     if key in _TRANSFORMED_CLASS_CACHE:
         return _TRANSFORMED_CLASS_CACHE[key]
 
     extra_bases: list[type] = []
-    if "log_prob" in protocols:
+    extra_methods: dict[str, object] = {}
+
+    if supports_sample:
+        extra_bases.append(SupportsSampling)
+
+        def _sample(
+            self,
+            key: PRNGKey,
+            sample_shape: tuple[int, ...] = (),
+        ) -> Array:
+            if self._tfp_transformed is not None:
+                return self._tfp_transformed.sample(seed=key, sample_shape=sample_shape)
+            raw = self._base._sample(key, sample_shape)
+            return self._bijector.forward(raw)
+
+        extra_methods["_sample"] = _sample
+
+    if supports_log_prob:
         extra_bases.append(SupportsLogProb)
-    if "mean" in protocols:
+
+        def _log_prob(self, x: ArrayLike) -> Array:
+            x = jnp.asarray(x)
+            if self._tfp_transformed is not None:
+                return self._tfp_transformed.log_prob(x)
+            raw = self._bijector.inverse(x)
+            return (
+                self._base._log_prob(raw)
+                + self._bijector.inverse_log_det_jacobian(
+                    x, event_ndims=len(self.event_shape)
+                )
+            )
+
+        extra_methods["_log_prob"] = _log_prob
+
+    if supports_mean:
         extra_bases.append(SupportsMean)
-    if "variance" in protocols:
+
+        def _mean(self) -> Array:
+            if self._tfp_transformed is not None:
+                return self._tfp_transformed.mean()
+            return self._expectation(lambda x: x, return_dist=False)
+
+        extra_methods["_mean"] = _mean
+
+    if supports_variance:
         extra_bases.append(SupportsVariance)
+
+        def _variance(self) -> Array:
+            if self._tfp_transformed is not None:
+                return self._tfp_transformed.variance()
+            mu = self._mean()
+            return self._expectation(lambda x: (x - mu) ** 2, return_dist=False)
+
+        extra_methods["_variance"] = _variance
 
     if not extra_bases:
         _TRANSFORMED_CLASS_CACHE[key] = TransformedDistribution
         return TransformedDistribution
 
-    cls = type("TransformedDistribution", (TransformedDistribution, *extra_bases), {})
+    cls = type(
+        "TransformedDistribution",
+        (TransformedDistribution, *extra_bases),
+        extra_methods,
+    )
     _TRANSFORMED_CLASS_CACHE[key] = cls
     return cls
 
 
-class TransformedDistribution(NumericRecordDistribution, SupportsSampling):
+class TransformedDistribution(NumericRecordDistribution):
     """
     Distribution formed by applying a TFP bijector to a base distribution.
 
@@ -194,45 +256,8 @@ class TransformedDistribution(NumericRecordDistribution, SupportsSampling):
                 return _BIJECTOR_SUPPORT_MAP[outermost]
         return real
 
-    # -- sampling & density -------------------------------------------------
-
-    def _sample(
-        self,
-        key: PRNGKey,
-        sample_shape: tuple[int, ...] = (),
-    ) -> Array:
-        """Draw samples, delegating to TFP when available for efficiency."""
-        if self._tfp_transformed is not None:
-            return self._tfp_transformed.sample(seed=key, sample_shape=sample_shape)
-        raw = self._base._sample(key, sample_shape)
-        return self._bijector.forward(raw)
-
-    def _log_prob(self, x: ArrayLike) -> Array:
-        x = jnp.asarray(x)
-        if self._tfp_transformed is not None:
-            return self._tfp_transformed.log_prob(x)
-        raw = self._bijector.inverse(x)
-        return (
-            self._base._log_prob(raw)
-            + self._bijector.inverse_log_det_jacobian(
-                x, event_ndims=len(self.event_shape)
-            )
-        )
-
-    # -- moments (delegate to TFP when available, else MC fallback) ----------
-
-    def _mean(self) -> Array:
-        if self._tfp_transformed is not None:
-            return self._tfp_transformed.mean()
-        # Fall through to MC estimation
-        return self._expectation(lambda x: x, return_dist=False)
-
-    def _variance(self) -> Array:
-        if self._tfp_transformed is not None:
-            return self._tfp_transformed.variance()
-        # Fall through to MC estimation
-        mu = self._mean()
-        return self._expectation(lambda x: (x - mu) ** 2, return_dist=False)
+    # -- sampling, density, moments are installed dynamically in
+    # -- _transformed_class_for_base based on what ``base`` supports.
 
     def _expectation(
         self,

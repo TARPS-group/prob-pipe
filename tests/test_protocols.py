@@ -458,3 +458,111 @@ class TestMixtureSamplingDispatch:
         # Unbatched → Record (first row of the stacked RecordArray)
         s_one = mix._sample(jax.random.PRNGKey(0), ())
         assert isinstance(s_one, Record)
+
+
+# ---------------------------------------------------------------------------
+# Dynamic protocol claims on concrete distributions
+# ---------------------------------------------------------------------------
+
+
+class TestTransformedDistributionDynamicProtocols:
+    """TransformedDistribution inherits only protocols its base supports."""
+
+    def test_over_full_tfp_base_has_all_protocols(self):
+        from probpipe import Normal, TransformedDistribution
+        import tensorflow_probability.substrates.jax.bijectors as tfb
+        td = TransformedDistribution(Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp())
+        assert isinstance(td, SupportsSampling)
+        assert isinstance(td, SupportsLogProb)
+        assert isinstance(td, SupportsMean)
+        assert isinstance(td, SupportsVariance)
+
+    def test_over_log_prob_only_base_no_sampling(self):
+        """A base with log_prob but no sampling → transform has no SupportsSampling."""
+        from probpipe import TransformedDistribution, NumericRecordDistribution
+        from probpipe.core.record import RecordTemplate
+        import tensorflow_probability.substrates.jax.bijectors as tfb
+        from probpipe.core.protocols import SupportsLogProb
+
+        class _LogProbOnly(NumericRecordDistribution, SupportsLogProb):
+            _sampling_cost = "low"
+            _preferred_orchestration = None
+            record_template = RecordTemplate(x=())
+
+            def __init__(self):
+                self._name = "lpo"
+
+            @property
+            def event_shape(self):
+                return ()
+
+            @property
+            def support(self):
+                from probpipe.core.constraints import real
+                return real
+
+            def _log_prob(self, x):
+                return jnp.asarray(0.0)
+
+        base = _LogProbOnly()
+        td = TransformedDistribution(base, tfb.Identity())
+        assert isinstance(td, SupportsLogProb)
+        assert not isinstance(td, SupportsSampling)
+
+
+class TestSequentialJointDynamicProtocols:
+    """SequentialJointDistribution protocol claims match components."""
+
+    def test_all_tfp_components_all_protocols(self):
+        joint = SequentialJointDistribution(
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+        )
+        assert isinstance(joint, SupportsSampling)
+        assert isinstance(joint, SupportsLogProb)
+        assert isinstance(joint, SupportsMean)
+        assert isinstance(joint, SupportsVariance)
+        assert isinstance(joint, SupportsConditioning)
+
+
+class TestJointEmpiricalDispatch:
+    """JointEmpirical auto-dispatches to NumericJointEmpirical for numeric data."""
+
+    def test_numeric_dispatch(self):
+        from probpipe import JointEmpirical, NumericJointEmpirical
+        je = JointEmpirical(x=jnp.zeros((5, 2)), y=jnp.zeros(5))
+        assert type(je) is NumericJointEmpirical
+        assert isinstance(je, SupportsLogProb)
+        assert isinstance(je, SupportsMean)
+        assert isinstance(je, SupportsVariance)
+
+    def test_numeric_rejects_non_numeric(self):
+        from probpipe import NumericJointEmpirical
+        import numpy as np
+        with pytest.raises(TypeError, match="numeric"):
+            NumericJointEmpirical(
+                labels=np.array(["a", "b", "c"], dtype=object),
+                y=jnp.zeros(3),
+            )
+
+
+class TestSimpleGenerativeModelSampling:
+    """SimpleGenerativeModel now advertises SupportsSampling."""
+
+    def test_supports_sampling(self):
+        from probpipe import Normal, SimpleGenerativeModel
+        from probpipe.modeling import GenerativeLikelihood
+
+        class _L:
+            def generate_data(self, params, n_samples, *, key):
+                import jax
+                k = key if key is not None else jax.random.PRNGKey(0)
+                return jax.random.normal(k, (n_samples, 3))
+
+        model = SimpleGenerativeModel(
+            prior=Normal(loc=0.0, scale=1.0, name="theta"),
+            likelihood=_L(),
+        )
+        assert isinstance(model, SupportsSampling)
+        params, data = model._sample(jax.random.PRNGKey(0))
+        assert data.shape == (3,)

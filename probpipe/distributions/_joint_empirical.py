@@ -3,6 +3,18 @@
 Stores per-component sample arrays (all with the same number of rows)
 and optional weights.  Sampling resamples rows jointly, preserving
 correlation between components.
+
+Two concrete classes:
+
+* :class:`JointEmpirical` — generic base. Accepts numeric or object
+  samples; claims only ``SupportsSampling`` and ``SupportsConditioning``.
+* :class:`NumericJointEmpirical` — all fields numeric. Additionally
+  claims ``SupportsLogProb`` (Gaussian approximation),
+  ``SupportsMean``, ``SupportsVariance``.
+
+Construct via ``JointEmpirical(...)`` — when every field is a numeric
+array, the class dispatches in ``__new__`` to ``NumericJointEmpirical``
+(same pattern as ``EmpiricalDistribution`` → ``NumericEmpiricalDistribution``).
 """
 
 from __future__ import annotations
@@ -11,7 +23,8 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
-from .._utils import prod
+import numpy as np
+from .._utils import prod, _is_numeric_array
 
 from ..custom_types import Array, ArrayLike, PRNGKey
 from .._weights import Weights
@@ -35,14 +48,23 @@ from ._joint_utils import (
     _parse_condition_args,
 )
 
+__all__ = ["JointEmpirical", "NumericJointEmpirical"]
 
-class JointEmpirical(RecordDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsConditioning):
+
+class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning):
     """
     Joint distribution from weighted joint samples.
 
     Stores per-component sample arrays (all with the same number of rows)
-    and optional weights.  Sampling resamples rows jointly, preserving
+    and optional weights. Sampling resamples rows jointly, preserving
     correlation between components.
+
+    **Dynamic dispatch via ``__new__``:** when every field is a numeric
+    array (numpy, JAX, or numeric scalar), constructing ``JointEmpirical``
+    returns a :class:`NumericJointEmpirical` instance, which additionally
+    supports log-prob (Gaussian approximation), mean, and variance. Fall
+    through to this base class for mixed / opaque data (e.g. object-dtype
+    arrays of labels).
 
     When used in broadcasting enumeration, the joint is treated as a single
     unit with ``n`` samples (no cartesian decomposition).
@@ -50,22 +72,38 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsLogProb, Supp
     Parameters
     ----------
     weights : array-like, :class:`~probpipe.Weights`, or None
-        Non-negative sample weights (normalized internally).  A pre-built
-        :class:`~probpipe.Weights` object is also accepted.  Mutually
+        Non-negative sample weights (normalized internally). A pre-built
+        :class:`~probpipe.Weights` object is also accepted. Mutually
         exclusive with *log_weights*.
     log_weights : array-like, :class:`~probpipe.Weights`, or None
-        Log-unnormalized sample weights.  A pre-built
-        :class:`~probpipe.Weights` object is also accepted.  Mutually
+        Log-unnormalized sample weights. A pre-built
+        :class:`~probpipe.Weights` object is also accepted. Mutually
         exclusive with *weights*.
     name : str, optional
         Distribution name.
     **samples : array-like
-        Named component sample arrays.  Each must have the same number of
+        Named component sample arrays. Each must have the same number of
         rows (first dimension = ``n``).
     """
 
     _sampling_cost = "low"
     _preferred_orchestration = None
+
+    def __new__(
+        cls,
+        *,
+        weights: ArrayLike | Weights | None = None,
+        log_weights: ArrayLike | Weights | None = None,
+        name: str | None = None,
+        **samples: ArrayLike,
+    ):
+        # Only auto-dispatch when someone calls ``JointEmpirical(...)``
+        # directly; explicit ``NumericJointEmpirical(...)`` skips the
+        # sniff and goes straight to the numeric subclass.
+        if cls is JointEmpirical and samples:
+            if all(_is_numeric_array(v) for v in samples.values()):
+                return object.__new__(NumericJointEmpirical)
+        return object.__new__(cls)
 
     def __init__(
         self,
@@ -78,12 +116,13 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsLogProb, Supp
         if not samples:
             raise ValueError("JointEmpirical requires at least one component.")
 
-        # Convert and validate shapes
-        converted: dict[str, Array] = {}
+        # Generic path: store samples as-is (numpy or jax arrays). Validate
+        # that all components have the same leading row count. Numeric
+        # coercion happens in NumericJointEmpirical.
+        stored: dict[str, Any] = {}
         n: int | None = None
         for cname, arr in samples.items():
-            arr = jnp.asarray(arr, dtype=jnp.float32)
-            if arr.ndim == 0:
+            if not hasattr(arr, "shape") or len(arr.shape) == 0:
                 raise ValueError(
                     f"Component '{cname}' must have at least 1 dimension "
                     f"(first dim = number of samples)."
@@ -95,24 +134,28 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsLogProb, Supp
                     f"All components must have the same number of samples. "
                     f"First component has {n}, but '{cname}' has {arr.shape[0]}."
                 )
-            converted[cname] = arr
+            stored[cname] = arr
 
-        self._joint_samples = converted
+        self._joint_samples = stored
         self._n = n
         if name is None:
             name = "joint_empirical(" + ",".join(sorted(samples.keys())) + ")"
         super().__init__(name=name)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
+        self._components = self._build_component_dists()
+        self._record_template = (
+            _build_record_template(self._components)
+            if self._components is not None
+            else None
+        )
 
-        # Build _components as NumericEmpiricalDistribution per component
-        # (JointDistribution requires NumericRecordDistribution leaves for shape introspection)
-        comp_dists: dict[str, NumericEmpiricalDistribution] = {}
-        for cname, arr in self._joint_samples.items():
-            comp_dists[cname] = NumericEmpiricalDistribution(
-                arr, weights=self._w, name=cname,
-            )
-        self._components = comp_dists
-        self._record_template = _build_record_template(self._components)
+    # Hook for NumericJointEmpirical to override; base class returns None
+    # because generic joint samples can't be expressed as per-component
+    # NumericRecordDistribution leaves without numeric coercion.
+    def _build_component_dists(self) -> dict[str, NumericRecordDistribution] | None:
+        return None
+
+    # -- Properties ---------------------------------------------------------
 
     @property
     def n(self) -> int:
@@ -131,19 +174,16 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsLogProb, Supp
     @property
     def component_names(self) -> tuple[str, ...]:
         """Component names in insertion order."""
-        return tuple(self._components.keys())
-
-    @property
-    def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-component event shapes from component distributions."""
-        return {k: v.event_shape for k, v in self._components.items()}
-
-    # flatten_value / unflatten_value inherited from RecordDistribution
+        return tuple(self._joint_samples.keys())
 
     @property
     def components(self):
-        """Read-only view of the component distributions."""
+        """Read-only view of the component distributions (numeric case)."""
+        if self._components is None:
+            return None
         return MappingProxyType(self._components)
+
+    # -- Sampling -----------------------------------------------------------
 
     def _sample(
         self,
@@ -152,86 +192,39 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsLogProb, Supp
     ):
         return self._sample_joint_rows(key, sample_shape)
 
-    def _sample_joint_rows(
-        self, key: PRNGKey, sample_shape: tuple[int, ...]
-    ):
-        """Resample rows jointly, preserving correlation."""
-        from ..core._record_array import NumericRecordArray
+    def _sample_joint_rows(self, key: PRNGKey, sample_shape: tuple[int, ...]):
+        """Resample rows jointly. Subclasses may override to return a
+        typed container (e.g. ``NumericRecordArray``)."""
         n_draws = prod(sample_shape)
         indices = self._w.choice(key, shape=(n_draws,))
         result = {}
         for cname, arr in self._joint_samples.items():
             drawn = arr[indices]
             if sample_shape:
-                result[cname] = drawn.reshape(sample_shape + arr.shape[1:])
+                # Reshape only if the underlying array supports it
+                # (numeric arrays do; numpy object arrays don't always).
+                try:
+                    result[cname] = drawn.reshape(sample_shape + arr.shape[1:])
+                except (TypeError, ValueError):
+                    result[cname] = drawn
             else:
-                result[cname] = drawn.squeeze(axis=0)
-        if sample_shape:
-            return NumericRecordArray(
-                result, batch_shape=sample_shape,
-                template=self.record_template,
-            )
+                result[cname] = drawn[0] if drawn.shape and drawn.shape[0] == 1 else drawn
+        if not sample_shape:
+            return Record(result)
         return Record(result)
 
-    def _log_prob(self, value) -> Array:
-        """Gaussian-approximation log-density (same as EmpiricalDistribution).
-
-        Evaluates a diagonal Gaussian approximation in the flat space.
-        """
-        if not isinstance(value, Record):
-            value = Record(value)
-        flat = self.flatten_value(value)
-        mu = self._flat_mean()
-        var = self._flat_variance()
-        var = jnp.maximum(var, 1e-12)
-        log_norm = -0.5 * jnp.sum(jnp.log(2 * jnp.pi * var))
-        diff = flat - mu
-        return log_norm - 0.5 * jnp.sum(diff**2 / var, axis=-1)
-
-    def _flat_mean(self) -> Array:
-        """Flat mean vector (for internal use by log_prob)."""
-        parts = []
-        for cname, arr in self._joint_samples.items():
-            parts.append(self._w.mean(arr).reshape(-1))
-        return jnp.concatenate(parts)
-
-    def _flat_variance(self) -> Array:
-        """Flat variance vector (for internal use by log_prob)."""
-        parts = []
-        for cname, arr in self._joint_samples.items():
-            arr_flat = arr.reshape(self._n, -1)
-            parts.append(self._w.variance(arr_flat))
-        return jnp.concatenate(parts)
-
-    def _mean(self) -> Record:
-        """Per-component weighted means."""
-        return Record({
-            cname: self._w.mean(arr)
-            for cname, arr in self._joint_samples.items()
-        })
-
-    def _variance(self) -> Record:
-        """Per-component weighted variances."""
-        return Record({
-            cname: self._w.variance(arr)
-            for cname, arr in self._joint_samples.items()
-        })
-
-    def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-        return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
+    # -- Conditioning -------------------------------------------------------
 
     def _condition_on(self, observed=None, /, **kwargs):
         observed_leaves = _parse_condition_args(self, observed, kwargs)
         return self._condition_on_impl(observed_leaves)
 
-    def _condition_on_impl(
-        self, observed_leaves: dict[KeyPath, ArrayLike],
-    ) -> "JointEmpirical":
+    def _condition_on_impl(self, observed_leaves: dict[KeyPath, ArrayLike]) -> "JointEmpirical":
         """Remove conditioned components and return a new JointEmpirical.
 
         Since ``JointEmpirical`` stores raw sample arrays keyed by name,
         conditioning simply drops those components from the joint sample
-        matrix (preserving the row-wise correlation among the remaining
+        matrix (preserving row-wise correlation among the remaining
         components).
 
         .. note::
@@ -239,7 +232,6 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsLogProb, Supp
             ``JointEmpirical`` only supports **flat dicts** (no nesting).
             All key paths must be length-1 (top-level component names).
         """
-        # Enforce flat-only
         for path in observed_leaves:
             if len(path) != 1:
                 raise TypeError(
@@ -260,7 +252,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsLogProb, Supp
                 "at least one must remain unconditioned."
             )
 
-        result = JointEmpirical(
+        result = type(self)(
             **remaining_samples,
             weights=self._w,
             name=self._name,
@@ -270,3 +262,139 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsLogProb, Supp
             metadata={"conditioned": list(observed_names)},
         ))
         return result
+
+
+# ---------------------------------------------------------------------------
+# NumericJointEmpirical — all-numeric case, adds log_prob / mean / variance
+# ---------------------------------------------------------------------------
+
+
+class NumericJointEmpirical(JointEmpirical, SupportsLogProb, SupportsMean, SupportsVariance):
+    """Joint empirical where every field is a numeric array.
+
+    Subclass of :class:`JointEmpirical` that additionally implements
+    :class:`~probpipe.core.protocols.SupportsLogProb` (via a diagonal
+    Gaussian approximation), :class:`~probpipe.core.protocols.SupportsMean`,
+    and :class:`~probpipe.core.protocols.SupportsVariance`.
+
+    Construction coerces every field to ``jnp.float32``; fields that
+    aren't numeric arrays raise ``TypeError``. Typically constructed via
+    :class:`JointEmpirical`, which dispatches here automatically when all
+    fields are numeric.
+    """
+
+    def __new__(cls, *args, **kwargs):
+        return object.__new__(cls)
+
+    def __init__(
+        self,
+        *,
+        weights: ArrayLike | Weights | None = None,
+        log_weights: ArrayLike | Weights | None = None,
+        name: str | None = None,
+        **samples: ArrayLike,
+    ):
+        if not samples:
+            raise ValueError("NumericJointEmpirical requires at least one component.")
+
+        # Coerce every field to jnp.float32 up front. Non-numeric inputs
+        # raise ``TypeError`` with a clear message before any bookkeeping.
+        coerced: dict[str, Array] = {}
+        for cname, arr in samples.items():
+            if not _is_numeric_array(arr):
+                raise TypeError(
+                    f"NumericJointEmpirical: field {cname!r} must be a "
+                    f"numeric array, got {type(arr).__name__}. Use "
+                    f"JointEmpirical directly for non-numeric components."
+                )
+            coerced[cname] = jnp.asarray(arr, dtype=jnp.float32)
+
+        super().__init__(
+            weights=weights, log_weights=log_weights, name=name, **coerced,
+        )
+
+    def _build_component_dists(self) -> dict[str, NumericRecordDistribution]:
+        return {
+            cname: NumericEmpiricalDistribution(arr, weights=self._w, name=cname)
+            for cname, arr in self._joint_samples.items()
+        }
+
+    # -- Sampling: return NumericRecordArray for batched draws --------------
+
+    def _sample_joint_rows(self, key: PRNGKey, sample_shape: tuple[int, ...]):
+        from ..core._record_array import NumericRecordArray
+        n_draws = prod(sample_shape)
+        indices = self._w.choice(key, shape=(n_draws,))
+        result: dict[str, Array] = {}
+        for cname, arr in self._joint_samples.items():
+            drawn = arr[indices]
+            if sample_shape:
+                result[cname] = drawn.reshape(sample_shape + arr.shape[1:])
+            else:
+                result[cname] = drawn.squeeze(axis=0)
+        if sample_shape:
+            return NumericRecordArray(
+                result, batch_shape=sample_shape,
+                template=self.record_template,
+            )
+        return Record(result)
+
+    # -- event_shapes (used by the record template) ------------------------
+
+    @property
+    def event_shapes(self) -> dict[str, tuple[int, ...]]:
+        """Per-component event shapes."""
+        return {k: v.event_shape for k, v in self._components.items()}
+
+    # -- Log-prob (Gaussian approximation) ---------------------------------
+
+    def _log_prob(self, value) -> Array:
+        """Gaussian-approximation log-density (same as :class:`~probpipe.NumericEmpiricalDistribution`).
+
+        Evaluates a diagonal Gaussian approximation in the flat space.
+        """
+        if not isinstance(value, Record):
+            value = Record(value)
+        flat = self.flatten_value(value)
+        mu = self._flat_mean()
+        var = self._flat_variance()
+        var = jnp.maximum(var, 1e-12)
+        log_norm = -0.5 * jnp.sum(jnp.log(2 * jnp.pi * var))
+        diff = flat - mu
+        return log_norm - 0.5 * jnp.sum(diff**2 / var, axis=-1)
+
+    def _flat_mean(self) -> Array:
+        """Flat mean vector (internal helper for log_prob)."""
+        parts = []
+        for _, arr in self._joint_samples.items():
+            parts.append(self._w.mean(arr).reshape(-1))
+        return jnp.concatenate(parts)
+
+    def _flat_variance(self) -> Array:
+        """Flat variance vector (internal helper for log_prob)."""
+        parts = []
+        for _, arr in self._joint_samples.items():
+            arr_flat = arr.reshape(self._n, -1)
+            parts.append(self._w.variance(arr_flat))
+        return jnp.concatenate(parts)
+
+    # -- Moments -----------------------------------------------------------
+
+    def _mean(self) -> Record:
+        """Per-component weighted means."""
+        return Record({
+            cname: self._w.mean(arr)
+            for cname, arr in self._joint_samples.items()
+        })
+
+    def _variance(self) -> Record:
+        """Per-component weighted variances."""
+        return Record({
+            cname: self._w.variance(arr)
+            for cname, arr in self._joint_samples.items()
+        })
+
+    def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
+        return _mc_expectation(
+            self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist,
+        )

@@ -80,6 +80,7 @@ from probpipe.distributions import (
     ProductDistribution,
     SequentialJointDistribution,
     JointEmpirical,
+    NumericJointEmpirical,
     JointGaussian,
     # Gaussian random functions
     GaussianRandomFunction,
@@ -209,6 +210,7 @@ __all__ = [
     "ProductDistribution",
     "SequentialJointDistribution",
     "JointEmpirical",
+    "NumericJointEmpirical",
     "JointGaussian",
     # WorkflowFunction
     "WorkflowFunction",

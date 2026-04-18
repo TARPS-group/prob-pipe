@@ -24,7 +24,9 @@ from ..core.provenance import Provenance
 from ..core.protocols import (
     SupportsConditioning,
     SupportsLogProb,
+    SupportsMean,
     SupportsSampling,
+    SupportsVariance,
 )
 from ._joint_utils import (
     KeyPath,
@@ -32,7 +34,54 @@ from ._joint_utils import (
 )
 
 
-class SequentialJointDistribution(RecordDistribution, SupportsSampling, SupportsLogProb, SupportsConditioning):
+# ---------------------------------------------------------------------------
+# Dynamic protocol factory for SequentialJointDistribution
+# ---------------------------------------------------------------------------
+
+_SEQUENTIAL_CLASS_CACHE: dict[frozenset[str], type] = {}
+
+
+def _sequential_class_for_components(components: dict) -> type:
+    """Return a SequentialJointDistribution subclass whose protocol bases
+    match what the resolved components support.
+
+    ``SupportsSampling`` and ``SupportsConditioning`` are always included
+    (forward sampling + conditioning always work regardless of component
+    capabilities).  ``SupportsLogProb`` / ``SupportsMean`` / ``SupportsVariance``
+    are included only when every leaf component satisfies the corresponding
+    protocol.
+    """
+    leaves = list(components.values())
+    protocols: set[str] = set()
+    if all(isinstance(c, SupportsLogProb) for c in leaves):
+        protocols.add("log_prob")
+    if all(isinstance(c, SupportsMean) for c in leaves):
+        protocols.add("mean")
+    if all(isinstance(c, SupportsVariance) for c in leaves):
+        protocols.add("variance")
+
+    key = frozenset(protocols)
+    if key in _SEQUENTIAL_CLASS_CACHE:
+        return _SEQUENTIAL_CLASS_CACHE[key]
+
+    extra_bases: list[type] = []
+    if "log_prob" in protocols:
+        extra_bases.append(SupportsLogProb)
+    if "mean" in protocols:
+        extra_bases.append(SupportsMean)
+    if "variance" in protocols:
+        extra_bases.append(SupportsVariance)
+
+    if not extra_bases:
+        _SEQUENTIAL_CLASS_CACHE[key] = SequentialJointDistribution
+        return SequentialJointDistribution
+
+    cls = type("SequentialJointDistribution", (SequentialJointDistribution, *extra_bases), {})
+    _SEQUENTIAL_CLASS_CACHE[key] = cls
+    return cls
+
+
+class SequentialJointDistribution(RecordDistribution, SupportsSampling, SupportsConditioning):
     """
     Joint distribution with autoregressive (sequential) dependence.
 
@@ -50,6 +99,11 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
 
     Callable signatures are inspected: parameter names must match earlier
     component names.
+
+    **Dynamic protocol support:** ``SupportsLogProb`` / ``SupportsMean``
+    / ``SupportsVariance`` are included only when every resolved leaf
+    component supports them.  Sampling and conditioning are always
+    available.
 
     Parameters
     ----------
@@ -121,6 +175,14 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
         # Build _components dict from resolved prototypes (for shape introspection)
         self._components = resolved
         self._record_template = _build_record_template(self._components)
+
+        # Reparent to the dynamic subclass whose protocol bases match the
+        # resolved components' capabilities. Done after component
+        # resolution because the capabilities depend on the distributions
+        # that callable components resolve to.
+        dynamic_cls = _sequential_class_for_components(self._components)
+        if dynamic_cls is not type(self):
+            object.__setattr__(self, "__class__", dynamic_cls)
 
     @staticmethod
     def _compute_sampleable_error(
