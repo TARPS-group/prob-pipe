@@ -626,3 +626,64 @@ class TestSimpleGenerativeModelSampling:
         assert isinstance(model, SupportsSampling)
         params, data = model._sample(jax.random.PRNGKey(0))
         assert data.shape == (3,)
+
+
+# ---------------------------------------------------------------------------
+# protocols_supported_by_all helper
+# ---------------------------------------------------------------------------
+
+
+class TestProtocolsSupportedByAll:
+    """Direct unit tests for the factory helper in core.protocols."""
+
+    def test_all_leaves_support_all_candidates(self):
+        from probpipe.core.protocols import protocols_supported_by_all
+        leaves = [
+            Normal(loc=0.0, scale=1.0, name="a"),
+            Normal(loc=0.0, scale=1.0, name="b"),
+        ]
+        result = protocols_supported_by_all(
+            leaves, (SupportsLogProb, SupportsMean, SupportsVariance),
+        )
+        assert result == (SupportsLogProb, SupportsMean, SupportsVariance)
+
+    def test_partial_support_filters_to_intersection(self):
+        """A leaf missing one protocol removes that protocol from the result."""
+        from probpipe.core.protocols import protocols_supported_by_all
+        boot = BootstrapDistribution(jnp.array([1.0, 2.0, 3.0]), name="b")
+        leaves = [Normal(loc=0.0, scale=1.0, name="n"), boot]
+        result = protocols_supported_by_all(
+            leaves, (SupportsLogProb, SupportsMean, SupportsVariance),
+        )
+        # Bootstrap has mean+variance but not log_prob.
+        assert SupportsLogProb not in result
+        assert SupportsMean in result
+        assert SupportsVariance in result
+
+    def test_no_leaves_support_returns_empty(self):
+        """When no leaf satisfies any candidate, the result is empty."""
+        from probpipe.core.protocols import protocols_supported_by_all
+
+        class _Stub:
+            """No protocol methods."""
+
+        leaves = [_Stub(), _Stub()]
+        result = protocols_supported_by_all(
+            leaves, (SupportsLogProb, SupportsMean),
+        )
+        assert result == ()
+
+    def test_preserves_candidate_order(self):
+        """Result preserves the order of ``candidates``."""
+        from probpipe.core.protocols import protocols_supported_by_all
+        leaves = [Normal(loc=0.0, scale=1.0, name="n")]
+        result = protocols_supported_by_all(
+            leaves, (SupportsVariance, SupportsLogProb, SupportsMean),
+        )
+        assert result == (SupportsVariance, SupportsLogProb, SupportsMean)
+
+    def test_empty_leaves_list(self):
+        """Empty leaves: ``all([])`` is True, so every candidate passes."""
+        from probpipe.core.protocols import protocols_supported_by_all
+        result = protocols_supported_by_all([], (SupportsLogProb, SupportsMean))
+        assert result == (SupportsLogProb, SupportsMean)

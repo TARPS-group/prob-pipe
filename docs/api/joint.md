@@ -15,4 +15,6 @@ function broadcasting.
 
 ::: probpipe.distributions._joint_empirical.JointEmpirical
 
+::: probpipe.distributions._joint_empirical.NumericJointEmpirical
+
 ::: probpipe.distributions._joint_gaussian.JointGaussian
