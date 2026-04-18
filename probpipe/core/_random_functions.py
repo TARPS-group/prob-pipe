@@ -38,10 +38,13 @@ class RandomFunction[X, Y](Distribution[Callable[[X], Y]]):
     drawing an entire function realization may be impossible or require
     approximation. Finite-dimensional subclasses that support sampling
     should inherit :class:`SupportsSampling` and implement
-    ``_sample_one`` and ``_sample``.
+    ``_sample(key, sample_shape)``.
 
     This class is generic in ``X`` (input type) and ``Y`` (output type).
     """
+
+    def __init__(self, *, name: str | None = None):
+        super().__init__(name=name or type(self).__name__)
 
     # -- Fundamental interface ----------------------------------------------
 
@@ -78,7 +81,7 @@ class RandomFunction[X, Y](Distribution[Callable[[X], Y]]):
 class ArrayRandomFunction(RandomFunction[Array, Array]):
     """A random function mapping arrays to arrays.
 
-    Follows the shape semantics as implemented in ``ArrayDistribution``.
+    Follows the shape semantics as implemented in ``NumericRecordDistribution``.
     Given prediction input ``X`` with shape ``(*extra_batch, n, *input_shape)``,
     where ``n`` is the number of input points:
 
@@ -116,7 +119,10 @@ class ArrayRandomFunction(RandomFunction[Array, Array]):
         self,
         input_shape: tuple[int, ...],
         output_shape: tuple[int, ...] = (),
+        *,
+        name: str | None = None,
     ) -> None:
+        super().__init__(name=name)
         self._input_shape = tuple(input_shape)
         self._output_shape = tuple(output_shape)
 
@@ -158,7 +164,7 @@ class ArrayRandomFunction(RandomFunction[Array, Array]):
 
         Returns
         -------
-        ArrayDistribution
+        NumericRecordDistribution
             A distribution whose ``batch_shape`` and ``event_shape`` follow
             the shape table in the class docstring.
         """

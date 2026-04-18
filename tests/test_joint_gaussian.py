@@ -8,11 +8,12 @@ import pytest
 from probpipe import (
     JointGaussian,
     MultivariateNormal,
-    DistributionView,
     EmpiricalDistribution,
-    JointDistribution,
+    Record,
+    RecordDistribution,
+    RecordArray,
 )
-from probpipe.core.distribution import PyTreeArrayDistribution
+from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.node import WorkflowFunction
 from probpipe import condition_on, log_prob, mean, sample, variance
 
@@ -31,8 +32,7 @@ class TestConstruction:
             y=1,
         )
         assert isinstance(jg, JointGaussian)
-        assert isinstance(jg, JointDistribution)
-        assert isinstance(jg, PyTreeArrayDistribution)
+        assert isinstance(jg, RecordDistribution)
 
     def test_component_names(self):
         jg = JointGaussian(
@@ -92,7 +92,7 @@ class TestConstruction:
 
 class TestSampling:
 
-    def test_sample_returns_dict(self):
+    def test_sample_returns_values(self):
         jg = JointGaussian(
             mean=jnp.array([0.0, 1.0]),
             cov=jnp.eye(2),
@@ -100,8 +100,8 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(0)
         s = sample(jg, key=key)
-        assert isinstance(s, dict)
-        assert set(s.keys()) == {"x", "y"}
+        assert isinstance(s, (Record, RecordArray))
+        assert set(s.fields) == {"x", "y"}
         assert s["x"].shape == (1,)
         assert s["y"].shape == (1,)
 
@@ -113,7 +113,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(1)
         s = sample(jg, key=key, sample_shape=(10,))
-        assert isinstance(s, dict)
+        assert isinstance(s, (Record, RecordArray))
         assert s["x"].shape == (10, 1)
         assert s["y"].shape == (10, 1)
 
@@ -161,7 +161,7 @@ class TestLogProb:
                         [0.5, 1.0, 0.3],
                         [0.1, 0.3, 1.5]])
         jg = JointGaussian(mean=m, cov=c, a=1, b=2)
-        mvn = MultivariateNormal(loc=m, cov=c)
+        mvn = MultivariateNormal(loc=m, cov=c, name="z")
 
         key = jax.random.PRNGKey(11)
         s = sample(jg, key=key, sample_shape=(10,))
@@ -169,7 +169,7 @@ class TestLogProb:
         # MVN expects flat arrays
         flat = jg.flatten_value(s)
         lp_mvn = log_prob(mvn, flat)
-        np.testing.assert_allclose(lp_jg, lp_mvn, atol=1e-4)
+        np.testing.assert_allclose(lp_jg, lp_mvn, atol=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -181,18 +181,18 @@ class TestMoments:
     def test_mean(self):
         m = jnp.array([1.0, 2.0, 3.0])
         jg = JointGaussian(mean=m, cov=jnp.eye(3), a=1, b=2)
-        mean_dict = mean(jg)
-        assert isinstance(mean_dict, dict)
-        np.testing.assert_allclose(mean_dict["a"], jnp.array([1.0]), atol=1e-6)
-        np.testing.assert_allclose(mean_dict["b"], jnp.array([2.0, 3.0]), atol=1e-6)
+        mean_vals = mean(jg)
+        assert isinstance(mean_vals, Record)
+        np.testing.assert_allclose(mean_vals["a"], jnp.array([1.0]), atol=1e-6)
+        np.testing.assert_allclose(mean_vals["b"], jnp.array([2.0, 3.0]), atol=1e-6)
 
     def test_variance(self):
         c = jnp.array([[2.0, 0.5], [0.5, 3.0]])
         jg = JointGaussian(mean=jnp.zeros(2), cov=c, x=1, y=1)
-        var_dict = variance(jg)
-        assert isinstance(var_dict, dict)
-        np.testing.assert_allclose(var_dict["x"], jnp.array([2.0]), atol=1e-6)
-        np.testing.assert_allclose(var_dict["y"], jnp.array([3.0]), atol=1e-6)
+        var_vals = variance(jg)
+        assert isinstance(var_vals, Record)
+        np.testing.assert_allclose(var_vals["x"], jnp.array([2.0]), atol=1e-6)
+        np.testing.assert_allclose(var_vals["y"], jnp.array([3.0]), atol=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +280,75 @@ class TestConditionOn:
         cond_var = variance(cond)
         np.testing.assert_allclose(float(cond_var["y"][0]), 0.36, atol=1e-5)
 
+    def test_conditional_covariance_schur_complement_3var(self):
+        """Conditional covariance matches the Schur complement formula.
+
+        For a 3-variable joint N(mu, Sigma) partitioned as (a, b | c) where
+        c is conditioned on, the conditional Sigma_{ab|c} equals the 2x2
+        Schur complement Sigma_ab - Sigma_{ab,c} Sigma_cc^{-1} Sigma_{c,ab}.
+        """
+        mu = np.array([0.0, 1.0, -1.0])
+        # 3x3 positive-definite covariance with nontrivial cross terms
+        cov_np = np.array(
+            [[1.00, 0.30, 0.20],
+             [0.30, 2.00, 0.50],
+             [0.20, 0.50, 1.50]],
+            dtype=np.float32,
+        )
+        jg = JointGaussian(
+            mean=jnp.asarray(mu), cov=jnp.asarray(cov_np),
+            a=1, b=1, c=1,
+        )
+
+        # Condition on c = 0.5.
+        cond = condition_on(jg, c=jnp.array([0.5]))
+
+        # Analytical Schur complement: indices a,b = 0,1; c = 2.
+        Sigma_ab = cov_np[:2, :2]
+        Sigma_abc = cov_np[:2, 2:3]
+        Sigma_cc = cov_np[2:3, 2:3]
+        expected_cond_cov = Sigma_ab - Sigma_abc @ np.linalg.inv(Sigma_cc) @ Sigma_abc.T
+
+        # ProbPipe stores per-component marginal variance, so compare diagonals.
+        cond_var = variance(cond)
+        np.testing.assert_allclose(
+            float(cond_var["a"][0]), expected_cond_cov[0, 0], atol=1e-5,
+        )
+        np.testing.assert_allclose(
+            float(cond_var["b"][0]), expected_cond_cov[1, 1], atol=1e-5,
+        )
+
+    def test_conditional_mean_vs_scipy(self):
+        """Conditional mean matches scipy.stats.multivariate_normal pdf-based
+        reasoning via the Gaussian formula computed with numpy."""
+        mu = np.array([0.5, -0.3, 1.2])
+        cov_np = np.array(
+            [[1.0, 0.2, 0.1],
+             [0.2, 1.5, 0.4],
+             [0.1, 0.4, 0.8]],
+            dtype=np.float32,
+        )
+        jg = JointGaussian(
+            mean=jnp.asarray(mu), cov=jnp.asarray(cov_np),
+            x=1, y=1, z=1,
+        )
+        # Condition on y = 2.0
+        y_obs = 2.0
+        cond = condition_on(jg, y=jnp.array([y_obs]))
+        cond_mean = mean(cond)
+
+        # Analytical: for joint N(mu, Sigma) conditioning on y_idx=1:
+        # mu_{x,z|y} = mu_{x,z} + Sigma_{xz,y} Sigma_yy^{-1} (y_obs - mu_y)
+        other_idx = [0, 2]
+        y_idx = [1]
+        Sigma_oy = cov_np[np.ix_(other_idx, y_idx)]
+        Sigma_yy = cov_np[np.ix_(y_idx, y_idx)]
+        mu_o = mu[other_idx]
+        mu_y = mu[y_idx]
+        expected = mu_o + (Sigma_oy @ np.linalg.inv(Sigma_yy) @ (np.array([y_obs]) - mu_y)).ravel()
+        np.testing.assert_allclose(float(cond_mean["x"][0]), expected[0], atol=1e-5)
+        np.testing.assert_allclose(float(cond_mean["z"][0]), expected[1], atol=1e-5)
+
     def test_conditioning_reduces_dimensions(self):
         jg = JointGaussian(
             mean=jnp.array([0.0, 1.0, 2.0, 3.0]),
@@ -328,7 +397,7 @@ class TestConditionOn:
         # sd / sqrt(5000) ~ 0.006
         key = jax.random.PRNGKey(20)
         s = sample(cond, key=key, sample_shape=(5000,))
-        assert isinstance(s, dict)
+        assert isinstance(s, (Record, RecordArray))
         np.testing.assert_allclose(float(jnp.mean(s["y"])), 2.7, atol=0.03)
 
     def test_dict_for_leaf_raises(self):

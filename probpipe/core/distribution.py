@@ -34,19 +34,24 @@ def __getattr__(name: str):
         return getattr(_base, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+# -- _record_distribution ---------------------------------------------------
+from ._record_distribution import (
+    RecordDistribution,
+    _RecordDistributionView,
+)
+
 # -- _array_distributions ---------------------------------------------------
 from ._array_distributions import (
-    ArrayDistribution,
+    NumericRecordDistribution,
     BootstrapDistribution,
     FlattenedView,
-    PyTreeArrayDistribution,
     _mc_expectation,
     _vmap_sample,
 )
 
 # -- _empirical -------------------------------------------------------------
 from ._empirical import (
-    ArrayEmpiricalDistribution,
+    NumericEmpiricalDistribution,
     ArrayBootstrapReplicateDistribution,
     EmpiricalDistribution,
     BootstrapReplicateDistribution,
@@ -61,13 +66,6 @@ from ._broadcast_distributions import (
     _MixtureMarginal,
     _make_marginal,
     _make_mixture_marginal,
-)
-
-# -- _joint -----------------------------------------------------------------
-from ._joint import (
-    JointDistribution,
-    ProductDistribution,
-    DistributionView,
 )
 
 # -- _random_functions ------------------------------------------------------
@@ -87,21 +85,19 @@ __all__ = [
     # Helpers
     "_vmap_sample",
     "_mc_expectation",
+    # Record distribution
+    "RecordDistribution",
+    "_RecordDistributionView",
     # Array hierarchy
-    "PyTreeArrayDistribution",
-    "ArrayDistribution",
+    "NumericRecordDistribution",
     "BootstrapDistribution",
     "FlattenedView",
     # Empirical
     "EmpiricalDistribution",
-    "ArrayEmpiricalDistribution",
+    "NumericEmpiricalDistribution",
     # Joint bootstrap
     "BootstrapReplicateDistribution",
     "ArrayBootstrapReplicateDistribution",
-    # Joint
-    "JointDistribution",
-    "ProductDistribution",
-    "DistributionView",
     # Random functions
     "RandomFunction",
     "ArrayRandomFunction",

@@ -21,7 +21,13 @@ dependencies = [
   "jax>=0.8.1,<0.9",
   "jaxlib>=0.8.1,<0.9",
   "tfp-nightly>=0.26.0.dev20260318",
-  "arviz>=1.0",
+  # sbijax 0.3.6 hard-pins arviz==1.0.0, but no released pymc yet accepts
+  # arviz 1.0 (the switch landed on pymc's v6 branch in pymc-devs/pymc#8019
+  # but 6.0 is unreleased as of 2026-04-16), and nutpie has not caught up
+  # either. We stay on arviz<1.0 for the [pymc] / [nutpie] extras; CI
+  # installs sbijax with --no-deps to bypass its strict pin. Revisit when
+  # pymc 6.0 ships.
+  "arviz>=0.13,<1.0",
 ]
 
 [project.optional-dependencies]
@@ -33,7 +39,7 @@ docs = [
   "mkdocs-jupyter<0.26",
 ]
 stan = ["bridgestan>=2.0", "cmdstanpy>=1.2"]
-pymc = ["pymc>=5"]
+pymc = ["pymc>=5.28"]
 nutpie = ["nutpie>=0.12"]
 sbi = ["sbijax>=0.3.6"]
 dev = [

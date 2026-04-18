@@ -24,7 +24,7 @@ except ImportError:
 
 from ..custom_types import PRNGKey, Array
 from .distribution import (
-    ArrayDistribution,
+    NumericRecordDistribution,
     BroadcastDistribution,
     Distribution,
     EmpiricalDistribution,
@@ -37,7 +37,6 @@ from .protocols import (
     SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
-    SupportsNamedComponents,
     SupportsSampling,
     SupportsUnnormalizedLogProb,
     SupportsVariance,
@@ -54,9 +53,7 @@ _DISTRIBUTION_PROTOCOLS: tuple[type, ...] = (
     SupportsVariance,
     SupportsCovariance,
     SupportsConditioning,
-    SupportsNamedComponents,
 )
-from ..distributions.joint import DistributionView
 from ..converters import converter_registry
 
 logger = logging.getLogger(__name__)
@@ -490,7 +487,7 @@ class WorkflowFunction(Node):
                 continue
             # Auto-convert external distribution types to ProbPipe
             if not isinstance(value, Distribution):
-                values[name] = converter_registry.convert(value, ArrayDistribution)
+                values[name] = converter_registry.convert(value, NumericRecordDistribution)
                 value = values[name]
             broadcast.append(name)
         return broadcast
@@ -650,40 +647,43 @@ class WorkflowFunction(Node):
         key: PRNGKey,
     ) -> dict[str, Array]:
         """
-        Sample all broadcast arguments, handling DistributionView reconnection.
+        Sample all broadcast arguments, handling view reconnection.
 
-        When multiple arguments are DistributionViews from the same parent
-        JointDistribution, the parent is sampled once and component samples
+        When multiple arguments are views from the same parent
+        distribution, the parent is sampled once and component samples
         are distributed to the appropriate arguments.  This preserves
         correlation between jointly-distributed components.
+
+        Views are detected via duck-typing (``_parent`` + ``_key_path``
+        attributes).
         """
-        # Group DistributionView args by parent
-        joint_groups: dict[int, dict] = {}  # id(parent) → {parent, mappings}
+        view_groups: dict[int, dict] = {}  # id(parent) → {parent, views}
         independent: list[str] = []
 
         for name in broadcast_args:
             dist = values[name]
-            if isinstance(dist, DistributionView):
+            if hasattr(dist, "_parent") and hasattr(dist, "_key_path"):
                 pid = id(dist._parent)
-                if pid not in joint_groups:
-                    joint_groups[pid] = {"parent": dist._parent, "mappings": {}}
-                # Store the key path (tuple of strings) for nested pytree navigation
-                joint_groups[pid]["mappings"][name] = dist._key_path
+                if pid not in view_groups:
+                    view_groups[pid] = {"parent": dist._parent, "views": {}}
+                view_groups[pid]["views"][name] = dist
             else:
                 independent.append(name)
 
         sampled: dict[str, Array] = {}
 
-        # Sample each joint group once, distribute to arguments
-        for group in joint_groups.values():
+        # Sample each parent once, distribute to arguments.
+        for group in view_groups.values():
             key, subkey = jax.random.split(key)
             structured = group["parent"]._sample(subkey, (n,))
-            for arg_name, key_path in group["mappings"].items():
-                # Walk the (possibly nested) sample pytree to extract the leaf
-                val = structured
-                for k in key_path:
-                    val = val[k]
-                sampled[arg_name] = val
+            for arg_name, view in group["views"].items():
+                if hasattr(view, "_extract"):
+                    sampled[arg_name] = view._extract(structured)
+                else:
+                    val = structured
+                    for k in view._key_path:
+                        val = val[k]
+                    sampled[arg_name] = val
 
         # Sample independent distributions
         for name in independent:

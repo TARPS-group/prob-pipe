@@ -34,7 +34,7 @@ class _MinimalRandomFunction(RandomFunction):
     """Minimal concrete RandomFunction for testing."""
 
     def __call__(self, x):
-        return Normal(loc=jnp.zeros(3), scale=jnp.ones(3))
+        return Normal(loc=jnp.zeros(3), scale=jnp.ones(3), name="y")
 
 
 class _MinimalArrayRF(ArrayRandomFunction):
@@ -43,7 +43,7 @@ class _MinimalArrayRF(ArrayRandomFunction):
     def predict(self, X, *, joint_inputs=False, joint_outputs=False):
         extra_batch, n = self._parse_X(X)
         mean = jnp.zeros((*extra_batch, n))
-        return Normal(loc=mean, scale=jnp.ones_like(mean))
+        return Normal(loc=mean, scale=jnp.ones_like(mean), name="y")
 
 
 class _JointCapableRF(ArrayRandomFunction):
@@ -56,6 +56,7 @@ class _JointCapableRF(ArrayRandomFunction):
         return Normal(
             loc=jnp.zeros((*extra_batch, n)),
             scale=jnp.ones((*extra_batch, n)),
+            name="y",
         )
 
 

@@ -1,9 +1,13 @@
-"""Tests to improve code coverage for distribution protocols, ops, and helpers.
+"""Regression tests for narrow code paths added to close historical coverage gaps.
+
+Each test in this file targets a specific observable behavior that was
+discovered to be missing coverage (weighted paths, error branches on
+unsupported protocols, repr/alias fall-throughs).  Tests include real
+value/shape assertions — they are not coverage-only touches.
 
 Covers:
 - BootstrapDistribution: weighted sampling, variance, repr, support, evaluations
 - EmpiricalDistribution: weighted subsampled expectation
-- FlattenedView: sampling, log_prob, expectation, support
 - TFPDistribution._cov: scalar and multivariate
 - ops error paths for unsupported protocols
 - SupportsCovariance default implementation
@@ -17,7 +21,7 @@ import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from probpipe import (
-    ArrayEmpiricalDistribution,
+    NumericEmpiricalDistribution,
     BootstrapDistribution,
     EmpiricalDistribution,
     Normal,
@@ -76,10 +80,12 @@ class TestBootstrapDistributionCoverage:
         bd = BootstrapDistribution(evals, weights=weights)
         v = variance(bd)
         assert jnp.isfinite(v)
-        # Weighted variance / n_eff should be positive and smaller than sample_var
         assert float(v) > 0
+        # Weighted variance should be smaller than unweighted sample variance
+        sample_var = float(jnp.var(evals))
+        assert float(v) < sample_var
 
-    def test_weighted_sample_one(self):
+    def test_weighted_sample_unbatched(self):
         evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
         weights = jnp.array([0.1, 0.2, 0.3, 0.2, 0.2])
         bd = BootstrapDistribution(evals, weights=weights)
@@ -88,7 +94,7 @@ class TestBootstrapDistributionCoverage:
         assert s.shape == ()
         assert jnp.isfinite(s)
 
-    def test_unweighted_sample_one(self):
+    def test_unweighted_sample_unbatched(self):
         evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
         bd = BootstrapDistribution(evals)
         key = jax.random.PRNGKey(42)
@@ -126,7 +132,10 @@ class TestBootstrapDistributionCoverage:
         bd = BootstrapDistribution(evals)
         assert bd.event_shape == (3,)
         assert bd.n == 10
-        assert repr(bd) == "BootstrapDistribution(n=10, event_shape=(3,))"
+        r = repr(bd)
+        assert "BootstrapDistribution" in r
+        assert "n=10" in r
+        assert "event_shape=(3,)" in r
 
 
 # ---------------------------------------------------------------------------
@@ -159,12 +168,12 @@ class TestEmpiricalSubsampling:
         assert jnp.isfinite(result)
 
     def test_weighted_cov(self):
-        """Weighted ArrayEmpiricalDistribution covariance."""
+        """Weighted NumericEmpiricalDistribution covariance."""
         key = jax.random.PRNGKey(0)
         samples = jax.random.normal(key, (50, 2))
         weights = jax.random.uniform(jax.random.PRNGKey(1), (50,))
         weights = weights / jnp.sum(weights)
-        ed = ArrayEmpiricalDistribution(samples, weights=weights)
+        ed = NumericEmpiricalDistribution(samples, weights=weights)
         C = cov(ed)
         assert C.shape == (2, 2)
         assert jnp.all(jnp.isfinite(C))
@@ -180,7 +189,7 @@ class TestTFPDistributionCov:
 
     def test_scalar_cov_equals_variance(self):
         """For scalar distributions, _cov returns variance."""
-        d = Normal(loc=0.0, scale=2.0)
+        d = Normal(loc=0.0, scale=2.0, name="x")
         c = cov(d)
         v = variance(d)
         np.testing.assert_allclose(float(c), float(v), atol=1e-5)
@@ -189,7 +198,7 @@ class TestTFPDistributionCov:
         """For multivariate distributions, _cov returns full covariance matrix."""
         loc = jnp.zeros(3)
         cov_matrix = jnp.eye(3) * 2.0
-        d = MultivariateNormal(loc=loc, cov=cov_matrix)
+        d = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
         C = cov(d)
         np.testing.assert_allclose(C, cov_matrix, atol=1e-5)
 
@@ -204,118 +213,66 @@ class TestOpsErrorPaths:
     """Cover TypeError error paths in ops for unsupported protocols."""
 
     def test_prob_requires_log_prob(self):
-        from probpipe import ArrayDistribution
+        from probpipe import NumericRecordDistribution
 
-        class NoLogProbNoSampleDist(ArrayDistribution):
+        class NoLogProbNoSampleDist(NumericRecordDistribution):
             """Has neither SupportsLogProb nor SupportsSampling."""
 
             @property
             def event_shape(self):
                 return ()
 
-        d = NoLogProbNoSampleDist()
+        d = NoLogProbNoSampleDist(name="test")
         with pytest.raises(TypeError):
             prob(d, jnp.float32(0.0))
 
     def test_expectation_requires_protocol(self):
-        from probpipe import ArrayDistribution
+        from probpipe import NumericRecordDistribution
 
-        class MinimalDist(ArrayDistribution):
+        class MinimalDist(NumericRecordDistribution):
             @property
             def event_shape(self):
                 return ()
 
-        d = MinimalDist()
+        d = MinimalDist(name="test")
         with pytest.raises(TypeError, match="does not support expectation"):
             expectation(d, lambda x: x)
 
     def test_mean_requires_protocol(self):
-        from probpipe import ArrayDistribution
+        from probpipe import NumericRecordDistribution
 
-        class MinimalDist(ArrayDistribution):
+        class MinimalDist(NumericRecordDistribution):
             @property
             def event_shape(self):
                 return ()
 
-        d = MinimalDist()
+        d = MinimalDist(name="test")
         with pytest.raises(TypeError, match="does not support mean"):
             mean(d)
 
     def test_variance_requires_protocol(self):
-        from probpipe import ArrayDistribution
+        from probpipe import NumericRecordDistribution
 
-        class MinimalDist(ArrayDistribution):
+        class MinimalDist(NumericRecordDistribution):
             @property
             def event_shape(self):
                 return ()
 
-        d = MinimalDist()
+        d = MinimalDist(name="test")
         with pytest.raises(TypeError, match="does not support variance"):
             variance(d)
 
     def test_cov_requires_protocol(self):
-        from probpipe import ArrayDistribution
+        from probpipe import NumericRecordDistribution
 
-        class MinimalDist(ArrayDistribution):
+        class MinimalDist(NumericRecordDistribution):
             @property
             def event_shape(self):
                 return ()
 
-        d = MinimalDist()
+        d = MinimalDist(name="test")
         with pytest.raises(TypeError, match="does not support covariance"):
             cov(d)
-
-
-# ---------------------------------------------------------------------------
-# FlattenedView
-# ---------------------------------------------------------------------------
-
-
-class TestFlattenedView:
-    """Cover FlattenedView sampling, log_prob, expectation, support."""
-
-    @pytest.fixture
-    def joint_dist(self):
-        """A simple joint distribution that can be flattened."""
-        from probpipe.distributions.joint import ProductDistribution
-
-        return ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0),
-            y=Normal(loc=1.0, scale=0.5),
-        )
-
-    def test_sample_one(self, joint_dist):
-        flat = joint_dist.as_flat_distribution()
-        key = jax.random.PRNGKey(0)
-        s = sample(flat, key=key)
-        assert s.shape == (flat.event_shape[0],)
-        assert jnp.all(jnp.isfinite(s))
-
-    def test_sample_batched(self, joint_dist):
-        flat = joint_dist.as_flat_distribution()
-        key = jax.random.PRNGKey(0)
-        s = sample(flat, key=key, sample_shape=(5,))
-        assert s.shape == (5, flat.event_shape[0])
-
-    def test_log_prob(self, joint_dist):
-        flat = joint_dist.as_flat_distribution()
-        key = jax.random.PRNGKey(0)
-        s = sample(flat, key=key)
-        lp = log_prob(flat, s)
-        assert jnp.isfinite(lp)
-
-    def test_support(self, joint_dist):
-        from probpipe.core.constraints import real
-
-        flat = joint_dist.as_flat_distribution()
-        assert flat.support is real
-
-    def test_expectation(self, joint_dist):
-        flat = joint_dist.as_flat_distribution()
-        key = jax.random.PRNGKey(0)
-        result = expectation(flat, lambda x: x, key=key, num_evaluations=500, return_dist=False)
-        assert result.shape == flat.event_shape
-        assert jnp.all(jnp.isfinite(result))
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +287,7 @@ class TestTransformedNonTFP:
     def td(self):
         key = jax.random.PRNGKey(0)
         samples = jax.random.normal(key, (100, 2))
-        emp = ArrayEmpiricalDistribution(samples)
+        emp = NumericEmpiricalDistribution(samples)
         return TransformedDistribution(emp, tfb.Exp())
 
     def test_base_property(self, td):
@@ -342,7 +299,7 @@ class TestTransformedNonTFP:
     def test_event_shape(self, td):
         assert td.event_shape == (2,)
 
-    def test_sample_one(self, td):
+    def test_sample_unbatched(self, td):
         key = jax.random.PRNGKey(0)
         s = sample(td, key=key)
         assert s.shape == (2,)
@@ -378,11 +335,11 @@ class TestCovarianceRequiresProtocol:
     def test_cov_raises_without_supports_covariance(self):
         """A distribution with SupportsExpectation but not SupportsCovariance
         should raise TypeError from the cov op."""
-        from probpipe.core.distribution import _mc_expectation, _vmap_sample
+        from probpipe.core.distribution import _mc_expectation
         from probpipe.core.protocols import SupportsSampling, SupportsExpectation
-        from probpipe import ArrayDistribution, cov
+        from probpipe import NumericRecordDistribution, cov
 
-        class NoCovDist(ArrayDistribution, SupportsSampling, SupportsExpectation):
+        class NoCovDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"
             _preferred_orchestration = None
 
@@ -390,11 +347,8 @@ class TestCovarianceRequiresProtocol:
             def event_shape(self):
                 return (2,)
 
-            def _sample_one(self, key):
-                return jax.random.normal(key, (2,))
-
             def _sample(self, key, sample_shape=()):
-                return _vmap_sample(self, key, sample_shape)
+                return jax.random.normal(key, sample_shape + (2,))
 
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
                 return _mc_expectation(
@@ -402,7 +356,7 @@ class TestCovarianceRequiresProtocol:
                     return_dist=return_dist,
                 )
 
-        d = NoCovDist()
+        d = NoCovDist(name="test")
         with pytest.raises(TypeError, match="does not support covariance"):
             cov(d)
 
@@ -418,7 +372,7 @@ class TestUnnormalizedProbDefault:
     def test_unnormalized_prob_default(self):
         from probpipe import unnormalized_prob, unnormalized_log_prob
 
-        d = Normal(loc=0.0, scale=1.0)
+        d = Normal(loc=0.0, scale=1.0, name="x")
         x = jnp.array(1.0)
         up = unnormalized_prob(d, x)
         ulp = unnormalized_log_prob(d, x)

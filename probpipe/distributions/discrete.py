@@ -13,7 +13,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 from ._tfp_base import TFPDistribution
 from .._utils import _auto_key
 from ..core.distribution import (
-    ArrayDistribution,
+    NumericRecordDistribution,
     EmpiricalDistribution,
 )
 from ..core.provenance import Provenance
@@ -45,8 +45,8 @@ class Bernoulli(TFPDistribution):
         must be provided.
     logits : array-like, optional
         Log-odds of a 1 outcome.
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -54,7 +54,7 @@ class Bernoulli(TFPDistribution):
         *,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
-        name: str | None = None,
+        name: str,
     ):
         if (probs is None) == (logits is None):
             raise ValueError("Exactly one of probs or logits must be provided.")
@@ -66,7 +66,7 @@ class Bernoulli(TFPDistribution):
             self._logits = jnp.asarray(logits, dtype=jnp.float32)
             self._probs = None
             self._tfp_dist = tfd.Bernoulli(logits=self._logits)
-        self._name = name
+        super().__init__(name=name)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -119,8 +119,8 @@ class Binomial(TFPDistribution):
         *logits* must be provided.
     logits : array-like, optional
         Log-odds of success per trial.
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -129,7 +129,7 @@ class Binomial(TFPDistribution):
         *,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
-        name: str | None = None,
+        name: str,
     ):
         if (probs is None) == (logits is None):
             raise ValueError("Exactly one of probs or logits must be provided.")
@@ -146,7 +146,7 @@ class Binomial(TFPDistribution):
             self._tfp_dist = tfd.Binomial(
                 total_count=self._total_count, logits=self._logits
             )
-        self._name = name
+        super().__init__(name=name)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -199,19 +199,19 @@ class Poisson(TFPDistribution):
     ----------
     rate : array-like
         Rate parameter (must be positive).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
         self,
         rate: ArrayLike,
         *,
-        name: str | None = None,
+        name: str,
     ):
         self._rate = jnp.asarray(rate, dtype=jnp.float32)
         self._tfp_dist = tfd.Poisson(rate=self._rate)
-        self._name = name
+        super().__init__(name=name)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -242,8 +242,8 @@ class Categorical(TFPDistribution):
         *logits* must be provided.
     logits : array-like, optional
         Unnormalized log-probabilities for each category.
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -251,7 +251,7 @@ class Categorical(TFPDistribution):
         *,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
-        name: str | None = None,
+        name: str,
     ):
         if (probs is None) == (logits is None):
             raise ValueError("Exactly one of probs or logits must be provided.")
@@ -263,7 +263,7 @@ class Categorical(TFPDistribution):
             self._logits = jnp.asarray(logits, dtype=jnp.float32)
             self._probs = None
             self._tfp_dist = tfd.Categorical(logits=self._logits)
-        self._name = name
+        super().__init__(name=name)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -317,8 +317,8 @@ class NegativeBinomial(TFPDistribution):
         *logits* must be provided.
     logits : array-like, optional
         Log-odds of success per trial.
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -327,7 +327,7 @@ class NegativeBinomial(TFPDistribution):
         *,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
-        name: str | None = None,
+        name: str,
     ):
         if (probs is None) == (logits is None):
             raise ValueError("Exactly one of probs or logits must be provided.")
@@ -344,7 +344,7 @@ class NegativeBinomial(TFPDistribution):
             self._tfp_dist = tfd.NegativeBinomial(
                 total_count=self._total_count, logits=self._logits
             )
-        self._name = name
+        super().__init__(name=name)
 
     # -- convenient accessors -----------------------------------------------
 

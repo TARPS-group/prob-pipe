@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import pytest
 from probpipe import from_distribution
 from probpipe import (
-    ArrayDistribution, ArrayEmpiricalDistribution, EmpiricalDistribution,
+    NumericRecordDistribution, NumericEmpiricalDistribution, EmpiricalDistribution,
     Provenance,
 )
 from probpipe.distributions import (
@@ -30,6 +30,17 @@ from probpipe.core.constraints import (
 class TestConstraints:
     def test_real_check(self):
         assert jnp.all(real.check(jnp.array([-1.0, 0.0, 1.0])))
+
+    def test_real_check_extreme_values(self):
+        """real accepts any finite float, including extreme magnitudes."""
+        assert jnp.all(real.check(jnp.array([-1e30, -1.0, 0.0, 1.0, 1e30])))
+
+    def test_real_check_rejects_nonfinite(self):
+        """NaN / inf are outside the real support (finite floats)."""
+        # Real constraint on NaN/inf: must return False per row.
+        assert not bool(real.check(jnp.asarray(float("nan"))))
+        assert not bool(real.check(jnp.asarray(float("inf"))))
+        assert not bool(real.check(jnp.asarray(float("-inf"))))
 
     def test_positive_check(self):
         assert jnp.all(positive.check(jnp.array([0.1, 1.0, 100.0])))
@@ -105,37 +116,37 @@ class TestDistributionSupport:
         return jax.random.PRNGKey(42)
 
     def test_normal_support(self):
-        assert Normal(0.0, 1.0).support == real
+        assert Normal(0.0, 1.0, name="x").support == real
 
     def test_beta_support(self):
-        assert Beta(2.0, 5.0).support == unit_interval
+        assert Beta(2.0, 5.0, name="b").support == unit_interval
 
     def test_gamma_support(self):
-        assert Gamma(3.0, 1.0).support == positive
+        assert Gamma(3.0, 1.0, name="g").support == positive
 
     def test_uniform_support(self):
-        assert Uniform(low=-1.0, high=2.0).support == interval(-1.0, 2.0)
+        assert Uniform(low=-1.0, high=2.0, name="u").support == interval(-1.0, 2.0)
 
     def test_bernoulli_support(self):
-        assert Bernoulli(probs=0.5).support == boolean
+        assert Bernoulli(probs=0.5, name="d").support == boolean
 
     def test_poisson_support(self):
-        assert Poisson(rate=3.0).support == non_negative_integer
+        assert Poisson(rate=3.0, name="p").support == non_negative_integer
 
     def test_dirichlet_support(self):
-        assert Dirichlet([1.0, 2.0]).support == simplex
+        assert Dirichlet([1.0, 2.0], name="d").support == simplex
 
     def test_wishart_support(self):
-        assert Wishart(df=5.0, scale_tril=jnp.eye(3)).support == positive_definite
+        assert Wishart(df=5.0, scale_tril=jnp.eye(3), name="w").support == positive_definite
 
     def test_vonmisesfisher_support(self):
-        assert VonMisesFisher([1.0, 0.0, 0.0], 5.0).support == sphere
+        assert VonMisesFisher([1.0, 0.0, 0.0], 5.0, name="v").support == sphere
 
     def test_mvn_support(self):
-        assert MultivariateNormal(jnp.zeros(2), cov=jnp.eye(2)).support == real
+        assert MultivariateNormal(jnp.zeros(2), cov=jnp.eye(2), name="z").support == real
 
     def test_empirical_support(self):
-        ed = ArrayEmpiricalDistribution(jnp.ones((5, 2)))
+        ed = NumericEmpiricalDistribution(jnp.ones((5, 2)))
         assert ed.support == real
 
 
@@ -149,38 +160,38 @@ class TestFromDistribution:
 
     # -- same-class copy --
     def test_normal_from_normal(self, key):
-        n = Normal(loc=3.0, scale=2.0)
+        n = Normal(loc=3.0, scale=2.0, name="n")
         n2 = from_distribution(n, Normal, key=key)
         assert jnp.isclose(n2.loc, 3.0, atol=0.01)
 
     def test_beta_from_beta(self, key):
-        b = Beta(alpha=2.0, beta=5.0)
+        b = Beta(alpha=2.0, beta=5.0, name="b")
         b2 = from_distribution(b, Beta, key=key)
         assert jnp.isclose(b2.alpha, 2.0, atol=0.01)
 
     # -- moment-matching --
     def test_normal_from_gamma(self, key):
         """Gamma -> Normal via moment matching (check_support=False needed)."""
-        g = Gamma(concentration=9.0, rate=1.0)
+        g = Gamma(concentration=9.0, rate=1.0, name="g")
         n = from_distribution(g, Normal, key=key, check_support=False, num_samples=5000)
         # Gamma(9,1) has mean=9, var=9
         assert jnp.isclose(n.loc, 9.0, atol=1.0)
 
     def test_gamma_from_normal(self, key):
         """Normal -> Gamma should fail support check by default."""
-        n = Normal(loc=5.0, scale=1.0)
+        n = Normal(loc=5.0, scale=1.0, name="n")
         with pytest.raises(ValueError, match="support"):
             from_distribution(n, Gamma, key=key)
 
     def test_gamma_from_normal_override(self, key):
         """Normal -> Gamma with check_support=False should work."""
-        n = Normal(loc=5.0, scale=1.0)
+        n = Normal(loc=5.0, scale=1.0, name="n")
         g = from_distribution(n, Gamma, key=key, check_support=False, num_samples=5000)
         assert jnp.isclose(float(g.concentration * 1.0 / g.rate), 5.0, atol=1.0)
 
     def test_beta_from_uniform(self, key):
         """Uniform(0,1) -> Beta should work (compatible support)."""
-        u = Uniform(low=0.0, high=1.0)
+        u = Uniform(low=0.0, high=1.0, name="u")
         b = from_distribution(u, Beta, key=key, num_samples=5000)
         # Uniform(0,1) has mean=0.5, var=1/12 -> alpha~=beta~=1
         assert float(b.alpha) > 0
@@ -188,23 +199,23 @@ class TestFromDistribution:
 
     # -- discrete --
     def test_bernoulli_from_bernoulli(self, key):
-        b = Bernoulli(probs=0.7)
+        b = Bernoulli(probs=0.7, name="b")
         b2 = from_distribution(b, Bernoulli, key=key)
         assert jnp.isclose(b2.probs, 0.7, atol=0.01)
 
     def test_poisson_from_poisson(self, key):
-        p = Poisson(rate=5.0)
+        p = Poisson(rate=5.0, name="p")
         p2 = from_distribution(p, Poisson, key=key)
         assert jnp.isclose(p2.rate, 5.0, atol=0.01)
 
     def test_binomial_requires_total_count(self, key):
         """Binomial.from_distribution from non-Binomial needs total_count."""
-        p = Poisson(rate=3.0)
+        p = Poisson(rate=3.0, name="p")
         with pytest.raises(ValueError, match="total_count"):
             from_distribution(p, Binomial, key=key, check_support=False)
 
     def test_binomial_from_poisson(self, key):
-        p = Poisson(rate=3.0)
+        p = Poisson(rate=3.0, name="p")
         b = from_distribution(p, Binomial, key=key, check_support=False, total_count=10, num_samples=5000)
         # mean ~ 3, so probs ~ 0.3
         assert b.probs is not None
@@ -212,31 +223,31 @@ class TestFromDistribution:
     # -- multivariate --
     def test_mvn_from_empirical(self, key):
         samples = jax.random.normal(key, (100, 3))
-        ed = ArrayEmpiricalDistribution(samples)
+        ed = NumericEmpiricalDistribution(samples)
         mvn = from_distribution(ed, MultivariateNormal)
         assert mvn.dim == 3
 
     def test_dirichlet_from_dirichlet(self, key):
-        d = Dirichlet(concentration=jnp.array([1.0, 2.0, 3.0]))
+        d = Dirichlet(concentration=jnp.array([1.0, 2.0, 3.0]), name="d")
         d2 = from_distribution(d, Dirichlet, key=key)
         assert jnp.allclose(d2.concentration, d.concentration)
 
     # -- provenance --
     def test_from_distribution_same_class_returns_source(self, key):
         """Same-class conversion returns the source object (no-op)."""
-        n = Normal(loc=0.0, scale=1.0)
+        n = Normal(loc=0.0, scale=1.0, name="n")
         n2 = from_distribution(n, Normal, key=key)
         assert n2 is n
 
     def test_from_distribution_cross_class_provenance(self, key):
         """Cross-class conversion attaches provenance."""
-        g = Gamma(concentration=3.0, rate=1.0)
+        g = Gamma(concentration=3.0, rate=1.0, name="g")
         n = from_distribution(g, Normal, key=key, check_support=False)
         assert n.source is not None
         assert n.source.operation == "from_distribution"
 
     # -- empirical from anything --
     def test_empirical_from_normal(self, key):
-        n = Normal(loc=0.0, scale=1.0)
-        ed = from_distribution(n, ArrayEmpiricalDistribution, key=key, num_samples=100)
+        n = Normal(loc=0.0, scale=1.0, name="n")
+        ed = from_distribution(n, NumericEmpiricalDistribution, key=key, num_samples=100)
         assert ed.n == 100

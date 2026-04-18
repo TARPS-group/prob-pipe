@@ -8,6 +8,7 @@ import jax.numpy as jnp
 
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb
+from ..core.record import Record, RecordTemplate
 from ..custom_types import Array
 from ._base import ProbabilisticModel
 from ._likelihood import Likelihood
@@ -23,16 +24,11 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
     The prior must support :class:`SupportsLogProb` so that the joint
     log-density is always computable.
 
-    **Named components:** ``"parameters"`` (the prior) and ``"data"``
-    (the likelihood).  Only ``"data"`` is conditionable.
-
-    **Log-prob:** ``_log_prob((params, data))`` returns the joint
-    log-density: ``prior._log_prob(params) + likelihood.log_likelihood(params, data)``.
-
-    **Conditioning:** Use ``condition_on(model, data)`` — the inference
-    method registry auto-selects NUTS (if JAX-traceable) or RWMH
-    (gradient-free fallback).  ``SimpleModel`` does not implement
-    ``SupportsConditioning`` directly.
+    **Named components:** merged from the prior's ``record_template``
+    and the likelihood's ``data_template`` when both are available.
+    For example, a GLM model might have
+    ``component_names == ("X", "intercept", "slope", "y")``.
+    Falls back to ``("parameters", "data")`` when templates are absent.
 
     Parameters
     ----------
@@ -63,23 +59,65 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         self._likelihood = likelihood
         self._name_str = name
 
+        # Build merged record_template: prior params + likelihood data fields.
+        # This makes component_names include both parameter and data names,
+        # so condition_on can use component names as the sole signal for
+        # splitting data kwargs from inference kwargs.
+        prior_tpl = prior.record_template
+        data_tpl = getattr(likelihood, 'data_template', None)
+        # Convert legacy Record templates to RecordTemplate
+        if isinstance(data_tpl, Record) and not isinstance(data_tpl, RecordTemplate):
+            data_tpl = RecordTemplate.from_record(data_tpl)
+        if prior_tpl is not None and data_tpl is not None:
+            overlap = set(prior_tpl.fields) & set(data_tpl.fields)
+            if overlap:
+                raise ValueError(
+                    f"Parameter and data field names overlap: {overlap}"
+                )
+            merged = {}
+            for f in prior_tpl.fields:
+                merged[f] = prior_tpl[f]
+            for f in data_tpl.fields:
+                merged[f] = data_tpl[f]
+            self._record_template = RecordTemplate(merged)
+        elif prior_tpl is not None:
+            self._record_template = prior_tpl
+
     # -- Distribution interface ---------------------------------------------
 
     @property
     def name(self) -> str | None:
         return self._name_str
 
-    # -- SupportsNamedComponents interface ----------------------------------
+    # -- Named components interface ------------------------------------------
 
     @property
     def component_names(self) -> tuple[str, ...]:
+        tpl = self.record_template
+        if tpl is not None:
+            return tpl.fields
         return ("parameters", "data")
 
-    def __getitem__(self, key: str) -> Any:
-        if key == "parameters":
+    @property
+    def _prior_fields(self) -> frozenset[str]:
+        tpl = self._prior.record_template
+        return frozenset(tpl.fields) if tpl is not None else frozenset()
+
+    @property
+    def _data_fields(self) -> frozenset[str]:
+        tpl = getattr(self._likelihood, 'data_template', None)
+        return frozenset(tpl.fields) if tpl is not None else frozenset()
+
+    def __getitem__(self, key: str) -> Distribution | Likelihood:
+        if key in self._data_fields:
+            return self._likelihood
+        if key in self._prior_fields:
             return self._prior
+        # Fallback for unstructured models
         if key == "data":
             return self._likelihood
+        if key == "parameters":
+            return self._prior
         raise KeyError(
             f"Unknown component: {key!r}; "
             f"available: {self.component_names}"
@@ -89,6 +127,8 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
 
     @property
     def parameter_names(self) -> tuple[str, ...]:
+        if self._prior_fields:
+            return tuple(sorted(self._prior_fields))
         return ("parameters",)
 
     # -- SupportsLogProb interface -----------------------------------------

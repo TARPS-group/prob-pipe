@@ -14,7 +14,6 @@ from probpipe import (
     SupportsVariance,
     SupportsCovariance,
     SupportsLogProb,
-    SupportsNamedComponents,
 )
 from probpipe.core.distribution import (
     _ArrayMarginal,
@@ -100,7 +99,7 @@ class TestBroadcastDistributionProtocols:
             weights=None,
             broadcast_args=["x"],
         )
-        assert isinstance(bd, SupportsNamedComponents)
+        assert hasattr(bd, 'component_names')
 
 
 # ---------------------------------------------------------------------------
@@ -269,24 +268,24 @@ class TestArrayMarginal:
 
 class TestMixtureMarginal:
     def test_sampling_protocol_when_components_support_it(self):
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=5.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=5.0, scale=1.0, name="y")]
         m = _make_mixture_marginal(components, None)
         assert isinstance(m, SupportsSampling)
 
     def test_mean_protocol_when_components_support_it(self):
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=10.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=10.0, scale=1.0, name="y")]
         m = _make_mixture_marginal(components, None)
         assert isinstance(m, SupportsMean)
         np.testing.assert_allclose(m._mean(), 5.0, atol=1e-5)
 
     def test_mean_weighted(self):
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=10.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=10.0, scale=1.0, name="y")]
         weights = jnp.array([0.75, 0.25])
         m = _make_mixture_marginal(components, weights)
         np.testing.assert_allclose(m._mean(), 2.5, atol=1e-5)
 
     def test_variance_protocol(self):
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=10.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=10.0, scale=1.0, name="y")]
         m = _make_mixture_marginal(components, None)
         assert isinstance(m, SupportsVariance)
         v = m._variance()
@@ -295,14 +294,14 @@ class TestMixtureMarginal:
         np.testing.assert_allclose(v, 26.0, atol=1e-4)
 
     def test_log_prob_protocol(self):
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=5.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=5.0, scale=1.0, name="y")]
         m = _make_mixture_marginal(components, None)
         assert isinstance(m, SupportsLogProb)
         lp = m._log_prob(jnp.array(0.0))
         assert jnp.isfinite(lp)
 
     def test_sample_draws(self, key):
-        components = [Normal(loc=-100.0, scale=0.01), Normal(loc=100.0, scale=0.01)]
+        components = [Normal(loc=-100.0, scale=0.01, name="a"), Normal(loc=100.0, scale=0.01, name="b")]
         m = _make_mixture_marginal(components, None)
         draws = m._sample(key, (1000,))
         # Should be bimodal around -100 and 100
@@ -316,12 +315,12 @@ class TestMixtureMarginal:
         class NoSampleDist(Distribution):
             pass
 
-        components = [NoSampleDist(), NoSampleDist()]
+        components = [NoSampleDist(name="test"), NoSampleDist(name="test")]
         m = _make_mixture_marginal(components, None)
         assert not isinstance(m, SupportsSampling)
 
     def test_properties(self):
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=5.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=5.0, scale=1.0, name="y")]
         m = _make_mixture_marginal(components, None)
         assert m.n == 2
         assert m.components is components
@@ -364,12 +363,12 @@ class TestMakeMarginal:
         assert isinstance(m, _ListMarginal)
 
     def test_list_of_distributions(self):
-        dists = [Normal(loc=0.0, scale=1.0), Normal(loc=1.0, scale=1.0)]
+        dists = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=1.0, scale=1.0, name="y")]
         m = _make_marginal(dists, None)
         assert isinstance(m, _MixtureMarginal)
 
     def test_explicit_output_distributions(self):
-        dists = [Normal(loc=0.0, scale=1.0), Normal(loc=1.0, scale=1.0)]
+        dists = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=1.0, scale=1.0, name="y")]
         m = _make_marginal(None, None, output_distributions=dists)
         assert isinstance(m, _MixtureMarginal)
 
@@ -590,7 +589,7 @@ class TestArrayMarginalAdditional:
 
 class TestMixtureMarginalAdditional:
     def test_repr(self):
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=5.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=5.0, scale=1.0, name="y")]
         m = _make_mixture_marginal(components, None)
         r = repr(m)
         assert "MarginalizedBroadcastDistribution" in r
@@ -599,13 +598,13 @@ class TestMixtureMarginalAdditional:
 
     def test_sample_scalar(self, key):
         """Single draw (sample_shape=()) returns scalar."""
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=5.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=5.0, scale=1.0, name="y")]
         m = _make_mixture_marginal(components, None)
         drawn = m._sample(key, ())
         assert drawn.shape == ()
 
     def test_weights_property(self):
-        components = [Normal(loc=0.0, scale=1.0), Normal(loc=5.0, scale=1.0)]
+        components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=5.0, scale=1.0, name="y")]
         m = _make_mixture_marginal(components, None)
         np.testing.assert_allclose(m.weights, jnp.array([0.5, 0.5]), atol=1e-5)
 
@@ -648,3 +647,69 @@ class TestMakeMarginalEdgeCases:
         """Name propagates."""
         m = _make_marginal(jnp.ones((5, 2)), None, name="test_output")
         assert m._name == "test_output"
+
+
+# ---------------------------------------------------------------------------
+# _RecordArrayMarginal (Record-returning WorkflowFunctions)
+# ---------------------------------------------------------------------------
+
+
+from probpipe import Record, RecordArray, ProductDistribution  # noqa: E402
+from probpipe.core._broadcast_distributions import _RecordArrayMarginal  # noqa: E402
+from probpipe.core.node import workflow_function  # noqa: E402
+from probpipe import mean, variance, sample  # noqa: E402
+
+
+class TestRecordArrayMarginal:
+    """Record-returning WorkflowFunction outputs should be RecordArrayMarginal,
+    not _ListMarginal, and must support mean/variance/sample."""
+
+    @pytest.fixture
+    def record_workflow(self):
+        @workflow_function
+        def transform(x, y):
+            return Record(sum=x + y, diff=x - y)
+        return transform
+
+    @pytest.fixture
+    def prior(self):
+        return ProductDistribution(
+            Normal(loc=1.0, scale=0.1, name="x"),
+            Normal(loc=2.0, scale=0.1, name="y"),
+        )
+
+    def test_record_output_produces_record_array_marginal(
+        self, record_workflow, prior,
+    ):
+        result = record_workflow(**prior.select("x", "y"))
+        assert isinstance(result, _RecordArrayMarginal)
+
+    def test_mean_per_field(self, record_workflow, prior):
+        result = record_workflow(**prior.select("x", "y"))
+        m = mean(result)
+        assert isinstance(m, Record)
+        # sum = x + y ~ N(3, sqrt(0.02)); diff = x - y ~ N(-1, sqrt(0.02))
+        mc_se = 3.0 * np.sqrt(0.02) / np.sqrt(128)
+        np.testing.assert_allclose(float(m["sum"]), 3.0, atol=mc_se)
+        np.testing.assert_allclose(float(m["diff"]), -1.0, atol=mc_se)
+
+    def test_variance_per_field(self, record_workflow, prior):
+        result = record_workflow(**prior.select("x", "y"))
+        v = variance(result)
+        assert isinstance(v, Record)
+        # Var(x+y) = Var(x) + Var(y) = 0.02 when jointly sampled independently.
+        # Allow for MC SE on variance: ~ 2 * var / sqrt(n) = 2 * 0.02 / sqrt(128).
+        np.testing.assert_allclose(float(v["sum"]), 0.02, atol=0.02)
+        np.testing.assert_allclose(float(v["diff"]), 0.02, atol=0.02)
+
+    def test_sample_returns_record(self, record_workflow, prior, key):
+        result = record_workflow(**prior.select("x", "y"))
+        s = sample(result, key=key, sample_shape=(5,))
+        assert "sum" in s
+        assert s["sum"].shape == (5,)
+        assert s["diff"].shape == (5,)
+
+    def test_repr_mentions_fields(self, record_workflow, prior):
+        result = record_workflow(**prior.select("x", "y"))
+        r = repr(result)
+        assert "sum" in r and "diff" in r

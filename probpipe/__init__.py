@@ -27,11 +27,11 @@ _warnings.filterwarnings(
 from probpipe._weights import Weights
 from probpipe.core.distribution import (
     Distribution,
-    PyTreeArrayDistribution,
-    ArrayDistribution,
+    RecordDistribution,
+    NumericRecordDistribution,
     FlattenedView,
     EmpiricalDistribution,
-    ArrayEmpiricalDistribution,
+    NumericEmpiricalDistribution,
     BroadcastDistribution,
     BootstrapDistribution,
     BootstrapReplicateDistribution,
@@ -43,10 +43,6 @@ from probpipe.core.distribution import (
     # Random functions
     RandomFunction,
     ArrayRandomFunction,
-    # Joint
-    JointDistribution,
-    ProductDistribution,
-    DistributionView,
 )
 from probpipe.distributions import (
     # TFP base
@@ -80,9 +76,11 @@ from probpipe.distributions import (
     VonMisesFisher,
     # Transformed
     TransformedDistribution,
-    # Joint (specialized)
+    # Joint
+    ProductDistribution,
     SequentialJointDistribution,
     JointEmpirical,
+    NumericJointEmpirical,
     JointGaussian,
     # Gaussian random functions
     GaussianRandomFunction,
@@ -90,6 +88,9 @@ from probpipe.distributions import (
     # KDE
     KDEDistribution,
 )
+from probpipe.core.record import Record, RecordTemplate
+from probpipe.core._numeric_record import NumericRecord
+from probpipe.core._record_array import RecordArray, NumericRecordArray
 from probpipe.core.node import WorkflowFunction, Module, workflow_function, workflow_method, abstract_workflow_method
 from probpipe.core.provenance import Provenance, provenance_ancestors, provenance_dag
 from probpipe.core.constraints import (
@@ -132,7 +133,6 @@ from probpipe.core.protocols import (
     SupportsVariance,
     SupportsCovariance,
     SupportsConditioning,
-    SupportsNamedComponents,
 )
 from probpipe.converters import (
     converter_registry,
@@ -142,16 +142,22 @@ from probpipe.converters import (
 )
 
 __all__ = [
+    # Record
+    "Record",
+    "RecordTemplate",
+    "NumericRecord",
+    "RecordArray",
+    "NumericRecordArray",
     # Weights
     "Weights",
     # Base classes
     "Distribution",
-    "PyTreeArrayDistribution",
-    "ArrayDistribution",
+    "RecordDistribution",
+    "NumericRecordDistribution",
     "FlattenedView",
     "TFPDistribution",
     "EmpiricalDistribution",
-    "ArrayEmpiricalDistribution",
+    "NumericEmpiricalDistribution",
     "BroadcastDistribution",
     "BootstrapDistribution",
     "BootstrapReplicateDistribution",
@@ -201,12 +207,11 @@ __all__ = [
     # Transformed
     "TransformedDistribution",
     # Joint
-    "JointDistribution",
     "ProductDistribution",
     "SequentialJointDistribution",
     "JointEmpirical",
+    "NumericJointEmpirical",
     "JointGaussian",
-    "DistributionView",
     # WorkflowFunction
     "WorkflowFunction",
     "Module",
@@ -232,7 +237,6 @@ __all__ = [
     "SupportsVariance",
     "SupportsCovariance",
     "SupportsConditioning",
-    "SupportsNamedComponents",
     # Transition / iteration
     "iterate",
     "with_conversion",

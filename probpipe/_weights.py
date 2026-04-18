@@ -111,7 +111,7 @@ def weighted_mean(weights: Array | None, values: Array) -> Array:
     weights : Array or None
         Normalized weights of shape ``(n,)``.  ``None`` for uniform.
     values : Array
-        Values of shape ``(n, ...)``.
+        Record of shape ``(n, ...)``.
     """
     if weights is None:
         return jnp.mean(values, axis=0)
@@ -130,7 +130,7 @@ def weighted_variance(
     weights : Array or None
         Normalized weights of shape ``(n,)``.  ``None`` for uniform.
     values : Array
-        Values of shape ``(n, ...)``.
+        Record of shape ``(n, ...)``.
     mean : Array, optional
         Pre-computed weighted mean.  Computed if ``None``.
     """
@@ -152,7 +152,7 @@ def weighted_covariance(
     weights : Array or None
         Normalized weights of shape ``(n,)``.  ``None`` for uniform.
     values : Array
-        Values of shape ``(n, ...)``.  Flattened to ``(n, d)`` internally.
+        Record of shape ``(n, ...)``.  Flattened to ``(n, d)`` internally.
     mean : Array, optional
         Pre-computed weighted mean.  Computed if ``None``.
 

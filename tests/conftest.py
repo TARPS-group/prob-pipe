@@ -38,7 +38,7 @@ def dim():
 
 
 @pytest.fixture
-def mean(dim):
+def loc(dim):
     return jnp.arange(dim, dtype=jnp.float32)
 
 

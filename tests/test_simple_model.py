@@ -17,13 +17,14 @@ import pytest
 from probpipe import (
     Likelihood,
     ApproximateDistribution,
+    MultivariateNormal,
     SimpleModel,
     SupportsLogProb,
-    SupportsNamedComponents,
     SupportsSampling,
+    Record,
+    RecordTemplate,
     condition_on,
 )
-from probpipe.distributions.multivariate import MultivariateNormal
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +49,7 @@ class TestSimpleModel:
 
     @pytest.fixture
     def prior(self):
-        return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
+        return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
 
     @pytest.fixture
     def likelihood(self):
@@ -85,15 +86,14 @@ class TestSimpleModel:
 
     def test_component_names(self, model):
         names = model.component_names
-        assert "parameters" in names
-        assert "data" in names
+        assert "params" in names
         assert isinstance(names, tuple)
 
     def test_parameter_names(self, model):
-        assert model.parameter_names == ("parameters",)
+        assert model.parameter_names == ("params",)
 
     def test_supports_named_components(self, model):
-        assert isinstance(model, SupportsNamedComponents)
+        assert hasattr(model, 'component_names')
 
     def test_getitem_parameters(self, model, prior):
         assert model["parameters"] is prior
@@ -157,7 +157,7 @@ class TestSimpleModelConditioningPaths:
 
     @pytest.fixture
     def prior(self):
-        return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
+        return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
 
     @pytest.fixture
     def likelihood(self):
@@ -207,7 +207,7 @@ class TestSimpleModelConditioningPaths:
                     return jnp.float32(-1e10)
                 return jnp.float32(-0.5 * np.sum((np.array(data) - np.array(params)) ** 2))
 
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
         model = SimpleModel(prior, NonTraceableLikelihood())
         data = jnp.array([[1.0, 2.0], [1.5, 2.5]])
         result = condition_on(
@@ -217,7 +217,7 @@ class TestSimpleModelConditioningPaths:
 
     def test_inference_data_produced(self):
         """TFP NUTS produces InferenceData with posterior and sample_stats."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10)
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
         model = SimpleModel(prior, GaussianLikelihood())
         data = jnp.array([[1.0, 2.0], [1.5, 2.5]])
         result = condition_on(
@@ -226,3 +226,124 @@ class TestSimpleModelConditioningPaths:
         assert result.inference_data is not None
         assert hasattr(result.inference_data, "posterior")
         assert hasattr(result.inference_data, "sample_stats")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Record integration
+# ---------------------------------------------------------------------------
+
+
+class _ValuesAwareLikelihood:
+    """Gaussian likelihood that handles both raw arrays and Record."""
+
+    def log_likelihood(self, params, data):
+        if isinstance(data, Record):
+            d = data[data.fields[0]]
+        else:
+            d = data
+        if isinstance(params, Record):
+            p = params[params.fields[0]]
+        else:
+            p = params
+        return -0.5 * jnp.sum((d - p) ** 2)
+
+
+class TestSimpleModelWithValues:
+    """SimpleModel propagates record_template and accepts Record data."""
+
+    @pytest.fixture
+    def prior_with_template(self):
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
+        prior._record_template = RecordTemplate(a=(), b=())
+        return prior
+
+    @pytest.fixture
+    def likelihood(self):
+        return _ValuesAwareLikelihood()
+
+    def test_record_template_propagated(self, prior_with_template, likelihood):
+        model = SimpleModel(prior_with_template, likelihood)
+        assert model.record_template is prior_with_template.record_template
+
+    def test_component_names_from_template(self, prior_with_template, likelihood):
+        model = SimpleModel(prior_with_template, likelihood)
+        # Likelihood has no data_template, so only prior fields appear
+        assert model.component_names == ("a", "b")
+
+    def test_parameter_names_from_template(self, prior_with_template, likelihood):
+        model = SimpleModel(prior_with_template, likelihood)
+        assert model.parameter_names == ("a", "b")
+
+    def test_getitem_template_field_name(self, prior_with_template, likelihood):
+        """Indexing by a template field name returns the prior."""
+        model = SimpleModel(prior_with_template, likelihood)
+        assert model["a"] is prior_with_template
+        assert model["b"] is prior_with_template
+        assert model["data"] is likelihood
+
+    def test_condition_on_with_record_data(self, prior_with_template, likelihood):
+        model = SimpleModel(prior_with_template, likelihood)
+        data = Record(obs=jnp.array([[1.0, 2.0], [1.5, 2.5]]))
+        result = condition_on(
+            model, data, num_results=50, num_warmup=20,
+            step_size=0.3, random_seed=42,
+        )
+        assert isinstance(result, ApproximateDistribution)
+
+    def test_condition_on_raw_array_still_works(self, prior_with_template, likelihood):
+        model = SimpleModel(prior_with_template, likelihood)
+        data = jnp.array([[1.0, 2.0], [1.5, 2.5]])
+        result = condition_on(
+            model, data, num_results=50, num_warmup=20,
+            step_size=0.3, random_seed=42,
+        )
+        assert isinstance(result, ApproximateDistribution)
+
+    def test_without_template_defaults(self):
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="params")
+        model = SimpleModel(prior, GaussianLikelihood())
+        assert "params" in model.component_names
+        assert model.parameter_names == ("params",)
+        assert model.record_template is not None
+
+    def test_field_overlap_raises(self):
+        """SimpleModel rejects overlapping prior and data field names."""
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
+        prior._record_template = RecordTemplate(X=(), y=())
+
+        class _OverlapLikelihood:
+            def log_likelihood(self, params, data):
+                return -0.5 * jnp.sum((data - params) ** 2)
+
+            @property
+            def data_template(self):
+                return RecordTemplate(X=(0, 0), y=(0,))
+
+        with pytest.raises(ValueError, match="overlap"):
+            SimpleModel(prior, _OverlapLikelihood())
+
+    def test_getitem_data_field_returns_likelihood(self, prior_with_template, likelihood):
+        """Data field names return the likelihood."""
+        class _DataTemplateLikelihood(_ValuesAwareLikelihood):
+            @property
+            def data_template(self):
+                return Record(obs=jnp.zeros(0))
+
+        lik = _DataTemplateLikelihood()
+        model = SimpleModel(prior_with_template, lik)
+        assert model["obs"] is lik
+
+    def test_condition_on_rejects_positional_and_named_data(self, prior_with_template):
+        """Cannot pass both positional observed and named data kwargs."""
+        class _DataTemplateLikelihood(_ValuesAwareLikelihood):
+            @property
+            def data_template(self):
+                return Record(obs=jnp.zeros(0))
+
+        model = SimpleModel(prior_with_template, _DataTemplateLikelihood())
+        with pytest.raises(ValueError, match="Cannot provide both"):
+            condition_on(
+                model, jnp.array([1.0, 2.0]),
+                obs=jnp.array([1.0, 2.0]),
+                num_results=50, random_seed=42,
+            )

@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    ArrayDistribution,
-    ArrayEmpiricalDistribution,
+    NumericRecordDistribution,
+    NumericEmpiricalDistribution,
     TFPDistribution,
     EmpiricalDistribution,
     Provenance,
@@ -65,7 +65,7 @@ def simple_weights():
 
 class TestMultivariateNormal:
     def test_construction_with_cov(self, loc, cov_matrix):
-        g = MultivariateNormal(loc=loc, cov=cov_matrix)
+        g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
         assert g.event_shape == (3,)
         assert g.batch_shape == ()
         assert g.dim == 3
@@ -73,26 +73,26 @@ class TestMultivariateNormal:
 
     def test_construction_with_scale_tril(self, loc, cov_matrix):
         L = jnp.linalg.cholesky(cov_matrix)
-        g = MultivariateNormal(loc=loc, scale_tril=L)
+        g = MultivariateNormal(loc=loc, scale_tril=L, name="z")
         np.testing.assert_allclose(g.cov, cov_matrix, atol=1e-5)
 
     def test_scalar_loc_promoted(self):
-        g = MultivariateNormal(loc=1.0, scale_tril=jnp.eye(1))
+        g = MultivariateNormal(loc=1.0, scale_tril=jnp.eye(1), name="z")
         assert g.event_shape == (1,)
         assert g.dim == 1
 
     def test_rejects_both_cov_and_scale_tril(self, loc, cov_matrix):
         L = jnp.linalg.cholesky(cov_matrix)
         with pytest.raises(ValueError, match="exactly one"):
-            MultivariateNormal(loc=loc, scale_tril=L, cov=cov_matrix)
+            MultivariateNormal(loc=loc, scale_tril=L, cov=cov_matrix, name="z")
 
     def test_rejects_neither_cov_nor_scale_tril(self, loc):
         with pytest.raises(ValueError, match="One of"):
-            MultivariateNormal(loc=loc)
+            MultivariateNormal(loc=loc, name="z")
 
     def test_rejects_dim_mismatch(self):
         with pytest.raises(ValueError, match="does not match"):
-            MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(3))
+            MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(3), name="z")
 
     def test_sample_shape(self, gaussian, key):
         s = sample(gaussian, key=key, sample_shape=(5,))
@@ -157,9 +157,9 @@ class TestMultivariateNormal:
     def test_name(self, gaussian):
         assert gaussian.name == "test_gaussian"
 
-    def test_no_name(self, loc, cov_matrix):
-        g = MultivariateNormal(loc=loc, cov=cov_matrix)
-        assert g.name is None
+    def test_name_set(self, loc, cov_matrix):
+        g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
+        assert g.name == "z"
 
     def test_repr(self, gaussian):
         r = repr(gaussian)
@@ -172,7 +172,7 @@ class TestMultivariateNormal:
 
     def test_from_distribution_empirical(self, gaussian, key):
         ed = from_distribution(
-            gaussian, ArrayEmpiricalDistribution, key=key, num_samples=2000
+            gaussian, NumericEmpiricalDistribution, key=key, num_samples=2000
         )
         g2 = from_distribution(ed, MultivariateNormal, name="fitted")
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.2)
@@ -193,13 +193,13 @@ class TestMultivariateNormal:
 
 class TestEmpiricalDistribution:
     def test_uniform_weights(self, simple_samples):
-        ed = ArrayEmpiricalDistribution(simple_samples)
+        ed = NumericEmpiricalDistribution(simple_samples)
         assert ed.n == 3
         assert ed.dim == 1
         np.testing.assert_allclose(ed.weights, jnp.ones(3) / 3)
 
     def test_custom_weights(self, simple_samples, simple_weights):
-        ed = ArrayEmpiricalDistribution(simple_samples, simple_weights)
+        ed = NumericEmpiricalDistribution(simple_samples, simple_weights)
         np.testing.assert_allclose(ed.weights.sum(), 1.0)
         expected_mean = jnp.sum(simple_samples.ravel() * ed.weights)
         np.testing.assert_allclose(mean(ed).ravel(), expected_mean, atol=1e-6)
@@ -223,18 +223,18 @@ class TestEmpiricalDistribution:
             EmpiricalDistribution(simple_samples, jnp.array([0.5, 0.5]))
 
     def test_1d_input_scalar_event(self):
-        ed = ArrayEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
+        ed = NumericEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
         assert ed.event_shape == ()
         assert ed.samples.shape == (3,)
 
     def test_multidim_event_shape(self):
         samples = jnp.ones((5, 3))
-        ed = ArrayEmpiricalDistribution(samples)
+        ed = NumericEmpiricalDistribution(samples)
         assert ed.event_shape == (3,)
         assert ed.dim == 3
 
     def test_event_shape(self, simple_samples):
-        ed = ArrayEmpiricalDistribution(simple_samples)
+        ed = NumericEmpiricalDistribution(simple_samples)
         assert ed.event_shape == (1,)
 
     def test_sample_shape(self, simple_samples, key):
@@ -254,19 +254,19 @@ class TestEmpiricalDistribution:
             assert jnp.any(jnp.all(jnp.isclose(simple_samples, val), axis=-1))
 
     def test_mean(self, simple_samples, simple_weights):
-        ed = ArrayEmpiricalDistribution(simple_samples, simple_weights)
+        ed = NumericEmpiricalDistribution(simple_samples, simple_weights)
         expected = jnp.sum(simple_samples.ravel() * ed.weights)
         np.testing.assert_allclose(mean(ed).ravel(), expected, atol=1e-6)
 
     def test_variance(self, simple_samples, simple_weights):
-        ed = ArrayEmpiricalDistribution(simple_samples, simple_weights)
+        ed = NumericEmpiricalDistribution(simple_samples, simple_weights)
         mu = mean(ed)
         expected = jnp.sum(ed.weights * (simple_samples.ravel() - mu.ravel()) ** 2)
         np.testing.assert_allclose(variance(ed).ravel(), expected, atol=1e-6)
 
     def test_cov_matrix(self):
         samples = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
-        ed = ArrayEmpiricalDistribution(samples)
+        ed = NumericEmpiricalDistribution(samples)
         C = cov(ed)
         assert C.shape == (2, 2)
         np.testing.assert_allclose(C, C.T, atol=1e-6)
@@ -274,7 +274,7 @@ class TestEmpiricalDistribution:
     def test_cov_psd(self):
         """Covariance matrix should be positive semi-definite."""
         samples = jnp.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [0.0, 0.0]])
-        ed = ArrayEmpiricalDistribution(samples)
+        ed = NumericEmpiricalDistribution(samples)
         C = cov(ed)
         eigvals = jnp.linalg.eigvalsh(C)
         assert jnp.all(eigvals >= -1e-8)
@@ -285,7 +285,7 @@ class TestEmpiricalDistribution:
 
     def test_from_distribution(self, gaussian, key):
         ed = from_distribution(
-            gaussian, ArrayEmpiricalDistribution, key=key, num_samples=50
+            gaussian, NumericEmpiricalDistribution, key=key, num_samples=50
         )
         assert ed.n == 50
         assert ed.event_shape == gaussian.event_shape
@@ -295,13 +295,13 @@ class TestEmpiricalDistribution:
 
     def test_from_distribution_custom_name(self, gaussian, key):
         ed = from_distribution(
-            gaussian, ArrayEmpiricalDistribution, key=key, num_samples=10, name="custom"
+            gaussian, NumericEmpiricalDistribution, key=key, num_samples=10, name="custom"
         )
         assert ed.name == "custom"
 
     def test_from_distribution_default_key(self, gaussian):
         """from_distribution should work without explicit key."""
-        ed = from_distribution(gaussian, ArrayEmpiricalDistribution, num_samples=10)
+        ed = from_distribution(gaussian, NumericEmpiricalDistribution, num_samples=10)
         assert ed.n == 10
 
 
@@ -356,12 +356,12 @@ class TestEmpiricalLogWeights:
 
     def test_uniform_mean_matches_numpy(self):
         samples = jnp.array([[1.0], [3.0], [5.0]])
-        ed = ArrayEmpiricalDistribution(samples)
+        ed = NumericEmpiricalDistribution(samples)
         np.testing.assert_allclose(mean(ed), jnp.array([3.0]), atol=1e-6)
 
     def test_uniform_variance_matches_numpy(self):
         samples = jnp.array([[1.0], [3.0], [5.0]])
-        ed = ArrayEmpiricalDistribution(samples)
+        ed = NumericEmpiricalDistribution(samples)
         expected_var = jnp.mean((samples - jnp.array([[3.0]])) ** 2, axis=0)
         np.testing.assert_allclose(variance(ed), expected_var, atol=1e-6)
 
@@ -392,14 +392,14 @@ class TestEmpiricalLogWeights:
         """Mean with log_weights should match weights-based mean."""
         samples = jnp.array([[1.0], [2.0], [3.0]])
         weights = jnp.array([0.2, 0.3, 0.5])
-        ed_w = ArrayEmpiricalDistribution(samples, weights)
-        ed_lw = ArrayEmpiricalDistribution(samples, log_weights=jnp.log(weights))
+        ed_w = NumericEmpiricalDistribution(samples, weights)
+        ed_lw = NumericEmpiricalDistribution(samples, log_weights=jnp.log(weights))
         np.testing.assert_allclose(mean(ed_w), mean(ed_lw), atol=1e-5)
 
     def test_uniform_cov(self):
         """Uniform cov should match standard formula."""
         samples = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
-        ed = ArrayEmpiricalDistribution(samples)
+        ed = NumericEmpiricalDistribution(samples)
         mu = jnp.mean(samples, axis=0)
         diff = samples - mu
         expected = diff.T @ diff / 3
@@ -430,10 +430,10 @@ class TestProvenance:
         assert "test_gaussian" in r
 
     def test_repr_unnamed_parent(self, loc, cov_matrix):
-        g = MultivariateNormal(loc=loc, cov=cov_matrix)  # no name
+        g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
         p = Provenance("op", parents=(g,))
         r = repr(p)
-        assert "MultivariateNormal" in r
+        assert "z" in r
 
     def test_frozen(self, gaussian):
         p = Provenance("test_op")
@@ -442,17 +442,17 @@ class TestProvenance:
 
 
 # ---------------------------------------------------------------------------
-# ArrayDistribution ABC
+# NumericRecordDistribution ABC
 # ---------------------------------------------------------------------------
 
 
 class TestDistributionABC:
     def test_cannot_instantiate(self):
         with pytest.raises(TypeError):
-            ArrayDistribution()
+            NumericRecordDistribution()
 
     def test_no_condition_on_method(self, gaussian):
-        """condition_on() is only on JointDistribution, not ArrayDistribution ABC."""
+        """condition_on() is only on JointDistribution, not NumericRecordDistribution ABC."""
         assert not hasattr(gaussian, "condition_on")
 
     def test_default_batch_shape(self, gaussian):
@@ -472,51 +472,47 @@ class TestDistributionABC:
     def test_mean_requires_supports_mean(self):
         """mean op raises TypeError for distributions without SupportsMean."""
         from probpipe.core.protocols import SupportsSampling, SupportsExpectation
-        from probpipe.core.distribution import _vmap_sample, _mc_expectation
+        from probpipe.core.distribution import _mc_expectation
 
-        class MinimalDist(ArrayDistribution, SupportsSampling, SupportsExpectation):
+        class MinimalDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"
             _preferred_orchestration = None
             @property
             def event_shape(self):
                 return (1,)
-            def _sample_one(self, key):
-                return jnp.zeros((1,))
             def _sample(self, key, sample_shape=()):
-                return _vmap_sample(self, key, sample_shape)
+                return jnp.zeros(sample_shape + (1,))
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
                 return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
-        d = MinimalDist()
+        d = MinimalDist(name="minimal")
         with pytest.raises(TypeError, match="does not support mean"):
             mean(d)
 
     def test_variance_requires_supports_variance(self):
         """variance op raises TypeError for distributions without SupportsVariance."""
         from probpipe.core.protocols import SupportsSampling, SupportsExpectation
-        from probpipe.core.distribution import _vmap_sample, _mc_expectation
+        from probpipe.core.distribution import _mc_expectation
 
-        class MinimalDist(ArrayDistribution, SupportsSampling, SupportsExpectation):
+        class MinimalDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"
             _preferred_orchestration = None
             @property
             def event_shape(self):
                 return (1,)
-            def _sample_one(self, key):
-                return jnp.zeros((1,))
             def _sample(self, key, sample_shape=()):
-                return _vmap_sample(self, key, sample_shape)
+                return jnp.zeros(sample_shape + (1,))
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
                 return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
-        d = MinimalDist()
+        d = MinimalDist(name="minimal")
         with pytest.raises(TypeError, match="does not support variance"):
             variance(d)
 
     def test_from_distribution_raises_for_invalid_input(self):
         with pytest.raises(TypeError):
-            from_distribution(None, ArrayDistribution)
+            from_distribution(None, NumericRecordDistribution)
 
     def test_source_default_none(self, gaussian):
-        g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         assert g.source is None
 
     def test_with_source(self, gaussian):
@@ -531,9 +527,9 @@ class TestDistributionABC:
         with pytest.raises(RuntimeError, match="Source already set"):
             gaussian.with_source(p2)
 
-    def test_name_default_none(self, loc, cov_matrix):
-        g = MultivariateNormal(loc=loc, cov=cov_matrix)
-        assert g.name is None
+    def test_name(self, loc, cov_matrix):
+        g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
+        assert g.name == "z"
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +540,7 @@ class TestDistributionABC:
 class TestTFPDistribution:
     def test_gaussian_is_tfp_distribution(self, gaussian):
         assert isinstance(gaussian, TFPDistribution)
-        assert isinstance(gaussian, ArrayDistribution)
+        assert isinstance(gaussian, NumericRecordDistribution)
 
     def test_dtype(self, gaussian):
         assert gaussian.dtype == jnp.float32
@@ -587,7 +583,7 @@ class TestShapeSemantics:
 
 
 # ---------------------------------------------------------------------------
-# ArrayDistribution / TFPDistribution coverage gaps
+# NumericRecordDistribution / TFPDistribution coverage gaps
 # ---------------------------------------------------------------------------
 
 
@@ -595,31 +591,37 @@ class TestDistributionCoverageGaps:
     """Cover otherwise-uncovered defaults and helpers in core.distribution."""
 
     def test_batch_shape_default(self):
-        """ArrayDistribution.batch_shape defaults to ()."""
-        class Scalar(ArrayDistribution):
+        """NumericRecordDistribution.batch_shape defaults to ()."""
+        class Scalar(NumericRecordDistribution):
             @property
             def event_shape(self):
                 return ()
 
-        assert Scalar().batch_shape == ()
+        assert Scalar(name="s").batch_shape == ()
 
-    def test_dtype_default(self):
-        """ArrayDistribution.dtype defaults to float32."""
-        class Scalar(ArrayDistribution):
+    def test_dtype_none_without_template(self):
+        """NumericRecordDistribution.dtype is None when no template is set."""
+        class Scalar(NumericRecordDistribution):
             @property
             def event_shape(self):
                 return ()
 
-        assert Scalar().dtype == jnp.float32
+        assert Scalar(name="s").dtype is None
+
+    def test_dtype_uniform_with_template(self):
+        """NumericRecordDistribution.dtype is the common dtype when all fields match."""
+        from probpipe import Normal
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        assert n.dtype == n._tfp_dist.dtype
 
     def test_repr_with_batch_shape(self):
         """TFPDistribution repr includes batch_shape when non-trivial."""
         from probpipe import Normal
 
-        d = Normal(loc=jnp.array([0.0, 1.0]), scale=jnp.array([1.0, 1.0]))
+        d = Normal(loc=jnp.array([0.0, 1.0]), scale=jnp.array([1.0, 1.0]), name="x")
         assert "batch_shape" in repr(d)
 
     def test_array_empirical_dtype(self):
-        """ArrayEmpiricalDistribution.dtype returns sample dtype."""
+        """NumericEmpiricalDistribution.dtype returns sample dtype."""
         samples = jnp.array([[1.0, 2.0]], dtype=jnp.float32)
-        assert ArrayEmpiricalDistribution(samples).dtype == jnp.float32
+        assert NumericEmpiricalDistribution(samples).dtype == jnp.float32

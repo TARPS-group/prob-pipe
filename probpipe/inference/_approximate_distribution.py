@@ -1,44 +1,42 @@
-"""Approximate empirical distribution with chain structure and ArviZ InferenceData."""
+"""Approximate empirical distribution with chain structure and auxiliary DataTree."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from xarray import DataTree
 
 import jax.numpy as jnp
 
-from ..core.distribution import ArrayEmpiricalDistribution, Distribution
+from ..core.distribution import NumericEmpiricalDistribution, Distribution
+from ..core._record_distribution import _RecordDistributionView
 from ..core.provenance import Provenance
-from ..custom_types import Array, ArrayLike
+from ..core.record import Record, RecordTemplate
+from ..custom_types import Array, ArrayLike, PRNGKey
 from .._weights import Weights
 
 __all__ = ["ApproximateDistribution", "make_posterior"]
 
 
-class ApproximateDistribution(ArrayEmpiricalDistribution):
-    """Empirical distribution with chain structure and ArviZ InferenceData.
+# ---------------------------------------------------------------------------
+# ApproximateDistribution
+# ---------------------------------------------------------------------------
 
-    Wraps one or more sample chains as an
-    :class:`~probpipe.core.distribution.EmpiricalDistribution` while
-    preserving per-chain structure, optional warmup samples, and an
-    ArviZ ``InferenceData`` object for downstream diagnostics.
+
+class ApproximateDistribution(NumericEmpiricalDistribution):
+    """Empirical distribution with chain structure.
+
+    Stores per-chain sample arrays for chain-structured access via
+    :meth:`draws`.  Algorithm metadata, sample statistics, warmup
+    samples, and the ArviZ ``InferenceData`` object live in
+    ``dist.auxiliary`` (a DataTree on the Distribution base class),
+    not as attributes of this class.
 
     Parameters
     ----------
     chains : list of Array
         Per-chain sample arrays, each of shape ``(num_draws, *event_shape)``.
-    algorithm : str
-        Name of the inference algorithm (e.g. ``"tfp_nuts"``, ``"rwmh"``).
-    inference_data : InferenceData or None
-        ArviZ ``InferenceData`` object from the inference run.  Contains
-        ``posterior``, ``sample_stats``, and other groups depending on
-        the backend.  Use ArviZ functions for diagnostics::
-
-            import arviz as az
-            az.summary(posterior.inference_data)
-            az.plot_trace(posterior.inference_data)
-
-    warmup_samples : list of Array or None
-        Per-chain warmup (burn-in) samples, same shapes as *chains*.
     weights : array-like, :class:`~probpipe.Weights`, or None
         Optional per-sample importance weights (across all chains).
     name : str or None
@@ -49,9 +47,6 @@ class ApproximateDistribution(ArrayEmpiricalDistribution):
         self,
         chains: list[Array],
         *,
-        algorithm: str = "unknown",
-        inference_data: Any | None = None,
-        warmup_samples: list[Array] | None = None,
         weights: ArrayLike | Weights | None = None,
         name: str | None = None,
     ):
@@ -59,17 +54,15 @@ class ApproximateDistribution(ArrayEmpiricalDistribution):
             raise ValueError("Must provide at least one chain")
 
         self._chains = [jnp.asarray(c) for c in chains]
-        self._warmup_samples = (
-            [jnp.asarray(w) for w in warmup_samples]
-            if warmup_samples is not None
-            else None
-        )
-        self._algorithm = algorithm
-        self._inference_data = inference_data
+        self._concatenated: Array | None = None
 
-        # Concatenate all chains for the parent EmpiricalDistribution
-        all_samples = jnp.concatenate(self._chains, axis=0)
-        super().__init__(all_samples, weights=weights, name=name)
+        super().__init__(self._concat_chains(), weights=weights, name=name)
+
+    def _concat_chains(self) -> Array:
+        """Lazily concatenated view of all chains."""
+        if self._concatenated is None:
+            self._concatenated = jnp.concatenate(self._chains, axis=0)
+        return self._concatenated
 
     # -- Chain access ---------------------------------------------------------
 
@@ -90,71 +83,95 @@ class ApproximateDistribution(ArrayEmpiricalDistribution):
 
     @property
     def algorithm(self) -> str:
-        """Name of the inference algorithm."""
-        return self._algorithm
+        """Name of the inference algorithm (read from provenance)."""
+        src = self.source
+        if src is not None:
+            return src.metadata.get("algorithm", src.operation)
+        return "unknown"
 
     @property
-    def inference_data(self) -> Any | None:
-        """ArviZ InferenceData, if available.
+    def inference_data(self) -> DataTree | None:
+        """The auxiliary DataTree, for ArviZ compatibility.
 
-        Contains ``posterior``, ``sample_stats``, and other groups
-        depending on the backend.  ``None`` only when inference was
-        interrupted or the backend could not produce one.
+        Alias for ``self.auxiliary``.  Use ArviZ functions for diagnostics::
+
+            import arviz as az
+            az.summary(posterior.inference_data)
         """
-        return self._inference_data
+        return self.auxiliary
 
     @property
     def warmup_samples(self) -> list[Array] | None:
-        """Per-chain warmup samples, if stored."""
-        return self._warmup_samples
+        """Per-chain warmup samples extracted from auxiliary data."""
+        aux = self.auxiliary
+        if aux is None:
+            return None
+        # arviz 1.x DataTree uses .children; arviz 0.x InferenceData uses .groups()
+        has_warmup = (
+            ("warmup" in aux.children) if hasattr(aux, "children")
+            else hasattr(aux, "warmup")
+        )
+        if not has_warmup:
+            return None
+        warmup = aux["warmup"]["params"]
+        n_chains = warmup.sizes.get("chain", 1)
+        return [jnp.asarray(warmup.sel(chain=i).values) for i in range(n_chains)]
 
     def draws(
         self,
         chain: int | None = None,
         *,
         include_warmup: bool = False,
-    ) -> Array:
-        """Access draws from specific chains.
+    ) -> Array | Record:
+        """Access draws, optionally named via record_template.
 
         Parameters
         ----------
         chain : int or None
-            Chain index.  If ``None``, returns concatenated draws from all
-            chains.
+            Chain index.  If ``None``, concatenates all chains.
         include_warmup : bool
-            If ``True`` and warmup samples are available, prepend them.
+            If ``True`` and warmup samples are in the auxiliary DataTree,
+            prepend them.
 
         Returns
         -------
-        Array
-            Sample array of shape ``(num_draws, *event_shape)`` (single chain)
-            or ``(total_draws, *event_shape)`` (all chains).
+        Array or Record
+            If ``record_template`` is set, returns a :class:`~probpipe.Record`
+            with named fields.  Otherwise returns a raw array.
         """
         if chain is not None:
             samples = self._chains[chain]
-            if include_warmup and self._warmup_samples is not None:
-                samples = jnp.concatenate(
-                    [self._warmup_samples[chain], samples], axis=0
-                )
-            return samples
-
-        # All chains
-        parts = []
-        if include_warmup and self._warmup_samples is not None:
-            for w, c in zip(self._warmup_samples, self._chains):
-                parts.append(jnp.concatenate([w, c], axis=0))
+            if include_warmup:
+                warmup = self.warmup_samples
+                if warmup is not None:
+                    samples = jnp.concatenate([warmup[chain], samples], axis=0)
         else:
             parts = list(self._chains)
-        return jnp.concatenate(parts, axis=0)
+            if include_warmup:
+                warmup = self.warmup_samples
+                if warmup is not None:
+                    parts = [jnp.concatenate([w, c], axis=0)
+                             for w, c in zip(warmup, parts)]
+            samples = jnp.concatenate(parts, axis=0)
+
+        if self.record_template is not None:
+            from ..core._record_array import NumericRecordArray
+            return NumericRecordArray.unflatten(samples, template=self.record_template)
+        return samples
 
     def __repr__(self) -> str:
         return (
             f"ApproximateDistribution("
-            f"algorithm={self._algorithm!r}, "
+            f"algorithm={self.algorithm!r}, "
             f"num_chains={self.num_chains}, "
             f"num_draws={self.num_draws}, "
             f"event_shape={self.event_shape})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Factory
+# ---------------------------------------------------------------------------
 
 
 def make_posterior(
@@ -162,11 +179,11 @@ def make_posterior(
     parents: tuple[Distribution, ...],
     algorithm: str,
     *,
-    inference_data: Any | None = None,
-    warmup_samples: list[Array] | None = None,
+    auxiliary: DataTree | None = None,
+    record_template: RecordTemplate | None = None,
     **meta: Any,
 ) -> ApproximateDistribution:
-    """Wrap chains into an ApproximateDistribution with provenance.
+    """Build an ApproximateDistribution with provenance.
 
     Parameters
     ----------
@@ -176,22 +193,27 @@ def make_posterior(
         Parent distributions for provenance tracking.
     algorithm : str
         Inference algorithm name (e.g. ``"tfp_nuts"``, ``"rwmh"``).
-    inference_data : InferenceData or None
-        ArviZ ``InferenceData`` from the inference run.
-    warmup_samples : list of Array or None
-        Per-chain warmup samples, same shapes as *chains*.
+    auxiliary : DataTree or None
+        Pre-built auxiliary DataTree (diagnostics, sample stats, warmup).
+        Inference methods are responsible for building this.
+    record_template : RecordTemplate or None
+        If provided, ``draws()`` returns named ``Record``.
     **meta
         Additional metadata stored in provenance.
 
     Returns
     -------
     ApproximateDistribution
-        Posterior with chain structure, InferenceData, and provenance.
+        Posterior with chain structure, auxiliary DataTree, and provenance.
     """
-    result = ApproximateDistribution(
-        chains, algorithm=algorithm, inference_data=inference_data,
-        warmup_samples=warmup_samples, name="posterior",
-    )
+    result = ApproximateDistribution(chains, name="posterior")
+
+    if auxiliary is not None:
+        result._auxiliary = auxiliary
+
+    if record_template is not None:
+        result._record_template = record_template
+
     result.with_source(
         Provenance(algorithm, parents=parents, metadata={"algorithm": algorithm, **meta})
     )

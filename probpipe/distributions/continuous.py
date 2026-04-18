@@ -12,7 +12,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ._tfp_base import TFPDistribution
 from ..core.distribution import (
-    ArrayDistribution,
+    NumericRecordDistribution,
     EmpiricalDistribution,
 )
 from ..core.provenance import Provenance
@@ -59,8 +59,8 @@ class Normal(TFPDistribution):
         Mean of the distribution.
     scale : array-like
         Standard deviation (> 0).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -68,12 +68,12 @@ class Normal(TFPDistribution):
         loc: ArrayLike,
         scale: ArrayLike,
         *,
-        name: str | None = None,
+        name: str,
     ):
         self._loc = jnp.asarray(loc, dtype=jnp.float32)
         self._scale = jnp.asarray(scale, dtype=jnp.float32)
         self._tfp_dist = tfd.Normal(loc=self._loc, scale=self._scale)
-        self._name = name
+        super().__init__(name=name)
 
     @property
     def loc(self) -> Array:
@@ -107,8 +107,8 @@ class Beta(TFPDistribution):
         First concentration parameter (> 0).
     beta : array-like
         Second concentration parameter (> 0).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -116,12 +116,12 @@ class Beta(TFPDistribution):
         alpha: ArrayLike,
         beta: ArrayLike,
         *,
-        name: str | None = None,
+        name: str,
     ):
         self._alpha = jnp.asarray(alpha, dtype=jnp.float32)
         self._beta = jnp.asarray(beta, dtype=jnp.float32)
         self._tfp_dist = tfd.Beta(concentration1=self._alpha, concentration0=self._beta)
-        self._name = name
+        super().__init__(name=name)
 
     @property
     def alpha(self) -> Array:
@@ -155,8 +155,8 @@ class Gamma(TFPDistribution):
         Shape parameter (> 0).
     rate : array-like
         Rate (inverse scale) parameter (> 0).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -164,12 +164,12 @@ class Gamma(TFPDistribution):
         concentration: ArrayLike,
         rate: ArrayLike,
         *,
-        name: str | None = None,
+        name: str,
     ):
         self._concentration = jnp.asarray(concentration, dtype=jnp.float32)
         self._rate = jnp.asarray(rate, dtype=jnp.float32)
         self._tfp_dist = tfd.Gamma(concentration=self._concentration, rate=self._rate)
-        self._name = name
+        super().__init__(name=name)
 
     @property
     def concentration(self) -> Array:
@@ -203,8 +203,8 @@ class InverseGamma(TFPDistribution):
         Shape parameter (> 0).
     scale : array-like
         Scale parameter (> 0).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -212,14 +212,14 @@ class InverseGamma(TFPDistribution):
         concentration: ArrayLike,
         scale: ArrayLike,
         *,
-        name: str | None = None,
+        name: str,
     ):
         self._concentration = jnp.asarray(concentration, dtype=jnp.float32)
         self._scale = jnp.asarray(scale, dtype=jnp.float32)
         self._tfp_dist = tfd.InverseGamma(
             concentration=self._concentration, scale=self._scale
         )
-        self._name = name
+        super().__init__(name=name)
 
     @property
     def concentration(self) -> Array:
@@ -251,19 +251,19 @@ class Exponential(TFPDistribution):
     ----------
     rate : array-like
         Rate parameter (> 0).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
         self,
         rate: ArrayLike,
         *,
-        name: str | None = None,
+        name: str,
     ):
         self._rate = jnp.asarray(rate, dtype=jnp.float32)
         self._tfp_dist = tfd.Exponential(rate=self._rate)
-        self._name = name
+        super().__init__(name=name)
 
     @property
     def rate(self) -> Array:
@@ -293,8 +293,8 @@ class LogNormal(TFPDistribution):
         Mean of the underlying normal distribution.
     scale : array-like
         Standard deviation of the underlying normal distribution (> 0).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -302,12 +302,12 @@ class LogNormal(TFPDistribution):
         loc: ArrayLike,
         scale: ArrayLike,
         *,
-        name: str | None = None,
+        name: str,
     ):
         self._loc = jnp.asarray(loc, dtype=jnp.float32)
         self._scale = jnp.asarray(scale, dtype=jnp.float32)
         self._tfp_dist = tfd.LogNormal(loc=self._loc, scale=self._scale)
-        self._name = name
+        super().__init__(name=name)
 
     @property
     def loc(self) -> Array:
@@ -343,8 +343,8 @@ class StudentT(TFPDistribution):
         Location parameter.
     scale : array-like
         Scale parameter (> 0).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -353,13 +353,13 @@ class StudentT(TFPDistribution):
         loc: ArrayLike,
         scale: ArrayLike,
         *,
-        name: str | None = None,
+        name: str,
     ):
         self._df = jnp.asarray(df, dtype=jnp.float32)
         self._loc = jnp.asarray(loc, dtype=jnp.float32)
         self._scale = jnp.asarray(scale, dtype=jnp.float32)
         self._tfp_dist = tfd.StudentT(df=self._df, loc=self._loc, scale=self._scale)
-        self._name = name
+        super().__init__(name=name)
 
     @property
     def df(self) -> Array:
@@ -397,8 +397,8 @@ class Uniform(TFPDistribution):
         Lower bound.
     high : array-like
         Upper bound (> low).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -406,12 +406,12 @@ class Uniform(TFPDistribution):
         low: ArrayLike,
         high: ArrayLike,
         *,
-        name: str | None = None,
+        name: str,
     ):
         self._low = jnp.asarray(low, dtype=jnp.float32)
         self._high = jnp.asarray(high, dtype=jnp.float32)
         self._tfp_dist = tfd.Uniform(low=self._low, high=self._high)
-        self._name = name
+        super().__init__(name=name)
 
     @property
     def low(self) -> Array:
@@ -445,8 +445,8 @@ class Cauchy(TFPDistribution):
         Location parameter.
     scale : array-like
         Scale parameter (> 0).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -454,12 +454,12 @@ class Cauchy(TFPDistribution):
         loc: ArrayLike,
         scale: ArrayLike,
         *,
-        name: str | None = None,
+        name: str,
     ):
         self._loc = jnp.asarray(loc, dtype=jnp.float32)
         self._scale = jnp.asarray(scale, dtype=jnp.float32)
         self._tfp_dist = tfd.Cauchy(loc=self._loc, scale=self._scale)
-        self._name = name
+        super().__init__(name=name)
 
     @property
     def loc(self) -> Array:
@@ -493,8 +493,8 @@ class Laplace(TFPDistribution):
         Location parameter.
     scale : array-like
         Scale parameter (> 0).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -502,12 +502,12 @@ class Laplace(TFPDistribution):
         loc: ArrayLike,
         scale: ArrayLike,
         *,
-        name: str | None = None,
+        name: str,
     ):
         self._loc = jnp.asarray(loc, dtype=jnp.float32)
         self._scale = jnp.asarray(scale, dtype=jnp.float32)
         self._tfp_dist = tfd.Laplace(loc=self._loc, scale=self._scale)
-        self._name = name
+        super().__init__(name=name)
 
     @property
     def loc(self) -> Array:
@@ -539,19 +539,19 @@ class HalfNormal(TFPDistribution):
     ----------
     scale : array-like
         Scale parameter (> 0).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
         self,
         scale: ArrayLike,
         *,
-        name: str | None = None,
+        name: str,
     ):
         self._scale = jnp.asarray(scale, dtype=jnp.float32)
         self._tfp_dist = tfd.HalfNormal(scale=self._scale)
-        self._name = name
+        super().__init__(name=name)
 
     @property
     def scale(self) -> Array:
@@ -581,8 +581,8 @@ class HalfCauchy(TFPDistribution):
         Location parameter.
     scale : array-like
         Scale parameter (> 0).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -590,12 +590,12 @@ class HalfCauchy(TFPDistribution):
         loc: ArrayLike,
         scale: ArrayLike,
         *,
-        name: str | None = None,
+        name: str,
     ):
         self._loc = jnp.asarray(loc, dtype=jnp.float32)
         self._scale = jnp.asarray(scale, dtype=jnp.float32)
         self._tfp_dist = tfd.HalfCauchy(loc=self._loc, scale=self._scale)
-        self._name = name
+        super().__init__(name=name)
 
     @property
     def loc(self) -> Array:
@@ -629,8 +629,8 @@ class Pareto(TFPDistribution):
         Tail index (shape parameter, > 0).
     scale : array-like
         Minimum value (scale parameter, > 0).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -638,14 +638,14 @@ class Pareto(TFPDistribution):
         concentration: ArrayLike,
         scale: ArrayLike,
         *,
-        name: str | None = None,
+        name: str,
     ):
         self._concentration = jnp.asarray(concentration, dtype=jnp.float32)
         self._scale = jnp.asarray(scale, dtype=jnp.float32)
         self._tfp_dist = tfd.Pareto(
             concentration=self._concentration, scale=self._scale
         )
-        self._name = name
+        super().__init__(name=name)
 
     @property
     def concentration(self) -> Array:
@@ -683,8 +683,8 @@ class TruncatedNormal(TFPDistribution):
         Lower truncation bound.
     high : array-like
         Upper truncation bound (> low).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -694,7 +694,7 @@ class TruncatedNormal(TFPDistribution):
         low: ArrayLike,
         high: ArrayLike,
         *,
-        name: str | None = None,
+        name: str,
     ):
         self._loc = jnp.asarray(loc, dtype=jnp.float32)
         self._scale = jnp.asarray(scale, dtype=jnp.float32)
@@ -703,7 +703,7 @@ class TruncatedNormal(TFPDistribution):
         self._tfp_dist = tfd.TruncatedNormal(
             loc=self._loc, scale=self._scale, low=self._low, high=self._high
         )
-        self._name = name
+        super().__init__(name=name)
 
     @property
     def loc(self) -> Array:

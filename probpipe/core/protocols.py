@@ -97,12 +97,29 @@ class SupportsSampling(Protocol):
     """Distribution that can produce samples via ``_sample(key, sample_shape)``.
 
     Only requires ``_sample(key, sample_shape)``; concrete classes choose
-    their own implementation strategy (vmap over ``_sample_one``, TFP
-    batched sampling, index resampling, etc.).
+    their own implementation strategy (TFP batched sampling, index
+    resampling, vmap over a local single-draw helper, etc.).
 
     Does NOT extend :class:`SupportsExpectation` — not all samplable
     distributions support array-valued expectations (e.g., random functions).
     Classes that support both should inherit both protocols.
+
+    Return-type convention
+    ----------------------
+    The shape of the return value depends on whether the distribution
+    emits structured samples and whether the caller asks for a batch:
+
+    =====================  =======================  =========================================
+    Distribution kind      ``sample_shape == ()``   ``sample_shape == (S1, S2, ...)``
+    =====================  =======================  =========================================
+    Numeric (raw array)    ``Array[*event_shape]``  ``Array[*sample_shape, *event_shape]``
+    ``RecordDistribution`` ``Record`` / ``NumericRecord``  ``NumericRecordArray(batch_shape=sample_shape)``
+    =====================  =======================  =========================================
+
+    To draw a single sample, call ``_sample(key, ())``. Implementations
+    that find it clearer to factor out a single-draw helper should
+    define it as a private method (e.g. ``_one_bootstrap``) and have
+    ``_sample`` dispatch on ``sample_shape`` internally.
     """
 
     _sampling_cost: ClassVar[str]  # "low", "medium", "high"
@@ -125,8 +142,7 @@ class SupportsSampling(Protocol):
         Returns
         -------
         Any
-            A single sample when ``sample_shape == ()``, or a batched
-            representation when ``sample_shape`` is non-empty.
+            See class-level "Return-type convention".
         """
         ...
 
@@ -229,18 +245,20 @@ class SupportsConditioning(Protocol):
     def _condition_on(self, observed: Any, /, **kwargs: Any) -> Any: ...
 
 
-# ---------------------------------------------------------------------------
-# Named components (joint distributions)
-# ---------------------------------------------------------------------------
+def protocols_supported_by_all(
+    leaves: list, candidates: tuple[type, ...],
+) -> tuple[type, ...]:
+    """Return the subset of *candidates* that every leaf satisfies.
 
-@runtime_checkable
-class SupportsNamedComponents(Protocol):
-    """Distribution with named sub-components (e.g., joint distributions)."""
-
-    @property
-    def component_names(self) -> tuple: ...
-
-    def __getitem__(self, key: Any) -> Any: ...
+    Used by dynamic-protocol factories (``ProductDistribution``,
+    ``SequentialJointDistribution``, ``TransformedDistribution``,
+    ``_RecordDistributionView``, ``FlattenedView``) when building a
+    cached subclass whose protocol bases track the capabilities of the
+    underlying distribution(s). Pass in the leaves to check and the
+    tuple of ``SupportsFoo`` protocols to test against; get back the
+    protocols that are satisfied by every leaf, in the given order.
+    """
+    return tuple(p for p in candidates if all(isinstance(l, p) for l in leaves))
 
 
 __all__ = [
@@ -253,5 +271,5 @@ __all__ = [
     "SupportsVariance",
     "SupportsCovariance",
     "SupportsConditioning",
-    "SupportsNamedComponents",
+    "protocols_supported_by_all",
 ]

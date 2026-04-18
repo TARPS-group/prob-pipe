@@ -7,11 +7,12 @@ import pytest
 
 from probpipe import (
     JointEmpirical,
-    DistributionView,
     EmpiricalDistribution,
-    JointDistribution,
+    Record,
+    RecordDistribution,
+    RecordArray,
 )
-from probpipe.core.distribution import PyTreeArrayDistribution
+from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.node import WorkflowFunction
 from probpipe import condition_on, log_prob, mean, sample, variance
 
@@ -28,8 +29,7 @@ class TestConstruction:
             y=jnp.array([4.0, 5.0, 6.0]),
         )
         assert isinstance(je, JointEmpirical)
-        assert isinstance(je, JointDistribution)
-        assert isinstance(je, PyTreeArrayDistribution)
+        assert isinstance(je, RecordDistribution)
 
     def test_component_names(self):
         je = JointEmpirical(
@@ -107,15 +107,15 @@ class TestConstruction:
 
 class TestSampling:
 
-    def test_sample_returns_dict(self):
+    def test_sample_returns_values(self):
         je = JointEmpirical(
             x=jnp.array([1.0, 2.0, 3.0]),
             y=jnp.array([4.0, 5.0, 6.0]),
         )
         key = jax.random.PRNGKey(0)
         s = sample(je, key=key)
-        assert isinstance(s, dict)
-        assert set(s.keys()) == {"x", "y"}
+        assert isinstance(s, (Record, RecordArray))
+        assert set(s.fields) == {"x", "y"}
         assert s["x"].shape == ()
         assert s["y"].shape == ()
 
@@ -126,7 +126,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(1)
         s = sample(je, key=key, sample_shape=(10,))
-        assert isinstance(s, dict)
+        assert isinstance(s, (Record, RecordArray))
         assert s["x"].shape == (10,)
         assert s["y"].shape == (10,)
 
@@ -178,7 +178,7 @@ class TestViews:
             y=jnp.array([3.0, 4.0]),
         )
         view = je["x"]
-        assert isinstance(view, DistributionView)
+        assert isinstance(view, _RecordDistributionView)
 
     def test_view_sample(self):
         je = JointEmpirical(
@@ -211,7 +211,7 @@ class TestMoments:
             y=jnp.array([10.0, 20.0]),
         )
         m = mean(je)
-        assert isinstance(m, dict)
+        assert isinstance(m, Record)
         np.testing.assert_allclose(m["x"], 2.0, atol=1e-5)
         np.testing.assert_allclose(m["y"], 15.0, atol=1e-5)
 
@@ -221,7 +221,7 @@ class TestMoments:
             weights=jnp.array([0.25, 0.75]),
         )
         m = mean(je)
-        assert isinstance(m, dict)
+        assert isinstance(m, Record)
         np.testing.assert_allclose(m["x"], 7.5, atol=1e-5)
 
     def test_variance_uniform(self):
@@ -229,9 +229,29 @@ class TestMoments:
             x=jnp.array([0.0, 2.0]),
         )
         v = variance(je)
-        assert isinstance(v, dict)
+        assert isinstance(v, Record)
         np.testing.assert_allclose(v["x"], 1.0, atol=1e-5)
 
+
+
+# ---------------------------------------------------------------------------
+# LogProb
+# ---------------------------------------------------------------------------
+
+class TestLogProb:
+
+    def test_isinstance_log_prob(self):
+        from probpipe import SupportsLogProb
+        je = JointEmpirical(x=jnp.array([1.0, 2.0, 3.0]),
+                            y=jnp.array([4.0, 5.0, 6.0]))
+        assert isinstance(je, SupportsLogProb)
+
+    def test_log_prob_finite(self):
+        je = JointEmpirical(x=jnp.array([1.0, 2.0, 3.0]),
+                            y=jnp.array([4.0, 5.0, 6.0]))
+        s = sample(je, key=jax.random.PRNGKey(0))
+        lp = log_prob(je, s)
+        assert jnp.isfinite(lp)
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +298,7 @@ class TestConditionOn:
         )
         cond = condition_on(je, x=jnp.array(1.0))
         s = sample(cond, key=jax.random.PRNGKey(0), sample_shape=(5,))
-        assert set(s.keys()) == {"y"}
+        assert set(s.fields) == {"y"}
         assert s["y"].shape == (5,)
 
     def test_condition_on_preserves_correlation(self):

@@ -1,4 +1,4 @@
-"""Tests for PyTreeArrayDistribution, FlattenedView, and ArrayDistribution pytree interface (Phase 2)."""
+"""Tests for NumericRecordDistribution, FlattenedView, and shape semantics."""
 
 import jax
 import jax.numpy as jnp
@@ -8,9 +8,8 @@ import pytest
 
 from probpipe import (
     Distribution,
-    PyTreeArrayDistribution,
-    ArrayDistribution,
-    ArrayEmpiricalDistribution,
+    NumericRecordDistribution,
+    NumericEmpiricalDistribution,
     FlattenedView,
     Normal,
     MultivariateNormal,
@@ -31,7 +30,7 @@ def key():
 
 @pytest.fixture
 def scalar_normal():
-    return Normal(loc=0.0, scale=1.0)
+    return Normal(loc=0.0, scale=1.0, name="x")
 
 
 @pytest.fixture
@@ -39,6 +38,7 @@ def vector_mvn():
     return MultivariateNormal(
         loc=jnp.zeros(3),
         cov=jnp.eye(3),
+        name="z",
     )
 
 
@@ -48,6 +48,7 @@ def matrix_mvn():
     return MultivariateNormal(
         loc=jnp.zeros(4),
         cov=jnp.eye(4),
+        name="w",
     )
 
 
@@ -57,16 +58,16 @@ def matrix_mvn():
 
 class TestHierarchy:
     def test_arraydist_is_pytreearraydist(self, scalar_normal):
-        assert isinstance(scalar_normal, PyTreeArrayDistribution)
+        assert isinstance(scalar_normal, NumericRecordDistribution)
 
     def test_arraydist_is_distribution(self, scalar_normal):
         assert isinstance(scalar_normal, Distribution)
 
     def test_pytreearraydist_is_distribution(self, scalar_normal):
-        """ArrayDistribution inherits PyTreeArrayDistribution which inherits Distribution."""
+        """NumericRecordDistribution inherits NumericRecordDistribution which inherits Distribution."""
         assert isinstance(scalar_normal, Distribution)
-        assert isinstance(scalar_normal, PyTreeArrayDistribution)
-        assert isinstance(scalar_normal, ArrayDistribution)
+        assert isinstance(scalar_normal, NumericRecordDistribution)
+        assert isinstance(scalar_normal, NumericRecordDistribution)
 
 
 # ---------------------------------------------------------------------------
@@ -79,9 +80,8 @@ class TestDistributionBase:
     def test_log_prob_raises_by_default(self):
         """Distribution[T] without SupportsLogProb raises TypeError."""
         class StubDist(Distribution):
-            def _sample_one(self, key):
-                return jnp.array(0.0)
-        d = StubDist()
+            pass
+        d = StubDist(name="stub")
         with pytest.raises(TypeError, match="does not support log_prob"):
             log_prob(d, jnp.array(0.0))
 
@@ -100,11 +100,12 @@ class TestDistributionBase:
         r = repr(n)
         assert "my_normal" in r
 
-    def test_repr_without_name(self):
-        """Distribution.__repr__ works without a name."""
-        n = Normal(loc=0.0, scale=1.0)
+    def test_repr_includes_class_and_name(self):
+        """Distribution.__repr__ includes both the class name and the name."""
+        n = Normal(loc=0.0, scale=1.0, name="x")
         r = repr(n)
         assert "Normal" in r
+        assert "x" in r
 
     def test_from_distribution_on_base_class(self, scalar_normal):
         """from_distribution is accessible on Distribution[T] base."""
@@ -114,7 +115,7 @@ class TestDistributionBase:
 
 
 # ---------------------------------------------------------------------------
-# ArrayDistribution trivial pytree interface
+# NumericRecordDistribution trivial pytree interface
 # ---------------------------------------------------------------------------
 
 class TestArrayDistributionPyTreeInterface:
@@ -126,11 +127,11 @@ class TestArrayDistributionPyTreeInterface:
         td = vector_mvn.treedef
         assert td == jax.tree.structure(None)
 
-    def test_event_shapes_equals_event_shape(self, scalar_normal):
-        assert scalar_normal.event_shapes == scalar_normal.event_shape
+    def test_event_shapes_dict(self, scalar_normal):
+        assert scalar_normal.event_shapes == {"x": ()}
 
     def test_event_shapes_vector(self, vector_mvn):
-        assert vector_mvn.event_shapes == (3,)
+        assert vector_mvn.event_shapes == {"z": (3,)}
         assert vector_mvn.event_shape == (3,)
 
     def test_flat_event_shapes_scalar(self, scalar_normal):
@@ -148,7 +149,7 @@ class TestArrayDistributionPyTreeInterface:
 
 
 # ---------------------------------------------------------------------------
-# flatten_value / unflatten_value on ArrayDistribution
+# flatten_value / unflatten_value on NumericRecordDistribution
 # ---------------------------------------------------------------------------
 
 class TestArrayDistFlattenUnflatten:
@@ -187,7 +188,7 @@ class TestFlattenedView:
     def test_as_flat_returns_flattened_view(self, vector_mvn):
         flat_dist = vector_mvn.as_flat_distribution()
         assert isinstance(flat_dist, FlattenedView)
-        assert isinstance(flat_dist, ArrayDistribution)
+        assert isinstance(flat_dist, NumericRecordDistribution)
 
     def test_event_shape(self, vector_mvn):
         flat_dist = vector_mvn.as_flat_distribution()
@@ -253,11 +254,22 @@ class TestFlattenedView:
 # ---------------------------------------------------------------------------
 
 class TestSupports:
-    def test_supports_delegates_to_support(self, scalar_normal):
-        """For ArrayDistribution, supports should equal support."""
+    def test_supports_is_per_field_dict(self, scalar_normal):
+        """supports returns a per-field dict of constraints."""
         from probpipe import real
-        assert scalar_normal.supports == scalar_normal.support
-        assert scalar_normal.supports == real
+        result = scalar_normal.supports
+        assert isinstance(result, dict)
+        assert len(result) == 1
+        # The single field's constraint should match .support
+        assert list(result.values())[0] == scalar_normal.support
+        assert list(result.values())[0] == real
+
+    def test_dtypes_is_per_field_dict(self, scalar_normal):
+        """dtypes returns a per-field dict of dtypes."""
+        result = scalar_normal.dtypes
+        assert isinstance(result, dict)
+        assert len(result) == 1
+        assert list(result.values())[0] == scalar_normal.dtype
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +279,7 @@ class TestSupports:
 class TestFlattenedViewEmpirical:
     def test_empirical_flatten_roundtrip(self, key):
         samples = jax.random.normal(key, shape=(100, 5))
-        emp = ArrayEmpiricalDistribution(samples)
+        emp = NumericEmpiricalDistribution(samples)
 
         flat_dist = emp.as_flat_distribution()
         assert flat_dist.event_shape == (5,)

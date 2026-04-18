@@ -194,7 +194,7 @@ class GaussianRandomFunction(ArrayRandomFunction):
         # -- Fully marginal ---------------------------------------------------
         if not joint_inputs and not joint_outputs:
             variance = self.predict_variance(X)
-            return Normal(loc=mean, scale=jnp.sqrt(variance))
+            return Normal(loc=mean, scale=jnp.sqrt(variance), name="grf_prediction")
 
         # -- At least one joint axis — need covariance ------------------------
         cov = self.predict_covariance(
@@ -208,7 +208,7 @@ class GaussianRandomFunction(ArrayRandomFunction):
         if joint_inputs and joint_outputs:
             flat_dim = n * d_out if self._output_shape else n
             flat_mean = mean.reshape(*extra_batch, flat_dim)
-            return MultivariateNormal(loc=flat_mean, scale_tril=scale_tril)
+            return MultivariateNormal(loc=flat_mean, scale_tril=scale_tril, name="grf_prediction")
 
         if joint_inputs and not joint_outputs:
             # Joint over n, independent over outputs.
@@ -221,12 +221,12 @@ class GaussianRandomFunction(ArrayRandomFunction):
                 mean_t = jnp.moveaxis(mean, source_axes, dest_axes)
             else:
                 mean_t = mean  # (*eb, n) — nothing to rearrange
-            return MultivariateNormal(loc=mean_t, scale_tril=scale_tril)
+            return MultivariateNormal(loc=mean_t, scale_tril=scale_tril, name="grf_prediction")
 
         # joint_outputs only (not joint_inputs)
         # mean: (*eb, n, *out) → flatten output dims: (*eb, n, d_out)
         flat_mean = mean.reshape(*extra_batch, n, d_out)
-        return MultivariateNormal(loc=flat_mean, scale_tril=scale_tril)
+        return MultivariateNormal(loc=flat_mean, scale_tril=scale_tril, name="grf_prediction")
 
 
 # ---------------------------------------------------------------------------
@@ -382,25 +382,6 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
 
     # -- Function sampling (finite-dimensional) -----------------------------
 
-    def _sample_one(self, key: PRNGKey) -> Callable[[ArrayLike], Array]:
-        """Draw a single function realization via weight-space sampling.
-
-        Returns a callable ``f(X) -> Array`` that evaluates the linear
-        model at arbitrary inputs using a single weight draw.
-        """
-        w = self._weights._sample(key)  # (d_w,)
-        bias = self._bias
-
-        # Capture feature_map in closure for consistency across calls.
-        feature_map = self._feature_map
-
-        def f(X: ArrayLike) -> Array:
-            X = jnp.asarray(X, dtype=jnp.float32)
-            phi = feature_map(X)  # (*eb, n, [*out,] d_w)
-            return bias + jnp.einsum("...w,w->...", phi, w)
-
-        return f
-
     def _sample(
         self,
         key: PRNGKey,
@@ -408,13 +389,27 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
     ) -> Callable[[ArrayLike], Array]:
         """Draw function realization(s) via weight-space sampling.
 
-        When ``sample_shape`` is non-empty, returns a single callable
-        that evaluates all draws at once, accepting ``X`` with shape
+        For ``sample_shape == ()`` returns a single callable
+        ``f(X) -> Array`` that evaluates the linear model at arbitrary
+        inputs using a single weight draw.
+
+        For non-empty ``sample_shape`` returns a single callable that
+        evaluates all draws at once, accepting ``X`` with shape
         ``(*extra_batch, n, *input_shape)`` and returning array of shape
         ``(*sample_shape, *extra_batch, n, *output_shape)``.
         """
+        bias = self._bias
+        feature_map = self._feature_map
+
         if sample_shape == ():
-            return self._sample_one(key)
+            w = self._weights._sample(key)  # (d_w,)
+
+            def f_one(X: ArrayLike) -> Array:
+                X = jnp.asarray(X, dtype=jnp.float32)
+                phi = feature_map(X)  # (*eb, n, [*out,] d_w)
+                return bias + jnp.einsum("...w,w->...", phi, w)
+
+            return f_one
         n_samples = prod(sample_shape)
         w_samples = self._weights._sample(key, sample_shape=(n_samples,))  # (n, d_w)
         bias = self._bias

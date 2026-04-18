@@ -9,7 +9,7 @@ import scipy.stats
 from probpipe import (
     Normal,
     MultivariateNormal,
-    ArrayEmpiricalDistribution,
+    NumericEmpiricalDistribution,
     EmpiricalDistribution,
     BootstrapDistribution,
     ProductDistribution,
@@ -24,23 +24,23 @@ from probpipe.core import ops
 
 @pytest.fixture
 def normal():
-    return Normal(loc=2.0, scale=0.5)
+    return Normal(loc=2.0, scale=0.5, name="x")
 
 
 @pytest.fixture
 def mvn():
-    return MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3))
+    return MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
 
 
 @pytest.fixture
 def empirical():
     samples = jax.random.normal(jax.random.PRNGKey(0), (200, 2))
-    return ArrayEmpiricalDistribution(samples)
+    return NumericEmpiricalDistribution(samples)
 
 
 @pytest.fixture
 def joint():
-    return ProductDistribution(x=Normal(0, 1), y=Normal(1, 2))
+    return ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
 
 
 # ---------------------------------------------------------------------------
@@ -144,23 +144,21 @@ class TestMean:
     def test_raises_without_supports_mean(self):
         """mean op raises TypeError for distributions without SupportsMean."""
         from probpipe.core.protocols import SupportsSampling, SupportsExpectation
-        from probpipe.core.distribution import _vmap_sample, _mc_expectation, ArrayDistribution
+        from probpipe.core.distribution import _mc_expectation, NumericRecordDistribution
 
-        class NoMeanDist(ArrayDistribution, SupportsSampling, SupportsExpectation):
+        class NoMeanDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"
             _preferred_orchestration = None
             @property
             def event_shape(self):
                 return ()
-            def _sample_one(self, key):
-                return jax.random.normal(key)
             def _sample(self, key, sample_shape=()):
-                return _vmap_sample(self, key, sample_shape)
+                return jax.random.normal(key, sample_shape)
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
                 return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
 
         with pytest.raises(TypeError, match="does not support mean"):
-            ops.mean(NoMeanDist())
+            ops.mean(NoMeanDist(name="test"))
 
 
 # ---------------------------------------------------------------------------
@@ -223,8 +221,8 @@ class TestConditionOn:
 
     def test_condition_sequential(self):
         sjd = SequentialJointDistribution(
-            x=Normal(0, 1),
-            y=lambda x: Normal(loc=x, scale=1.0),
+            x=Normal(0, 1, name="x"),
+            y=lambda x: Normal(loc=x, scale=1.0, name="y"),
         )
         conditioned = ops.condition_on(sjd, x=jnp.array(3.0))
         assert conditioned.component_names == ("y",)
@@ -293,3 +291,55 @@ class TestTopLevelImports:
     def test_import_condition_on(self):
         from probpipe import condition_on as co
         assert callable(co)
+
+
+# ---------------------------------------------------------------------------
+# _split_data_kwargs
+# ---------------------------------------------------------------------------
+
+class TestSplitDataKwargs:
+    """Unit tests for the _split_data_kwargs helper."""
+
+    def test_empty_kwargs(self):
+        from probpipe.core.ops import _split_data_kwargs
+        dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"))
+        data, inference = _split_data_kwargs(dist, {})
+        assert data == {}
+        assert inference == {}
+
+    def test_all_data_kwargs(self):
+        from probpipe.core.ops import _split_data_kwargs
+        dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"), y=Normal(0.0, 1.0, name="y"))
+        data, inference = _split_data_kwargs(
+            dist, {"x": jnp.array(1.0), "y": jnp.array(2.0)},
+        )
+        assert set(data.keys()) == {"x", "y"}
+        assert inference == {}
+
+    def test_all_inference_kwargs(self):
+        from probpipe.core.ops import _split_data_kwargs
+        dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"))
+        data, inference = _split_data_kwargs(
+            dist, {"num_results": 100, "random_seed": 42},
+        )
+        assert data == {}
+        assert set(inference.keys()) == {"num_results", "random_seed"}
+
+    def test_mixed_kwargs(self):
+        from probpipe.core.ops import _split_data_kwargs
+        dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"), y=Normal(0.0, 1.0, name="y"))
+        data, inference = _split_data_kwargs(
+            dist, {"x": jnp.array(1.0), "num_results": 100},
+        )
+        assert set(data.keys()) == {"x"}
+        assert set(inference.keys()) == {"num_results"}
+
+    def test_no_component_names(self):
+        """Distribution without component_names → all kwargs are inference."""
+        from probpipe.core.ops import _split_data_kwargs
+        dist = Normal(0.0, 1.0, name="x")
+        data, inference = _split_data_kwargs(
+            dist, {"num_results": 100},
+        )
+        assert data == {}
+        assert set(inference.keys()) == {"num_results"}

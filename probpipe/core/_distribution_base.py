@@ -8,8 +8,14 @@ Provides:
 
 from __future__ import annotations
 
+import copy as _copy
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from xarray import DataTree
+
+    from .record import RecordTemplate
 
 import jax
 import jax.numpy as jnp
@@ -52,10 +58,22 @@ class Distribution[T](ABC):
     Abstract base for all ProbPipe distributions, parameterized by
     value type ``T``.
 
+    Every distribution has a ``name``.  Leaf distributions (Normal, Gamma,
+    etc.) require an explicit ``name=`` argument; composite distributions
+    (ProductDistribution, EmpiricalDistribution, etc.) auto-generate a
+    name from their components when one is not provided.
+
     Provides naming, provenance, conversion, and approximation tracking.
     Sampling and expectation capabilities are provided by the
     :class:`~probpipe.core.protocols.SupportsSampling` protocol.
     """
+
+    def __init__(self, *, name: str):
+        if not isinstance(name, str) or not name:
+            raise TypeError(
+                f"{type(self).__name__} requires a non-empty name= argument"
+            )
+        self._name = name
 
     # -- approximation tracking ---------------------------------------------
 
@@ -78,11 +96,38 @@ class Distribution[T](ABC):
             self._validation_results: list[dict] = []
         return self._validation_results
 
+    # -- values template (deprecated on base; now lives on RecordDistribution)
+    # Kept here temporarily for backward compatibility during migration.
+
+    @property
+    def record_template(self) -> RecordTemplate | None:
+        """Structural template for this distribution's samples, or ``None``.
+
+        .. deprecated::
+            This property is migrating to
+            :class:`~probpipe.core._record_distribution.RecordDistribution`.
+            Non-Record distributions should not rely on this.
+        """
+        return getattr(self, "_record_template", None)
+
+    # -- auxiliary information ----------------------------------------------
+
+    @property
+    def auxiliary(self) -> DataTree | None:
+        """An xarray ``DataTree`` of auxiliary information (diagnostics,
+        sample statistics, algorithm metadata), or ``None``.
+
+        Populated by inference methods.  Follows ArviZ group conventions
+        (``posterior``, ``sample_stats``, ``warmup``, etc.) with metadata
+        stored as DataTree attributes.
+        """
+        return getattr(self, "_auxiliary", None)
+
     # -- naming & provenance ------------------------------------------------
 
     @property
-    def name(self) -> str | None:
-        return getattr(self, "_name", None)
+    def name(self) -> str:
+        return self._name
 
     @property
     def source(self) -> Provenance | None:
@@ -97,6 +142,29 @@ class Distribution[T](ABC):
             )
         self._source = source
         return self
+
+    def renamed(self, new_name: str) -> Distribution:
+        """Return a shallow copy with a different name.
+
+        The copy shares all internal state but has a new ``name``.
+        Provenance is tracked: the copy's ``source`` records the rename
+        operation and points to the original as parent.  Any cached
+        ``record_template`` is cleared so it regenerates with the new
+        name (relevant for ``TFPDistribution``).
+        """
+        clone = _copy.copy(self)
+        object.__setattr__(clone, "_name", new_name)
+        object.__setattr__(clone, "_record_template", None)
+        # Bypass write-once guard so rename provenance can be attached
+        object.__setattr__(clone, "_source", None)
+        clone.with_source(
+            Provenance(
+                "renamed",
+                parents=(self,),
+                metadata={"old_name": self.name, "new_name": new_name},
+            )
+        )
+        return clone
 
     # -- repr ---------------------------------------------------------------
 

@@ -84,7 +84,7 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
     def event_shape(self) -> tuple[int, ...]:
         return (self._num_params,)
 
-    # -- SupportsNamedComponents interface ----------------------------------
+    # -- Named components interface ------------------------------------------
 
     @property
     def component_names(self) -> tuple[str, ...]:

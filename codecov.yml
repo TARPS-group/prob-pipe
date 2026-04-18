@@ -2,7 +2,9 @@ coverage:
   status:
     project:
       default:
-        threshold: 1%
+        # Allow small drops during large refactors. Absolute coverage
+        # should still land in the 80s.
+        threshold: 2%
     patch:
       default:
         target: 70%

@@ -215,19 +215,35 @@ class IncrementalConditioner[P, D](Module):
         """The underlying step function, for use with ``iterate``."""
         return self._step
 
-    def update(self, data: D) -> Distribution[P]:
+    def update(self, data: D | None = None, **kwargs) -> Distribution[P]:
         """Condition on new data, updating the current posterior.
+
+        Data can be passed positionally, as ``data=``, or as named
+        keyword arguments that are bundled into a ``Record``::
+
+            conditioner.update(y_obs)                # positional / data=
+            conditioner.update(X=new_X, y=new_y)     # named kwargs → Record
 
         Parameters
         ----------
-        data : D
+        data : D, optional
             New observed data to condition on.
+        **kwargs
+            Named data fields, bundled into a ``Record`` automatically.
+            Cannot be combined with *data*.
 
         Returns
         -------
         Distribution[P]
             The updated posterior distribution.
         """
+        if kwargs:
+            if data is not None:
+                raise ValueError(
+                    "Cannot provide both `data` and named data kwargs"
+                )
+            from ..core.record import Record
+            data = Record(kwargs)
         posterior = self._step(self._curr_posterior, data)
         self._curr_posterior = posterior
         return posterior

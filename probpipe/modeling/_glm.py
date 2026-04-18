@@ -2,97 +2,150 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
+from ..core.record import Record, RecordTemplate
 from ..custom_types import Array, ArrayLike, PRNGKey
 from .._utils import _auto_key
 
 __all__ = ["GLMLikelihood"]
 
 
+def _coerce_array(x: ArrayLike | Record) -> jnp.ndarray:
+    """Extract a JAX array from a Record, RecordArray, or raw array-like.
+
+    Single-field Record/RecordArray: extract the field.
+    Multi-field: stack fields into a vector (preserving leading batch dims).
+    """
+    from .._utils import prod
+    from ..core._record_array import RecordArray
+    if isinstance(x, jnp.ndarray):
+        return x
+    if isinstance(x, (Record, RecordArray)):
+        fields = x.fields
+        if len(fields) == 1:
+            return jnp.asarray(x[fields[0]])
+        arrays = [jnp.asarray(x[f]) for f in fields]
+        return jnp.stack(arrays, axis=-1)
+    return jnp.asarray(x)
+
+
 class GLMLikelihood:
     """Wraps a TFP GLM family + design matrix into a Likelihood and GenerativeLikelihood.
 
-    Given a TFP GLM family (e.g., ``tfp.glm.Poisson()``) and a design
-    matrix ``X``, this class computes the linear predictor
-    ``X @ params`` and delegates to the family for log-probability
-    and data generation.
+    The design matrix ``X`` can be provided at construction (default)
+    or per-call via ``data=Record(X=..., y=...)``.  When ``data``
+    is a ``Record`` with ``X`` and ``y`` fields, both are extracted;
+    otherwise ``data`` is treated as the response and the stored ``X``
+    is used.
 
-    Satisfies both the ``Likelihood[Array, Array]`` and
-    ``GenerativeLikelihood[Array, Array]`` protocols.
+    This enables joint bootstrapping of covariates and response::
+
+        Xy = Record(X=X_design, y=y_observed)
+        bootstrap = BootstrapReplicateDistribution(EmpiricalDistribution(Xy))
+        bagged = condition_on(model, bootstrap, n_broadcast_samples=16)
 
     Parameters
     ----------
     family : tfp.glm.ExponentialFamily
         TFP GLM family (e.g., ``Poisson()``, ``Bernoulli()``,
         ``NegativeBinomial()``).
-    x : array-like
-        Design matrix of shape ``(n, p)`` or covariate vector of shape
-        ``(n,)``.  If 1-D, an intercept column is **not** added
-        automatically — include it in ``x`` or in the parameter vector
-        as needed.
+    x : array-like or None
+        Default design matrix of shape ``(n, p)``.  If ``None``, must
+        be provided per-call via ``data=Record(X=..., y=...)``.
     seed : int
         Random seed for data generation.
-
-    Examples
-    --------
-    >>> import tensorflow_probability.substrates.jax.glm as tfp_glm
-    >>> lik = GLMLikelihood(tfp_glm.Poisson(), x=X_design)
-    >>> lik.log_likelihood(params, y_obs)  # scalar log-prob
-    >>> lik.generate_data(params, n_samples=100)  # Poisson draws
     """
 
     def __init__(
         self,
         family: tfp_glm.ExponentialFamily,
-        x: ArrayLike,
+        x: ArrayLike | None = None,
         *,
         seed: int = 0,
     ):
         self.family = family
-        self._x = jnp.atleast_2d(jnp.asarray(x, dtype=jnp.float32))
-        if self._x.ndim == 2 and self._x.shape[0] == 1 and self._x.shape[1] > 1:
-            # atleast_2d turned (n,) into (1, n) — transpose to (n, 1)
-            self._x = self._x.T
+        if x is not None:
+            self._x = jnp.atleast_2d(jnp.asarray(x, dtype=jnp.float32))
+            if self._x.ndim == 2 and self._x.shape[0] == 1 and self._x.shape[1] > 1:
+                self._x = self._x.T
+        else:
+            self._x = None
         self._key = jax.random.PRNGKey(seed)
 
-    def log_likelihood(self, params: Array, data: Array) -> float:
-        """Log-likelihood: sum of per-observation log-probs."""
-        eta = self._x @ params
-        return jnp.sum(self.family.log_prob(data, eta))
+    @property
+    def data_template(self) -> RecordTemplate:
+        """Named structure of GLM data: ``X`` (design matrix) and ``y`` (response)."""
+        return RecordTemplate(X=(0, 0), y=(0,))
+
+    def _extract_X_y(self, data):
+        """Extract design matrix and response from data.
+
+        Resolution order:
+
+        1. ``data = Record(X=..., y=...)`` → extract both fields.
+        2. ``data`` is an array with more columns than ``p`` (the number
+           of coefficients, inferred from the stored ``X``) → last column
+           is the response, preceding columns are the design matrix.
+        3. ``data`` is a response array → use the stored ``X``.
+        """
+        if isinstance(data, Record) and "X" in data and "y" in data:
+            return jnp.asarray(data["X"]), _coerce_array(data["y"])
+        data_arr = _coerce_array(data)
+        if self._x is not None:
+            p = self._x.shape[1]
+            if data_arr.ndim == 2 and data_arr.shape[1] > p:
+                # Stacked (X, y) array — split columns
+                return data_arr[:, :p], data_arr[:, p]
+            return self._x, data_arr
+        # No stored X: data must be a stacked (X, y) array
+        if data_arr.ndim == 2 and data_arr.shape[1] > 1:
+            return data_arr[:, :-1], data_arr[:, -1]
+        raise ValueError(
+            "No design matrix: pass X at construction or "
+            "via data=Record(X=..., y=...)"
+        )
+
+    def log_likelihood(self, params: ArrayLike | Record, data: ArrayLike | Record) -> float:
+        """Log-likelihood: sum of per-observation log-probs.
+
+        *params* and *data* can be raw arrays or ``Record`` objects.
+        When *data* is ``Record(X=..., y=...)``, both the design matrix
+        and response are extracted.
+        """
+        X, y = self._extract_X_y(data)
+        eta = X @ _coerce_array(params)
+        return jnp.sum(self.family.log_prob(y, eta))
 
     def generate_data(
         self,
-        params: Array,
+        params: ArrayLike | Record,
         n_samples: int,
         *,
         key: PRNGKey | None = None,
     ) -> Array:
         """Generate synthetic data from the GLM.
 
-        Supports arbitrary leading batch dimensions on *params*:
-        if ``params`` has shape ``(*batch, p)``, the output has shape
-        ``(*batch, n_samples)``.  This lets callers vectorize predictive
-        checks without a Python loop.
+        Uses the stored design matrix (first ``n_samples`` rows).
 
         Parameters
         ----------
-        params : Array
-            Parameter vector of shape ``(p,)`` or a batch of vectors
-            with shape ``(*batch, p)``.
+        params : Array or Record
+            Parameter vector of shape ``(p,)`` or a batch ``(*batch, p)``.
         n_samples : int
             Number of observations to generate (per batch element).
         key : PRNGKey, optional
-            JAX PRNG key.  If ``None``, uses (and advances) the
-            internal key set at construction.
+            JAX PRNG key.
         """
         if key is None:
             self._key, key = jax.random.split(self._key)
-        # params @ X[:n].T works for (p,) → (n,) and (*batch, p) → (*batch, n)
-        eta = params @ self._x[:n_samples].T
+        X = self._x
+        if X is None:
+            raise ValueError(
+                "generate_data requires a stored design matrix (pass x at construction)"
+            )
+        eta = _coerce_array(params) @ X[:n_samples].T
         dist = self.family.as_distribution(eta)
         return dist.sample(seed=key)

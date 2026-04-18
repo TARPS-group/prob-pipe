@@ -227,7 +227,7 @@ class DirectSamplerSBIModel(Distribution, SupportsConditioning):
             chains,
             parents=(self._prior,),
             algorithm=self._algorithm,
-            inference_data=posterior_idata,
+            auxiliary=posterior_idata,
         )
 
     def __repr__(self) -> str:
@@ -606,5 +606,5 @@ class SbiSMCABCMethod(InferenceMethod):
             chains,
             parents=(dist["parameters"],),
             algorithm="sbijax_smcabc",
-            inference_data=posterior_idata,
+            auxiliary=posterior_idata,
         )

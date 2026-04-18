@@ -2,9 +2,11 @@
 
 Provides:
   - ``EmpiricalDistribution[T]``        – Generic weighted empirical distribution.
-  - ``ArrayEmpiricalDistribution``       – Array specialization with moments.
+  - ``NumericEmpiricalDistribution``      – Numeric array specialization with moments.
+  - ``_RecordEmpiricalDistribution``     – Record specialization with per-field moments.
   - ``BootstrapReplicateDistribution[T]``    – Bootstrap resampling over datasets.
   - ``ArrayBootstrapReplicateDistribution``  – Array specialization.
+  - ``_RecordBootstrapReplicateDistribution`` – Record specialization with joint row resampling.
 """
 
 from __future__ import annotations
@@ -33,9 +35,11 @@ from . import _distribution_base as _base
 from .._utils import _auto_key
 from ._distribution_base import Distribution
 from ._array_distributions import (
-    ArrayDistribution,
+    NumericRecordDistribution,
     BootstrapDistribution,
 )
+from ._record_distribution import RecordDistribution
+from .record import Record, RecordTemplate
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +60,7 @@ class EmpiricalDistribution[T](
 
     **Automatic array dispatch:** When *samples* is a numeric JAX or
     numpy array, ``EmpiricalDistribution(samples, ...)`` automatically
-    returns an :class:`ArrayEmpiricalDistribution` instance, which
+    returns a :class:`NumericEmpiricalDistribution` instance, which
     provides TFP-style shape semantics (``batch_shape``, ``event_shape``,
     ``flatten_value``, ``support``, etc.) and exact weighted moments.
     Pass a non-numeric sequence (e.g. a list of objects) to get the
@@ -82,8 +86,11 @@ class EmpiricalDistribution[T](
     """
 
     def __new__(cls, samples=None, *args, **kwargs):
-        if cls is EmpiricalDistribution and samples is not None and _is_numeric_array(samples):
-            return object.__new__(ArrayEmpiricalDistribution)
+        if cls is EmpiricalDistribution and samples is not None:
+            if isinstance(samples, Record):
+                return object.__new__(_RecordEmpiricalDistribution)
+            if _is_numeric_array(samples):
+                return object.__new__(NumericEmpiricalDistribution)
         return object.__new__(cls)
 
     def __init__(
@@ -104,7 +111,9 @@ class EmpiricalDistribution[T](
         if n == 0:
             raise ValueError("samples must be a non-empty sequence.")
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
-        self._name = name
+        if name is None:
+            name = "empirical"
+        super().__init__(name=name)
         self._approximate = True
 
     _sampling_cost: str = "low"
@@ -149,11 +158,6 @@ class EmpiricalDistribution[T](
 
     # -- sampling -----------------------------------------------------------
 
-    def _sample_one(self, key: PRNGKey) -> T:
-        """Draw a single sample (with replacement according to weights)."""
-        idx = self._w.choice(key)
-        return self._samples[idx]
-
     def _sample(
         self,
         key: PRNGKey,
@@ -168,7 +172,8 @@ class EmpiricalDistribution[T](
         ``sample_shape``.
         """
         if sample_shape == ():
-            return self._sample_one(key)
+            idx = self._w.choice(key)
+            return self._samples[idx]
         n_draws = prod(sample_shape)
         indices = self._w.choice(key, shape=(n_draws,))
         draws = self._samples[indices]
@@ -220,24 +225,24 @@ class EmpiricalDistribution[T](
 
 
 # ---------------------------------------------------------------------------
-# ArrayEmpiricalDistribution
+# NumericEmpiricalDistribution
 # ---------------------------------------------------------------------------
 
-class ArrayEmpiricalDistribution(
+class NumericEmpiricalDistribution(
     EmpiricalDistribution[Array],
-    ArrayDistribution,
+    NumericRecordDistribution,
     SupportsMean,
     SupportsVariance,
     SupportsCovariance,
 ):
-    """Empirical distribution with full :class:`ArrayDistribution` shape semantics.
+    """Empirical distribution with full numeric shape semantics.
 
     Stores samples as a stacked JAX array for efficient vectorised
     operations (``jax.vmap``-based sampling and expectations).
 
     Inherits weight management from :class:`EmpiricalDistribution` and
     adds TFP-style shape properties (``batch_shape``, ``flatten_value``,
-    ``unflatten_value``, ``support``, etc.) via :class:`ArrayDistribution`,
+    ``unflatten_value``, ``support``, etc.) via :class:`NumericRecordDistribution`,
     plus exact weighted moments (mean, variance, covariance).
 
     Parameters
@@ -292,7 +297,11 @@ class ArrayEmpiricalDistribution(
         self._w = Weights(
             n=self._samples.shape[0], weights=weights, log_weights=log_weights,
         )
-        self._name = name
+        if name is None:
+            name = "empirical"
+        # Skip EmpiricalDistribution.__init__ (different init pattern),
+        # go directly to Distribution.__init__ for name registration.
+        Distribution.__init__(self, name=name)
         self._approximate = True
 
     # -- array-specific properties ------------------------------------------
@@ -326,6 +335,131 @@ class ArrayEmpiricalDistribution(
     def _cov(self) -> Array:
         """Weighted sample covariance matrix, shape ``(d, d)``."""
         return self._w.covariance(self._samples)
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers for Record-based distribution classes
+# ---------------------------------------------------------------------------
+
+
+def _record_template_from_data(
+    values_data: Record,
+    leading_shape: tuple[int, ...] = (),
+) -> RecordTemplate:
+    """Build a RecordTemplate from stored Record data.
+
+    Strips the first dimension (sample axis) from each field to get
+    event shapes, optionally prepending ``leading_shape``.
+    """
+    specs: dict[str, tuple[int, ...]] = {}
+    for fname in values_data.fields:
+        arr = jnp.asarray(values_data[fname])
+        specs[fname] = (*leading_shape, *arr.shape[1:])
+    return RecordTemplate(specs)
+
+
+def _index_record(values_data: Record, idx) -> Record:
+    """Index all fields of a Record object with the same indices."""
+    return Record({
+        f: jnp.asarray(values_data[f])[idx]
+        for f in values_data.fields
+    })
+
+
+def _fieldwise_op(values_data: Record, op: Callable) -> Record:
+    """Apply an operation to each field of a Record object."""
+    return Record({
+        f: op(jnp.asarray(values_data[f]))
+        for f in values_data.fields
+    })
+
+
+# ---------------------------------------------------------------------------
+# _RecordEmpiricalDistribution (Record specialization)
+# ---------------------------------------------------------------------------
+
+
+class _RecordEmpiricalDistribution(
+    EmpiricalDistribution[Record],
+    RecordDistribution,
+    SupportsMean,
+    SupportsVariance,
+):
+    """Empirical distribution over Record-structured data.
+
+    Each sample is a *row* of the stored Record: if the Record has fields
+    ``X`` of shape ``(n, p)`` and ``y`` of shape ``(n,)``, then ``n`` is
+    the number of samples and each draw is a ``Record(X=array(p,), y=scalar)``.
+
+    Joint row indexing ensures that all fields are resampled with the same
+    indices, preserving per-observation relationships.
+
+    The ``record_template`` is set automatically from the field shapes
+    (leading sample dimension removed), enabling ``__getitem__``,
+    ``select()``, and ``component_names`` via
+    :class:`~probpipe.core._record_distribution.RecordDistribution`.
+    """
+
+    _sampling_cost: str = "low"
+    _preferred_orchestration: str | None = None
+
+    def __init__(
+        self,
+        samples: Record,
+        weights: ArrayLike | Weights | None = None,
+        *,
+        log_weights: ArrayLike | Weights | None = None,
+        name: str | None = None,
+    ):
+        self._record_data = samples
+        first_field = samples[samples.fields[0]]
+        n = jnp.asarray(first_field).shape[0]
+        self._n_samples = n
+        self._w = Weights(n=n, weights=weights, log_weights=log_weights)
+        if name is None:
+            name = "empirical(" + ",".join(samples.fields) + ")"
+        # Skip EmpiricalDistribution.__init__ (different init pattern),
+        # go directly to Distribution.__init__ for name registration.
+        Distribution.__init__(self, name=name)
+        self._approximate = True
+        self._record_template = _record_template_from_data(samples)
+
+    @property
+    def n(self) -> int:
+        return self._n_samples
+
+    @property
+    def samples(self) -> Record:
+        """The stored Record data."""
+        return self._record_data
+
+    def _sample(
+        self,
+        key: PRNGKey,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Record:
+        if sample_shape == ():
+            idx = self._w.choice(key)
+            return _index_record(self._record_data, idx)
+        indices = self._w.choice(key, shape=(prod(sample_shape),))
+        fields: dict[str, jnp.ndarray] = {}
+        for f in self._record_data.fields:
+            arr = jnp.asarray(self._record_data[f])
+            fields[f] = arr[indices].reshape(*sample_shape, *arr.shape[1:])
+        return Record(fields)
+
+    def _mean(self) -> Record:
+        return _fieldwise_op(self._record_data, self._w.mean)
+
+    def _variance(self) -> Record:
+        return _fieldwise_op(self._record_data, self._w.variance)
+
+    def __repr__(self) -> str:
+        fields = ", ".join(self._record_data.fields)
+        return (
+            f"_RecordEmpiricalDistribution(n={self._n_samples}, "
+            f"fields=({fields}))"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -382,6 +516,10 @@ class BootstrapReplicateDistribution[T](
 
     def __new__(cls, source=None, *args, **kwargs):
         if cls is BootstrapReplicateDistribution and source is not None:
+            if isinstance(source, _RecordEmpiricalDistribution):
+                return object.__new__(_RecordBootstrapReplicateDistribution)
+            if isinstance(source, Record):
+                return object.__new__(_RecordBootstrapReplicateDistribution)
             if _is_numeric_array(source):
                 return object.__new__(ArrayBootstrapReplicateDistribution)
             if isinstance(source, EmpiricalDistribution) and _is_numeric_array(source.samples):
@@ -430,15 +568,13 @@ class BootstrapReplicateDistribution[T](
                 raise ValueError(f"n must be positive, got {n}")
             self._n = n
 
-        self._name = name
+        if name is None:
+            name = "bootstrap"
+        super().__init__(name=name)
         self._source_n = len(self._data)
         self._approximate = True
 
     # -- properties ---------------------------------------------------------
-
-    @property
-    def name(self) -> str | None:
-        return self._name
 
     @property
     def n(self) -> int:
@@ -465,15 +601,15 @@ class BootstrapReplicateDistribution[T](
         """True when all source observations have equal weight."""
         return self._w.is_uniform
 
-    def _sample_one(self, key: PRNGKey) -> Any:
-        """Draw a single bootstrapped dataset."""
-        idx = self._w.choice(key, shape=(self._n,))
-        return self._data[idx]
-
     @property
     def _is_object_data(self) -> bool:
         """True when source data is stored as a numpy object array."""
         return isinstance(self._data, np.ndarray) and self._data.dtype == object
+
+    def _one_bootstrap(self, key: PRNGKey) -> Any:
+        """Draw a single bootstrapped dataset."""
+        idx = self._w.choice(key, shape=(self._n,))
+        return self._data[idx]
 
     def _sample(
         self,
@@ -482,16 +618,16 @@ class BootstrapReplicateDistribution[T](
     ) -> Any:
         """Draw bootstrap datasets."""
         if sample_shape == ():
-            return self._sample_one(key)
+            return self._one_bootstrap(key)
 
         total = prod(sample_shape)
         keys = jax.random.split(key, total)
         if self._is_object_data:
             results = np.empty(total, dtype=object)
             for i in range(total):
-                results[i] = self._sample_one(keys[i])
+                results[i] = self._one_bootstrap(keys[i])
             return results.reshape(sample_shape)
-        results = jax.vmap(self._sample_one)(keys)
+        results = jax.vmap(self._one_bootstrap)(keys)
         return results.reshape(*sample_shape, *results.shape[1:])
 
     # -- expectation --------------------------------------------------------
@@ -542,15 +678,16 @@ class BootstrapReplicateDistribution[T](
         )
 
 
-class ArrayBootstrapReplicateDistribution(BootstrapReplicateDistribution[Array], ArrayDistribution):
-    """Joint bootstrap distribution with full :class:`ArrayDistribution` shape semantics.
+
+class ArrayBootstrapReplicateDistribution(BootstrapReplicateDistribution[Array], NumericRecordDistribution):
+    """Joint bootstrap distribution with full :class:`NumericRecordDistribution` shape semantics.
 
     Inherits all functionality from :class:`BootstrapReplicateDistribution` and adds
     TFP-style shape properties (``batch_shape``, ``event_shape``, ``support``,
-    etc.) via :class:`ArrayDistribution`.
+    etc.) via :class:`NumericRecordDistribution`.
 
     Use this instead of :class:`BootstrapReplicateDistribution` when the distribution
-    must interoperate with code that requires :class:`ArrayDistribution` instances.
+    must interoperate with code that requires :class:`NumericRecordDistribution` instances.
     """
 
     def __init__(
@@ -607,4 +744,97 @@ class ArrayBootstrapReplicateDistribution(BootstrapReplicateDistribution[Array],
             f"ArrayBootstrapReplicateDistribution(n={self._n}, "
             f"source_n={self._source_n}, "
             f"obs_shape={self._event_shape_per_obs})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# _RecordBootstrapReplicateDistribution (Record specialization)
+# ---------------------------------------------------------------------------
+
+
+class _RecordBootstrapReplicateDistribution(
+    BootstrapReplicateDistribution[Record],
+    RecordDistribution,
+):
+    """Bootstrap replicate distribution over Record-structured data.
+
+    Each sample is a full bootstrapped dataset: ``n`` rows drawn i.i.d.
+    with replacement from the source data, with the *same* row indices
+    applied to all fields jointly.
+
+    Supports named field access (``bootstrap["X"]``, ``bootstrap["y"]``)
+    via :class:`~probpipe.core._record_distribution.RecordDistribution`,
+    returning ``_RecordDistributionView`` instances that preserve
+    correlation when used together in workflow function broadcasting.
+
+    Parameters
+    ----------
+    source : _RecordEmpiricalDistribution or Record
+        The data to bootstrap from.
+    n : int or None
+        Number of observations per bootstrap dataset.  Defaults to the
+        number of rows in ``source``.
+    name : str or None
+        Distribution name for provenance.
+    """
+
+    _sampling_cost: str = "low"
+    _preferred_orchestration: str | None = None
+
+    def __init__(
+        self,
+        source: _RecordEmpiricalDistribution | Record,
+        *,
+        n: int | None = None,
+        name: str | None = None,
+    ):
+        if isinstance(source, _RecordEmpiricalDistribution):
+            self._record_data = source._record_data
+            self._w = source._w
+            default_n = source.n
+        elif isinstance(source, Record):
+            self._record_data = source
+            first = jnp.asarray(source[source.fields[0]])
+            default_n = first.shape[0]
+            self._w = Weights.uniform(default_n)
+        else:
+            raise TypeError(
+                f"Expected Record or _RecordEmpiricalDistribution, "
+                f"got {type(source).__name__}"
+            )
+        # self._data required by base class .data property
+        self._data = self._record_data
+        self._init_bootstrap_state(default_n, n=n, name=name)
+        self._record_template = _record_template_from_data(
+            self._record_data, leading_shape=(self._n,),
+        )
+
+    def _one_bootstrap(self, key: PRNGKey) -> Record:
+        """Draw a single bootstrapped Record (one resampled dataset)."""
+        idx = self._w.choice(key, shape=(self._n,))
+        return _index_record(self._record_data, idx)
+
+    def _sample(
+        self,
+        key: PRNGKey,
+        sample_shape: tuple[int, ...] = (),
+    ) -> Record:
+        if sample_shape == ():
+            return self._one_bootstrap(key)
+        total = prod(sample_shape)
+        keys = jax.random.split(key, total)
+        results = [self._one_bootstrap(k) for k in keys]
+        # Stack: each result is Record(X=array(n,p), y=array(n,))
+        # → Record(X=array(*sample_shape, n, p), y=array(*sample_shape, n))
+        stacked: dict[str, jnp.ndarray] = {}
+        for f in self._record_data.fields:
+            arrs = jnp.stack([jnp.asarray(r[f]) for r in results])
+            stacked[f] = arrs.reshape(*sample_shape, *arrs.shape[1:])
+        return Record(stacked)
+
+    def __repr__(self) -> str:
+        fields = ", ".join(self._record_data.fields)
+        return (
+            f"_RecordBootstrapReplicateDistribution(n={self._n}, "
+            f"source_n={self._source_n}, fields=({fields}))"
         )

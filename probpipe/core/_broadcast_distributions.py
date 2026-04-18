@@ -17,7 +17,6 @@ from .._utils import prod
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
-    SupportsNamedComponents,
     SupportsSampling,
     SupportsVariance,
 )
@@ -28,10 +27,14 @@ import jax.numpy as jnp
 from ..custom_types import Array
 from .._weights import Weights
 from ._distribution_base import Distribution
+from ._record_distribution import RecordDistribution
 from ._empirical import (
-    ArrayEmpiricalDistribution,
+    NumericEmpiricalDistribution,
     EmpiricalDistribution,
+    _RecordEmpiricalDistribution,
 )
+from ._record_array import RecordArray
+from .record import Record, RecordTemplate
 
 
 # ---------------------------------------------------------------------------
@@ -43,10 +46,10 @@ from ._empirical import (
 # ---------------------------------------------------------------------------
 
 
-class _ArrayMarginal(ArrayEmpiricalDistribution):
+class _ArrayMarginal(NumericEmpiricalDistribution):
     """Output marginal when broadcast outputs are stackable arrays.
 
-    Inherits from :class:`ArrayEmpiricalDistribution` for weighted
+    Inherits from :class:`NumericEmpiricalDistribution` for weighted
     resampling and exact weighted moments.
     """
 
@@ -86,7 +89,9 @@ class _MixtureMarginal[T](Distribution[T]):
         n = len(components)
         self._components = components
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
-        self._name = name
+        if name is None:
+            name = "mixture_marginal"
+        super().__init__(name=name)
         self._approximate = True
 
     @property
@@ -108,22 +113,58 @@ class _MixtureMarginal[T](Distribution[T]):
 # -- Mixture protocol mixins (combined dynamically) -------------------------
 
 class _MixtureSampling:
-    """SupportsSampling mixin for mixture marginals."""
+    """SupportsSampling mixin for mixture marginals.
+
+    Returns a raw ``Array`` when component samples are arrays (the
+    common case — broadcasting a numeric function over a distribution
+    of inputs), and a ``RecordArray`` when component samples are
+    ``Record``-valued (e.g., broadcasting a ``Record``-returning
+    ``WorkflowFunction``). Opaque / non-stackable component outputs
+    raise a ``TypeError`` with the component types listed.
+    """
 
     _sampling_cost: str = "medium"
     _preferred_orchestration: str | None = None
 
     def _sample(self, key, sample_shape=()):
+        from ._record_array import RecordArray
+        from .record import Record
+
         n_draws = prod(sample_shape) if sample_shape else 1
         key1, key2 = jax.random.split(key)
         indices = self._w.choice(key1, shape=(n_draws,))
         keys = jax.random.split(key2, n_draws)
 
-        results = []
-        for i in range(n_draws):
-            comp = self._components[int(indices[i])]
-            results.append(comp._sample(keys[i], ()))
-        stacked = jnp.stack(results, axis=0)
+        results = [
+            self._components[int(indices[i])]._sample(keys[i], ())
+            for i in range(n_draws)
+        ]
+
+        # Dispatch on result type so a mixture of Record-returning
+        # distributions produces a RecordArray rather than crashing in
+        # jnp.stack. Scalars / arrays stay on the numeric path.
+        if all(isinstance(r, Record) for r in results):
+            stacked_ra = RecordArray.stack(results)
+            if sample_shape == ():
+                return stacked_ra[0]
+            # Reshape the leading batch axis to sample_shape.
+            fields = {
+                name: stacked_ra[name].reshape(sample_shape + stacked_ra[name].shape[1:])
+                for name in stacked_ra.fields
+            }
+            return type(stacked_ra)(
+                fields, batch_shape=sample_shape, template=stacked_ra.template,
+            )
+
+        try:
+            stacked = jnp.stack(results, axis=0)
+        except (TypeError, ValueError) as exc:
+            types_seen = sorted({type(r).__name__ for r in results})
+            raise TypeError(
+                f"_MixtureSampling cannot stack component samples of "
+                f"types {types_seen}; mixture marginals support numeric "
+                f"arrays and Record values only."
+            ) from exc
         if sample_shape == ():
             return stacked[0]
         return stacked.reshape(sample_shape + stacked.shape[1:])
@@ -206,6 +247,36 @@ def _make_mixture_marginal(
     return obj
 
 
+class _RecordArrayMarginal(_RecordEmpiricalDistribution):
+    """Output marginal when broadcast outputs are Records.
+
+    Wraps a :class:`RecordArray` as a Record-valued empirical distribution
+    with per-field weighted mean, variance, and resampling.
+    """
+
+    def __init__(
+        self,
+        record_array: RecordArray,
+        weights: Array | Weights | None = None,
+        *,
+        log_weights: Array | Weights | None = None,
+        name: str | None = None,
+    ):
+        if not isinstance(record_array, RecordArray):
+            raise TypeError(
+                f"Expected RecordArray, got {type(record_array).__name__}"
+            )
+        # RecordArray is structurally a Record with batched fields; wrap it
+        # directly so _RecordEmpiricalDistribution sees one row per batch index.
+        samples = Record({f: record_array[f] for f in record_array.fields})
+        super().__init__(samples, weights=weights, log_weights=log_weights, name=name)
+        # Preserve the original template so event_shapes stay accurate
+        self._record_template = record_array.template
+
+    def __repr__(self):
+        return f"MarginalizedBroadcastDistribution(n={self.n}, fields={self._record_data.fields})"
+
+
 class _ListMarginal[T](Distribution[T]):
     """Output marginal when broadcast outputs are non-stackable (e.g., strings).
 
@@ -222,7 +293,9 @@ class _ListMarginal[T](Distribution[T]):
     ):
         self._items = items
         self._w = Weights(n=len(items), weights=weights, log_weights=log_weights)
-        self._name = name
+        if name is None:
+            name = "list_marginal"
+        super().__init__(name=name)
 
     @property
     def n(self) -> int:
@@ -241,7 +314,7 @@ class _ListMarginal[T](Distribution[T]):
 
 
 # Public alias for type checking / isinstance
-MarginalizedBroadcastDistribution = _ArrayMarginal | _MixtureMarginal | _ListMarginal
+MarginalizedBroadcastDistribution = _ArrayMarginal | _RecordArrayMarginal | _MixtureMarginal | _ListMarginal
 """Union type for the output marginal of a :class:`BroadcastDistribution`.
 
 Concrete subtype depends on output kind:
@@ -263,11 +336,31 @@ def _make_marginal(
     if output_distributions is not None:
         return _make_mixture_marginal(output_distributions, weights, name=name)
 
-    # Try stacking into an array
+    if isinstance(output_samples, RecordArray):
+        return _RecordArrayMarginal(output_samples, weights, name=name)
+
+    # Record with batched leaves (e.g., from jax.vmap over a Record-returning fn).
+    # All fields must be arrays with a consistent leading batch dimension.
+    if isinstance(output_samples, Record) and output_samples.fields:
+        resolved = [output_samples[f] for f in output_samples.fields]
+        if all(hasattr(v, "ndim") and v.ndim > 0 for v in resolved):
+            n = resolved[0].shape[0]
+            if all(v.shape[0] == n for v in resolved):
+                tpl = RecordTemplate.from_record(output_samples, batch_shape=(n,))
+                fields = dict(zip(output_samples.fields, resolved))
+                ra = RecordArray(fields, batch_shape=(n,), template=tpl)
+                return _RecordArrayMarginal(ra, weights, name=name)
+
     if isinstance(output_samples, jnp.ndarray):
         return _ArrayMarginal(output_samples, weights, name=name)
 
     if isinstance(output_samples, list):
+        if output_samples and all(isinstance(r, Record) for r in output_samples):
+            try:
+                ra = RecordArray.stack(output_samples)
+                return _RecordArrayMarginal(ra, weights, name=name)
+            except (ValueError, TypeError):
+                pass
         try:
             stacked = jnp.stack(
                 [jnp.asarray(r, dtype=jnp.float32) for r in output_samples], axis=0
@@ -290,7 +383,7 @@ def _make_marginal(
 # ---------------------------------------------------------------------------
 
 
-class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedComponents):
+class BroadcastDistribution(Distribution[dict], SupportsSampling):
     """Joint distribution over broadcast inputs and function output.
 
     Stores the paired input–output samples from a
@@ -307,7 +400,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
        ``BroadcastDistribution`` does **not** inherit from
        :class:`~probpipe.distributions.joint.JointDistribution`.
        ``JointDistribution`` requires all leaves to be
-       ``ArrayDistribution`` instances with TFP shape semantics
+       ``NumericRecordDistribution`` instances with TFP shape semantics
        (``batch_shape``, ``event_shape``), but a broadcast output can be
        any type — arrays, distributions, strings, etc. — and input
        samples are plain arrays without distribution metadata.  The two
@@ -362,7 +455,9 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
         n = first_arr.shape[0] if hasattr(first_arr, 'shape') else len(first_arr)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._broadcast_args = list(broadcast_args)
-        self._name = name
+        if name is None:
+            name = "broadcast"
+        super().__init__(name=name)
         self._approximate = True
         self._marginal_cache: MarginalizedBroadcastDistribution | None = None
 
@@ -389,7 +484,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling, SupportsNamedC
         m = self.marginalize()
         return m.samples if hasattr(m, 'samples') else m.items
 
-    # -- SupportsNamedComponents --------------------------------------------
+    # -- Named components ----------------------------------------------------
 
     @property
     def component_names(self) -> tuple[str, ...]:

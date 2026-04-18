@@ -45,8 +45,8 @@ class MultivariateNormal(TFPDistribution):
         *scale_tril* or *cov* must be provided.
     cov : array-like, shape ``(d, d)``, optional
         Covariance matrix (Cholesky-decomposed internally).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -55,7 +55,7 @@ class MultivariateNormal(TFPDistribution):
         scale_tril: ArrayLike | None = None,
         *,
         cov: ArrayLike | None = None,
-        name: str | None = None,
+        name: str,
     ):
         loc = jnp.asarray(loc, dtype=jnp.float32)
         if loc.ndim == 0:
@@ -81,7 +81,7 @@ class MultivariateNormal(TFPDistribution):
         self._tfp_dist = tfd.MultivariateNormalTriL(
             loc=loc, scale_tril=scale_tril
         )
-        self._name = name
+        super().__init__(name=name)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -126,15 +126,15 @@ class Dirichlet(TFPDistribution):
     ----------
     concentration : array-like, shape ``(k,)``
         Positive concentration (alpha) parameters.
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
         self,
         concentration: ArrayLike,
         *,
-        name: str | None = None,
+        name: str,
     ):
         concentration = jnp.asarray(concentration, dtype=jnp.float32)
         if concentration.ndim == 0:
@@ -142,7 +142,7 @@ class Dirichlet(TFPDistribution):
 
         self._concentration = concentration
         self._tfp_dist = tfd.Dirichlet(concentration=concentration)
-        self._name = name
+        super().__init__(name=name)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -184,8 +184,8 @@ class Multinomial(TFPDistribution):
         Event probabilities (need not be normalised).
     logits : array-like, shape ``(k,)``, optional
         Log-odds of each event.
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -194,7 +194,7 @@ class Multinomial(TFPDistribution):
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
         *,
-        name: str | None = None,
+        name: str,
     ):
         if (probs is None) == (logits is None):
             raise ValueError("Exactly one of probs or logits must be provided.")
@@ -217,7 +217,7 @@ class Multinomial(TFPDistribution):
             )
 
         self._total_count = total_count
-        self._name = name
+        super().__init__(name=name)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -263,8 +263,8 @@ class Wishart(TFPDistribution):
         Lower-triangular Cholesky factor of the scale matrix.
     scale : array-like, shape ``(d, d)``, optional
         Full scale matrix (Cholesky-decomposed internally).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -273,7 +273,7 @@ class Wishart(TFPDistribution):
         scale_tril: ArrayLike | None = None,
         *,
         scale: ArrayLike | None = None,
-        name: str | None = None,
+        name: str,
     ):
         if scale_tril is not None and scale is not None:
             raise ValueError(
@@ -293,7 +293,7 @@ class Wishart(TFPDistribution):
         self._df = df
         self._scale_tril = scale_tril
         self._tfp_dist = tfd.WishartTriL(df=df, scale_tril=scale_tril)
-        self._name = name
+        super().__init__(name=name)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -340,8 +340,8 @@ class VonMisesFisher(TFPDistribution):
         Unit vector giving the mean direction.
     concentration : float or array-like
         Scalar concentration parameter (kappa >= 0).
-    name : str, optional
-        Distribution name for provenance / JointDistribution.
+    name : str
+        Distribution name.
     """
 
     def __init__(
@@ -349,7 +349,7 @@ class VonMisesFisher(TFPDistribution):
         mean_direction: ArrayLike,
         concentration: float | ArrayLike,
         *,
-        name: str | None = None,
+        name: str,
     ):
         mean_direction = jnp.asarray(mean_direction, dtype=jnp.float32)
         concentration = jnp.asarray(concentration, dtype=jnp.float32)
@@ -359,7 +359,7 @@ class VonMisesFisher(TFPDistribution):
         self._tfp_dist = tfd.VonMisesFisher(
             mean_direction=mean_direction, concentration=concentration
         )
-        self._name = name
+        super().__init__(name=name)
 
     # -- convenient accessors -----------------------------------------------
 

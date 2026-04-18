@@ -10,11 +10,12 @@ from probpipe import (
     Normal,
     MultivariateNormal,
     SequentialJointDistribution,
-    DistributionView,
     EmpiricalDistribution,
-    JointDistribution,
+    Record,
+    RecordDistribution,
+    RecordArray,
 )
-from probpipe.core.distribution import PyTreeArrayDistribution
+from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.node import WorkflowFunction
 from probpipe import condition_on, log_prob, sample, unnormalized_log_prob
 
@@ -27,33 +28,32 @@ class TestConstruction:
 
     def test_basic_construction(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         assert isinstance(joint, SequentialJointDistribution)
-        assert isinstance(joint, JointDistribution)
-        assert isinstance(joint, PyTreeArrayDistribution)
+        assert isinstance(joint, RecordDistribution)
 
     def test_component_names(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         assert joint.component_names == ("z", "x")
 
     def test_event_shapes(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         assert joint.event_shapes == {"z": (), "x": ()}
         assert joint.event_size == 2
 
     def test_three_components(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
-            y=lambda z, x: Normal(loc=z + x, scale=0.1),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
+            y=lambda z, x: Normal(loc=z + x, scale=0.1, name="y"),
         )
         assert joint.event_shapes == {"z": (), "x": (), "y": ()}
         assert joint.event_size == 3
@@ -62,8 +62,8 @@ class TestConstruction:
     def test_independent_root(self):
         """All root distributions (no callables) should work."""
         joint = SequentialJointDistribution(
-            a=Normal(loc=0.0, scale=1.0),
-            b=Normal(loc=1.0, scale=2.0),
+            a=Normal(loc=0.0, scale=1.0, name="a"),
+            b=Normal(loc=1.0, scale=2.0, name="b"),
         )
         assert joint.event_shapes == {"a": (), "b": ()}
         assert joint.event_size == 2
@@ -71,8 +71,8 @@ class TestConstruction:
     def test_raises_on_invalid_dependency(self):
         with pytest.raises(ValueError, match="not defined before"):
             SequentialJointDistribution(
-                x=lambda z: Normal(loc=z, scale=1.0),  # z not yet defined
-                z=Normal(loc=0.0, scale=1.0),
+                x=lambda z: Normal(loc=z, scale=1.0, name="x"),  # z not yet defined
+                z=Normal(loc=0.0, scale=1.0, name="z"),
             )
 
     def test_raises_on_empty(self):
@@ -81,8 +81,8 @@ class TestConstruction:
 
     def test_named(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
             name="my_seq",
         )
         assert joint._name == "my_seq"
@@ -94,34 +94,34 @@ class TestConstruction:
 
 class TestSampling:
 
-    def test_sample_returns_dict(self):
+    def test_sample_returns_values(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         key = jax.random.PRNGKey(0)
         s = sample(joint, key=key)
-        assert isinstance(s, dict)
-        assert set(s.keys()) == {"z", "x"}
+        assert isinstance(s, (Record, RecordArray))
+        assert set(s.fields) == {"z", "x"}
         assert s["z"].shape == ()
         assert s["x"].shape == ()
 
     def test_sample_batch(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         key = jax.random.PRNGKey(1)
         s = sample(joint, key=key, sample_shape=(10,))
-        assert isinstance(s, dict)
+        assert isinstance(s, (Record, RecordArray))
         assert s["z"].shape == (10,)
         assert s["x"].shape == (10,)
 
     def test_conditional_sampling_correlation(self):
         """x depends on z, so they should be correlated."""
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.01),  # x ≈ z
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.01, name="x"),  # x ≈ z
         )
         key = jax.random.PRNGKey(3)
         s = sample(joint, key=key, sample_shape=(500,))
@@ -131,11 +131,11 @@ class TestSampling:
     def test_auto_key(self):
         """sample() without explicit key should work."""
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         s = sample(joint, sample_shape=(5,))
-        assert isinstance(s, dict)
+        assert isinstance(s, (Record, RecordArray))
         assert s["z"].shape == (5,)
         assert s["x"].shape == (5,)
 
@@ -148,8 +148,8 @@ class TestLogProb:
 
     def test_log_prob_shape(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         key = jax.random.PRNGKey(10)
         samples = sample(joint, key=key, sample_shape=(5,))
@@ -158,8 +158,8 @@ class TestLogProb:
 
     def test_log_prob_finite(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         key = jax.random.PRNGKey(11)
         samples = sample(joint, key=key, sample_shape=(10,))
@@ -169,12 +169,12 @@ class TestLogProb:
     def test_log_prob_manual(self):
         """Verify log_prob = log p(z) + log p(x|z)."""
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         z_val = jnp.array(1.0)
         x_val = jnp.array(1.5)
-        value = {"z": z_val, "x": x_val}
+        value = Record(z=z_val, x=x_val)
         lp = log_prob(joint, value)
 
         # Independent baseline: scipy.stats.norm.logpdf
@@ -186,12 +186,12 @@ class TestLogProb:
 
     def test_log_prob_three_components(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
-            y=lambda z, x: Normal(loc=z + x, scale=0.1),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
+            y=lambda z, x: Normal(loc=z + x, scale=0.1, name="y"),
         )
         z_val, x_val, y_val = 0.5, 0.8, 1.2
-        value = {"z": jnp.array(z_val), "x": jnp.array(x_val), "y": jnp.array(y_val)}
+        value = Record(z=jnp.array(z_val), x=jnp.array(x_val), y=jnp.array(y_val))
         lp = log_prob(joint, value)
 
         # Independent baseline: scipy.stats.norm.logpdf
@@ -211,25 +211,25 @@ class TestDistributionView:
 
     def test_getitem_returns_view(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         view = joint["z"]
-        assert isinstance(view, DistributionView)
-        assert view._component_name == "z"
+        assert isinstance(view, _RecordDistributionView)
+        assert view._key == "z"
 
     def test_view_event_shape(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         assert joint["z"].event_shape == ()
         assert joint["x"].event_shape == ()
 
     def test_view_sample(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         key = jax.random.PRNGKey(20)
         s = sample(joint["z"], key=key, sample_shape=(5,))
@@ -244,8 +244,8 @@ class TestConditionOn:
 
     def test_condition_on_removes_conditioned_component(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         cond = condition_on(joint, z=jnp.array(2.0))
         assert "z" not in cond.components
@@ -256,13 +256,13 @@ class TestConditionOn:
 
     def test_conditioned_sampling_uses_observed_value(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         cond = condition_on(joint, z=jnp.array(3.0))
         key = jax.random.PRNGKey(30)
         s = sample(cond, key=key, sample_shape=(50,))
-        # z should not be in s (it's conditioned)
+        # z should not be in s (it's conditioned); Record supports `in`
         assert "z" not in s
         # x should be centered around 3.0 (since x = N(z=3, 0.5))
         assert abs(float(jnp.mean(s["x"])) - 3.0) < 0.3
@@ -270,8 +270,8 @@ class TestConditionOn:
     def test_condition_on_downstream_effect(self):
         """Conditioning on z should make downstream x use the observed value."""
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.01),  # x ≈ z
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.01, name="x"),  # x ≈ z
         )
         cond = condition_on(joint, z=jnp.array(5.0))
         key = jax.random.PRNGKey(31)
@@ -282,8 +282,8 @@ class TestConditionOn:
 
     def test_condition_on_provenance(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         cond = condition_on(joint, z=jnp.array(0.0))
         assert cond.source is not None
@@ -291,8 +291,8 @@ class TestConditionOn:
 
     def test_condition_on_unknown_raises(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         with pytest.raises(KeyError, match="not found"):
             condition_on(joint, nonexistent=jnp.array(0.0))
@@ -300,8 +300,8 @@ class TestConditionOn:
     def test_condition_on_non_root_removes_component(self):
         """Conditioning on a non-root removes it from components."""
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         cond = condition_on(joint, x=jnp.array(1.0))
         assert "x" not in cond.components
@@ -311,8 +311,8 @@ class TestConditionOn:
     def test_condition_on_non_root_with_unconditioned_parent_raises(self):
         """Sampling raises if a conditioned non-root has unconditioned parents."""
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         cond = condition_on(joint, x=jnp.array(1.0))
         with pytest.raises(NotImplementedError, match="unconditioned parent"):
@@ -321,9 +321,9 @@ class TestConditionOn:
     def test_condition_on_non_root_with_all_parents_conditioned_is_sampleable(self):
         """If all parents of a conditioned non-root are also conditioned, sampling works."""
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
-            y=lambda z, x: Normal(loc=z + x, scale=0.1),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
+            y=lambda z, x: Normal(loc=z + x, scale=0.1, name="y"),
         )
         # Condition on z (root) and x (non-root, parent=z which is conditioned)
         cond = condition_on(joint, z=jnp.array(1.0), x=jnp.array(2.0))
@@ -338,12 +338,12 @@ class TestConditionOn:
     def test_condition_on_root_log_prob_works(self):
         """log_prob should work when conditioning on root components."""
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         # Condition on root z — x's conditional p(x|z=2) is normalized
         cond = condition_on(joint, z=jnp.array(2.0))
-        value = {"x": jnp.array(1.5)}
+        value = Record(x=jnp.array(1.5))
         lp = log_prob(cond, value)
         assert jnp.isfinite(lp)
         # Should equal log p(x=1.5 | z=2.0) = log N(1.5; 2.0, 0.5)
@@ -353,23 +353,23 @@ class TestConditionOn:
     def test_condition_on_non_root_log_prob_raises(self):
         """log_prob should raise when conditioning on non-root with free parents."""
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         cond = condition_on(joint, x=jnp.array(1.0))
-        value = {"z": jnp.array(0.0)}
+        value = Record(z=jnp.array(0.0))
         with pytest.raises(NotImplementedError, match="unnormalized_log_prob"):
             log_prob(cond, value)
 
     def test_condition_on_non_root_unnormalized_log_prob_works(self):
         """unnormalized_log_prob should work after conditioning on a non-root."""
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         cond = condition_on(joint, x=jnp.array(1.0))
-        # Only z is unconditioned; input is dict with just z
-        value = {"z": jnp.array(0.0)}
+        # Only z is unconditioned; input is Record with just z
+        value = Record(z=jnp.array(0.0))
         lp = unnormalized_log_prob(cond, value)
         assert jnp.isfinite(lp)
         # Should be log p(z=0) + log p(x=1|z=0) (unnormalized conditional)
@@ -382,9 +382,9 @@ class TestConditionOn:
     def test_condition_on_chain_accumulates(self):
         """Successive condition_on calls accumulate conditioned names."""
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
-            y=lambda z, x: Normal(loc=z + x, scale=0.1),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
+            y=lambda z, x: Normal(loc=z + x, scale=0.1, name="y"),
         )
         # First condition on x alone — not sampleable (z unconditioned parent)
         cond1 = condition_on(joint, x=jnp.array(1.0))
@@ -395,14 +395,14 @@ class TestConditionOn:
         cond2 = condition_on(cond1, z=jnp.array(0.0))
         assert cond2.component_names == ("y",)
         s = sample(cond2, sample_shape=(5,))
-        assert isinstance(s, dict)
-        assert set(s.keys()) == {"y"}
+        assert isinstance(s, (Record, RecordArray))
+        assert set(s.fields) == {"y"}
         assert s["y"].shape == (5,)
 
     def test_raises_on_conditioning_all(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         with pytest.raises(ValueError, match="Cannot condition on all"):
             condition_on(joint, z=jnp.array(0.0), x=jnp.array(0.0))
@@ -410,8 +410,8 @@ class TestConditionOn:
     def test_dict_for_leaf_raises(self):
         """Passing a dict value for a leaf component should raise TypeError."""
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         with pytest.raises(TypeError, match="component distribution"):
             condition_on(joint, z={"sub": jnp.array(0.0)})
@@ -425,8 +425,8 @@ class TestFlattenUnflatten:
 
     def test_flatten_roundtrip(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         key = jax.random.PRNGKey(50)
         s = sample(joint, key=key, sample_shape=(5,))
@@ -445,8 +445,8 @@ class TestBroadcastingReconnection:
 
     def test_views_from_sequential_joint_loop(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.01),  # x ≈ z
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.01, name="x"),  # x ≈ z
         )
 
         def subtract(a: float, b: float) -> float:
@@ -467,8 +467,8 @@ class TestBroadcastingReconnection:
 
     def test_views_from_sequential_joint_jax(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.01),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.01, name="x"),
         )
 
         def subtract(a: float, b: float) -> float:
@@ -495,8 +495,8 @@ class TestRepr:
 
     def test_repr_includes_callable(self):
         joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0),
-            x=lambda z: Normal(loc=z, scale=0.5),
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         r = repr(joint)
         assert "SequentialJointDistribution" in r

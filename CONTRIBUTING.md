@@ -118,22 +118,51 @@ full public API surface.
 3. **Capabilities via protocols** — distributions declare support through
    `@runtime_checkable` protocols (e.g., `SupportsSampling`,
    `SupportsLogProb`, `SupportsMean`). Operations check protocols at
-   dispatch time.
+   dispatch time.  Protocols are dynamically included on composite
+   distributions (`ProductDistribution`, `TransformedDistribution`)
+   based on component capabilities.
 4. **Private method convention** — protocols define `_method()` (e.g.,
    `_sample`, `_log_prob`, `_mean`). The public API is via ops:
    `sample(dist)`, not `dist.sample()`.
+5. **Record and Distributions are parallel** — `Record` is the universal
+   container for non-random structured data; `Distribution` is the
+   universal container for random quantities. Both support named fields,
+   `select()` for workflow function splatting, and JAX pytree
+   traversal.  The full pipeline (prior → inference → posterior
+   predictive) produces named, provenance-tracked objects at every step.
+   **Field access is bracket-only**: use `record["x"]`, `array["x"]`,
+   `dist["x"]`.  Attribute access (`__getattr__`) was removed from
+   `Record` and `RecordDistribution` because it shadowed methods and
+   properties like `.mean`, `.var`, `.fields`, `.flatten`, and produced
+   confusing errors.
+6. **Every distribution is named** — `Distribution.__init__` requires a
+   non-empty `name: str`.  Leaf distributions (Normal, Gamma, etc.)
+   require an explicit `name=` at construction.  Composite distributions
+   (ProductDistribution, EmpiricalDistribution, TransformedDistribution,
+   etc.) auto-generate a name from their components when one is not
+   provided.  `ProductDistribution` validates that each component
+   distribution's `name` matches its keyword key (e.g.,
+   `ProductDistribution(x=Normal(0, 1, name="x"))`).
 
 ### Key abstractions
 
 | Abstraction | Description |
 |-------------|-------------|
-| `Distribution[T]` | Generic base parameterized by value type |
-| `ArrayDistribution` | Single-array specialization with TFP shape conventions |
-| `WorkflowFunction` | Orchestration-aware function wrapper |
+| `Distribution[T]` | Generic base parameterized by value type; provides `record_template` and `auxiliary` properties |
+| `Record` | Named, immutable, JAX-pytree container for structured non-random values; leaves stored verbatim (no coercion); `select()` for workflow function splatting |
+| `NumericRecord` (subclass of `Record`) | Adds numeric-leaf validation at construction plus `flatten` / `unflatten` / `flat_size`; coerces scalar / numpy leaves to `jnp.ndarray` |
+| `RecordArray` | Batch of `Record` elements with a `RecordTemplate`; integer index → element, field index → batched array |
+| `NumericRecordArray` (subclass of `RecordArray`) | Batch of `NumericRecord` elements; adds `flatten` / `mean` / `var` |
+| `RecordTemplate` | Structural skeleton (field names, per-field shapes or `None`); enables `NumericRecord.unflatten` without an example instance |
+| `RecordDistribution` | Record-based distribution base; `component_names`, `__getitem__` → `_RecordDistributionView`, `select()` for correlated broadcasting |
+| `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
+| `NumericRecordDistribution` | Numeric-array distribution base; per-field `dtypes`, `supports`, `event_shapes`; base for all TFP-backed distributions |
+| `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling + conditioning; the numeric subclass adds Gaussian-approximation `SupportsLogProb` and exact `SupportsMean` / `SupportsVariance`. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. |
+| `WorkflowFunction` | Orchestration-aware function wrapper; groups views by parent for correlated broadcasting |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
-| Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc. |
+| Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
 | `MethodRegistry` | Generic priority-based dispatch; used by the inference method registry |
-| `ProbabilisticModel` | Base for models (extends `Distribution` + `SupportsNamedComponents`) |
+| `ProbabilisticModel` | Base for models (extends `Distribution`; provides `component_names`) |
 | `SimpleGenerativeModel` | Simulator-only model wrapper for SBI/ABC (prior + `GenerativeLikelihood`) |
 | `IncrementalConditioner` | Stateful `Module` for sequential Bayesian updating via `update()` / `update_all()` |
 | `iterate` / combinators | Iterative distribution transformation; `with_conversion`, `with_resampling` |
@@ -150,7 +179,7 @@ whose `check()` returns `feasible=True` wins.
 Models no longer implement `_condition_on` directly — conditioning is
 handled entirely by registered methods.  The removed protocol
 `SupportsConditionableComponents` is no longer part of the public API;
-use `SupportsNamedComponents` and the inference registry instead.
+use `component_names` and the inference registry instead.
 
 Built-in methods:
 
@@ -188,19 +217,19 @@ converters should be above concrete-type converters.
 Some distribution families have a generic base and an array-specific
 subclass:
 
-- `EmpiricalDistribution[T]` / `ArrayEmpiricalDistribution`
+- `EmpiricalDistribution[T]` / `NumericEmpiricalDistribution`
 - `BootstrapReplicateDistribution[T]` / `ArrayBootstrapReplicateDistribution`
 
 The generic base carries only type-agnostic features (sampling, expectation).
-The array variant adds `event_shape`, `dim`, `dtype`, `support`, and moment
+The numeric variant adds `event_shape`, `dim`, `dtype`, `support`, and moment
 protocols (`SupportsMean`, `SupportsVariance`, `SupportsCovariance`).
 
 **Automatic factory dispatch:** Constructing a generic base with a numeric
-array automatically returns the array-specific subclass:
+array automatically returns the numeric-specific subclass:
 
 ```python
 EmpiricalDistribution(jnp.ones((100, 3)))
-# → returns ArrayEmpiricalDistribution
+# → returns NumericEmpiricalDistribution
 
 BootstrapReplicateDistribution(jnp.ones((50, 2)))
 # → returns ArrayBootstrapReplicateDistribution
@@ -208,8 +237,8 @@ BootstrapReplicateDistribution(jnp.ones((50, 2)))
 
 This is implemented via `__new__` on the generic base classes.  Non-numeric
 inputs (e.g. lists of objects, numpy object arrays) remain as the generic
-base class.  Calling the array subclass directly (e.g.
-`ArrayEmpiricalDistribution(...)`) is unaffected by the dispatch.
+base class.  Calling the numeric subclass directly (e.g.
+`NumericEmpiricalDistribution(...)`) is unaffected by the dispatch.
 
 ---
 

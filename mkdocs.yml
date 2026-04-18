@@ -89,3 +89,4 @@ nav:
     - Provenance: api/provenance.md
     - Random Functions: api/random_functions.md
     - Constraints: api/constraints.md
+    - Internals: api/internals.md

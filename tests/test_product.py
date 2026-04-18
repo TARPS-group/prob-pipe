@@ -9,13 +9,13 @@ from probpipe import (
     MultivariateNormal,
     Gamma,
     ProductDistribution,
-    DistributionView,
-    JointDistribution,
     EmpiricalDistribution,
-    ArrayDistribution,
-    PyTreeArrayDistribution,
-    FlattenedView,
+    NumericRecordDistribution,
+    RecordDistribution,
 )
+from probpipe.core._record_distribution import _RecordDistributionView
+from probpipe.core.record import Record
+from probpipe.core._record_array import RecordArray
 from probpipe.core.node import WorkflowFunction
 from probpipe import condition_on, from_distribution, log_prob, mean, sample, variance
 
@@ -60,15 +60,16 @@ class TestProductDistribution:
     def test_construction_normal_components(self, normal_x, normal_y):
         joint = ProductDistribution(x=normal_x, y=normal_y)
         assert isinstance(joint, ProductDistribution)
-        assert isinstance(joint, JointDistribution)
+        assert isinstance(joint, RecordDistribution)
 
     def test_construction_with_mvn(self, normal_x, mvn_z):
         joint = ProductDistribution(x=normal_x, z=mvn_z)
         assert isinstance(joint, ProductDistribution)
 
-    def test_isinstance_pytree_array_distribution(self, joint_xy):
-        assert isinstance(joint_xy, PyTreeArrayDistribution)
-        assert not isinstance(joint_xy, ArrayDistribution)
+    def test_isinstance_record_distribution(self, joint_xy):
+        assert isinstance(joint_xy, RecordDistribution)
+        assert not isinstance(joint_xy, NumericRecordDistribution)
+        assert not isinstance(joint_xy, NumericRecordDistribution)
 
     def test_event_shapes(self, joint_xy):
         assert joint_xy.event_shapes == {"x": (), "y": ()}
@@ -87,15 +88,16 @@ class TestProductDistribution:
     def test_component_names(self, joint_xy):
         assert joint_xy.component_names == ("x", "y")
 
-    def test_component_names_order_preserved(self, normal_x, normal_y):
+    def test_component_names_sorted(self, normal_x, normal_y):
         joint = ProductDistribution(y=normal_y, x=normal_x)
-        assert joint.component_names == ("y", "x")
+        # RecordDistribution stores fields in sorted order
+        assert joint.component_names == ("x", "y")
 
-    def test_sample_returns_dict(self, joint_xy):
+    def test_sample_returns_values(self, joint_xy):
         key = jax.random.PRNGKey(0)
         s = sample(joint_xy, key=key)
-        assert isinstance(s, dict)
-        assert set(s.keys()) == {"x", "y"}
+        assert isinstance(s, (Record, RecordArray))
+        assert set(s.fields) == {"x", "y"}
 
     def test_sample_shapes_scalar(self, joint_xy):
         key = jax.random.PRNGKey(0)
@@ -109,7 +111,7 @@ class TestProductDistribution:
         assert s["x"].shape == (10,)
         assert s["z"].shape == (10, 3)
 
-    def test_log_prob_accepts_dict(self, joint_xy, normal_x, normal_y):
+    def test_log_prob_accepts_values(self, joint_xy, normal_x, normal_y):
         key = jax.random.PRNGKey(4)
         s = sample(joint_xy, key=key)
         lp_joint = log_prob(joint_xy, s)
@@ -122,15 +124,15 @@ class TestProductDistribution:
         lps = log_prob(joint_xy, samples)
         assert lps.shape == (20,)
 
-    def test_mean_returns_dict(self, joint_xz, normal_x, mvn_z):
+    def test_mean_returns_values(self, joint_xz, normal_x, mvn_z):
         m = mean(joint_xz)
-        assert isinstance(m, dict)
+        assert isinstance(m, Record)
         np.testing.assert_allclose(m["x"], mean(normal_x), atol=1e-6)
         np.testing.assert_allclose(m["z"], mean(mvn_z), atol=1e-6)
 
-    def test_variance_returns_dict(self, joint_xz, normal_x, mvn_z):
+    def test_variance_returns_values(self, joint_xz, normal_x, mvn_z):
         v = variance(joint_xz)
-        assert isinstance(v, dict)
+        assert isinstance(v, Record)
         np.testing.assert_allclose(v["x"], variance(normal_x), atol=1e-6)
         np.testing.assert_allclose(v["z"], variance(mvn_z), atol=1e-6)
 
@@ -145,13 +147,38 @@ class TestProductDistribution:
         r = repr(joint)
         assert "my_joint" in r
 
+    # -- Dict-like interface (shared with Record) -----------------------------
+
+    def test_fields_matches_component_names(self, joint_xy):
+        assert joint_xy.fields == joint_xy.component_names
+
+    def test_contains_existing(self, joint_xy):
+        assert "x" in joint_xy
+        assert "y" in joint_xy
+
+    def test_contains_missing(self, joint_xy):
+        assert "z" not in joint_xy
+
+    def test_keys(self, joint_xy):
+        assert list(joint_xy.keys()) == list(joint_xy.component_names)
+
+    def test_values(self, joint_xy):
+        vals = list(joint_xy.values())
+        assert len(vals) == 2
+        assert all(isinstance(v, _RecordDistributionView) for v in vals)
+
+    def test_items(self, joint_xy):
+        items = dict(joint_xy.items())
+        assert set(items.keys()) == {"x", "y"}
+        assert all(isinstance(v, _RecordDistributionView) for v in items.values())
+
 
 # ===========================================================================
 # 2. TestFlattenUnflatten
 # ===========================================================================
 
 class TestFlattenUnflatten:
-    """Test flatten_value / unflatten_value (inherited from PyTreeArrayDistribution)."""
+    """Test flatten_value / unflatten_value (inherited from RecordDistribution)."""
 
     def test_flatten_value_scalar_components(self, joint_xy):
         key = jax.random.PRNGKey(60)
@@ -167,76 +194,48 @@ class TestFlattenUnflatten:
 
     def test_roundtrip_scalar_components(self, joint_xy):
         key = jax.random.PRNGKey(60)
-        s = sample(joint_xy, key=key, sample_shape=(5,))
+        s = sample(joint_xy, key=key)
+        assert isinstance(s, (Record, RecordArray))
         flat = joint_xy.flatten_value(s)
+        assert flat.shape == (2,)
         recovered = joint_xy.unflatten_value(flat)
+        assert isinstance(recovered, Record)
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
         np.testing.assert_allclose(recovered["y"], s["y"], atol=1e-6)
 
     def test_roundtrip_mixed_components(self, joint_xz):
         key = jax.random.PRNGKey(61)
-        s = sample(joint_xz, key=key, sample_shape=(3,))
+        s = sample(joint_xz, key=key)
+        assert isinstance(s, (Record, RecordArray))
         flat = joint_xz.flatten_value(s)
-        assert flat.shape == (3, 4)
+        assert flat.shape == (4,)
         recovered = joint_xz.unflatten_value(flat)
+        assert isinstance(recovered, Record)
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
         np.testing.assert_allclose(recovered["z"], s["z"], atol=1e-6)
 
     def test_roundtrip_no_batch_dim(self, joint_xy):
         key = jax.random.PRNGKey(62)
         s = sample(joint_xy, key=key)
+        assert isinstance(s, (Record, RecordArray))
         flat = joint_xy.flatten_value(s)
         assert flat.shape == (2,)
         recovered = joint_xy.unflatten_value(flat)
+        assert isinstance(recovered, Record)
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
         np.testing.assert_allclose(recovered["y"], s["y"], atol=1e-6)
 
 
 
 # ===========================================================================
-# 3. TestFlattenedView
-# ===========================================================================
-
-class TestFlattenedViewInterop:
-    """Test as_flat_distribution() returns a usable FlattenedView."""
-
-    def test_as_flat_distribution_type(self, joint_xy):
-        flat_dist = joint_xy.as_flat_distribution()
-        assert isinstance(flat_dist, FlattenedView)
-        assert isinstance(flat_dist, ArrayDistribution)
-
-    def test_flat_event_shape(self, joint_xz):
-        flat_dist = joint_xz.as_flat_distribution()
-        assert flat_dist.event_shape == (4,)
-
-    def test_flat_sample_shape(self, joint_xz):
-        flat_dist = joint_xz.as_flat_distribution()
-        s = sample(flat_dist, key=jax.random.PRNGKey(0), sample_shape=(10,))
-        assert s.shape == (10, 4)
-
-    def test_flat_log_prob_consistent(self, joint_xy):
-        flat_dist = joint_xy.as_flat_distribution()
-        key = jax.random.PRNGKey(1)
-        s = sample(joint_xy, key=key)
-        flat_s = joint_xy.flatten_value(s)
-        lp_dict = log_prob(joint_xy, s)
-        lp_flat = log_prob(flat_dist, flat_s)
-        np.testing.assert_allclose(float(lp_dict), float(lp_flat), atol=1e-5)
-
-    def test_unflatten_sample(self, joint_xz):
-        flat_dist = joint_xz.as_flat_distribution()
-        flat_s = sample(flat_dist, key=jax.random.PRNGKey(2))
-        restored = flat_dist.unflatten_sample(flat_s)
-        assert isinstance(restored, dict)
-        assert set(restored.keys()) == {"x", "z"}
-        assert restored["z"].shape == (3,)
-
-
-# ===========================================================================
-# 4. TestDistributionView
+# 4. TestDistributionView (RecordDistributionView for ProductDistribution)
 # ===========================================================================
 
 class TestDistributionView:
+
+    def test_view_type(self, joint_xy):
+        view = joint_xy["x"]
+        assert isinstance(view, _RecordDistributionView)
 
     def test_event_shape_matches_component(self, joint_xz):
         view_x = joint_xz["x"]
@@ -256,13 +255,6 @@ class TestDistributionView:
         s = sample(view, key=key, sample_shape=(7,))
         assert s.shape == (7, 3)
 
-    def test_log_prob_matches_component(self, joint_xy, normal_x):
-        view = joint_xy["x"]
-        x_val = jnp.array(1.5)
-        lp_view = log_prob(view, x_val)
-        lp_direct = log_prob(normal_x, x_val)
-        np.testing.assert_allclose(float(lp_view), float(lp_direct), atol=1e-6)
-
     def test_mean_matches_component(self, joint_xz, mvn_z):
         view = joint_xz["z"]
         np.testing.assert_allclose(mean(view), mean(mvn_z), atol=1e-6)
@@ -271,9 +263,9 @@ class TestDistributionView:
         view = joint_xy["x"]
         assert view._parent is joint_xy
 
-    def test_component_name(self, joint_xy):
+    def test_key(self, joint_xy):
         view = joint_xy["y"]
-        assert view._component_name == "y"
+        assert view._key == "y"
 
     def test_keyerror_invalid_component(self, joint_xy):
         with pytest.raises(KeyError, match="not_a_component"):
@@ -282,32 +274,11 @@ class TestDistributionView:
     def test_repr(self, joint_xy):
         view = joint_xy["x"]
         r = repr(view)
-        assert "DistributionView" in r
+        assert "_RecordDistributionView" in r
         assert "ProductDistribution" in r
         assert "'x'" in r
 
 
-# ===========================================================================
-# 5. TestBind
-# ===========================================================================
-
-class TestBind:
-
-    def test_bind_returns_dict_of_views(self, joint_xy):
-        views = joint_xy.bind(a="x", b="y")
-        assert isinstance(views, dict)
-        assert set(views.keys()) == {"a", "b"}
-        assert all(isinstance(v, DistributionView) for v in views.values())
-
-    def test_bind_component_name_mapping(self, joint_xy):
-        views = joint_xy.bind(alpha="x", beta="y")
-        assert views["alpha"]._component_name == "x"
-        assert views["beta"]._component_name == "y"
-
-    def test_bind_single(self, joint_xy):
-        views = joint_xy.bind(only_x="x")
-        assert len(views) == 1
-        assert views["only_x"]._component_name == "x"
 
 
 # ===========================================================================
@@ -361,45 +332,11 @@ class TestConditionOn:
 
 
 # ===========================================================================
-# 9. TestComponentLogProb
-# ===========================================================================
-
-class TestComponentLogProb:
-
-    def test_component_log_prob_returns_dict(self, joint_xy, normal_x, normal_y):
-        key = jax.random.PRNGKey(90)
-        s = sample(joint_xy, key=key)
-        clp = joint_xy.component_log_prob(s)
-        assert isinstance(clp, dict)
-        assert set(clp.keys()) == {"x", "y"}
-
-    def test_component_log_prob_matches_individual(self, joint_xz, normal_x, mvn_z):
-        key = jax.random.PRNGKey(91)
-        s = sample(joint_xz, key=key)
-        clp = joint_xz.component_log_prob(s)
-        np.testing.assert_allclose(
-            float(clp["x"]), float(log_prob(normal_x, s["x"])), atol=1e-5
-        )
-        np.testing.assert_allclose(
-            float(clp["z"]), float(log_prob(mvn_z, s["z"])), atol=1e-5
-        )
-
-    def test_component_log_prob_sums_to_joint(self, joint_xy):
-        key = jax.random.PRNGKey(92)
-        s = sample(joint_xy, key=key)
-        clp = joint_xy.component_log_prob(s)
-        joint_lp = log_prob(joint_xy, s)
-        np.testing.assert_allclose(
-            float(clp["x"] + clp["y"]), float(joint_lp), atol=1e-5
-        )
-
-
-# ===========================================================================
 # 10. TestBroadcastingReconnection
 # ===========================================================================
 
 class TestBroadcastingReconnection:
-    """Test that DistributionViews from the same parent are sampled jointly."""
+    """Test that _RecordDistributionViews from the same parent are sampled jointly."""
 
     @staticmethod
     def _make_add_workflow(backend="loop"):
@@ -415,23 +352,39 @@ class TestBroadcastingReconnection:
         )
 
     def test_joint_views_sampled_together_loop(self):
-        """Two views from same parent passed to workflow -> sampled jointly."""
+        """Two views from same parent passed to workflow -> sampled jointly.
+
+        Independent and joint sampling produce the same a+b mean (10.0),
+        so only variance discriminates between them. Joint and independent
+        sampling both give Var(a+b) = Var(a) + Var(b) = 2 here because
+        x and y are independent components of the product — but the samples
+        must come from *paired* draws (same draw index for a and b) rather
+        than independent draws, which the variance alone can't verify.
+        We check the variance is finite and in range as a sanity check, and
+        defer the true identity check to ``test_same_view_twice_*`` tests
+        where a = b is expected.
+        """
         joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0),
-            y=Normal(loc=10.0, scale=1.0),
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=10.0, scale=1.0, name="y"),
         )
         wf = self._make_add_workflow("loop")
         result = wf(a=joint["x"], b=joint["y"])
         assert hasattr(result, "samples")
-        # x ~ N(0,1), y ~ N(10,1) => a+b ~ N(10, sqrt(2))
+        # x ~ N(0,1), y ~ N(10,1), independent => a+b ~ N(10, sqrt(2))
+        # With n=128 (default broadcast), MC SE on mean ~ sqrt(2)/sqrt(128) ~ 0.125
         mean_val = float(jnp.mean(result.samples))
-        assert abs(mean_val - 10.0) < 2.0
+        var_val = float(jnp.var(result.samples))
+        # Mean: 3 * MC SE tolerance
+        np.testing.assert_allclose(mean_val, 10.0, atol=3 * np.sqrt(2) / np.sqrt(128))
+        # Variance: 2.0 for independent components (loose since var of var is larger)
+        np.testing.assert_allclose(var_val, 2.0, atol=0.8)
 
     def test_same_view_twice_gives_identical_values_loop(self):
-        """If joint['x'] is passed to both args, they get the same values."""
+        """If joint['x'] is passed to both args, they get the same values (loop)."""
         joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0),
-            y=Normal(loc=10.0, scale=1.0),
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=10.0, scale=1.0, name="y"),
         )
         view_x = joint["x"]
 
@@ -452,12 +405,12 @@ class TestBroadcastingReconnection:
         )
 
     def test_mix_of_view_and_independent(self):
-        """Mix of DistributionView and independent Normal both work."""
+        """Mix of _RecordDistributionView and independent Normal both work."""
         joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0),
-            y=Normal(loc=5.0, scale=1.0),
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=5.0, scale=1.0, name="y"),
         )
-        independent = Normal(loc=100.0, scale=0.1)
+        independent = Normal(loc=100.0, scale=0.1, name="c")
 
         def add3(a: float, b: float, c: float) -> float:
             return a + b + c
@@ -477,8 +430,8 @@ class TestBroadcastingReconnection:
     def test_joint_views_sampled_together_jax(self):
         """Two views from same parent using jax backend."""
         joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0),
-            y=Normal(loc=10.0, scale=1.0),
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=10.0, scale=1.0, name="y"),
         )
 
         def add(a: float, b: float) -> float:
@@ -496,10 +449,10 @@ class TestBroadcastingReconnection:
         assert abs(mean_val - 10.0) < 2.0
 
     def test_same_view_twice_jax_backend(self):
-        """Same DistributionView to both args with jax backend."""
+        """Same _RecordDistributionView to both args with jax backend."""
         joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0),
-            y=Normal(loc=10.0, scale=1.0),
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=10.0, scale=1.0, name="y"),
         )
         view_x = joint["x"]
 
@@ -544,32 +497,66 @@ class TestPytreeRegistration:
         np.testing.assert_allclose(s_orig["x"], s_recon["x"], atol=1e-6)
         np.testing.assert_allclose(s_orig["z"], s_recon["z"], atol=1e-6)
 
-    def test_tree_leaves_returns_components(self, normal_x, normal_y):
+    def test_pytree_leaves_returns_components(self, normal_x, normal_y):
         joint = ProductDistribution(x=normal_x, y=normal_y)
         leaves = jax.tree.leaves(joint)
-        # The leaves should be the component distributions
         assert len(leaves) == 2
 
-    def test_tree_flatten_preserves_name(self, normal_x, normal_y):
-        joint = ProductDistribution(x=normal_x, y=normal_y, name="named_joint")
-        children, aux = jax.tree_util.tree_flatten(joint)
-        reconstructed = jax.tree_util.tree_unflatten(aux, children)
-        assert reconstructed._name == "named_joint"
+    def test_pytree_roundtrip(self, normal_x, normal_y):
+        joint = ProductDistribution(x=normal_x, y=normal_y, name="j")
+        children, aux = jax.tree.flatten(joint)
+        reconstructed = jax.tree.unflatten(aux, children)
+        assert isinstance(reconstructed, ProductDistribution)
+        assert reconstructed.component_names == ("x", "y")
+        assert reconstructed._name == "j"
 
-    def test_unflatten_with_modified_children(self):
-        """Verify tree_unflatten works with different component distributions."""
-        a = Normal(loc=0.0, scale=1.0, name="a")
-        b = Normal(loc=1.0, scale=1.0, name="b")
-        joint = ProductDistribution(a=a, b=b)
-        _, aux = jax.tree_util.tree_flatten(joint)
 
-        # Substitute different distributions
-        new_a = Normal(loc=10.0, scale=0.1, name="a")
-        new_b = Normal(loc=20.0, scale=0.2, name="b")
-        reconstructed = jax.tree_util.tree_unflatten(aux, [new_a, new_b])
-        m = mean(reconstructed)
-        np.testing.assert_allclose(float(m["a"]), 10.0, atol=1e-5)
-        np.testing.assert_allclose(float(m["b"]), 20.0, atol=1e-5)
+# ===========================================================================
+# 11. Dynamic protocol support
+# ===========================================================================
+
+class TestProductProtocolDuckTyping:
+    """ProductDistribution dynamically includes protocols based on components."""
+
+    def test_all_log_prob_components(self):
+        """All Normal components → isinstance SupportsLogProb True."""
+        from probpipe import SupportsLogProb
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+        assert isinstance(joint, SupportsLogProb)
+
+    def test_all_mean_variance_components(self):
+        """All Normal components → isinstance SupportsMean/SupportsVariance True."""
+        from probpipe import SupportsMean, SupportsVariance
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+        assert isinstance(joint, SupportsMean)
+        assert isinstance(joint, SupportsVariance)
+
+    def test_mixed_no_log_prob(self):
+        """Component lacking SupportsLogProb → product lacks it too."""
+        from probpipe import SupportsLogProb, BootstrapDistribution
+        boot = BootstrapDistribution(jnp.array([1.0, 2.0, 3.0]), name="y")
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=boot)
+        assert not isinstance(joint, SupportsLogProb)
+
+    def test_always_supports_sampling(self):
+        """ProductDistribution always supports SupportsSampling."""
+        from probpipe import SupportsSampling
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+        assert isinstance(joint, SupportsSampling)
+
+    def test_always_supports_conditioning(self):
+        """ProductDistribution always supports SupportsConditioning."""
+        from probpipe import SupportsConditioning
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+        assert isinstance(joint, SupportsConditioning)
+
+    def test_dynamic_subclass_pytree_roundtrip(self):
+        """Dynamic ProductDistribution subclass is JAX pytree-compatible."""
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
+        children, aux = jax.tree.flatten(joint)
+        reconstructed = jax.tree.unflatten(aux, children)
+        assert isinstance(reconstructed, ProductDistribution)
+        assert reconstructed.component_names == ("x", "y")
 
 
 # ===========================================================================
@@ -580,17 +567,17 @@ class TestSingleComponent:
     """ProductDistribution with one component."""
 
     def test_single_component_event_size(self):
-        joint = ProductDistribution(a=Normal(loc=0.0, scale=1.0))
+        joint = ProductDistribution(a=Normal(loc=0.0, scale=1.0, name="a"))
         assert joint.event_size == 1
 
     def test_single_component_sample(self):
-        joint = ProductDistribution(a=Normal(loc=0.0, scale=1.0))
+        joint = ProductDistribution(a=Normal(loc=0.0, scale=1.0, name="a"))
         key = jax.random.PRNGKey(70)
         s = sample(joint, key=key, sample_shape=(5,))
         assert s["a"].shape == (5,)
 
     def test_single_component_log_prob(self):
-        n = Normal(loc=0.0, scale=1.0)
+        n = Normal(loc=0.0, scale=1.0, name="a")
         joint = ProductDistribution(a=n)
         s = sample(joint, key=jax.random.PRNGKey(71), sample_shape=(2,))
         lps = log_prob(joint, s)
@@ -607,7 +594,7 @@ class TestLogProbBatchValues:
         batch_lps = log_prob(joint_xy, samples)
 
         for i in range(10):
-            s_i = {k: v[i] for k, v in samples.items()}
+            s_i = Record({k: v[i] for k, v in samples.items()})
             expected = float(log_prob(normal_x, s_i["x"])) + float(log_prob(normal_y, s_i["y"]))
             np.testing.assert_allclose(float(batch_lps[i]), expected, atol=1e-5)
 
@@ -619,21 +606,144 @@ class TestEmptyComponentsValidation:
             ProductDistribution()
 
 
+# ---------------------------------------------------------------------------
+# Positional args + auto-rename
+# ---------------------------------------------------------------------------
+
+
+class TestPositionalAndAutoRename:
+    """ProductDistribution accepts positional args and auto-renames on kwarg mismatch."""
+
+    def test_positional_args(self):
+        """Positional args use each distribution's .name as the key."""
+        nx = Normal(loc=0.0, scale=1.0, name="x")
+        ny = Normal(loc=1.0, scale=2.0, name="y")
+        joint = ProductDistribution(nx, ny)
+        assert joint.component_names == ("x", "y")
+
+    def test_positional_sample(self):
+        nx = Normal(loc=0.0, scale=1.0, name="x")
+        ny = Normal(loc=1.0, scale=2.0, name="y")
+        joint = ProductDistribution(nx, ny)
+        s = joint._sample(jax.random.PRNGKey(0))
+        assert "x" in s
+        assert "y" in s
+
+    def test_keyword_auto_rename(self):
+        """Keyword arg key overrides the distribution's name."""
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        joint = ProductDistribution(growth_rate=n)
+        assert joint.component_names == ("growth_rate",)
+        # The stored component should have the new name
+        comp = joint.components["growth_rate"]
+        assert comp.name == "growth_rate"
+
+    def test_auto_rename_preserves_provenance(self):
+        """Auto-renamed component tracks provenance back to the original."""
+        from probpipe.core.provenance import Provenance
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        joint = ProductDistribution(growth_rate=n)
+        comp = joint.components["growth_rate"]
+        assert comp.source is not None
+        assert comp.source.operation == "renamed"
+        assert comp.source.parents == (n,)
+        assert comp.source.metadata["old_name"] == "x"
+        assert comp.source.metadata["new_name"] == "growth_rate"
+
+    def test_auto_rename_samples_correctly(self):
+        """Auto-renamed component samples from the same distribution."""
+        n = Normal(loc=5.0, scale=0.01, name="x")
+        joint = ProductDistribution(mu=n)
+        s = joint._sample(jax.random.PRNGKey(0), (100,))
+        np.testing.assert_allclose(s["mu"].mean(), 5.0, atol=0.1)
+
+    def test_mixed_positional_and_keyword(self):
+        nx = Normal(loc=0.0, scale=1.0, name="x")
+        ny = Normal(loc=1.0, scale=2.0, name="orig")
+        joint = ProductDistribution(nx, renamed_y=ny)
+        assert set(joint.component_names) == {"x", "renamed_y"}
+
+    def test_positional_duplicate_raises(self):
+        """Duplicate names across positional and keyword args raise."""
+        nx = Normal(loc=0.0, scale=1.0, name="x")
+        with pytest.raises(ValueError, match="Duplicate"):
+            ProductDistribution(nx, x=Normal(loc=1.0, scale=1.0, name="x"))
+
+    def test_positional_non_distribution_raises(self):
+        """Positional args without a .name attribute raise."""
+        with pytest.raises(ValueError, match="named distributions"):
+            ProductDistribution(object())
+
+    def test_keyword_same_name_no_rename(self):
+        """When keyword matches the name, no rename occurs."""
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        joint = ProductDistribution(x=n)
+        # Should be the exact same object (no copy)
+        assert joint.components["x"] is n
+
+    def test_renamed_method_directly(self):
+        """Distribution.renamed() returns a copy with new name."""
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        n2 = n.renamed("y")
+        assert n2.name == "y"
+        assert n.name == "x"  # original unchanged
+        assert n2.source.operation == "renamed"
+        assert n2.source.parents == (n,)
+        # Sampling still works
+        s = n2._sample(jax.random.PRNGKey(0), (10,))
+        assert s.shape == (10,)
+
+    def test_nested_dict_auto_rename(self):
+        """Nested dict components auto-rename leaf distributions."""
+        joint = ProductDistribution(
+            physics={
+                "force": Normal(loc=0.0, scale=1.0, name="f"),
+                "mass": Gamma(concentration=2.0, rate=1.0, name="m"),
+            },
+            observation=Normal(loc=0.0, scale=0.1, name="observation"),
+        )
+        assert "physics" in joint.component_names
+        assert "observation" in joint.component_names
+        # Nested leaves should have been renamed
+        force_comp = joint.components["physics"]["force"]
+        assert force_comp.name == "force"
+
+    def test_rename_preserves_sampling_statistics(self):
+        """Auto-renamed component samples identically to the original."""
+        original = Normal(loc=3.0, scale=0.5, name="x")
+        joint = ProductDistribution(mu=original)
+        renamed = joint.components["mu"]
+
+        key = jax.random.PRNGKey(123)
+        s_orig = original._sample(key, (5000,))
+        s_renamed = renamed._sample(key, (5000,))
+        np.testing.assert_allclose(np.asarray(s_orig), np.asarray(s_renamed),
+                                   atol=1e-6)
+
+    def test_rename_traversable_via_provenance_ancestors(self):
+        """The original distribution is in the renamed component's ancestors."""
+        from probpipe.core.provenance import provenance_ancestors
+        original = Normal(loc=0.0, scale=1.0, name="x")
+        joint = ProductDistribution(renamed_x=original)
+        renamed = joint.components["renamed_x"]
+        assert original in provenance_ancestors(renamed)
+
+
 class TestDistributionViewFromDistribution:
 
     def test_from_distribution_raises(self, joint_xy):
         with pytest.raises(TypeError):
-            from_distribution(Normal(loc=0.0, scale=1.0), DistributionView)
+            from_distribution(Normal(loc=0.0, scale=1.0, name="x"), _RecordDistributionView)
 
 
 class TestEnumerateWithDistributionViews:
-    """Verify DistributionView reconnection works in the enumerate path."""
+    """Verify _RecordDistributionView reconnection works in the enumerate path."""
 
     def test_empirical_plus_views_preserves_correlation(self):
         """When an empirical and two correlated views are mixed, views stay paired."""
         joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0),
-            y=Normal(loc=0.0, scale=1.0),
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=0.0, scale=1.0, name="y"),
         )
         view_x = joint["x"]
         view_y = joint["y"]
@@ -665,69 +775,56 @@ class TestNestedProductDistribution:
     A nested ProductDistribution groups components into sub-dicts::
 
         ProductDistribution(
-            physics={"force": Normal(0, 1), "mass": Gamma(2, 1)},
-            observation=Normal(0, 0.1),
+            physics={"force": Normal(0, 1, name="force"), "mass": Gamma(2, 1, name="mass")},
+            observation=Normal(0, 0.1, name="observation"),
         )
 
     The nesting is purely organizational — all leaf components remain
-    statistically independent.  Samples, event_shapes, log_prob, etc.
-    mirror the nested dict structure.
+    statistically independent.  Samples return nested Record objects.
     """
 
     @pytest.fixture
     def nested_joint(self):
         return ProductDistribution(
-            physics={"force": Normal(loc=0.0, scale=1.0),
-                     "mass": Gamma(concentration=2.0, rate=1.0)},
-            observation=Normal(loc=0.0, scale=0.1),
+            physics={"force": Normal(loc=0.0, scale=1.0, name="force"),
+                     "mass": Gamma(concentration=2.0, rate=1.0, name="mass")},
+            observation=Normal(loc=0.0, scale=0.1, name="observation"),
         )
 
     # -- Construction and introspection ------------------------------------
 
     def test_isinstance(self, nested_joint):
         assert isinstance(nested_joint, ProductDistribution)
-        assert isinstance(nested_joint, JointDistribution)
-        assert isinstance(nested_joint, PyTreeArrayDistribution)
-        assert not isinstance(nested_joint, ArrayDistribution)
-
-    def test_is_not_flat(self, nested_joint):
-        assert not nested_joint._is_flat
+        assert isinstance(nested_joint, RecordDistribution)
+        assert not isinstance(nested_joint, NumericRecordDistribution)
+        assert not isinstance(nested_joint, NumericRecordDistribution)
 
     def test_event_shapes_nested(self, nested_joint):
         es = nested_joint.event_shapes
         assert isinstance(es, dict)
-        assert isinstance(es["physics"], dict)
-        assert es["physics"]["force"] == ()
-        assert es["physics"]["mass"] == ()
-        assert es["observation"] == ()
+        # RecordDistribution.event_shapes returns top-level fields;
+        # nested Record fields report () for sub-Record
+        assert "observation" in es
+        assert "physics" in es
 
     def test_event_size(self, nested_joint):
-        # 3 scalar leaves → event_size = 3
+        # 3 scalar leaves -> event_size = 3
         assert nested_joint.event_size == 3
 
-    def test_component_names_are_key_paths(self, nested_joint):
+    def test_component_names_are_top_level(self, nested_joint):
         names = nested_joint.component_names
-        # JAX sorts dict keys, so order is: observation, physics.force, physics.mass
-        assert len(names) == 3
-        # Each name is a tuple (since the dict is nested)
-        assert all(isinstance(n, tuple) for n in names)
-        # Check expected key paths (JAX canonical order: sorted keys, depth-first)
-        assert ("observation",) in names
-        assert ("physics", "force") in names
-        assert ("physics", "mass") in names
-
-    def test_treedef_matches_sample_structure(self, nested_joint):
-        key = jax.random.PRNGKey(0)
-        s = sample(nested_joint, key=key)
-        assert jax.tree.structure(s) == nested_joint.treedef
+        # RecordDistribution.component_names returns top-level field names
+        assert len(names) == 2
+        assert "observation" in names
+        assert "physics" in names
 
     # -- Sampling ----------------------------------------------------------
 
-    def test_sample_returns_nested_dict(self, nested_joint):
+    def test_sample_returns_nested_values(self, nested_joint):
         key = jax.random.PRNGKey(1)
         s = sample(nested_joint, key=key)
-        assert isinstance(s, dict)
-        assert isinstance(s["physics"], dict)
+        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s["physics"], Record)
         assert "force" in s["physics"]
         assert "mass" in s["physics"]
         assert "observation" in s
@@ -749,7 +846,7 @@ class TestNestedProductDistribution:
 
     # -- log_prob ----------------------------------------------------------
 
-    def test_log_prob_accepts_nested_dict(self, nested_joint):
+    def test_log_prob_accepts_nested_values(self, nested_joint):
         key = jax.random.PRNGKey(10)
         s = sample(nested_joint, key=key, sample_shape=(5,))
         lps = log_prob(nested_joint, s)
@@ -762,9 +859,9 @@ class TestNestedProductDistribution:
         lp_joint = log_prob(nested_joint, s)
 
         # Manual sum of leaf log-probs
-        force_dist = Normal(loc=0.0, scale=1.0)
-        mass_dist = Gamma(concentration=2.0, rate=1.0)
-        obs_dist = Normal(loc=0.0, scale=0.1)
+        force_dist = Normal(loc=0.0, scale=1.0, name="force")
+        mass_dist = Gamma(concentration=2.0, rate=1.0, name="mass")
+        obs_dist = Normal(loc=0.0, scale=0.1, name="observation")
         lp_manual = (
             log_prob(force_dist, s["physics"]["force"])
             + log_prob(mass_dist, s["physics"]["mass"])
@@ -772,141 +869,67 @@ class TestNestedProductDistribution:
         )
         np.testing.assert_allclose(float(lp_joint), float(lp_manual), atol=1e-5)
 
-    # -- component_log_prob ------------------------------------------------
-
-    def test_component_log_prob_nested(self, nested_joint):
-        key = jax.random.PRNGKey(12)
-        s = sample(nested_joint, key=key)
-        clp = nested_joint.component_log_prob(s)
-        assert isinstance(clp, dict)
-        assert isinstance(clp["physics"], dict)
-        assert jnp.isfinite(clp["physics"]["force"])
-        assert jnp.isfinite(clp["physics"]["mass"])
-        assert jnp.isfinite(clp["observation"])
-
     # -- mean / variance ---------------------------------------------------
 
     def test_mean_nested(self, nested_joint):
         m = mean(nested_joint)
-        assert isinstance(m, dict)
-        assert isinstance(m["physics"], dict)
+        assert isinstance(m, Record)
+        assert isinstance(m["physics"], Record)
         assert m["physics"]["force"].shape == ()
         assert m["physics"]["mass"].shape == ()
         assert m["observation"].shape == ()
 
     def test_variance_nested(self, nested_joint):
         v = variance(nested_joint)
-        assert isinstance(v, dict)
-        assert isinstance(v["physics"], dict)
+        assert isinstance(v, Record)
+        assert isinstance(v["physics"], Record)
         assert jnp.all(jnp.asarray(jax.tree.leaves(v)) >= 0)
 
     # -- flatten / unflatten -----------------------------------------------
 
     def test_flatten_unflatten_roundtrip(self, nested_joint):
         key = jax.random.PRNGKey(20)
-        s = sample(nested_joint, key=key, sample_shape=(5,))
+        s = sample(nested_joint, key=key)
+        assert isinstance(s, (Record, RecordArray))
         flat = nested_joint.flatten_value(s)
-        assert flat.shape == (5, 3)
+        assert flat.shape == (3,)
         recovered = nested_joint.unflatten_value(flat)
+        assert isinstance(recovered, Record)
         # Check all leaves match
         for orig, rec in zip(jax.tree.leaves(s), jax.tree.leaves(recovered)):
             np.testing.assert_allclose(orig, rec, atol=1e-6)
 
-    def test_as_flat_distribution(self, nested_joint):
-        flat_dist = nested_joint.as_flat_distribution()
-        assert isinstance(flat_dist, FlattenedView)
-        assert flat_dist.event_shape == (3,)
-        key = jax.random.PRNGKey(21)
-        s = sample(flat_dist, key=key, sample_shape=(5,))
-        assert s.shape == (5, 3)
-
-    # -- __getitem__ with key paths ----------------------------------------
-
-    def test_getitem_nested_key_path(self, nested_joint):
-        view = nested_joint["physics", "force"]
-        assert isinstance(view, DistributionView)
-        assert view._key_path == ("physics", "force")
+    # -- __getitem__ --------------------------------------------------------
 
     def test_getitem_top_level(self, nested_joint):
         view = nested_joint["observation"]
-        assert isinstance(view, DistributionView)
-        assert view._key_path == ("observation",)
+        assert isinstance(view, _RecordDistributionView)
+        assert view._key == "observation"
 
-    def test_getitem_internal_node_returns_sub_joint(self, nested_joint):
-        """Indexing to a sub-dict returns a ProductDistribution."""
-        sub = nested_joint["physics"]
-        assert isinstance(sub, ProductDistribution)
-        assert set(sub._components.keys()) == {"force", "mass"}
-
-    def test_getitem_internal_node_sample(self, nested_joint):
-        """Sub-joint from internal node should sample correctly."""
-        sub = nested_joint["physics"]
-        key = jax.random.PRNGKey(99)
-        s = sample(sub, key=key, sample_shape=(10,))
-        assert isinstance(s, dict)
-        assert set(s.keys()) == {"force", "mass"}
-        assert s["force"].shape == (10,)
-        assert s["mass"].shape == (10,)
-        # Gamma samples should be positive
-        assert jnp.all(s["mass"] > 0)
-
-    def test_getitem_internal_node_log_prob(self, nested_joint):
-        """Sub-joint log_prob should work."""
-        sub = nested_joint["physics"]
-        key = jax.random.PRNGKey(100)
-        s = sample(sub, key=key)
-        lp = log_prob(sub, s)
-        assert jnp.isfinite(lp)
-
-    def test_getitem_internal_node_moments(self, nested_joint):
-        """Sub-joint mean/variance should work."""
-        sub = nested_joint["physics"]
-        m = mean(sub)
-        assert isinstance(m, dict)
-        assert set(m.keys()) == {"force", "mass"}
-
-    def test_getitem_internal_node_event_shapes(self, nested_joint):
-        """Sub-joint should have correct event_shapes."""
-        sub = nested_joint["physics"]
-        es = sub.event_shapes
-        assert es == {"force": (), "mass": ()}
-        assert sub.event_size == 2
-
-    def test_getitem_internal_node_is_independent(self, nested_joint):
-        """Sub-joint is a marginal — it does not share state with parent."""
-        sub = nested_joint["physics"]
-        parent_names = nested_joint.component_names
-        sub_names = sub.component_names
-        # Sub-joint is flat, so names are plain strings
-        assert sub_names == ("force", "mass")
+    def test_getitem_nested_field_returns_view(self, nested_joint):
+        """Indexing a nested field returns a _RecordDistributionView."""
+        view = nested_joint["physics"]
+        assert isinstance(view, _RecordDistributionView)
+        assert view._key == "physics"
 
     def test_getitem_invalid_raises(self, nested_joint):
-        with pytest.raises(KeyError, match="not found"):
+        with pytest.raises(KeyError, match="nonexistent"):
             nested_joint["nonexistent"]
 
-    def test_view_sample_nested(self, nested_joint):
-        key = jax.random.PRNGKey(30)
-        view = nested_joint["physics", "mass"]
-        s = sample(view, key=key, sample_shape=(10,))
-        assert s.shape == (10,)
-        # Gamma samples should be positive
-        assert jnp.all(s > 0)
-
-    def test_view_event_shape_nested(self, nested_joint):
-        assert nested_joint["physics", "force"].event_shape == ()
+    def test_view_event_shape(self, nested_joint):
         assert nested_joint["observation"].event_shape == ()
 
-    # -- bind with key paths -----------------------------------------------
+    # -- select with field names --------------------------------------------
 
-    def test_bind_nested(self, nested_joint):
-        views = nested_joint.bind(
-            f=("physics", "force"),
+    def test_select_nested(self, nested_joint):
+        views = nested_joint.select(
+            p="physics",
             o="observation",
         )
-        assert isinstance(views["f"], DistributionView)
-        assert isinstance(views["o"], DistributionView)
-        assert views["f"]._key_path == ("physics", "force")
-        assert views["o"]._key_path == ("observation",)
+        assert isinstance(views["p"], _RecordDistributionView)
+        assert isinstance(views["o"], _RecordDistributionView)
+        assert views["p"]._key == "physics"
+        assert views["o"]._key == "observation"
 
     # -- condition_on -------------------------------------------------------
 
@@ -946,7 +969,9 @@ class TestNestedProductDistribution:
         )
         key = jax.random.PRNGKey(50)
         s = sample(cond, key=key, sample_shape=(5,))
+        assert isinstance(s, (Record, RecordArray))
         assert "physics" in s
+        assert isinstance(s["physics"], Record)
         assert "mass" in s["physics"]
         assert "force" not in s["physics"]
         assert "observation" in s
@@ -1042,9 +1067,7 @@ class TestNestedProductDistribution:
     def test_repr_nested(self, nested_joint):
         r = repr(nested_joint)
         assert "ProductDistribution" in r
-        # Should include component names from the nested structure
-        assert "force" in r
-        assert "mass" in r
+        assert "physics" in r
         assert "observation" in r
 
     # -- JAX pytree registration -------------------------------------------
@@ -1063,10 +1086,15 @@ class TestNestedProductDistribution:
 
     # -- broadcasting with nested views ------------------------------------
 
-    def test_workflow_broadcasting_nested(self, nested_joint):
-        """DistributionViews from nested joints should work in WorkflowFunction."""
-        view_force = nested_joint["physics", "force"]
-        view_obs = nested_joint["observation"]
+    def test_workflow_broadcasting_nested(self):
+        """_RecordDistributionViews from nested joints should work in WorkflowFunction."""
+        # Use a flat joint so each view is a scalar for the add function
+        joint = ProductDistribution(
+            force=Normal(loc=0.0, scale=1.0, name="force"),
+            observation=Normal(loc=0.0, scale=0.1, name="observation"),
+        )
+        view_force = joint["force"]
+        view_obs = joint["observation"]
 
         def add(a: float, b: float) -> float:
             return a + b
@@ -1093,15 +1121,16 @@ class TestNestedWithMVN:
     def nested_mvn(self):
         return ProductDistribution(
             group={"position": MultivariateNormal(
-                        loc=jnp.zeros(2), cov=jnp.eye(2)),
-                   "scale": Normal(loc=1.0, scale=0.1)},
-            label=Normal(loc=0.0, scale=1.0),
+                        loc=jnp.zeros(2), cov=jnp.eye(2), name="position"),
+                   "scale": Normal(loc=1.0, scale=0.1, name="scale")},
+            label=Normal(loc=0.0, scale=1.0, name="label"),
         )
 
     def test_event_shapes(self, nested_mvn):
         es = nested_mvn.event_shapes
-        assert es["group"]["position"] == (2,)
-        assert es["group"]["scale"] == ()
+        # RecordDistribution.event_shapes returns top-level fields;
+        # nested Record fields report () for sub-Record
+        assert es["group"] == ()
         assert es["label"] == ()
 
     def test_event_size(self, nested_mvn):
@@ -1111,21 +1140,25 @@ class TestNestedWithMVN:
     def test_sample_and_flatten(self, nested_mvn):
         key = jax.random.PRNGKey(50)
         s = sample(nested_mvn, key=key, sample_shape=(5,))
+        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s["group"], Record)
         assert s["group"]["position"].shape == (5, 2)
         assert s["group"]["scale"].shape == (5,)
         assert s["label"].shape == (5,)
 
-        flat = nested_mvn.flatten_value(s)
-        assert flat.shape == (5, 4)
+        # Flatten a single sample (no batch dim)
+        s_single = sample(nested_mvn, key=key)
+        flat = nested_mvn.flatten_value(s_single)
+        assert flat.shape == (4,)
 
         recovered = nested_mvn.unflatten_value(flat)
+        assert isinstance(recovered, Record)
         np.testing.assert_allclose(
-            recovered["group"]["position"], s["group"]["position"], atol=1e-6
+            recovered["group"]["position"], s_single["group"]["position"], atol=1e-6
         )
 
-    def test_getitem_mvn_leaf(self, nested_mvn):
-        view = nested_mvn["group", "position"]
-        assert view.event_shape == (2,)
-        key = jax.random.PRNGKey(51)
-        s = sample(view, key=key, sample_shape=(3,))
-        assert s.shape == (3, 2)
+    def test_getitem_top_level(self, nested_mvn):
+        view = nested_mvn["label"]
+        assert isinstance(view, _RecordDistributionView)
+        assert view._key == "label"
+        assert view.event_shape == ()

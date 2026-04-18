@@ -68,7 +68,9 @@ class KDEDistribution(TFPDistribution):
         n, d = samples.shape
         self._samples = samples
         self._d = d
-        self._name = name
+        if name is None:
+            name = "kde"
+        super().__init__(name=name)
 
         # Weights
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable
 
-import arviz as az
-
 if TYPE_CHECKING:
     from xarray import DataTree
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -17,6 +16,7 @@ from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb, SupportsMean
 from ..custom_types import Array, ArrayLike
+from ..core.record import Record, RecordTemplate
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
@@ -35,7 +35,7 @@ def _is_jax_traceable(fn: Callable, init_state: jnp.ndarray) -> bool:
 
 
 def _get_init_state(
-    dist: Any, init: ArrayLike | None, data: ArrayLike | None,
+    dist: Distribution, init: ArrayLike | None, data: ArrayLike | None,
 ) -> jnp.ndarray:
     """Determine an initial chain state from the distribution or data."""
     if init is not None:
@@ -44,6 +44,11 @@ def _get_init_state(
     if isinstance(dist, SupportsMean):
         try:
             m = dist._mean()
+            if isinstance(m, Record):
+                from ..core._numeric_record import NumericRecord
+                if not isinstance(m, NumericRecord):
+                    m = NumericRecord.from_record(m)
+                m = m.flatten()
             return jnp.atleast_1d(jnp.asarray(m, dtype=jnp.float32))
         except Exception:
             pass
@@ -60,13 +65,13 @@ def _get_init_state(
     )
 
 
-def _is_simple_model(dist: Any) -> bool:
+def _is_simple_model(dist: Distribution) -> bool:
     """Check if *dist* is a SimpleModel (lazy import to avoid circularity)."""
     from ..modeling._simple import SimpleModel
     return isinstance(dist, SimpleModel)
 
 
-def _build_target_log_prob(dist: Any, observed: Any) -> Callable[[jnp.ndarray], Array]:
+def _build_target_log_prob(dist: Distribution, observed: ArrayLike | Record | None) -> Callable[[jnp.ndarray], Array]:
     """Build a target_log_prob_fn(params) from *dist* and *observed*.
 
     Handles three cases:
@@ -76,10 +81,20 @@ def _build_target_log_prob(dist: Any, observed: Any) -> Callable[[jnp.ndarray], 
     2. **Bare SupportsLogProb with data**: ``dist._log_prob(params)``
        (data is assumed already folded in, e.g., via closure).
     3. **Joint over (params, data)**: ``dist._log_prob((params, data))``
+
+    Observed data is passed through to the likelihood as-is (may be a
+    raw array, a ``Record`` object, or a dict — the likelihood handles
+    its own input types).
     """
-    # SimpleModel: separate prior + likelihood
     if _is_simple_model(dist):
-        data = jnp.asarray(observed) if observed is not None else None
+        data = observed
+        # Records now store values verbatim (no lazy conversion), so we
+        # no longer have to pre-resolve to avoid tracer leaks. Left as a
+        # no-op Record rebuild for backwards-compatible safety under JIT
+        # if callers pass in non-JAX array leaves (e.g. numpy).
+        from ..core.record import Record
+        if isinstance(data, Record):
+            data = Record({f: jnp.asarray(data[f]) for f in data.fields})
 
         def target_log_prob_fn(params):
             lp = dist._prior._log_prob(params)
@@ -89,12 +104,9 @@ def _build_target_log_prob(dist: Any, observed: Any) -> Callable[[jnp.ndarray], 
 
         return target_log_prob_fn
 
-    # Joint _log_prob((params, data))
     if observed is not None:
-        data = jnp.asarray(observed)
-        return lambda params: dist._log_prob((params, data))
+        return lambda params: dist._log_prob((params, observed))
 
-    # Bare SupportsLogProb (no data)
     return dist._log_prob
 
 
@@ -108,7 +120,7 @@ def _run_tfp_chains(
     num_chains: int,
     step_size: float,
     random_seed: int,
-) -> tuple[list[Array], dict[str, Any]]:
+) -> tuple[list[Array], dict[str, np.ndarray]]:
     """Run TFP-backed MCMC chains.
 
     Returns (chains, sample_stats_dict) where sample_stats_dict contains
@@ -155,18 +167,17 @@ def _run_tfp_chains(
     # all_samples: (num_chains, num_results, *event_shape)
     chains = [all_samples[c] for c in range(num_chains)]
 
-    # Extract sample_stats from traces for DataTree
     sample_stats = _extract_sample_stats(all_traces, num_chains)
     return chains, sample_stats
 
 
-def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, Any]:
+def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, np.ndarray]:
     """Extract sample stats arrays from TFP traces.
 
     Returns dict of numpy arrays shaped (num_chains, num_draws).
     """
     results = traces
-    stats: dict[str, Any] = {}
+    stats: dict[str, np.ndarray] = {}
 
     if hasattr(results, "new_step_size"):
         stats["step_size"] = np.asarray(results.new_step_size)
@@ -186,17 +197,60 @@ def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, Any]:
     return stats
 
 
-def _build_tfp_inference_data(
+# ---------------------------------------------------------------------------
+# Auxiliary DataTree builder (MCMC-specific)
+# ---------------------------------------------------------------------------
+
+
+def _build_mcmc_datatree(
     chains: list[Array],
-    sample_stats: dict[str, Any],
+    sample_stats: dict[str, np.ndarray] | None = None,
+    warmup_chains: list[Array] | None = None,
 ) -> DataTree:
-    """Build an ArviZ ``DataTree`` from TFP chains and sample stats."""
-    # Stack chains: (num_chains, num_draws, *event_shape)
-    posterior_array = np.stack([np.asarray(c) for c in chains], axis=0)
-    groups: dict[str, Any] = {"posterior": {"params": posterior_array}}
-    if sample_stats:
-        groups["sample_stats"] = sample_stats
-    return az.from_dict(groups)
+    """Build an arviz-convention DataTree from MCMC chains + diagnostics.
+
+    Groups: ``posterior``, ``sample_stats`` (if provided), ``warmup``
+    (if provided).
+    """
+    import arviz as az
+    import xarray as xr
+
+    def _stack(chain_list):
+        return np.stack([np.asarray(c) for c in chain_list], axis=0)
+
+    posterior_dict = {"params": _stack(chains)}
+    # arviz 1.x from_dict takes a positional groups dict;
+    # arviz 0.x takes keyword arguments (posterior=, sample_stats=, ...).
+    import inspect
+    sig = inspect.signature(az.from_dict)
+    first_param = next(iter(sig.parameters))
+    if first_param == "posterior":
+        # arviz 0.x keyword-style API
+        kw: dict = {"posterior": posterior_dict}
+        if sample_stats:
+            kw["sample_stats"] = sample_stats
+        dt = az.from_dict(**kw)
+    else:
+        # arviz 1.x groups-dict API
+        groups: dict = {"posterior": posterior_dict}
+        if sample_stats:
+            groups["sample_stats"] = sample_stats
+        dt = az.from_dict(groups)
+
+    if warmup_chains is not None and all(w is not None for w in warmup_chains):
+        warmup_array = _stack(warmup_chains)
+        n_chains, n_warmup = warmup_array.shape[:2]
+        event_dims = [f"params_dim_{i}" for i in range(warmup_array.ndim - 2)]
+        dims = ["chain", "draw"] + event_dims
+        warmup_ds = xr.Dataset({
+            "params": xr.DataArray(
+                warmup_array, dims=dims,
+                coords={"chain": np.arange(n_chains), "draw": np.arange(n_warmup)},
+            ),
+        })
+        dt["warmup"] = xr.DataTree(dataset=warmup_ds)
+
+    return dt
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +260,12 @@ def _build_tfp_inference_data(
 def _get_prior(dist: Distribution) -> Distribution:
     """Extract the prior from a model, or return dist itself."""
     return dist._prior if _is_simple_model(dist) else dist
+
+
+def _extract_record_template(dist: Distribution) -> RecordTemplate | None:
+    """Return the RecordTemplate from *dist*'s prior, or ``None``."""
+    prior = _get_prior(dist)
+    return prior.record_template
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +314,7 @@ class _TFPGradientMethod(InferenceMethod):
         target = _build_target_log_prob(dist, observed)
         prior = _get_prior(dist)
         init = _get_init_state(prior, kwargs.get("init"), observed)
+        record_template = _extract_record_template(dist)
 
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 500)
@@ -268,10 +329,10 @@ class _TFPGradientMethod(InferenceMethod):
             step_size=kwargs.get("step_size", 0.1),
             random_seed=kwargs.get("random_seed", 0),
         )
-        inference_data = _build_tfp_inference_data(chains, sample_stats)
+        auxiliary = _build_mcmc_datatree(chains, sample_stats)
         return make_posterior(
             chains, parents=(prior,), algorithm=self._method_name,
-            inference_data=inference_data,
+            auxiliary=auxiliary, record_template=record_template,
             num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         )
 

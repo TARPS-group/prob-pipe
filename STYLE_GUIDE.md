@@ -80,8 +80,8 @@ condition_on_nutpie = WorkflowFunction(
 
 - **Distribution classes:** CamelCase, descriptive — `Normal`, `MultivariateNormal`,
   `EmpiricalDistribution`, `BootstrapReplicateDistribution`.
-- **Base / mixin classes:** `Distribution`, `ArrayDistribution`,
-  `TFPDistribution`, `ProbabilisticModel`.
+- **Base / mixin classes:** `Distribution`, `RecordDistribution`,
+  `NumericRecordDistribution`, `TFPDistribution`, `ProbabilisticModel`.
 - **Private helper classes:** Leading underscore — `_LinearMapGRF`, `_ShiftedGRF`.
 
 ### 1.6 Modules
@@ -123,7 +123,7 @@ this distribution hold?"
 | Class | `.n` meaning |
 |-------|-------------|
 | `EmpiricalDistribution` | Number of samples |
-| `JointEmpiricalDistribution` | Number of joint samples |
+| `JointEmpirical` | Number of joint samples |
 | `BootstrapDistribution` | Number of function evaluations |
 | `BootstrapReplicateDistribution` | Number of observations per bootstrap dataset |
 | `BroadcastDistribution` | Number of input–output pairs |
@@ -214,8 +214,8 @@ class Normal(TFPDistribution):
         Mean of the distribution.
     scale : array-like
         Standard deviation (> 0).
-    name : str, optional
-        Distribution name for provenance.
+    name : str
+        Distribution name (required for leaf distributions).
     """
 ```
 
@@ -381,11 +381,10 @@ inference/    (imports core/, custom_types)
 
 > **Exceptions** (intentional reverse edges):
 >
-> - `core/node.py` → `distributions/joint.py` (WorkflowFunction broadcasting)
 > - `inference/` → `modeling/` (lazy imports for model-type dispatch in
 >   `_sbijax`, `_tfp_mcmc`, `_nutpie`, `_cmdstan_method`, `_pymc_method`)
 >
-> Both use lazy (in-function) imports to avoid circular imports at
+> These use lazy (in-function) imports to avoid circular imports at
 > module load time.  Do not add new reverse edges without discussion.
 
 ---
@@ -409,7 +408,7 @@ class SupportsFoo(Protocol):
 - `SupportsLogProb` extends `SupportsUnnormalizedLogProb`.
 - All other protocols (`SupportsSampling`, `SupportsMean`,
   `SupportsVariance`, `SupportsCovariance`, `SupportsExpectation`,
-  `SupportsConditioning`, `SupportsNamedComponents`) are standalone.
+  `SupportsConditioning`) are standalone.
 
 ### 7.3 Implementing protocols
 
@@ -451,7 +450,7 @@ Define reusable fixtures at module scope:
 ```python
 @pytest.fixture
 def normal():
-    return Normal(loc=2.0, scale=0.5)
+    return Normal(loc=2.0, scale=0.5, name="x")
 ```
 
 Use `@pytest.fixture(params=...)` for parametrized testing across

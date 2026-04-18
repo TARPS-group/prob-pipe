@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..core.distribution import (
-    ArrayDistribution,
+    NumericRecordDistribution,
     _mc_expectation,
 )
 from ..core.protocols import (
@@ -23,11 +23,12 @@ from ..core.protocols import (
     SupportsSampling,
     SupportsVariance,
 )
+from ..core.record import Record, RecordTemplate
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 
 class TFPDistribution(
-    ArrayDistribution,
+    NumericRecordDistribution,
     SupportsSampling,
     SupportsLogProb,
     SupportsMean,
@@ -52,6 +53,21 @@ class TFPDistribution(
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
 
+    # -- record_template auto-generation ------------------------------------
+
+    @property
+    def record_template(self):
+        """Auto-build record_template from name + event_shape when named."""
+        tpl = getattr(self, "_record_template", None)
+        if tpl is not None:
+            return tpl
+        name = getattr(self, "_name", None)
+        if name is not None:
+            tpl = RecordTemplate(**{name: self.event_shape})
+            object.__setattr__(self, "_record_template", tpl)
+            return tpl
+        return None
+
     # -- shape delegation ---------------------------------------------------
 
     @property
@@ -66,11 +82,28 @@ class TFPDistribution(
     def dtype(self) -> jnp.dtype:
         return self._tfp_dist.dtype
 
-    # -- sampling & density -------------------------------------------------
+    @property
+    def dtypes(self) -> dict[str, jnp.dtype]:
+        """Per-field dtypes (single field for TFPDistribution)."""
+        tpl = self.record_template
+        if tpl is not None:
+            return {name: self.dtype for name in tpl.fields}
+        return {}
 
-    def _sample_one(self, key: PRNGKey) -> Array:
-        """Draw a single sample from the TFP distribution."""
-        return self._tfp_dist.sample(seed=key)
+    @property
+    def support(self):
+        """The support of this distribution.  Override in subclasses."""
+        raise NotImplementedError(f"{type(self).__name__}.support")
+
+    @property
+    def supports(self) -> dict[str, any]:
+        """Per-field support constraints (single field for TFPDistribution)."""
+        tpl = self.record_template
+        if tpl is not None:
+            return {name: self.support for name in tpl.fields}
+        return {}
+
+    # -- sampling & density -------------------------------------------------
 
     def _sample(
         self,

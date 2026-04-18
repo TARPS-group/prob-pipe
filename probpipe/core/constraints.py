@@ -130,7 +130,7 @@ class _Interval(Constraint):
         return f"interval({self.low}, {self.high})"
 
 class _GreaterThan(Constraint):
-    """Values strictly greater than a lower bound."""
+    """Record strictly greater than a lower bound."""
     def __init__(self, lower_bound: float):
         self.lower_bound = lower_bound
     def check(self, value: ArrayLike) -> Array:

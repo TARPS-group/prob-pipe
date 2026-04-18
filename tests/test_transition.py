@@ -172,7 +172,7 @@ class TestWithConversion:
             samples = pp_sample(dist, key=key, sample_shape=(50,)) + shift
             return EmpiricalDistribution(samples)
 
-        initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         step = with_conversion(parametric_step, MultivariateNormal)
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0, 2.0, 3.0])
         for d in dists[1:]:
@@ -234,10 +234,10 @@ class TestWithResampling:
 
     def test_non_empirical_passthrough(self):
         """Non-EmpiricalDistribution passes through unchanged."""
-        initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2))
+        initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
 
         def mvn_step(dist, inp):
-            return MultivariateNormal(loc=jnp.ones(2) * inp, cov=jnp.eye(2))
+            return MultivariateNormal(loc=jnp.ones(2) * inp, cov=jnp.eye(2), name="z")
 
         step = with_resampling(mvn_step, ess_threshold=0.5)
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0])
@@ -286,7 +286,7 @@ class _SimpleLikelihood:
 class TestIncrementalConditioner:
     def test_update_single_batch(self):
         """update() conditions on a single data batch, updates state."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0)
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0, name="prior")
         conditioner = IncrementalConditioner(
             prior, _SimpleLikelihood(), condition_fn=_mock_condition_fn,
         )
@@ -300,7 +300,7 @@ class TestIncrementalConditioner:
 
     def test_update_successive(self):
         """Successive update() calls chain posteriors."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0)
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0, name="prior")
         conditioner = IncrementalConditioner(
             prior, _SimpleLikelihood(), condition_fn=_mock_condition_fn,
         )
@@ -311,7 +311,7 @@ class TestIncrementalConditioner:
 
     def test_update_all(self):
         """update_all() iterates over batches, returns list, updates state."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0)
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0, name="prior")
         conditioner = IncrementalConditioner(
             prior, _SimpleLikelihood(), condition_fn=_mock_condition_fn,
         )
@@ -325,7 +325,7 @@ class TestIncrementalConditioner:
 
     def test_step_property(self):
         """step property exposes the step function for use with iterate."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0)
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0, name="prior")
         conditioner = IncrementalConditioner(
             prior, _SimpleLikelihood(), condition_fn=_mock_condition_fn,
         )

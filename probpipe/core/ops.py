@@ -193,6 +193,26 @@ def expectation(
     )
 
 
+def _split_data_kwargs(
+    dist: Distribution,
+    kwargs: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Separate named data kwargs from inference kwargs.
+
+    Uses the distribution's ``component_names`` as the sole signal:
+    any kwarg whose name matches a component name is data (conditioning
+    target); everything else is an inference parameter.
+
+    Returns ``(data_kwargs, inference_kwargs)``.
+    """
+    comp_names = frozenset(
+        dist.component_names if hasattr(dist, 'component_names') else ()
+    )
+    data_kwargs = {k: v for k, v in kwargs.items() if k in comp_names}
+    inference_kwargs = {k: v for k, v in kwargs.items() if k not in comp_names}
+    return data_kwargs, inference_kwargs
+
+
 @workflow_function
 def condition_on(
     dist: Distribution,
@@ -202,6 +222,20 @@ def condition_on(
     **kwargs: Any,
 ) -> Distribution:
     """Condition a distribution on observed values.
+
+    Observed data can be passed positionally or as named keyword
+    arguments::
+
+        # Positional (backward compatible):
+        condition_on(model, y_obs)
+
+        # Named data kwargs — bundled into Record(X=..., y=...):
+        condition_on(model, X=bootstrap["X"], y=bootstrap["y"],
+                     n_broadcast_samples=16)
+
+    When named data kwargs are distribution views from the same parent,
+    the workflow function broadcasting machinery samples the parent once
+    and distributes the fields, preserving joint correlation.
 
     Dispatch priority:
 
@@ -225,23 +259,47 @@ def condition_on(
         If provided, use the named inference method from the registry
         instead of the default dispatch.
     **kwargs
-        Passed to the inference method (e.g., ``num_results``,
-        ``num_warmup``, ``random_seed``).
+        Inference parameters (e.g., ``num_results``, ``num_warmup``,
+        ``random_seed``) and/or named data kwargs.  Any kwarg whose
+        name matches a distribution component name is treated as
+        observed data; everything else is an inference parameter.
     """
     from ..inference import inference_method_registry
+    from .record import Record
+
+    # Separate data kwargs (names matching component_names) from
+    # inference kwargs (everything else like num_results, num_warmup).
+    data_kwargs, inference_kwargs = _split_data_kwargs(dist, kwargs)
 
     # Explicit method override → always use the registry
     if method is not None:
+        if data_kwargs:
+            if observed is not None:
+                raise ValueError(
+                    "Cannot provide both positional `observed` and named "
+                    f"data kwargs ({', '.join(data_kwargs)})"
+                )
+            observed = Record(data_kwargs)
         return inference_method_registry.execute(
-            dist, observed, method=method, **kwargs
+            dist, observed, method=method, **inference_kwargs
         )
 
     # Exact conditioning (conjugate updates, joint marginalization, etc.)
+    # All kwargs pass through to _condition_on — it handles its own
+    # validation (e.g., ProductDistribution raises KeyError on unknown names).
     if isinstance(dist, SupportsConditioning):
-        return dist._condition_on(observed, **kwargs)
+        return dist._condition_on(observed, **data_kwargs, **inference_kwargs)
 
-    # Registry auto-selects the best approximate inference algorithm
-    return inference_method_registry.execute(dist, observed, **kwargs)
+    # Registry auto-selects the best approximate inference algorithm.
+    # Data kwargs are bundled into observed as a Record object.
+    if data_kwargs:
+        if observed is not None:
+            raise ValueError(
+                "Cannot provide both positional `observed` and named "
+                f"data kwargs ({', '.join(data_kwargs)})"
+            )
+        observed = Record(data_kwargs)
+    return inference_method_registry.execute(dist, observed, **inference_kwargs)
 
 
 @workflow_function
