@@ -98,6 +98,54 @@ class TestConstruction:
         assert isinstance(nr["y"], jnp.ndarray)
         np.testing.assert_allclose(nr["y"], [1.0, 2.0, 3.0])
 
+    # Regression: previous ``_is_numeric_leaf`` short-circuited True on
+    # ``isinstance(val, np.ndarray)`` without checking ``val.dtype.kind``,
+    # so a numpy object-dtype array slipped past our validation and
+    # blew up later inside JAX with a cryptic "Dtype object is not a
+    # valid JAX array type" error. The check should happen on *every*
+    # array-like leaf, not just "unknown" ones.
+
+    def test_rejects_numpy_object_dtype_array_of_strings(self):
+        with pytest.raises(TypeError, match="numeric"):
+            NumericRecord(x=np.array(["a", "b"], dtype=object))
+
+    def test_rejects_numpy_object_dtype_array_of_dicts(self):
+        with pytest.raises(TypeError, match="numeric"):
+            NumericRecord(x=np.array([{"a": 1}, {"b": 2}], dtype=object))
+
+    def test_rejects_numpy_string_dtype_array(self):
+        with pytest.raises(TypeError, match="numeric"):
+            NumericRecord(x=np.array(["a", "b"]))  # dtype='<U1'
+
+    def test_rejects_jax_error_never_surfaces(self):
+        """The TypeError must come from NumericRecord validation (clear
+        message naming the field), not from ``jnp.asarray`` downstream.
+        Otherwise users get the JAX-internal 'Dtype object is not a
+        valid JAX array type' and can't tell which field is to blame."""
+        with pytest.raises(TypeError, match="'x'"):
+            NumericRecord(x=np.array(["a", "b"], dtype=object))
+
+    def test_accepts_all_numeric_array_dtypes(self):
+        """The other side of the regression: float / int / uint /
+        complex / bool arrays all pass validation."""
+        dtypes = [np.float32, np.float64, np.int32, np.uint8, np.complex64, np.bool_]
+        for dt in dtypes:
+            arr = np.array([1, 2, 3]).astype(dt)
+            nr = NumericRecord(x=arr)
+            assert isinstance(nr["x"], jnp.ndarray), f"failed for dtype {dt}"
+
+    def test_numeric_dtype_kinds_shared_constant(self):
+        """``NumericRecord`` and ``NumericRecordArray`` must agree on
+        which dtype kinds are numeric. Duplicated literals would let
+        the two validation sites drift silently — this test pins down
+        that they consume the same frozenset."""
+        from probpipe.core._numeric_record import _NUMERIC_DTYPE_KINDS
+        assert _NUMERIC_DTYPE_KINDS == frozenset("biufc")
+        # Import path is also the import path used by
+        # NumericRecordArray._validate_fields (see _record_array.py).
+        from probpipe.core import _record_array
+        assert _record_array._NUMERIC_DTYPE_KINDS is _NUMERIC_DTYPE_KINDS
+
 
 # ---------------------------------------------------------------------------
 # Flatten / unflatten

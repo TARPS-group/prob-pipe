@@ -567,6 +567,26 @@ class TestNumericRecordArrayValidation:
         )
         assert isinstance(nra["x"], jnp.ndarray)
 
+    def test_rejects_numpy_object_dtype_batch(self):
+        """Parallel regression for the _is_numeric_leaf object-dtype fix:
+        NumericRecordArray._validate_fields shares the same
+        _NUMERIC_DTYPE_KINDS set, so an object-dtype batched field
+        must be rejected up front (not left to blow up inside JAX)."""
+        tpl = RecordTemplate(x=())
+        with pytest.raises(TypeError, match="non-numeric dtype"):
+            NumericRecordArray(
+                {"x": np.array([{"a": 1}, {"b": 2}], dtype=object)},
+                batch_shape=(2,), template=tpl,
+            )
+
+    def test_rejects_numpy_string_dtype_batch(self):
+        tpl = RecordTemplate(x=())
+        with pytest.raises(TypeError, match="non-numeric dtype"):
+            NumericRecordArray(
+                {"x": np.array(["a", "b"])},  # dtype='<U1'
+                batch_shape=(2,), template=tpl,
+            )
+
     def test_nested_template_field_allowed(self):
         """Fields whose template spec is a nested ``RecordTemplate`` are
         allowed to hold a Record / RecordArray leaf without triggering
