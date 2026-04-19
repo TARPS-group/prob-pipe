@@ -64,6 +64,17 @@ class TestConstruction:
         with pytest.raises(ValueError, match="at least one component"):
             _make_distribution_array([])
 
+    def test_single_component(self):
+        """Edge case: n=1 works; batch_shape=(1,), indexing, sampling,
+        and reductions all behave uniformly with the n>1 path."""
+        comp = Normal(loc=7.0, scale=0.5, name="only")
+        da = _make_distribution_array([comp])
+        assert da.n == 1
+        assert da.batch_shape == (1,)
+        assert da[0] is comp
+        assert da._mean().shape == (1,)
+        np.testing.assert_allclose(da._mean(), [7.0])
+
     def test_factory_returns_distribution_subclass(self):
         comps = [Normal(loc=0.0, scale=1.0, name="d0")]
         da = _make_distribution_array(comps)
@@ -109,6 +120,12 @@ class TestProtocolOptIn:
         assert isinstance(da, SupportsMean)
         assert isinstance(da, SupportsVariance)
         assert isinstance(da, SupportsLogProb)
+        # isinstance is necessary but not sufficient — verify the
+        # methods actually dispatch and produce the expected shapes.
+        assert da._sample(jax.random.PRNGKey(0)).shape == (3,)
+        assert da._mean().shape == (3,)
+        assert da._variance().shape == (3,)
+        assert da._log_prob(jnp.zeros(3)).shape == (3,)
 
     def test_drops_log_prob_when_component_lacks_it(self):
         # NumericEmpiricalDistribution supports Sampling + Mean + Variance
@@ -122,6 +139,9 @@ class TestProtocolOptIn:
         assert isinstance(da, SupportsMean)
         assert isinstance(da, SupportsVariance)
         assert not isinstance(da, SupportsLogProb)
+        # And _log_prob is not defined on the dynamic subclass —
+        # the opt-out is structural, not just a lie.
+        assert not hasattr(da, "_log_prob")
 
     def test_factory_cache_reuses_class(self):
         """Two DistributionArrays with the same protocol signature share

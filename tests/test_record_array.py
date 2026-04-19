@@ -693,15 +693,26 @@ class TestHierarchy:
     """
 
     def test_recordarray_is_record(self):
-        ra = NumericRecordArray.stack(
-            [NumericRecord(x=float(i)) for i in range(3)]
+        """Base ``RecordArray`` — permissive leaf storage, no numeric
+        validation — must still ``isinstance`` as a ``Record``."""
+        tpl = RecordTemplate(label=None, value=())
+        ra = RecordArray(
+            {"label": np.asarray(["a", "b", "c"], dtype=object),
+             "value": jnp.arange(3.0)},
+            batch_shape=(3,),
+            template=tpl,
         )
         assert isinstance(ra, Record)
+        assert not isinstance(ra, NumericRecordArray)
 
     def test_numericrecordarray_is_record(self):
+        """The ``NumericRecordArray`` subclass inherits through the
+        chain NumericRecordArray → RecordArray → Record."""
         ra = NumericRecordArray.stack(
             [NumericRecord(x=float(i)) for i in range(3)]
         )
+        assert isinstance(ra, NumericRecordArray)
+        assert isinstance(ra, RecordArray)
         assert isinstance(ra, Record)
 
     def test_numericrecord_is_not_recordarray(self):
@@ -779,6 +790,7 @@ class TestSingleFieldCoercion:
         )
         arr = jnp.asarray(nra)
         assert isinstance(arr, jnp.ndarray)
+        np.testing.assert_allclose(arr, [0.0, 1.0, 2.0, 3.0])
 
     def test_multi_field_raises(self):
         nra = NumericRecordArray.stack(
