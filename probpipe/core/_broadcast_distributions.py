@@ -417,10 +417,8 @@ def _make_marginal(
 
 
 # Field name used when auto-wrapping scalar / array returns into a
-# Record so the output type contract holds. See issue #130 Open
-# Question 7: pickable in a follow-up PR via a decorator option; the
-# constant stays fixed here so pipelines that chain workflow functions
-# can rely on a stable key.
+# Record. Fixed as a module-level constant so pipelines that chain
+# workflow functions can index the result with a stable key.
 AUTO_WRAP_FIELD = "result"
 
 

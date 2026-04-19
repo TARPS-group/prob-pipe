@@ -73,11 +73,12 @@ __all__ = ["DistributionArray"]
 
 
 class DistributionArray[T](Distribution[T]):
-    """Ordered collection of ``n`` independent distributions.
+    """Ordered collection of ``n`` independent scalar distributions.
 
-    Leading ``batch_shape=(n,)`` prepended to the shared inner
-    ``batch_shape`` of the components (all components must have the
-    same inner batch_shape and event_shape).
+    The ``batch_shape`` is purely the DistributionArray's own leading
+    axes (default ``(n,)`` for the 1-D form, any shape with
+    ``prod == n`` for multi-d); components are required to be scalar
+    (``batch_shape == ()``) so there is no inner-batch composition.
 
     Use the :func:`_make_distribution_array` factory to construct
     instances — it picks the right subclass based on which protocols
@@ -87,8 +88,11 @@ class DistributionArray[T](Distribution[T]):
     Parameters
     ----------
     components : sequence of Distribution
-        The n component distributions. Must be non-empty and share
-        ``event_shape`` (and inner ``batch_shape`` if any).
+        The n component distributions. Must be non-empty, share
+        ``event_shape``, and each have ``batch_shape == ()``.
+    batch_shape : tuple of int, optional
+        Leading batch shape. Defaults to ``(len(components),)`` for the
+        1-D form; ``prod(batch_shape)`` must equal ``len(components)``.
     name : str, optional
         Name for provenance / introspection. Defaults to
         ``"distribution_array"``.
@@ -446,8 +450,8 @@ def _reshape_flat_to_bshape(flat: Any, bshape: tuple[int, ...]) -> Any:
         return flat.reshape(bshape + flat.shape[1:])
     if isinstance(flat, RecordArray):
         return _reshape_record_array_batch(flat, bshape)
-    # Record (scalar, stack_leading returned one) — bshape must be ()
-    # which the no-op fast-path above caught. Otherwise it's a mismatch.
+    # Scalar Record — bshape must be ``()``, which the no-op fast-path
+    # above already caught. Any other mismatch is a bug at the caller.
     return flat
 
 

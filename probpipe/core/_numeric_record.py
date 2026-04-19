@@ -210,10 +210,10 @@ class NumericRecord(Record):
     # When a NumericRecord has exactly one numeric field, it behaves like
     # a thin wrapper around that field's value for the common coercion
     # paths: ``float()``, ``int()``, ``bool()``, ``np.asarray()``,
-    # ``jnp.asarray()``. This keeps ergonomic expressions like
-    # ``float(mean(dist))`` working after PR 1.5 makes every
-    # ``WorkflowFunction`` output go through the
-    # ``Record | RecordArray | Distribution`` output-type contract.
+    # ``jnp.asarray()``. The shim lets workflow authors who return a
+    # single-field NumericRecord from a ``@workflow_function`` keep using
+    # idiomatic expressions like ``float(result)`` / ``np.asarray(result)``
+    # without a manual ``result["field"]`` unwrap at every callsite.
     #
     # The shim is intentionally narrow — only single-field records
     # qualify, and only scalar-like coercions are exposed. Multi-field

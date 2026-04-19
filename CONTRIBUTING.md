@@ -157,6 +157,7 @@ full public API surface.
 | `RecordDistribution` | Record-based distribution base; `component_names`, `__getitem__` → `_RecordDistributionView`, `select()` for correlated broadcasting |
 | `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
 | `NumericRecordDistribution` | Numeric-array distribution base; per-field `dtypes`, `supports`, `event_shapes`; base for all TFP-backed distributions |
+| `DistributionArray` | Shape-indexed collection of `n` independent scalar distributions; `batch_shape` is the array's own leading shape (1-D `(n,)` or multi-d with `prod == n`) and composes with the shared component `event_shape`; produced by parameter-sweep `WorkflowFunction`s whose inner call returns a `Distribution`; Pattern B dynamic protocol mixin so `isinstance` reflects what every component supports |
 | `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling + conditioning; the numeric subclass adds Gaussian-approximation `SupportsLogProb` and exact `SupportsMean` / `SupportsVariance`. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. |
 | `WorkflowFunction` | Orchestration-aware function wrapper; groups views by parent for correlated broadcasting |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |

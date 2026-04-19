@@ -834,7 +834,8 @@ class TestMakeStack:
 class TestCoerceOutput:
     """``_coerce_output`` is the single entry point where broadcast
     outputs pick up their provenance. Non-broadcast values pass through
-    unchanged (PR 1 narrowing — see issue #130)."""
+    unchanged (scalars / ndarrays / callables stay usable in idiomatic
+    arithmetic / attribute access)."""
 
     def test_none_mode_passes_through(self):
         from probpipe.core.node import _coerce_output

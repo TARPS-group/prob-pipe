@@ -1,4 +1,4 @@
-"""Tests for ``DistributionArray`` (issue #130 / PR 1 commit 2).
+"""Tests for ``DistributionArray``.
 
 A ``DistributionArray`` is a shape-indexed collection of independent
 distributions with leading ``batch_shape=(n,)`` — **not** a mixture.
@@ -100,8 +100,8 @@ class TestConstruction:
         assert "DistributionArray" in r
         assert "n=3" in r
 
-    # The factory demands uniform shapes so the (n,) + inner_batch
-    # batch_shape semantic holds. Mismatches raise at construction.
+    # The factory demands uniform event_shape across components so the
+    # shared event_shape contract holds. Mismatches raise at construction.
 
     def test_mismatched_event_shape_raises(self):
         c0 = Normal(loc=0.0, scale=1.0, name="d0")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Mapping, get_type_hints
+from typing import Any, Callable, Literal, Mapping, get_type_hints
 import inspect
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -23,6 +23,7 @@ try:
 except ImportError:
     Digraph = None
 
+from .._utils import prod
 from ..custom_types import PRNGKey, Array
 from .distribution import (
     NumericRecordDistribution,
@@ -71,7 +72,6 @@ logger = logging.getLogger(__name__)
 
 # Broadcast modes: how a value reached ``_coerce_output``. Exposed as
 # constants so callsites use the same spelling and typos fail loudly.
-from typing import Literal  # noqa: E402
 
 BroadcastMode = Literal["wrap", "marginalise", "stack", "nested"]
 BROADCAST_WRAP: BroadcastMode = "wrap"
@@ -459,12 +459,14 @@ class WorkflowFunction(Node):
                 values, dist_args, ra_args, n_broadcast_samples, do_include_inputs,
             )
 
-        # Non-broadcast call — run the function body once and wrap the
-        # return so every WorkflowFunction output satisfies the
-        # Record | RecordArray | Distribution contract (issue #130
-        # PR 1.5). Provenance parents are the inputs that carry their
-        # own ``.source`` slot (Distribution / Record / RecordArray
-        # instances) — other args are data, not lineage.
+        # Non-broadcast call — run the function body once, then let
+        # ``_wrap_as_record`` promote structure-valued returns (dict →
+        # Record, list/tuple → stacked aggregate). Bare scalars,
+        # ndarrays, and callables pass through unchanged so idioms like
+        # ``sample(d) + shift`` keep working. Provenance parents are the
+        # inputs that carry their own ``.source`` slot (Distribution /
+        # Record / RecordArray instances) — other args are data, not
+        # lineage.
         result = self._execute_many([values])[0]
         parents = tuple(
             v for v in values.values() if hasattr(v, "source")
@@ -816,7 +818,6 @@ class WorkflowFunction(Node):
         # Multi-d batch_shape is supported: the outer loop iterates
         # over the flat product of all batch axes, and output aggregates
         # get their leading axis reshaped back to the original shape.
-        from .._utils import prod
         sweep_batch_shape = values[ra_args[0]].batch_shape
         n_total = prod(sweep_batch_shape)
 
@@ -982,12 +983,6 @@ class WorkflowFunction(Node):
         ``Distribution`` instances after ``_find_broadcast_args``),
         calls the user's function once per sample, and wraps the n
         outputs as a single marginal distribution.
-
-        This method was historically named ``_broadcast``. Commit 4 of
-        PR 1 (issue #130) will re-introduce ``_broadcast`` as a dispatch
-        layer that routes between this Distribution-only path, the new
-        RecordArray-stack path, and the nested combination — hence the
-        rename.
 
         Vectorization (``"jax"`` vs ``"loop"``) and orchestration
         (``workflow_kind``) are resolved independently:
