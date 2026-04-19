@@ -15,6 +15,31 @@ Protocol support is dynamic (Pattern B): a ``DistributionArray``
 satisfies ``SupportsX`` iff every component does. The factory
 :func:`_make_distribution_array` constructs a cached subclass with the
 appropriate protocol mixins based on component capabilities.
+
+``DistributionArray`` vs. ``ProductDistribution``
+-------------------------------------------------
+
+Both produce multi-valued samples, but they represent different
+statistical objects:
+
+- :class:`~probpipe.ProductDistribution` is a single joint distribution
+  over **named, heterogeneous components** — e.g.,
+  ``ProductDistribution(theta=Normal(0, 1), sigma=Gamma(2, 1))``
+  represents one random variable that happens to be a (θ, σ) tuple.
+  ``sample`` returns a ``Record`` keyed by component name; ``log_prob``
+  accepts a same-shaped Record and sums the marginal log-probs.
+
+- :class:`DistributionArray` is a **collection of n distributions of the
+  same kind** indexed by position — e.g.,
+  ``DistributionArray([Normal(loc=i, scale=1.0, name=f"n{i}") for i in
+  range(5)])`` represents five independent Normal random variables
+  indexed 0..4. ``sample`` returns a stacked array of shape
+  ``(5,) + event_shape``; ``log_prob`` accepts a same-shaped array and
+  returns a per-row log-prob vector.
+
+Rule of thumb: if you'd write ``d["sigma"]`` to pull out a specific
+named quantity → ``ProductDistribution``. If you'd write ``d[i]`` to
+pull out the i-th element of a batch → ``DistributionArray``.
 """
 
 from __future__ import annotations
