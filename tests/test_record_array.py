@@ -5,7 +5,15 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import NumericRecord, NumericRecordArray, Record, RecordArray
+from probpipe import (
+    Normal,
+    NumericRecord,
+    NumericRecordArray,
+    Provenance,
+    Record,
+    RecordArray,
+    provenance_ancestors,
+)
 from probpipe.core.record import RecordTemplate
 
 
@@ -602,3 +610,65 @@ class TestNumericRecordArrayValidation:
             template=outer_tpl,
         )
         assert nra["physics"] is inner
+
+
+# ---------------------------------------------------------------------------
+# Provenance (issue #130 / PR 1 commit 1)
+# ---------------------------------------------------------------------------
+
+
+class TestProvenance:
+    """RecordArray carries the same ``.source`` / ``.with_source`` slot
+    as Record and Distribution so sweep outputs can record which
+    parameters / distributions produced them.
+    """
+
+    @pytest.fixture
+    def ra(self):
+        return NumericRecordArray.stack(
+            [NumericRecord(x=float(i), y=2.0 * i) for i in range(3)]
+        )
+
+    def test_initial_source_is_none(self, ra):
+        assert ra.source is None
+
+    def test_with_source_sets_and_returns_self(self, ra):
+        out = ra.with_source(Provenance("sweep", parents=()))
+        assert out is ra
+        assert ra.source.operation == "sweep"
+
+    def test_with_source_is_write_once(self, ra):
+        ra.with_source(Provenance("first", parents=()))
+        with pytest.raises(RuntimeError, match="write-once"):
+            ra.with_source(Provenance("second", parents=()))
+
+    def test_eq_ignores_source(self, ra):
+        ra2 = NumericRecordArray.stack(
+            [NumericRecord(x=float(i), y=2.0 * i) for i in range(3)]
+        )
+        ra.with_source(Provenance("a", parents=()))
+        ra2.with_source(Provenance("b", parents=()))
+        assert ra == ra2
+
+    def test_pytree_roundtrip_drops_source(self, ra):
+        ra.with_source(Provenance("sweep", parents=()))
+        leaves, treedef = jax.tree_util.tree_flatten(ra)
+        ra2 = jax.tree_util.tree_unflatten(treedef, leaves)
+        assert ra2.source is None
+        assert ra2 == ra
+
+    def test_numeric_record_array_inherits_slot(self, ra):
+        # ``ra`` is a NumericRecordArray (subclass of RecordArray) —
+        # verify the slot is inherited without redeclaration.
+        assert isinstance(ra, NumericRecordArray)
+        assert hasattr(ra, "source")
+
+    # Integration: provenance_ancestors walks RecordArray → parent
+    # distributions.
+
+    def test_provenance_ancestors_through_distribution(self, ra):
+        prior = Normal(loc=0.0, scale=1.0, name="prior")
+        ra.with_source(Provenance("sweep", parents=(prior,)))
+        ancestors = provenance_ancestors(ra)
+        assert len(ancestors) == 1
+        assert ancestors[0] is prior
