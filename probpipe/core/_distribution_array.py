@@ -144,13 +144,28 @@ class DistributionArray[T](Distribution[T]):
     def __len__(self) -> int:
         return self.n
 
-    def __getitem__(self, i: int) -> Distribution:
-        """Return the ``i``-th component distribution (not a slice)."""
-        if not isinstance(i, (int, jnp.integer)) and not hasattr(i, "__index__"):
-            raise TypeError(
-                f"DistributionArray index must be int, got {type(i).__name__}"
-            )
-        return self._components[int(i)]
+    def __getitem__(self, key):
+        """Index a single component or slice a sub-range.
+
+        * ``int`` → returns the single component distribution.
+        * ``slice`` → returns a new ``DistributionArray`` containing the
+          sliced subset (uses the factory so protocol support is
+          re-resolved for the shrunk component list).
+        """
+        if isinstance(key, slice):
+            sliced = list(self._components)[key]
+            if not sliced:
+                raise ValueError(
+                    "DistributionArray slice produced an empty sequence; "
+                    "at least one component is required."
+                )
+            return _make_distribution_array(sliced, name=self._name)
+        if isinstance(key, (int, jnp.integer)) or hasattr(key, "__index__"):
+            return self._components[int(key)]
+        raise TypeError(
+            f"DistributionArray index must be int or slice, got "
+            f"{type(key).__name__}"
+        )
 
     def __iter__(self):
         return iter(self._components)
