@@ -31,6 +31,8 @@ from .distribution import (
     _make_marginal,
 )
 from ._broadcast_distributions import _make_stack
+from ._distribution_array import _make_distribution_array
+from ._record_array import RecordArray
 from .provenance import Provenance
 from .protocols import (
     SupportsConditioning,
@@ -387,10 +389,10 @@ class WorkflowFunction(Node):
         values = self._resolve_inputs(call_inputs)
         values = self._convert_distributions(values)
 
-        broadcast_args = self._find_broadcast_args(values)
-        if broadcast_args:
-            return self._broadcast_distributions_only(
-                values, broadcast_args, n_broadcast_samples, do_include_inputs,
+        dist_args, ra_args = self._find_broadcast_args(values)
+        if dist_args or ra_args:
+            return self._broadcast(
+                values, dist_args, ra_args, n_broadcast_samples, do_include_inputs,
             )
 
         return self._execute_many([values])[0]
@@ -525,19 +527,78 @@ class WorkflowFunction(Node):
 
         return out
 
-    def _find_broadcast_args(self, values: dict[str, Any]) -> list[str]:
+    def _find_broadcast_args(
+        self, values: dict[str, Any]
+    ) -> tuple[list[str], list[str]]:
+        """Classify argument values into distribution-broadcast and
+        RecordArray-broadcast groups.
+
+        Returns
+        -------
+        (dist_args, ra_args) : tuple of list
+            - ``dist_args``: arguments where a Distribution was passed
+              but the type hint expects a concrete (non-Distribution)
+              type. These are handled by the existing Monte Carlo
+              marginalisation path.
+            - ``ra_args``: arguments where a ``RecordArray`` with
+              nonempty ``batch_shape`` was passed to a slot whose type
+              hint is *not* a RecordArray (or subclass). These are
+              handled by the new parameter-sweep stack path introduced
+              in issue #130.
+
+        The two groups are disjoint — a value is either a Distribution
+        or a RecordArray or neither. Both groups firing on the same
+        call triggers the nested regime in ``_broadcast``: outer stack
+        over the RecordArray rows, inner marginalise over the
+        Distribution MC draws.
+
+        Raises
+        ------
+        ValueError
+            If two or more RecordArray args have different
+            ``batch_shape`` (lockstep broadcasting requires matching
+            leading axes).
         """
-        Identify arguments where a Distribution was passed but the type hint
-        expects a concrete (non-Distribution) type.
-        """
-        broadcast = []
+        dist_broadcast: list[str] = []
+        ra_broadcast: list[str] = []
         for name, value in values.items():
+            expected = self._hints.get(name)
+
+            # --- RecordArray branch ---------------------------------------
+            if isinstance(value, RecordArray) and len(value.batch_shape) > 0:
+                # Dispatch rules (see issue #130):
+                # - Hint is RecordArray (or subclass) → caller wants the
+                #   batched object as-is, don't broadcast.
+                # - Hint is ``typing.Any`` → caller opted out of
+                #   help ("anything goes"). Match their intent by
+                #   skipping broadcast. Also the signal used by
+                #   ``ops.log_prob`` / ``ops.prob`` / ``ops.expectation``
+                #   where ``value: Any`` consumes the batched Record
+                #   directly.
+                # - Hint is a ``Record`` / ``NumericRecord`` subclass →
+                #   caller wants a scalar Record; broadcast over rows.
+                # - Hint is any other concrete type, or no hint at all →
+                #   broadcast (the caller didn't express a batched
+                #   preference and a per-row call is the friendlier
+                #   default).
+                import typing
+                try:
+                    is_ra_hint = (
+                        isinstance(expected, type)
+                        and issubclass(expected, RecordArray)
+                    )
+                except TypeError:
+                    is_ra_hint = False
+                is_any_hint = expected is typing.Any
+                if is_ra_hint or is_any_hint:
+                    continue
+                ra_broadcast.append(name)
+                continue
+
+            # --- Distribution branch (existing logic) ---------------------
             if not converter_registry.is_distribution_type(value):
                 continue
-            # Check if the type hint indicates a distribution/protocol parameter.
-            # If so, the caller expects a distribution object — don't broadcast.
-            expected = self._hints.get(name)
-            # Unwrap parameterized generics (e.g. Distribution[T]) to their origin
+            # Unwrap parameterized generics (e.g. Distribution[T]).
             origin = getattr(expected, "__origin__", None)
             expected_type = origin if isinstance(origin, type) else expected
             try:
@@ -554,10 +615,24 @@ class WorkflowFunction(Node):
                 continue
             # Auto-convert external distribution types to ProbPipe
             if not isinstance(value, Distribution):
-                values[name] = converter_registry.convert(value, NumericRecordDistribution)
+                values[name] = converter_registry.convert(
+                    value, NumericRecordDistribution,
+                )
                 value = values[name]
-            broadcast.append(name)
-        return broadcast
+            dist_broadcast.append(name)
+
+        # Lockstep shape check: all RecordArrays must agree on batch_shape.
+        if len(ra_broadcast) >= 2:
+            shapes = {n: values[n].batch_shape for n in ra_broadcast}
+            unique = set(shapes.values())
+            if len(unique) > 1:
+                raise ValueError(
+                    f"Cannot broadcast RecordArray args with mismatched "
+                    f"batch_shapes: {shapes}. Align them explicitly "
+                    f"(e.g., via FullFactorialDesign)."
+                )
+
+        return dist_broadcast, ra_broadcast
 
     def _get_key(self):
         """Split and advance the internal PRNG key."""
@@ -583,9 +658,16 @@ class WorkflowFunction(Node):
                 if name == "self":
                     continue
                 if name in broadcast_args:
-                    dist = values[name]
-                    es = dist.event_shape
-                    dummy_kw[name] = jnp.zeros(es) if es else jnp.zeros(())
+                    v = values[name]
+                    # RecordArray input: construct a single Record from
+                    # row 0 so the dummy call sees what an inner sweep
+                    # iteration will actually receive.
+                    if isinstance(v, RecordArray):
+                        dummy_kw[name] = v[0]
+                    else:
+                        dist = v
+                        es = dist.event_shape
+                        dummy_kw[name] = jnp.zeros(es) if es else jnp.zeros(())
                 elif name in values:
                     v = values[name]
                     if isinstance(v, jnp.ndarray):
@@ -604,6 +686,198 @@ class WorkflowFunction(Node):
             self._resolved_vectorize = "loop"
 
         return self._resolved_vectorize
+
+    def _broadcast(
+        self,
+        values: dict[str, Any],
+        dist_args: list[str],
+        ra_args: list[str],
+        n_broadcast_samples: int,
+        do_include_inputs: bool = False,
+    ) -> Any:
+        """Dispatcher: route to the right broadcast regime (issue #130).
+
+        Three regimes:
+
+        - ``dist_args`` only — existing Monte Carlo marginalisation via
+          ``_broadcast_distributions_only``. Output: marginal
+          distribution (``_MixtureMarginal`` / ``_ArrayMarginal`` / ...).
+        - ``ra_args`` only — pure parameter sweep. One inner call per
+          RecordArray row; no marginalisation. Output: stacked
+          aggregate (``NumericRecordArray`` / ``RecordArray`` /
+          ``DistributionArray``) via ``_make_stack``.
+        - **Both** — nested regime. Outer loop over ``ra_args[0]`` rows,
+          each iteration running an inner distribution-only broadcast
+          for ``dist_args``. Output always a ``DistributionArray`` of
+          per-row marginals (satisfies the
+          Record | RecordArray | Distribution output contract).
+
+        The ``include_inputs=True`` override still produces the
+        inner-path ``BroadcastDistribution`` when ``dist_args`` fire,
+        but it is **not** supported on the pure-sweep or nested paths
+        (the stack has no single joint distribution to return; the
+        inputs are known via provenance). Calling with
+        ``include_inputs=True`` and any ``ra_args`` raises.
+        """
+        # ---- No RecordArray: delegate to the existing path -------------
+        if not ra_args:
+            return self._broadcast_distributions_only(
+                values, dist_args, n_broadcast_samples, do_include_inputs,
+            )
+
+        if do_include_inputs:
+            raise NotImplementedError(
+                "include_inputs=True is not supported with RecordArray "
+                "broadcasting. The inputs are already available via "
+                "provenance on the stacked output."
+            )
+
+        # PR 1 supports 1-D sweeps only. Multi-dim batch_shapes are a
+        # follow-up (would require flattening + reshaping of outputs).
+        sweep_ra_shape = values[ra_args[0]].batch_shape
+        if len(sweep_ra_shape) > 1:
+            raise NotImplementedError(
+                f"Multi-dimensional RecordArray batch_shape={sweep_ra_shape} "
+                f"broadcasting is not supported in PR 1; flatten via "
+                f"reshape / stack first."
+            )
+        n = sweep_ra_shape[0]
+
+        # ---- Pure sweep (no Distribution args) -------------------------
+        if not dist_args:
+            per_row = self._execute_sweep_rows(values, ra_args, n)
+            aggregate = _make_stack(per_row, n=n, name=self._name)
+            provenance = self._make_sweep_provenance(
+                values, ra_args, dist_args, n=n, k=0,
+            )
+            return _coerce_output(
+                aggregate, broadcast_mode="stack", provenance=provenance,
+            )
+
+        # ---- Nested (RecordArray + Distribution) -----------------------
+        # Per sweep row: run an inner distribution-only broadcast,
+        # marginalise over the k MC draws, collect the n per-row
+        # marginals and stack them into a DistributionArray.
+        per_row_marginals: list[Distribution] = []
+        for i in range(n):
+            row_values = self._slice_ra_args(values, ra_args, i)
+            inner = self._broadcast_distributions_only(
+                row_values, dist_args, n_broadcast_samples,
+                do_include_inputs=True,
+            )
+            # ``_broadcast_distributions_only`` with include_inputs=True
+            # returns a BroadcastDistribution; call .marginalize() to
+            # get the output-only marginal distribution.
+            if isinstance(inner, BroadcastDistribution):
+                marginal = inner.marginalize()
+            else:
+                # A non-broadcast inner (shouldn't happen when dist_args
+                # non-empty, but handle defensively).
+                marginal = inner
+            per_row_marginals.append(marginal)
+
+        stacked = _make_distribution_array(
+            per_row_marginals, name=self._name or "sweep",
+        )
+        provenance = self._make_sweep_provenance(
+            values, ra_args, dist_args, n=n, k=n_broadcast_samples,
+        )
+        return _coerce_output(
+            stacked, broadcast_mode="nested", provenance=provenance,
+        )
+
+    # ----- Helpers for the RecordArray-broadcast path ----------------------
+
+    def _slice_ra_args(
+        self,
+        values: dict[str, Any],
+        ra_args: list[str],
+        i: int,
+    ) -> dict[str, Any]:
+        """Materialise the ``i``-th sweep row by integer-indexing every
+        RecordArray argument.
+
+        Non-RecordArray arguments pass through unchanged; each indexed
+        RecordArray yields a ``Record`` (or ``NumericRecord`` for
+        ``NumericRecordArray``) via ``__getitem__``.
+        """
+        out = dict(values)
+        for name in ra_args:
+            out[name] = values[name][i]
+        return out
+
+    def _execute_sweep_rows(
+        self,
+        values: dict[str, Any],
+        ra_args: list[str],
+        n: int,
+    ) -> Any:
+        """Execute n inner calls, one per sweep row. Returns a list of
+        outputs (Python-loop path) or a stacked pytree (JAX vmap path).
+
+        Both returns are valid inputs for ``_make_stack``.
+        """
+        vectorize = self._resolve_vectorize(values, ra_args)
+
+        if vectorize == "jax":
+            # vmap-friendly: split the RecordArray leaves along batch
+            # axis 0, rebuild a single-row Record inside the function
+            # call so the body sees a plain Record of scalars.
+            static = {k: v for k, v in values.items() if k not in ra_args}
+
+            def single_call(ra_slice_leaves):
+                kw = dict(static)
+                for name in ra_args:
+                    ra = values[name]
+                    # ra_slice_leaves[name] is a dict of per-field
+                    # leaves shaped like a single row; reconstruct the
+                    # Record so the body sees a Record of scalars.
+                    kw[name] = ra._record_cls(ra_slice_leaves[name])
+                return self._func(**kw)
+
+            # Build the vmap-over-leaves input: a dict {name: {field: batched_array}}.
+            vmap_input = {
+                name: {f: values[name][f] for f in values[name].fields}
+                for name in ra_args
+            }
+            return jax.vmap(single_call)(vmap_input)
+
+        # Loop path.
+        per_row_values = [self._slice_ra_args(values, ra_args, i) for i in range(n)]
+        return self._execute_many(per_row_values)
+
+    def _make_sweep_provenance(
+        self,
+        values: dict[str, Any],
+        ra_args: list[str],
+        dist_args: list[str],
+        *,
+        n: int,
+        k: int,
+    ) -> Provenance:
+        """Build the Provenance node for a sweep output.
+
+        Parents are the RecordArray / Distribution inputs that drove
+        the broadcast. Metadata records the regime and count so
+        downstream tooling can report whether uncertainty was
+        marginalised or stacked.
+        """
+        regime = "nested" if dist_args else "stack"
+        parents = tuple(values[name] for name in ra_args) + tuple(
+            values[name] for name in dist_args
+            if isinstance(values[name], Distribution)
+        )
+        return Provenance(
+            operation=f"workflow.{regime}",
+            parents=parents,
+            metadata={
+                "func": self._name or self._func.__name__,
+                "n": n,
+                "k": k,
+                "ra_args": list(ra_args),
+                "dist_args": list(dist_args),
+            },
+        )
 
     def _broadcast_distributions_only(
         self,

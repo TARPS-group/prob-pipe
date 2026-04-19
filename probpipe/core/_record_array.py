@@ -122,6 +122,17 @@ class RecordArray:
         """Field names in sorted order."""
         return tuple(self._store.keys())
 
+    @property
+    def name(self) -> str:
+        """Auto-generated human-readable name for provenance reports.
+
+        Derived from the class name and the sorted field list. Not a
+        user-configurable slot in PR 1 — callers that need custom names
+        on a batched output should attach them via
+        ``replace``/``with_source`` at a higher layer.
+        """
+        return f"{type(self).__name__.lower()}({','.join(self._store.keys())})"
+
     # -- Provenance --------------------------------------------------------
 
     @property
