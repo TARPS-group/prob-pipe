@@ -4,7 +4,7 @@ Core distribution abstractions for ProbPipe.
 Public API facade that re-exports symbols from the internal submodules:
 
   - :mod:`._distribution_base`       – ``Distribution[T]`` + minimal helpers
-  - :mod:`._array_distributions`     – Array hierarchy + ``BootstrapDistribution``
+  - :mod:`._numeric_record_distribution`     – Array hierarchy + ``BootstrapDistribution``
   - :mod:`._empirical`               – Empirical + BootstrapReplicate distributions
   - :mod:`._broadcast_distributions` – ``BroadcastDistribution`` + marginals
 
@@ -40,8 +40,8 @@ from ._record_distribution import (
     _RecordDistributionView,
 )
 
-# -- _array_distributions ---------------------------------------------------
-from ._array_distributions import (
+# -- _numeric_record_distribution ---------------------------------------------------
+from ._numeric_record_distribution import (
     NumericRecordDistribution,
     BootstrapDistribution,
     FlattenedView,

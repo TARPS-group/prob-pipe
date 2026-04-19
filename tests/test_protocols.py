@@ -302,7 +302,7 @@ class TestFlattenedViewDynamicProtocols:
     """FlattenedView must only claim the protocols its base supports."""
 
     def test_flattened_view_inherits_sampling_and_log_prob(self):
-        from probpipe.core._array_distributions import FlattenedView
+        from probpipe.core._numeric_record_distribution import FlattenedView
         dist = ProductDistribution(
             x=Normal(loc=0.0, scale=1.0, name="x"),
             y=Normal(loc=0.0, scale=1.0, name="y"),
@@ -316,7 +316,7 @@ class TestFlattenedViewDynamicProtocols:
         SupportsLogProb."""
         import jax.numpy as jnp
         import jax
-        from probpipe.core._array_distributions import (
+        from probpipe.core._numeric_record_distribution import (
             FlattenedView, NumericRecordDistribution,
         )
         from probpipe.core.record import RecordTemplate
@@ -343,7 +343,7 @@ class TestFlattenedViewDynamicProtocols:
         """A log-prob-only base produces a FlattenedView that isn't
         ``SupportsSampling`` (reverse direction of the sampling-only test)."""
         import jax.numpy as jnp
-        from probpipe.core._array_distributions import (
+        from probpipe.core._numeric_record_distribution import (
             FlattenedView, NumericRecordDistribution,
         )
         from probpipe.core.record import RecordTemplate

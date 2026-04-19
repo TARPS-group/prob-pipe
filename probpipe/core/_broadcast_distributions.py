@@ -143,8 +143,14 @@ class _MixtureSampling:
 
         # Dispatch on result type so a mixture of Record-returning
         # distributions produces a RecordArray rather than crashing in
-        # jnp.stack. Scalars / arrays stay on the numeric path.
-        if all(isinstance(r, Record) for r in results):
+        # jnp.stack. Scalars / arrays stay on the numeric path. Exclude
+        # RecordArray leaves here — ``RecordArray.stack`` expects
+        # scalar Records; a mixture over already-batched Record
+        # samples isn't supported on this path.
+        if all(
+            isinstance(r, Record) and not isinstance(r, RecordArray)
+            for r in results
+        ):
             stacked_ra = RecordArray.stack(results)
             if sample_shape == ():
                 return stacked_ra[0]
@@ -342,7 +348,14 @@ def _make_marginal(
 
     # Record with batched leaves (e.g., from jax.vmap over a Record-returning fn).
     # All fields must be arrays with a consistent leading batch dimension.
-    if isinstance(output_samples, Record) and output_samples.fields:
+    # Exclude RecordArray — the earlier branch handles it already, but
+    # since ``RecordArray`` is a ``Record`` subclass we'd otherwise
+    # match here for a RecordArray whose fields have extra axes.
+    if (
+        isinstance(output_samples, Record)
+        and not isinstance(output_samples, RecordArray)
+        and output_samples.fields
+    ):
         resolved = [output_samples[f] for f in output_samples.fields]
         if all(hasattr(v, "ndim") and v.ndim > 0 for v in resolved):
             n = resolved[0].shape[0]
@@ -356,7 +369,10 @@ def _make_marginal(
         return _ArrayMarginal(output_samples, weights, name=name)
 
     if isinstance(output_samples, list):
-        if output_samples and all(isinstance(r, Record) for r in output_samples):
+        if output_samples and all(
+            isinstance(r, Record) and not isinstance(r, RecordArray)
+            for r in output_samples
+        ):
             try:
                 ra = RecordArray.stack(output_samples)
                 return _RecordArrayMarginal(ra, weights, name=name)
@@ -455,11 +471,33 @@ def _make_stack(
             )
         outs = inner_outputs
 
-        # All Records → stack as a RecordArray. NumericRecordArray if
-        # every leaf is numeric; otherwise fall back to the permissive
+        # Check the more-specific subclass first: all RecordArrays
+        # (since ``RecordArray`` is itself a ``Record`` subclass, the
+        # generic Record branch below would otherwise claim them and
+        # collapse the inner batch axis).
+        if outs and all(isinstance(o, RecordArray) for o in outs):
+            first = outs[0]
+            if all(ra.batch_shape == first.batch_shape for ra in outs):
+                fields = {
+                    fname: jnp.stack([ra[fname] for ra in outs], axis=0)
+                    for fname in first.fields
+                }
+                return type(first)(
+                    fields,
+                    batch_shape=(n,) + first.batch_shape,
+                    template=first.template,
+                )
+            # Mismatched inner shapes fall through to the generic
+            # Record / list handlers.
+
+        # All (scalar) Records → stack as a RecordArray. NumericRecordArray
+        # if every leaf is numeric; otherwise fall back to the permissive
         # RecordArray class, building the fields manually so non-numeric
         # leaves (strings, xarray objects, ...) survive.
-        if outs and all(isinstance(o, Record) for o in outs):
+        if outs and all(
+            isinstance(o, Record) and not isinstance(o, RecordArray)
+            for o in outs
+        ):
             try:
                 from ._record_array import NumericRecordArray
                 return NumericRecordArray.stack(list(outs))
@@ -491,22 +529,6 @@ def _make_stack(
         # All Distributions → stacked DistributionArray.
         if outs and all(isinstance(o, Distribution) for o in outs):
             return _make_distribution_array(outs, name=name)
-
-        # All RecordArrays with matching (non-empty) batch_shape →
-        # nested RecordArray with leading (n,) axis.
-        if outs and all(isinstance(o, RecordArray) for o in outs):
-            first = outs[0]
-            if all(ra.batch_shape == first.batch_shape for ra in outs):
-                fields = {
-                    fname: jnp.stack([ra[fname] for ra in outs], axis=0)
-                    for fname in first.fields
-                }
-                return type(first)(
-                    fields,
-                    batch_shape=(n,) + first.batch_shape,
-                    template=first.template,
-                )
-            # Mismatched inner shapes — fall through to the error path.
 
         # Numeric scalars / arrays → wrap in NumericRecordArray with
         # the single "result" field carrying the stacked values.
@@ -567,7 +589,12 @@ def _make_stack(
     # vmap of a Record-returning function produces a Record with
     # batched leaves (each leaf has leading axis n). Promote to a
     # RecordArray — NumericRecordArray when all leaves numeric.
-    if isinstance(inner_outputs, Record) and inner_outputs.fields:
+    # Exclude the already-RecordArray case (already an aggregate).
+    if (
+        isinstance(inner_outputs, Record)
+        and not isinstance(inner_outputs, RecordArray)
+        and inner_outputs.fields
+    ):
         resolved = [inner_outputs[f] for f in inner_outputs.fields]
         if all(hasattr(v, "shape") and v.shape[:1] == (n,) for v in resolved):
             event_shapes = tuple(v.shape[1:] for v in resolved)

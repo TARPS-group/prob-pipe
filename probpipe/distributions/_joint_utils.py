@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import ArrayLike
-from ..core._array_distributions import NumericRecordDistribution
+from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core.record import Record
 from ..core._record_distribution import RecordDistribution
 

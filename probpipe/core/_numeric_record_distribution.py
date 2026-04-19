@@ -1,11 +1,28 @@
-"""Distribution hierarchy with numeric shape semantics.
+"""``NumericRecordDistribution`` and its closely-related helpers.
+
+The primary class is :class:`NumericRecordDistribution` — a
+:class:`~probpipe.core._record_distribution.RecordDistribution` that
+additionally enforces numeric-leaf shape semantics (``event_shape``,
+``batch_shape``, ``flat_event_shapes``, ``event_size``) and serves as
+the base class for every numeric ProbPipe distribution (``Normal``,
+``Beta``, ``ProductDistribution``, ...).
 
 Provides:
-  - ``_vmap_sample()``               – Batched sampling via ``jax.vmap``.
-  - ``_mc_expectation()``            – Monte Carlo expectation helper.
-  - ``NumericRecordDistribution``    – RecordDistribution + numeric shapes (base for all numeric dists).
-  - ``BootstrapDistribution``        – MC error tracking via bootstrap resampling.
-  - ``FlattenedView``                – Wraps any distribution as a flat distribution.
+
+  - :class:`NumericRecordDistribution` — the base class.
+  - :class:`BootstrapDistribution` — MC error tracking via bootstrap
+    resampling.
+  - :class:`FlattenedView` — wraps any distribution as a flat-array
+    distribution.
+  - Private helpers ``_vmap_sample`` / ``_mc_expectation``.
+
+Not to be confused with :mod:`_distribution_array`, which houses
+:class:`DistributionArray` — a *collection of n independent scalar
+distributions* along a batch axis. ``DistributionArray`` is a
+``Distribution`` subclass, not a ``NumericRecordDistribution``
+subclass: it represents "many random variables indexed by position",
+while ``NumericRecordDistribution`` represents "one random variable
+with a numeric-valued event structure".
 """
 
 from __future__ import annotations

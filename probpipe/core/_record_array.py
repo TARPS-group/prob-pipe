@@ -24,10 +24,27 @@ from .record import Record, RecordTemplate, _spec_size
 __all__ = ["RecordArray", "NumericRecordArray"]
 
 
-class RecordArray:
+class RecordArray(Record):
     """Batch of Records with consistent field structure.
 
     Each field stores values with shape ``(*batch_shape, *leaf_shape)``.
+    A ``RecordArray`` *is* a :class:`Record` — the batched variant,
+    parallel to the way :class:`DistributionArray` is a
+    :class:`Distribution`. Consolidating the two in a single hierarchy
+    means:
+
+    - ``isinstance(x, Record)`` accepts both scalar and batched Records.
+      Code that needs to distinguish uses
+      ``isinstance(x, RecordArray)`` for the batched case, or
+      ``isinstance(x, Record) and not isinstance(x, RecordArray)`` for
+      scalar-only.
+    - ``.source`` / ``.with_source`` / ``.name`` are inherited from
+      Record (stored on the ``_name`` / ``_source`` slots declared on
+      Record).
+    - ``replace`` / ``merge`` / ``without`` / ``map`` / ``map_with_names``
+      are overridden here because the base constructor signature
+      doesn't carry ``batch_shape`` / ``template``; RecordArray versions
+      preserve those.
 
     Parameters
     ----------
@@ -35,6 +52,9 @@ class RecordArray:
         Shape of the batch dimensions.
     template : RecordTemplate
         Structural description of each element.
+    name : str, optional
+        Human-readable name for provenance / introspection. Defaults
+        to ``"{class_name}({sorted field list})"``.
     **fields
         Named values, each with shape ``(*batch_shape, *leaf_shape)``.
 
@@ -45,7 +65,7 @@ class RecordArray:
     field name (``arr["x"]`` → batched leaf array).
     """
 
-    __slots__ = ("_store", "_batch_shape", "_template", "_source")
+    __slots__ = ("_batch_shape", "_template")
 
     def __init__(
         self,
@@ -54,6 +74,7 @@ class RecordArray:
         *,
         batch_shape: tuple[int, ...],
         template: RecordTemplate,
+        name: str | None = None,
         **fields: Any,
     ):
         if _dict is not None:
@@ -74,10 +95,17 @@ class RecordArray:
         # subclasses (e.g. NumericRecordArray) see a canonicalised view
         # of the leaves. Raises from ``_validate_fields`` propagate.
         store = type(self)._validate_fields(store, batch_shape, template)
+        # Inherit the Record plumbing for _store / _name / _source.
+        # We bypass Record's normal constructor path because RecordArray
+        # requires its own field-validation hook and an auto-name that
+        # reflects the class name, not the "record(...)" default.
+        if name is None:
+            name = f"{type(self).__name__.lower()}({','.join(store.keys())})"
         object.__setattr__(self, "_store", store)
+        object.__setattr__(self, "_name", name)
+        object.__setattr__(self, "_source", None)
         object.__setattr__(self, "_batch_shape", batch_shape)
         object.__setattr__(self, "_template", template)
-        object.__setattr__(self, "_source", None)
 
     @classmethod
     def _validate_fields(
@@ -97,13 +125,8 @@ class RecordArray:
         """
         return store
 
-    # -- Immutability -------------------------------------------------------
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        raise AttributeError("RecordArray is immutable")
-
-    def __delattr__(self, name: str) -> None:
-        raise AttributeError("RecordArray is immutable")
+    # ``__setattr__`` / ``__delattr__`` / ``.name`` / ``.source`` /
+    # ``.with_source`` / ``.fields`` are inherited from :class:`Record`.
 
     # -- Properties ---------------------------------------------------------
 
@@ -116,51 +139,6 @@ class RecordArray:
     def template(self) -> RecordTemplate:
         """Structural description of each element."""
         return self._template
-
-    @property
-    def fields(self) -> tuple[str, ...]:
-        """Field names in sorted order."""
-        return tuple(self._store.keys())
-
-    @property
-    def name(self) -> str:
-        """Auto-generated human-readable name for provenance reports.
-
-        Derived from the class name and the sorted field list. Not a
-        user-configurable slot in PR 1 — callers that need custom names
-        on a batched output should attach them via
-        ``replace``/``with_source`` at a higher layer.
-        """
-        return f"{type(self).__name__.lower()}({','.join(self._store.keys())})"
-
-    # -- Provenance --------------------------------------------------------
-
-    @property
-    def source(self) -> Provenance | None:
-        """Provenance describing how this RecordArray was created, or ``None``."""
-        return self._source
-
-    def with_source(self, source: Provenance) -> RecordArray:
-        """Attach provenance to this RecordArray (write-once).
-
-        Mirrors ``Distribution.with_source`` / ``Record.with_source``.
-
-        Notes
-        -----
-        ``_source`` is runtime-only metadata — it is not serialised into
-        the JAX pytree aux (a ``Provenance`` parent is typically a
-        ``Distribution`` or ``Record``, neither hashable by structure).
-        Round-tripping through ``jax.tree_util.tree_flatten`` /
-        ``tree_unflatten`` drops the source; re-attach it on the
-        reconstructed RecordArray if the chain must be preserved.
-        """
-        if self._source is not None:
-            raise RuntimeError(
-                f"Source already set on {self!r}. "
-                "Provenance is write-once; create a new RecordArray instead."
-            )
-        object.__setattr__(self, "_source", source)
-        return self
 
     # -- Field access -------------------------------------------------------
 

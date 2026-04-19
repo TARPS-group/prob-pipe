@@ -15,6 +15,33 @@ Protocol support is dynamic (Pattern B): a ``DistributionArray``
 satisfies ``SupportsX`` iff every component does. The factory
 :func:`_make_distribution_array` constructs a cached subclass with the
 appropriate protocol mixins based on component capabilities.
+
+``DistributionArray`` vs. ``ProductDistribution``
+-------------------------------------------------
+
+Both express a set of independent components, but the access pattern
+differs:
+
+- :class:`~probpipe.ProductDistribution` bundles **heterogeneous
+  independent components** addressed by name — e.g.
+  ``ProductDistribution(theta=Normal(0, 1), sigma=Gamma(2, 1))``.
+  ``sample`` returns a ``Record`` keyed by component name; ``log_prob``
+  takes a same-shaped Record and sums the marginals. Different
+  components are typically different families (Normal + Gamma + ...).
+
+- :class:`DistributionArray` bundles **positionally-indexed components**
+  along a batch axis — e.g.
+  ``DistributionArray([Normal(loc=i, scale=1.0, name=f"n{i}") for i in
+  range(5)])``. ``sample`` returns a stacked array of shape
+  ``(5,) + event_shape``; ``log_prob`` takes a same-shaped array and
+  returns a per-row vector. Components can still be heterogeneous
+  as long as they share ``event_shape``, but the common use case is
+  n instances of the same family parameterised differently (the output
+  of a parameter sweep).
+
+Rule of thumb: if you'd write ``d["sigma"]`` to pull out a specific
+**named** quantity → ``ProductDistribution``. If you'd write ``d[i]``
+to pull out the i-th element of a **batch** → ``DistributionArray``.
 """
 
 from __future__ import annotations
@@ -212,7 +239,8 @@ class _DistArraySampling:
         #     along a new trailing batch axis so the final leading
         #     shape is ``sample_shape + (n,)``.
         if sample_shape == () and all(
-            isinstance(s, Record) for s in per_component
+            isinstance(s, Record) and not isinstance(s, RecordArray)
+            for s in per_component
         ):
             return RecordArray.stack(list(per_component))
         if sample_shape != () and all(
@@ -260,8 +288,9 @@ def _stack_leading(values: list) -> Any:
     """
     if not values:
         raise ValueError("cannot stack an empty list of values")
-    if all(isinstance(v, Record) for v in values):
-        return RecordArray.stack(list(values))
+    # Check the more-specific RecordArray subclass first — else the
+    # Record branch below would claim batched values and collapse their
+    # inner batch axis (``RecordArray`` is now a ``Record`` subclass).
     if all(isinstance(v, RecordArray) for v in values):
         # Stack each field along a new leading axis; shapes must match.
         first = values[0]
@@ -274,6 +303,11 @@ def _stack_leading(values: list) -> Any:
             batch_shape=(len(values),) + first.batch_shape,
             template=first.template,
         )
+    if all(
+        isinstance(v, Record) and not isinstance(v, RecordArray)
+        for v in values
+    ):
+        return RecordArray.stack(list(values))
     try:
         return jnp.stack(values, axis=0)
     except (TypeError, ValueError) as exc:

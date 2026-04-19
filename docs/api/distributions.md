@@ -18,7 +18,7 @@
 
 ::: probpipe.core._distribution_base.Distribution
 
-::: probpipe.core._array_distributions.NumericRecordDistribution
+::: probpipe.core._numeric_record_distribution.NumericRecordDistribution
 
 ::: probpipe.distributions._tfp_base.TFPDistribution
 
@@ -26,7 +26,7 @@
 
 ::: probpipe.core._empirical.NumericEmpiricalDistribution
 
-::: probpipe.core._array_distributions.BootstrapDistribution
+::: probpipe.core._numeric_record_distribution.BootstrapDistribution
 
 ::: probpipe.core._empirical.BootstrapReplicateDistribution
 
