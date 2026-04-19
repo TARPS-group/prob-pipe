@@ -44,6 +44,7 @@ from probpipe.core.distribution import (
     RandomFunction,
     ArrayRandomFunction,
 )
+from probpipe.core._distribution_array import DistributionArray
 from probpipe.distributions import (
     # TFP base
     TFPDistribution,
@@ -155,6 +156,7 @@ __all__ = [
     "RecordDistribution",
     "NumericRecordDistribution",
     "FlattenedView",
+    "DistributionArray",
     "TFPDistribution",
     "EmpiricalDistribution",
     "NumericEmpiricalDistribution",
