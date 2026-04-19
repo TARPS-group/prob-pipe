@@ -107,32 +107,52 @@ class DistributionArray[T](Distribution[T]):
         self,
         components,
         *,
+        batch_shape: tuple[int, ...] | None = None,
         name: str | None = None,
     ):
         components = tuple(components)
         if not components:
             raise ValueError("DistributionArray requires at least one component")
-        # All components must share event_shape. Inner batch_shape
-        # mismatches would break the (n,) + inner batch semantics, so
-        # enforce uniformity eagerly.
+        # All components must share event_shape. Additionally, each
+        # component must be scalar (batch_shape == ()) — batching is
+        # DistributionArray's job, not an orthogonal axis living on
+        # individual components. Rejecting batched-param components
+        # enforces the "one Distribution = one random variable" rule
+        # the wider codebase is moving toward (see issue #134).
         es0 = getattr(components[0], "event_shape", ())
-        bs0 = getattr(components[0], "batch_shape", ())
-        for i, c in enumerate(components[1:], start=1):
+        for i, c in enumerate(components):
             es = getattr(c, "event_shape", ())
             bs = getattr(c, "batch_shape", ())
             if es != es0:
                 raise ValueError(
-                    f"DistributionArray requires matching event_shape across "
-                    f"components; components[0].event_shape={es0} but "
-                    f"components[{i}].event_shape={es}."
+                    f"DistributionArray requires matching event_shape "
+                    f"across components; components[0].event_shape={es0} "
+                    f"but components[{i}].event_shape={es}."
                 )
-            if bs != bs0:
+            if bs != ():
                 raise ValueError(
-                    f"DistributionArray requires matching inner batch_shape "
-                    f"across components; components[0].batch_shape={bs0} but "
-                    f"components[{i}].batch_shape={bs}."
+                    f"DistributionArray components must be scalar "
+                    f"(batch_shape == ()); components[{i}] has "
+                    f"batch_shape={bs}. Batching is expressed by "
+                    f"DistributionArray itself — pass scalar components "
+                    f"and set batch_shape=... on the DistributionArray."
+                )
+        # ``batch_shape`` defaults to (n,) for backward compatibility
+        # with the 1-D-only form used until now. Multi-d broadcasting
+        # passes the full sweep shape explicitly.
+        if batch_shape is None:
+            batch_shape = (len(components),)
+        else:
+            batch_shape = tuple(batch_shape)
+            from .._utils import prod as _prod
+            if _prod(batch_shape) != len(components):
+                raise ValueError(
+                    f"DistributionArray batch_shape={batch_shape} implies "
+                    f"{_prod(batch_shape)} components but got "
+                    f"{len(components)}."
                 )
         self._components = components
+        self._batch_shape_leading = batch_shape
         if name is None:
             name = "distribution_array"
         super().__init__(name=name)
@@ -148,18 +168,26 @@ class DistributionArray[T](Distribution[T]):
 
     @property
     def n(self) -> int:
+        """Total number of components (``prod(batch_shape_leading)``)."""
         return len(self._components)
 
     @property
     def components(self) -> tuple[Distribution, ...]:
-        """The n component distributions in sweep-row order."""
+        """Flat tuple of component distributions, in row-major order
+        across the leading ``batch_shape``."""
         return self._components
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
-        """(n,) prepended to the shared inner batch_shape of components."""
-        inner = getattr(self._components[0], "batch_shape", ())
-        return (self.n,) + tuple(inner)
+        """Batch axes of this DistributionArray.
+
+        The components themselves are required to be scalar
+        (``batch_shape == ()``), so this is just
+        ``self._batch_shape_leading`` — no inherit-from-component
+        composition. Multi-d broadcasting outputs pass the full
+        sweep shape; the default 1-D form is ``(n,)``.
+        """
+        return tuple(self._batch_shape_leading)
 
     @property
     def event_shape(self) -> tuple[int, ...]:
@@ -169,29 +197,57 @@ class DistributionArray[T](Distribution[T]):
     # -- container protocol --------------------------------------------------
 
     def __len__(self) -> int:
-        return self.n
+        return self._batch_shape_leading[0]
 
     def __getitem__(self, key):
-        """Index a single component or slice a sub-range.
+        """Index a single component, slice, or multi-d tuple.
 
-        * ``int`` → returns the single component distribution.
-        * ``slice`` → returns a new ``DistributionArray`` containing the
-          sliced subset (uses the factory so protocol support is
-          re-resolved for the shrunk component list).
+        Supported key forms:
+
+        * ``int`` → index along the leading batch axis.
+        * ``slice`` → slice along the leading batch axis; returns a
+          new ``DistributionArray`` containing the sliced subset.
+        * ``tuple`` → multi-axis index (int or slice per axis);
+          collapses along int axes and slices along slice axes.
+
+        Indexing uses row-major order across ``batch_shape_leading``.
         """
-        if isinstance(key, slice):
-            sliced = list(self._components)[key]
-            if not sliced:
-                raise ValueError(
-                    "DistributionArray slice produced an empty sequence; "
-                    "at least one component is required."
+        import numpy as _np
+        bshape = self._batch_shape_leading
+        # Normalise the key to a tuple, one entry per leading axis.
+        if isinstance(key, tuple):
+            if len(key) > len(bshape):
+                raise IndexError(
+                    f"DistributionArray has {len(bshape)} leading batch "
+                    f"axes; got {len(key)}-tuple key."
                 )
-            return _make_distribution_array(sliced, name=self._name)
-        if isinstance(key, (int, jnp.integer)) or hasattr(key, "__index__"):
-            return self._components[int(key)]
-        raise TypeError(
-            f"DistributionArray index must be int or slice, got "
-            f"{type(key).__name__}"
+            key_tuple = key + (slice(None),) * (len(bshape) - len(key))
+        else:
+            key_tuple = (key,) + (slice(None),) * (len(bshape) - 1)
+
+        # Reshape the flat component tuple to match bshape, apply the
+        # key, and decide whether the result is a single distribution
+        # or a new DistributionArray.
+        components_nd = _np.empty(bshape, dtype=object)
+        for flat_idx, comp in enumerate(self._components):
+            components_nd[_np.unravel_index(flat_idx, bshape)] = comp
+        sliced = components_nd[key_tuple]
+
+        if isinstance(sliced, Distribution):
+            return sliced  # single component
+        # np.ndarray (possibly 0-d) of distributions.
+        if sliced.ndim == 0:
+            return sliced.item()
+        new_components = list(sliced.ravel())
+        if not new_components:
+            raise ValueError(
+                "DistributionArray index produced an empty sequence; "
+                "at least one component is required."
+            )
+        return _make_distribution_array(
+            new_components,
+            batch_shape=sliced.shape,
+            name=self._name,
         )
 
     def __iter__(self):
@@ -228,21 +284,23 @@ class _DistArraySampling:
             self._components[i]._sample(keys[i], sample_shape)
             for i in range(self.n)
         ]
+        bshape = self._batch_shape_leading
 
         # Record-valued components — two sample-shape regimes:
         #
         #  1. sample_shape == ()  → each per_component[i] is a Record.
-        #     Stack n of them into a RecordArray (batch_shape=(n,)).
-        #
-        #  2. sample_shape != ()  → each per_component[i] is already a
+        #     Stack n of them into a RecordArray, then reshape its
+        #     leading axis to bshape.
+        #  2. sample_shape != ()  → each per_component[i] is a
         #     RecordArray with batch_shape=sample_shape. Stack fields
-        #     along a new trailing batch axis so the final leading
-        #     shape is ``sample_shape + (n,)``.
+        #     along a new trailing axis so the leading shape is
+        #     ``sample_shape + bshape``.
         if sample_shape == () and all(
             isinstance(s, Record) and not isinstance(s, RecordArray)
             for s in per_component
         ):
-            return RecordArray.stack(list(per_component))
+            flat_ra = RecordArray.stack(list(per_component))
+            return _reshape_record_array_batch(flat_ra, bshape)
         if sample_shape != () and all(
             isinstance(s, RecordArray) for s in per_component
         ):
@@ -252,17 +310,23 @@ class _DistArraySampling:
                 )
                 for name in per_component[0].fields
             }
+            # Reshape the flat n-axis to bshape.
+            reshaped = {
+                name: arr.reshape(sample_shape + bshape + arr.shape[len(sample_shape) + 1:])
+                for name, arr in fields.items()
+            }
             return type(per_component[0])(
-                fields,
-                batch_shape=sample_shape + (self.n,),
+                reshaped,
+                batch_shape=sample_shape + bshape,
                 template=per_component[0].template,
             )
 
         # Numeric-array case. Stack along the axis right after
-        # sample_shape — leading axes are sample_shape, then the (n,)
-        # DistributionArray axis, then any inner batch + event axes.
+        # sample_shape, then reshape the leading axis from (n,) to
+        # bshape so the final shape is ``sample_shape + bshape +
+        # event_shape``.
         try:
-            return jnp.stack(per_component, axis=len(sample_shape))
+            stacked = jnp.stack(per_component, axis=len(sample_shape))
         except (TypeError, ValueError) as exc:
             types_seen = sorted({type(s).__name__ for s in per_component})
             raise TypeError(
@@ -270,6 +334,45 @@ class _DistArraySampling:
                 f"types {types_seen}; DistributionArray supports numeric "
                 f"arrays and Record values only."
             ) from exc
+        if bshape == (self.n,):
+            return stacked
+        new_shape = (
+            stacked.shape[:len(sample_shape)]
+            + bshape
+            + stacked.shape[len(sample_shape) + 1:]
+        )
+        return stacked.reshape(new_shape)
+
+
+def _reshape_record_array_batch(
+    ra: RecordArray, new_batch_shape: tuple[int, ...]
+) -> RecordArray:
+    """Reshape a RecordArray's leading batch axis to ``new_batch_shape``.
+
+    Assumes the RecordArray's current ``batch_shape`` has the same
+    flat size as ``new_batch_shape`` (``prod(current) == prod(new)``).
+    Each field array is reshaped so its leading axes match.
+    """
+    from .._utils import prod as _prod
+
+    if _prod(ra.batch_shape) != _prod(new_batch_shape):
+        raise ValueError(
+            f"Cannot reshape RecordArray batch_shape={ra.batch_shape} to "
+            f"{new_batch_shape}: different total size."
+        )
+    if ra.batch_shape == new_batch_shape:
+        return ra
+    n_cur = len(ra.batch_shape)
+    new_fields = {}
+    for name in ra.fields:
+        val = ra[name]
+        event_tail = val.shape[n_cur:]
+        new_fields[name] = val.reshape(new_batch_shape + event_tail)
+    return type(ra)(
+        new_fields,
+        batch_shape=new_batch_shape,
+        template=ra.template,
+    )
 
 
 def _stack_leading(values: list) -> Any:
@@ -318,51 +421,85 @@ def _stack_leading(values: list) -> Any:
         ) from exc
 
 
+def _reshape_flat_to_bshape(flat: Any, bshape: tuple[int, ...]) -> Any:
+    """Reshape the leading axis of ``flat`` from ``(n,)`` to ``bshape``.
+
+    Works for arrays, Records (no-op), and RecordArrays. Called by the
+    DistArray reduction mixins to present multi-d batch outputs.
+    """
+    from .._utils import prod as _prod
+    if bshape == (_prod(bshape),):
+        return flat
+    if isinstance(flat, jnp.ndarray):
+        return flat.reshape(bshape + flat.shape[1:])
+    if isinstance(flat, RecordArray):
+        return _reshape_record_array_batch(flat, bshape)
+    # Record (scalar, stack_leading returned one) — bshape must be ()
+    # which the no-op fast-path above caught. Otherwise it's a mismatch.
+    return flat
+
+
 class _DistArrayMean:
     """SupportsMean mixin for DistributionArray.
 
-    Per-component mean — stacks ``components[i]._mean()`` along the
-    leading (n,) axis. This is **not** a mixture mean; there is no
-    weighted average across components. The stack adapts to the value
-    type so Record-valued means become a ``RecordArray`` with the
-    (n,) axis prepended.
+    Per-component mean stacked along the leading batch axes of the
+    DistributionArray. **Not** a mixture mean — each row is a distinct
+    distribution, so its mean is reported independently. The stack
+    adapts to the value type so Record-valued means become a
+    ``RecordArray`` with the batch axes prepended.
     """
 
     def _mean(self):
-        return _stack_leading([c._mean() for c in self._components])
+        stacked = _stack_leading([c._mean() for c in self._components])
+        return _reshape_flat_to_bshape(stacked, self._batch_shape_leading)
 
 
 class _DistArrayVariance:
     """SupportsVariance mixin for DistributionArray.
 
-    Per-component variance stacked along the leading (n,) axis.
+    Per-component variance stacked along the leading batch axes.
     **Not** the law-of-total-variance mixture formula — each row is a
     distinct distribution, so its variance is reported independently.
     """
 
     def _variance(self):
-        return _stack_leading([c._variance() for c in self._components])
+        stacked = _stack_leading([c._variance() for c in self._components])
+        return _reshape_flat_to_bshape(stacked, self._batch_shape_leading)
 
 
 class _DistArrayLogProb:
     """SupportsLogProb mixin for DistributionArray.
 
-    Per-component log-density. ``value`` must have leading axis of
-    length n (after stripping any sample_shape the caller prepended);
-    returns a shape-(n,) array of per-component log-probs.
+    Per-component log-density. ``value`` must have leading axes
+    ``self.batch_shape`` (after stripping any outer sample axes the
+    caller prepended); returns an array of shape ``self.batch_shape``
+    of per-component log-probs.
     """
 
     def _log_prob(self, value):
-        # value shape is (n,) + event_shape for array-valued components,
-        # or a RecordArray/batched Record for structured components —
-        # slice along axis 0 and evaluate each component on its slice.
-        return jnp.stack(
+        bshape = self._batch_shape_leading
+        # Flatten value's leading batch axes so we can address
+        # components in row-major order.
+        if isinstance(value, jnp.ndarray):
+            flat_leading = int(jnp.prod(jnp.array(bshape))) if bshape else 1
+            flat_value = value.reshape((flat_leading,) + value.shape[len(bshape):])
+            lps = jnp.stack(
+                [
+                    self._components[i]._log_prob(flat_value[i])
+                    for i in range(self.n)
+                ],
+                axis=0,
+            )
+            return lps.reshape(bshape)
+        # Non-array value: evaluate component-by-component (slow path).
+        lps = jnp.stack(
             [
                 self._components[i]._log_prob(value[i])
                 for i in range(self.n)
             ],
             axis=0,
         )
+        return lps.reshape(bshape)
 
 
 # ---------------------------------------------------------------------------
@@ -389,6 +526,7 @@ _distarray_class_cache: dict[tuple[type, ...], type] = {}
 def _make_distribution_array(
     components,
     *,
+    batch_shape: tuple[int, ...] | None = None,
     name: str | None = None,
 ) -> DistributionArray:
     """Factory: build a ``DistributionArray`` with dynamic protocol support.
@@ -400,7 +538,13 @@ def _make_distribution_array(
     Parameters
     ----------
     components : sequence of Distribution
-        Component distributions.
+        Component distributions (must each be scalar,
+        ``batch_shape == ()``).
+    batch_shape : tuple of int, optional
+        Leading batch shape for the DistributionArray. Defaults to
+        ``(len(components),)`` for the 1-D form. Multi-d broadcasting
+        passes the full sweep shape; ``prod(batch_shape)`` must equal
+        ``len(components)``.
     name : str, optional
         Name for provenance.
 
@@ -431,5 +575,5 @@ def _make_distribution_array(
 
     cls = _distarray_class_cache[cache_key]
     obj = object.__new__(cls)
-    DistributionArray.__init__(obj, components, name=name)
+    DistributionArray.__init__(obj, components, batch_shape=batch_shape, name=name)
     return obj

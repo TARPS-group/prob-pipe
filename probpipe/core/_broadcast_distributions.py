@@ -427,23 +427,33 @@ AUTO_WRAP_FIELD = "result"
 def _make_stack(
     inner_outputs: Any,
     *,
-    n: int,
+    batch_shape: tuple[int, ...] | None = None,
+    n: int | None = None,
     name: str | None = None,
 ) -> Any:
-    """Wrap n inner workflow-function outputs as a shape-(n,) aggregate.
+    """Wrap inner workflow-function outputs as a shape-``batch_shape``
+    aggregate.
 
-    Dispatch on ``inner_outputs`` — either a Python ``list`` of length n
-    (Python-loop execution path) or a pytree with a leading axis of
-    length n (``jax.vmap`` execution path).
+    Internally the outputs are aggregated along a single leading axis
+    of length ``prod(batch_shape)``; the final aggregate reshapes that
+    axis to ``batch_shape`` so multi-d sweeps produce multi-d output
+    shapes.
+
+    Dispatch on ``inner_outputs`` — either a Python ``list`` of length
+    ``prod(batch_shape)`` (Python-loop execution path) or a pytree with
+    a leading axis of length ``prod(batch_shape)`` (``jax.vmap``
+    execution path).
 
     Parameters
     ----------
     inner_outputs : list or pytree
-        Either a list of n inner-function results, or a single
-        stackable pytree with a leading axis of length n.
-    n : int
-        Expected size of the leading aggregate axis. Used for sanity
-        checks and for building fresh templates.
+        Either a list of inner-function results, or a single stackable
+        pytree with a leading axis equal to ``prod(batch_shape)``.
+    batch_shape : tuple of int, optional
+        Shape of the output aggregate's leading axes. Pass either
+        ``batch_shape`` or ``n`` (the 1-D shortcut); exactly one.
+    n : int, optional
+        Shortcut for ``batch_shape=(n,)``.
     name : str, optional
         Name for the resulting aggregate.
 
@@ -462,12 +472,23 @@ def _make_stack(
     from ._distribution_array import _make_distribution_array
     from .record import Record, RecordTemplate
 
+    # Resolve batch_shape vs. n. Exactly one must be provided.
+    if batch_shape is None and n is None:
+        raise TypeError("_make_stack requires either batch_shape or n")
+    if batch_shape is not None and n is not None:
+        raise TypeError("_make_stack: pass batch_shape OR n, not both")
+    if batch_shape is None:
+        batch_shape = (n,)
+    batch_shape = tuple(batch_shape)
+    n_total = int(prod(batch_shape)) if batch_shape else 1
+
     # --- List-of-X path (Python-loop execution) -------------------------
     if isinstance(inner_outputs, list):
-        if len(inner_outputs) != n:
+        if len(inner_outputs) != n_total:
             raise ValueError(
                 f"_make_stack got {len(inner_outputs)} outputs but "
-                f"expected n={n}."
+                f"expected prod(batch_shape)={n_total} "
+                f"(batch_shape={batch_shape})."
             )
         outs = inner_outputs
 
@@ -482,9 +503,14 @@ def _make_stack(
                     fname: jnp.stack([ra[fname] for ra in outs], axis=0)
                     for fname in first.fields
                 }
+                # Reshape the leading (n_total,) axis to batch_shape.
+                reshaped = {
+                    fname: arr.reshape(batch_shape + arr.shape[1:])
+                    for fname, arr in fields.items()
+                }
                 return type(first)(
-                    fields,
-                    batch_shape=(n,) + first.batch_shape,
+                    reshaped,
+                    batch_shape=batch_shape + first.batch_shape,
                     template=first.template,
                 )
             # Mismatched inner shapes fall through to the generic
@@ -498,11 +524,28 @@ def _make_stack(
             isinstance(o, Record) and not isinstance(o, RecordArray)
             for o in outs
         ):
+            # Stack flat, then reshape to batch_shape.
             try:
                 from ._record_array import NumericRecordArray
-                return NumericRecordArray.stack(list(outs))
+                flat = NumericRecordArray.stack(list(outs))
             except (TypeError, ValueError):
-                pass
+                flat = None
+            if flat is not None:
+                if batch_shape == (n_total,):
+                    return flat
+                # Reshape each field's leading axis.
+                n_cur = len(flat.batch_shape)
+                new_fields = {
+                    fname: flat[fname].reshape(
+                        batch_shape + flat[fname].shape[n_cur:]
+                    )
+                    for fname in flat.fields
+                }
+                return type(flat)(
+                    new_fields,
+                    batch_shape=batch_shape,
+                    template=flat.template,
+                )
             # Manual per-field assembly: numpy-array-like leaves stack
             # numerically, object-dtype leaves use np.asarray(..., dtype=object).
             first = outs[0]
@@ -514,24 +557,34 @@ def _make_stack(
             for fname in first.fields:
                 values = [o[fname] for o in outs]
                 try:
-                    fields[fname] = jnp.stack(values, axis=0)
+                    stacked = jnp.stack(values, axis=0)
+                    fields[fname] = stacked.reshape(batch_shape + stacked.shape[1:])
                 except (TypeError, ValueError):
-                    fields[fname] = np.asarray(values, dtype=object)
+                    arr = np.asarray(values, dtype=object)
+                    fields[fname] = arr.reshape(batch_shape + arr.shape[1:])
             tpl_spec: dict[str, Any] = {}
             for fname, v in fields.items():
                 if hasattr(v, "dtype") and getattr(v.dtype, "kind", None) in "biufc":
-                    tpl_spec[fname] = tuple(v.shape[1:])
+                    tpl_spec[fname] = tuple(v.shape[len(batch_shape):])
                 else:
                     tpl_spec[fname] = None
             from .record import RecordTemplate
-            return RecordArray(fields, batch_shape=(n,), template=RecordTemplate(tpl_spec))
+            return RecordArray(
+                fields,
+                batch_shape=batch_shape,
+                template=RecordTemplate(tpl_spec),
+            )
 
-        # All Distributions → stacked DistributionArray.
+        # All Distributions → stacked DistributionArray, shaped to
+        # batch_shape.
         if outs and all(isinstance(o, Distribution) for o in outs):
-            return _make_distribution_array(outs, name=name)
+            return _make_distribution_array(
+                outs, batch_shape=batch_shape, name=name,
+            )
 
         # Numeric scalars / arrays → wrap in NumericRecordArray with
-        # the single "result" field carrying the stacked values.
+        # the single "result" field carrying the stacked values,
+        # reshape leading axis to batch_shape.
         try:
             stacked = jnp.stack(
                 [jnp.asarray(o) for o in outs], axis=0,
@@ -542,21 +595,22 @@ def _make_stack(
         if stacked is not None:
             from ._record_array import NumericRecordArray
             event_shape = tuple(stacked.shape[1:])
+            reshaped = stacked.reshape(batch_shape + event_shape)
             tpl = RecordTemplate(**{AUTO_WRAP_FIELD: event_shape})
             return NumericRecordArray(
-                {AUTO_WRAP_FIELD: stacked},
-                batch_shape=(n,),
+                {AUTO_WRAP_FIELD: reshaped},
+                batch_shape=batch_shape,
                 template=tpl,
             )
 
         # Last-ditch: wrap as a RecordArray whose single field holds a
         # numpy object-dtype array of the opaque outputs.
         try:
-            object_array = np.asarray(outs, dtype=object)
+            object_array = np.asarray(outs, dtype=object).reshape(batch_shape)
             tpl = RecordTemplate(**{AUTO_WRAP_FIELD: None})
             return RecordArray(
                 {AUTO_WRAP_FIELD: object_array},
-                batch_shape=(n,),
+                batch_shape=batch_shape,
                 template=tpl,
             )
         except (TypeError, ValueError) as exc:
@@ -570,44 +624,49 @@ def _make_stack(
     # --- Single-pytree path (jax.vmap execution) ------------------------
 
     # vmap of a numeric-returning function produces a jnp.ndarray with
-    # leading axis of length n.
+    # leading axis of length n_total. Reshape to batch_shape.
     if isinstance(inner_outputs, jnp.ndarray):
-        if inner_outputs.shape[:1] != (n,):
+        if inner_outputs.shape[:1] != (n_total,):
             raise ValueError(
                 f"_make_stack got array of shape {inner_outputs.shape} but "
-                f"expected leading axis of length n={n}."
+                f"expected leading axis of length {n_total} "
+                f"(batch_shape={batch_shape})."
             )
         from ._record_array import NumericRecordArray
         event_shape = tuple(inner_outputs.shape[1:])
+        reshaped = inner_outputs.reshape(batch_shape + event_shape)
         tpl = RecordTemplate(**{AUTO_WRAP_FIELD: event_shape})
         return NumericRecordArray(
-            {AUTO_WRAP_FIELD: inner_outputs},
-            batch_shape=(n,),
+            {AUTO_WRAP_FIELD: reshaped},
+            batch_shape=batch_shape,
             template=tpl,
         )
 
     # vmap of a Record-returning function produces a Record with
-    # batched leaves (each leaf has leading axis n). Promote to a
-    # RecordArray — NumericRecordArray when all leaves numeric.
-    # Exclude the already-RecordArray case (already an aggregate).
+    # batched leaves (each leaf has leading axis n_total). Promote to a
+    # RecordArray — NumericRecordArray when all leaves numeric — with
+    # the leading axis reshaped to batch_shape.
     if (
         isinstance(inner_outputs, Record)
         and not isinstance(inner_outputs, RecordArray)
         and inner_outputs.fields
     ):
         resolved = [inner_outputs[f] for f in inner_outputs.fields]
-        if all(hasattr(v, "shape") and v.shape[:1] == (n,) for v in resolved):
+        if all(hasattr(v, "shape") and v.shape[:1] == (n_total,) for v in resolved):
             event_shapes = tuple(v.shape[1:] for v in resolved)
             tpl = RecordTemplate(**dict(zip(inner_outputs.fields, event_shapes)))
-            fields = dict(zip(inner_outputs.fields, resolved))
+            reshaped_fields = {
+                fname: v.reshape(batch_shape + v.shape[1:])
+                for fname, v in zip(inner_outputs.fields, resolved)
+            }
             try:
                 from ._record_array import NumericRecordArray
                 return NumericRecordArray(
-                    fields, batch_shape=(n,), template=tpl,
+                    reshaped_fields, batch_shape=batch_shape, template=tpl,
                 )
             except (TypeError, ValueError):
                 return RecordArray(
-                    fields, batch_shape=(n,), template=tpl,
+                    reshaped_fields, batch_shape=batch_shape, template=tpl,
                 )
 
     # Fallback — shouldn't reach here with well-formed vmap output; if

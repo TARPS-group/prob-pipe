@@ -817,7 +817,7 @@ class TestMakeStack:
 
     def test_length_mismatch_raises(self):
         from probpipe.core._broadcast_distributions import _make_stack
-        with pytest.raises(ValueError, match="expected n=5"):
+        with pytest.raises(ValueError, match=r"expected prod\(batch_shape\)=5"):
             _make_stack([1.0, 2.0, 3.0], n=5)
 
     def test_ndarray_leading_axis_mismatch_raises(self):

@@ -276,7 +276,7 @@ class TestProvenanceChain:
         assert out.source is not None
         assert out.source.operation == "workflow.stack"
         assert sweep in out.source.parents
-        assert out.source.metadata["n"] == 3
+        assert out.source.metadata["batch_shape"] == (3,)
         assert out.source.metadata["k"] == 0
         assert out.source.metadata["func"] == "f"
 
@@ -299,6 +299,115 @@ class TestProvenanceChain:
 # ---------------------------------------------------------------------------
 # Auto-wrap field name
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Multi-d batch_shape (follow-up to PR #131)
+# ---------------------------------------------------------------------------
+
+
+class TestMultiDimensionalBatch:
+    """A ``RecordArray`` with multi-dimensional ``batch_shape`` feeds into
+    the sweep path cleanly: the function runs ``prod(batch_shape)`` times
+    in row-major order, and the output's leading axes match the input's
+    ``batch_shape``.
+
+    For a length-``M x N`` sweep, a scalar-returning inner function
+    produces a ``NumericRecordArray`` with ``batch_shape=(M, N)``; a
+    Distribution-returning inner produces a ``DistributionArray`` with
+    matching ``batch_shape``.
+    """
+
+    @pytest.fixture
+    def sweep_2d(self):
+        """3 x 2 sweep over (r, k)."""
+        from probpipe.core.record import RecordTemplate
+        r_values = jnp.array([[1.0, 1.0],
+                              [2.0, 2.0],
+                              [3.0, 3.0]])
+        k_values = jnp.array([[10.0, 20.0],
+                              [10.0, 20.0],
+                              [10.0, 20.0]])
+        tpl = RecordTemplate(r=(), k=())
+        return NumericRecordArray(
+            {"r": r_values, "k": k_values},
+            batch_shape=(3, 2),
+            template=tpl,
+        )
+
+    def test_2d_sweep_scalar_output(self, sweep_2d):
+        @workflow_function
+        def f(p: NumericRecord) -> float:
+            return p["r"] * p["k"]
+
+        out = f(p=sweep_2d)
+        assert isinstance(out, NumericRecordArray)
+        assert out.batch_shape == (3, 2)
+        np.testing.assert_allclose(
+            out["result"],
+            [[10.0, 20.0],
+             [20.0, 40.0],
+             [30.0, 60.0]],
+        )
+
+    def test_2d_sweep_record_output(self, sweep_2d):
+        @workflow_function
+        def f(p: NumericRecord) -> NumericRecord:
+            return NumericRecord(sum=p["r"] + p["k"], prod=p["r"] * p["k"])
+
+        out = f(p=sweep_2d)
+        assert isinstance(out, NumericRecordArray)
+        assert out.batch_shape == (3, 2)
+        assert set(out.fields) == {"sum", "prod"}
+        np.testing.assert_allclose(out["sum"][1, :], [12.0, 22.0])
+
+    def test_2d_sweep_distribution_output(self, sweep_2d):
+        @workflow_function
+        def f(p: NumericRecord) -> Distribution:
+            return Normal(loc=p["r"] * p["k"], scale=1.0, name="out")
+
+        out = f(p=sweep_2d)
+        assert isinstance(out, DistributionArray)
+        assert out.batch_shape == (3, 2)
+        # Indexing with a tuple returns a single component
+        assert out[0, 1] is not out[1, 0]
+        # Sliced row is a smaller DistributionArray
+        row = out[2, :]
+        assert isinstance(row, DistributionArray)
+        assert row.batch_shape == (2,)
+
+    def test_2d_sweep_with_distribution_input_gives_distarray(self, sweep_2d):
+        """Nested regime: each sweep cell marginalises over the MC
+        draws; output is a DistributionArray matching the sweep's
+        batch_shape."""
+        @workflow_function(n_broadcast_samples=10, vectorize="loop")
+        def f(p: NumericRecord, noise: float) -> float:
+            return p["r"] * p["k"] + noise
+
+        out = f(p=sweep_2d, noise=Normal(loc=0.0, scale=0.1, name="noise"))
+        assert isinstance(out, DistributionArray)
+        assert out.batch_shape == (3, 2)
+
+    def test_3d_sweep(self):
+        """3-D sweep works too — the row-major flattening is general."""
+        from probpipe.core.record import RecordTemplate
+
+        shape = (2, 3, 4)
+        # Generate a 2x3x4 grid of distinct values.
+        vals = jnp.arange(24.0).reshape(shape)
+        tpl = RecordTemplate(v=())
+        sweep = NumericRecordArray(
+            {"v": vals}, batch_shape=shape, template=tpl,
+        )
+
+        @workflow_function
+        def f(p: NumericRecord) -> float:
+            return p["v"] * 2.0
+
+        out = f(p=sweep)
+        assert isinstance(out, NumericRecordArray)
+        assert out.batch_shape == shape
+        np.testing.assert_allclose(out["result"], 2 * np.asarray(vals))
 
 
 class TestAutoWrapFieldName:

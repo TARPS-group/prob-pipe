@@ -803,55 +803,55 @@ class WorkflowFunction(Node):
                 "provenance on the stacked output."
             )
 
-        # PR 1 supports 1-D sweeps only. Multi-dim batch_shapes are a
-        # follow-up (would require flattening + reshaping of outputs).
-        sweep_ra_shape = values[ra_args[0]].batch_shape
-        if len(sweep_ra_shape) > 1:
-            raise NotImplementedError(
-                f"Multi-dimensional RecordArray batch_shape={sweep_ra_shape} "
-                f"broadcasting is not supported in PR 1; flatten via "
-                f"reshape / stack first."
-            )
-        n = sweep_ra_shape[0]
+        # Multi-d batch_shape is supported: the outer loop iterates
+        # over the flat product of all batch axes, and output aggregates
+        # get their leading axis reshaped back to the original shape.
+        from .._utils import prod
+        sweep_batch_shape = values[ra_args[0]].batch_shape
+        n_total = prod(sweep_batch_shape)
 
         # ---- Pure sweep (no Distribution args) -------------------------
         if not dist_args:
-            per_row = self._execute_sweep_rows(values, ra_args, n)
-            aggregate = _make_stack(per_row, n=n, name=self._name)
+            per_row = self._execute_sweep_rows(
+                values, ra_args, n_total, sweep_batch_shape,
+            )
+            aggregate = _make_stack(
+                per_row, batch_shape=sweep_batch_shape, name=self._name,
+            )
             provenance = self._make_sweep_provenance(
-                values, ra_args, dist_args, n=n, k=0,
+                values, ra_args, dist_args, batch_shape=sweep_batch_shape, k=0,
             )
             return _coerce_output(
                 aggregate, broadcast_mode="stack", provenance=provenance,
             )
 
         # ---- Nested (RecordArray + Distribution) -----------------------
-        # Per sweep row: run an inner distribution-only broadcast,
-        # marginalise over the k MC draws, collect the n per-row
-        # marginals and stack them into a DistributionArray.
+        # Per sweep row (in flat row-major order over the multi-d batch):
+        # run an inner distribution-only broadcast, marginalise over the
+        # k MC draws, collect the n_total per-row marginals and stack
+        # them into a DistributionArray that presents the sweep's
+        # multi-d batch_shape.
         per_row_marginals: list[Distribution] = []
-        for i in range(n):
+        for i in range(n_total):
             row_values = self._slice_ra_args(values, ra_args, i)
             inner = self._broadcast_distributions_only(
                 row_values, dist_args, n_broadcast_samples,
                 do_include_inputs=True,
             )
-            # ``_broadcast_distributions_only`` with include_inputs=True
-            # returns a BroadcastDistribution; call .marginalize() to
-            # get the output-only marginal distribution.
             if isinstance(inner, BroadcastDistribution):
                 marginal = inner.marginalize()
             else:
-                # A non-broadcast inner (shouldn't happen when dist_args
-                # non-empty, but handle defensively).
                 marginal = inner
             per_row_marginals.append(marginal)
 
         stacked = _make_distribution_array(
-            per_row_marginals, name=self._name or "sweep",
+            per_row_marginals,
+            batch_shape=sweep_batch_shape,
+            name=self._name or "sweep",
         )
         provenance = self._make_sweep_provenance(
-            values, ra_args, dist_args, n=n, k=n_broadcast_samples,
+            values, ra_args, dist_args,
+            batch_shape=sweep_batch_shape, k=n_broadcast_samples,
         )
         return _coerce_output(
             stacked, broadcast_mode="nested", provenance=provenance,
@@ -881,40 +881,48 @@ class WorkflowFunction(Node):
         self,
         values: dict[str, Any],
         ra_args: list[str],
-        n: int,
+        n_total: int,
+        sweep_batch_shape: tuple[int, ...],
     ) -> Any:
-        """Execute n inner calls, one per sweep row. Returns a list of
-        outputs (Python-loop path) or a stacked pytree (JAX vmap path).
+        """Execute ``n_total`` inner calls, one per sweep row in flat
+        row-major order over the multi-d ``sweep_batch_shape``.
 
-        Both returns are valid inputs for ``_make_stack``.
+        Returns a Python list of outputs (loop path) or a stacked
+        pytree with leading axis ``n_total`` (vmap path). Either form
+        is a valid input for ``_make_stack``.
         """
         vectorize = self._resolve_vectorize(values, ra_args)
 
         if vectorize == "jax":
-            # vmap-friendly: split the RecordArray leaves along batch
-            # axis 0, rebuild a single-row Record inside the function
-            # call so the body sees a plain Record of scalars.
+            # Flatten each RecordArray's batch axes to a single leading
+            # dim so vmap maps over axis 0 uniformly regardless of the
+            # sweep's original batch_shape.
             static = {k: v for k, v in values.items() if k not in ra_args}
 
             def single_call(ra_slice_leaves):
                 kw = dict(static)
                 for name in ra_args:
                     ra = values[name]
-                    # ra_slice_leaves[name] is a dict of per-field
-                    # leaves shaped like a single row; reconstruct the
-                    # Record so the body sees a Record of scalars.
                     kw[name] = ra._record_cls(ra_slice_leaves[name])
                 return self._func(**kw)
 
-            # Build the vmap-over-leaves input: a dict {name: {field: batched_array}}.
-            vmap_input = {
-                name: {f: values[name][f] for f in values[name].fields}
-                for name in ra_args
-            }
+            vmap_input = {}
+            for name in ra_args:
+                ra = values[name]
+                n_batch = len(ra.batch_shape)
+                vmap_input[name] = {
+                    f: ra[f].reshape((n_total,) + ra[f].shape[n_batch:])
+                    for f in ra.fields
+                }
             return jax.vmap(single_call)(vmap_input)
 
-        # Loop path.
-        per_row_values = [self._slice_ra_args(values, ra_args, i) for i in range(n)]
+        # Loop path. RecordArray's integer ``__getitem__`` already
+        # does row-major unravelling over multi-d batch_shape, so
+        # ``self._slice_ra_args(values, ra_args, i)`` for ``i`` in
+        # ``range(n_total)`` visits every cell.
+        per_row_values = [
+            self._slice_ra_args(values, ra_args, i) for i in range(n_total)
+        ]
         return self._execute_many(per_row_values)
 
     def _make_sweep_provenance(
@@ -923,15 +931,16 @@ class WorkflowFunction(Node):
         ra_args: list[str],
         dist_args: list[str],
         *,
-        n: int,
+        batch_shape: tuple[int, ...],
         k: int,
     ) -> Provenance:
         """Build the Provenance node for a sweep output.
 
         Parents are the RecordArray / Distribution inputs that drove
-        the broadcast. Metadata records the regime and count so
-        downstream tooling can report whether uncertainty was
-        marginalised or stacked.
+        the broadcast. Metadata records the regime, the full sweep
+        ``batch_shape`` (for multi-d), and the MC count so downstream
+        tooling can report whether uncertainty was marginalised or
+        stacked.
         """
         regime = "nested" if dist_args else "stack"
         parents = tuple(values[name] for name in ra_args) + tuple(
@@ -943,7 +952,7 @@ class WorkflowFunction(Node):
             parents=parents,
             metadata={
                 "func": self._name or self._func.__name__,
-                "n": n,
+                "batch_shape": tuple(batch_shape),
                 "k": k,
                 "ra_args": list(ra_args),
                 "dist_args": list(dist_args),
