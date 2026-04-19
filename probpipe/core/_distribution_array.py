@@ -212,7 +212,8 @@ class _DistArraySampling:
         #     along a new trailing batch axis so the final leading
         #     shape is ``sample_shape + (n,)``.
         if sample_shape == () and all(
-            isinstance(s, Record) for s in per_component
+            isinstance(s, Record) and not isinstance(s, RecordArray)
+            for s in per_component
         ):
             return RecordArray.stack(list(per_component))
         if sample_shape != () and all(
@@ -260,8 +261,9 @@ def _stack_leading(values: list) -> Any:
     """
     if not values:
         raise ValueError("cannot stack an empty list of values")
-    if all(isinstance(v, Record) for v in values):
-        return RecordArray.stack(list(values))
+    # Check the more-specific RecordArray subclass first — else the
+    # Record branch below would claim batched values and collapse their
+    # inner batch axis (``RecordArray`` is now a ``Record`` subclass).
     if all(isinstance(v, RecordArray) for v in values):
         # Stack each field along a new leading axis; shapes must match.
         first = values[0]
@@ -274,6 +276,11 @@ def _stack_leading(values: list) -> Any:
             batch_shape=(len(values),) + first.batch_shape,
             template=first.template,
         )
+    if all(
+        isinstance(v, Record) and not isinstance(v, RecordArray)
+        for v in values
+    ):
+        return RecordArray.stack(list(values))
     try:
         return jnp.stack(values, axis=0)
     except (TypeError, ValueError) as exc:

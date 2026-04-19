@@ -679,6 +679,82 @@ class TestProvenance:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Hierarchy — RecordArray IS-A Record (issue #130 symmetry fix)
+# ---------------------------------------------------------------------------
+
+
+class TestHierarchy:
+    """``RecordArray`` inherits from ``Record`` so that the Record family
+    mirrors Distribution / DistributionArray's relationship. Users who
+    want to discriminate batched vs. scalar write
+    ``isinstance(x, RecordArray)`` or
+    ``isinstance(x, Record) and not isinstance(x, RecordArray)``.
+    """
+
+    def test_recordarray_is_record(self):
+        ra = NumericRecordArray.stack(
+            [NumericRecord(x=float(i)) for i in range(3)]
+        )
+        assert isinstance(ra, Record)
+
+    def test_numericrecordarray_is_record(self):
+        ra = NumericRecordArray.stack(
+            [NumericRecord(x=float(i)) for i in range(3)]
+        )
+        assert isinstance(ra, Record)
+
+    def test_numericrecord_is_not_recordarray(self):
+        """Guard against the inverse mistake: NumericRecord is still
+        a scalar Record, not a RecordArray."""
+        nr = NumericRecord(x=1.0)
+        assert isinstance(nr, Record)
+        assert not isinstance(nr, RecordArray)
+
+    def test_mro_order(self):
+        """Subclass chain is NumericRecordArray → RecordArray → Record.
+        The linear MRO keeps the provenance / name / hash plumbing on
+        Record and lets RecordArray add batch-shape / template
+        specialisation."""
+        mro = [c.__name__ for c in NumericRecordArray.mro()]
+        # Record must appear before object, after RecordArray.
+        assert mro.index("RecordArray") < mro.index("Record")
+        assert mro.index("Record") < mro.index("object")
+
+    def test_source_slot_inherited_from_record(self):
+        ra = NumericRecordArray.stack(
+            [NumericRecord(x=float(i)) for i in range(2)]
+        )
+        # Record defines the ``_source`` slot; RecordArray should
+        # *not* redeclare it (that would raise a layout conflict on
+        # construction). Confirm the attribute works end-to-end.
+        assert ra.source is None
+        ra.with_source(Provenance("test", parents=()))
+        assert ra.source.operation == "test"
+
+    def test_name_slot_inherited_from_record(self):
+        """RecordArray uses Record's ``_name`` slot for its stored name,
+        not a separate property on RecordArray. The default name is
+        derived from the class name + fields at construction time."""
+        ra = NumericRecordArray.stack(
+            [NumericRecord(x=float(i)) for i in range(2)]
+        )
+        assert "numericrecordarray" in ra.name.lower()
+
+    def test_custom_name_kwarg_honored(self):
+        """RecordArray accepts a ``name=`` kwarg at construction,
+        matching Record's API."""
+        from probpipe.core.record import RecordTemplate
+        tpl = RecordTemplate(x=())
+        ra = NumericRecordArray(
+            {"x": jnp.arange(3.0)},
+            batch_shape=(3,),
+            template=tpl,
+            name="my_sweep",
+        )
+        assert ra.name == "my_sweep"
+
+
 class TestSingleFieldCoercion:
     """A single-field NumericRecordArray is array-like via ``__array__``
     / ``__jax_array__``. Multi-field raises.
