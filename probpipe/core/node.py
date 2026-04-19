@@ -389,7 +389,9 @@ class WorkflowFunction(Node):
 
         broadcast_args = self._find_broadcast_args(values)
         if broadcast_args:
-            return self._broadcast(values, broadcast_args, n_broadcast_samples, do_include_inputs)
+            return self._broadcast_distributions_only(
+                values, broadcast_args, n_broadcast_samples, do_include_inputs,
+            )
 
         return self._execute_many([values])[0]
 
@@ -603,18 +605,25 @@ class WorkflowFunction(Node):
 
         return self._resolved_vectorize
 
-    def _broadcast(
+    def _broadcast_distributions_only(
         self,
         values: dict[str, Any],
         broadcast_args: list[str],
         n_broadcast_samples: int,
         do_include_inputs: bool = False,
     ) -> BroadcastDistribution | Distribution:
-        """
-        Sample from Distribution arguments and call the function once per sample.
-        Returns the output marginal by default, or a ``BroadcastDistribution``
-        holding the joint over inputs and outputs when ``do_include_inputs``
-        is True.
+        """Distribution-only broadcast path (Monte Carlo marginalisation).
+
+        Samples from each ``broadcast_args`` entry (all of which are
+        ``Distribution`` instances after ``_find_broadcast_args``),
+        calls the user's function once per sample, and wraps the n
+        outputs as a single marginal distribution.
+
+        This method was historically named ``_broadcast``. Commit 4 of
+        PR 1 (issue #130) will re-introduce ``_broadcast`` as a dispatch
+        layer that routes between this Distribution-only path, the new
+        RecordArray-stack path, and the nested combination — hence the
+        rename.
 
         Vectorization (``"jax"`` vs ``"loop"``) and orchestration
         (``workflow_kind``) are resolved independently:
