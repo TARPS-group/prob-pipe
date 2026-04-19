@@ -713,3 +713,176 @@ class TestRecordArrayMarginal:
         result = record_workflow(**prior.select("x", "y"))
         r = repr(result)
         assert "sum" in r and "diff" in r
+
+
+# ===========================================================================
+# _make_stack — RecordArray-broadcast sibling of _make_marginal (issue #130)
+# ===========================================================================
+
+
+class TestMakeStack:
+    """Dispatch rules for wrapping n inner-function outputs as a
+    shape-(n,) aggregate. Every case is a parameter-sweep-like scenario
+    where row identity must survive; there is no marginalisation."""
+
+    def test_list_of_scalars_wraps_as_numeric_record_array(self):
+        from probpipe import NumericRecordArray
+        from probpipe.core._broadcast_distributions import _make_stack, AUTO_WRAP_FIELD
+        out = _make_stack([1.0, 2.0, 3.0, 4.0], n=4)
+        assert isinstance(out, NumericRecordArray)
+        assert out.batch_shape == (4,)
+        assert out.fields == (AUTO_WRAP_FIELD,)
+        np.testing.assert_allclose(out[AUTO_WRAP_FIELD], [1.0, 2.0, 3.0, 4.0])
+
+    def test_list_of_arrays_preserves_event_shape(self):
+        from probpipe import NumericRecordArray
+        from probpipe.core._broadcast_distributions import _make_stack, AUTO_WRAP_FIELD
+        values = [jnp.arange(3.0) + 10.0 * i for i in range(4)]
+        out = _make_stack(values, n=4)
+        assert isinstance(out, NumericRecordArray)
+        assert out.batch_shape == (4,)
+        assert out[AUTO_WRAP_FIELD].shape == (4, 3)
+
+    def test_list_of_numeric_records_promotes_to_numeric_array(self):
+        from probpipe import NumericRecord, NumericRecordArray
+        from probpipe.core._broadcast_distributions import _make_stack
+        records = [NumericRecord(a=float(i), b=float(i) * 2) for i in range(5)]
+        out = _make_stack(records, n=5)
+        assert isinstance(out, NumericRecordArray)
+        assert out.batch_shape == (5,)
+        np.testing.assert_allclose(out["a"], [0, 1, 2, 3, 4])
+        np.testing.assert_allclose(out["b"], [0, 2, 4, 6, 8])
+
+    def test_list_of_mixed_records_falls_back_to_recordarray(self):
+        """Records with a string (non-numeric) leaf can't go through
+        ``NumericRecordArray.stack``. The fallback path builds each
+        field independently — numeric leaves via ``jnp.stack``,
+        opaque leaves via ``np.asarray(dtype=object)``."""
+        from probpipe import Record, NumericRecordArray, RecordArray
+        from probpipe.core._broadcast_distributions import _make_stack
+        records = [Record(a=float(i), label=f"row{i}") for i in range(3)]
+        out = _make_stack(records, n=3)
+        assert isinstance(out, RecordArray)
+        assert not isinstance(out, NumericRecordArray)
+        np.testing.assert_allclose(out["a"], [0.0, 1.0, 2.0])
+        np.testing.assert_array_equal(out["label"], ["row0", "row1", "row2"])
+
+    def test_list_of_distributions_gives_distribution_array(self):
+        from probpipe import DistributionArray, Normal
+        from probpipe.core._broadcast_distributions import _make_stack
+        comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(3)]
+        out = _make_stack(comps, n=3)
+        assert isinstance(out, DistributionArray)
+        assert out.batch_shape == (3,)
+        assert out[0] is comps[0]
+
+    def test_list_of_record_arrays_nests_batch_shape(self):
+        """Each inner RecordArray has its own batch_shape (m,). Stacking
+        n of them produces a RecordArray with batch_shape (n, m)."""
+        from probpipe import NumericRecord, NumericRecordArray
+        from probpipe.core._broadcast_distributions import _make_stack
+        inner = [
+            NumericRecordArray.stack(
+                [NumericRecord(x=float(i * 10 + j)) for j in range(4)]
+            )
+            for i in range(3)
+        ]
+        out = _make_stack(inner, n=3)
+        assert isinstance(out, NumericRecordArray)
+        assert out.batch_shape == (3, 4)
+        np.testing.assert_allclose(out["x"][0], [0, 1, 2, 3])
+        np.testing.assert_allclose(out["x"][2], [20, 21, 22, 23])
+
+    def test_vmap_ndarray_wraps_as_numeric_record_array(self):
+        """A bare ``jnp.ndarray`` with leading axis n (typical ``jax.vmap``
+        output for scalar-returning fns) wraps without unstacking."""
+        from probpipe import NumericRecordArray
+        from probpipe.core._broadcast_distributions import _make_stack, AUTO_WRAP_FIELD
+        arr = jnp.arange(12.0).reshape(4, 3)
+        out = _make_stack(arr, n=4)
+        assert isinstance(out, NumericRecordArray)
+        assert out.batch_shape == (4,)
+        assert out[AUTO_WRAP_FIELD].shape == (4, 3)
+
+    def test_vmap_record_with_batched_leaves_promotes_to_ra(self):
+        """``jax.vmap`` of a Record-returning fn produces a Record whose
+        leaves are already batched along a leading axis. That's the
+        input form for the pytree branch of ``_make_stack``."""
+        from probpipe import NumericRecordArray, Record
+        from probpipe.core._broadcast_distributions import _make_stack
+        rec = Record(x=jnp.arange(5.0), y=jnp.arange(5.0) + 10)
+        out = _make_stack(rec, n=5)
+        assert isinstance(out, NumericRecordArray)
+        assert out.batch_shape == (5,)
+
+    def test_length_mismatch_raises(self):
+        from probpipe.core._broadcast_distributions import _make_stack
+        with pytest.raises(ValueError, match="expected n=5"):
+            _make_stack([1.0, 2.0, 3.0], n=5)
+
+    def test_ndarray_leading_axis_mismatch_raises(self):
+        from probpipe.core._broadcast_distributions import _make_stack
+        with pytest.raises(ValueError, match="expected leading axis"):
+            _make_stack(jnp.arange(6.0), n=4)
+
+
+# ===========================================================================
+# _coerce_output — attaches provenance to broadcast outputs
+# ===========================================================================
+
+
+class TestCoerceOutput:
+    """``_coerce_output`` is the single entry point where broadcast
+    outputs pick up their provenance. Non-broadcast values pass through
+    unchanged (PR 1 narrowing — see issue #130)."""
+
+    def test_none_mode_passes_through(self):
+        from probpipe.core.node import _coerce_output
+        # Non-Record/Dist values wouldn't normally have .with_source
+        # but the "none" mode short-circuits before the check anyway.
+        assert _coerce_output(3.14, broadcast_mode="none", provenance=None) == 3.14
+        # None provenance also short-circuits.
+        prov = Provenance("x", parents=())
+        assert _coerce_output(3.14, broadcast_mode="none", provenance=prov) == 3.14
+
+    def test_stack_mode_attaches_to_recordarray(self):
+        from probpipe import NumericRecord, NumericRecordArray
+        from probpipe.core.node import _coerce_output
+        ra = NumericRecordArray.stack(
+            [NumericRecord(x=float(i)) for i in range(3)]
+        )
+        assert ra.source is None
+        prov = Provenance("sweep", parents=())
+        out = _coerce_output(ra, broadcast_mode="stack", provenance=prov)
+        assert out is ra
+        assert ra.source.operation == "sweep"
+
+    def test_attaches_to_distribution_array(self):
+        from probpipe import DistributionArray, Normal
+        from probpipe.core._broadcast_distributions import _make_stack
+        from probpipe.core.node import _coerce_output
+        da = _make_stack(
+            [Normal(loc=0.0, scale=1.0, name=f"d{i}") for i in range(3)], n=3,
+        )
+        assert isinstance(da, DistributionArray)
+        assert da.source is None
+        prov = Provenance("nested", parents=())
+        _coerce_output(da, broadcast_mode="nested", provenance=prov)
+        assert da.source.operation == "nested"
+
+    def test_existing_source_is_not_overwritten(self):
+        """If the broadcasting layer has already wired a fresh inner
+        marginal with a source (e.g., a _MixtureMarginal was built with
+        its own provenance), ``_coerce_output`` must not crash and the
+        existing source must remain."""
+        from probpipe import NumericRecord
+        from probpipe.core.node import _coerce_output
+        nr = NumericRecord(x=1.0).with_source(Provenance("inner", parents=()))
+        # Second set would normally raise RuntimeError; _coerce_output
+        # swallows it.
+        _coerce_output(
+            nr,
+            broadcast_mode="stack",
+            provenance=Provenance("outer", parents=()),
+        )
+        assert nr.source.operation == "inner"

@@ -23,6 +23,7 @@ from .protocols import (
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from ..custom_types import Array
 from .._weights import Weights
@@ -376,6 +377,219 @@ def _make_marginal(
     # Single array result (e.g., from vmap); ensure at least 1D for the sample axis
     arr = jnp.atleast_1d(jnp.asarray(output_samples, dtype=jnp.float32))
     return _ArrayMarginal(arr, weights, name=name)
+
+
+# ---------------------------------------------------------------------------
+# _make_stack — stacked sibling of _make_marginal for RecordArray broadcasts
+# ---------------------------------------------------------------------------
+#
+# When a WorkflowFunction broadcasts over a RecordArray (parameter
+# sweep), the n inner outputs are independent scenarios indexed by
+# input row — *not* MC draws. The wrapper must preserve row identity:
+#
+#   numeric → NumericRecordArray(result=..., batch_shape=(n,))
+#   Record → RecordArray.stack (NumericRecordArray when all leaves numeric)
+#   Distribution → DistributionArray
+#   RecordArray (per row batch_shape=(m,)) → RecordArray(batch_shape=(n, m))
+#
+# Opaque Python values (e.g. strings) that can't be stacked fall
+# through to a plain-list wrapping with a clear error if even that
+# fails.
+#
+# Caller attaches ``.with_source(...)`` externally via ``_coerce_output``.
+# ---------------------------------------------------------------------------
+
+
+# Field name used when auto-wrapping scalar / array returns into a
+# Record so the output type contract holds. See issue #130 Open
+# Question 7: pickable in a follow-up PR via a decorator option; the
+# constant stays fixed here so pipelines that chain workflow functions
+# can rely on a stable key.
+AUTO_WRAP_FIELD = "result"
+
+
+def _make_stack(
+    inner_outputs: Any,
+    *,
+    n: int,
+    name: str | None = None,
+) -> Any:
+    """Wrap n inner workflow-function outputs as a shape-(n,) aggregate.
+
+    Dispatch on ``inner_outputs`` — either a Python ``list`` of length n
+    (Python-loop execution path) or a pytree with a leading axis of
+    length n (``jax.vmap`` execution path).
+
+    Parameters
+    ----------
+    inner_outputs : list or pytree
+        Either a list of n inner-function results, or a single
+        stackable pytree with a leading axis of length n.
+    n : int
+        Expected size of the leading aggregate axis. Used for sanity
+        checks and for building fresh templates.
+    name : str, optional
+        Name for the resulting aggregate.
+
+    Returns
+    -------
+    NumericRecordArray | RecordArray | DistributionArray
+        Output type depends on the inner-return type; see module
+        docstring for the dispatch table.
+
+    Raises
+    ------
+    TypeError
+        If the inner outputs can't be coerced into any of the three
+        aggregate types. The error lists the observed types.
+    """
+    from ._distribution_array import _make_distribution_array
+    from .record import Record, RecordTemplate
+
+    # --- List-of-X path (Python-loop execution) -------------------------
+    if isinstance(inner_outputs, list):
+        if len(inner_outputs) != n:
+            raise ValueError(
+                f"_make_stack got {len(inner_outputs)} outputs but "
+                f"expected n={n}."
+            )
+        outs = inner_outputs
+
+        # All Records → stack as a RecordArray. NumericRecordArray if
+        # every leaf is numeric; otherwise fall back to the permissive
+        # RecordArray class, building the fields manually so non-numeric
+        # leaves (strings, xarray objects, ...) survive.
+        if outs and all(isinstance(o, Record) for o in outs):
+            try:
+                from ._record_array import NumericRecordArray
+                return NumericRecordArray.stack(list(outs))
+            except (TypeError, ValueError):
+                pass
+            # Manual per-field assembly: numpy-array-like leaves stack
+            # numerically, object-dtype leaves use np.asarray(..., dtype=object).
+            first = outs[0]
+            if any(o.fields != first.fields for o in outs):
+                raise TypeError(
+                    "_make_stack: Records in list have inconsistent fields."
+                )
+            fields: dict[str, Any] = {}
+            for fname in first.fields:
+                values = [o[fname] for o in outs]
+                try:
+                    fields[fname] = jnp.stack(values, axis=0)
+                except (TypeError, ValueError):
+                    fields[fname] = np.asarray(values, dtype=object)
+            tpl_spec: dict[str, Any] = {}
+            for fname, v in fields.items():
+                if hasattr(v, "dtype") and getattr(v.dtype, "kind", None) in "biufc":
+                    tpl_spec[fname] = tuple(v.shape[1:])
+                else:
+                    tpl_spec[fname] = None
+            from .record import RecordTemplate
+            return RecordArray(fields, batch_shape=(n,), template=RecordTemplate(tpl_spec))
+
+        # All Distributions → stacked DistributionArray.
+        if outs and all(isinstance(o, Distribution) for o in outs):
+            return _make_distribution_array(outs, name=name)
+
+        # All RecordArrays with matching (non-empty) batch_shape →
+        # nested RecordArray with leading (n,) axis.
+        if outs and all(isinstance(o, RecordArray) for o in outs):
+            first = outs[0]
+            if all(ra.batch_shape == first.batch_shape for ra in outs):
+                fields = {
+                    fname: jnp.stack([ra[fname] for ra in outs], axis=0)
+                    for fname in first.fields
+                }
+                return type(first)(
+                    fields,
+                    batch_shape=(n,) + first.batch_shape,
+                    template=first.template,
+                )
+            # Mismatched inner shapes — fall through to the error path.
+
+        # Numeric scalars / arrays → wrap in NumericRecordArray with
+        # the single "result" field carrying the stacked values.
+        try:
+            stacked = jnp.stack(
+                [jnp.asarray(o) for o in outs], axis=0,
+            )
+        except (TypeError, ValueError):
+            stacked = None
+
+        if stacked is not None:
+            from ._record_array import NumericRecordArray
+            event_shape = tuple(stacked.shape[1:])
+            tpl = RecordTemplate(**{AUTO_WRAP_FIELD: event_shape})
+            return NumericRecordArray(
+                {AUTO_WRAP_FIELD: stacked},
+                batch_shape=(n,),
+                template=tpl,
+            )
+
+        # Last-ditch: wrap as a RecordArray whose single field holds a
+        # numpy object-dtype array of the opaque outputs.
+        try:
+            object_array = np.asarray(outs, dtype=object)
+            tpl = RecordTemplate(**{AUTO_WRAP_FIELD: None})
+            return RecordArray(
+                {AUTO_WRAP_FIELD: object_array},
+                batch_shape=(n,),
+                template=tpl,
+            )
+        except (TypeError, ValueError) as exc:
+            types_seen = sorted({type(o).__name__ for o in outs})
+            raise TypeError(
+                f"_make_stack cannot aggregate outputs of types "
+                f"{types_seen}; supported: numeric arrays, Record, "
+                f"RecordArray, Distribution."
+            ) from exc
+
+    # --- Single-pytree path (jax.vmap execution) ------------------------
+
+    # vmap of a numeric-returning function produces a jnp.ndarray with
+    # leading axis of length n.
+    if isinstance(inner_outputs, jnp.ndarray):
+        if inner_outputs.shape[:1] != (n,):
+            raise ValueError(
+                f"_make_stack got array of shape {inner_outputs.shape} but "
+                f"expected leading axis of length n={n}."
+            )
+        from ._record_array import NumericRecordArray
+        event_shape = tuple(inner_outputs.shape[1:])
+        tpl = RecordTemplate(**{AUTO_WRAP_FIELD: event_shape})
+        return NumericRecordArray(
+            {AUTO_WRAP_FIELD: inner_outputs},
+            batch_shape=(n,),
+            template=tpl,
+        )
+
+    # vmap of a Record-returning function produces a Record with
+    # batched leaves (each leaf has leading axis n). Promote to a
+    # RecordArray — NumericRecordArray when all leaves numeric.
+    if isinstance(inner_outputs, Record) and inner_outputs.fields:
+        resolved = [inner_outputs[f] for f in inner_outputs.fields]
+        if all(hasattr(v, "shape") and v.shape[:1] == (n,) for v in resolved):
+            event_shapes = tuple(v.shape[1:] for v in resolved)
+            tpl = RecordTemplate(**dict(zip(inner_outputs.fields, event_shapes)))
+            fields = dict(zip(inner_outputs.fields, resolved))
+            try:
+                from ._record_array import NumericRecordArray
+                return NumericRecordArray(
+                    fields, batch_shape=(n,), template=tpl,
+                )
+            except (TypeError, ValueError):
+                return RecordArray(
+                    fields, batch_shape=(n,), template=tpl,
+                )
+
+    # Fallback — shouldn't reach here with well-formed vmap output; if
+    # we do, raise with the type info.
+    raise TypeError(
+        f"_make_stack cannot aggregate output of type "
+        f"{type(inner_outputs).__name__}; expected a list, jnp.ndarray, "
+        f"or batched Record."
+    )
 
 
 # ---------------------------------------------------------------------------

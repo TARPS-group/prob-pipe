@@ -30,6 +30,7 @@ from .distribution import (
     EmpiricalDistribution,
     _make_marginal,
 )
+from ._broadcast_distributions import _make_stack
 from .provenance import Provenance
 from .protocols import (
     SupportsConditioning,
@@ -57,6 +58,70 @@ _DISTRIBUTION_PROTOCOLS: tuple[type, ...] = (
 from ..converters import converter_registry
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Output-type coercion for WorkflowFunction returns (issue #130 / PR 1)
+# ---------------------------------------------------------------------------
+#
+# PR 1 narrows the output-type contract to the broadcast path only —
+# non-broadcast calls pass their value through unchanged to preserve
+# backward compatibility with ops.py. PR 1.5 extends the contract to
+# every WorkflowFunction return.
+#
+# ``_coerce_output`` is the single entry point. For broadcast outputs,
+# it attaches a ``Provenance`` node via ``.with_source(...)`` so the
+# result carries a record of how it was produced (sweep rows, MC
+# draws, inner function name). Non-broadcast values are returned as-is.
+# ---------------------------------------------------------------------------
+
+
+def _coerce_output(
+    value: Any,
+    *,
+    broadcast_mode: str,
+    provenance: Provenance | None,
+) -> Any:
+    """Attach provenance to a broadcast output, if the type supports it.
+
+    Parameters
+    ----------
+    value
+        The output produced by the broadcast layer. For
+        ``broadcast_mode != "none"`` this is always a ``Record``,
+        ``RecordArray``, or ``Distribution`` (the three types that
+        expose ``.with_source``); for ``"none"`` it may be anything.
+    broadcast_mode : {"none", "marginalise", "stack", "nested"}
+        How the value was produced:
+
+        * ``"none"`` — non-broadcast call; pass through unchanged.
+        * ``"marginalise"`` — Distribution-only broadcast; value is
+          a marginal distribution.
+        * ``"stack"`` — RecordArray-only broadcast; value is a
+          stacked aggregate (``NumericRecordArray`` / ``RecordArray``
+          / ``DistributionArray``).
+        * ``"nested"`` — RecordArray + Distribution broadcast; value
+          is a ``DistributionArray`` whose components are per-row
+          marginals.
+    provenance : Provenance or None
+        Provenance node to attach. ``None`` skips the attachment.
+
+    Returns
+    -------
+    Any
+        The same value, with ``.source`` set when applicable.
+    """
+    if broadcast_mode == "none" or provenance is None:
+        return value
+    if hasattr(value, "with_source"):
+        try:
+            value.with_source(provenance)
+        except RuntimeError:
+            # Value already has a source (e.g., an inner marginal that
+            # the broadcasting layer built with its own provenance).
+            # Leave the existing source in place.
+            pass
+    return value
 
 __all__ = [
     "InputFrozenError",
