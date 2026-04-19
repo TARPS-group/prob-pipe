@@ -28,15 +28,15 @@ dynamically from the parent's capabilities, so
 
 `FlattenedView` is a public wrapper that exposes a distribution with
 structured samples as a flat
-[`NumericRecordDistribution`][probpipe.core._array_distributions.NumericRecordDistribution],
+[`NumericRecordDistribution`][probpipe.core._numeric_record_distribution.NumericRecordDistribution],
 useful for interop with algorithms that expect flat vectors. It uses the same
 dynamic-protocol pattern as `_RecordDistributionView` — only the protocols the
 base distribution supports are attached to the view.
 
-::: probpipe.core._array_distributions.FlattenedView
+::: probpipe.core._numeric_record_distribution.FlattenedView
 
 ## Sampling primitive
 
-::: probpipe.core._array_distributions._vmap_sample
+::: probpipe.core._numeric_record_distribution._vmap_sample
 
-::: probpipe.core._array_distributions._mc_expectation
+::: probpipe.core._numeric_record_distribution._mc_expectation
