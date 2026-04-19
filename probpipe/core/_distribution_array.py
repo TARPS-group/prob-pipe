@@ -19,27 +19,29 @@ appropriate protocol mixins based on component capabilities.
 ``DistributionArray`` vs. ``ProductDistribution``
 -------------------------------------------------
 
-Both produce multi-valued samples, but they represent different
-statistical objects:
+Both express a set of independent components, but the access pattern
+differs:
 
-- :class:`~probpipe.ProductDistribution` is a single joint distribution
-  over **named, heterogeneous components** — e.g.,
-  ``ProductDistribution(theta=Normal(0, 1), sigma=Gamma(2, 1))``
-  represents one random variable that happens to be a (θ, σ) tuple.
+- :class:`~probpipe.ProductDistribution` bundles **heterogeneous
+  independent components** addressed by name — e.g.
+  ``ProductDistribution(theta=Normal(0, 1), sigma=Gamma(2, 1))``.
   ``sample`` returns a ``Record`` keyed by component name; ``log_prob``
-  accepts a same-shaped Record and sums the marginal log-probs.
+  takes a same-shaped Record and sums the marginals. Different
+  components are typically different families (Normal + Gamma + ...).
 
-- :class:`DistributionArray` is a **collection of n distributions of the
-  same kind** indexed by position — e.g.,
+- :class:`DistributionArray` bundles **positionally-indexed components**
+  along a batch axis — e.g.
   ``DistributionArray([Normal(loc=i, scale=1.0, name=f"n{i}") for i in
-  range(5)])`` represents five independent Normal random variables
-  indexed 0..4. ``sample`` returns a stacked array of shape
-  ``(5,) + event_shape``; ``log_prob`` accepts a same-shaped array and
-  returns a per-row log-prob vector.
+  range(5)])``. ``sample`` returns a stacked array of shape
+  ``(5,) + event_shape``; ``log_prob`` takes a same-shaped array and
+  returns a per-row vector. Components can still be heterogeneous
+  as long as they share ``event_shape``, but the common use case is
+  n instances of the same family parameterised differently (the output
+  of a parameter sweep).
 
 Rule of thumb: if you'd write ``d["sigma"]`` to pull out a specific
-named quantity → ``ProductDistribution``. If you'd write ``d[i]`` to
-pull out the i-th element of a batch → ``DistributionArray``.
+**named** quantity → ``ProductDistribution``. If you'd write ``d[i]``
+to pull out the i-th element of a **batch** → ``DistributionArray``.
 """
 
 from __future__ import annotations
