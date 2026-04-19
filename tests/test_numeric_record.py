@@ -271,3 +271,75 @@ class TestPyTree:
         grads = jax.grad(f)(nr)
         assert isinstance(grads, NumericRecord)
         np.testing.assert_allclose(float(grads["x"]), 2.0)
+
+
+# ---------------------------------------------------------------------------
+# Single-field scalar-like coercion (issue #130 PR 1.5)
+# ---------------------------------------------------------------------------
+
+
+class TestSingleFieldCoercion:
+    """A single-field NumericRecord behaves like a thin wrapper around
+    its one numeric value for coercion purposes. Multi-field records
+    raise a clear error — ``record["field"]`` is the explicit way.
+
+    The shim is what keeps idiomatic expressions like
+    ``float(mean(dist))`` working once ``mean`` returns a
+    ``NumericRecord(result=...)`` under the full output-type contract.
+    """
+
+    def test_float_scalar(self):
+        nr = NumericRecord(result=3.14)
+        assert abs(float(nr) - 3.14) < 1e-5
+
+    def test_int_scalar(self):
+        nr = NumericRecord(result=3.14)
+        assert int(nr) == 3
+
+    def test_bool_scalar(self):
+        assert bool(NumericRecord(result=1.0)) is True
+        assert bool(NumericRecord(result=0.0)) is False
+
+    def test_np_asarray_scalar(self):
+        nr = NumericRecord(result=2.5)
+        arr = np.asarray(nr)
+        assert arr.shape == ()
+        assert float(arr) == 2.5
+
+    def test_np_asarray_vector(self):
+        nr = NumericRecord(result=jnp.array([1.0, 2.0, 3.0]))
+        arr = np.asarray(nr)
+        np.testing.assert_allclose(arr, [1.0, 2.0, 3.0])
+
+    def test_np_asarray_with_dtype(self):
+        nr = NumericRecord(result=3.14)
+        arr = np.asarray(nr, dtype=np.float64)
+        assert arr.dtype == np.float64
+
+    def test_jnp_asarray_preserves_jax_type(self):
+        nr = NumericRecord(result=jnp.array([1.0, 2.0]))
+        arr = jnp.asarray(nr)
+        assert isinstance(arr, jnp.ndarray)
+        np.testing.assert_allclose(arr, [1.0, 2.0])
+
+    # Multi-field raises — silently unwrapping one of many fields is
+    # ambiguous. Users say what they want with explicit indexing.
+
+    def test_multi_field_float_raises(self):
+        nr = NumericRecord(a=1.0, b=2.0)
+        with pytest.raises(TypeError, match="2 fields"):
+            float(nr)
+
+    def test_multi_field_int_raises(self):
+        with pytest.raises(TypeError, match="not scalar-like"):
+            int(NumericRecord(a=1.0, b=2.0))
+
+    def test_multi_field_asarray_raises(self):
+        with pytest.raises(TypeError, match="not scalar-like"):
+            np.asarray(NumericRecord(a=1.0, b=2.0))
+
+    def test_nested_numeric_record_raises(self):
+        inner = NumericRecord(x=1.0, y=2.0)
+        outer = NumericRecord(inner=inner)
+        with pytest.raises(TypeError, match="nested NumericRecord"):
+            float(outer)

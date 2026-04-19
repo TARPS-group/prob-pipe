@@ -205,6 +205,58 @@ class NumericRecord(Record):
                 raw_fields[field_name] = val
         return cls(raw_fields)
 
+    # -- Single-field scalar-like coercion ---------------------------------
+    #
+    # When a NumericRecord has exactly one numeric field, it behaves like
+    # a thin wrapper around that field's value for the common coercion
+    # paths: ``float()``, ``int()``, ``bool()``, ``np.asarray()``,
+    # ``jnp.asarray()``. This keeps ergonomic expressions like
+    # ``float(mean(dist))`` working after PR 1.5 makes every
+    # ``WorkflowFunction`` output go through the
+    # ``Record | RecordArray | Distribution`` output-type contract.
+    #
+    # The shim is intentionally narrow — only single-field records
+    # qualify, and only scalar-like coercions are exposed. Multi-field
+    # records raise ``TypeError`` with a message pointing at explicit
+    # field access, because silently unwrapping one field of many would
+    # be ambiguous.
+    # ---------------------------------------------------------------------
+
+    def _single_numeric_leaf(self):
+        """Return the sole numeric leaf, or raise ``TypeError``."""
+        if len(self._store) != 1:
+            raise TypeError(
+                f"NumericRecord with {len(self._store)} fields is not "
+                f"scalar-like; access a specific field with "
+                f"record['field_name'] first."
+            )
+        only = next(iter(self._store.values()))
+        if isinstance(only, NumericRecord):
+            raise TypeError(
+                "NumericRecord with a nested NumericRecord field is not "
+                "scalar-like; access the nested record explicitly."
+            )
+        return only
+
+    def __float__(self) -> float:
+        return float(self._single_numeric_leaf())
+
+    def __int__(self) -> int:
+        return int(self._single_numeric_leaf())
+
+    def __bool__(self) -> bool:
+        return bool(self._single_numeric_leaf())
+
+    def __array__(self, dtype=None):
+        leaf = self._single_numeric_leaf()
+        return np.asarray(leaf, dtype=dtype) if dtype is not None else np.asarray(leaf)
+
+    # JAX treats ``__jax_array__`` as the conversion hook for
+    # ``jnp.asarray`` — without it, ``jnp.asarray(nr)`` goes through
+    # ``__array__`` (numpy) and loses JAX tracing support.
+    def __jax_array__(self):
+        return jnp.asarray(self._single_numeric_leaf())
+
 
 # ---------------------------------------------------------------------------
 # JAX PyTree registration — reuse Record's flatten, custom unflatten

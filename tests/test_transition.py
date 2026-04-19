@@ -52,9 +52,17 @@ def provenance_step(dist, value):
 
 class TestIterate:
     def test_basic(self, initial):
-        """iterate returns a list[Distribution] including the initial."""
+        """iterate returns a DistributionArray including the initial.
+
+        Post issue #130 PR 1.5, WorkflowFunction outputs whose function
+        body returns a Python list of Distributions get wrapped as a
+        ``DistributionArray`` (the stacked-collection counterpart to
+        ``list[Distribution]``), so indexing, iteration, and len all
+        still work.
+        """
+        from probpipe import DistributionArray
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0])
-        assert isinstance(dists, list)
+        assert isinstance(dists, DistributionArray)
         assert len(dists) == 3  # initial + 2 steps
         assert dists[0] is initial
         assert all(isinstance(d, Distribution) for d in dists)
@@ -310,7 +318,9 @@ class TestIncrementalConditioner:
         assert post1 is not post2
 
     def test_update_all(self):
-        """update_all() iterates over batches, returns list, updates state."""
+        """update_all() iterates over batches, returns DistributionArray,
+        updates state."""
+        from probpipe import DistributionArray
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0, name="prior")
         conditioner = IncrementalConditioner(
             prior, _SimpleLikelihood(), condition_fn=_mock_condition_fn,
@@ -318,7 +328,7 @@ class TestIncrementalConditioner:
         batches = [jnp.ones((10, 2)) * i for i in [1.0, 2.0, 3.0]]
         dists = conditioner.update_all(data_batches=batches)
 
-        assert isinstance(dists, list)
+        assert isinstance(dists, DistributionArray)
         assert len(dists) == 4  # prior + 3 steps
         assert dists[0] is prior
         assert conditioner.curr_posterior is dists[-1]

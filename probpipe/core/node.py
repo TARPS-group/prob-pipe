@@ -11,6 +11,7 @@ import warnings
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 try:
     from prefect import task, flow
@@ -30,10 +31,12 @@ from .distribution import (
     EmpiricalDistribution,
     _make_marginal,
 )
-from ._broadcast_distributions import _make_stack
+from ._broadcast_distributions import _make_stack, AUTO_WRAP_FIELD
 from ._distribution_array import _make_distribution_array
+from ._numeric_record import NumericRecord
 from ._record_array import RecordArray
 from .provenance import Provenance
+from .record import Record
 from .protocols import (
     SupportsConditioning,
     SupportsCovariance,
@@ -63,19 +66,65 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Output-type coercion for WorkflowFunction returns (issue #130 / PR 1)
+# Output-type coercion for WorkflowFunction returns (issue #130)
 # ---------------------------------------------------------------------------
 #
-# PR 1 narrows the output-type contract to the broadcast path only —
-# non-broadcast calls pass their value through unchanged to preserve
-# backward compatibility with ops.py. PR 1.5 extends the contract to
-# every WorkflowFunction return.
+# Every ``WorkflowFunction`` output is one of three types: ``Record``,
+# ``RecordArray``, or ``Distribution`` (the three types that carry a
+# ``.source`` provenance slot). ``_coerce_output`` is the single entry
+# point that enforces the contract and attaches a ``Provenance`` node.
 #
-# ``_coerce_output`` is the single entry point. For broadcast outputs,
-# it attaches a ``Provenance`` node via ``.with_source(...)`` so the
-# result carries a record of how it was produced (sweep rows, MC
-# draws, inner function name). Non-broadcast values are returned as-is.
+# Bare scalars, ``jnp.ndarray``, and Python lists are wrapped as
+# ``NumericRecord(result=...)`` (or, for broadcast outputs, into the
+# appropriate aggregate). Opaque Python values (strings, dicts, ...)
+# fall back to ``Record(result=...)``.
+#
+# The ergonomic shim on single-field ``NumericRecord`` (see
+# ``_numeric_record.py``) keeps ``float(mean(d))`` /
+# ``np.asarray(mean(d))`` working transparently.
 # ---------------------------------------------------------------------------
+
+
+def _wrap_as_record(value: Any) -> Any:
+    """Coerce a structure-valued return toward an output-contract type.
+
+    The wrap is deliberately narrow — **only** ``dict`` and non-empty
+    ``list``/``tuple`` returns are promoted. Everything else passes
+    through so that:
+
+    - Bare numeric scalars and ``ndarray`` values keep working with
+      arithmetic (``sample(dist) + shift``) and attribute access
+      (``mean(dist).shape``).
+    - Callables returned by ``sample`` on a ``RandomFunction`` stay
+      callable (``f = sample(grf); f(X)``).
+    - Any custom domain object (xarray, pandas, ...) is passed through
+      unchanged — the workflow author is responsible for any further
+      wrapping.
+
+    For the pass-through types, provenance remains reachable via
+    ``provenance_ancestors(input_distribution)``.
+
+    Promoted types:
+
+    - ``dict`` with at least one key → ``Record(**dict)``, so the
+      caller's keys stay addressable without a ``"result"`` detour.
+      This is the common case for pipeline helpers that produce
+      structured summaries (test statistics, diagnostics, ...).
+    - Non-empty ``list`` / ``tuple`` → ``_make_stack`` dispatch:
+      a list of Distributions becomes a ``DistributionArray``, a list
+      of Records a ``RecordArray``, a list of arrays a stacked
+      ``NumericRecordArray``. This handles the ``iterate`` /
+      ``condition_on_all`` family of ops that naturally produce
+      sequences of distributions.
+    """
+    if isinstance(value, dict) and value:
+        return Record(dict(value))
+    if isinstance(value, (list, tuple)) and value:
+        try:
+            return _make_stack(list(value), n=len(value))
+        except (TypeError, ValueError):
+            pass
+    return value
 
 
 def _coerce_output(
@@ -84,38 +133,43 @@ def _coerce_output(
     broadcast_mode: str,
     provenance: Provenance | None,
 ) -> Any:
-    """Attach provenance to a broadcast output, if the type supports it.
+    """Enforce the Record | RecordArray | Distribution output contract.
 
     Parameters
     ----------
     value
-        The output produced by the broadcast layer. For
-        ``broadcast_mode != "none"`` this is always a ``Record``,
-        ``RecordArray``, or ``Distribution`` (the three types that
-        expose ``.with_source``); for ``"none"`` it may be anything.
-    broadcast_mode : {"none", "marginalise", "stack", "nested"}
+        The raw output produced by the function body or a broadcast
+        aggregator. For ``broadcast_mode != "wrap"`` this is always
+        already one of the three contract types.
+    broadcast_mode : {"wrap", "marginalise", "stack", "nested"}
         How the value was produced:
 
-        * ``"none"`` — non-broadcast call; pass through unchanged.
-        * ``"marginalise"`` — Distribution-only broadcast; value is
-          a marginal distribution.
-        * ``"stack"`` — RecordArray-only broadcast; value is a
-          stacked aggregate (``NumericRecordArray`` / ``RecordArray``
-          / ``DistributionArray``).
-        * ``"nested"`` — RecordArray + Distribution broadcast; value
-          is a ``DistributionArray`` whose components are per-row
-          marginals.
+        * ``"wrap"`` — non-broadcast call; ``value`` is whatever the
+          user's function returned. Wrap scalars/arrays as
+          ``NumericRecord(result=...)`` / opaque Python values as
+          ``Record(result=...)``. Existing Record / RecordArray /
+          Distribution values pass through.
+        * ``"marginalise"`` — Distribution-only broadcast; ``value`` is
+          a marginal distribution from ``_make_marginal``.
+        * ``"stack"`` — RecordArray-only broadcast; ``value`` is a
+          stacked aggregate from ``_make_stack``
+          (``NumericRecordArray`` / ``RecordArray`` / ``DistributionArray``).
+        * ``"nested"`` — RecordArray + Distribution broadcast; ``value``
+          is a ``DistributionArray`` of per-row marginals.
     provenance : Provenance or None
-        Provenance node to attach. ``None`` skips the attachment.
+        Provenance node to attach. ``None`` skips the attachment step.
 
     Returns
     -------
-    Any
-        The same value, with ``.source`` set when applicable.
+    Record | RecordArray | Distribution
+        The value, possibly wrapped, with ``.source`` attached when it
+        was empty. An already-sourced value keeps its existing source
+        (inner marginals produced by the broadcast layer carry their
+        own provenance; ``_coerce_output`` doesn't overwrite).
     """
-    if broadcast_mode == "none" or provenance is None:
-        return value
-    if hasattr(value, "with_source"):
+    if broadcast_mode == "wrap":
+        value = _wrap_as_record(value)
+    if provenance is not None and hasattr(value, "with_source"):
         try:
             value.with_source(provenance)
         except RuntimeError:
@@ -395,7 +449,24 @@ class WorkflowFunction(Node):
                 values, dist_args, ra_args, n_broadcast_samples, do_include_inputs,
             )
 
-        return self._execute_many([values])[0]
+        # Non-broadcast call — run the function body once and wrap the
+        # return so every WorkflowFunction output satisfies the
+        # Record | RecordArray | Distribution contract (issue #130
+        # PR 1.5). Provenance parents are the inputs that carry their
+        # own ``.source`` slot (Distribution / Record / RecordArray
+        # instances) — other args are data, not lineage.
+        result = self._execute_many([values])[0]
+        parents = tuple(
+            v for v in values.values() if hasattr(v, "source")
+        )
+        provenance = Provenance(
+            operation=f"workflow.{self._name or self._func.__name__}",
+            parents=parents,
+            metadata={"func": self._name or self._func.__name__},
+        )
+        return _coerce_output(
+            result, broadcast_mode="wrap", provenance=provenance,
+        )
 
     def _resolve_inputs(self, call_inputs: dict[str, Any]) -> dict[str, Any]:
         """
