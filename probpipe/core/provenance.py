@@ -6,7 +6,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from ._record_array import RecordArray
     from .distribution import Distribution
+    from .record import Record
+
+    ProvenanceNode = Distribution | Record | RecordArray
 
 __all__ = ["Provenance", "provenance_ancestors", "provenance_dag"]
 
@@ -83,19 +87,25 @@ class Provenance:
 # Graph utilities
 # ---------------------------------------------------------------------------
 
-def provenance_ancestors(dist: Distribution) -> list[Distribution]:
-    """Return all ancestor distributions reachable via provenance chains.
+def provenance_ancestors(node: "ProvenanceNode") -> list["ProvenanceNode"]:
+    """Return all ancestor nodes reachable via provenance chains.
 
-    Traverses ``dist.source.parents`` recursively (breadth-first) and
-    returns a flat list of unique ancestor distributions, ordered by
-    discovery.  The input *dist* is **not** included in the result.
+    Traverses ``node.source.parents`` recursively (breadth-first) and
+    returns a flat list of unique ancestors, ordered by discovery.
+    The input *node* is **not** included in the result.
+
+    Parameters
+    ----------
+    node : Distribution | Record | RecordArray
+        Any object exposing a ``.source`` attribute. The three ProbPipe
+        types that carry provenance satisfy this uniformly.
     """
-    visited: set[int] = {id(dist)}
-    ancestors: list[Distribution] = []
-    queue: list[Distribution] = []
+    visited: set[int] = {id(node)}
+    ancestors: list = []
+    queue: list = []
 
-    if dist.source is not None:
-        for p in dist.source.parents:
+    if node.source is not None:
+        for p in node.source.parents:
             if id(p) not in visited:
                 visited.add(id(p))
                 queue.append(p)

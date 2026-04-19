@@ -116,6 +116,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import ArrayLike
+from .provenance import Provenance
 
 if TYPE_CHECKING:
     import xarray as xr
@@ -157,7 +158,7 @@ class Record:
     switch to insertion order.
     """
 
-    __slots__ = ("_store", "_name")
+    __slots__ = ("_store", "_name", "_source")
 
     def __init__(
         self,
@@ -179,13 +180,45 @@ class Record:
         if name is None:
             name = "record(" + ",".join(store.keys()) + ")"
         object.__setattr__(self, "_name", name)
+        object.__setattr__(self, "_source", None)
 
-    # -- Name ---------------------------------------------------------------
+    # -- Name & provenance --------------------------------------------------
 
     @property
     def name(self) -> str:
         """Name of this Record."""
         return self._name
+
+    @property
+    def source(self) -> Provenance | None:
+        """Provenance describing how this Record was created, or ``None``."""
+        return self._source
+
+    def with_source(self, source: Provenance) -> Record:
+        """Attach provenance to this Record (write-once).
+
+        Mirrors ``Distribution.with_source`` — `_source` is set once and
+        subsequent calls raise. Semantic transformations (``replace``,
+        ``merge``, ``without``, ``map``, ``map_with_names``) return a
+        *new* Record with an empty source; the caller attaches fresh
+        provenance there if desired.
+
+        Notes
+        -----
+        ``_source`` is runtime-only metadata — it is not serialised into
+        the JAX pytree aux (a ``Provenance`` parent is a ``Distribution``
+        or ``Record``, neither of which is hashable by structure).
+        Round-tripping through ``jax.tree_util.tree_flatten`` /
+        ``tree_unflatten`` therefore drops the source; re-attach it on
+        the reconstructed Record if you need to preserve the chain.
+        """
+        if self._source is not None:
+            raise RuntimeError(
+                f"Source already set on {self!r}. "
+                "Provenance is write-once; create a new Record instead."
+            )
+        object.__setattr__(self, "_source", source)
+        return self
 
     # -- Immutability -------------------------------------------------------
 

@@ -18,6 +18,7 @@ import numpy as np
 from .._utils import prod
 from ..custom_types import ArrayLike
 from ._numeric_record import NumericRecord, _NUMERIC_DTYPE_KINDS
+from .provenance import Provenance
 from .record import Record, RecordTemplate, _spec_size
 
 __all__ = ["RecordArray", "NumericRecordArray"]
@@ -44,7 +45,7 @@ class RecordArray:
     field name (``arr["x"]`` → batched leaf array).
     """
 
-    __slots__ = ("_store", "_batch_shape", "_template")
+    __slots__ = ("_store", "_batch_shape", "_template", "_source")
 
     def __init__(
         self,
@@ -76,6 +77,7 @@ class RecordArray:
         object.__setattr__(self, "_store", store)
         object.__setattr__(self, "_batch_shape", batch_shape)
         object.__setattr__(self, "_template", template)
+        object.__setattr__(self, "_source", None)
 
     @classmethod
     def _validate_fields(
@@ -119,6 +121,35 @@ class RecordArray:
     def fields(self) -> tuple[str, ...]:
         """Field names in sorted order."""
         return tuple(self._store.keys())
+
+    # -- Provenance --------------------------------------------------------
+
+    @property
+    def source(self) -> Provenance | None:
+        """Provenance describing how this RecordArray was created, or ``None``."""
+        return self._source
+
+    def with_source(self, source: Provenance) -> RecordArray:
+        """Attach provenance to this RecordArray (write-once).
+
+        Mirrors ``Distribution.with_source`` / ``Record.with_source``.
+
+        Notes
+        -----
+        ``_source`` is runtime-only metadata — it is not serialised into
+        the JAX pytree aux (a ``Provenance`` parent is typically a
+        ``Distribution`` or ``Record``, neither hashable by structure).
+        Round-tripping through ``jax.tree_util.tree_flatten`` /
+        ``tree_unflatten`` drops the source; re-attach it on the
+        reconstructed RecordArray if the chain must be preserved.
+        """
+        if self._source is not None:
+            raise RuntimeError(
+                f"Source already set on {self!r}. "
+                "Provenance is write-once; create a new RecordArray instead."
+            )
+        object.__setattr__(self, "_source", source)
+        return self
 
     # -- Field access -------------------------------------------------------
 
