@@ -252,7 +252,7 @@ class TestPrefectProvenance:
         )
         result = wf(x=normal_dist)
         assert result.source is not None
-        assert result.source.metadata["orchestrate"] == "none"
+        assert result.source.metadata["orchestrate"] == "off"
 
 
 # ---------------------------------------------------------------------------
