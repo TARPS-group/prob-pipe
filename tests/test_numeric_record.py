@@ -290,7 +290,7 @@ class TestSingleFieldCoercion:
 
     def test_float_scalar(self):
         nr = NumericRecord(result=3.14)
-        assert abs(float(nr) - 3.14) < 1e-5
+        np.testing.assert_allclose(float(nr), 3.14, rtol=1e-5)
 
     def test_int_scalar(self):
         nr = NumericRecord(result=3.14)

@@ -61,8 +61,9 @@ class TestRecordArrayDetection:
         # Single inner call — output is the unwrapped float result.
         assert float(out) == 6.0
 
-    def test_zero_dim_recordarray_passes_through(self):
-        """batch_shape=() means no batch axis, so don't iterate."""
+    def test_scalar_batch_shape_passes_through(self):
+        """``batch_shape=()`` means no batch axis (scalar / zero-rank,
+        not zero-length), so don't iterate."""
         from probpipe.core.record import RecordTemplate
 
         @workflow_function
