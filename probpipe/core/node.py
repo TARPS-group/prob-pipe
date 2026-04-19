@@ -68,6 +68,16 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Output-type coercion for WorkflowFunction returns (issue #130)
 # ---------------------------------------------------------------------------
+
+# Broadcast modes: how a value reached ``_coerce_output``. Exposed as
+# constants so callsites use the same spelling and typos fail loudly.
+from typing import Literal  # noqa: E402
+
+BroadcastMode = Literal["wrap", "marginalise", "stack", "nested"]
+BROADCAST_WRAP: BroadcastMode = "wrap"
+BROADCAST_MARGINALISE: BroadcastMode = "marginalise"
+BROADCAST_STACK: BroadcastMode = "stack"
+BROADCAST_NESTED: BroadcastMode = "nested"
 #
 # Every ``WorkflowFunction`` output is one of three types: ``Record``,
 # ``RecordArray``, or ``Distribution`` (the three types that carry a
@@ -130,7 +140,7 @@ def _wrap_as_record(value: Any) -> Any:
 def _coerce_output(
     value: Any,
     *,
-    broadcast_mode: str,
+    broadcast_mode: BroadcastMode,
     provenance: Provenance | None,
 ) -> Any:
     """Enforce the Record | RecordArray | Distribution output contract.
@@ -167,7 +177,7 @@ def _coerce_output(
         (inner marginals produced by the broadcast layer carry their
         own provenance; ``_coerce_output`` doesn't overwrite).
     """
-    if broadcast_mode == "wrap":
+    if broadcast_mode == BROADCAST_WRAP:
         value = _wrap_as_record(value)
     if provenance is not None and hasattr(value, "with_source"):
         try:
@@ -465,7 +475,7 @@ class WorkflowFunction(Node):
             metadata={"func": self._name or self._func.__name__},
         )
         return _coerce_output(
-            result, broadcast_mode="wrap", provenance=provenance,
+            result, broadcast_mode=BROADCAST_WRAP, provenance=provenance,
         )
 
     def _resolve_inputs(self, call_inputs: dict[str, Any]) -> dict[str, Any]:
@@ -822,7 +832,7 @@ class WorkflowFunction(Node):
                 values, ra_args, dist_args, batch_shape=sweep_batch_shape, k=0,
             )
             return _coerce_output(
-                aggregate, broadcast_mode="stack", provenance=provenance,
+                aggregate, broadcast_mode=BROADCAST_STACK, provenance=provenance,
             )
 
         # ---- Nested (RecordArray + Distribution) -----------------------
@@ -854,7 +864,7 @@ class WorkflowFunction(Node):
             batch_shape=sweep_batch_shape, k=n_broadcast_samples,
         )
         return _coerce_output(
-            stacked, broadcast_mode="nested", provenance=provenance,
+            stacked, broadcast_mode=BROADCAST_NESTED, provenance=provenance,
         )
 
     # ----- Helpers for the RecordArray-broadcast path ----------------------

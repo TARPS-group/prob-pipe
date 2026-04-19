@@ -50,7 +50,9 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
+from .._utils import prod
 from ..custom_types import Array
 from ._distribution_base import Distribution
 from ._record_array import RecordArray
@@ -144,15 +146,14 @@ class DistributionArray[T](Distribution[T]):
             batch_shape = (len(components),)
         else:
             batch_shape = tuple(batch_shape)
-            from .._utils import prod as _prod
-            if _prod(batch_shape) != len(components):
+            if prod(batch_shape) != len(components):
                 raise ValueError(
                     f"DistributionArray batch_shape={batch_shape} implies "
-                    f"{_prod(batch_shape)} components but got "
+                    f"{prod(batch_shape)} components but got "
                     f"{len(components)}."
                 )
         self._components = components
-        self._batch_shape_leading = batch_shape
+        self._batch_shape = batch_shape
         if name is None:
             name = "distribution_array"
         super().__init__(name=name)
@@ -168,7 +169,7 @@ class DistributionArray[T](Distribution[T]):
 
     @property
     def n(self) -> int:
-        """Total number of components (``prod(batch_shape_leading)``)."""
+        """Total number of components (``prod(batch_shape)``)."""
         return len(self._components)
 
     @property
@@ -183,11 +184,11 @@ class DistributionArray[T](Distribution[T]):
 
         The components themselves are required to be scalar
         (``batch_shape == ()``), so this is just
-        ``self._batch_shape_leading`` — no inherit-from-component
+        ``self._batch_shape`` — no inherit-from-component
         composition. Multi-d broadcasting outputs pass the full
         sweep shape; the default 1-D form is ``(n,)``.
         """
-        return tuple(self._batch_shape_leading)
+        return tuple(self._batch_shape)
 
     @property
     def event_shape(self) -> tuple[int, ...]:
@@ -197,7 +198,7 @@ class DistributionArray[T](Distribution[T]):
     # -- container protocol --------------------------------------------------
 
     def __len__(self) -> int:
-        return self._batch_shape_leading[0]
+        return self._batch_shape[0]
 
     def __getitem__(self, key):
         """Index a single component, slice, or multi-d tuple.
@@ -210,10 +211,12 @@ class DistributionArray[T](Distribution[T]):
         * ``tuple`` → multi-axis index (int or slice per axis);
           collapses along int axes and slices along slice axes.
 
-        Indexing uses row-major order across ``batch_shape_leading``.
+        Indexing uses row-major order across ``batch_shape``.
+        The pure-int path translates the key directly to a flat index
+        via ``np.ravel_multi_index`` without materialising a
+        ``shape=batch_shape`` object array.
         """
-        import numpy as _np
-        bshape = self._batch_shape_leading
+        bshape = self._batch_shape
         # Normalise the key to a tuple, one entry per leading axis.
         if isinstance(key, tuple):
             if len(key) > len(bshape):
@@ -225,17 +228,28 @@ class DistributionArray[T](Distribution[T]):
         else:
             key_tuple = (key,) + (slice(None),) * (len(bshape) - 1)
 
-        # Reshape the flat component tuple to match bshape, apply the
-        # key, and decide whether the result is a single distribution
-        # or a new DistributionArray.
-        components_nd = _np.empty(bshape, dtype=object)
-        for flat_idx, comp in enumerate(self._components):
-            components_nd[_np.unravel_index(flat_idx, bshape)] = comp
-        sliced = components_nd[key_tuple]
+        # Fast path: all axes addressed by int (or int-like). Compute
+        # the flat index directly; no object-array materialisation.
+        # ``np.ravel_multi_index`` rejects negative indices, so wrap
+        # them into the positive range first (``dists[-1]`` is a
+        # common pattern — e.g. "last posterior in an iterate output").
+        if all(
+            isinstance(k, (int, np.integer)) or hasattr(k, "__index__")
+            for k in key_tuple
+        ):
+            indices = tuple(
+                int(k) % dim for k, dim in zip(key_tuple, bshape)
+            )
+            flat = int(np.ravel_multi_index(indices, bshape))
+            return self._components[flat]
 
+        # General path: object-array view for slice / mixed-key
+        # support. Only materialised when slices are actually used,
+        # and only for the axes that involve them.
+        components_nd = np.asarray(self._components, dtype=object).reshape(bshape)
+        sliced = components_nd[key_tuple]
         if isinstance(sliced, Distribution):
-            return sliced  # single component
-        # np.ndarray (possibly 0-d) of distributions.
+            return sliced
         if sliced.ndim == 0:
             return sliced.item()
         new_components = list(sliced.ravel())
@@ -284,7 +298,7 @@ class _DistArraySampling:
             self._components[i]._sample(keys[i], sample_shape)
             for i in range(self.n)
         ]
-        bshape = self._batch_shape_leading
+        bshape = self._batch_shape
 
         # Record-valued components — two sample-shape regimes:
         #
@@ -353,9 +367,8 @@ def _reshape_record_array_batch(
     flat size as ``new_batch_shape`` (``prod(current) == prod(new)``).
     Each field array is reshaped so its leading axes match.
     """
-    from .._utils import prod as _prod
 
-    if _prod(ra.batch_shape) != _prod(new_batch_shape):
+    if prod(ra.batch_shape) != prod(new_batch_shape):
         raise ValueError(
             f"Cannot reshape RecordArray batch_shape={ra.batch_shape} to "
             f"{new_batch_shape}: different total size."
@@ -427,8 +440,7 @@ def _reshape_flat_to_bshape(flat: Any, bshape: tuple[int, ...]) -> Any:
     Works for arrays, Records (no-op), and RecordArrays. Called by the
     DistArray reduction mixins to present multi-d batch outputs.
     """
-    from .._utils import prod as _prod
-    if bshape == (_prod(bshape),):
+    if bshape == (prod(bshape),):
         return flat
     if isinstance(flat, jnp.ndarray):
         return flat.reshape(bshape + flat.shape[1:])
@@ -451,7 +463,7 @@ class _DistArrayMean:
 
     def _mean(self):
         stacked = _stack_leading([c._mean() for c in self._components])
-        return _reshape_flat_to_bshape(stacked, self._batch_shape_leading)
+        return _reshape_flat_to_bshape(stacked, self._batch_shape)
 
 
 class _DistArrayVariance:
@@ -464,7 +476,7 @@ class _DistArrayVariance:
 
     def _variance(self):
         stacked = _stack_leading([c._variance() for c in self._components])
-        return _reshape_flat_to_bshape(stacked, self._batch_shape_leading)
+        return _reshape_flat_to_bshape(stacked, self._batch_shape)
 
 
 class _DistArrayLogProb:
@@ -477,11 +489,11 @@ class _DistArrayLogProb:
     """
 
     def _log_prob(self, value):
-        bshape = self._batch_shape_leading
+        bshape = self._batch_shape
         # Flatten value's leading batch axes so we can address
         # components in row-major order.
         if isinstance(value, jnp.ndarray):
-            flat_leading = int(jnp.prod(jnp.array(bshape))) if bshape else 1
+            flat_leading = prod(bshape) if bshape else 1
             flat_value = value.reshape((flat_leading,) + value.shape[len(bshape):])
             lps = jnp.stack(
                 [

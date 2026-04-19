@@ -55,6 +55,18 @@ class TestConstruction:
         assert da[0] is comps[0]
         assert da[2] is comps[2]
 
+    def test_negative_indexing(self):
+        """Negative int indices work; Python wraparound applies per axis.
+
+        Regression for a ``np.ravel_multi_index``-based fast path that
+        initially rejected negatives (the common ``dists[-1]`` pattern
+        — e.g. the last posterior out of ``iterate`` — must work).
+        """
+        comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(4)]
+        da = _make_distribution_array(comps)
+        assert da[-1] is comps[3]
+        assert da[-2] is comps[2]
+
     def test_iter_yields_components(self):
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(3)]
         da = _make_distribution_array(comps)
