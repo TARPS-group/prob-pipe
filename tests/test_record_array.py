@@ -672,3 +672,50 @@ class TestProvenance:
         ancestors = provenance_ancestors(ra)
         assert len(ancestors) == 1
         assert ancestors[0] is prior
+
+
+# ---------------------------------------------------------------------------
+# Single-field array-like coercion (issue #130 PR 1.5)
+# ---------------------------------------------------------------------------
+
+
+class TestSingleFieldCoercion:
+    """A single-field NumericRecordArray is array-like via ``__array__``
+    / ``__jax_array__``. Multi-field raises.
+
+    This is the NumericRecordArray counterpart to the scalar shim on
+    NumericRecord — it keeps ``np.asarray(result)`` working when a
+    workflow function auto-wrapped its scalar output as a
+    ``NumericRecordArray(result=...)`` under the PR 1.5 output-type
+    contract.
+    """
+
+    def test_np_asarray_single_field(self):
+        nra = NumericRecordArray.stack(
+            [NumericRecord(result=float(i)) for i in range(4)]
+        )
+        arr = np.asarray(nra)
+        np.testing.assert_allclose(arr, [0.0, 1.0, 2.0, 3.0])
+
+    def test_jnp_asarray_single_field(self):
+        nra = NumericRecordArray.stack(
+            [NumericRecord(result=float(i)) for i in range(4)]
+        )
+        arr = jnp.asarray(nra)
+        assert isinstance(arr, jnp.ndarray)
+
+    def test_multi_field_raises(self):
+        nra = NumericRecordArray.stack(
+            [NumericRecord(a=float(i), b=float(i) * 2) for i in range(3)]
+        )
+        with pytest.raises(TypeError, match="2 fields"):
+            np.asarray(nra)
+
+    # ``float()`` / ``int()`` / ``bool()`` are deliberately not exposed
+    # on NumericRecordArray — the value isn't scalar.
+    def test_float_not_supported(self):
+        nra = NumericRecordArray.stack(
+            [NumericRecord(result=float(i)) for i in range(4)]
+        )
+        with pytest.raises(TypeError):
+            float(nra)

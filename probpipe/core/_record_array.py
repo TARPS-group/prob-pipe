@@ -448,6 +448,39 @@ class NumericRecordArray(RecordArray):
         """
         return self._reduce(jnp.var, axis)
 
+    # -- Single-field array-like coercion ---------------------------------
+    #
+    # When a NumericRecordArray has exactly one numeric field, it behaves
+    # like a thin wrapper around that field's batched array for the
+    # ``np.asarray`` / ``jnp.asarray`` coercion paths. Mirrors the
+    # single-field shim on ``NumericRecord`` (see ``_numeric_record.py``)
+    # but for batched values — ``float()`` / ``int()`` / ``bool()`` are
+    # intentionally **not** exposed here because the value isn't scalar.
+    # ---------------------------------------------------------------------
+
+    def _single_numeric_leaf(self):
+        """Return the sole numeric leaf array, or raise ``TypeError``."""
+        if len(self._store) != 1:
+            raise TypeError(
+                f"NumericRecordArray with {len(self._store)} fields is "
+                f"not array-like; access a specific field with "
+                f"array['field_name'] first."
+            )
+        only = next(iter(self._store.values()))
+        if isinstance(only, (Record, RecordArray)):
+            raise TypeError(
+                "NumericRecordArray with a nested Record field is not "
+                "array-like; access the nested record explicitly."
+            )
+        return only
+
+    def __array__(self, dtype=None):
+        leaf = self._single_numeric_leaf()
+        return np.asarray(leaf, dtype=dtype) if dtype is not None else np.asarray(leaf)
+
+    def __jax_array__(self):
+        return jnp.asarray(self._single_numeric_leaf())
+
 
 # ---------------------------------------------------------------------------
 # JAX PyTree registration
