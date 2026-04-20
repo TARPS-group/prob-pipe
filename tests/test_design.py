@@ -145,22 +145,66 @@ class TestDesignAsSweep:
             [1.5 * 60, 1.8 * 60, 2.0 * 60, 1.5 * 80, 1.8 * 80, 2.0 * 80],
         )
 
-    def test_select_all_splat_for_jax_vectorized_body(self):
+    def test_select_all_splat_triggers_zip_sweep(self):
+        """Splatting ``**design.select_all()`` yields sibling views of
+        the same Design. The WF sweep layer groups them by parent
+        identity and iterates in lockstep — one inner call per row —
+        producing a ``NumericRecordArray`` identical to the single
+        Record-arg pattern (``fit(p=design)``)."""
+
         @workflow_function
         def product(r, K):
             return r * K
 
         ff = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
         out = product(**ff.select_all())
-        # Splat into a vectorizable body: WF runs once, JAX broadcasts
-        # to a (6,)-array, WF wraps as NumericRecord with the function
-        # name as the single field.
-        assert isinstance(out, NumericRecord)
-        assert "product" in out.fields
+        assert isinstance(out, NumericRecordArray)
+        assert out.batch_shape == (6,)
         np.testing.assert_allclose(
             np.asarray(out["product"]),
             [1.5 * 60, 1.8 * 60, 2.0 * 60, 1.5 * 80, 1.8 * 80, 2.0 * 80],
         )
+
+    def test_patterns_a_and_b_are_equivalent(self):
+        """Pattern A (``f(p=design)``) and Pattern B
+        (``f(**design.select_all())``) produce identical outputs."""
+        ff = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
+
+        @workflow_function
+        def fit_a(p: NumericRecord):
+            return p["r"] * p["K"]
+
+        @workflow_function
+        def fit_b(r, K):
+            return r * K
+
+        out_a = fit_a(p=ff)
+        out_b = fit_b(**ff.select_all())
+        assert out_a.batch_shape == out_b.batch_shape == (6,)
+        np.testing.assert_allclose(
+            np.asarray(out_a["fit_a"]),
+            np.asarray(out_b["fit_b"]),
+        )
+
+    def test_raw_fields_still_cartesian_product(self):
+        """Passing raw columns (``design["r"]``, ``design["K"]``) gives
+        the expected independent-arrays behaviour: they cartesian-product
+        because they carry no parent-identity signal the WF layer can
+        use to zip them."""
+
+        @workflow_function
+        def product(r, K):
+            return r * K
+
+        ff = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
+        # Raw columns → two independent jnp.ndarrays. With no type
+        # hints they're passed to the body wholesale and JAX broadcasts
+        # the arithmetic to a (6,)-array; WF wraps as NumericRecord.
+        out = product(r=ff["r"], K=ff["K"])
+        # Confirm the output is a single Record with the arithmetic
+        # result, not a swept NumericRecordArray.
+        assert isinstance(out, NumericRecord)
+        assert out["product"].shape == (6,)
 
     def test_mixed_field_sweep_uses_record_arg_pattern(self):
         """Categorical fields can't ride JAX broadcasting — the single
@@ -188,11 +232,20 @@ class TestDesignAsSweep:
 
 
 class TestSelectAll:
-    def test_select_all_returns_column_arrays(self):
+    def test_select_all_returns_views(self):
+        """``select_all()`` returns single-field views that share the
+        Design as their parent. Sibling views passed to a
+        ``WorkflowFunction`` zip rather than cartesian-product — the
+        mechanism behind ``f(**design.select_all()) ≡ f(p=design)``."""
+        from probpipe.core._record_array import _RecordArrayView
         ff = FullFactorialDesign(r=[1.5, 1.8], K=[60.0, 80.0])
         cols = ff.select_all()
         assert set(cols) == {"r", "K"}
-        # Each column is the raw field array (not a single-field RecordArray).
-        assert not isinstance(cols["r"], RecordArray)
+        # Views carry the Design as their parent.
+        assert isinstance(cols["r"], _RecordArrayView)
+        assert isinstance(cols["K"], _RecordArrayView)
+        assert cols["r"].parent is ff
+        assert cols["K"].parent is ff
+        # Shape / leaf access forwards to the underlying column.
         assert cols["r"].shape == (4,)
         assert cols["K"].shape == (4,)

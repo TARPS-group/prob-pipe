@@ -35,7 +35,7 @@ from .distribution import (
 from ._broadcast_distributions import _make_stack
 from ._distribution_array import DistributionArray, _make_distribution_array
 from ._numeric_record import NumericRecord, _is_numeric_leaf
-from ._record_array import RecordArray
+from ._record_array import RecordArray, _RecordArrayView
 from .provenance import Provenance
 from .record import Record
 from .protocols import (
@@ -786,18 +786,23 @@ class WorkflowFunction(Node):
                 "provenance on the stacked output."
             )
 
-        # Product rule: each array arg contributes its own batch_shape
-        # as a block of leading axes in the sweep output. The sweep
-        # iterates the Cartesian product across all blocks.
+        # Group ``ra_args`` by parent identity. Views from the same
+        # ``RecordArray`` (e.g. ``Design.select_all()`` outputs) zip —
+        # they contribute a single axis block to the sweep. Plain
+        # ``RecordArray`` / ``DistributionArray`` args and views from
+        # different parents each form their own group and product
+        # across the sweep. Insertion order of first occurrence
+        # preserves axis ordering in the output.
+        ra_groups = self._group_ra_args_by_parent(values, ra_args)
         sweep_batch_shape = tuple(
-            ax for name in ra_args for ax in values[name].batch_shape
+            ax for _, bshape, _ in ra_groups for ax in bshape
         )
         n_total = prod(sweep_batch_shape) if sweep_batch_shape else 1
 
         # ---- Pure sweep (no Distribution args) -------------------------
         if not dist_args:
             per_row = self._execute_sweep_rows(
-                values, ra_args, n_total, sweep_batch_shape,
+                values, ra_args, n_total, sweep_batch_shape, ra_groups,
             )
             aggregate = _make_stack(
                 per_row,
@@ -822,9 +827,8 @@ class WorkflowFunction(Node):
         # them into a DistributionArray that presents the sweep's
         # multi-d batch_shape.
         per_row_marginals: list[Distribution] = []
-        sizes = [prod(values[name].batch_shape) for name in ra_args]
         for i in range(n_total):
-            row_values = self._slice_ra_args(values, ra_args, i, sizes)
+            row_values = self._slice_ra_args(values, ra_args, i, ra_groups)
             inner = self._broadcast_distributions_only(
                 row_values, dist_args, n_broadcast_samples,
                 do_include_inputs=True,
@@ -853,35 +857,76 @@ class WorkflowFunction(Node):
 
     # ----- Helpers for the array-broadcast path ---------------------------
 
+    def _group_ra_args_by_parent(
+        self,
+        values: dict[str, Any],
+        ra_args: list[str],
+    ) -> list[tuple[list[str], tuple[int, ...], int]]:
+        """Group array-valued sweep args by parent identity.
+
+        Views (``_RecordArrayView``) from the same parent
+        ``RecordArray`` — e.g. the output dict of
+        ``Design.select_all()`` — belong to one group and iterate in
+        lockstep (zip). Plain ``RecordArray`` / ``DistributionArray``
+        args and views from distinct parents each form their own group
+        and product across the sweep.
+
+        Returns a list of tuples ``(arg_names, batch_shape, size)``
+        in first-occurrence order; each tuple is one axis block of the
+        sweep. ``size`` is ``prod(batch_shape)``.
+        """
+        groups: list[tuple[list[str], tuple[int, ...], int]] = []
+        groups_by_parent: dict[int, int] = {}  # parent_id → index into groups
+        for name in ra_args:
+            value = values[name]
+            if isinstance(value, _RecordArrayView):
+                parent_id = id(value.parent)
+            else:
+                # Plain RecordArray / DistributionArray: its own parent.
+                parent_id = id(value)
+            if parent_id in groups_by_parent:
+                group_names, bshape, size = groups[groups_by_parent[parent_id]]
+                if tuple(value.batch_shape) != bshape:
+                    raise ValueError(
+                        f"sweep args {group_names + [name]!r} share a "
+                        f"parent RecordArray but have mismatched "
+                        f"batch_shapes: first was {bshape}, "
+                        f"{name!r} is {tuple(value.batch_shape)}"
+                    )
+                group_names.append(name)
+                continue
+            bshape = tuple(value.batch_shape)
+            groups_by_parent[parent_id] = len(groups)
+            groups.append(([name], bshape, prod(bshape) if bshape else 1))
+        return groups
+
     def _slice_ra_args(
         self,
         values: dict[str, Any],
         ra_args: list[str],
         i: int,
-        sizes: list[int],
+        ra_groups: list[tuple[list[str], tuple[int, ...], int]],
     ) -> dict[str, Any]:
-        """Materialise the ``i``-th sweep cell under the product rule.
+        """Materialise the ``i``-th sweep cell under parent-grouped sweep.
 
-        ``sizes`` is the flat batch size of each ``ra_args`` arg — the
-        sweep caller computes it once outside the cell loop to avoid
-        repeating ``prod`` per cell.
-
-        Each array arg is integer-indexed along its own batch — yielding
-        a ``Record`` / ``NumericRecord`` (``RecordArray``) or a scalar
-        component ``Distribution`` (``DistributionArray``).
+        ``ra_groups`` is the per-parent grouping from
+        :meth:`_group_ra_args_by_parent`. Each group's args share a flat
+        in-group index (zip); groups compose by row-major unravel of
+        the outer flat index ``i`` over the concatenated batch shapes.
         """
         out = dict(values)
         rem = i
-        # Highest-index arg is the fastest-varying axis (row-major over
-        # the concatenated sweep shape).
-        for name, size in zip(reversed(ra_args), reversed(sizes)):
+        # Highest-index group varies fastest (row-major over the
+        # concatenated sweep shape).
+        for arg_names, _, size in reversed(ra_groups):
             idx = rem % size
             rem = rem // size
-            source = values[name]
-            if isinstance(source, DistributionArray):
-                out[name] = source._flat_component(idx)
-            else:
-                out[name] = source[idx]
+            for name in arg_names:
+                source = values[name]
+                if isinstance(source, DistributionArray):
+                    out[name] = source._flat_component(idx)
+                else:
+                    out[name] = source[idx]
         return out
 
     def _execute_sweep_rows(
@@ -890,6 +935,7 @@ class WorkflowFunction(Node):
         ra_args: list[str],
         n_total: int,
         sweep_batch_shape: tuple[int, ...],
+        ra_groups: list[tuple[list[str], tuple[int, ...], int]],
     ) -> Any:
         """Execute ``n_total`` inner calls, one per sweep cell in flat
         row-major order over the concatenated ``sweep_batch_shape``.
@@ -900,13 +946,17 @@ class WorkflowFunction(Node):
         """
         vectorize = self._resolve_vectorize(values, ra_args)
 
-        # Mixed-kind arg lists (RecordArray + DistributionArray) and
-        # product-rule expansion aren't supported by the single-axis
-        # vmap path; drop to the loop.
+        # The vmap path only handles the simple single-RecordArray
+        # case: one group, one RA arg, no DistributionArray, no views
+        # (views carry parent references that would confuse vmap's
+        # leading-axis flattening).
         has_dist_array = any(
             isinstance(values[name], DistributionArray) for name in ra_args
         )
-        if has_dist_array or len(ra_args) > 1:
+        has_view = any(
+            isinstance(values[name], _RecordArrayView) for name in ra_args
+        )
+        if has_dist_array or has_view or len(ra_groups) > 1 or len(ra_args) > 1:
             vectorize = "loop"
 
         if vectorize == "jax":
@@ -927,15 +977,15 @@ class WorkflowFunction(Node):
                 ra = values[name]
                 n_batch = len(ra.batch_shape)
                 vmap_input[name] = {
-                    f: ra[f].reshape((n_total,) + ra[f].shape[n_batch:])
+                    f: ra._store[f].reshape((n_total,) + ra._store[f].shape[n_batch:])
                     for f in ra.fields
                 }
             return jax.vmap(single_call)(vmap_input)
 
         # Loop path.
-        sizes = [prod(values[name].batch_shape) for name in ra_args]
         per_row_values = [
-            self._slice_ra_args(values, ra_args, i, sizes) for i in range(n_total)
+            self._slice_ra_args(values, ra_args, i, ra_groups)
+            for i in range(n_total)
         ]
         return self._execute_many(per_row_values)
 
