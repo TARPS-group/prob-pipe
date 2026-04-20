@@ -19,7 +19,10 @@ ProbPipe addresses these challenges through a single design principle: **simplif
 
 - **`Distribution`**: the universal representation of random quantities (priors, posteriors, data-generating processes). A distribution's capabilities are declared via protocols (`SupportsSampling`, `SupportsLogProb`, ...), and ProbPipe converts between representations as needed.
 - **`Record`**: the universal container for non-random structured data (observed datasets, hyperparameters, design matrices). `Record` is the deterministic counterpart of `Distribution`.
-- **`WorkflowFunction`**: operations that take distributions or fixed values as input and return distributions or fixed values as output. Decorate any function with `@workflow_function` and ProbPipe automatically propagates uncertainty: pass a `Distribution` where the function expects a concrete value, and the output becomes a `Distribution` over results.
+- **`WorkflowFunction`**: operations that take distributions or fixed values as input and return distributions or fixed values as output. Decorate any function with `@workflow_function` and ProbPipe propagates uncertainty by one simple rule:
+    - **Scalar `Distribution` inputs** (passed to slots that expect a concrete value) are Monte-Carlo marginalised — the output is a `Distribution` over results.
+    - **Array-valued inputs** (`RecordArray`, `DistributionArray`) drive a cell-by-cell **sweep**; multiple array inputs combine by the **product rule** (Cartesian full factorial).
+    - **Every return** is wrapped at the decorator boundary into a `Record` / `RecordArray` / `Distribution` with the function's name as the single field name — so `mean(d)` returns `NumericRecord(mean=...)`. Raw numeric access stays terse via single-field shims: `float(...)`, `jnp.array(...)`, `.shape`, `.dtype`.
 
 `Distribution` and `Record` follow the same syntax for accessing their components and passing those components into a `WorkflowFunction`, so they can easily be interchanged. Both support **named fields** and a **`select()`** method for splatting (e.g., `predict(**posterior.select("intercept", "slope"))`). Implementation details (algorithms, data and distribution representations) are invisible to the user, while remaining fully configurable when control is needed.
 
