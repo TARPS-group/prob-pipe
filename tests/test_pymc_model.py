@@ -100,13 +100,19 @@ class TestPyMCModel:
         assert len(m.observed_RVs) > 0
 
     def test_condition_on(self, model):
-        """condition_on runs PyMC sampling and returns ApproximateDistribution."""
+        """condition_on runs PyMC sampling and returns ApproximateDistribution.
+
+        Explicitly pins ``method="pymc_nuts"`` — the registry would
+        otherwise prefer nutpie (higher priority) when it's installed,
+        which is a different codepath with its own test.
+        """
         from probpipe import condition_on
 
         data = np.random.randn(50)
         result = condition_on(
             model,
             {"y": data},
+            method="pymc_nuts",
             num_results=20,
             num_warmup=10,
             num_chains=1,
