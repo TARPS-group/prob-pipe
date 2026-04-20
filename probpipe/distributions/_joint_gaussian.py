@@ -128,7 +128,7 @@ class JointGaussian(RecordDistribution, SupportsSampling, SupportsLogProb, Suppo
         return self._cov_mat
 
     @property
-    def component_names(self) -> tuple[str, ...]:
+    def fields(self) -> tuple[str, ...]:
         """Component names in insertion order."""
         return tuple(self._component_shapes.keys())
 

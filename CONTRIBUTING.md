@@ -182,7 +182,7 @@ full public API surface.
 | `RecordArray` | Batch of `Record` elements with a `RecordTemplate`; integer index → element, field index → batched array |
 | `NumericRecordArray` (subclass of `RecordArray`) | Batch of `NumericRecord` elements; adds `flatten` / `mean` / `var` |
 | `RecordTemplate` | Structural skeleton (field names, per-field shapes or `None`); enables `NumericRecord.unflatten` without an example instance |
-| `RecordDistribution` | Record-based distribution base; `component_names`, `__getitem__` → `_RecordDistributionView`, `select()` for correlated broadcasting |
+| `RecordDistribution` | Record-based distribution base; `fields`, `__getitem__` → `_RecordDistributionView`, `select()` / `select_all()` for correlated broadcasting; `.n` = cells in `batch_shape` |
 | `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
 | `NumericRecordDistribution` | Numeric-array distribution base; per-field `dtypes`, `supports`, `event_shapes`; base for all TFP-backed distributions |
 | `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `n`, `components`). Vectorized ops are delivered by the `WorkflowFunction` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordArray` / `RecordArray` / (nested) `DistributionArray`. Produced by parameter-sweep workflow functions whose inner call returns a `Distribution`. |
@@ -191,7 +191,7 @@ full public API surface.
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
 | `MethodRegistry` | Generic priority-based dispatch; used by the inference method registry |
-| `ProbabilisticModel` | Base for models (extends `Distribution`; provides `component_names`) |
+| `ProbabilisticModel` | Base for models (extends `Distribution`; provides `fields`) |
 | `SimpleGenerativeModel` | Simulator-only model wrapper for SBI/ABC (prior + `GenerativeLikelihood`) |
 | `IncrementalConditioner` | Stateful `Module` for sequential Bayesian updating via `update()` / `update_all()` |
 | `iterate` / combinators | Iterative distribution transformation; `with_conversion`, `with_resampling` |
@@ -209,7 +209,7 @@ whose `check()` returns `feasible=True` wins.
 Models no longer implement `_condition_on` directly — conditioning is
 handled entirely by registered methods.  The removed protocol
 `SupportsConditionableComponents` is no longer part of the public API;
-use `component_names` and the inference registry instead.
+use `fields` and the inference registry instead.
 
 Built-in methods:
 

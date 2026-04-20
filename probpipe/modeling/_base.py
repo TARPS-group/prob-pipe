@@ -26,7 +26,7 @@ class ProbabilisticModel[T](Distribution[T]):
 
     @property
     @abstractmethod
-    def component_names(self) -> tuple[str, ...]:
+    def fields(self) -> tuple[str, ...]:
         """Names of all model components (parameters + data)."""
         ...
 

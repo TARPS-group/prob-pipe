@@ -31,12 +31,12 @@ class TestConstruction:
         assert isinstance(je, JointEmpirical)
         assert isinstance(je, RecordDistribution)
 
-    def test_component_names(self):
+    def test_fields(self):
         je = JointEmpirical(
             x=jnp.array([1.0, 2.0]),
             y=jnp.array([3.0, 4.0]),
         )
-        assert je.component_names == ("x", "y")
+        assert je.fields == ("x", "y")
 
     def test_n_property(self):
         je = JointEmpirical(
@@ -287,7 +287,7 @@ class TestConditionOn:
             y=jnp.array([4.0, 5.0, 6.0]),
         )
         cond = condition_on(je, x=jnp.array(1.0))
-        assert cond.component_names == ("y",)
+        assert cond.fields == ("y",)
         assert isinstance(cond, JointEmpirical)
 
     def test_conditioned_sample_shape(self):

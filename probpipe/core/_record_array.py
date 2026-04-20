@@ -190,7 +190,11 @@ class RecordArray(Record):
         return name in self._store
 
     def __len__(self) -> int:
-        return prod(self._batch_shape)
+        # Field count, not batch size — matches ``Record.__len__`` so
+        # ``len(ra)`` and ``len(record)`` mean the same thing across the
+        # Record family. For the flat batch count, use
+        # ``prod(ra.batch_shape)``.
+        return len(self._store)
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._store)

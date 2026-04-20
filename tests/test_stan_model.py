@@ -55,7 +55,7 @@ class TestStanModelProtocols:
 
     def test_supports_named_components(self):
         model = _make_stan_model()
-        assert hasattr(model, 'component_names')
+        assert hasattr(model, 'fields')
 
 
 # ---------------------------------------------------------------------------
@@ -74,8 +74,8 @@ class TestStanModelMocked:
     def test_event_shape(self, model):
         assert model.event_shape == (3,)
 
-    def test_component_names(self, model):
-        assert model.component_names == ("alpha", "beta", "sigma")
+    def test_fields(self, model):
+        assert model.fields == ("alpha", "beta", "sigma")
 
     def test_parameter_names(self, model):
         assert model.parameter_names == ("alpha", "beta", "sigma")

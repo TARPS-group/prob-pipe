@@ -199,14 +199,14 @@ def _split_data_kwargs(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Separate named data kwargs from inference kwargs.
 
-    Uses the distribution's ``component_names`` as the sole signal:
+    Uses the distribution's ``fields`` as the sole signal:
     any kwarg whose name matches a component name is data (conditioning
     target); everything else is an inference parameter.
 
     Returns ``(data_kwargs, inference_kwargs)``.
     """
     comp_names = frozenset(
-        dist.component_names if hasattr(dist, 'component_names') else ()
+        dist.fields if hasattr(dist, 'fields') else ()
     )
     data_kwargs = {k: v for k, v in kwargs.items() if k in comp_names}
     inference_kwargs = {k: v for k, v in kwargs.items() if k not in comp_names}
@@ -267,7 +267,7 @@ def condition_on(
     from ..inference import inference_method_registry
     from .record import Record
 
-    # Separate data kwargs (names matching component_names) from
+    # Separate data kwargs (names matching fields) from
     # inference kwargs (everything else like num_results, num_warmup).
     data_kwargs, inference_kwargs = _split_data_kwargs(dist, kwargs)
 

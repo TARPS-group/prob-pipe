@@ -779,7 +779,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
     # -- Named components ----------------------------------------------------
 
     @property
-    def component_names(self) -> tuple[str, ...]:
+    def fields(self) -> tuple[str, ...]:
         return tuple(self._broadcast_args) + ("_output",)
 
     def __getitem__(self, key: str):
@@ -788,7 +788,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         if key in self._input_samples:
             arr = self._input_samples[key]
             return EmpiricalDistribution(arr, weights=self._w)
-        raise KeyError(f"Unknown component {key!r}; available: {self.component_names}")
+        raise KeyError(f"Unknown component {key!r}; available: {self.fields}")
 
     # -- joint sampling -----------------------------------------------------
 

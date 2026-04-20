@@ -77,8 +77,8 @@ class TestProtocols:
 
 
 class TestComponents:
-    def test_component_names(self, model):
-        assert model.component_names == ("parameters", "data")
+    def test_fields(self, model):
+        assert model.fields == ("parameters", "data")
 
     def test_parameter_names(self, model):
         assert model.parameter_names == ("parameters",)

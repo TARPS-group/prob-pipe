@@ -34,14 +34,14 @@ class TestConstruction:
         assert isinstance(jg, JointGaussian)
         assert isinstance(jg, RecordDistribution)
 
-    def test_component_names(self):
+    def test_fields(self):
         jg = JointGaussian(
             mean=jnp.array([0.0, 1.0, 2.0]),
             cov=jnp.eye(3),
             a=1,
             bc=2,
         )
-        assert jg.component_names == ("a", "bc")
+        assert jg.fields == ("a", "bc")
 
     def test_event_shapes(self):
         jg = JointGaussian(
@@ -252,7 +252,7 @@ class TestConditionOn:
         jg = JointGaussian(mean=jnp.zeros(2), cov=cov, x=1, y=1)
         cond = condition_on(jg, x=jnp.array([1.0]))
         assert isinstance(cond, JointGaussian)
-        assert cond.component_names == ("y",)
+        assert cond.fields == ("y",)
         assert cond.event_shapes == {"y": (1,)}
         assert cond.event_size == 1
 
@@ -358,7 +358,7 @@ class TestConditionOn:
         cond = condition_on(jg, a=jnp.array([0.0]))
         assert cond.event_shapes == {"b": (1,), "c": (2,)}
         assert cond.event_size == 3
-        assert cond.component_names == ("b", "c")
+        assert cond.fields == ("b", "c")
 
     def test_conditioning_multiple(self):
         jg = JointGaussian(
@@ -369,7 +369,7 @@ class TestConditionOn:
         cond = condition_on(jg, a=jnp.array([0.0]), c=jnp.array([2.0, 3.0]))
         assert cond.event_shapes == {"b": (1,)}
         assert cond.event_size == 1
-        assert cond.component_names == ("b",)
+        assert cond.fields == ("b",)
 
     def test_raises_on_unknown_component(self):
         jg = JointGaussian(mean=jnp.zeros(2), cov=jnp.eye(2), x=1, y=1)

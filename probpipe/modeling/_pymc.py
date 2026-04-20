@@ -112,7 +112,7 @@ class PyMCModel(ProbabilisticModel):
     # -- Named components interface ------------------------------------------
 
     @property
-    def component_names(self) -> tuple[str, ...]:
+    def fields(self) -> tuple[str, ...]:
         return self._param_names + self._observed_names
 
     def __getitem__(self, key: str) -> Any:

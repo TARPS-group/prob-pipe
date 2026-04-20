@@ -148,17 +148,17 @@ class TestGLMLikelihoodDataTemplate:
         assert tpl.fields == ("X", "y")
 
     def test_data_template_integrates_with_simple_model(self, poisson_lik):
-        """SimpleModel merges GLM data_template into component_names."""
+        """SimpleModel merges GLM data_template into fields."""
         from probpipe import Normal, ProductDistribution
         prior = ProductDistribution(
             intercept=Normal(loc=0.0, scale=2.0, name="intercept"),
             slope=Normal(loc=0.0, scale=2.0, name="slope"),
         )
         model = SimpleModel(prior, poisson_lik)
-        assert "X" in model.component_names
-        assert "y" in model.component_names
-        assert "intercept" in model.component_names
-        assert "slope" in model.component_names
+        assert "X" in model.fields
+        assert "y" in model.fields
+        assert "intercept" in model.fields
+        assert "slope" in model.fields
         assert model.parameter_names == ("intercept", "slope")
 
 

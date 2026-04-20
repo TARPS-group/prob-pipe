@@ -40,15 +40,15 @@ class TestPyMCModel:
         assert "mu" in names
         assert "sigma" in names
 
-    def test_component_names(self, model):
-        names = model.component_names
+    def test_fields(self, model):
+        names = model.fields
         assert "mu" in names
         assert "sigma" in names
         assert "y" in names
 
     def test_supports_named_components(self, model):
-        assert hasattr(model, 'component_names')
-        assert len(model.component_names) > 0
+        assert hasattr(model, 'fields')
+        assert len(model.fields) > 0
 
     def test_repr(self, model):
         r = repr(model)

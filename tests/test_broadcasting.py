@@ -435,9 +435,9 @@ class TestIncludeInputsArgument:
         g2 = Normal(loc=2.0, scale=0.1, name="b")
         result = w(a=g1, b=g2, include_inputs=True)
         assert isinstance(result, BroadcastDistribution)
-        assert "a" in result.component_names
-        assert "b" in result.component_names
-        assert "_output" in result.component_names
+        assert "a" in result.fields
+        assert "b" in result.fields
+        assert "_output" in result.fields
 
 
 # ---------------------------------------------------------------------------
@@ -445,7 +445,7 @@ class TestIncludeInputsArgument:
 # ---------------------------------------------------------------------------
 
 class TestNamedComponents:
-    def test_component_names(self):
+    def test_fields(self):
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
@@ -453,9 +453,9 @@ class TestNamedComponents:
         g1 = Normal(loc=1.0, scale=0.1, name="a")
         g2 = Normal(loc=2.0, scale=0.1, name="b")
         result = w(a=g1, b=g2, include_inputs=True)
-        assert "a" in result.component_names
-        assert "b" in result.component_names
-        assert "_output" in result.component_names
+        assert "a" in result.fields
+        assert "b" in result.fields
+        assert "_output" in result.fields
 
     def test_getitem_input(self):
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
