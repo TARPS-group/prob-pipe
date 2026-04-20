@@ -356,6 +356,7 @@ custom_types  (no internal deps — leaf)
    core/      (imports custom_types only)
      ↑
 distributions/ (imports core/, custom_types)
+record/        (imports core/, custom_types)
      ↑
 linalg/       (imports core/, custom_types; no distribution imports)
      ↑
@@ -367,16 +368,18 @@ inference/    (imports core/, custom_types)
 
 ### Rules
 
-1. **`core/`** must never import from `distributions/`, `linalg/`,
+1. **`core/`** must never import from `distributions/`, `record/`,
+   `linalg/`, `converters/`, `inference/`, or `modeling/`.
+2. **`distributions/`** must never import from `record/`, `linalg/`,
    `converters/`, `inference/`, or `modeling/`.
-2. **`distributions/`** must never import from `linalg/`, `converters/`,
-   `inference/`, or `modeling/`.
-3. **`linalg/`** is self-contained; it may import from `core/` and
+3. **`record/`** must never import from `distributions/`, `linalg/`,
+   `converters/`, `inference/`, or `modeling/`.
+4. **`linalg/`** is self-contained; it may import from `core/` and
    `custom_types` only.
-4. **`converters/`** may import from `distributions/` and `core/` but
+5. **`converters/`** may import from `distributions/` and `core/` but
    must never import from `inference/` or `modeling/`.
-5. **`inference/`** must never import from `modeling/` or `converters/`.
-6. **`modeling/`** may import from `inference/` (for MCMC result types)
+6. **`inference/`** must never import from `modeling/` or `converters/`.
+7. **`modeling/`** may import from `inference/` (for MCMC result types)
    and from `converters/` (for auto-conversion in conditioning).
 
 > **Exceptions** (intentional reverse edges):

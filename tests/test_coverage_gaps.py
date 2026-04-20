@@ -22,6 +22,7 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from probpipe import (
     NumericEmpiricalDistribution,
+    NumericRecord,
     BootstrapDistribution,
     EmpiricalDistribution,
     Normal,
@@ -124,7 +125,7 @@ class TestBootstrapDistributionCoverage:
         bd = BootstrapDistribution(evals)
         key = jax.random.PRNGKey(0)
         result = expectation(bd, lambda x: x, key=key, num_evaluations=100, return_dist=False)
-        assert isinstance(result, jnp.ndarray)
+        assert isinstance(result, NumericRecord)
         np.testing.assert_allclose(float(result), 3.0, atol=0.5)
 
     def test_multidimensional_evaluations(self):
@@ -164,8 +165,8 @@ class TestEmpiricalSubsampling:
         ed = EmpiricalDistribution(samples, weights=weights)
         key = jax.random.PRNGKey(1)
         result = expectation(ed, lambda x: x, key=key, num_evaluations=10, return_dist=False)
-        assert isinstance(result, jnp.ndarray)
-        assert jnp.isfinite(result)
+        assert isinstance(result, NumericRecord)
+        assert jnp.isfinite(jnp.asarray(result))
 
     def test_weighted_cov(self):
         """Weighted NumericEmpiricalDistribution covariance."""
@@ -301,13 +302,13 @@ class TestTransformedNonTFP:
 
     def test_sample_unbatched(self, td):
         key = jax.random.PRNGKey(0)
-        s = sample(td, key=key)
+        s = jnp.asarray(sample(td, key=key))
         assert s.shape == (2,)
         assert jnp.all(s > 0)  # Exp bijector
 
     def test_sample_batched(self, td):
         key = jax.random.PRNGKey(0)
-        s = sample(td, key=key, sample_shape=(5,))
+        s = jnp.asarray(sample(td, key=key, sample_shape=(5,)))
         assert s.shape == (5, 2)
         assert jnp.all(s > 0)
 

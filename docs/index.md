@@ -32,36 +32,58 @@ Fit a Bayesian model with named parameters, then propagate posterior uncertainty
 ```python
 import jax
 import jax.numpy as jnp
+import numpy as np
 from probpipe import (
-    MultivariateNormal, SimpleModel, workflow_function,
+    Normal, ProductDistribution, SimpleModel, workflow_function,
     condition_on, mean, variance,
 )
+from probpipe.modeling import Likelihood
 
-# 1. Define a model with a named prior
-class LinearLikelihood:
+# 1. Define a model with a named prior. ``params`` arrives flattened
+#    in sorted-field order (here ``intercept`` then ``slope``).
+class LinearLikelihood(Likelihood):
     def log_likelihood(self, params, data):
         x, y = data[:, 0], data[:, 1]
-        return jnp.sum(-0.5 * (y - (params[0] + params[1] * x)) ** 2)
+        intercept, slope = params
+        return jnp.sum(-0.5 * (y - (intercept + slope * x)) ** 2)
 
-prior = MultivariateNormal(loc=jnp.zeros(2), cov=10.0 * jnp.eye(2), name="beta")
+prior = ProductDistribution(
+    intercept=Normal(loc=0.0, scale=3.0, name="intercept"),
+    slope=Normal(loc=0.0, scale=3.0, name="slope"),
+)
 model = SimpleModel(prior, LinearLikelihood())
+
+# Simulated data for the snippet
+key = jax.random.PRNGKey(0)
+x = jax.random.normal(key, (50,))
+y = 0.7 + 1.3 * x + 0.2 * jax.random.normal(key, (50,))
+data = jnp.column_stack([x, y])
 
 # 2. Fit the posterior — named prior produces named draws
 posterior = condition_on(model, data)
-draws = posterior.draws()       # Record(beta=array(num_draws, 2))
-draws.beta.mean(axis=0)         # posterior mean for [intercept, slope]
+draws = posterior.draws()                   # NumericRecordArray(intercept, slope)
+draws["intercept"].mean()                   # posterior mean of intercept
+draws["slope"].mean()                       # posterior mean of slope
 
 # 3. Propagate uncertainty — select() preserves posterior correlation
 @workflow_function
-def predict(beta, x):
-    return beta[0] + beta[1] * x
+def predict(intercept, slope, x):
+    return intercept + slope * x
 
-predictive = predict(**posterior.select("beta"), x=0.5)
-mean(predictive)       # posterior predictive mean
-variance(predictive)   # posterior predictive variance
+predictive = predict(**posterior.select("intercept", "slope"), x=0.5)
+float(mean(predictive))                     # posterior predictive mean
+float(jnp.sqrt(variance(predictive)))       # posterior predictive std
 ```
 
-When a `WorkflowFunction` receives a distribution where it expects a concrete value, it automatically broadcasts over samples and returns the output distribution.  Using `select()` ensures that correlated parameters from the same posterior are sampled jointly.
+A `WorkflowFunction`'s broadcasting rule is simple and uniform: array-valued inputs
+(a `RecordArray` or `DistributionArray`) drive a cell-by-cell sweep, multiple array
+inputs combine by the product rule, and scalar `Distribution` inputs marginalise via
+Monte Carlo. Every return is wrapped at the decorator boundary into the
+`Record | RecordArray | Distribution` contract with the function's name as the
+single field name — so `mean(d)` returns `NumericRecord(mean=...)`, and numeric
+access stays terse via `float(...)`, `jnp.array(...)`, and `.shape` / `.dtype` shims.
+Using `select()` ensures that correlated parameters from the same posterior are
+sampled jointly.
 
 ## Next Steps
 

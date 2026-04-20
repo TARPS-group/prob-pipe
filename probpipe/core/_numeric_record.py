@@ -210,10 +210,10 @@ class NumericRecord(Record):
     # When a NumericRecord has exactly one numeric field, it behaves like
     # a thin wrapper around that field's value for the common coercion
     # paths: ``float()``, ``int()``, ``bool()``, ``np.asarray()``,
-    # ``jnp.asarray()``. This keeps ergonomic expressions like
-    # ``float(mean(dist))`` working after PR 1.5 makes every
-    # ``WorkflowFunction`` output go through the
-    # ``Record | RecordArray | Distribution`` output-type contract.
+    # ``jnp.asarray()``. The shim lets workflow authors who return a
+    # single-field NumericRecord from a ``@workflow_function`` keep using
+    # idiomatic expressions like ``float(result)`` / ``np.asarray(result)``
+    # without a manual ``result["field"]`` unwrap at every callsite.
     #
     # The shim is intentionally narrow — only single-field records
     # qualify, and only scalar-like coercions are exposed. Multi-field
@@ -256,6 +256,24 @@ class NumericRecord(Record):
     # ``__array__`` (numpy) and loses JAX tracing support.
     def __jax_array__(self):
         return jnp.asarray(self._single_numeric_leaf())
+
+    # Single-field shape / dtype / ndim — the same "there's only one
+    # thing in here; forward to it" ergonomic as the arithmetic and
+    # array-conversion shims above.
+    @property
+    def shape(self) -> tuple[int, ...]:
+        leaf = self._single_numeric_leaf()
+        return tuple(getattr(leaf, "shape", ()))
+
+    @property
+    def dtype(self):
+        leaf = self._single_numeric_leaf()
+        return getattr(leaf, "dtype", type(leaf))
+
+    @property
+    def ndim(self) -> int:
+        leaf = self._single_numeric_leaf()
+        return int(getattr(leaf, "ndim", 0))
 
 
 # ---------------------------------------------------------------------------

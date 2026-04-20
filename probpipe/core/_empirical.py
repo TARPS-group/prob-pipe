@@ -34,7 +34,7 @@ from .constraints import Constraint, real
 from . import _distribution_base as _base
 from .._utils import _auto_key
 from ._distribution_base import Distribution
-from ._array_distributions import (
+from ._numeric_record_distribution import (
     NumericRecordDistribution,
     BootstrapDistribution,
 )

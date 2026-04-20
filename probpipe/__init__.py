@@ -116,6 +116,7 @@ from probpipe.core.transition import (
     with_resampling,
 )
 from probpipe.modeling import GLMLikelihood, Likelihood, GenerativeLikelihood, IncrementalConditioner
+from probpipe.record import Design, FullFactorialDesign
 from probpipe.inference import (
     ApproximateDistribution,
     inference_method_registry,
@@ -255,6 +256,9 @@ __all__ = [
     "ProbabilisticModel",
     "SimpleModel",
     "SimpleGenerativeModel",
+    # Record-based designs
+    "Design",
+    "FullFactorialDesign",
     # Inference
     "ApproximateDistribution",
     "inference_method_registry",

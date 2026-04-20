@@ -30,7 +30,7 @@ from .record import Record, RecordTemplate
 from ..custom_types import Array, PRNGKey
 
 if TYPE_CHECKING:
-    from ._array_distributions import FlattenedView
+    from ._numeric_record_distribution import FlattenedView
 
 
 __all__ = ["RecordDistribution", "_RecordDistributionView"]
@@ -256,7 +256,7 @@ def _build_record_template(components: dict) -> RecordTemplate:
     Each ``NumericRecordDistribution`` leaf contributes its ``event_shape``.
     Nested dicts become nested ``RecordTemplate``.
     """
-    from ._array_distributions import NumericRecordDistribution
+    from ._numeric_record_distribution import NumericRecordDistribution
 
     specs: dict[str, tuple[int, ...] | RecordTemplate] = {}
     for name, comp in components.items():
@@ -389,11 +389,11 @@ class RecordDistribution(Distribution[Record]):
     def as_flat_distribution(self) -> FlattenedView:
         """View this distribution as a flat ``NumericRecordDistribution``.
 
-        Returns a :class:`~probpipe.core._array_distributions.FlattenedView`
+        Returns a :class:`~probpipe.core._numeric_record_distribution.FlattenedView`
         with ``event_shape = (event_size,)`` for algorithms expecting
         flat vectors (MCMC, optimizers, VI methods).
         """
-        from ._array_distributions import FlattenedView
+        from ._numeric_record_distribution import FlattenedView
         return FlattenedView(self)
 
     @property

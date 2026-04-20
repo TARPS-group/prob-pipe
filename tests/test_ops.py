@@ -181,7 +181,7 @@ class TestVariance:
 
 class TestCov:
     def test_exact_cov_empirical(self, empirical):
-        c = ops.cov(empirical)
+        c = jnp.asarray(ops.cov(empirical))
         assert c.shape == (2, 2)
         np.testing.assert_allclose(c, c.T, atol=1e-5)
 

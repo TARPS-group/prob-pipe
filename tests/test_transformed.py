@@ -35,7 +35,7 @@ class TestTFPBase:
     def test_exp_samples_positive(self, key):
         base = Normal(loc=0.0, scale=1.0, name="x")
         td = TransformedDistribution(base, tfb.Exp())
-        samples = sample(td, key=key, sample_shape=(100,))
+        samples = jnp.asarray(sample(td, key=key, sample_shape=(100,)))
         assert jnp.all(samples > 0)
 
     def test_exp_event_shape(self):
@@ -71,13 +71,13 @@ class TestTFPBase:
     def test_sigmoid_samples_in_unit_interval(self, key):
         base = Normal(loc=0.0, scale=1.0, name="x")
         td = TransformedDistribution(base, tfb.Sigmoid())
-        samples = sample(td, key=key, sample_shape=(100,))
+        samples = jnp.asarray(sample(td, key=key, sample_shape=(100,)))
         assert jnp.all(samples >= 0) and jnp.all(samples <= 1)
 
     def test_softplus_samples_positive(self, key):
         base = Normal(loc=0.0, scale=1.0, name="x")
         td = TransformedDistribution(base, tfb.Softplus())
-        samples = sample(td, key=key, sample_shape=(100,))
+        samples = jnp.asarray(sample(td, key=key, sample_shape=(100,)))
         assert jnp.all(samples > 0)
 
     def test_multivariate_exp(self, key):
@@ -85,7 +85,7 @@ class TestTFPBase:
             loc=jnp.zeros(3), cov=jnp.eye(3), name="z"
         )
         td = TransformedDistribution(base, tfb.Exp())
-        samples = sample(td, key=key, sample_shape=(10,))
+        samples = jnp.asarray(sample(td, key=key, sample_shape=(10,)))
         assert samples.shape == (10, 3)
         assert jnp.all(samples > 0)
 
@@ -114,7 +114,7 @@ class TestNonTFPBase:
         samples = jax.random.normal(key, (50, 2))
         emp = EmpiricalDistribution(samples)
         td = TransformedDistribution(emp, tfb.Exp())
-        s = sample(td, key=key, sample_shape=(10,))
+        s = jnp.asarray(sample(td, key=key, sample_shape=(10,)))
         assert s.shape == (10, 2)
         assert jnp.all(s > 0)
 
@@ -137,7 +137,7 @@ class TestChainedBijectors:
         base = Normal(loc=0.0, scale=1.0, name="x")
         chain = tfb.Chain([tfb.Exp(), tfb.Shift(1.0), tfb.Scale(2.0)])
         td = TransformedDistribution(base, chain)
-        s = sample(td, key=key, sample_shape=(10,))
+        s = jnp.asarray(sample(td, key=key, sample_shape=(10,)))
         assert s.shape == (10,)
         # Exp is the outermost bijector → samples should be positive
         assert jnp.all(s > 0)

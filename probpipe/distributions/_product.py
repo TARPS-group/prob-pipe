@@ -18,7 +18,7 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ..core._array_distributions import (
+from ..core._numeric_record_distribution import (
     NumericRecordDistribution,
     _mc_expectation,
 )

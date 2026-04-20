@@ -115,7 +115,9 @@ class TestProductDistribution:
         key = jax.random.PRNGKey(4)
         s = sample(joint_xy, key=key)
         lp_joint = log_prob(joint_xy, s)
-        lp_sum = log_prob(normal_x, s["x"]) + log_prob(normal_y, s["y"])
+        lp_sum = jnp.asarray(log_prob(normal_x, s["x"])) + jnp.asarray(
+            log_prob(normal_y, s["y"])
+        )
         np.testing.assert_allclose(float(lp_joint), float(lp_sum), atol=1e-5)
 
     def test_log_prob_batch(self, joint_xy):
@@ -591,7 +593,7 @@ class TestLogProbBatchValues:
     def test_batch_log_prob_matches_individual(self, joint_xy, normal_x, normal_y):
         key = jax.random.PRNGKey(80)
         samples = sample(joint_xy, key=key, sample_shape=(10,))
-        batch_lps = log_prob(joint_xy, samples)
+        batch_lps = jnp.asarray(log_prob(joint_xy, samples))
 
         for i in range(10):
             s_i = Record({k: v[i] for k, v in samples.items()})
@@ -863,9 +865,9 @@ class TestNestedProductDistribution:
         mass_dist = Gamma(concentration=2.0, rate=1.0, name="mass")
         obs_dist = Normal(loc=0.0, scale=0.1, name="observation")
         lp_manual = (
-            log_prob(force_dist, s["physics"]["force"])
-            + log_prob(mass_dist, s["physics"]["mass"])
-            + log_prob(obs_dist, s["observation"])
+            jnp.asarray(log_prob(force_dist, s["physics"]["force"]))
+            + jnp.asarray(log_prob(mass_dist, s["physics"]["mass"]))
+            + jnp.asarray(log_prob(obs_dist, s["observation"]))
         )
         np.testing.assert_allclose(float(lp_joint), float(lp_manual), atol=1e-5)
 

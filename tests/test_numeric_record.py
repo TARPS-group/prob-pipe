@@ -290,7 +290,7 @@ class TestSingleFieldCoercion:
 
     def test_float_scalar(self):
         nr = NumericRecord(result=3.14)
-        assert abs(float(nr) - 3.14) < 1e-5
+        np.testing.assert_allclose(float(nr), 3.14, rtol=1e-5)
 
     def test_int_scalar(self):
         nr = NumericRecord(result=3.14)
@@ -315,6 +315,7 @@ class TestSingleFieldCoercion:
         nr = NumericRecord(result=3.14)
         arr = np.asarray(nr, dtype=np.float64)
         assert arr.dtype == np.float64
+        np.testing.assert_allclose(arr, 3.14)
 
     def test_jnp_asarray_preserves_jax_type(self):
         nr = NumericRecord(result=jnp.array([1.0, 2.0]))

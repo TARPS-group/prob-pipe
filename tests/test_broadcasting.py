@@ -158,7 +158,9 @@ class TestNoBroadcasting:
 
         w = WorkflowFunction(func=add, vectorize="loop")
         result = w(a=1.0, b=2.0)
-        assert result == 3.0
+        # Concrete args return the workflow-function's auto-wrapped scalar:
+        # ``NumericRecord({"add": 3.0})``. The ``__float__`` shim unwraps it.
+        assert float(result) == 3.0
 
 
 # ---------------------------------------------------------------------------

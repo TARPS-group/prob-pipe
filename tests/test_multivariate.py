@@ -129,14 +129,14 @@ class TestDirichlet:
 
     def test_samples_positive(self, key):
         d = Dirichlet(concentration=[1.0, 2.0, 3.0], name="d")
-        samples = sample(d, key=key, sample_shape=(100,))
+        samples = jnp.asarray(sample(d, key=key, sample_shape=(100,)))
         assert jnp.all(samples > 0)
 
 
 class TestMultinomial:
     def test_samples_nonnegative_integers(self, key):
         d = Multinomial(total_count=10, probs=[0.2, 0.3, 0.5], name="m")
-        samples = sample(d, key=key, sample_shape=(100,))
+        samples = jnp.asarray(sample(d, key=key, sample_shape=(100,)))
         assert jnp.all(samples >= 0)
         assert jnp.allclose(samples, jnp.round(samples))
 
@@ -182,7 +182,7 @@ class TestWishart:
 
     def test_samples_positive_semi_definite(self, key):
         d = Wishart(df=5.0, scale_tril=jnp.eye(3), name="w")
-        samples = sample(d, key=key, sample_shape=(10,))
+        samples = jnp.asarray(sample(d, key=key, sample_shape=(10,)))
         # Diagonal elements of a positive semi-definite matrix are >= 0.
         for i in range(10):
             diag = jnp.diag(samples[i])

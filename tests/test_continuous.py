@@ -118,7 +118,7 @@ class TestContinuousGeneric:
 class TestBeta:
     def test_samples_in_unit_interval(self, key):
         d = Beta(alpha=2.0, beta=5.0, name="x")
-        s = sample(d, key=key, sample_shape=(1000,))
+        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
         assert jnp.all(s <= 1.0)
 
@@ -126,49 +126,49 @@ class TestBeta:
 class TestGammaDist:
     def test_samples_nonnegative(self, key):
         d = Gamma(concentration=3.0, rate=1.0, name="x")
-        s = sample(d, key=key, sample_shape=(1000,))
+        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestInverseGammaDist:
     def test_samples_nonnegative(self, key):
         d = InverseGamma(concentration=3.0, scale=1.0, name="x")
-        s = sample(d, key=key, sample_shape=(1000,))
+        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestExponentialDist:
     def test_samples_nonnegative(self, key):
         d = Exponential(rate=2.0, name="x")
-        s = sample(d, key=key, sample_shape=(1000,))
+        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestHalfNormalDist:
     def test_samples_nonnegative(self, key):
         d = HalfNormal(scale=1.0, name="x")
-        s = sample(d, key=key, sample_shape=(1000,))
+        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestHalfCauchyDist:
     def test_samples_nonnegative(self, key):
         d = HalfCauchy(loc=0.0, scale=1.0, name="x")
-        s = sample(d, key=key, sample_shape=(1000,))
+        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestParetoDist:
     def test_samples_nonnegative(self, key):
         d = Pareto(concentration=3.0, scale=1.0, name="x")
-        s = sample(d, key=key, sample_shape=(1000,))
+        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
 
 
 class TestUniformDist:
     def test_samples_in_bounds(self, key):
         d = Uniform(low=0.0, high=1.0, name="x")
-        s = sample(d, key=key, sample_shape=(1000,))
+        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
         assert jnp.all(s >= 0.0)
         assert jnp.all(s <= 1.0)
 
@@ -176,7 +176,7 @@ class TestUniformDist:
 class TestTruncatedNormalDist:
     def test_samples_in_bounds(self, key):
         d = TruncatedNormal(loc=0.0, scale=1.0, low=-2.0, high=2.0, name="x")
-        s = sample(d, key=key, sample_shape=(1000,))
+        s = jnp.asarray(sample(d, key=key, sample_shape=(1000,)))
         assert jnp.all(s >= -2.0)
         assert jnp.all(s <= 2.0)
 
