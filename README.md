@@ -78,7 +78,7 @@ predictive = predict_prob(**posterior.select('intercept', 'slope'), x=x_new)
 # predictive is a Distribution over predicted P(y=1|x) curves
 ```
 
-`predict_prob` is a `@workflow_function`: ProbPipe samples from the posterior and evaluates the function for each draw, returning the full predictive distribution. Plotting the result:
+`predict_prob` is a `@workflow_function`: ProbPipe samples from the posterior and evaluates the function for each draw, returning the full predictive distribution. The two posterior fields are splatted from a single parent, so ProbPipe draws them jointly — each `(intercept, slope)` pair stays correlated. The same call shape swaps the posterior for a `FullFactorialDesign(intercept=[...], slope=[...])` to turn the line into a grid search without changing `predict_prob`. Plotting the result:
 
 ```python
 import numpy as np, matplotlib.pyplot as plt
@@ -94,24 +94,6 @@ plt.xlabel('x'); plt.ylabel('P(y = 1 | x)'); plt.legend(fontsize=8)
 ```
 
 ![Posterior predictive](docs/assets/images/readme_logistic.png)
-
-### Parameter sweeps
-
-Array-valued inputs drive cell-by-cell sweeps. `FullFactorialDesign` materialises a Cartesian grid of named parameter values as a single sweep-ready `RecordArray`:
-
-```python
-from probpipe import FullFactorialDesign, workflow_function
-
-@workflow_function
-def yield_curve(r, K):
-    return r * K                          # toy production model
-
-design = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
-out = yield_curve(**design.select_all())  # batch_shape = (6,); one call per cell
-# → out is a NumericRecordArray with 6 rows
-```
-
-Splatting `design.select_all()` hands `yield_curve` two sibling views of the same design, so they zip across the six rows instead of producting into a `(3, 2, ...)` grid. To product a sweep across *two* independent designs (or any two unrelated array inputs), pass them as separate arguments and the batch shape becomes `(6, 6, ...)` automatically.
 
 ## Key Features
 
