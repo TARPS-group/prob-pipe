@@ -88,6 +88,7 @@ Docs build (`.github/workflows/docs.yml`) with `mkdocs build --strict`.
 probpipe/
 ├── core/           # Base abstractions: Distribution, protocols, ops, node, transition
 ├── distributions/  # Concrete distributions (continuous, discrete, multivariate, ...)
+├── record/         # Record-adjacent constructions: parameter-sweep Designs
 ├── modeling/       # Model wrappers (SimpleModel, StanModel, PyMCModel, likelihoods)
 ├── inference/      # Inference methods + registry (TFP, nutpie, RWMH, sbijax)
 ├── converters/     # Distribution conversion registry
@@ -195,6 +196,7 @@ full public API surface.
 | `IncrementalConditioner` | Stateful `Module` for sequential Bayesian updating via `update()` / `update_all()` |
 | `iterate` / combinators | Iterative distribution transformation; `with_conversion`, `with_resampling` |
 | `sbi_learn_conditional` / `sbi_learn_likelihood` | SBI workflow functions; return `DirectSamplerSBIModel` or `SimpleModel` with neural likelihood |
+| `Design` / `FullFactorialDesign` (`probpipe.record`) | `RecordArray` subclass carrying per-field marginals; `FullFactorialDesign(**marginals)` materialises the Cartesian product as a sweep-ready `RecordArray`. Pipe into a `WorkflowFunction` as a single `Record`-typed arg to trigger the WF sweep path. |
 
 ### Inference method registry
 
