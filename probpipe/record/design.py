@@ -110,24 +110,25 @@ class Design(RecordArray):
         return dict(self._marginals)
 
     def select_all(self) -> dict[str, Any]:
-        """Return ``{field: column_array}`` for splat-as-kwargs calls.
+        """Return ``{field: view}`` for splat-as-kwargs calls.
 
-        The returned values are the underlying field columns, not
-        single-field ``RecordArray`` wrappers. Splatting them as
-        kwargs into a ``@workflow_function`` therefore **does not**
-        trigger the WF sweep path — the WF runs once with full column
-        arrays and relies on whatever broadcasting the inner body
-        naturally provides.
+        Each value is a single-field view that carries the Design's
+        identity. When the result is splatted into a
+        ``@workflow_function`` — e.g. ``f(**design.select_all())`` —
+        the WF sweep layer recognises the shared parent and iterates
+        the views in lockstep (one inner call per row, matching
+        ``f(p=design)``), rather than treating them as independent
+        axes to cartesian-product.
 
-        Use this as a faster alternative to the single-Record-arg
-        sweep pattern (``f(p=design)``) when the body's ops broadcast
-        over column arrays — typically pure JAX arithmetic. It is
-        **not** a general substitute: anything that expects per-element
-        values (``f'{x:.1f}'``, ``float(x)``, ``if x > 0``, scalar-only
-        external library calls) will fail because those receive full
-        arrays, not per-row scalars.
+        Works with any inner body: no constraint on what ``f`` does
+        per cell, since each cell receives a scalar element (same as
+        the single-Record-arg pattern). For a faster JAX-traceable
+        shortcut on purely numeric bodies, pass the raw columns
+        instead (``f(r=design["r"], K=design["K"])``) — those are
+        independent arrays, so they'll cartesian-product rather than
+        zip.
         """
-        return {f: self._store[f] for f in self.fields}
+        return {f: self.view(f) for f in self.fields}
 
 
 # ---------------------------------------------------------------------------
