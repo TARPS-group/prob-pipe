@@ -177,7 +177,7 @@ class TestWithConversion:
 
         def parametric_step(dist, shift):
             key = jax.random.PRNGKey(42)
-            samples = pp_sample(dist, key=key, sample_shape=(50,)) + shift
+            samples = jnp.asarray(pp_sample(dist, key=key, sample_shape=(50,))) + shift
             return EmpiricalDistribution(samples)
 
         initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")

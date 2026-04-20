@@ -416,18 +416,13 @@ def _make_marginal(
 # ---------------------------------------------------------------------------
 
 
-# Field name used when auto-wrapping scalar / array returns into a
-# Record. Fixed as a module-level constant so pipelines that chain
-# workflow functions can index the result with a stable key.
-AUTO_WRAP_FIELD = "result"
-
-
 def _make_stack(
     inner_outputs: Any,
     *,
     batch_shape: tuple[int, ...] | None = None,
     n: int | None = None,
     name: str | None = None,
+    field_name: str = "result",
 ) -> Any:
     """Wrap inner workflow-function outputs as a shape-``batch_shape``
     aggregate.
@@ -566,7 +561,6 @@ def _make_stack(
                     tpl_spec[fname] = tuple(v.shape[len(batch_shape):])
                 else:
                     tpl_spec[fname] = None
-            from .record import RecordTemplate
             return RecordArray(
                 fields,
                 batch_shape=batch_shape,
@@ -594,9 +588,9 @@ def _make_stack(
             from ._record_array import NumericRecordArray
             event_shape = tuple(stacked.shape[1:])
             reshaped = stacked.reshape(batch_shape + event_shape)
-            tpl = RecordTemplate(**{AUTO_WRAP_FIELD: event_shape})
+            tpl = RecordTemplate(**{field_name: event_shape})
             return NumericRecordArray(
-                {AUTO_WRAP_FIELD: reshaped},
+                {field_name: reshaped},
                 batch_shape=batch_shape,
                 template=tpl,
             )
@@ -605,9 +599,9 @@ def _make_stack(
         # numpy object-dtype array of the opaque outputs.
         try:
             object_array = np.asarray(outs, dtype=object).reshape(batch_shape)
-            tpl = RecordTemplate(**{AUTO_WRAP_FIELD: None})
+            tpl = RecordTemplate(**{field_name: None})
             return RecordArray(
-                {AUTO_WRAP_FIELD: object_array},
+                {field_name: object_array},
                 batch_shape=batch_shape,
                 template=tpl,
             )
@@ -633,9 +627,9 @@ def _make_stack(
         from ._record_array import NumericRecordArray
         event_shape = tuple(inner_outputs.shape[1:])
         reshaped = inner_outputs.reshape(batch_shape + event_shape)
-        tpl = RecordTemplate(**{AUTO_WRAP_FIELD: event_shape})
+        tpl = RecordTemplate(**{field_name: event_shape})
         return NumericRecordArray(
-            {AUTO_WRAP_FIELD: reshaped},
+            {field_name: reshaped},
             batch_shape=batch_shape,
             template=tpl,
         )

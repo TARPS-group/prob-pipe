@@ -479,6 +479,29 @@ class Record:
                 parts.append(f"{name}={val!r}")
         return f"{type(self).__name__}({', '.join(parts)})"
 
+    # -- Call-forwarding shim for single-field Records ----------------------
+    #
+    # Mirrors the single-field ``__jax_array__`` / ``__float__`` etc.
+    # shims on ``NumericRecord``: when a WorkflowFunction wraps a
+    # callable return as ``Record({fn_name: callable})``, the caller
+    # can keep invoking the callable transparently via ``result(args)``.
+    # Multi-field records raise — silently unwrapping one of many
+    # fields would be ambiguous.
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        if len(self._store) != 1:
+            raise TypeError(
+                f"{type(self).__name__} with {len(self._store)} fields is not "
+                f"callable; access a specific field with record['field_name'] "
+                f"first."
+            )
+        only = next(iter(self._store.values()))
+        if not callable(only):
+            raise TypeError(
+                f"{type(self).__name__} single field is not callable "
+                f"(got {type(only).__name__})."
+            )
+        return only(*args, **kwargs)
+
     # -- Equality / hash ----------------------------------------------------
 
     def __eq__(self, other: object) -> bool:

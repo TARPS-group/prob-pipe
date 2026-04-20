@@ -101,7 +101,7 @@ def test_name_set(name):
 class TestBernoulli:
     def test_samples_zero_or_one(self, key):
         dist = Bernoulli(probs=0.7, name="x")
-        samples = sample(dist, key=key, sample_shape=(1000,))
+        samples = jnp.asarray(sample(dist, key=key, sample_shape=(1000,)))
         assert jnp.all((samples == 0) | (samples == 1))
 
     def test_works_with_probs(self, key):
@@ -122,20 +122,20 @@ class TestBernoulli:
 class TestBinomial:
     def test_samples_nonneg_leq_total_count(self, key):
         dist = Binomial(total_count=10, probs=0.3, name="x")
-        samples = sample(dist, key=key, sample_shape=(1000,))
+        samples = jnp.asarray(sample(dist, key=key, sample_shape=(1000,)))
         assert jnp.all(samples >= 0)
         assert jnp.all(samples <= 10)
 
     def test_samples_are_integers(self, key):
         dist = Binomial(total_count=10, probs=0.3, name="x")
-        samples = sample(dist, key=key, sample_shape=(100,))
+        samples = jnp.asarray(sample(dist, key=key, sample_shape=(100,)))
         assert jnp.allclose(samples, jnp.round(samples))
 
 
 class TestPoisson:
     def test_samples_nonneg_integers(self, key):
         dist = Poisson(rate=5.0, name="x")
-        samples = sample(dist, key=key, sample_shape=(1000,))
+        samples = jnp.asarray(sample(dist, key=key, sample_shape=(1000,)))
         assert jnp.all(samples >= 0)
         assert jnp.allclose(samples, jnp.round(samples))
 
@@ -144,20 +144,20 @@ class TestCategorical:
     def test_samples_are_valid_indices(self, key):
         probs = [0.2, 0.3, 0.5]
         dist = Categorical(probs=probs, name="x")
-        samples = sample(dist, key=key, sample_shape=(1000,))
+        samples = jnp.asarray(sample(dist, key=key, sample_shape=(1000,)))
         assert jnp.all(samples >= 0)
         assert jnp.all(samples < len(probs))
 
     def test_samples_are_integers(self, key):
         dist = Categorical(probs=[0.2, 0.3, 0.5], name="x")
-        samples = sample(dist, key=key, sample_shape=(100,))
+        samples = jnp.asarray(sample(dist, key=key, sample_shape=(100,)))
         assert jnp.allclose(samples, jnp.round(samples))
 
 
 class TestNegativeBinomial:
     def test_samples_nonneg_integers(self, key):
         dist = NegativeBinomial(total_count=5, probs=0.4, name="x")
-        samples = sample(dist, key=key, sample_shape=(1000,))
+        samples = jnp.asarray(sample(dist, key=key, sample_shape=(1000,)))
         assert jnp.all(samples >= 0)
         assert jnp.allclose(samples, jnp.round(samples))
 

@@ -103,7 +103,7 @@ class TestMultivariateNormal:
         assert s.shape == (3,)
 
     def test_sample_statistics(self, gaussian, key):
-        s = sample(gaussian, key=key, sample_shape=(5000,))
+        s = jnp.asarray(sample(gaussian, key=key, sample_shape=(5000,)))
         np.testing.assert_allclose(s.mean(axis=0), gaussian.loc, atol=0.15)
 
     def test_log_prob_shape(self, gaussian, key):
@@ -202,7 +202,9 @@ class TestEmpiricalDistribution:
         ed = NumericEmpiricalDistribution(simple_samples, simple_weights)
         np.testing.assert_allclose(ed.weights.sum(), 1.0)
         expected_mean = jnp.sum(simple_samples.ravel() * ed.weights)
-        np.testing.assert_allclose(mean(ed).ravel(), expected_mean, atol=1e-6)
+        np.testing.assert_allclose(
+            jnp.asarray(mean(ed)).ravel(), expected_mean, atol=1e-6
+        )
 
     def test_weights_normalized(self):
         """Unnormalized weights should be normalized internally."""
@@ -249,25 +251,29 @@ class TestEmpiricalDistribution:
 
     def test_sample_values_from_support(self, simple_samples, key):
         ed = EmpiricalDistribution(simple_samples)
-        s = sample(ed, key=key, sample_shape=(100,))
+        s = jnp.asarray(sample(ed, key=key, sample_shape=(100,)))
         for val in s:
             assert jnp.any(jnp.all(jnp.isclose(simple_samples, val), axis=-1))
 
     def test_mean(self, simple_samples, simple_weights):
         ed = NumericEmpiricalDistribution(simple_samples, simple_weights)
         expected = jnp.sum(simple_samples.ravel() * ed.weights)
-        np.testing.assert_allclose(mean(ed).ravel(), expected, atol=1e-6)
+        np.testing.assert_allclose(
+            jnp.asarray(mean(ed)).ravel(), expected, atol=1e-6
+        )
 
     def test_variance(self, simple_samples, simple_weights):
         ed = NumericEmpiricalDistribution(simple_samples, simple_weights)
-        mu = mean(ed)
+        mu = jnp.asarray(mean(ed))
         expected = jnp.sum(ed.weights * (simple_samples.ravel() - mu.ravel()) ** 2)
-        np.testing.assert_allclose(variance(ed).ravel(), expected, atol=1e-6)
+        np.testing.assert_allclose(
+            jnp.asarray(variance(ed)).ravel(), expected, atol=1e-6
+        )
 
     def test_cov_matrix(self):
         samples = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
         ed = NumericEmpiricalDistribution(samples)
-        C = cov(ed)
+        C = jnp.asarray(cov(ed))
         assert C.shape == (2, 2)
         np.testing.assert_allclose(C, C.T, atol=1e-6)
 
@@ -275,7 +281,7 @@ class TestEmpiricalDistribution:
         """Covariance matrix should be positive semi-definite."""
         samples = jnp.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [0.0, 0.0]])
         ed = NumericEmpiricalDistribution(samples)
-        C = cov(ed)
+        C = jnp.asarray(cov(ed))
         eigvals = jnp.linalg.eigvalsh(C)
         assert jnp.all(eigvals >= -1e-8)
 

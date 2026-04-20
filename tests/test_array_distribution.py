@@ -166,7 +166,7 @@ class TestArrayDistFlattenUnflatten:
         np.testing.assert_allclose(restored, s, atol=1e-6)
 
     def test_flatten_unflatten_roundtrip_batched(self, vector_mvn, key):
-        samples = sample(vector_mvn, key=key, sample_shape=(5,))
+        samples = jnp.asarray(sample(vector_mvn, key=key, sample_shape=(5,)))
         flat = vector_mvn.flatten_value(samples)
         assert flat.shape == (5, 3)
         restored = vector_mvn.unflatten_value(flat)

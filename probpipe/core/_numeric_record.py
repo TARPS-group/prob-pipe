@@ -257,6 +257,24 @@ class NumericRecord(Record):
     def __jax_array__(self):
         return jnp.asarray(self._single_numeric_leaf())
 
+    # Single-field shape / dtype / ndim — the same "there's only one
+    # thing in here; forward to it" ergonomic as the arithmetic and
+    # array-conversion shims above.
+    @property
+    def shape(self) -> tuple[int, ...]:
+        leaf = self._single_numeric_leaf()
+        return tuple(getattr(leaf, "shape", ()))
+
+    @property
+    def dtype(self):
+        leaf = self._single_numeric_leaf()
+        return getattr(leaf, "dtype", type(leaf))
+
+    @property
+    def ndim(self) -> int:
+        leaf = self._single_numeric_leaf()
+        return int(getattr(leaf, "ndim", 0))
+
 
 # ---------------------------------------------------------------------------
 # JAX PyTree registration — reuse Record's flatten, custom unflatten

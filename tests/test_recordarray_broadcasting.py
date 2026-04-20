@@ -78,7 +78,11 @@ class TestRecordArrayDetection:
         out = f(p=scalar_ra)
         assert float(out) == 7.0
 
-    def test_mismatched_batch_shapes_raise(self):
+    def test_mismatched_batch_shapes_produce_cartesian_sweep(self):
+        """Different ``batch_shapes`` combine via the product rule: the
+        output's ``batch_shape`` is the concatenation of the two inputs'
+        ``batch_shapes`` (here ``(3,) x (5,)`` → ``(3, 5)``)."""
+
         @workflow_function
         def f(a: NumericRecord, b: NumericRecord) -> float:
             return a["x"] + b["y"]
@@ -89,8 +93,9 @@ class TestRecordArrayDetection:
         b = NumericRecordArray.stack(
             [NumericRecord(y=float(i)) for i in range(5)]
         )
-        with pytest.raises(ValueError, match="batch_shapes"):
-            f(a=a, b=b)
+        out = f(a=a, b=b)
+        assert isinstance(out, NumericRecordArray)
+        assert out.batch_shape == (3, 5)
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +120,7 @@ class TestPureSweepParityMatrix:
         out = f(p=sweep)
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (4,)
-        np.testing.assert_allclose(out["result"], [10.0, 40.0, 90.0, 160.0])
+        np.testing.assert_allclose(out["f"], [10.0, 40.0, 90.0, 160.0])
 
     def test_ndarray_return_preserves_event_shape(self, sweep):
         @workflow_function
@@ -125,7 +130,7 @@ class TestPureSweepParityMatrix:
         out = f(p=sweep)
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (4,)
-        assert out["result"].shape == (4, 3)
+        assert out["f"].shape == (4, 3)
 
     def test_numericrecord_return_stacks(self, sweep):
         @workflow_function
@@ -256,7 +261,7 @@ class TestVectorization:
         )
         out_loop = f_loop(p=sweep)
         out_jax = f_jax(p=sweep)
-        np.testing.assert_allclose(out_loop["result"], out_jax["result"])
+        np.testing.assert_allclose(out_loop["f_loop"], out_jax["f_jax"])
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +350,7 @@ class TestMultiDimensionalBatch:
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (3, 2)
         np.testing.assert_allclose(
-            out["result"],
+            out["f"],
             [[10.0, 20.0],
              [20.0, 40.0],
              [30.0, 60.0]],
@@ -408,20 +413,22 @@ class TestMultiDimensionalBatch:
         out = f(p=sweep)
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == shape
-        np.testing.assert_allclose(out["result"], 2 * np.asarray(vals))
+        np.testing.assert_allclose(out["f"], 2 * np.asarray(vals))
 
 
 class TestAutoWrapFieldName:
-    def test_scalar_return_uses_result_field(self):
-        from probpipe.core._broadcast_distributions import AUTO_WRAP_FIELD
+    def test_scalar_return_uses_function_name_as_field(self):
+        """Scalar returns are auto-wrapped into a ``NumericRecordArray``
+        with a single field named after the ``@workflow_function`` — so
+        the field name reflects which function produced the value rather
+        than a fixed sentinel."""
 
         @workflow_function
-        def f(p: NumericRecord) -> float:
+        def my_scalar_fn(p: NumericRecord) -> float:
             return p["x"] * 2
 
         sweep = NumericRecordArray.stack(
             [NumericRecord(x=float(i)) for i in range(3)]
         )
-        out = f(p=sweep)
-        assert out.fields == (AUTO_WRAP_FIELD,)
-        assert AUTO_WRAP_FIELD == "result"  # documents the current default
+        out = my_scalar_fn(p=sweep)
+        assert out.fields == ("my_scalar_fn",)

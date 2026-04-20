@@ -727,21 +727,21 @@ class TestMakeStack:
 
     def test_list_of_scalars_wraps_as_numeric_record_array(self):
         from probpipe import NumericRecordArray
-        from probpipe.core._broadcast_distributions import _make_stack, AUTO_WRAP_FIELD
-        out = _make_stack([1.0, 2.0, 3.0, 4.0], n=4)
+        from probpipe.core._broadcast_distributions import _make_stack
+        out = _make_stack([1.0, 2.0, 3.0, 4.0], n=4, field_name="demo")
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (4,)
-        assert out.fields == (AUTO_WRAP_FIELD,)
-        np.testing.assert_allclose(out[AUTO_WRAP_FIELD], [1.0, 2.0, 3.0, 4.0])
+        assert out.fields == ("demo",)
+        np.testing.assert_allclose(out["demo"], [1.0, 2.0, 3.0, 4.0])
 
     def test_list_of_arrays_preserves_event_shape(self):
         from probpipe import NumericRecordArray
-        from probpipe.core._broadcast_distributions import _make_stack, AUTO_WRAP_FIELD
+        from probpipe.core._broadcast_distributions import _make_stack
         values = [jnp.arange(3.0) + 10.0 * i for i in range(4)]
-        out = _make_stack(values, n=4)
+        out = _make_stack(values, n=4, field_name="demo")
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (4,)
-        assert out[AUTO_WRAP_FIELD].shape == (4, 3)
+        assert out["demo"].shape == (4, 3)
 
     def test_list_of_numeric_records_promotes_to_numeric_array(self):
         from probpipe import NumericRecord, NumericRecordArray
@@ -797,12 +797,12 @@ class TestMakeStack:
         """A bare ``jnp.ndarray`` with leading axis n (typical ``jax.vmap``
         output for scalar-returning fns) wraps without unstacking."""
         from probpipe import NumericRecordArray
-        from probpipe.core._broadcast_distributions import _make_stack, AUTO_WRAP_FIELD
+        from probpipe.core._broadcast_distributions import _make_stack
         arr = jnp.arange(12.0).reshape(4, 3)
-        out = _make_stack(arr, n=4)
+        out = _make_stack(arr, n=4, field_name="demo")
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (4,)
-        assert out[AUTO_WRAP_FIELD].shape == (4, 3)
+        assert out["demo"].shape == (4, 3)
 
     def test_vmap_record_with_batched_leaves_promotes_to_ra(self):
         """``jax.vmap`` of a Record-returning fn produces a Record whose
@@ -841,10 +841,14 @@ class TestCoerceOutput:
         from probpipe.core.node import _coerce_output
         # Non-Record/Dist values wouldn't normally have .with_source
         # but the "none" mode short-circuits before the check anyway.
-        assert _coerce_output(3.14, broadcast_mode="none", provenance=None) == 3.14
+        assert _coerce_output(
+            3.14, broadcast_mode="none", provenance=None, field_name="f",
+        ) == 3.14
         # None provenance also short-circuits.
         prov = Provenance("x", parents=())
-        assert _coerce_output(3.14, broadcast_mode="none", provenance=prov) == 3.14
+        assert _coerce_output(
+            3.14, broadcast_mode="none", provenance=prov, field_name="f",
+        ) == 3.14
 
     def test_stack_mode_attaches_to_recordarray(self):
         from probpipe import NumericRecord, NumericRecordArray
@@ -854,7 +858,7 @@ class TestCoerceOutput:
         )
         assert ra.source is None
         prov = Provenance("sweep", parents=())
-        out = _coerce_output(ra, broadcast_mode="stack", provenance=prov)
+        out = _coerce_output(ra, broadcast_mode="stack", provenance=prov, field_name="f")
         assert out is ra
         assert ra.source.operation == "sweep"
 
@@ -868,7 +872,7 @@ class TestCoerceOutput:
         assert isinstance(da, DistributionArray)
         assert da.source is None
         prov = Provenance("nested", parents=())
-        _coerce_output(da, broadcast_mode="nested", provenance=prov)
+        _coerce_output(da, broadcast_mode="nested", provenance=prov, field_name="f")
         assert da.source.operation == "nested"
 
     def test_existing_source_is_not_overwritten(self):
@@ -885,5 +889,6 @@ class TestCoerceOutput:
             nr,
             broadcast_mode="stack",
             provenance=Provenance("outer", parents=()),
+            field_name="f",
         )
         assert nr.source.operation == "inner"

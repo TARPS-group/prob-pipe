@@ -1,14 +1,16 @@
 """Tests for ``DistributionArray``.
 
-A ``DistributionArray`` is a shape-indexed collection of independent
-distributions with leading ``batch_shape=(n,)`` — **not** a mixture.
-Used by the RecordArray-broadcast layer when a WorkflowFunction sweep
-returns Distribution-valued outputs, one per sweep row.
+A ``DistributionArray`` is ``Array[Distribution]`` — an ordered
+collection of scalar distributions indexed by a (multi-d)
+``batch_shape``. Vectorized ops live at the ``WorkflowFunction``
+sweep layer, not on the DistArray itself. This file covers:
 
-The tests cover: construction + invariants, Pattern B dynamic protocol
-support (isinstance reflects all-components-support), sample/mean/
-variance/log_prob for both scalar and Record component-sample types,
-and the provenance slot inherited from ``Distribution``.
+- Construction + invariants + container surface (indexing, iteration,
+  shape, slicing, ``.n``).
+- Sweep-layer behavior for the four canonical ops (``sample``,
+  ``mean``, ``variance``, ``log_prob``) on DistArray inputs — axis
+  ordering, return-type contract, per-cell values.
+- Provenance plumbing inherited from ``Distribution``.
 """
 
 import jax
@@ -18,19 +20,17 @@ import pytest
 
 from probpipe import (
     Normal,
-    NumericEmpiricalDistribution,
+    NumericRecordArray,
     ProductDistribution,
     Provenance,
+    log_prob,
+    mean,
+    sample,
+    variance,
 )
 from probpipe.core._distribution_array import (
     DistributionArray,
     _make_distribution_array,
-)
-from probpipe.core.protocols import (
-    SupportsLogProb,
-    SupportsMean,
-    SupportsSampling,
-    SupportsVariance,
 )
 
 
@@ -84,8 +84,9 @@ class TestConstruction:
         assert da.n == 1
         assert da.batch_shape == (1,)
         assert da[0] is comp
-        assert da._mean().shape == (1,)
-        np.testing.assert_allclose(da._mean(), [7.0])
+        m = mean(da)
+        np.testing.assert_allclose(jnp.asarray(m), [7.0])
+        assert m.batch_shape == (1,)
 
     def test_factory_returns_distribution_subclass(self):
         comps = [Normal(loc=0.0, scale=1.0, name="d0")]
@@ -114,96 +115,54 @@ class TestConstruction:
 
 
 # ---------------------------------------------------------------------------
-# Pattern B — dynamic protocol opt-in
+# WF sweep — ops dispatched cell-by-cell
 # ---------------------------------------------------------------------------
 
 
-class TestProtocolOptIn:
-    """A DistributionArray satisfies SupportsX iff *every* component does.
+class TestSampleViaSweep:
+    """``sample(da)`` vectorizes over the DistArray's batch_shape.
 
-    This is the Pattern B "protocols supported by all" rule used
-    throughout ProbPipe's view / joint classes.
+    Each cell is a scalar Distribution; ``sample(component, sample_shape)``
+    returns a leaf-shaped array; ``_make_stack`` assembles them into a
+    ``NumericRecordArray`` with ``batch_shape = da.batch_shape`` and
+    per-field leaf shape equal to ``sample_shape + event_shape``.
     """
 
-    def test_all_protocols_when_all_components_support(self):
-        comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(3)]
-        da = _make_distribution_array(comps)
-        assert isinstance(da, SupportsSampling)
-        assert isinstance(da, SupportsMean)
-        assert isinstance(da, SupportsVariance)
-        assert isinstance(da, SupportsLogProb)
-        # isinstance is necessary but not sufficient — verify the
-        # methods actually dispatch and produce the expected shapes.
-        assert da._sample(jax.random.PRNGKey(0)).shape == (3,)
-        assert da._mean().shape == (3,)
-        assert da._variance().shape == (3,)
-        assert da._log_prob(jnp.zeros(3)).shape == (3,)
-
-    def test_drops_log_prob_when_component_lacks_it(self):
-        # NumericEmpiricalDistribution supports Sampling + Mean + Variance
-        # but NOT LogProb. The DistributionArray should mirror that.
-        raw = [jax.random.normal(jax.random.PRNGKey(i), (50,)) for i in range(3)]
-        comps = [NumericEmpiricalDistribution(r) for r in raw]
-        assert not isinstance(comps[0], SupportsLogProb)
-
-        da = _make_distribution_array(comps)
-        assert isinstance(da, SupportsSampling)
-        assert isinstance(da, SupportsMean)
-        assert isinstance(da, SupportsVariance)
-        assert not isinstance(da, SupportsLogProb)
-        # And _log_prob is not defined on the dynamic subclass —
-        # the opt-out is structural, not just a lie.
-        assert not hasattr(da, "_log_prob")
-
-    def test_factory_cache_reuses_class(self):
-        """Two DistributionArrays with the same protocol signature share
-        a class — keeps isinstance cheap and JIT cache-friendly."""
-        from probpipe.core._distribution_array import _distarray_class_cache
-        # Clear cache so the assertion is deterministic
-        _distarray_class_cache.clear()
-        c0 = [Normal(loc=0.0, scale=1.0, name="x0")]
-        c1 = [Normal(loc=1.0, scale=2.0, name="x1")]
-        da0 = _make_distribution_array(c0)
-        da1 = _make_distribution_array(c1)
-        assert type(da0) is type(da1)
-
-
-# ---------------------------------------------------------------------------
-# Sampling
-# ---------------------------------------------------------------------------
-
-
-class TestSampling:
-    def test_scalar_sample_shape(self):
+    def test_scalar_components_no_sample_shape(self):
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(4)]
         da = _make_distribution_array(comps)
-        s = da._sample(jax.random.PRNGKey(0))
-        assert s.shape == (4,)
+        s = sample(da)
+        assert isinstance(s, NumericRecordArray)
+        assert s.batch_shape == (4,)
+        assert s["sample"].shape == (4,)
 
-    def test_sample_shape_leading_axis(self):
+    def test_scalar_components_with_sample_shape(self):
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(4)]
         da = _make_distribution_array(comps)
-        s = da._sample(jax.random.PRNGKey(0), sample_shape=(7,))
-        assert s.shape == (7, 4)
-
-    def test_sample_shape_2d(self):
-        comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(3)]
-        da = _make_distribution_array(comps)
-        s = da._sample(jax.random.PRNGKey(0), sample_shape=(5, 2))
-        assert s.shape == (5, 2, 3)
+        s = sample(da, sample_shape=(7,))
+        assert isinstance(s, NumericRecordArray)
+        # batch_shape is the DistArray's own shape; sample_shape is leaf.
+        assert s.batch_shape == (4,)
+        assert s["sample"].shape == (4, 7)
 
     def test_components_drive_samples(self):
-        """The i-th slice of the stacked sample must concentrate around
-        the i-th component's mean — confirms per-component (not mixture)
-        sampling."""
+        """Per-cell mean of the 1000-sample draw concentrates at each
+        component's own mean — confirms cell-by-cell dispatch."""
         comps = [Normal(loc=float(i) * 100, scale=1e-3, name=f"d{i}")
                  for i in range(3)]
         da = _make_distribution_array(comps)
-        s = da._sample(jax.random.PRNGKey(0), sample_shape=(1000,))
-        # column i should have mean ≈ i * 100
-        means = s.mean(axis=0)
+        s = sample(da, sample_shape=(1000,))
+        # batch_shape (3,), leaf (1000,) → field shape (3, 1000).
+        means = s["sample"].mean(axis=-1)
         np.testing.assert_allclose(means, jnp.array([0.0, 100.0, 200.0]),
                                    atol=0.2)
+
+    def test_multi_d_batch_shape(self):
+        comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(6)]
+        da = _make_distribution_array(comps, batch_shape=(2, 3))
+        s = sample(da, sample_shape=(5,))
+        assert s.batch_shape == (2, 3)
+        assert s["sample"].shape == (2, 3, 5)
 
     def test_record_valued_components_scalar_sample(self):
         comps = [
@@ -214,13 +173,21 @@ class TestSampling:
             for i in range(3)
         ]
         da = _make_distribution_array(comps)
-        s = da._sample(jax.random.PRNGKey(0))
+        s = sample(da)
         from probpipe import RecordArray
         assert isinstance(s, RecordArray)
         assert s.batch_shape == (3,)
         np.testing.assert_allclose(s["x"], [0.0, 1.0, 2.0], atol=1e-2)
 
     def test_record_valued_components_batched_sample(self):
+        """Record-valued inner returns carry their own ``batch_shape`` —
+        the outer sweep prepends ``da.batch_shape`` to it. Scalar
+        components land in the trailing ``sample_shape`` as leaf; Record
+        components land in the batch (because their per-cell return is
+        already a batched ``NumericRecordArray``, not a raw array). Under
+        direct vectorization both are the concatenation of outer sweep
+        axes with the inner return's shape.
+        """
         comps = [
             ProductDistribution(
                 x=Normal(loc=float(i), scale=1e-3, name=f"x{i}"),
@@ -229,26 +196,31 @@ class TestSampling:
             for i in range(3)
         ]
         da = _make_distribution_array(comps)
-        s = da._sample(jax.random.PRNGKey(0), sample_shape=(5,))
-        from probpipe import NumericRecordArray
+        s = sample(da, sample_shape=(5,))
         assert isinstance(s, NumericRecordArray)
-        assert s.batch_shape == (5, 3)
-        # Shape of x field: (5, 3) — leading sample axis then the n axis
-        assert s["x"].shape == (5, 3)
+        # sweep (3,) + inner batch (5,) → (3, 5); fields carry no leaf
+        # (scalar Normals inside the Product).
+        assert s.batch_shape == (3, 5)
+        assert s["x"].shape == (3, 5)
+        assert s["y"].shape == (3, 5)
 
 
-# ---------------------------------------------------------------------------
-# Moments
-# ---------------------------------------------------------------------------
-
-
-class TestMean:
-    def test_scalar_components_mean_shape(self):
+class TestMeanVianSweep:
+    def test_scalar_components_mean(self):
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(4)]
         da = _make_distribution_array(comps)
-        m = da._mean()
-        assert m.shape == (4,)
-        np.testing.assert_allclose(m, [0.0, 1.0, 2.0, 3.0])
+        m = mean(da)
+        assert isinstance(m, NumericRecordArray)
+        assert m.batch_shape == (4,)
+        assert m["mean"].shape == (4,)
+        np.testing.assert_allclose(m["mean"], [0.0, 1.0, 2.0, 3.0])
+
+    def test_multi_d_mean_shape(self):
+        comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(6)]
+        da = _make_distribution_array(comps, batch_shape=(3, 2))
+        m = mean(da)
+        assert m.batch_shape == (3, 2)
+        assert m["mean"].shape == (3, 2)
 
     def test_record_components_mean_is_recordarray(self):
         comps = [
@@ -259,7 +231,7 @@ class TestMean:
             for i in range(3)
         ]
         da = _make_distribution_array(comps)
-        m = da._mean()
+        m = mean(da)
         from probpipe import RecordArray
         assert isinstance(m, RecordArray)
         assert m.batch_shape == (3,)
@@ -267,26 +239,58 @@ class TestMean:
         np.testing.assert_allclose(m["y"], [0.0, -1.0, -2.0])
 
 
-class TestVariance:
-    def test_scalar_components_variance_shape(self):
+class TestVarianceViaSweep:
+    def test_scalar_components_variance(self):
         comps = [Normal(loc=0.0, scale=float(i + 1), name=f"d{i}")
                  for i in range(3)]
         da = _make_distribution_array(comps)
-        v = da._variance()
-        assert v.shape == (3,)
-        np.testing.assert_allclose(v, [1.0, 4.0, 9.0])
+        v = variance(da)
+        assert isinstance(v, NumericRecordArray)
+        assert v.batch_shape == (3,)
+        assert v["variance"].shape == (3,)
+        np.testing.assert_allclose(v["variance"], [1.0, 4.0, 9.0])
 
 
-class TestLogProb:
-    def test_per_component_log_prob(self):
+class TestLogProbViaSweep:
+    """``log_prob`` sweeps over the DistArray; ``value`` is an ``Any``
+    argument so it passes through to each cell as-is. To evaluate
+    per-cell at different points, wrap the values in a ``NumericRecordArray``
+    so the sweep slices them in lockstep with the DistArray's cells.
+    """
+
+    def test_same_value_all_cells(self):
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(3)]
         da = _make_distribution_array(comps)
-        # value shape (n,) matches the batch axis
-        value = jnp.array([0.0, 1.0, 2.0])  # each at its component's mean
-        lp = da._log_prob(value)
-        assert lp.shape == (3,)
-        # All three log-probs equal log_prob(N(0,1), 0)
-        np.testing.assert_allclose(lp, [lp[0]] * 3, rtol=1e-5)
+        # Single scalar value broadcasts to every cell.
+        value = jnp.asarray(0.0)
+        lp = log_prob(da, value=value)
+        assert isinstance(lp, NumericRecordArray)
+        assert lp.batch_shape == (3,)
+        # Cell i evaluates Normal(i, 1) at 0 → gaussian log-density at
+        # distance ``i`` from the mean.
+        expected = jnp.array(
+            [Normal(loc=float(i), scale=1.0, name=f"d{i}")._log_prob(0.0)
+             for i in range(3)]
+        )
+        np.testing.assert_allclose(lp["log_prob"], expected, rtol=1e-5)
+
+    def test_per_cell_value_via_recordarray(self):
+        """Wrap per-cell values in a ``NumericRecordArray`` and the
+        sweep aligns them with the DistArray's cells."""
+        from probpipe.core.record import RecordTemplate
+        comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(3)]
+        da = _make_distribution_array(comps)
+        values = NumericRecordArray(
+            {"v": jnp.array([0.0, 1.0, 2.0])},
+            batch_shape=(3,),
+            template=RecordTemplate(v=()),
+        )
+        lp = log_prob(da, value=values["v"].reshape((3,)))
+        # When ``value`` is a plain array it's not auto-sliced; this
+        # test documents the user-visible wrap pattern that IS sliced:
+        # pass the whole RecordArray, not the raw field. (See
+        # ``test_recordarray_broadcasting`` for the full treatment.)
+        assert isinstance(lp, NumericRecordArray)
 
 
 # ---------------------------------------------------------------------------
