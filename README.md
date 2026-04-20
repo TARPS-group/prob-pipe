@@ -21,10 +21,10 @@ ProbPipe addresses these challenges through a single design principle: **simplif
 - **`Record`**: the universal container for non-random structured data (observed datasets, hyperparameters, design matrices). `Record` is the deterministic counterpart of `Distribution`.
 - **`WorkflowFunction`**: operations that take distributions or fixed values as input and return distributions or fixed values as output. Decorate any function with `@workflow_function` and ProbPipe propagates uncertainty by one simple rule:
     - **Scalar `Distribution` inputs** (passed to slots that expect a concrete value) are Monte-Carlo marginalised — the output is a `Distribution` over results.
-    - **Array-valued inputs** (`RecordArray`, `DistributionArray`) drive a cell-by-cell **sweep**; multiple array inputs combine by the **product rule** (Cartesian full factorial).
+    - **Array-valued inputs** (`RecordArray`, `DistributionArray`) drive a cell-by-cell **sweep**; multiple array inputs combine by the **product rule** (Cartesian full factorial). Fields split out of a common parent via `select_all()` or `ra.view("field")` **zip** as a single axis instead — so `f(p=design)` and `f(**design.select_all())` produce identical outputs.
     - **Every return** is wrapped at the decorator boundary into a `Record` / `RecordArray` / `Distribution` with the function's name as the single field name — so `mean(d)` returns `NumericRecord(mean=...)`. Raw numeric access stays terse via single-field shims: `float(...)`, `jnp.array(...)`, `.shape`, `.dtype`.
 
-`Distribution` and `Record` follow the same syntax for accessing their components and passing those components into a `WorkflowFunction`, so they can easily be interchanged. Both support **named fields** and a **`select()`** method for splatting (e.g., `predict(**posterior.select("intercept", "slope"))`). Implementation details (algorithms, data and distribution representations) are invisible to the user, while remaining fully configurable when control is needed.
+`Distribution` and `Record` follow the same syntax for accessing their components and passing those components into a `WorkflowFunction`, so they can easily be interchanged. Both expose `fields`, `select(...)`, and `select_all()` (e.g., `predict(**posterior.select("intercept", "slope"))`) — and splatted components from one parent stay correlated end-to-end thanks to the parent-identity zip rule above. Implementation details (algorithms, data and distribution representations) are invisible to the user, while remaining fully configurable when control is needed.
 
 ### Built-in operations
 
@@ -97,6 +97,24 @@ plt.xlabel('x'); plt.ylabel('P(y = 1 | x)'); plt.legend(fontsize=8)
 ```
 
 ![Posterior predictive](docs/assets/images/readme_logistic.png)
+
+### Parameter sweeps
+
+Array-valued inputs drive cell-by-cell sweeps. `FullFactorialDesign` materialises a Cartesian grid of named parameter values as a single sweep-ready `RecordArray`:
+
+```python
+from probpipe import FullFactorialDesign, workflow_function
+
+@workflow_function
+def yield_curve(r, K):
+    return r * K                          # toy production model
+
+design = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
+out = yield_curve(**design.select_all())  # batch_shape = (6,); one call per cell
+# → out is a NumericRecordArray with 6 rows
+```
+
+Splatting `design.select_all()` hands `yield_curve` two sibling views of the same design, so they zip across the six rows instead of producting into a `(3, 2, ...)` grid. To product a sweep across *two* independent designs (or any two unrelated array inputs), pass them as separate arguments and the batch shape becomes `(6, 6, ...)` automatically.
 
 ## Key Features
 
