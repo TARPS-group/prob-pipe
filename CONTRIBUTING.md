@@ -143,6 +143,33 @@ full public API surface.
    provided.  `ProductDistribution` validates that each component
    distribution's `name` matches its keyword key (e.g.,
    `ProductDistribution(x=Normal(0, 1, name="x"))`).
+7. **Uniform output wrap at the WorkflowFunction boundary** — every
+   `@workflow_function` return is coerced into the
+   `Record | RecordArray | Distribution` contract before it reaches the
+   caller.  Scalars and `jnp.ndarray`s become
+   `NumericRecord({fn_name: value})` (no sweep) or
+   `NumericRecordArray({fn_name: arr}, batch_shape=sweep_shape)`
+   (swept); `dict` / `list` / `tuple` promote via `_make_stack`;
+   existing `Record` / `RecordArray` / `Distribution` values pass
+   through unchanged.  The field name is always the function's own
+   name.  Single-field `NumericRecord` / `NumericRecordArray` / `Record`
+   expose shims (`__jax_array__`, `__float__`, `__call__`, `.shape`,
+   `.dtype`, `.ndim`) so `jnp.array(log_prob(d, v))`,
+   `float(mean(d))`, and `sample(grf)(X)` stay terse.
+8. **Array inputs vectorize with the product rule** — when a
+   `@workflow_function` is called with array-valued inputs
+   (`RecordArray` or `DistributionArray` with nonempty
+   `batch_shape`) passed to slots whose hints don't match the
+   batched type, the WorkflowFunction layer dispatches cell-by-cell
+   and stacks the returns.  Multiple array inputs combine by the
+   **product rule** (Cartesian full factorial); the sweep's
+   `batch_shape` is the concatenation of each array arg's
+   `batch_shape`.  Scalar `Distribution` inputs marginalise via
+   Monte Carlo, unchanged.  A `DistributionArray` is always treated
+   as `Array[Distribution]` (never marginalised in-place), so
+   `sample(da)` / `mean(da)` / `log_prob(da, v)` are handled
+   uniformly by the sweep path rather than by DistArray-specific
+   methods.
 
 ### Key abstractions
 
@@ -157,6 +184,7 @@ full public API surface.
 | `RecordDistribution` | Record-based distribution base; `component_names`, `__getitem__` → `_RecordDistributionView`, `select()` for correlated broadcasting |
 | `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
 | `NumericRecordDistribution` | Numeric-array distribution base; per-field `dtypes`, `supports`, `event_shapes`; base for all TFP-backed distributions |
+| `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `n`, `components`). Vectorized ops are delivered by the `WorkflowFunction` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordArray` / `RecordArray` / (nested) `DistributionArray`. Produced by parameter-sweep workflow functions whose inner call returns a `Distribution`. |
 | `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling + conditioning; the numeric subclass adds Gaussian-approximation `SupportsLogProb` and exact `SupportsMean` / `SupportsVariance`. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. |
 | `WorkflowFunction` | Orchestration-aware function wrapper; groups views by parent for correlated broadcasting |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |

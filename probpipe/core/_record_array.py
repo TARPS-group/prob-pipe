@@ -459,6 +459,24 @@ class NumericRecordArray(RecordArray):
     def __jax_array__(self):
         return jnp.asarray(self._single_numeric_leaf())
 
+    # Single-field shape / dtype / ndim shims — return the sole leaf's
+    # full array shape (``batch_shape + leaf_shape``), matching the
+    # one-thing-in-here philosophy of the other single-field shims.
+    @property
+    def shape(self) -> tuple[int, ...]:
+        leaf = self._single_numeric_leaf()
+        return tuple(getattr(leaf, "shape", ()))
+
+    @property
+    def dtype(self):
+        leaf = self._single_numeric_leaf()
+        return getattr(leaf, "dtype", None)
+
+    @property
+    def ndim(self) -> int:
+        leaf = self._single_numeric_leaf()
+        return int(getattr(leaf, "ndim", 0))
+
 
 # ---------------------------------------------------------------------------
 # JAX PyTree registration

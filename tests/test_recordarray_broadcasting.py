@@ -61,8 +61,9 @@ class TestRecordArrayDetection:
         # Single inner call — output is the unwrapped float result.
         assert float(out) == 6.0
 
-    def test_zero_dim_recordarray_passes_through(self):
-        """batch_shape=() means no batch axis, so don't iterate."""
+    def test_scalar_batch_shape_passes_through(self):
+        """``batch_shape=()`` means no batch axis (scalar / zero-rank,
+        not zero-length), so don't iterate."""
         from probpipe.core.record import RecordTemplate
 
         @workflow_function
@@ -77,7 +78,11 @@ class TestRecordArrayDetection:
         out = f(p=scalar_ra)
         assert float(out) == 7.0
 
-    def test_mismatched_batch_shapes_raise(self):
+    def test_mismatched_batch_shapes_produce_cartesian_sweep(self):
+        """Different ``batch_shapes`` combine via the product rule: the
+        output's ``batch_shape`` is the concatenation of the two inputs'
+        ``batch_shapes`` (here ``(3,) x (5,)`` → ``(3, 5)``)."""
+
         @workflow_function
         def f(a: NumericRecord, b: NumericRecord) -> float:
             return a["x"] + b["y"]
@@ -88,8 +93,9 @@ class TestRecordArrayDetection:
         b = NumericRecordArray.stack(
             [NumericRecord(y=float(i)) for i in range(5)]
         )
-        with pytest.raises(ValueError, match="batch_shapes"):
-            f(a=a, b=b)
+        out = f(a=a, b=b)
+        assert isinstance(out, NumericRecordArray)
+        assert out.batch_shape == (3, 5)
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +120,7 @@ class TestPureSweepParityMatrix:
         out = f(p=sweep)
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (4,)
-        np.testing.assert_allclose(out["result"], [10.0, 40.0, 90.0, 160.0])
+        np.testing.assert_allclose(out["f"], [10.0, 40.0, 90.0, 160.0])
 
     def test_ndarray_return_preserves_event_shape(self, sweep):
         @workflow_function
@@ -124,7 +130,7 @@ class TestPureSweepParityMatrix:
         out = f(p=sweep)
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (4,)
-        assert out["result"].shape == (4, 3)
+        assert out["f"].shape == (4, 3)
 
     def test_numericrecord_return_stacks(self, sweep):
         @workflow_function
@@ -255,7 +261,7 @@ class TestVectorization:
         )
         out_loop = f_loop(p=sweep)
         out_jax = f_jax(p=sweep)
-        np.testing.assert_allclose(out_loop["result"], out_jax["result"])
+        np.testing.assert_allclose(out_loop["f_loop"], out_jax["f_jax"])
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +282,7 @@ class TestProvenanceChain:
         assert out.source is not None
         assert out.source.operation == "workflow.stack"
         assert sweep in out.source.parents
-        assert out.source.metadata["n"] == 3
+        assert out.source.metadata["batch_shape"] == (3,)
         assert out.source.metadata["k"] == 0
         assert out.source.metadata["func"] == "f"
 
@@ -301,17 +307,128 @@ class TestProvenanceChain:
 # ---------------------------------------------------------------------------
 
 
-class TestAutoWrapFieldName:
-    def test_scalar_return_uses_result_field(self):
-        from probpipe.core._broadcast_distributions import AUTO_WRAP_FIELD
+# ---------------------------------------------------------------------------
+# Multi-d batch_shape (follow-up to PR #131)
+# ---------------------------------------------------------------------------
+
+
+class TestMultiDimensionalBatch:
+    """A ``RecordArray`` with multi-dimensional ``batch_shape`` feeds into
+    the sweep path cleanly: the function runs ``prod(batch_shape)`` times
+    in row-major order, and the output's leading axes match the input's
+    ``batch_shape``.
+
+    For a length-``M x N`` sweep, a scalar-returning inner function
+    produces a ``NumericRecordArray`` with ``batch_shape=(M, N)``; a
+    Distribution-returning inner produces a ``DistributionArray`` with
+    matching ``batch_shape``.
+    """
+
+    @pytest.fixture
+    def sweep_2d(self):
+        """3 x 2 sweep over (r, k)."""
+        from probpipe.core.record import RecordTemplate
+        r_values = jnp.array([[1.0, 1.0],
+                              [2.0, 2.0],
+                              [3.0, 3.0]])
+        k_values = jnp.array([[10.0, 20.0],
+                              [10.0, 20.0],
+                              [10.0, 20.0]])
+        tpl = RecordTemplate(r=(), k=())
+        return NumericRecordArray(
+            {"r": r_values, "k": k_values},
+            batch_shape=(3, 2),
+            template=tpl,
+        )
+
+    def test_2d_sweep_scalar_output(self, sweep_2d):
+        @workflow_function
+        def f(p: NumericRecord) -> float:
+            return p["r"] * p["k"]
+
+        out = f(p=sweep_2d)
+        assert isinstance(out, NumericRecordArray)
+        assert out.batch_shape == (3, 2)
+        np.testing.assert_allclose(
+            out["f"],
+            [[10.0, 20.0],
+             [20.0, 40.0],
+             [30.0, 60.0]],
+        )
+
+    def test_2d_sweep_record_output(self, sweep_2d):
+        @workflow_function
+        def f(p: NumericRecord) -> NumericRecord:
+            return NumericRecord(sum=p["r"] + p["k"], prod=p["r"] * p["k"])
+
+        out = f(p=sweep_2d)
+        assert isinstance(out, NumericRecordArray)
+        assert out.batch_shape == (3, 2)
+        assert set(out.fields) == {"sum", "prod"}
+        np.testing.assert_allclose(out["sum"][1, :], [12.0, 22.0])
+
+    def test_2d_sweep_distribution_output(self, sweep_2d):
+        @workflow_function
+        def f(p: NumericRecord) -> Distribution:
+            return Normal(loc=p["r"] * p["k"], scale=1.0, name="out")
+
+        out = f(p=sweep_2d)
+        assert isinstance(out, DistributionArray)
+        assert out.batch_shape == (3, 2)
+        # Indexing with a tuple returns a single component
+        assert out[0, 1] is not out[1, 0]
+        # Sliced row is a smaller DistributionArray
+        row = out[2, :]
+        assert isinstance(row, DistributionArray)
+        assert row.batch_shape == (2,)
+
+    def test_2d_sweep_with_distribution_input_gives_distarray(self, sweep_2d):
+        """Nested regime: each sweep cell marginalises over the MC
+        draws; output is a DistributionArray matching the sweep's
+        batch_shape."""
+        @workflow_function(n_broadcast_samples=10, vectorize="loop")
+        def f(p: NumericRecord, noise: float) -> float:
+            return p["r"] * p["k"] + noise
+
+        out = f(p=sweep_2d, noise=Normal(loc=0.0, scale=0.1, name="noise"))
+        assert isinstance(out, DistributionArray)
+        assert out.batch_shape == (3, 2)
+
+    def test_3d_sweep(self):
+        """3-D sweep works too — the row-major flattening is general."""
+        from probpipe.core.record import RecordTemplate
+
+        shape = (2, 3, 4)
+        # Generate a 2x3x4 grid of distinct values.
+        vals = jnp.arange(24.0).reshape(shape)
+        tpl = RecordTemplate(v=())
+        sweep = NumericRecordArray(
+            {"v": vals}, batch_shape=shape, template=tpl,
+        )
 
         @workflow_function
         def f(p: NumericRecord) -> float:
+            return p["v"] * 2.0
+
+        out = f(p=sweep)
+        assert isinstance(out, NumericRecordArray)
+        assert out.batch_shape == shape
+        np.testing.assert_allclose(out["f"], 2 * np.asarray(vals))
+
+
+class TestAutoWrapFieldName:
+    def test_scalar_return_uses_function_name_as_field(self):
+        """Scalar returns are auto-wrapped into a ``NumericRecordArray``
+        with a single field named after the ``@workflow_function`` — so
+        the field name reflects which function produced the value rather
+        than a fixed sentinel."""
+
+        @workflow_function
+        def my_scalar_fn(p: NumericRecord) -> float:
             return p["x"] * 2
 
         sweep = NumericRecordArray.stack(
             [NumericRecord(x=float(i)) for i in range(3)]
         )
-        out = f(p=sweep)
-        assert out.fields == (AUTO_WRAP_FIELD,)
-        assert AUTO_WRAP_FIELD == "result"  # documents the current default
+        out = my_scalar_fn(p=sweep)
+        assert out.fields == ("my_scalar_fn",)
