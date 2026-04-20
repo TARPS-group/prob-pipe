@@ -109,26 +109,14 @@ class Design(RecordArray):
         """Per-field marginals this design was built from."""
         return dict(self._marginals)
 
-    def select_all(self) -> dict[str, Any]:
-        """Return ``{field: view}`` for splat-as-kwargs calls.
-
-        Each value is a single-field view that carries the Design's
-        identity. When the result is splatted into a
-        ``@workflow_function`` — e.g. ``f(**design.select_all())`` —
-        the WF sweep layer recognises the shared parent and iterates
-        the views in lockstep (one inner call per row, matching
-        ``f(p=design)``), rather than treating them as independent
-        axes to cartesian-product.
-
-        Works with any inner body: no constraint on what ``f`` does
-        per cell, since each cell receives a scalar element (same as
-        the single-Record-arg pattern). For a faster JAX-traceable
-        shortcut on purely numeric bodies, pass the raw columns
-        instead (``f(r=design["r"], K=design["K"])``) — those are
-        independent arrays, so they'll cartesian-product rather than
-        zip.
-        """
-        return {f: self.view(f) for f in self.fields}
+    # ``select`` / ``select_all`` are inherited from ``RecordArray``
+    # and return single-field views, so
+    # ``f(**design.select_all())`` triggers the parent-identity zip
+    # sweep in the WorkflowFunction layer (one inner call per row,
+    # matching ``f(p=design)``). For a faster JAX-traceable shortcut
+    # on purely numeric bodies, pass the raw columns instead
+    # (``f(r=design["r"], K=design["K"])``) — those are independent
+    # arrays, so they cartesian-product rather than zip.
 
 
 # ---------------------------------------------------------------------------

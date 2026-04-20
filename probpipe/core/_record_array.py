@@ -209,6 +209,37 @@ class RecordArray(Record):
         for name in self._store:
             yield name, self._store[name]
 
+    # -- Selection (override to return views) ------------------------------
+
+    def select(self, *fields: str, **mapping: str) -> dict[str, Any]:
+        """Select fields as a dict of single-field **views**.
+
+        Mirrors :meth:`Record.select` but each entry is a
+        :class:`_RecordArrayView` rather than the raw column. The views
+        carry this ``RecordArray`` as their parent, so splatting the
+        result into a ``@workflow_function`` triggers the
+        parent-identity **zip sweep** (one inner call per row, matching
+        ``f(p=self)``) instead of cartesian-producting the fields as
+        independent axes.
+
+        For raw-column access, use ``self["field"]`` per field or
+        iterate ``self.items()``.
+        """
+        result: dict[str, Any] = {}
+        for f in fields:
+            if f not in self._store:
+                raise KeyError(f"No field {f!r} in {type(self).__name__}")
+            result[f] = self.view(f)
+        for arg_name, field_name in mapping.items():
+            if field_name not in self._store:
+                raise KeyError(f"No field {field_name!r} in {type(self).__name__}")
+            result[arg_name] = self.view(field_name)
+        return result
+
+    # ``select_all`` is inherited from ``Record`` and calls
+    # ``self.select(*self.fields)``, which dispatches here and returns
+    # per-field views.
+
     # -- Factory methods ----------------------------------------------------
 
     @classmethod

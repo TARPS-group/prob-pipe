@@ -327,6 +327,18 @@ class RecordDistribution(Distribution[Record]):
             result[arg_name] = self[field_name]
         return result
 
+    def select_all(self) -> dict[str, _RecordDistributionView]:
+        """Return every component as a view, for splatting into function calls.
+
+        Sugar for ``select(*self.component_names)``. Matches
+        :meth:`Record.select_all` / :meth:`RecordArray.select_all` so
+        the splat-all pattern works uniformly across the three field-
+        bearing container types. Preserves cross-field correlation via
+        the parent-identity machinery in the ``WorkflowFunction`` sweep
+        layer.
+        """
+        return self.select(*self.component_names)
+
     # -- Dict-like interface (mirrors Record) ---------------------------------
 
     @property
