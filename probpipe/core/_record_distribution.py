@@ -232,7 +232,7 @@ class _RecordDistributionView(Distribution):
         return batch + self.event_shape
 
     @property
-    def dtype(self):
+    def dtype(self) -> "jnp.dtype | None":
         """Dtype of a single draw, if the parent exposes ``dtypes``."""
         dtypes = getattr(self._parent, "dtypes", None)
         if isinstance(dtypes, dict):
@@ -513,7 +513,7 @@ class RecordDistribution(Distribution[Record]):
             raise TypeError(
                 f"{type(self).__name__} with {len(fields)} fields is not "
                 f"array-like; index a specific field via dist[field] or "
-                f"use .event_shapes / .dtypes dicts."
+                f"use .event_shapes dict."
             )
         return fields[0]
 

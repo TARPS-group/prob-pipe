@@ -617,7 +617,7 @@ class _RecordArrayView(RecordArray):
         return tuple(getattr(self._store[self._field], "shape", ()))
 
     @property
-    def dtype(self):
+    def dtype(self) -> "jnp.dtype | None":
         return getattr(self._store[self._field], "dtype", None)
 
     @property
@@ -643,6 +643,10 @@ class _RecordArrayView(RecordArray):
         return self._store[self._field][key]
 
     def __len__(self) -> int:
+        # Deliberate deviation from ``RecordArray.__len__`` (field count):
+        # a view is always single-field, so that would always return 1.
+        # Reporting the row count instead matches the column-like
+        # intuition — ``len(view)`` == ``len(ra["field"])``.
         leaf = self._store[self._field]
         return int(leaf.shape[0]) if getattr(leaf, "shape", ()) else 0
 
