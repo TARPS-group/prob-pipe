@@ -76,9 +76,6 @@ class DistributionArray[T](Distribution[T]):
         ``"distribution_array"``.
     """
 
-    _sampling_cost: str = "medium"
-    _preferred_orchestration: str | None = None
-
     def __init__(
         self,
         components,
@@ -89,12 +86,9 @@ class DistributionArray[T](Distribution[T]):
         components = tuple(components)
         if not components:
             raise ValueError("DistributionArray requires at least one component")
-        # All components must share event_shape. Additionally, each
-        # component must be scalar (batch_shape == ()) — batching is
-        # DistributionArray's job, not an orthogonal axis living on
-        # individual components. Rejecting batched-param components
-        # enforces the "one Distribution = one random variable" rule
-        # the wider codebase is moving toward (see issue #134).
+        # Components must share event_shape and each be scalar
+        # (``batch_shape == ()``); batching lives on the
+        # DistributionArray itself, not on its elements.
         es0 = getattr(components[0], "event_shape", ())
         for i, c in enumerate(components):
             es = getattr(c, "event_shape", ())

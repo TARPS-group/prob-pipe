@@ -252,10 +252,12 @@ class TestVarianceViaSweep:
 
 
 class TestLogProbViaSweep:
-    """``log_prob`` sweeps over the DistArray; ``value`` is an ``Any``
-    argument so it passes through to each cell as-is. To evaluate
-    per-cell at different points, wrap the values in a ``NumericRecordArray``
-    so the sweep slices them in lockstep with the DistArray's cells.
+    """``log_prob`` sweeps over the DistArray; ``value`` is ``Any``-hinted
+    so it passes through to each cell as-is (the sweep broadcasts the
+    single value across cells). Per-cell-value evaluation against a
+    batched input is a user-level composition (wrap in a small
+    ``@workflow_function``) and is tested via the broader sweep tests,
+    not here.
     """
 
     def test_same_value_all_cells(self):
@@ -273,24 +275,6 @@ class TestLogProbViaSweep:
              for i in range(3)]
         )
         np.testing.assert_allclose(lp["log_prob"], expected, rtol=1e-5)
-
-    def test_per_cell_value_via_recordarray(self):
-        """Wrap per-cell values in a ``NumericRecordArray`` and the
-        sweep aligns them with the DistArray's cells."""
-        from probpipe.core.record import RecordTemplate
-        comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(3)]
-        da = _make_distribution_array(comps)
-        values = NumericRecordArray(
-            {"v": jnp.array([0.0, 1.0, 2.0])},
-            batch_shape=(3,),
-            template=RecordTemplate(v=()),
-        )
-        lp = log_prob(da, value=values["v"].reshape((3,)))
-        # When ``value`` is a plain array it's not auto-sliced; this
-        # test documents the user-visible wrap pattern that IS sliced:
-        # pass the whole RecordArray, not the raw field. (See
-        # ``test_recordarray_broadcasting`` for the full treatment.)
-        assert isinstance(lp, NumericRecordArray)
 
 
 # ---------------------------------------------------------------------------

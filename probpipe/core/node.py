@@ -4,7 +4,6 @@ from abc import ABC, abstractmethod
 from typing import Any, Callable, Literal, Mapping, get_type_hints
 import inspect
 import logging
-import typing
 from concurrent.futures import ThreadPoolExecutor
 from itertools import product as cartesian_product
 from types import MappingProxyType
@@ -548,9 +547,9 @@ class WorkflowFunction(Node):
         return values
 
     def _convert_distributions(self, values: dict[str, Any]) -> dict[str, Any]:
-        """Convert distributions based on type hints.
+        """Convert distribution-valued args based on type hints.
 
-        Handles two cases:
+        Handles two conversion cases and one skip:
 
         1. **Concrete type hints** – if the hint is a ``Distribution``
            subclass and the value is a recognised distribution that is
@@ -559,6 +558,10 @@ class WorkflowFunction(Node):
            ``@runtime_checkable`` protocol (e.g., ``SupportsLogProb``)
            and the value is a ``Distribution`` that does not satisfy the
            protocol, convert via protocol-based resolution.
+        3. **``DistributionArray`` skip** – ``Array[Distribution]``
+           values are handled by the sweep path in
+           ``_find_broadcast_args`` (cell-by-cell); they never go
+           through the scalar-distribution conversion.
         """
         out = dict(values)
 
@@ -651,7 +654,7 @@ class WorkflowFunction(Node):
                     )
                 except TypeError:
                     is_same_array_hint = False
-                is_any_hint = expected is typing.Any
+                is_any_hint = expected is Any
                 if is_same_array_hint or is_any_hint:
                     continue
                 ra_broadcast.append(name)
@@ -855,21 +858,19 @@ class WorkflowFunction(Node):
         values: dict[str, Any],
         ra_args: list[str],
         i: int,
-        sizes: list[int] | None = None,
+        sizes: list[int],
     ) -> dict[str, Any]:
         """Materialise the ``i``-th sweep cell under the product rule.
 
-        ``sizes`` is the flat batch size of each ``ra_args`` arg; if
-        omitted, computed here. The sweep caller passes it in once to
-        avoid recomputing ``prod`` per cell.
+        ``sizes`` is the flat batch size of each ``ra_args`` arg — the
+        sweep caller computes it once outside the cell loop to avoid
+        repeating ``prod`` per cell.
 
         Each array arg is integer-indexed along its own batch — yielding
         a ``Record`` / ``NumericRecord`` (``RecordArray``) or a scalar
         component ``Distribution`` (``DistributionArray``).
         """
         out = dict(values)
-        if sizes is None:
-            sizes = [prod(values[name].batch_shape) for name in ra_args]
         rem = i
         # Highest-index arg is the fastest-varying axis (row-major over
         # the concatenated sweep shape).

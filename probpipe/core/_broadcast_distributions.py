@@ -422,7 +422,7 @@ def _make_stack(
     batch_shape: tuple[int, ...] | None = None,
     n: int | None = None,
     name: str | None = None,
-    field_name: str = "result",
+    field_name: str,
 ) -> Any:
     """Wrap inner workflow-function outputs as a shape-``batch_shape``
     aggregate.
