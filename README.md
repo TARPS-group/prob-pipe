@@ -78,7 +78,7 @@ predictive = predict_prob(**posterior.select('intercept', 'slope'), x=x_new)
 # predictive is a Distribution over predicted P(y=1|x) curves
 ```
 
-`predict_prob` is a `@workflow_function`: ProbPipe samples from the posterior and evaluates the function for each draw, returning the full predictive distribution. The two posterior fields are splatted from a single parent, so ProbPipe draws them jointly — each `(intercept, slope)` pair stays correlated. The same call shape swaps the posterior for a `FullFactorialDesign(intercept=[...], slope=[...])` to turn the line into a grid search without changing `predict_prob`. Plotting the result:
+`predict_prob` is a `@workflow_function`: ProbPipe samples from the posterior and evaluates the function for each draw, returning the full predictive distribution. The two posterior fields are splatted from a single parent, so ProbPipe draws them jointly — each `(intercept, slope)` pair stays correlated. Plotting the result:
 
 ```python
 import numpy as np, matplotlib.pyplot as plt
