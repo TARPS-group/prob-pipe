@@ -46,7 +46,7 @@ class TestBroadcastDistributionConstruction:
             broadcast_args=["x"],
         )
         assert bd.n == n
-        assert bd.component_names == ("x", "_output")
+        assert bd.fields == ("x", "_output")
 
     def test_with_weights(self):
         n = 5
@@ -72,7 +72,7 @@ class TestBroadcastDistributionConstruction:
             weights=None,
             broadcast_args=["a", "b"],
         )
-        assert bd.component_names == ("a", "b", "_output")
+        assert bd.fields == ("a", "b", "_output")
         assert "a" in bd.input_samples
         assert "b" in bd.input_samples
 
@@ -99,7 +99,7 @@ class TestBroadcastDistributionProtocols:
             weights=None,
             broadcast_args=["x"],
         )
-        assert hasattr(bd, 'component_names')
+        assert hasattr(bd, 'fields')
 
 
 # ---------------------------------------------------------------------------

@@ -34,12 +34,12 @@ class TestConstruction:
         assert isinstance(joint, SequentialJointDistribution)
         assert isinstance(joint, RecordDistribution)
 
-    def test_component_names(self):
+    def test_fields(self):
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0, name="z"),
             x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
-        assert joint.component_names == ("z", "x")
+        assert joint.fields == ("z", "x")
 
     def test_event_shapes(self):
         joint = SequentialJointDistribution(
@@ -57,7 +57,7 @@ class TestConstruction:
         )
         assert joint.event_shapes == {"z": (), "x": (), "y": ()}
         assert joint.event_size == 3
-        assert joint.component_names == ("z", "x", "y")
+        assert joint.fields == ("z", "x", "y")
 
     def test_independent_root(self):
         """All root distributions (no callables) should work."""
@@ -250,7 +250,7 @@ class TestConditionOn:
         cond = condition_on(joint, z=jnp.array(2.0))
         assert "z" not in cond.components
         assert "x" in cond.components
-        assert cond.component_names == ("x",)
+        assert cond.fields == ("x",)
         assert cond.event_shapes == {"x": ()}
         assert cond.event_size == 1
 
@@ -306,7 +306,7 @@ class TestConditionOn:
         cond = condition_on(joint, x=jnp.array(1.0))
         assert "x" not in cond.components
         assert "z" in cond.components
-        assert cond.component_names == ("z",)
+        assert cond.fields == ("z",)
 
     def test_condition_on_non_root_with_unconditioned_parent_raises(self):
         """Sampling raises if a conditioned non-root has unconditioned parents."""
@@ -388,12 +388,12 @@ class TestConditionOn:
         )
         # First condition on x alone — not sampleable (z unconditioned parent)
         cond1 = condition_on(joint, x=jnp.array(1.0))
-        assert cond1.component_names == ("z", "y")
+        assert cond1.fields == ("z", "y")
         with pytest.raises(NotImplementedError):
             sample(cond1, sample_shape=(5,))
         # Then also condition on z — now sampleable, only y remains
         cond2 = condition_on(cond1, z=jnp.array(0.0))
-        assert cond2.component_names == ("y",)
+        assert cond2.fields == ("y",)
         s = sample(cond2, sample_shape=(5,))
         assert isinstance(s, (Record, RecordArray))
         assert set(s.fields) == {"y"}

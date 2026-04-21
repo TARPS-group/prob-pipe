@@ -19,12 +19,9 @@ ProbPipe addresses these challenges through a single design principle: **simplif
 
 - **`Distribution`**: the universal representation of random quantities (priors, posteriors, data-generating processes). A distribution's capabilities are declared via protocols (`SupportsSampling`, `SupportsLogProb`, ...), and ProbPipe converts between representations as needed.
 - **`Record`**: the universal container for non-random structured data (observed datasets, hyperparameters, design matrices). `Record` is the deterministic counterpart of `Distribution`.
-- **`WorkflowFunction`**: operations that take distributions or fixed values as input and return distributions or fixed values as output. Decorate any function with `@workflow_function` and ProbPipe propagates uncertainty by one simple rule:
-    - **Scalar `Distribution` inputs** (passed to slots that expect a concrete value) are Monte-Carlo marginalised — the output is a `Distribution` over results.
-    - **Array-valued inputs** (`RecordArray`, `DistributionArray`) drive a cell-by-cell **sweep**; multiple array inputs combine by the **product rule** (Cartesian full factorial).
-    - **Every return** is wrapped at the decorator boundary into a `Record` / `RecordArray` / `Distribution` with the function's name as the single field name — so `mean(d)` returns `NumericRecord(mean=...)`. Raw numeric access stays terse via single-field shims: `float(...)`, `jnp.array(...)`, `.shape`, `.dtype`.
+- **`WorkflowFunction`**: any function decorated with `@workflow_function`. Pass concrete values and it runs normally; pass a `Distribution` where a concrete value is expected and ProbPipe propagates uncertainty automatically, returning a `Distribution` over the results. Array-valued inputs (`RecordArray`, `DistributionArray`) drive parameter sweeps; all returns are wrapped in the same `Record` / `Distribution` contract so pipelines compose cleanly.
 
-`Distribution` and `Record` follow the same syntax for accessing their components and passing those components into a `WorkflowFunction`, so they can easily be interchanged. Both support **named fields** and a **`select()`** method for splatting (e.g., `predict(**posterior.select("intercept", "slope"))`). Implementation details (algorithms, data and distribution representations) are invisible to the user, while remaining fully configurable when control is needed.
+`Distribution` and `Record` share a single interface for named-field access (`fields`, `select(...)`, `select_all()`) and passing components into a `WorkflowFunction`, so they are interchangeable at call sites. Fields split out of a common parent stay correlated end-to-end, so the two natural shapes — `f(p=posterior)` and `f(**posterior.select_all())` — produce identical outputs. Implementation details (algorithms, data and distribution representations) stay invisible by default, while remaining fully configurable when control is needed.
 
 ### Built-in operations
 
@@ -81,7 +78,7 @@ predictive = predict_prob(**posterior.select('intercept', 'slope'), x=x_new)
 # predictive is a Distribution over predicted P(y=1|x) curves
 ```
 
-`predict_prob` is a `@workflow_function`: ProbPipe samples from the posterior and evaluates the function for each draw, returning the full predictive distribution. Plotting the result:
+`predict_prob` is a `@workflow_function`: ProbPipe samples from the posterior and evaluates the function for each draw, returning the full predictive distribution. The two posterior fields are splatted from a single parent, so ProbPipe draws them jointly — each `(intercept, slope)` pair stays correlated. Plotting the result:
 
 ```python
 import numpy as np, matplotlib.pyplot as plt

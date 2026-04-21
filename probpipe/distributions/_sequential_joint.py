@@ -209,7 +209,7 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
             raise NotImplementedError(self._sampleable_error)
 
     @property
-    def component_names(self) -> tuple[str, ...]:
+    def fields(self) -> tuple[str, ...]:
         """Component names in topological (insertion) order."""
         return tuple(self._components.keys())
 

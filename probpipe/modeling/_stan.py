@@ -87,7 +87,7 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
     # -- Named components interface ------------------------------------------
 
     @property
-    def component_names(self) -> tuple[str, ...]:
+    def fields(self) -> tuple[str, ...]:
         return self.parameter_names
 
     def __getitem__(self, key: str) -> Any:

@@ -236,14 +236,6 @@ class NumericRecordDistribution(RecordDistribution):
         return jax.tree.structure(None)
 
     @property
-    def event_shapes(self):
-        """Per-field event shapes, or single event shape when unnamed."""
-        tpl = self.record_template
-        if tpl is not None:
-            return super().event_shapes  # RecordDistribution dict version
-        return self.event_shape
-
-    @property
     def flat_event_shapes(self) -> list[tuple[int, ...]]:
         """Single-leaf: just the one event_shape."""
         return [self.event_shape]

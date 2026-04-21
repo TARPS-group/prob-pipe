@@ -172,7 +172,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
         return self._w.normalized
 
     @property
-    def component_names(self) -> tuple[str, ...]:
+    def fields(self) -> tuple[str, ...]:
         """Component names in insertion order."""
         return tuple(self._joint_samples.keys())
 

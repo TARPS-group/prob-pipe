@@ -82,18 +82,20 @@ class Design(RecordArray):
     rows in ``__init__`` and stash the originating marginals for
     introspection.
 
-    Usage inside a ``@workflow_function``: pass the design as a single
-    ``Record`` / ``NumericRecord``-typed argument. The WF layer's
-    sweep path iterates over its batch and returns a stacked output::
+    Two equivalent ways to drive a sweep through a ``@workflow_function``::
 
         @workflow_function
-        def fit(p): ...                  # p arrives as one row (a Record)
-        result = fit(p=design)           # one inner call per row
+        def fit(p): ...
+        result = fit(p=design)              # one row per call
 
-    ``select_all()`` returns the per-field columns as raw arrays — useful
-    for inspection or for calls into JAX-vectorizable bodies that don't
-    need the sweep machinery. It does **not** trigger the WF sweep (the
-    raw arrays aren't recognised as array-valued inputs).
+        @workflow_function
+        def fit(r, K): ...
+        result = fit(**design.select_all()) # zip across sibling views
+
+    ``select_all()`` returns one view per field; views that share the
+    Design as their parent zip across rows in the WF sweep layer (so
+    the two shapes above produce identical outputs). For raw columns
+    (no sweep — just JAX broadcasting), index with ``design["r"]``.
 
     Attributes
     ----------
@@ -108,26 +110,6 @@ class Design(RecordArray):
     def marginals(self) -> Mapping[str, Any]:
         """Per-field marginals this design was built from."""
         return dict(self._marginals)
-
-    def select_all(self) -> dict[str, Any]:
-        """Return ``{field: column_array}`` for splat-as-kwargs calls.
-
-        The returned values are the underlying field columns, not
-        single-field ``RecordArray`` wrappers. Splatting them as
-        kwargs into a ``@workflow_function`` therefore **does not**
-        trigger the WF sweep path — the WF runs once with full column
-        arrays and relies on whatever broadcasting the inner body
-        naturally provides.
-
-        Use this as a faster alternative to the single-Record-arg
-        sweep pattern (``f(p=design)``) when the body's ops broadcast
-        over column arrays — typically pure JAX arithmetic. It is
-        **not** a general substitute: anything that expects per-element
-        values (``f'{x:.1f}'``, ``float(x)``, ``if x > 0``, scalar-only
-        external library calls) will fail because those receive full
-        arrays, not per-row scalars.
-        """
-        return {f: self._store[f] for f in self.fields}
 
 
 # ---------------------------------------------------------------------------

@@ -286,12 +286,26 @@ class Record:
         for f in fields:
             if f not in self._store:
                 raise KeyError(f"No field {f!r} in Record")
-            result[f] = self._store[f]
+            result[f] = self[f]
         for arg_name, field_name in mapping.items():
             if field_name not in self._store:
                 raise KeyError(f"No field {field_name!r} in Record")
-            result[arg_name] = self._store[field_name]
+            result[arg_name] = self[field_name]
         return result
+
+    def select_all(self) -> dict[str, _FieldValue]:
+        """Return every field as a dict, for splatting into function calls.
+
+        Sugar for ``select(*self.fields)``. Subclasses whose
+        ``__getitem__`` returns a view (``RecordArray`` →
+        ``_RecordArrayView``, ``RecordDistribution`` →
+        ``_RecordDistributionView``) inherit this method and return
+        per-field views — so ``f(**ra.select_all())`` triggers the
+        parent-identity zip sweep in ``WorkflowFunction``, and
+        ``f(**dist.select_all())`` similarly preserves cross-field
+        correlation.
+        """
+        return self.select(*self.fields)
 
     # -- Immutable updates --------------------------------------------------
 

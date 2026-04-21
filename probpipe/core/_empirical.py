@@ -396,7 +396,7 @@ class _RecordEmpiricalDistribution(
 
     The ``record_template`` is set automatically from the field shapes
     (leading sample dimension removed), enabling ``__getitem__``,
-    ``select()``, and ``component_names`` via
+    ``select()``, and ``fields`` via
     :class:`~probpipe.core._record_distribution.RecordDistribution`.
     """
 

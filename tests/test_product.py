@@ -85,13 +85,13 @@ class TestProductDistribution:
         # Scalar Normal (dim 1) + MVN(dim 3): total dim = 4
         assert joint_xz.event_size == 4
 
-    def test_component_names(self, joint_xy):
-        assert joint_xy.component_names == ("x", "y")
+    def test_fields(self, joint_xy):
+        assert joint_xy.fields == ("x", "y")
 
-    def test_component_names_sorted(self, normal_x, normal_y):
+    def test_fields_sorted(self, normal_x, normal_y):
         joint = ProductDistribution(y=normal_y, x=normal_x)
         # RecordDistribution stores fields in sorted order
-        assert joint.component_names == ("x", "y")
+        assert joint.fields == ("x", "y")
 
     def test_sample_returns_values(self, joint_xy):
         key = jax.random.PRNGKey(0)
@@ -151,9 +151,6 @@ class TestProductDistribution:
 
     # -- Dict-like interface (shared with Record) -----------------------------
 
-    def test_fields_matches_component_names(self, joint_xy):
-        assert joint_xy.fields == joint_xy.component_names
-
     def test_contains_existing(self, joint_xy):
         assert "x" in joint_xy
         assert "y" in joint_xy
@@ -162,7 +159,7 @@ class TestProductDistribution:
         assert "z" not in joint_xy
 
     def test_keys(self, joint_xy):
-        assert list(joint_xy.keys()) == list(joint_xy.component_names)
+        assert list(joint_xy.keys()) == list(joint_xy.fields)
 
     def test_values(self, joint_xy):
         vals = list(joint_xy.values())
@@ -293,7 +290,7 @@ class TestConditionOn:
         cond = condition_on(joint_xy, x=jnp.array(2.0))
         assert "x" not in cond.components
         assert "y" in cond.components
-        assert cond.component_names == ("y",)
+        assert cond.fields == ("y",)
         assert cond.event_size == 1
 
     def test_conditioned_sample_excludes_conditioned(self, joint_xy):
@@ -485,7 +482,7 @@ class TestPytreeRegistration:
         children, aux = jax.tree_util.tree_flatten(joint)
         reconstructed = jax.tree_util.tree_unflatten(aux, children)
         assert isinstance(reconstructed, ProductDistribution)
-        assert reconstructed.component_names == ("x", "y")
+        assert reconstructed.fields == ("x", "y")
         assert reconstructed.event_size == 2
 
     def test_tree_flatten_preserves_components(self, normal_x, mvn_z):
@@ -509,7 +506,7 @@ class TestPytreeRegistration:
         children, aux = jax.tree.flatten(joint)
         reconstructed = jax.tree.unflatten(aux, children)
         assert isinstance(reconstructed, ProductDistribution)
-        assert reconstructed.component_names == ("x", "y")
+        assert reconstructed.fields == ("x", "y")
         assert reconstructed._name == "j"
 
 
@@ -558,7 +555,7 @@ class TestProductProtocolDuckTyping:
         children, aux = jax.tree.flatten(joint)
         reconstructed = jax.tree.unflatten(aux, children)
         assert isinstance(reconstructed, ProductDistribution)
-        assert reconstructed.component_names == ("x", "y")
+        assert reconstructed.fields == ("x", "y")
 
 
 # ===========================================================================
@@ -621,7 +618,7 @@ class TestPositionalAndAutoRename:
         nx = Normal(loc=0.0, scale=1.0, name="x")
         ny = Normal(loc=1.0, scale=2.0, name="y")
         joint = ProductDistribution(nx, ny)
-        assert joint.component_names == ("x", "y")
+        assert joint.fields == ("x", "y")
 
     def test_positional_sample(self):
         nx = Normal(loc=0.0, scale=1.0, name="x")
@@ -635,7 +632,7 @@ class TestPositionalAndAutoRename:
         """Keyword arg key overrides the distribution's name."""
         n = Normal(loc=0.0, scale=1.0, name="x")
         joint = ProductDistribution(growth_rate=n)
-        assert joint.component_names == ("growth_rate",)
+        assert joint.fields == ("growth_rate",)
         # The stored component should have the new name
         comp = joint.components["growth_rate"]
         assert comp.name == "growth_rate"
@@ -663,7 +660,7 @@ class TestPositionalAndAutoRename:
         nx = Normal(loc=0.0, scale=1.0, name="x")
         ny = Normal(loc=1.0, scale=2.0, name="orig")
         joint = ProductDistribution(nx, renamed_y=ny)
-        assert set(joint.component_names) == {"x", "renamed_y"}
+        assert set(joint.fields) == {"x", "renamed_y"}
 
     def test_positional_duplicate_raises(self):
         """Duplicate names across positional and keyword args raise."""
@@ -704,8 +701,8 @@ class TestPositionalAndAutoRename:
             },
             observation=Normal(loc=0.0, scale=0.1, name="observation"),
         )
-        assert "physics" in joint.component_names
-        assert "observation" in joint.component_names
+        assert "physics" in joint.fields
+        assert "observation" in joint.fields
         # Nested leaves should have been renamed
         force_comp = joint.components["physics"]["force"]
         assert force_comp.name == "force"
@@ -813,9 +810,9 @@ class TestNestedProductDistribution:
         # 3 scalar leaves -> event_size = 3
         assert nested_joint.event_size == 3
 
-    def test_component_names_are_top_level(self, nested_joint):
-        names = nested_joint.component_names
-        # RecordDistribution.component_names returns top-level field names
+    def test_fields_are_top_level(self, nested_joint):
+        names = nested_joint.fields
+        # RecordDistribution.fields returns top-level field names
         assert len(names) == 2
         assert "observation" in names
         assert "physics" in names

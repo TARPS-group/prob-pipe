@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`_RecordArrayView`** (`RecordArray.view(field)`) — single-field view of a
+  ``RecordArray`` column that carries its parent as shared-identity metadata.
+  The ``WorkflowFunction`` sweep layer groups sibling views from one parent
+  into a single zip axis; views from different parents product.
+- **Uniform `select_all()`** on ``Record`` / ``RecordArray`` /
+  ``RecordDistribution``. Splatting the result into a
+  ``@workflow_function`` preserves correlation on the two batched variants
+  and plain splats fields on scalar ``Record``.
+- **Public `.parent` / `.field`** properties on both
+  ``_RecordArrayView`` and ``_RecordDistributionView``.
+- **`.n`** property on ``RecordDistribution`` — ``prod(batch_shape)``
+  (STYLE_GUIDE §1.9).
+- **Single-field `.shape` / `.ndim` shims** on ``RecordDistribution`` and
+  ``_RecordDistributionView`` (mirror the existing shims on
+  ``NumericRecord`` / ``NumericRecordArray``). Multi-field distributions
+  raise ``TypeError``.
+
+### Changed (breaking)
+
+- **`len(RecordArray)`** now returns the **field count** (matching
+  ``len(Record)``) instead of ``prod(batch_shape)``. For the flat batch
+  size, use ``prod(ra.batch_shape)``.
+- **`event_shapes`** now always returns ``dict[str, tuple[int, ...]]``.
+  Untemplated (legacy) distributions return ``{}``; use the singular
+  ``.event_shape`` for the whole-sample shape.
+- **`component_names` → `fields`** on every Record-based distribution and
+  model (``RecordDistribution``, ``ProductDistribution``, ``JointGaussian``,
+  ``JointEmpirical``, ``SequentialJointDistribution``,
+  ``BroadcastDistribution``, ``ProbabilisticModel``, ``SimpleModel``,
+  ``SimpleGenerativeModel``, ``PyMCModel``, ``StanModel``). No backward
+  alias.
+
 ## [0.1.0] - 2025-03-21
 
 Initial release with TensorFlow Probability / JAX backend.
