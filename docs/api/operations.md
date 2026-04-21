@@ -3,7 +3,7 @@
 Built-in operations are standalone workflow functions that form the primary public API.
 Each operation checks the relevant protocol at dispatch time and delegates to the
 distribution's private implementation method. All operations participate in
-[broadcasting](../examples/04_broadcasting.ipynb) and Prefect orchestration.
+[broadcasting](../examples/03_broadcasting.ipynb) and Prefect orchestration.
 
 ```python
 from probpipe import sample, mean, log_prob, condition_on
