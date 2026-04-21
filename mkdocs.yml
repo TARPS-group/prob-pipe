@@ -69,15 +69,14 @@ nav:
     - Overview: reference_notebooks.md
     - Distribution basics: examples/01_distributions.ipynb
     - Records and the Record family: examples/02_records.ipynb
-    - Broadcasting: examples/04_broadcasting.ipynb
+    - Broadcasting and workflow functions: examples/03_broadcasting.ipynb
     - Joint distributions: examples/04_joint_distributions.ipynb
     - External backends: examples/05_external_backends.ipynb
     - Converting between representations: examples/06_converting_representations.ipynb
-    - Sequential Updating: examples/10_sequential_updating.ipynb
-    - Automatic Differentiation: examples/05_autodiff.ipynb
+    - Sequential updating: examples/07_sequential_updating.ipynb
+    - JAX interop (gradients, jit, vmap): examples/08_jax_interop.ipynb
     - Bagged posteriors: examples/09_bagged_posteriors.ipynb
-    - Emulators: examples/07_emulators.ipynb
-    - Random Functions: examples/08_random_functions.ipynb
+    - Random functions and Gaussian emulators: examples/10_random_functions_and_emulators.ipynb
   - API Reference:
     - Operations: api/operations.md
     - Protocols: api/protocols.md
