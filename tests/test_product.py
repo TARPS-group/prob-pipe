@@ -151,9 +151,6 @@ class TestProductDistribution:
 
     # -- Dict-like interface (shared with Record) -----------------------------
 
-    def test_fields_matches_fields(self, joint_xy):
-        assert joint_xy.fields == joint_xy.fields
-
     def test_contains_existing(self, joint_xy):
         assert "x" in joint_xy
         assert "y" in joint_xy

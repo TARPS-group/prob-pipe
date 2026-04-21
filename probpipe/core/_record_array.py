@@ -631,10 +631,8 @@ class _RecordArrayView(RecordArray):
     def __jax_array__(self):
         return jnp.asarray(self._store[self._field])
 
-    # Int / slice / tuple indexing acts on the underlying column —
-    # ``view[i]`` is the i-th row, matching the raw-array behaviour
-    # users expect from ``ra["field"][i]`` prior to the view contract.
-    # String indexing is idempotent (same field) or raises.
+    # ``view[i]`` indexes the underlying column; ``view[name]`` is
+    # idempotent (same field) or raises.
     def __getitem__(self, key):
         if isinstance(key, str):
             if key == self._field:
@@ -643,10 +641,8 @@ class _RecordArrayView(RecordArray):
         return self._store[self._field][key]
 
     def __len__(self) -> int:
-        # Deliberate deviation from ``RecordArray.__len__`` (field count):
-        # a view is always single-field, so that would always return 1.
-        # Reporting the row count instead matches the column-like
-        # intuition — ``len(view)`` == ``len(ra["field"])``.
+        # Row count, matching the column-like intuition. (``RecordArray``
+        # itself returns the field count.)
         leaf = self._store[self._field]
         return int(leaf.shape[0]) if getattr(leaf, "shape", ()) else 0
 
@@ -708,12 +704,7 @@ jax.tree_util.register_pytree_node(
 )
 
 
-# Views are intentionally **not** registered as pytree nodes. JAX
-# treats them as leaves, which means ``jnp.sum(view)`` / ``jnp.mean(view)``
-# /etc. go through ``__jax_array__`` and operate on the underlying
-# column — the expected "column-like" behaviour. If we registered the
-# view as a pytree, JAX's tree-flatten machinery would unpack it into
-# a leaf plus aux and then re-unflatten as a plain ``RecordArray``
-# (since the parent pointer isn't reconstructible), which doesn't
-# support ``jnp.sum`` etc. Keeping the view as a leaf sidesteps that
-# round-trip entirely.
+# Views are intentionally pytree leaves, not nodes — JAX routes
+# ``jnp.sum(view)`` / etc. through ``__jax_array__`` to operate on
+# the underlying column, and we avoid an unflatten that would drop
+# the ``_parent`` reference.

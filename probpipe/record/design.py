@@ -82,18 +82,20 @@ class Design(RecordArray):
     rows in ``__init__`` and stash the originating marginals for
     introspection.
 
-    Usage inside a ``@workflow_function``: pass the design as a single
-    ``Record`` / ``NumericRecord``-typed argument. The WF layer's
-    sweep path iterates over its batch and returns a stacked output::
+    Two equivalent ways to drive a sweep through a ``@workflow_function``::
 
         @workflow_function
-        def fit(p): ...                  # p arrives as one row (a Record)
-        result = fit(p=design)           # one inner call per row
+        def fit(p): ...
+        result = fit(p=design)              # one row per call
 
-    ``select_all()`` returns the per-field columns as raw arrays — useful
-    for inspection or for calls into JAX-vectorizable bodies that don't
-    need the sweep machinery. It does **not** trigger the WF sweep (the
-    raw arrays aren't recognised as array-valued inputs).
+        @workflow_function
+        def fit(r, K): ...
+        result = fit(**design.select_all()) # zip across sibling views
+
+    ``select_all()`` returns one view per field; views that share the
+    Design as their parent zip across rows in the WF sweep layer (so
+    the two shapes above produce identical outputs). For raw columns
+    (no sweep — just JAX broadcasting), index with ``design["r"]``.
 
     Attributes
     ----------
@@ -108,15 +110,6 @@ class Design(RecordArray):
     def marginals(self) -> Mapping[str, Any]:
         """Per-field marginals this design was built from."""
         return dict(self._marginals)
-
-    # ``select`` / ``select_all`` are inherited from ``RecordArray``
-    # and return single-field views, so
-    # ``f(**design.select_all())`` triggers the parent-identity zip
-    # sweep in the WorkflowFunction layer (one inner call per row,
-    # matching ``f(p=design)``). For a faster JAX-traceable shortcut
-    # on purely numeric bodies, pass the raw columns instead
-    # (``f(r=design["r"], K=design["K"])``) — those are independent
-    # arrays, so they cartesian-product rather than zip.
 
 
 # ---------------------------------------------------------------------------

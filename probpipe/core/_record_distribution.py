@@ -27,6 +27,7 @@ from .protocols import (
     SupportsVariance,
 )
 from .record import Record, RecordTemplate
+from .._utils import prod
 from ..custom_types import Array, PRNGKey
 
 if TYPE_CHECKING:
@@ -356,7 +357,6 @@ class RecordDistribution(Distribution[Record]):
         ``prod(batch_shape)``. Parallels
         :attr:`~probpipe.DistributionArray.n`.
         """
-        from .._utils import prod
         return prod(getattr(self, "batch_shape", ()) or ())
 
     def __getitem__(self, key: str) -> _RecordDistributionView:
@@ -462,7 +462,6 @@ class RecordDistribution(Distribution[Record]):
         if tpl is None:
             return 0
         if isinstance(tpl, RecordTemplate):
-            from .._utils import prod
             return sum(
                 prod(shape) if shape else 1
                 for shape in tpl.numeric_leaf_shapes.values()
@@ -472,42 +471,37 @@ class RecordDistribution(Distribution[Record]):
 
     @property
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-field event shapes derived from record_template."""
+        """Per-field event shapes.
+
+        For untemplated distributions (no ``record_template``) returns
+        ``{}``; use :attr:`event_shape` for the scalar shape of a
+        single unnamed field. Nested sub-templates collapse to ``()``
+        at the top level.
+        """
         tpl = self.record_template
         if tpl is None:
             return {}
-        if isinstance(tpl, RecordTemplate):
-            # Return top-level field shapes only; nested RecordTemplate → ()
-            result: dict[str, tuple[int, ...]] = {}
-            for name in tpl.fields:
-                spec = tpl[name]
-                if isinstance(spec, RecordTemplate):
-                    result[name] = ()
-                elif spec is not None:
-                    result[name] = spec
-                else:
-                    result[name] = ()
-            return result
-        # Legacy Record template fallback
-        result: dict[str, tuple[int, ...]] = {}
-        for name in tpl.fields:
-            val = tpl[name]
-            result[name] = val.shape if not isinstance(val, Record) else ()
-        return result
+        return {name: self._field_event_shape(tpl[name]) for name in tpl.fields}
 
-    # -- Single-field array-like shims (mirror ``NumericRecordArray``) --------
-    #
-    # When a RecordDistribution has exactly one field, expose ``.shape``
-    # and ``.ndim`` as thin delegates to the sole field's event shape
-    # (with the ``batch_shape`` prefix when present). Mirrors the
-    # single-field shims on :class:`NumericRecord` / :class:`NumericRecordArray`
-    # and on :class:`_RecordDistributionView`. Multi-field distributions
-    # raise ``TypeError`` — use ``.event_shapes`` for a per-field dict or
-    # index into a view (``dist[field]``).
-    # ------------------------------------------------------------------------
+    @staticmethod
+    def _field_event_shape(spec) -> tuple[int, ...]:
+        """Event shape for one field spec (nested template → ``()``)."""
+        if isinstance(spec, RecordTemplate):
+            return ()
+        if spec is None:
+            return ()
+        if isinstance(spec, tuple):
+            return spec
+        # Record-valued template fallback.
+        return spec.shape if not isinstance(spec, Record) else ()
+
+    # -- Single-field array-like shims --------------------------------------
+    # On a single-field distribution, ``.shape`` / ``.ndim`` delegate to
+    # the sole field's event shape (prefixed by ``batch_shape``).
+    # Multi-field distributions raise ``TypeError``; use ``.event_shapes``
+    # for a per-field dict or index into a view (``dist[field]``).
 
     def _single_field_name(self) -> str:
-        """Return the sole field name, or raise ``TypeError`` if not single-field."""
         fields = self.fields
         if len(fields) != 1:
             raise TypeError(
@@ -519,14 +513,16 @@ class RecordDistribution(Distribution[Record]):
 
     @property
     def shape(self) -> tuple[int, ...]:
-        """Shape of one draw (``batch_shape + event_shape``) for a single-field distribution."""
+        """Shape of one draw (``batch_shape + event_shape``)."""
         name = self._single_field_name()
+        tpl = self.record_template
+        event = self._field_event_shape(tpl[name]) if tpl is not None else ()
         batch = tuple(getattr(self, "batch_shape", ()) or ())
-        return batch + self.event_shapes[name]
+        return batch + event
 
     @property
     def ndim(self) -> int:
-        """Number of axes in one draw for a single-field distribution."""
+        """Number of axes in one draw."""
         return len(self.shape)
 
 

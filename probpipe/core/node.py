@@ -36,6 +36,7 @@ from ._broadcast_distributions import _make_stack
 from ._distribution_array import DistributionArray, _make_distribution_array
 from ._numeric_record import NumericRecord, _is_numeric_leaf
 from ._record_array import RecordArray, _RecordArrayView
+from ._record_distribution import _RecordDistributionView
 from .provenance import Provenance
 from .record import Record
 from .protocols import (
@@ -191,19 +192,6 @@ class InputFrozenError(Exception):
     pass
 
 
-# ---------------------------------------------------------------------------
-# Parent-identity grouping (shared between RA sweep and Dist MC paths)
-# ---------------------------------------------------------------------------
-#
-# Both the array-broadcast path (``_group_ra_args_by_parent``) and the
-# distribution-MC path (``_sample_broadcast_args``) need to detect
-# "sibling views from the same parent" and group them together —
-# sibling RA views zip across cells, sibling Dist views co-sample.
-# The grouping key is the same: ``id(value.parent)`` when the value
-# is a view, ``id(value)`` otherwise.
-# ---------------------------------------------------------------------------
-
-
 def _group_by_parent(
     values: dict[str, Any],
     names: list[str],
@@ -211,12 +199,8 @@ def _group_by_parent(
     """Group arg names by the ``id()`` of their source parent.
 
     Views (``_RecordArrayView`` / ``_RecordDistributionView``) expose
-    ``.parent`` and are grouped with other views that share it. Plain
-    container args (``RecordArray`` / ``DistributionArray`` /
-    ``Distribution``) are each their own parent.
-
-    Returns ``{parent_id: [arg_names]}`` preserving first-occurrence
-    order (Python dict invariant since 3.7).
+    ``.parent`` and group with other views sharing it; plain container
+    args are each their own parent. First-occurrence order preserved.
     """
     groups: dict[int, list[str]] = {}
     for name in names:
@@ -910,22 +894,13 @@ class WorkflowFunction(Node):
         in first-occurrence order; each tuple is one axis block of the
         sweep. ``size`` is ``prod(batch_shape)``.
         """
-        parent_groups = _group_by_parent(values, ra_args)
         groups: list[tuple[list[str], tuple[int, ...], int]] = []
-        for arg_names in parent_groups.values():
-            # All args in the group share the same parent, so they
-            # must share the same batch_shape. Validate by cross-check.
-            first_bshape = tuple(values[arg_names[0]].batch_shape)
-            for name in arg_names[1:]:
-                bshape = tuple(values[name].batch_shape)
-                if bshape != first_bshape:
-                    raise ValueError(
-                        f"sweep args {arg_names!r} share a parent "
-                        f"RecordArray but have mismatched batch_shapes: "
-                        f"first was {first_bshape}, {name!r} is {bshape}"
-                    )
-            size = prod(first_bshape) if first_bshape else 1
-            groups.append((arg_names, first_bshape, size))
+        for arg_names in _group_by_parent(values, ra_args).values():
+            # Sibling views share their parent's batch_shape by
+            # construction, so the first arg's batch_shape stands for
+            # the group.
+            bshape = tuple(values[arg_names[0]].batch_shape)
+            groups.append((arg_names, bshape, prod(bshape) if bshape else 1))
         return groups
 
     def _slice_ra_args(
@@ -1005,7 +980,7 @@ class WorkflowFunction(Node):
                 ra = values[name]
                 n_batch = len(ra.batch_shape)
                 vmap_input[name] = {
-                    f: ra._store[f].reshape((n_total,) + ra._store[f].shape[n_batch:])
+                    f: ra[f].reshape((n_total,) + ra[f].shape[n_batch:])
                     for f in ra.fields
                 }
             return jax.vmap(single_call)(vmap_input)
@@ -1160,34 +1135,21 @@ class WorkflowFunction(Node):
         n: int,
         key: PRNGKey,
     ) -> dict[str, Array]:
-        """
-        Sample all broadcast arguments, handling view reconnection.
+        """Sample all broadcast arguments, handling view reconnection.
 
-        When multiple arguments are views from the same parent
-        distribution, the parent is sampled once and component samples
-        are distributed to the appropriate arguments. This preserves
-        correlation between jointly-distributed components. Plain
-        (non-view) distributions are each sampled independently, even
-        when the *same* distribution is passed under multiple argument
-        names (each kwarg is treated as its own independent draw).
-
-        Grouping uses the shared :func:`_group_by_parent` helper —
-        views expose ``.parent`` (public on ``_RecordDistributionView``
-        and ``_RecordArrayView``).
+        Sibling views from the same parent distribution share one
+        parent draw, preserving cross-field correlation. Plain
+        (non-view) distributions are sampled independently per kwarg,
+        even if the same object is passed under multiple names.
         """
         sampled: dict[str, Array] = {}
         for arg_names in _group_by_parent(values, broadcast_args).values():
             first = values[arg_names[0]]
-            is_view = hasattr(first, "parent") and first.parent is not first
-            if not is_view:
-                # Plain distributions sharing identity still sample
-                # independently per kwarg — the view path is what
-                # ties them to a common parent draw.
+            if not isinstance(first, _RecordDistributionView):
                 for arg_name in arg_names:
                     key, subkey = jax.random.split(key)
                     sampled[arg_name] = values[arg_name]._sample(subkey, (n,))
                 continue
-            # Views of a shared parent: sample the parent once, extract.
             key, subkey = jax.random.split(key)
             structured = first.parent._sample(subkey, (n,))
             for arg_name in arg_names:
@@ -1195,8 +1157,6 @@ class WorkflowFunction(Node):
                 if hasattr(view, "_extract"):
                     sampled[arg_name] = view._extract(structured)
                 else:
-                    # Fallback: walk the view's key path (kept for
-                    # future view types that don't expose ``_extract``).
                     val = structured
                     for k in getattr(view, "_key_path", (view.field,)):
                         val = val[k]

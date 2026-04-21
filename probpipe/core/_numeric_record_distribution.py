@@ -235,11 +235,6 @@ class NumericRecordDistribution(RecordDistribution):
         """Treedef for a single array (one-leaf pytree)."""
         return jax.tree.structure(None)
 
-    # ``event_shapes`` is inherited from ``RecordDistribution`` and
-    # always returns ``dict[str, tuple[int, ...]]``. Untemplated
-    # (legacy) distributions get an empty dict; use ``.event_shape``
-    # for the scalar shape of a single unnamed field.
-
     @property
     def flat_event_shapes(self) -> list[tuple[int, ...]]:
         """Single-leaf: just the one event_shape."""

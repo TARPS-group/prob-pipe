@@ -1,14 +1,12 @@
 """Tests for the ``RecordDistribution`` / ``_RecordDistributionView`` surface.
 
-Covers the API additions landed in PR #141:
-
 - Public ``.parent`` / ``.field`` properties on ``_RecordDistributionView``
   (parallel to ``_RecordArrayView``).
 - ``.n`` property on ``RecordDistribution`` (STYLE_GUIDE §1.9).
 - Single-field ``.shape`` / ``.ndim`` shims on ``RecordDistribution``
   and ``_RecordDistributionView`` — and their multi-field ``TypeError``.
 - ``event_shapes`` returns ``dict[str, tuple[int, ...]]`` uniformly,
-  including the empty-dict case for untemplated (legacy) distributions.
+  including the empty-dict case for untemplated distributions.
 """
 
 from __future__ import annotations
@@ -132,8 +130,8 @@ class TestSingleFieldShapeShim:
 
 class TestEventShapesUniformDict:
     """``event_shapes`` returns ``dict[str, tuple[int, ...]]`` on every
-    ``RecordDistribution``. Untemplated (legacy) distributions get
-    ``{}`` — matching their empty ``.fields``."""
+    ``RecordDistribution``. Untemplated distributions get ``{}`` —
+    matching their empty ``.fields``."""
 
     def test_templated_returns_dict(self, multi_field_dist):
         es = multi_field_dist.event_shapes
@@ -141,9 +139,9 @@ class TestEventShapesUniformDict:
         assert es == {"x": (), "y": ()}
 
     def test_untemplated_empirical_returns_empty_dict(self):
-        """``EmpiricalDistribution`` built from a raw array has no
-        ``record_template`` — ``event_shapes`` should be ``{}`` (not
-        the event_shape tuple it returned before PR #141)."""
+        """An ``EmpiricalDistribution`` built from a raw array has no
+        ``record_template``; ``event_shapes`` reports ``{}`` and
+        ``.event_shape`` (singular) gives the whole-sample shape."""
         samples = np.random.randn(100, 3)
         dist = EmpiricalDistribution(samples)
         assert dist.record_template is None
