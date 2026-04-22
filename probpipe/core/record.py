@@ -121,7 +121,7 @@ from .provenance import Provenance
 if TYPE_CHECKING:
     import xarray as xr
 
-__all__ = ["Record", "RecordTemplate"]
+__all__ = ["Record", "RecordTemplate", "NumericRecordTemplate"]
 
 # A field value: nested ``Record`` or anything else (stored as-is).
 _FieldValue: TypeAlias = "Any"
@@ -577,6 +577,24 @@ _LeafSpec: TypeAlias = "tuple[int, ...] | None"
 _FieldSpec: TypeAlias = "_LeafSpec | RecordTemplate"
 
 
+def _all_numeric(specs) -> bool:
+    """True iff every spec is either a shape tuple or an already-promoted
+    :class:`NumericRecordTemplate`. Used by the base-class auto-promotion
+    hook so ``RecordTemplate(x=(), y=(3,))`` returns a
+    ``NumericRecordTemplate`` instance without opting in explicitly."""
+    for spec in specs:
+        if spec is None:
+            return False
+        if isinstance(spec, RecordTemplate) and not isinstance(
+            spec, NumericRecordTemplate,
+        ):
+            return False
+        if not isinstance(spec, (tuple, RecordTemplate)):
+            # Leave validation of unsupported spec types to __init__.
+            return False
+    return True
+
+
 class RecordTemplate:
     """Structural description of a Record: field names, leaf shapes, nesting.
 
@@ -602,12 +620,38 @@ class RecordTemplate:
     --------
     ::
 
-        RecordTemplate(x=(), y=(3,))                    # two numeric fields
-        RecordTemplate(label=None, x=())                 # mixed
+        RecordTemplate(x=(), y=(3,))                    # -> NumericRecordTemplate
+        RecordTemplate(label=None, x=())                 # -> RecordTemplate (mixed)
         RecordTemplate(physics=RecordTemplate(force=(), mass=()), obs=())
+
+    Notes
+    -----
+    Calling ``RecordTemplate(...)`` directly auto-promotes to a
+    :class:`NumericRecordTemplate` when every spec is numeric (and
+    every nested sub-template is itself all-numeric). That keeps
+    ``flat_size`` and ``numeric_leaf_shapes`` reachable in the common
+    all-numeric case without requiring the caller to name the subclass.
+    Mixed templates (any ``None`` spec) stay as plain ``RecordTemplate``
+    and do not expose ``flat_size`` — it isn't a meaningful quantity
+    once opaque leaves are in the mix.
     """
 
-    __slots__ = ("_specs", "_flat_size")
+    __slots__ = ("_specs",)
+
+    def __new__(
+        cls,
+        _dict: dict[str, _FieldSpec] | None = None,
+        /,
+        **field_specs: _FieldSpec,
+    ):
+        # Only auto-promote when invoked directly on the base class —
+        # explicit ``NumericRecordTemplate(...)`` calls bypass this path
+        # and run their own strict validation.
+        if cls is RecordTemplate:
+            specs = _dict if _dict is not None else field_specs
+            if specs and _all_numeric(specs.values()):
+                return object.__new__(NumericRecordTemplate)
+        return object.__new__(cls)
 
     def __init__(
         self,
@@ -622,7 +666,7 @@ class RecordTemplate:
                 )
             field_specs = _dict
         if not field_specs:
-            raise ValueError("RecordTemplate requires at least one field")
+            raise ValueError(f"{type(self).__name__} requires at least one field")
         # Validate specs
         for name, spec in field_specs.items():
             if spec is not None and not isinstance(spec, (tuple, RecordTemplate)):
@@ -636,9 +680,13 @@ class RecordTemplate:
                         f"Field {name!r}: shape must be a tuple of "
                         f"non-negative ints, got {spec!r}"
                     )
+        self._post_validate(field_specs)
         specs = OrderedDict(sorted(field_specs.items()))
         object.__setattr__(self, "_specs", specs)
-        object.__setattr__(self, "_flat_size", self._compute_flat_size())
+
+    def _post_validate(self, field_specs: dict[str, _FieldSpec]) -> None:
+        """Subclass hook for stricter spec validation. No-op on the base."""
+        return
 
     # -- Immutability -------------------------------------------------------
 
@@ -671,31 +719,6 @@ class RecordTemplate:
             else:
                 result[name] = spec
         return result
-
-    @property
-    def numeric_leaf_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-field shapes for numeric leaves only (excludes opaque)."""
-        return {
-            name: shape
-            for name, shape in self.leaf_shapes.items()
-            if shape is not None
-        }
-
-    def _compute_flat_size(self) -> int:
-        """Compute total scalar count across all numeric leaves."""
-        from .._utils import prod
-        total = 0
-        for spec in self._specs.values():
-            if isinstance(spec, RecordTemplate):
-                total += spec.flat_size
-            elif spec is not None:
-                total += prod(spec) if spec else 1
-        return total
-
-    @property
-    def flat_size(self) -> int:
-        """Total number of scalar elements across all numeric leaves."""
-        return self._flat_size
 
     def __contains__(self, name: str) -> bool:
         return name in self._specs
@@ -757,12 +780,22 @@ class RecordTemplate:
         Downstream operations that call ``NumericRecord.unflatten`` will
         otherwise raise on the opaque field.
         """
+        # Promote plain ``RecordTemplate.from_record`` to
+        # ``NumericRecordTemplate`` when the source signals it is all-numeric
+        # (a ``NumericRecord`` or any Record whose recursive leaves are
+        # numeric). That keeps ``flat_size`` reachable for the common
+        # all-numeric case without requiring callers to name the subclass.
+        target_cls = cls
+        if cls is RecordTemplate:
+            from ._numeric_record import NumericRecord
+            if isinstance(record, NumericRecord):
+                target_cls = NumericRecordTemplate
         n_batch = len(batch_shape)
         specs: dict[str, _FieldSpec] = {}
         for name in record.fields:
             val = record[name]
             if isinstance(val, Record):
-                specs[name] = cls.from_record(val, batch_shape=batch_shape)
+                specs[name] = target_cls.from_record(val, batch_shape=batch_shape)
                 continue
             # Numeric scalar / numeric array → strip leading batch dims.
             if isinstance(val, (bool, int, float, complex, np.integer, np.floating, np.bool_)):
@@ -779,7 +812,7 @@ class RecordTemplate:
                 continue
             event_shape = full_shape[n_batch:] if n_batch else full_shape
             specs[name] = event_shape
-        return cls(specs)
+        return target_cls(specs)
 
     # -- Repr ---------------------------------------------------------------
 
@@ -792,7 +825,86 @@ class RecordTemplate:
                 parts.append(f"{name}=None")
             else:
                 parts.append(f"{name}={spec}")
-        return f"RecordTemplate({', '.join(parts)})"
+        return f"{type(self).__name__}({', '.join(parts)})"
+
+
+# ---------------------------------------------------------------------------
+# NumericRecordTemplate — all-numeric specialisation
+# ---------------------------------------------------------------------------
+
+
+class NumericRecordTemplate(RecordTemplate):
+    """RecordTemplate where every leaf is numeric.
+
+    Extends :class:`RecordTemplate` by requiring each spec to be a shape
+    tuple (or a nested :class:`NumericRecordTemplate`) — no opaque
+    ``None`` leaves are allowed. That restriction is what makes
+    :attr:`flat_size` and :meth:`numeric_leaf_shapes` meaningful:
+    ``flat_size`` is the total number of scalar elements across every
+    numeric leaf, and the unflatten machinery (``NumericRecord.unflatten``
+    / ``NumericRecordArray.unflatten``) requires a template of this
+    class so that every field can be reconstructed from a slice of the
+    flat buffer.
+
+    Use :meth:`RecordTemplate.from_record` on a :class:`NumericRecord`
+    (it auto-promotes) or call this constructor directly when you have
+    the shape specs in hand.
+    """
+
+    __slots__ = ("_flat_size",)
+
+    def _post_validate(self, field_specs: dict[str, _FieldSpec]) -> None:
+        for name, spec in field_specs.items():
+            if spec is None:
+                raise TypeError(
+                    f"NumericRecordTemplate: field {name!r} is opaque "
+                    f"(spec=None); opaque leaves are not allowed — use "
+                    f"RecordTemplate if you need a mixed template."
+                )
+            if isinstance(spec, RecordTemplate) and not isinstance(
+                spec, NumericRecordTemplate,
+            ):
+                raise TypeError(
+                    f"NumericRecordTemplate: nested field {name!r} is a "
+                    f"{type(spec).__name__}; nested sub-templates must "
+                    f"themselves be NumericRecordTemplate."
+                )
+
+    def __init__(
+        self,
+        _dict: dict[str, _FieldSpec] | None = None,
+        /,
+        **field_specs: _FieldSpec,
+    ):
+        super().__init__(_dict, **field_specs)
+        object.__setattr__(self, "_flat_size", self._compute_flat_size())
+
+    @property
+    def numeric_leaf_shapes(self) -> dict[str, tuple[int, ...]]:
+        """Per-field shapes for numeric leaves.
+
+        On :class:`NumericRecordTemplate` every leaf is numeric, so this
+        is equivalent to :attr:`leaf_shapes`. Kept as a distinct name for
+        symmetry with historical callers that used it as a filter.
+        """
+        return dict(self.leaf_shapes)
+
+    def _compute_flat_size(self) -> int:
+        """Total scalar count across all numeric leaves."""
+        from .._utils import prod
+        total = 0
+        for spec in self._specs.values():
+            if isinstance(spec, NumericRecordTemplate):
+                total += spec.flat_size
+            else:
+                # spec is a shape tuple — validated by ``_post_validate``.
+                total += prod(spec) if spec else 1
+        return total
+
+    @property
+    def flat_size(self) -> int:
+        """Total number of scalar elements across all numeric leaves."""
+        return self._flat_size
 
 
 # ---------------------------------------------------------------------------
@@ -804,11 +916,17 @@ def _spec_size(spec: _FieldSpec) -> int:
     """Number of scalar elements a leaf-spec stands for.
 
     Shared by ``NumericRecord.unflatten`` and ``NumericRecordArray.unflatten``
-    when walking a template and slicing a flat buffer. Opaque fields
-    (``spec is None``) have no flat size and raise.
+    when walking a template and slicing a flat buffer. Nested specs must be
+    :class:`NumericRecordTemplate` so that ``.flat_size`` is defined;
+    opaque leaves (``spec is None``) have no flat size and raise.
     """
-    if isinstance(spec, RecordTemplate):
+    if isinstance(spec, NumericRecordTemplate):
         return spec.flat_size
+    if isinstance(spec, RecordTemplate):
+        raise TypeError(
+            f"nested {type(spec).__name__} contains opaque leaves; "
+            f"unflatten requires a NumericRecordTemplate."
+        )
     if spec is None:
         raise TypeError(
             "opaque template fields (shape=None) have no flat size; "

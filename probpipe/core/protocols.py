@@ -228,18 +228,20 @@ class SupportsCovariance(Protocol):
 
 @runtime_checkable
 class SupportsConditioning(Protocol):
-    """Distribution that supports exact (closed-form) conditioning.
+    """Distribution that has a fast, built-in ``condition_on`` path.
 
-    Reserved for distributions where ``_condition_on`` computes an
-    **exact** posterior — e.g., conjugate updates or joint distribution
-    marginalization.  When ``condition_on(dist, observed)`` is called
-    and *dist* implements this protocol, the exact path is used
+    Implemented by distributions whose ``_condition_on`` produces a
+    posterior without calling into the inference registry — either
+    closed-form (conjugate updates, joint Gaussian marginalization)
+    or amortized (e.g., a pre-trained SBI posterior that just runs a
+    forward pass).  When ``condition_on(dist, observed)`` is called
+    and *dist* implements this protocol, the built-in path is used
     directly; otherwise the inference method registry selects an
-    approximate algorithm (NUTS, RWMH, etc.).
+    algorithm (NUTS, RWMH, variational, ...).
 
-    Probabilistic models that require MCMC or variational inference
-    should **not** implement this protocol — let the registry handle
-    algorithm selection instead.
+    Probabilistic models whose conditioning requires on-the-fly MCMC
+    or variational inference should **not** implement this protocol —
+    let the registry handle algorithm selection instead.
     """
 
     def _condition_on(self, observed: Any, /, **kwargs: Any) -> Any: ...
