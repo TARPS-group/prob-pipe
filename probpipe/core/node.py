@@ -1063,40 +1063,41 @@ class WorkflowFunction(Node):
 
         vectorize = self._resolve_vectorize(values, broadcast_args)
 
-        # JAX vectorization: vmap (no enumeration path — sample everything)
-        if vectorize == "jax":
+        # Collect candidate empirical dists (small enough individually),
+        # sorted smallest first. Greedily include them while the product
+        # stays within budget.
+        candidates = []
+        sample_args: dict[str, Distribution] = {}
+        for name in broadcast_args:
+            dist = values[name]
+            if isinstance(dist, EmpiricalDistribution) and dist.n <= n_broadcast_samples:
+                candidates.append((name, dist))
+            else:
+                sample_args[name] = dist
+        candidates.sort(key=lambda pair: pair[1].n)
+
+        empirical_args: dict[str, EmpiricalDistribution] = {}
+        product_size = 1
+        for name, dist in candidates:
+            if product_size * dist.n <= n_broadcast_samples:
+                empirical_args[name] = dist
+                product_size *= dist.n
+            else:
+                # Too large to enumerate — sample from it instead.
+                sample_args[name] = dist
+
+        # Enumeration preserves exact empirical weights and must run in
+        # all vectorization modes — otherwise the cartesian-product
+        # semantics change with vectorize= (issue surfaced in the
+        # ``EmpiricalDistribution`` broadcasting example).
+        if empirical_args:
+            result = self._broadcast_enumerate(
+                values, empirical_args, sample_args, product_size, n_broadcast_samples,
+            )
+        elif vectorize == "jax":
             result = self._broadcast_jax(values, broadcast_args, n_broadcast_samples)
         else:
-            # Loop vectorization: supports empirical enumeration
-            # Collect candidate empirical dists (small enough individually), sorted smallest first
-            candidates = []
-            sample_args: dict[str, Distribution] = {}
-            for name in broadcast_args:
-                dist = values[name]
-                if isinstance(dist, EmpiricalDistribution) and dist.n <= n_broadcast_samples:
-                    candidates.append((name, dist))
-                else:
-                    sample_args[name] = dist
-
-            candidates.sort(key=lambda pair: pair[1].n)
-
-            # Greedily include smallest empirical dists while product stays within budget
-            empirical_args: dict[str, EmpiricalDistribution] = {}
-            product_size = 1
-            for name, dist in candidates:
-                if product_size * dist.n <= n_broadcast_samples:
-                    empirical_args[name] = dist
-                    product_size *= dist.n
-                else:
-                    # Too large to enumerate — sample from it instead
-                    sample_args[name] = dist
-
-            if empirical_args:
-                result = self._broadcast_enumerate(
-                    values, empirical_args, sample_args, product_size, n_broadcast_samples
-                )
-            else:
-                result = self._broadcast_sample(values, broadcast_args, n_broadcast_samples)
+            result = self._broadcast_sample(values, broadcast_args, n_broadcast_samples)
 
         # Attach provenance
         parents = tuple(
