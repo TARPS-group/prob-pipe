@@ -247,9 +247,10 @@ class NumericRecord(Record):
     def __bool__(self) -> bool:
         return bool(self._single_numeric_leaf())
 
-    def __array__(self, dtype=None):
+    def __array__(self, dtype=None, copy=None):
         leaf = self._single_numeric_leaf()
-        return np.asarray(leaf, dtype=dtype) if dtype is not None else np.asarray(leaf)
+        arr = np.asarray(leaf, dtype=dtype) if dtype is not None else np.asarray(leaf)
+        return arr.copy() if copy else arr
 
     # JAX treats ``__jax_array__`` as the conversion hook for
     # ``jnp.asarray`` — without it, ``jnp.asarray(nr)`` goes through
