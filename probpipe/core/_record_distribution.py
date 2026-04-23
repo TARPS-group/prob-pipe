@@ -457,17 +457,23 @@ class RecordDistribution(Distribution[Record]):
 
     @property
     def event_size(self) -> int:
-        """Total number of scalar elements in one sample."""
+        """Total number of scalar elements in one sample.
+
+        Sums the sizes of every numeric leaf described by the template;
+        opaque leaves contribute zero. A ``NumericRecordTemplate`` has
+        ``flat_size`` already cached — reuse it when available.
+        """
         tpl = self.record_template
         if tpl is None:
             return 0
-        if isinstance(tpl, RecordTemplate):
-            return sum(
-                prod(shape) if shape else 1
-                for shape in tpl.numeric_leaf_shapes.values()
-            )
-        # Legacy Record template fallback
-        return tpl.flat_size
+        from .record import NumericRecordTemplate
+        if isinstance(tpl, NumericRecordTemplate):
+            return tpl.flat_size
+        return sum(
+            prod(shape) if shape else 1
+            for shape in tpl.leaf_shapes.values()
+            if shape is not None
+        )
 
     @property
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
