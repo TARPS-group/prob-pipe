@@ -337,7 +337,7 @@ class WorkflowFunction(Node):
         self,
         *,
         func: Callable,
-        workflow_kind: WorkflowKind | str | None = WorkflowKind.DEFAULT,
+        workflow_kind: WorkflowKind | str | None = WorkflowKind.DEFAULT,  # TODO: remove str | None in follow-up issue
         name: str | None = None,
         bind: dict[str, Any] | None = None,         # construction-time bindings (defaults/config)
         module: Any | None = None,                  # typically a Module; kept as Any to avoid import cycles
@@ -352,6 +352,7 @@ class WorkflowFunction(Node):
         self._sig = inspect.signature(func)
         self._hints = get_type_hints(func)
         # Convert legacy string / None values to WorkflowKind enum
+        # TODO: remove this legacy conversion in follow-up issue
         if workflow_kind is None:
             self._workflow_kind_raw = WorkflowKind.OFF
         elif isinstance(workflow_kind, str) and not isinstance(workflow_kind, WorkflowKind):
@@ -411,19 +412,21 @@ class WorkflowFunction(Node):
         3. If global is also ``DEFAULT``, auto-detect: ``TASK`` when
            Prefect is installed, ``OFF`` otherwise.
 
-        ``TASK`` / ``FLOW`` with Prefect missing raises ``ImportError``
-        for explicit per-instance settings, but falls back to ``OFF``
-        for values inherited from global config (graceful degradation).
+        If Prefect is not installed but ``TASK`` or ``FLOW`` is requested
+        (either per-instance or globally), a warning is emitted and the
+        mode falls back to ``OFF``.
         """
         raw = self._workflow_kind_raw
 
         # 1. Per-instance explicit (non-DEFAULT) override
         if raw is not WorkflowKind.DEFAULT:
             if raw in (WorkflowKind.TASK, WorkflowKind.FLOW) and task is None:
-                raise ImportError(
-                    f"Prefect is required for workflow_kind={raw!r}: "
-                    f"pip install probpipe[prefect]"
+                warnings.warn(
+                    f"workflow_kind={raw!r} requested but Prefect is not installed. "
+                    f"Falling back to OFF. Install with: pip install probpipe[prefect]",
+                    stacklevel=2,
                 )
+                return WorkflowKind.OFF
             return raw
 
         # 2. Resolve global config

@@ -214,8 +214,8 @@ class TestEffectiveWorkflowKind:
         )
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
-    def test_explicit_task_raises_without_prefect(self, monkeypatch):
-        """Per-instance TASK + Prefect missing → ImportError."""
+    def test_explicit_task_warns_without_prefect(self, monkeypatch):
+        """Per-instance TASK + Prefect missing → warning + OFF."""
         import probpipe.core.node as node_mod
         monkeypatch.setattr(node_mod, "task", None)
         monkeypatch.setattr(node_mod, "flow", None)
@@ -228,8 +228,9 @@ class TestEffectiveWorkflowKind:
         wf = WorkflowFunction(
             func=noop, workflow_kind=WorkflowKind.TASK, vectorize="loop", seed=0,
         )
-        with pytest.raises(ImportError, match="Prefect is required"):
-            wf.effective_workflow_kind
+        with pytest.warns(UserWarning, match="Prefect is not installed"):
+            kind = wf.effective_workflow_kind
+        assert kind is WorkflowKind.OFF
 
     def test_global_task_falls_back_without_prefect(self, monkeypatch):
         """Global TASK + Prefect missing → OFF (graceful)."""
