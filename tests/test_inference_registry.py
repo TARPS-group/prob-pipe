@@ -59,7 +59,7 @@ def simple_model():
 
 @pytest.fixture
 def data():
-    return jnp.ones(20, dtype=jnp.float32)
+    return jnp.ones(20, dtype=float)
 
 
 # ---------------------------------------------------------------------------

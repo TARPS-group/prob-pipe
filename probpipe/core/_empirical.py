@@ -29,6 +29,7 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
+from .._dtype import _as_float_array
 from .._weights import Weights, weighted_mean
 from .constraints import Constraint, real
 from . import _distribution_base as _base
@@ -279,7 +280,7 @@ class NumericEmpiricalDistribution(
         name: str | None = None,
     ):
         # Store only the JAX array — bypass the generic base's storage.
-        self._samples = jnp.asarray(samples, dtype=jnp.float32)
+        self._samples = _as_float_array(samples)
         if self._samples.ndim == 0:
             raise ValueError("samples must have at least 1 dimension (the sample axis).")
 
@@ -699,12 +700,12 @@ class ArrayBootstrapReplicateDistribution(BootstrapReplicateDistribution[Array],
     ):
         # Coerce to JAX array, then let the generic base store it.
         if isinstance(source, EmpiricalDistribution):
-            jax_data = jnp.asarray(list(source.samples), dtype=jnp.float32)
+            jax_data = _as_float_array(list(source.samples))
             self._data = jax_data
             self._w = source._w
             default_n = source.n
         else:
-            jax_data = jnp.asarray(source, dtype=jnp.float32)
+            jax_data = _as_float_array(source)
             if jax_data.ndim == 0:
                 raise ValueError("source must have at least 1 dimension (the observation axis).")
             self._data = jax_data

@@ -38,8 +38,15 @@ def _get_init_state(
     dist: Distribution, init: ArrayLike | None, data: ArrayLike | None,
 ) -> jnp.ndarray:
     """Determine an initial chain state from the distribution or data."""
+    # Inherit dtype from the target distribution when available, so that
+    # log_prob/sample stay self-consistent under JAX x64.
+    target_dtype = getattr(dist, "dtype", None)
+    if not isinstance(target_dtype, jnp.dtype):
+        from .._dtype import _default_float_dtype
+        target_dtype = _default_float_dtype()
+
     if init is not None:
-        return jnp.atleast_1d(jnp.asarray(init, dtype=jnp.float32))
+        return jnp.atleast_1d(jnp.asarray(init, dtype=target_dtype))
 
     if isinstance(dist, SupportsMean):
         try:
@@ -49,7 +56,7 @@ def _get_init_state(
                 if not isinstance(m, NumericRecord):
                     m = NumericRecord.from_record(m)
                 m = m.flatten()
-            return jnp.atleast_1d(jnp.asarray(m, dtype=jnp.float32))
+            return jnp.atleast_1d(jnp.asarray(m, dtype=target_dtype))
         except Exception:
             pass
 
@@ -57,7 +64,7 @@ def _get_init_state(
         return jnp.atleast_1d(jnp.mean(jnp.asarray(data), axis=0))
 
     if hasattr(dist, "event_shape"):
-        return jnp.zeros(dist.event_shape, dtype=jnp.float32)
+        return jnp.zeros(dist.event_shape, dtype=target_dtype)
 
     raise ValueError(
         "Cannot determine initial state: provide init=, "

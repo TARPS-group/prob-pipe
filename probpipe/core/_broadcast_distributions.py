@@ -380,7 +380,7 @@ def _make_marginal(
                 pass
         try:
             stacked = jnp.stack(
-                [jnp.asarray(r, dtype=jnp.float32) for r in output_samples], axis=0
+                [jnp.asarray(r) for r in output_samples], axis=0
             )
             return _ArrayMarginal(stacked, weights, name=name)
         except (ValueError, TypeError):
@@ -391,7 +391,7 @@ def _make_marginal(
         return _ListMarginal(output_samples, weights, name=name)
 
     # Single array result (e.g., from vmap); ensure at least 1D for the sample axis
-    arr = jnp.atleast_1d(jnp.asarray(output_samples, dtype=jnp.float32))
+    arr = jnp.atleast_1d(jnp.asarray(output_samples))
     return _ArrayMarginal(arr, weights, name=name)
 
 

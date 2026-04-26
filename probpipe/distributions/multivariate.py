@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ._tfp_base import TFPDistribution
+from .._dtype import _as_float_array, _promote_floats
 from ..core.constraints import (
     Constraint,
     real,
@@ -57,24 +58,25 @@ class MultivariateNormal(TFPDistribution):
         cov: ArrayLike | None = None,
         name: str,
     ):
-        loc = jnp.asarray(loc, dtype=jnp.float32)
-        if loc.ndim == 0:
-            loc = loc.reshape(1)
-
         if scale_tril is not None and cov is not None:
             raise ValueError("Provide exactly one of scale_tril or cov, not both.")
 
         if scale_tril is not None:
-            scale_tril = jnp.asarray(scale_tril, dtype=jnp.float32)
+            _, (loc, scale_tril) = _promote_floats(loc, scale_tril)
         elif cov is not None:
-            cov = jnp.asarray(cov, dtype=jnp.float32)
+            _, (loc, cov) = _promote_floats(loc, cov)
+        else:
+            raise ValueError("One of scale_tril or cov must be provided.")
+
+        if loc.ndim == 0:
+            loc = loc.reshape(1)
+
+        if cov is not None:
             if cov.shape != (loc.shape[0], loc.shape[0]):
                 raise ValueError(
                     f"cov shape {cov.shape} does not match loc length {loc.shape[0]}."
                 )
             scale_tril = jnp.linalg.cholesky(cov)
-        else:
-            raise ValueError("One of scale_tril or cov must be provided.")
 
         self._loc = loc
         self._scale_tril = scale_tril
@@ -136,7 +138,7 @@ class Dirichlet(TFPDistribution):
         *,
         name: str,
     ):
-        concentration = jnp.asarray(concentration, dtype=jnp.float32)
+        concentration = _as_float_array(concentration)
         if concentration.ndim == 0:
             raise ValueError("concentration must be at least 1-D.")
 
@@ -199,17 +201,15 @@ class Multinomial(TFPDistribution):
         if (probs is None) == (logits is None):
             raise ValueError("Exactly one of probs or logits must be provided.")
 
-        total_count = jnp.asarray(total_count, dtype=jnp.float32)
-
         if probs is not None:
-            probs = jnp.asarray(probs, dtype=jnp.float32)
+            _, (total_count, probs) = _promote_floats(total_count, probs)
             self._probs = probs
             self._logits = None
             self._tfp_dist = tfd.Multinomial(
                 total_count=total_count, probs=probs
             )
         else:
-            logits = jnp.asarray(logits, dtype=jnp.float32)
+            _, (total_count, logits) = _promote_floats(total_count, logits)
             self._logits = logits
             self._probs = None
             self._tfp_dist = tfd.Multinomial(
@@ -282,13 +282,11 @@ class Wishart(TFPDistribution):
         if scale_tril is None and scale is None:
             raise ValueError("One of scale_tril or scale must be provided.")
 
-        df = jnp.asarray(df, dtype=jnp.float32)
-
         if scale is not None:
-            scale = jnp.asarray(scale, dtype=jnp.float32)
+            _, (df, scale) = _promote_floats(df, scale)
             scale_tril = jnp.linalg.cholesky(scale)
         else:
-            scale_tril = jnp.asarray(scale_tril, dtype=jnp.float32)
+            _, (df, scale_tril) = _promote_floats(df, scale_tril)
 
         self._df = df
         self._scale_tril = scale_tril
@@ -351,8 +349,9 @@ class VonMisesFisher(TFPDistribution):
         *,
         name: str,
     ):
-        mean_direction = jnp.asarray(mean_direction, dtype=jnp.float32)
-        concentration = jnp.asarray(concentration, dtype=jnp.float32)
+        _, (mean_direction, concentration) = _promote_floats(
+            mean_direction, concentration
+        )
 
         self._mean_direction = mean_direction
         self._concentration = concentration

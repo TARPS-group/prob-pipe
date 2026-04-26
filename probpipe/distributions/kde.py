@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ._tfp_base import TFPDistribution
+from .._dtype import _as_float_array
 from ..core.constraints import Constraint, real
 from ..custom_types import ArrayLike
 from .._weights import Weights
@@ -56,7 +57,7 @@ class KDEDistribution(TFPDistribution):
         bandwidth: ArrayLike | None = None,
         name: str | None = None,
     ):
-        samples = jnp.asarray(samples, dtype=jnp.float32)
+        samples = _as_float_array(samples)
         if samples.ndim == 0:
             raise ValueError("samples must have at least 1 dimension.")
         if samples.ndim == 1:
@@ -78,7 +79,7 @@ class KDEDistribution(TFPDistribution):
 
         # Bandwidth (Silverman's rule default)
         if bandwidth is not None:
-            bw = jnp.broadcast_to(jnp.asarray(bandwidth, dtype=jnp.float32), (d,))
+            bw = jnp.broadcast_to(jnp.asarray(bandwidth, dtype=samples.dtype), (d,))
         else:
             std = jnp.sqrt(self._w.variance(samples))
             # Silverman's rule: n^{-1/(d+4)} * std

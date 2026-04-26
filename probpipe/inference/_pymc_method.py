@@ -122,7 +122,7 @@ class PyMCADVIMethod(InferenceMethod):
             [np.atleast_2d(d).reshape(num_results, -1) for d in chain_draws],
             axis=1,
         )
-        chains = [jnp.asarray(samples, dtype=jnp.float32)]
+        chains = [jnp.asarray(samples)]
         algorithm = f"pymc_{vi_method}"
 
         return make_posterior(

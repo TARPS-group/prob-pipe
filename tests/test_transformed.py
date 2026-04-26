@@ -92,14 +92,15 @@ class TestTFPBase:
     def test_mean_delegates_to_tfp_when_available(self):
         """Shift bijector preserves tractable mean exactly."""
         base = Normal(loc=0.0, scale=1.0, name="x")
-        td = TransformedDistribution(base, tfb.Shift(5.0))
+        # Pass a JAX array so the bijector's constant honors x64 mode.
+        td = TransformedDistribution(base, tfb.Shift(jnp.array(5.0)))
         # Analytical identity: Shift(c) on N(0,1) has mean c exactly.
         assert jnp.isclose(mean(td), 5.0, atol=1e-6)
 
     def test_variance_delegates_to_tfp_when_available(self):
         """Scale bijector has tractable variance exactly."""
         base = Normal(loc=0.0, scale=1.0, name="x")
-        td = TransformedDistribution(base, tfb.Scale(2.0))
+        td = TransformedDistribution(base, tfb.Scale(jnp.array(2.0)))
         # Analytical identity: Scale(s) on N(0,1) has variance s^2 exactly.
         assert jnp.isclose(variance(td), 4.0, atol=1e-6)
 
@@ -135,7 +136,7 @@ class TestNonTFPBase:
 class TestChainedBijectors:
     def test_chain_sample_shape(self, key):
         base = Normal(loc=0.0, scale=1.0, name="x")
-        chain = tfb.Chain([tfb.Exp(), tfb.Shift(1.0), tfb.Scale(2.0)])
+        chain = tfb.Chain([tfb.Exp(), tfb.Shift(jnp.array(1.0)), tfb.Scale(jnp.array(2.0))])
         td = TransformedDistribution(base, chain)
         s = jnp.asarray(sample(td, key=key, sample_shape=(10,)))
         assert s.shape == (10,)
@@ -144,7 +145,7 @@ class TestChainedBijectors:
 
     def test_chain_log_prob_finite(self, key):
         base = Normal(loc=0.0, scale=1.0, name="x")
-        chain = tfb.Chain([tfb.Exp(), tfb.Shift(1.0), tfb.Scale(2.0)])
+        chain = tfb.Chain([tfb.Exp(), tfb.Shift(jnp.array(1.0)), tfb.Scale(jnp.array(2.0))])
         td = TransformedDistribution(base, chain)
         s = sample(td, key=key, sample_shape=(5,))
         lp = log_prob(td, s)
@@ -206,7 +207,8 @@ class TestNameAndRepr:
 
     def test_dtype(self):
         td = TransformedDistribution(Normal(0.0, 1.0, name="x"), tfb.Exp())
-        assert td.dtype == jnp.float32
+        # Inherits JAX's default float dtype (float32 normally, float64 with x64).
+        assert td.dtype == jnp.zeros((), dtype=float).dtype
 
 
 class TestTransformedProtocolDuckTyping:

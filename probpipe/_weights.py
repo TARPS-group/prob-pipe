@@ -13,6 +13,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
+from ._dtype import _as_float_array, _default_float_dtype
 from .custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = [
@@ -56,7 +57,7 @@ def _validate_to_log_weights(
         raise ValueError("Provide either weights or log_weights, not both.")
 
     if weights is not None:
-        weights = jnp.asarray(weights, dtype=jnp.float32)
+        weights = _as_float_array(weights)
         if weights.shape != (n,):
             raise ValueError(
                 f"weights shape {weights.shape} does not match "
@@ -70,7 +71,7 @@ def _validate_to_log_weights(
         return jnp.log(weights), False
 
     if log_weights is not None:
-        log_weights = jnp.asarray(log_weights, dtype=jnp.float32)
+        log_weights = _as_float_array(log_weights)
         if log_weights.shape != (n,):
             raise ValueError(
                 f"log_weights shape {log_weights.shape} does not match "
@@ -98,9 +99,14 @@ def normalized_log_weights(log_weights: Array) -> Array:
     return jax.nn.log_softmax(log_weights)
 
 
-def uniform_weights(n: int) -> Array:
-    """Return uniform weight vector of length *n*."""
-    return jnp.ones(n, dtype=jnp.float32) / n
+def uniform_weights(n: int, dtype: jnp.dtype | None = None) -> Array:
+    """Return uniform weight vector of length *n*.
+
+    *dtype* defaults to JAX's current default float dtype.
+    """
+    if dtype is None:
+        dtype = _default_float_dtype()
+    return jnp.ones(n, dtype=dtype) / n
 
 
 def weighted_mean(weights: Array | None, values: Array) -> Array:
@@ -356,12 +362,12 @@ class Weights:
         # Infer n from array length when not given explicitly.
         if n is None:
             if weights is not None:
-                weights = jnp.asarray(weights, dtype=jnp.float32)
+                weights = _as_float_array(weights)
                 if weights.ndim != 1 or weights.shape[0] == 0:
                     raise ValueError("weights must be a non-empty 1-D array.")
                 n = weights.shape[0]
             elif log_weights is not None:
-                log_weights = jnp.asarray(log_weights, dtype=jnp.float32)
+                log_weights = _as_float_array(log_weights)
                 if log_weights.ndim != 1 or log_weights.shape[0] == 0:
                     raise ValueError("log_weights must be a non-empty 1-D array.")
                 n = log_weights.shape[0]
@@ -474,8 +480,13 @@ class Weights:
 
     @property
     def dtype(self) -> jnp.dtype:
-        """Data type: always ``float32``."""
-        return jnp.float32
+        """Data type of the underlying log-weights array.
+
+        For uniform weights, returns JAX's current default float dtype.
+        """
+        if self._log_weights is not None:
+            return self._log_weights.dtype
+        return _default_float_dtype()
 
     def __len__(self) -> int:
         return self._n

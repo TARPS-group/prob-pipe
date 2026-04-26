@@ -17,13 +17,13 @@ def _sigmoid(x):
 
 @pytest.fixture
 def poisson_lik():
-    X = np.column_stack([np.ones(20), np.linspace(-1, 1, 20)]).astype(np.float32)
+    X = np.column_stack([np.ones(20), np.linspace(-1, 1, 20)]).astype(float)
     return GLMLikelihood(tfp_glm.Poisson(), X)
 
 
 @pytest.fixture
 def bernoulli_lik():
-    X = np.column_stack([np.ones(30), np.linspace(-2, 2, 30)]).astype(np.float32)
+    X = np.column_stack([np.ones(30), np.linspace(-2, 2, 30)]).astype(float)
     return GLMLikelihood(tfp_glm.Bernoulli(), X)
 
 
@@ -46,7 +46,7 @@ class TestGLMLikelihood:
         """Poisson GLM log-likelihood must match sum of scipy.stats.poisson.logpmf."""
         params = jnp.array([1.0, 0.5])
         data = jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1,
-                          0, 2, 6, 1, 3, 2, 0, 4, 1, 3], dtype=jnp.float32)
+                          0, 2, 6, 1, 3, 2, 0, 4, 1, 3], dtype=float)
         ll = float(poisson_lik.log_likelihood(params, data))
 
         # Independent baseline: Poisson log link -> rate = exp(X @ params).
@@ -60,7 +60,7 @@ class TestGLMLikelihood:
         """Bernoulli GLM log-likelihood must match sum of scipy.stats.bernoulli.logpmf."""
         params = jnp.array([0.2, 1.0])
         rng = np.random.default_rng(0)
-        data = rng.binomial(1, 0.5, size=30).astype(np.float32)
+        data = rng.binomial(1, 0.5, size=30).astype(float)
         ll = float(bernoulli_lik.log_likelihood(params, jnp.asarray(data)))
 
         # Independent baseline: Bernoulli logit link -> p = sigmoid(X @ params).
@@ -73,7 +73,7 @@ class TestGLMLikelihood:
     def test_poisson_generate_data_moments(self):
         """Sample mean must approximate exp(intercept) for constant-rate Poisson."""
         n = 2000
-        X = np.column_stack([np.ones(n), np.zeros(n)]).astype(np.float32)
+        X = np.column_stack([np.ones(n), np.zeros(n)]).astype(float)
         lik = GLMLikelihood(tfp_glm.Poisson(), X, seed=7)
         params = jnp.array([0.5, 0.0])  # constant rate = exp(0.5)
         expected_rate = np.exp(0.5)
@@ -92,7 +92,7 @@ class TestGLMLikelihood:
 
     def test_bernoulli_log_likelihood(self, bernoulli_lik):
         params = jnp.array([0.0, 1.0])
-        data = jnp.ones(30, dtype=jnp.float32)
+        data = jnp.ones(30, dtype=float)
         ll = bernoulli_lik.log_likelihood(params, data)
         assert jnp.isfinite(ll)
 
@@ -103,7 +103,7 @@ class TestGLMLikelihood:
 
     def test_1d_covariate(self):
         """1-D x should be handled (transposed to column vector)."""
-        x = np.linspace(-1, 1, 15).astype(np.float32)
+        x = np.linspace(-1, 1, 15).astype(float)
         lik = GLMLikelihood(tfp_glm.Poisson(), x)
         assert lik._x.shape == (15, 1)
         params = jnp.array([0.5])
@@ -111,7 +111,7 @@ class TestGLMLikelihood:
         assert jnp.isfinite(ll)
 
     def test_negbin(self):
-        X = np.column_stack([np.ones(20), np.linspace(-1, 1, 20)]).astype(np.float32)
+        X = np.column_stack([np.ones(20), np.linspace(-1, 1, 20)]).astype(float)
         lik = GLMLikelihood(tfp_glm.NegativeBinomial(), X)
         params = jnp.array([1.0, 0.3])
         ll = lik.log_likelihood(params, jnp.ones(20))
@@ -124,13 +124,13 @@ class TestGLMLikelihood:
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), name="beta")
         model = SimpleModel(prior, poisson_lik)
         data = jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1,
-                           0, 2, 6, 1, 3, 2, 0, 4, 1, 3], dtype=jnp.float32)
+                           0, 2, 6, 1, 3, 2, 0, 4, 1, 3], dtype=float)
         posterior = condition_on(model, data, num_results=100, num_warmup=50, random_seed=0)
         m = mean(posterior)
         assert m.shape == (2,)
 
     def test_seed_reproducibility(self):
-        X = np.column_stack([np.ones(10), np.zeros(10)]).astype(np.float32)
+        X = np.column_stack([np.ones(10), np.zeros(10)]).astype(float)
         params = jnp.array([1.0, 0.0])
         lik1 = GLMLikelihood(tfp_glm.Poisson(), X, seed=42)
         lik2 = GLMLikelihood(tfp_glm.Poisson(), X, seed=42)
@@ -179,7 +179,7 @@ class TestGLMLikelihoodWithValues:
 
     def test_values_matches_raw(self, poisson_lik):
         params_raw = jnp.array([1.0, 0.5])
-        data_raw = jnp.ones(20, dtype=jnp.float32)
+        data_raw = jnp.ones(20, dtype=float)
         ll_raw = float(poisson_lik.log_likelihood(params_raw, data_raw))
 
         params_v = Record(beta=params_raw)
@@ -201,7 +201,7 @@ class TestGLMLikelihoodWithValues:
         model = SimpleModel(prior, poisson_lik)
         data = Record(y=jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1,
                                     0, 2, 6, 1, 3, 2, 0, 4, 1, 3],
-                                   dtype=jnp.float32))
+                                   dtype=float))
         posterior = condition_on(model, data, num_results=50, num_warmup=25, random_seed=0)
         assert mean(posterior).shape == (2,)
         # Prior has no record_template, so draws are raw arrays.
@@ -220,11 +220,11 @@ class TestIncrementalConditionerAutoConvert:
         from probpipe.inference import ApproximateDistribution
         from probpipe.core.protocols import SupportsLogProb
 
-        X = np.column_stack([np.ones(20), np.linspace(-1, 1, 20)]).astype(np.float32)
+        X = np.column_stack([np.ones(20), np.linspace(-1, 1, 20)]).astype(float)
         lik = GLMLikelihood(tfp_glm.Poisson(), X)
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), name="beta")
         model = SimpleModel(prior, lik)
-        data = jnp.ones(20, dtype=jnp.float32)
+        data = jnp.ones(20, dtype=float)
 
         # Get an ApproximateDistribution (does NOT support SupportsLogProb)
         post = condition_on(model, data, num_results=100, num_warmup=50, random_seed=0)
