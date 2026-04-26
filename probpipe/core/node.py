@@ -366,7 +366,14 @@ class WorkflowFunction(Node):
     ):
         self._func = func
         self._sig = inspect.signature(func)
-        self._hints = get_type_hints(func)
+        # PEP 695 type parameters (``def f[T](...)``) live on
+        # ``__type_params__`` and are not in the function's globals, so
+        # ``get_type_hints`` cannot resolve them when annotations are
+        # strings (PEP 563 / ``from __future__ import annotations``).
+        # Pass them through ``localns`` to avoid NameError on Python 3.12.
+        type_params = getattr(func, "__type_params__", ())
+        type_param_ns = {tp.__name__: tp for tp in type_params}
+        self._hints = get_type_hints(func, localns=type_param_ns or None)
         self._workflow_kind = workflow_kind
         self._name = name or getattr(func, "__name__", self.__class__.__name__)
 
