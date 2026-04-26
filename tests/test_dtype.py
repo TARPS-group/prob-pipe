@@ -248,3 +248,144 @@ def test_x32_weights_default():
     assert w.dtype == jnp.float32
     u = Weights.uniform(5)
     assert u.dtype == jnp.float32
+
+
+# ---------------------------------------------------------------------------
+# Discrete distributions, KDE, GRF, and joint conditioning under x64
+# ---------------------------------------------------------------------------
+
+
+def test_x64_discrete_distributions():
+    out = _run_x64(
+        """
+        from probpipe.distributions.discrete import (
+            Bernoulli, Binomial, Poisson, Categorical, NegativeBinomial,
+        )
+        import probpipe.core.ops as ops
+        import jax
+
+        cases = [
+            Bernoulli(probs=0.5, name='b'),
+            Binomial(total_count=10, probs=0.3, name='bn'),
+            Poisson(rate=2.0, name='p'),
+            Categorical(probs=jnp.array([0.2, 0.3, 0.5]), name='c'),
+            NegativeBinomial(total_count=5.0, probs=0.4, name='nb'),
+        ]
+        for d in cases:
+            # log_prob on int-valued support should not raise
+            sample = ops.sample(d, key=jax.random.key(0))
+            ops.log_prob(d, sample)
+        # The float-valued probs/rate/logits should produce float64 internals
+        b = Bernoulli(probs=0.5, name='b2')
+        assert b._probs.dtype == jnp.float64
+        print('OK')
+        """
+    )
+    assert out == "OK"
+
+
+def test_x64_kde_distribution():
+    out = _run_x64(
+        """
+        from probpipe.distributions.kde import KDEDistribution
+        import probpipe.core.ops as ops
+        import jax
+
+        samples = jnp.linspace(-2.0, 2.0, 50)
+        kde = KDEDistribution(samples, name='kde')
+        assert kde.dtype == jnp.float64
+        assert ops.sample(kde, key=jax.random.key(0)).dtype == jnp.float64
+        assert ops.log_prob(kde, 0.5).dtype == jnp.float64
+        print('OK')
+        """
+    )
+    assert out == "OK"
+
+
+def test_x64_gaussian_random_function():
+    out = _run_x64(
+        """
+        from probpipe.distributions import MultivariateNormal
+        from probpipe.distributions.gaussian_random_function import LinearBasisFunction
+        import jax
+
+        weights = MultivariateNormal(
+            loc=jnp.zeros(3), cov=jnp.eye(3), name='w',
+        )
+        feature_map = lambda X: jnp.stack([jnp.ones_like(X[..., 0]),
+                                            X[..., 0],
+                                            X[..., 0] ** 2], axis=-1)
+        grf = LinearBasisFunction(
+            feature_map, weights, input_shape=(1,), output_shape=(),
+        )
+        X = jnp.linspace(-1.0, 1.0, 5)[:, None]
+        d = grf(X)
+        assert d.dtype == jnp.float64, d.dtype
+        # bias defaults to zeros at the weight dtype
+        assert grf._bias.dtype == jnp.float64
+        print('OK')
+        """
+    )
+    assert out == "OK"
+
+
+def test_x64_product_distribution_promotes():
+    out = _run_x64(
+        """
+        from probpipe.distributions import ProductDistribution
+        from probpipe.distributions.continuous import Normal
+        import probpipe.core.ops as ops
+        import jax
+
+        prod = ProductDistribution(
+            a=Normal(loc=0.0, scale=1.0, name='a'),
+            b=Normal(loc=0.0, scale=1.0, name='b'),
+        )
+        sample = ops.sample(prod, key=jax.random.key(0))
+        assert sample['a'].dtype == jnp.float64
+        assert sample['b'].dtype == jnp.float64
+        assert ops.log_prob(prod, sample).dtype == jnp.float64
+        print('OK')
+        """
+    )
+    assert out == "OK"
+
+
+def test_x64_joint_gaussian_conditioning():
+    """Conditioning on observed data must respect the parent's dtype under x64."""
+    out = _run_x64(
+        """
+        from probpipe.distributions.joint import JointGaussian
+        from probpipe.core.ops import condition_on, sample
+        import jax
+
+        jg = JointGaussian(
+            mean=jnp.zeros(3), cov=jnp.eye(3), x=1, y=2,
+        )
+        # Conditioning on a float32 observed value must not corrupt the
+        # parent's float64 dtype.
+        cond = condition_on(jg, x=jnp.array([1.0], dtype=jnp.float32))
+        sample_y = sample(cond, key=jax.random.key(0))
+        assert sample_y['y'].dtype == jnp.float64, sample_y['y'].dtype
+        print('OK')
+        """
+    )
+    assert out == "OK"
+
+
+def test_x64_bootstrap_distribution():
+    out = _run_x64(
+        """
+        from probpipe.core._numeric_record_distribution import BootstrapDistribution
+        import probpipe.core.ops as ops
+        import jax
+
+        evals = jnp.linspace(0.0, 1.0, 10)
+        b = BootstrapDistribution(evals, name='b')
+        assert b.dtype == jnp.float64
+        assert ops.mean(b).dtype == jnp.float64
+        assert ops.sample(b, key=jax.random.key(0)).dtype == jnp.float64
+        print('OK')
+        """
+    )
+    assert out == "OK"

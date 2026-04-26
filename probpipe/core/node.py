@@ -747,7 +747,10 @@ class WorkflowFunction(Node):
                     else:
                         dist = v
                         es = dist.event_shape
-                        dummy_kw[name] = jnp.zeros(es) if es else jnp.zeros(())
+                        # Match the distribution's own dtype so the probe
+                        # mirrors what the inner function actually sees.
+                        dt = getattr(dist, "dtype", None) or jnp.zeros((), dtype=float).dtype
+                        dummy_kw[name] = jnp.zeros(es, dtype=dt) if es else jnp.zeros((), dtype=dt)
                 elif name in values:
                     v = values[name]
                     if isinstance(v, jnp.ndarray):
