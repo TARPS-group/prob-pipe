@@ -94,7 +94,12 @@ class RecordArray(Record):
                 f"Field names {sorted(fields)} do not match template "
                 f"fields {sorted(template.fields)}"
             )
-        store = OrderedDict(sorted(fields.items()))
+        # Reorder ``fields`` to match the template's insertion order so
+        # the RecordArray's iteration order is canonical regardless of
+        # how the caller spelled the kwargs.
+        store: "OrderedDict[str, Any]" = OrderedDict(
+            (name, fields[name]) for name in template.fields
+        )
         # Subclass validation hook. Runs after sort / name-check so
         # subclasses (e.g. NumericRecordArray) see a canonicalised view
         # of the leaves. Raises from ``_validate_fields`` propagate.
@@ -256,6 +261,13 @@ class RecordArray(Record):
             Records with consistent field structure.
         template : RecordTemplate, optional
             If not provided, inferred from the first record.
+
+        Notes
+        -----
+        Any backend metadata captured on the source ``NumericRecord``
+        instances (xarray dims / coords, pandas index) is dropped — the
+        stacked leaves are plain ``jax.Array`` objects. ``RecordArray``
+        does not currently carry per-row aux.
         """
         if not records:
             raise ValueError("Cannot stack empty list of Records")

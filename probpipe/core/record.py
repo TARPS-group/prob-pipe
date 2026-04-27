@@ -12,21 +12,24 @@ The Record family
 | Class                                                       | Purpose                                                                                 |
 |-------------------------------------------------------------|-----------------------------------------------------------------------------------------|
 | :class:`Record`                                             | Single structured value; fields may be arrays, scalars, strings, xarray, nested Record. |
-| :class:`~probpipe.NumericRecord` (subclass)                 | Single structured value; every leaf is a numeric array (validated at construction).     |
+| :class:`~probpipe.NumericRecord` (subclass)                 | Single structured value; every leaf is a ``jax.Array`` (post-construction invariant).   |
 | :class:`~probpipe.RecordArray`                              | Batch of ``Record`` elements sharing a :class:`RecordTemplate`.                         |
 | :class:`~probpipe.NumericRecordArray` (subclass)            | Batch of :class:`~probpipe.NumericRecord` elements with ``flatten`` / ``mean`` / ``var``. |
 | :class:`RecordTemplate`                                     | Structural skeleton: field names, per-field leaf shapes or ``None`` for opaque leaves.  |
 
 **When to reach for which:**
 
-* Use :class:`Record` when fields are heterogeneous (numeric array plus a
-  label string, a DataFrame, an xarray object, ...). No method on
-  ``Record`` assumes numeric leaves.
-* Use :class:`~probpipe.NumericRecord` when you want to flatten / unflatten
-  to a 1-D vector, take reductions, or pass the value through
-  :func:`jax.numpy` operations. Construction validates that every leaf
-  is a numeric scalar or array and coerces each to :class:`jnp.ndarray`
-  so downstream code sees a uniform type.
+* Use :class:`Record` when fields are heterogeneous (numeric array
+  plus a label string, a DataFrame, an xarray object, ...) — or when
+  you want to keep the original backend objects intact. ``Record``
+  performs no coercion and accepts arbitrary leaves.
+* Use :class:`~probpipe.NumericRecord` when you want to flatten /
+  unflatten to a 1-D vector, take reductions, or pass the value
+  through :func:`jax.numpy` operations. Construction coerces every
+  leaf to a ``jax.Array`` (the post-construction invariant) and
+  captures backend-specific metadata (xarray dims/coords, pandas
+  index) via the aux registry so :meth:`NumericRecord.to_native` can
+  restore the original backend on the reverse trip.
 * Use :class:`~probpipe.RecordArray` / :class:`~probpipe.NumericRecordArray`
   for collections (e.g., posterior draws): each field has shape
   ``(*batch_shape, *leaf_shape)``. Integer indexing materialises a
@@ -45,8 +48,8 @@ Usage::
     data = Record(counts=np.array([2, 1, 3, 0, 5]), label="horseshoe")
 
     params["r"]            # → jnp.array(1.8)
-    params.fields          # → ('K', 'phi', 'r')
-    params.flatten()       # → jnp.array([70., 10., 1.8])
+    params.fields          # → ('r', 'K', 'phi')   # insertion order
+    params.flatten()       # → jnp.array([1.8, 70., 10.])
 
     data["counts"]         # → np.array([2, 1, 3, 0, 5]) (stored verbatim)
     data["label"]          # → "horseshoe"
@@ -72,44 +75,38 @@ nested ``Record``, anything. Implications:
   convert at the boundary (``jnp.asarray(rec[name])``) or use
   :class:`~probpipe.NumericRecord`, which coerces at construction.
 
-``NumericRecord`` is the one place conversion happens automatically,
-and only for a validated set of numeric inputs (numeric arrays,
-numeric scalars including ``bool``, and objects with a numeric dtype
-such as ``xarray.DataArray`` or ``pandas.Series``). Non-numeric
-leaves raise ``TypeError`` at construction time with a message that
-names the offending field and its type.
-
 A side effect of the no-coercion policy: Python ``list`` / ``tuple``
 leaves have no ``.shape`` or ``.dtype``, so :meth:`RecordTemplate.from_record`
 sees them as opaque (``None``) — even if they contain numbers.
 Wrap numeric lists in ``np.asarray`` or ``jnp.asarray`` before
 storing them if you want a numeric template entry.
 
-Coord / label lifecycle
------------------------
+Round-trip to / from JAX
+------------------------
 
-The only structural metadata ``Record`` respects is what's encoded in
-the stored leaf itself. If you pass in an ``xr.DataArray`` with
-dims / coords / attrs, the leaf keeps those as long as no transform
-replaces it. ``to_datatree`` re-reads them on export.
+ProbPipe's native array form is the JAX array. Use :meth:`Record.to_numeric`
+to convert a ``Record`` (any leaves) to a :class:`NumericRecord` (every
+leaf a ``jax.Array``), and :meth:`NumericRecord.to_native` to go back.
+The reverse trip uses the per-type aux registry in
+:mod:`probpipe.core._array_backend` to restore backend-specific metadata
+(xarray dims / coords / attrs, pandas index / columns / dtypes) that
+``jnp.asarray`` would otherwise drop. Direct ``NumericRecord(...)``
+construction consults the same registry, so the two paths are
+semantically identical.
 
-Coords are **not** carried as a Record-level sidecar, so any
-operation that swaps a leaf for a plain array loses them. That
-includes ``record.map(jnp.asarray)``, ``jax.tree.map(jnp.sqrt, ...)``
-when applied to an xarray leaf, and construction of a
-:class:`~probpipe.NumericRecord` from a ``Record``. Treat coords as a
-construction-time snapshot that export re-attaches, not a property
-that follows the data through computation. The xarray decoupling
-tracked in
-https://github.com/TARPS-group/prob-pipe/issues/125 will eventually
-move coord handling to a dedicated subclass.
+Field ordering
+--------------
+
+Fields iterate in **insertion order** (the order keyword arguments are
+passed, or the order of the input ``dict``). The ``/`` character is
+reserved as a path separator on nested ``Record``s and ``RecordTemplate``s
+and is rejected at construction.
 """
 
 from __future__ import annotations
 
-from collections import OrderedDict
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any, Callable, TypeAlias
+from typing import Any, Callable, TypeAlias
 
 import jax
 import jax.numpy as jnp
@@ -117,9 +114,6 @@ import numpy as np
 
 from ..custom_types import ArrayLike
 from .provenance import Provenance
-
-if TYPE_CHECKING:
-    import xarray as xr
 
 __all__ = ["Record", "RecordTemplate", "NumericRecordTemplate"]
 
@@ -135,27 +129,22 @@ _FieldValue: TypeAlias = "Any"
 class Record:
     """Named, immutable, pytree-registered container for structured values.
 
-    Fields are stored in alphabetical order by name and returned verbatim;
+    Fields iterate in insertion order and are returned verbatim;
     ``Record`` performs no coercion between backends (numpy, JAX, xarray,
     Python scalars, strings, nested Records are all accepted). Use
-    :class:`NumericRecord` when you want numeric-leaf validation and
-    flatten / unflatten support.
+    :class:`NumericRecord` when you want a uniform ``jax.Array`` leaf
+    type and flatten / unflatten support.
 
     Parameters
     ----------
     **fields
         Named values.  Values may be JAX or numpy arrays, Python scalars,
         strings, xarray / pandas objects, nested ``Record``, or any other
-        opaque object. Nothing is converted at construction.
+        opaque object. Nothing is converted at construction. Field names
+        must not contain ``/`` (reserved as the nested-path separator).
     name : str, optional
         Name for provenance / introspection. Auto-generated from field
         names if not provided.
-
-    Notes
-    -----
-    Field order is currently alphabetical for deterministic flattening; see
-    https://github.com/TARPS-group/prob-pipe/issues/124 for the planned
-    switch to insertion order.
     """
 
     __slots__ = ("_store", "_name", "_source")
@@ -174,7 +163,13 @@ class Record:
             fields = _dict
         if not fields:
             raise ValueError("Record requires at least one named field")
-        store = OrderedDict(sorted(fields.items()))
+        for field_name in fields:
+            if "/" in field_name:
+                raise ValueError(
+                    f"Field name {field_name!r} must not contain '/' "
+                    f"(reserved as the nested-path separator)."
+                )
+        store = dict(fields)
         object.__setattr__(self, "_store", store)
         # Auto-generate name from field names if not provided
         if name is None:
@@ -232,12 +227,20 @@ class Record:
 
     def __getitem__(self, key: str | tuple[str, ...]) -> _FieldValue:
         if isinstance(key, str):
+            # Slash-delimited path: ``record["a/b/c"]`` is sugar for
+            # ``record["a", "b", "c"]``. Single-segment strings (no
+            # ``/``) take the fast path through the store.
+            if "/" in key:
+                v: Any = self
+                for k in key.split("/"):
+                    v = v[k]
+                return v
             store = self._store
             if key not in store:
                 raise KeyError(key)
             return store[key]
         if isinstance(key, tuple):
-            v: Any = self
+            v = self
             for k in key:
                 v = v[k]
             return v
@@ -245,13 +248,22 @@ class Record:
 
     @property
     def fields(self) -> tuple[str, ...]:
-        """Field names in sorted order."""
+        """Field names in insertion order."""
         return tuple(self._store.keys())
 
     def __len__(self) -> int:
         return len(self._store)
 
     def __contains__(self, name: str) -> bool:
+        # Accept slash-delimited paths so ``"a/b/c" in record`` mirrors
+        # ``record["a/b/c"]`` access. Single-segment names take the
+        # dict fast path.
+        if "/" in name:
+            try:
+                self[name]
+            except (KeyError, TypeError):
+                return False
+            return True
         return name in self._store
 
     def __iter__(self) -> Iterator[str]:
@@ -364,14 +376,10 @@ class Record:
         """Return a dict of numpy arrays (recursive for nested Record).
 
         Each numeric leaf is converted via ``np.asarray``. Non-numeric
-        leaves (strings, opaque objects) are returned as-is.
-
-        Notes
-        -----
-        xarray coord metadata is not preserved: an ``xr.DataArray``
-        leaf becomes a plain numpy array with its dims / coords / attrs
-        stripped. Use :meth:`to_datatree` instead to keep the xarray
-        structure.
+        leaves (strings, opaque objects) are returned as-is. Backend
+        metadata (xarray dims / coords, pandas index) is stripped — use
+        :meth:`to_numeric` followed by :meth:`NumericRecord.to_native`
+        if you need a metadata-preserving round-trip.
         """
         result: dict[str, Any] = {}
         for name, val in self._store.items():
@@ -383,31 +391,30 @@ class Record:
                 result[name] = val
         return result
 
-    def to_datatree(self) -> xr.DataTree:
-        """Export to an xarray DataTree.
+    def to_numeric(self) -> "NumericRecord":  # type: ignore[name-defined]
+        """Convert to a :class:`NumericRecord` with every leaf a ``jax.Array``.
 
-        Requires ``xarray`` to be installed. If a leaf is already an
-        ``xr.DataArray``, its dims / coords / attrs are preserved. Any
-        other leaf is wrapped as a bare ``DataArray`` without coord
-        metadata.
+        Per-field metadata that ``jnp.asarray`` would drop (xarray
+        dims / coords / attrs, pandas index / columns / dtypes) is
+        captured via the aux registry in
+        :mod:`probpipe.core._array_backend` and stored on the resulting
+        ``NumericRecord``. Calling :meth:`NumericRecord.to_native`
+        on the result reverses the conversion, restoring each leaf to
+        its original backend type.
 
-        Note: coordinate metadata only survives a round-trip through
-        ``Record`` for leaves that were ``xr.DataArray`` at construction
-        time. It is **not** preserved through JAX transforms.
+        Direct ``NumericRecord(**self._store)`` construction does the
+        same thing — the two paths are semantically identical.
+
+        Raises
+        ------
+        TypeError
+            If any leaf is not coercible via ``jnp.asarray`` (e.g.
+            strings, opaque Python objects).
         """
-        import xarray as xr
-
-        datasets: dict[str, xr.Dataset | xr.DataTree] = {}
-        for name, val in self._store.items():
-            if isinstance(val, Record):
-                datasets[f"/{name}"] = val.to_datatree()
-                continue
-            if isinstance(val, xr.DataArray):
-                da = val
-            else:
-                da = xr.DataArray(np.asarray(val))
-            datasets[f"/{name}"] = xr.Dataset({name: da})
-        return xr.DataTree.from_dict(datasets)
+        # Lazy import to avoid the module-level circular dep:
+        # _numeric_record.py imports Record from this module.
+        from ._numeric_record import NumericRecord
+        return NumericRecord(self._store)
 
     # -- Coercion -----------------------------------------------------------
 
@@ -431,28 +438,6 @@ class Record:
     def from_dict(cls, d: dict[str, ArrayLike | Record]) -> Record:
         """Construct Record from a dict of arrays."""
         return cls(d)
-
-    @classmethod
-    def from_datatree(cls, dt) -> Record:
-        """Construct Record from an xarray DataTree.
-
-        Extracts arrays and preserves coordinate metadata for round-tripping.
-        """
-        fields: dict[str, ArrayLike | Record] = {}
-        if hasattr(dt, "data_vars"):
-            for var_name in dt.data_vars:
-                fields[var_name] = dt[var_name]
-        if hasattr(dt, "children"):
-            for child_name, child_node in dt.children.items():
-                child_vars = list(child_node.data_vars) if hasattr(child_node, "data_vars") else []
-                child_kids = list(child_node.children) if hasattr(child_node, "children") else []
-                # Leaf group with a single variable matching its name →
-                # extract the DataArray directly (avoids double-wrapping).
-                if child_vars == [child_name] and not child_kids:
-                    fields[child_name] = child_node[child_name]
-                else:
-                    fields[child_name] = cls.from_datatree(child_node)
-        return cls(fields)
 
     # -- Leaf-wise operations -----------------------------------------------
 
@@ -669,6 +654,11 @@ class RecordTemplate:
             raise ValueError(f"{type(self).__name__} requires at least one field")
         # Validate specs
         for name, spec in field_specs.items():
+            if "/" in name:
+                raise ValueError(
+                    f"Field name {name!r} must not contain '/' "
+                    f"(reserved as the nested-path separator)."
+                )
             if spec is not None and not isinstance(spec, (tuple, RecordTemplate)):
                 raise TypeError(
                     f"Field {name!r}: spec must be a shape tuple, None, "
@@ -681,7 +671,7 @@ class RecordTemplate:
                         f"non-negative ints, got {spec!r}"
                     )
         self._post_validate(field_specs)
-        specs = OrderedDict(sorted(field_specs.items()))
+        specs = dict(field_specs)
         object.__setattr__(self, "_specs", specs)
 
     def _post_validate(self, field_specs: dict[str, _FieldSpec]) -> None:
@@ -700,7 +690,7 @@ class RecordTemplate:
 
     @property
     def fields(self) -> tuple[str, ...]:
-        """Field names in sorted order."""
+        """Field names in insertion order."""
         return tuple(self._specs.keys())
 
     @property
@@ -708,14 +698,16 @@ class RecordTemplate:
         """Per-field leaf shapes.  ``None`` for opaque (non-array) leaves.
 
         For nested ``RecordTemplate`` fields, returns the nested
-        template's ``leaf_shapes`` (not the template itself).
+        template's ``leaf_shapes`` (not the template itself), keyed by
+        ``/``-delimited paths so the keys round-trip with
+        :meth:`Record.__getitem__`'s path syntax.
         """
         result: dict[str, tuple[int, ...] | None] = {}
         for name, spec in self._specs.items():
             if isinstance(spec, RecordTemplate):
-                # Flatten nested template into dotted names
+                # Flatten nested template into slash-delimited paths
                 for sub_name, sub_shape in spec.leaf_shapes.items():
-                    result[f"{name}.{sub_name}"] = sub_shape
+                    result[f"{name}/{sub_name}"] = sub_shape
             else:
                 result[name] = spec
         return result

@@ -1,10 +1,18 @@
-"""NumericRecord — Record subclass where every leaf is a numeric array.
+"""NumericRecord — Record subclass where every leaf is a ``jax.Array``.
 
 Adds ``flatten`` / ``unflatten`` / ``flat_size`` for 1-D serialisation.
-Construction validates that every leaf is a numeric array (or nested
-``NumericRecord``), coerces plain Python scalars and numpy arrays to
-``jnp.ndarray`` so downstream JAX code receives a uniform array type,
-and raises a clear error otherwise.
+Construction validates that every leaf is a numeric value (numeric
+array, numeric scalar, or nested ``NumericRecord``) and coerces each
+to ``jnp.ndarray`` so the post-construction invariant is "every leaf
+is a ``jax.Array``" (or a nested ``NumericRecord``).
+
+Per-field metadata that ``jnp.asarray`` would drop — ``xarray`` dims /
+coords / attrs, ``pandas`` index / columns / dtypes — is captured via
+the registry in :mod:`probpipe.core._array_backend` and stored on the
+new instance. :meth:`NumericRecord.to_native` reverses the conversion,
+restoring each leaf to its original backend type. Direct
+``NumericRecord(**fields)`` and ``Record(**fields).to_numeric()``
+follow the same code path and produce identical results.
 
 Bool handling
 -------------
@@ -22,6 +30,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import ArrayLike
+from ._array_backend import aux_for
 from .record import Record, RecordTemplate, _record_flatten, _spec_size
 
 __all__ = ["NumericRecord", "_is_numeric_leaf", "_NUMERIC_DTYPE_KINDS"]
@@ -42,7 +51,9 @@ def _is_numeric_leaf(val: Any) -> bool:
     """True if *val* is a numeric array or numeric scalar.
 
     Rejects object-dtype arrays, string-like scalars, and opaque types
-    that don't expose ``dtype`` / ``shape``.
+    that don't expose ``dtype`` / ``shape``. ``pandas.DataFrame``-like
+    types whose elements are numeric are accepted via their ``.dtypes``
+    summary.
     """
     if isinstance(val, (str, bytes)):
         return False
@@ -51,35 +62,55 @@ def _is_numeric_leaf(val: Any) -> bool:
     if hasattr(val, "dtype") and hasattr(val, "shape"):
         kind = getattr(val.dtype, "kind", None)
         return kind in _NUMERIC_DTYPE_KINDS
+    # ``pandas.DataFrame`` has ``.dtypes`` (per-column) but no ``.dtype``.
+    # Accept when every column is numeric.
+    dtypes = getattr(val, "dtypes", None)
+    if dtypes is not None and hasattr(val, "shape"):
+        try:
+            kinds = {getattr(d, "kind", None) for d in dtypes}
+        except TypeError:
+            return False
+        return bool(kinds) and kinds.issubset(_NUMERIC_DTYPE_KINDS)
     return False
 
 
 class NumericRecord(Record):
-    """``Record`` where every leaf is a numeric array.
+    """``Record`` where every leaf is a ``jax.Array``.
 
     Adds :meth:`flatten` / :meth:`unflatten` / :attr:`flat_size` for
     serialising the record to / from a flat 1-D vector. Construction
     validates that every leaf is a numeric value (or a nested
-    :class:`NumericRecord`) and coerces scalar / numpy leaves to
-    ``jnp.ndarray`` so downstream code sees a uniform JAX array type.
+    :class:`NumericRecord`) and coerces scalar / numpy / xarray /
+    pandas leaves to ``jnp.ndarray`` so downstream code sees a uniform
+    JAX array type. Backend-specific metadata (xarray dims / coords /
+    attrs, pandas index / columns / dtypes) is captured via the aux
+    registry in :mod:`probpipe.core._array_backend` and stored on the
+    instance; :meth:`to_native` reverses the conversion.
 
     Parameters
     ----------
     **fields
         Named values. Every leaf must be a numeric array (``jax.numpy``,
-        ``numpy``), a numeric Python scalar (``int``, ``float``,
-        ``complex``, ``bool``), or a nested ``NumericRecord``. Non-numeric
-        values raise ``TypeError`` at construction time.
+        ``numpy``, ``xarray.DataArray``, ``pandas.Series`` /
+        ``DataFrame`` with numeric dtype), a numeric Python scalar
+        (``int``, ``float``, ``complex``, ``bool``), or a nested
+        ``NumericRecord``. Non-numeric values raise ``TypeError`` at
+        construction time.
 
     Notes
     -----
+    ``NumericRecord(**fields)`` and ``Record(**fields).to_numeric()``
+    are semantically identical — both consult the aux registry to
+    capture metadata, both coerce leaves via ``jnp.asarray``, both
+    raise ``TypeError`` on non-coercible leaves.
+
     Validation and coercion happen *before* the underlying ``Record`` is
     constructed, so ``_store`` is populated exactly once and remains
     immutable from the moment ``__init__`` returns — consistent with the
     ``__slots__`` + ``__setattr__`` guard on the base class.
     """
 
-    __slots__ = ("_flat_size",)
+    __slots__ = ("_flat_size", "_aux")
 
     def __init__(
         self,
@@ -101,7 +132,7 @@ class NumericRecord(Record):
             raw_fields = _dict
         else:
             raw_fields = fields
-        validated = self._validate_and_coerce(raw_fields)
+        validated, aux = self._validate_and_coerce(raw_fields)
         super().__init__(validated, name=name)
         # Cache flat_size — leaves are immutable arrays after construction.
         total = 0
@@ -111,17 +142,29 @@ class NumericRecord(Record):
             else:
                 total += int(val.size)
         object.__setattr__(self, "_flat_size", total)
+        # Aux is ``None`` if no field had a registered hook — keeps the
+        # common all-jax case allocation-free and lets ``to_native``
+        # short-circuit.
+        object.__setattr__(self, "_aux", aux if aux else None)
 
     @classmethod
     def _validate_and_coerce(
         cls, raw_fields: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Return a new dict with every leaf validated and (if numeric)
-        coerced to ``jnp.ndarray``. Raises ``TypeError`` on non-numeric
-        input with a message that names the offending field and its type.
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Return ``(validated_store, aux)`` for the raw fields.
+
+        ``validated_store`` has every leaf coerced to ``jnp.ndarray``
+        (or kept as a nested :class:`NumericRecord`). ``aux`` captures
+        backend-specific metadata for any field whose original leaf
+        type is in the aux registry; the caller stores it on
+        ``self._aux`` for :meth:`to_native` to consume.
+
+        Raises ``TypeError`` on non-numeric input with a message that
+        names the offending field and its type.
         """
         cls_name = cls.__name__
         out: dict[str, Any] = {}
+        aux: dict[str, Any] = {}
         for field_name, raw in raw_fields.items():
             if isinstance(raw, Record):
                 if not isinstance(raw, NumericRecord):
@@ -138,8 +181,13 @@ class NumericRecord(Record):
                     f"array, numeric scalar, or nested NumericRecord, got "
                     f"{type(raw).__name__}"
                 )
+            # Capture backend-specific metadata before the cast to
+            # ``jnp.ndarray`` strips it.
+            hooks = aux_for(raw)
+            if hooks is not None:
+                aux[field_name] = (hooks, hooks.capture(raw))
             out[field_name] = raw if isinstance(raw, jnp.ndarray) else jnp.asarray(raw)
-        return out
+        return out, aux
 
     # -- Flat-array conversion ----------------------------------------------
 
@@ -196,7 +244,13 @@ class NumericRecord(Record):
 
     @classmethod
     def from_record(cls, record: Record) -> NumericRecord:
-        """Convert a ``Record`` to ``NumericRecord``, validating leaves."""
+        """Convert a ``Record`` to ``NumericRecord``, validating leaves.
+
+        Equivalent to ``record.to_numeric()`` for non-nested records;
+        recurses into nested ``Record`` children, preserving structure.
+        Backend-specific metadata is captured per-leaf via the aux
+        registry.
+        """
         raw_fields: dict[str, Any] = {}
         for field_name, val in record._store.items():
             if isinstance(val, Record):
@@ -204,6 +258,45 @@ class NumericRecord(Record):
             else:
                 raw_fields[field_name] = val
         return cls(raw_fields)
+
+    # -- Conversion back to native backends --------------------------------
+
+    @property
+    def aux(self) -> dict[str, Any] | None:
+        """Captured backend metadata, keyed by field name (or ``None``).
+
+        Each entry is an ``(AuxHooks, aux_blob)`` pair captured from the
+        original leaf at construction. Fields whose leaf type wasn't in
+        the registry (plain numpy / jax / Python scalars) are absent.
+        """
+        return self._aux
+
+    def to_native(self) -> Record:
+        """Restore each leaf to its original backend type, returning a :class:`Record`.
+
+        Fields whose original leaf type was registered in
+        :mod:`probpipe.core._array_backend` are restored via
+        ``hooks.restore(jax_array, aux)``. Fields without captured aux
+        pass through as their stored ``jax.Array``. Nested
+        :class:`NumericRecord` fields recurse.
+
+        The result is a permissive :class:`Record`, not a
+        ``NumericRecord`` — restored xarray / pandas leaves are no
+        longer ``jax.Array`` and would fail the numeric invariant.
+        """
+        fields: dict[str, Any] = {}
+        aux = self._aux or {}
+        for field_name, val in self._store.items():
+            if isinstance(val, NumericRecord):
+                fields[field_name] = val.to_native()
+                continue
+            entry = aux.get(field_name)
+            if entry is None:
+                fields[field_name] = val
+            else:
+                hooks, blob = entry
+                fields[field_name] = hooks.restore(val, blob)
+        return Record(fields)
 
     # -- Single-field scalar-like coercion ---------------------------------
     #

@@ -22,9 +22,13 @@ class TestConstruction:
         tpl = RecordTemplate({"a": (), "b": (2,)})
         assert tpl.fields == ("a", "b")
 
-    def test_fields_sorted(self):
+    def test_fields_insertion_order(self):
         tpl = RecordTemplate(z=(), a=(3,), m=None)
-        assert tpl.fields == ("a", "m", "z")
+        assert tpl.fields == ("z", "a", "m")
+
+    def test_slash_in_field_name_rejected(self):
+        with pytest.raises(ValueError, match="must not contain '/'"):
+            RecordTemplate(**{"a/b": ()})
 
     def test_dict_and_kwargs_raises(self):
         with pytest.raises(ValueError, match="Cannot pass both"):
@@ -103,7 +107,9 @@ class TestLeafShapes:
         inner = RecordTemplate(a=(), b=(2,))
         outer = RecordTemplate(inner=inner, z=(3,))
         shapes = outer.leaf_shapes
-        assert shapes == {"inner.a": (), "inner.b": (2,), "z": (3,)}
+        # Slash-delimited keys for consistency with ``Record["a/b"]``
+        # path access.
+        assert shapes == {"inner/a": (), "inner/b": (2,), "z": (3,)}
 
     def test_numeric_leaf_shapes_on_numeric_template(self):
         tpl = NumericRecordTemplate(x=(), y=(3,))
