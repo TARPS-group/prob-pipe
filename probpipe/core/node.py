@@ -45,6 +45,8 @@ from .protocols import (
     SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
+    SupportsRandomLogProb,
+    SupportsRandomUnnormalizedLogProb,
     SupportsSampling,
     SupportsUnnormalizedLogProb,
     SupportsVariance,
@@ -60,6 +62,8 @@ _DISTRIBUTION_PROTOCOLS: tuple[type, ...] = (
     SupportsMean,
     SupportsVariance,
     SupportsCovariance,
+    SupportsRandomLogProb,
+    SupportsRandomUnnormalizedLogProb,
     SupportsConditioning,
 )
 from ..converters import converter_registry

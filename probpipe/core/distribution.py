@@ -74,6 +74,12 @@ from ._random_functions import (
     ArrayRandomFunction,
 )
 
+# -- _random_measures -------------------------------------------------------
+from ._random_measures import (
+    RandomMeasure,
+    NumericRandomMeasure,
+)
+
 __all__ = [
     # Base
     "Distribution",
@@ -101,6 +107,9 @@ __all__ = [
     # Random functions
     "RandomFunction",
     "ArrayRandomFunction",
+    # Random measures
+    "RandomMeasure",
+    "NumericRandomMeasure",
     # Broadcast
     "BroadcastDistribution",
     "MarginalizedBroadcastDistribution",
