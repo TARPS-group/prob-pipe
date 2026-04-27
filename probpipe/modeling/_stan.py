@@ -87,7 +87,7 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
     # -- Named components interface ------------------------------------------
 
     @property
-    def component_names(self) -> tuple[str, ...]:
+    def fields(self) -> tuple[str, ...]:
         return self.parameter_names
 
     def __getitem__(self, key: str) -> Any:
@@ -111,7 +111,7 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
         """
         params_constrained = jnp.asarray(value)
         params_unc = self.param_unconstrain(params_constrained)
-        return jnp.float32(self._bs_model.log_density(params_unc))
+        return jnp.asarray(self._bs_model.log_density(params_unc))
 
     def _unnormalized_log_prob(self, value: Any) -> Array:
         """Delegates to _log_prob (Stan provides the full joint)."""
@@ -175,7 +175,7 @@ class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):
     def _log_prob(self, value: Any) -> Array:
         """Log-density directly in unconstrained space."""
         params_unc = jnp.asarray(value)
-        return jnp.float32(self._model._bs_model.log_density(params_unc))
+        return jnp.asarray(self._model._bs_model.log_density(params_unc))
 
     def _unnormalized_log_prob(self, value: Any) -> Array:
         return self._log_prob(value)

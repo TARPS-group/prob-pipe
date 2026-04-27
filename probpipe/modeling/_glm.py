@@ -68,7 +68,7 @@ class GLMLikelihood:
     ):
         self.family = family
         if x is not None:
-            self._x = jnp.atleast_2d(jnp.asarray(x, dtype=jnp.float32))
+            self._x = jnp.atleast_2d(jnp.asarray(x))
             if self._x.ndim == 2 and self._x.shape[0] == 1 and self._x.shape[1] > 1:
                 self._x = self._x.T
         else:

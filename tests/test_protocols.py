@@ -231,10 +231,10 @@ class TestSupportsConditioning:
 
 class TestNamedComponents:
     def test_product_distribution(self, joint):
-        assert hasattr(joint, 'component_names')
+        assert hasattr(joint, 'fields')
 
-    def test_normal_component_names_has_name(self, normal):
-        assert normal.component_names == ("x",)
+    def test_normal_fields_has_name(self, normal):
+        assert normal.fields == ("x",)
 
 
 # ---------------------------------------------------------------------------

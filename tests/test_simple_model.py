@@ -84,8 +84,8 @@ class TestSimpleModel:
         """SimpleModel does not define _sample even if prior supports sampling."""
         assert not isinstance(model, SupportsSampling)
 
-    def test_component_names(self, model):
-        names = model.component_names
+    def test_fields(self, model):
+        names = model.fields
         assert "params" in names
         assert isinstance(names, tuple)
 
@@ -93,7 +93,7 @@ class TestSimpleModel:
         assert model.parameter_names == ("params",)
 
     def test_supports_named_components(self, model):
-        assert hasattr(model, 'component_names')
+        assert hasattr(model, 'fields')
 
     def test_getitem_parameters(self, model, prior):
         assert model["parameters"] is prior
@@ -265,10 +265,10 @@ class TestSimpleModelWithValues:
         model = SimpleModel(prior_with_template, likelihood)
         assert model.record_template is prior_with_template.record_template
 
-    def test_component_names_from_template(self, prior_with_template, likelihood):
+    def test_fields_from_template(self, prior_with_template, likelihood):
         model = SimpleModel(prior_with_template, likelihood)
         # Likelihood has no data_template, so only prior fields appear
-        assert model.component_names == ("a", "b")
+        assert model.fields == ("a", "b")
 
     def test_parameter_names_from_template(self, prior_with_template, likelihood):
         model = SimpleModel(prior_with_template, likelihood)
@@ -302,7 +302,7 @@ class TestSimpleModelWithValues:
     def test_without_template_defaults(self):
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="params")
         model = SimpleModel(prior, GaussianLikelihood())
-        assert "params" in model.component_names
+        assert "params" in model.fields
         assert model.parameter_names == ("params",)
         assert model.record_template is not None
 

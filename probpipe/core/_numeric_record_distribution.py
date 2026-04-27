@@ -30,6 +30,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import Any, Callable
 
+from .._dtype import _as_float_array, _default_float_dtype
 from .._utils import prod
 from .protocols import (
     SupportsExpectation,
@@ -162,10 +163,16 @@ class NumericRecordDistribution(RecordDistribution):
 
     @property
     def dtypes(self) -> dict[str, jnp.dtype]:
-        """Per-field dtypes.  Default: ``float32`` for every field."""
+        """Per-field dtypes.
+
+        Default: JAX's current default float dtype (``float32`` normally,
+        ``float64`` when ``jax_enable_x64`` is set).  Subclasses with
+        concrete arrays should override to report the actual dtype.
+        """
         tpl = self.record_template
         if tpl is not None:
-            return {name: jnp.float32 for name in tpl.fields}
+            default = _default_float_dtype()
+            return {name: default for name in tpl.fields}
         return {}
 
     @property
@@ -236,14 +243,6 @@ class NumericRecordDistribution(RecordDistribution):
         return jax.tree.structure(None)
 
     @property
-    def event_shapes(self):
-        """Per-field event shapes, or single event shape when unnamed."""
-        tpl = self.record_template
-        if tpl is not None:
-            return super().event_shapes  # RecordDistribution dict version
-        return self.event_shape
-
-    @property
     def flat_event_shapes(self) -> list[tuple[int, ...]]:
         """Single-leaf: just the one event_shape."""
         return [self.event_shape]
@@ -253,7 +252,15 @@ class NumericRecordDistribution(RecordDistribution):
         """Total flat dimensionality."""
         tpl = self.record_template
         if tpl is not None:
-            return tpl.flat_size
+            from .record import NumericRecordTemplate
+            if isinstance(tpl, NumericRecordTemplate):
+                return tpl.flat_size
+            # Mixed template — sum the numeric leaves explicitly.
+            return sum(
+                prod(shape) if shape else 1
+                for shape in tpl.leaf_shapes.values()
+                if shape is not None
+            )
         return prod(self.event_shape)
 
     def flatten_value(self, value) -> Array:
@@ -349,7 +356,7 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
         log_weights: ArrayLike | Weights | None = None,
         name: str | None = None,
     ):
-        self._evaluations = jnp.asarray(evaluations, dtype=jnp.float32)
+        self._evaluations = _as_float_array(evaluations)
         if self._evaluations.ndim == 0:
             raise ValueError("evaluations must have at least 1 dimension.")
         self._n = self._evaluations.shape[0]
@@ -374,6 +381,10 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
     @property
     def event_shape(self) -> tuple[int, ...]:
         return self._evaluations.shape[1:]
+
+    @property
+    def dtype(self) -> jnp.dtype:
+        return self._evaluations.dtype
 
     def _mean(self) -> Array:
         """Point estimate: (weighted) mean of evaluations."""

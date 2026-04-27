@@ -1,6 +1,6 @@
 """RecordDistribution — generic Record-based distribution base.
 
-Provides the named-component layer (``component_names``, ``__getitem__``,
+Provides the named-component layer (``fields``, ``__getitem__``,
 ``select()``) and Record-aware flatten/unflatten, without imposing TFP
 shape conventions (dtype, support, batch_shape).  Those live on
 ``NumericRecordDistribution`` and its consumers.
@@ -27,6 +27,7 @@ from .protocols import (
     SupportsVariance,
 )
 from .record import Record, RecordTemplate
+from .._utils import prod
 from ..custom_types import Array, PRNGKey
 
 if TYPE_CHECKING:
@@ -192,6 +193,24 @@ class _RecordDistributionView(Distribution):
         self._key_path = (key,)
         self._template_field = template[key]
 
+    # -- Parent identity (mirrors ``_RecordArrayView``) --------------------
+
+    @property
+    def parent(self) -> Distribution:
+        """The :class:`RecordDistribution` this view points at.
+
+        Shared-identity signal for the ``WorkflowFunction`` sweep layer:
+        views with the same ``parent`` co-sample (preserve correlation)
+        when passed as sibling broadcast args to a workflow function.
+        Matches the ``_RecordArrayView.parent`` surface.
+        """
+        return self._parent
+
+    @property
+    def field(self) -> str:
+        """Name of the viewed field (the top-level key into the parent)."""
+        return self._key
+
     # -- Shape info ---------------------------------------------------------
 
     @property
@@ -204,6 +223,27 @@ class _RecordDistributionView(Distribution):
             return ()
         # Legacy Record template: field is an array
         return f.shape if not isinstance(f, Record) else ()
+
+    # -- Single-field array-like shims (mirrors ``_RecordArrayView``) ------
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Shape of one draw from this view — ``batch_shape + event_shape``."""
+        batch = tuple(getattr(self._parent, "batch_shape", ()) or ())
+        return batch + self.event_shape
+
+    @property
+    def dtype(self) -> "jnp.dtype | None":
+        """Dtype of a single draw, if the parent exposes ``dtypes``."""
+        dtypes = getattr(self._parent, "dtypes", None)
+        if isinstance(dtypes, dict):
+            return dtypes.get(self._key)
+        return None
+
+    @property
+    def ndim(self) -> int:
+        """Number of axes in a single draw (``batch_shape + event_shape``)."""
+        return len(self.shape)
 
     # -- Internals ----------------------------------------------------------
 
@@ -277,7 +317,7 @@ def _build_record_template(components: dict) -> RecordTemplate:
 class RecordDistribution(Distribution[Record]):
     """Generic Record-based distribution.
 
-    Provides named component access (``component_names``, ``__getitem__``,
+    Provides named component access (``fields``, ``__getitem__``,
     ``select()``) and Record-aware flatten / unflatten.  Does NOT impose
     TFP shape conventions (dtype, support, batch_shape) — those belong
     on ``NumericRecordDistribution`` and its consumers.
@@ -302,10 +342,22 @@ class RecordDistribution(Distribution[Record]):
     # -- Named component access ---------------------------------------------
 
     @property
-    def component_names(self) -> tuple[str, ...]:
+    def fields(self) -> tuple[str, ...]:
         """Field names from the record_template, or empty tuple."""
         tpl = self.record_template
         return tpl.fields if tpl is not None else ()
+
+    @property
+    def n(self) -> int:
+        """Number of cells in the batch shape (see STYLE_GUIDE §1.9).
+
+        For scalar Record distributions (``batch_shape == ()``) this
+        is ``1``; for batched variants (``NumericRecordDistribution``
+        with a nonempty ``batch_shape``) it's
+        ``prod(batch_shape)``. Parallels
+        :attr:`~probpipe.DistributionArray.n`.
+        """
+        return prod(getattr(self, "batch_shape", ()) or ())
 
     def __getitem__(self, key: str) -> _RecordDistributionView:
         return _RecordDistributionView(self, key)
@@ -327,15 +379,22 @@ class RecordDistribution(Distribution[Record]):
             result[arg_name] = self[field_name]
         return result
 
+    def select_all(self) -> dict[str, _RecordDistributionView]:
+        """Return every component as a view, for splatting into function calls.
+
+        Sugar for ``select(*self.fields)``. Matches
+        :meth:`Record.select_all` / :meth:`RecordArray.select_all` so
+        the splat-all pattern works uniformly across the three field-
+        bearing container types. Preserves cross-field correlation via
+        the parent-identity machinery in the ``WorkflowFunction`` sweep
+        layer.
+        """
+        return self.select(*self.fields)
+
     # -- Dict-like interface (mirrors Record) ---------------------------------
 
-    @property
-    def fields(self) -> tuple[str, ...]:
-        """Field names, matching ``Record.fields``."""
-        return self.component_names
-
     def __contains__(self, name: str) -> bool:
-        return name in self.component_names
+        return name in self.fields
 
     # NOTE: __iter__ and __len__ are intentionally NOT implemented.
     # Adding them causes JAX/numpy to treat distributions as sequences,
@@ -343,16 +402,16 @@ class RecordDistribution(Distribution[Record]):
 
     def keys(self) -> Iterator[str]:
         """Iterate over component names."""
-        return iter(self.component_names)
+        return iter(self.fields)
 
     def values(self) -> Iterator[_RecordDistributionView]:
         """Iterate over component views."""
-        for name in self.component_names:
+        for name in self.fields:
             yield self[name]
 
     def items(self) -> Iterator[tuple[str, _RecordDistributionView]]:
         """Iterate over (name, view) pairs."""
-        for name in self.component_names:
+        for name in self.fields:
             yield name, self[name]
 
     # -- Flatten / unflatten ------------------------------------------------
@@ -398,41 +457,79 @@ class RecordDistribution(Distribution[Record]):
 
     @property
     def event_size(self) -> int:
-        """Total number of scalar elements in one sample."""
+        """Total number of scalar elements in one sample.
+
+        Sums the sizes of every numeric leaf described by the template;
+        opaque leaves contribute zero. A ``NumericRecordTemplate`` has
+        ``flat_size`` already cached — reuse it when available.
+        """
         tpl = self.record_template
         if tpl is None:
             return 0
-        if isinstance(tpl, RecordTemplate):
-            from .._utils import prod
-            return sum(
-                prod(shape) if shape else 1
-                for shape in tpl.numeric_leaf_shapes.values()
-            )
-        # Legacy Record template fallback
-        return tpl.flat_size
+        from .record import NumericRecordTemplate
+        if isinstance(tpl, NumericRecordTemplate):
+            return tpl.flat_size
+        return sum(
+            prod(shape) if shape else 1
+            for shape in tpl.leaf_shapes.values()
+            if shape is not None
+        )
 
     @property
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-field event shapes derived from record_template."""
+        """Per-field event shapes.
+
+        For untemplated distributions (no ``record_template``) returns
+        ``{}``; use :attr:`event_shape` for the scalar shape of a
+        single unnamed field. Nested sub-templates collapse to ``()``
+        at the top level.
+        """
         tpl = self.record_template
         if tpl is None:
             return {}
-        if isinstance(tpl, RecordTemplate):
-            # Return top-level field shapes only; nested RecordTemplate → ()
-            result: dict[str, tuple[int, ...]] = {}
-            for name in tpl.fields:
-                spec = tpl[name]
-                if isinstance(spec, RecordTemplate):
-                    result[name] = ()
-                elif spec is not None:
-                    result[name] = spec
-            return result
-        # Legacy Record template fallback
-        result: dict[str, tuple[int, ...]] = {}
-        for name in tpl.fields:
-            val = tpl[name]
-            result[name] = val.shape if not isinstance(val, Record) else ()
-        return result
+        return {name: self._field_event_shape(tpl[name]) for name in tpl.fields}
+
+    @staticmethod
+    def _field_event_shape(spec) -> tuple[int, ...]:
+        """Event shape for one field spec (nested template → ``()``)."""
+        if isinstance(spec, RecordTemplate):
+            return ()
+        if spec is None:
+            return ()
+        if isinstance(spec, tuple):
+            return spec
+        # Record-valued template fallback.
+        return spec.shape if not isinstance(spec, Record) else ()
+
+    # -- Single-field array-like shims --------------------------------------
+    # On a single-field distribution, ``.shape`` / ``.ndim`` delegate to
+    # the sole field's event shape (prefixed by ``batch_shape``).
+    # Multi-field distributions raise ``TypeError``; use ``.event_shapes``
+    # for a per-field dict or index into a view (``dist[field]``).
+
+    def _single_field_name(self) -> str:
+        fields = self.fields
+        if len(fields) != 1:
+            raise TypeError(
+                f"{type(self).__name__} with {len(fields)} fields is not "
+                f"array-like; index a specific field via dist[field] or "
+                f"use .event_shapes dict."
+            )
+        return fields[0]
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Shape of one draw (``batch_shape + event_shape``)."""
+        name = self._single_field_name()
+        tpl = self.record_template
+        event = self._field_event_shape(tpl[name]) if tpl is not None else ()
+        batch = tuple(getattr(self, "batch_shape", ()) or ())
+        return batch + event
+
+    @property
+    def ndim(self) -> int:
+        """Number of axes in one draw."""
+        return len(self.shape)
 
 
 

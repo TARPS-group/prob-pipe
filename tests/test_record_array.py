@@ -42,7 +42,7 @@ class TestRecordArrayConstruction:
             template=tpl,
         )
         assert ra.batch_shape == (4, 5)
-        assert len(ra) == 20
+        assert len(ra) == 1  # field count, not batch size
 
     def test_dict_positional(self):
         tpl = RecordTemplate(a=(), b=(2,))
@@ -68,7 +68,7 @@ class TestRecordArrayConstruction:
         tpl = RecordTemplate(x=())
         ra = RecordArray(x=jnp.zeros(0), batch_shape=(0,), template=tpl)
         assert ra.batch_shape == (0,)
-        assert len(ra) == 0
+        assert len(ra) == 1  # field count
         assert ra["x"].shape == (0,)
 
     def test_flatten_preserves_nan(self):
@@ -151,7 +151,8 @@ class TestRecordArrayAccess:
         assert "z" not in ra
 
     def test_len(self, ra):
-        assert len(ra) == 10
+        # ``len`` reports field count; for batch size use ``batch_shape``.
+        assert len(ra) == 2
 
     def test_keys(self, ra):
         assert list(ra.keys()) == ["x", "y"]

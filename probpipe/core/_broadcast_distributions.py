@@ -380,7 +380,7 @@ def _make_marginal(
                 pass
         try:
             stacked = jnp.stack(
-                [jnp.asarray(r, dtype=jnp.float32) for r in output_samples], axis=0
+                [jnp.asarray(r) for r in output_samples], axis=0
             )
             return _ArrayMarginal(stacked, weights, name=name)
         except (ValueError, TypeError):
@@ -391,7 +391,7 @@ def _make_marginal(
         return _ListMarginal(output_samples, weights, name=name)
 
     # Single array result (e.g., from vmap); ensure at least 1D for the sample axis
-    arr = jnp.atleast_1d(jnp.asarray(output_samples, dtype=jnp.float32))
+    arr = jnp.atleast_1d(jnp.asarray(output_samples))
     return _ArrayMarginal(arr, weights, name=name)
 
 
@@ -779,7 +779,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
     # -- Named components ----------------------------------------------------
 
     @property
-    def component_names(self) -> tuple[str, ...]:
+    def fields(self) -> tuple[str, ...]:
         return tuple(self._broadcast_args) + ("_output",)
 
     def __getitem__(self, key: str):
@@ -788,7 +788,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         if key in self._input_samples:
             arr = self._input_samples[key]
             return EmpiricalDistribution(arr, weights=self._w)
-        raise KeyError(f"Unknown component {key!r}; available: {self.component_names}")
+        raise KeyError(f"Unknown component {key!r}; available: {self.fields}")
 
     # -- joint sampling -----------------------------------------------------
 

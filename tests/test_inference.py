@@ -536,13 +536,13 @@ class TestRecordDistributionView:
         with pytest.raises(KeyError):
             dist["x"]
 
-    def test_component_names(self, posterior):
-        assert posterior.component_names == ("K", "phi", "r")
+    def test_fields(self, posterior):
+        assert posterior.fields == ("K", "phi", "r")
 
-    def test_component_names_without_template(self):
+    def test_fields_without_template(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = ApproximateDistribution([chain])
-        assert dist.component_names == ()
+        assert dist.fields == ()
 
     def test_view_event_shape_scalar(self, posterior):
         view = posterior["r"]

@@ -2,14 +2,17 @@
 
 These notebooks provide in-depth coverage of specific ProbPipe features. For a guided introduction, start with the [Getting Started tutorial](tutorials/getting_started.ipynb).
 
-| Notebook | Description |
-|----------|-------------|
-| [Distributions](examples/01_distributions.ipynb) | Distribution basics, shape semantics, support checking, and moment-matching conversion between distribution types. |
-| [Transformations](examples/02_transformations.ipynb) | Bijector-based transforms (Exp, Sigmoid, Softplus), chaining transforms, and transforming empirical distributions. |
-| [Joint Distributions](examples/03_joint_distributions.ipynb) | Composing marginals into joint distributions, autoregressive dependence, exact Gaussian conditioning, and correlated broadcasting. |
-| [Broadcasting](examples/04_broadcasting.ipynb) | Automatic uncertainty propagation, empirical enumeration, cartesian products, backend auto-detection, and seeded reproducibility. |
-| [Automatic Differentiation](examples/05_autodiff.ipynb) | End-to-end JAX gradients through distributions: score functions, sensitivity analysis, maximum likelihood estimation, and variational inference. |
-| [Modular Forecasting](examples/06_modular_forecasting.ipynb) | Building a full inference pipeline with swappable likelihoods, MCMC sampling, iterative Bayesian updating, and posterior predictive checks. |
-| [Emulators](examples/07_emulators.ipynb) | Gaussian random functions and emulators for expensive simulators. |
-| [Random Functions](examples/08_random_functions.ipynb) | Distribution over functions, algebraic operations on Gaussian random functions, and workflow function broadcasting. |
-| [PyTree Distributions](examples/09_pytree_array_distributions.ipynb) | Distributions over structured JAX pytrees with shared batch shapes and per-leaf event shapes. |
+The set below matches the 10-notebook target tracked in [issue #127](https://github.com/TARPS-group/prob-pipe/issues/127).
+
+| # | Notebook | Description |
+|---|----------|-------------|
+| 1 | [Distribution basics](examples/01_distributions.ipynb) | `sample` / `log_prob` / `mean` / `variance` / `cov` / `expectation`; parametric families; support checking; the `SupportsX` protocol family. |
+| 2 | [Records and the Record family](examples/02_records.ipynb) | `Record`, `NumericRecord`, `RecordArray`, `NumericRecordArray`, `RecordTemplate` — the structured-value containers that flow through every ProbPipe workflow. |
+| 3 | [Broadcasting and workflow functions](examples/03_broadcasting.ipynb) | Automatic uncertainty propagation, empirical enumeration, cartesian products, vectorization backends, and seeded reproducibility. |
+| 4 | [Joint distributions](examples/04_joint_distributions.ipynb) | `ProductDistribution`, `SequentialJointDistribution`, `JointGaussian`, `JointEmpirical` / `NumericJointEmpirical`; component views; `condition_on`; flat-vector interop. |
+| 5 | [External backends](examples/05_external_backends.ipynb) | How `condition_on` dispatches to TFP NUTS, Stan, PyMC, nutpie, and sbijax; pinning a specific method; the inference method registry. |
+| 6 | [Converting between representations](examples/06_converting_representations.ipynb) | Bijectors + `TransformedDistribution`, `from_distribution` moment matching, and the converter registry for satisfying protocols like `SupportsLogProb`. |
+| 7 | [Sequential updating](examples/07_sequential_updating.ipynb) | Batch-wise Bayesian updating with `IncrementalConditioner`, auto KDE conversion, and provenance chain. |
+| 8 | [JAX interop](examples/08_jax_interop.ipynb) | End-to-end JAX gradients through distributions: score functions, sensitivity analysis, maximum likelihood estimation, and variational inference. |
+| 9 | [Bagged posteriors](examples/09_bagged_posteriors.ipynb) | `BootstrapReplicateDistribution`, broadcasting `condition_on` over resampled datasets, and the between- vs. within-replicate spread as a stability / misspecification diagnostic. |
+| 10 | [Random functions and Gaussian emulators](examples/10_random_functions_and_emulators.ipynb) | `RandomFunction` / `GaussianRandomFunction` / `LinearBasisFunction`; joint-input / joint-output modes; algebraic operations; fitting to data; GP emulators and synthetic-likelihood surrogates for simulation-based inference. |

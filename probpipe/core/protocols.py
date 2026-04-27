@@ -187,10 +187,26 @@ class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
 class SupportsMean(Protocol):
     """Distribution with an exact mean via ``_mean()``.
 
+    The return type is ``T``-shaped where ``T`` is the distribution's
+    sample type. For the common cases this is:
+
+    * :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`
+      and friends (``T = Array``) — returns :class:`~probpipe.custom_types.Array`.
+    * :class:`~probpipe.core._record_distribution.RecordDistribution` and
+      friends (``T = Record``) — returns :class:`~probpipe.record.Record`.
+    * :class:`~probpipe.core._random_measures.RandomMeasure[T]`
+      (``T = Distribution[T]``) — returns the marginalised
+      ``Distribution[T]`` with marginal ``D̄(A) = ∫ D(A) dM(D)``.
+
+    The protocol is sample-type-polymorphic by design: the array-valued
+    and structured paths are unchanged; ``RandomMeasure`` opts in by
+    implementing ``_mean`` to return its expected distribution.
+
     Independent of :class:`SupportsExpectation`.  The ops layer falls
     back to MC estimation via ``SupportsExpectation`` when this protocol
     is absent.  Concrete classes that want the MC default can apply
-    ``@compute_expectation`` to their ``_mean`` implementation.
+    ``@compute_expectation`` to their ``_mean`` implementation (only
+    valid when ``T`` is array-like).
     """
 
     def _mean(self) -> Any: ...
@@ -223,23 +239,65 @@ class SupportsCovariance(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Random-measure protocols
+# ---------------------------------------------------------------------------
+
+@runtime_checkable
+class SupportsRandomLogProb(Protocol):
+    """Distribution over distributions with a random (normalized) log-density.
+
+    For a ``RandomMeasure[T]`` ``M``, ``_random_log_prob`` returns the
+    random function ``x ↦ log D(x)`` where ``D ~ M`` as a
+    :class:`~probpipe.core._random_functions.RandomFunction`. The op
+    layer (:func:`~probpipe.core.ops.random_log_prob`) optionally
+    forwards an input *value* by calling the returned random function;
+    that two-argument convenience is purely op-layer sugar — concrete
+    subclasses implement only the zero-argument method here.
+
+    Mirrors :class:`SupportsLogProb` for the random-measure setting.
+    """
+
+    def _random_log_prob(self) -> Any: ...
+
+
+@runtime_checkable
+class SupportsRandomUnnormalizedLogProb(Protocol):
+    """Distribution over distributions with a random unnormalized log-density.
+
+    Mirrors :class:`SupportsUnnormalizedLogProb` for the random-measure
+    setting. ``_random_unnormalized_log_prob`` returns the random
+    function ``x ↦ log D̃(x)`` where ``D̃`` is the unnormalized density
+    of a draw ``D ~ M``, as a
+    :class:`~probpipe.core._random_functions.RandomFunction`. The op
+    layer (:func:`~probpipe.core.ops.random_unnormalized_log_prob`)
+    optionally forwards an input *value* by calling the returned random
+    function; that two-argument convenience is purely op-layer sugar —
+    concrete subclasses implement only the zero-argument method here.
+    """
+
+    def _random_unnormalized_log_prob(self) -> Any: ...
+
+
+# ---------------------------------------------------------------------------
 # Conditioning
 # ---------------------------------------------------------------------------
 
 @runtime_checkable
 class SupportsConditioning(Protocol):
-    """Distribution that supports exact (closed-form) conditioning.
+    """Distribution that has a fast, built-in ``condition_on`` path.
 
-    Reserved for distributions where ``_condition_on`` computes an
-    **exact** posterior — e.g., conjugate updates or joint distribution
-    marginalization.  When ``condition_on(dist, observed)`` is called
-    and *dist* implements this protocol, the exact path is used
+    Implemented by distributions whose ``_condition_on`` produces a
+    posterior without calling into the inference registry — either
+    closed-form (conjugate updates, joint Gaussian marginalization)
+    or amortized (e.g., a pre-trained SBI posterior that just runs a
+    forward pass).  When ``condition_on(dist, observed)`` is called
+    and *dist* implements this protocol, the built-in path is used
     directly; otherwise the inference method registry selects an
-    approximate algorithm (NUTS, RWMH, etc.).
+    algorithm (NUTS, RWMH, variational, ...).
 
-    Probabilistic models that require MCMC or variational inference
-    should **not** implement this protocol — let the registry handle
-    algorithm selection instead.
+    Probabilistic models whose conditioning requires on-the-fly MCMC
+    or variational inference should **not** implement this protocol —
+    let the registry handle algorithm selection instead.
     """
 
     def _condition_on(self, observed: Any, /, **kwargs: Any) -> Any: ...
@@ -270,6 +328,8 @@ __all__ = [
     "SupportsMean",
     "SupportsVariance",
     "SupportsCovariance",
+    "SupportsRandomLogProb",
+    "SupportsRandomUnnormalizedLogProb",
     "SupportsConditioning",
     "protocols_supported_by_all",
 ]

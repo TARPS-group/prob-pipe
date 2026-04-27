@@ -24,7 +24,7 @@ import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
 from .._utils import _auto_key
-from .distribution import Distribution
+from .distribution import Distribution, RandomFunction
 from .node import workflow_function
 from .protocols import (
     SupportsConditioning,
@@ -32,6 +32,8 @@ from .protocols import (
     SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
+    SupportsRandomLogProb,
+    SupportsRandomUnnormalizedLogProb,
     SupportsSampling,
     SupportsUnnormalizedLogProb,
     SupportsVariance,
@@ -47,6 +49,8 @@ __all__ = [
     "variance",
     "cov",
     "expectation",
+    "random_log_prob",
+    "random_unnormalized_log_prob",
     "condition_on",
     "from_distribution",
 ]
@@ -134,7 +138,18 @@ def unnormalized_prob(
 
 @workflow_function
 def mean(dist: SupportsMean) -> Any:
-    """Compute E[X].
+    """Compute ``E[X]`` where ``X ~ dist``.
+
+    The return type is ``T``-shaped where ``T`` is *dist*'s sample type:
+
+    * Numeric distributions (``T = Array``) — returns
+      :class:`~probpipe.custom_types.Array`.
+    * Structured distributions (``T = Record``) — returns
+      :class:`~probpipe.record.Record`.
+    * :class:`~probpipe.core._random_measures.RandomMeasure[T]` (``T``
+      itself a :class:`~probpipe.core._distribution_base.Distribution[T]`)
+      — returns the marginalised ``Distribution[T]`` with marginal
+      ``D̄(A) = ∫ D(A) dM(D)``.
 
     Requires the distribution to implement :class:`SupportsMean`.
     """
@@ -193,20 +208,85 @@ def expectation(
     )
 
 
+@workflow_function
+def random_log_prob(
+    dist: SupportsRandomLogProb,
+    value: Any = None,
+) -> RandomFunction | Distribution:
+    """Return the random (normalized) log-density of a random measure.
+
+    For a ``RandomMeasure[T]`` ``M`` with draws ``D ~ M``, the random
+    function ``x ↦ log D(x)`` is itself a callable returning a
+    distribution over scalars at every input.
+
+    When *value* is omitted, returns that callable as a
+    :class:`~probpipe.core._random_functions.RandomFunction`. When
+    *value* is provided, returns the ``Distribution[Array]`` over
+    ``log D(value)`` directly — equivalent to
+    ``random_log_prob(dist)(value)``. The two-argument form mirrors
+    :func:`log_prob` for non-random distributions.
+
+    Concrete subclasses implement a single method
+    ``_random_log_prob()`` returning a ``RandomFunction``; the optional
+    *value* dispatch lives entirely in this op, not on the protocol.
+    """
+    if not isinstance(dist, SupportsRandomLogProb):
+        raise TypeError(
+            f"{type(dist).__name__} does not support random_log_prob "
+            f"(does not implement SupportsRandomLogProb)"
+        )
+    rf = dist._random_log_prob()
+    return rf if value is None else rf(value)
+
+
+@workflow_function
+def random_unnormalized_log_prob(
+    dist: SupportsRandomUnnormalizedLogProb,
+    value: Any = None,
+) -> RandomFunction | Distribution:
+    """Return the random unnormalized log-density of a random measure.
+
+    For a ``RandomMeasure[T]`` ``M`` with draws ``D ~ M``, the random
+    function ``x ↦ log D̃(x)`` (where ``D̃`` is the unnormalized density
+    of ``D``) is itself a callable returning a distribution over
+    scalars at every input.
+
+    When *value* is omitted, returns that callable as a
+    :class:`~probpipe.core._random_functions.RandomFunction`. When
+    *value* is provided, returns the ``Distribution[Array]`` over
+    ``log D̃(value)`` directly — equivalent to
+    ``random_unnormalized_log_prob(dist)(value)``. The two-argument
+    form mirrors :func:`unnormalized_log_prob` for non-random
+    distributions.
+
+    Concrete subclasses implement a single method
+    ``_random_unnormalized_log_prob()`` returning a ``RandomFunction``;
+    the optional *value* dispatch lives entirely in this op, not on
+    the protocol.
+    """
+    if not isinstance(dist, SupportsRandomUnnormalizedLogProb):
+        raise TypeError(
+            f"{type(dist).__name__} does not support random_unnormalized_log_prob "
+            f"(does not implement SupportsRandomUnnormalizedLogProb)"
+        )
+    rf = dist._random_unnormalized_log_prob()
+    return rf if value is None else rf(value)
+
+
 def _split_data_kwargs(
     dist: Distribution,
     kwargs: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Separate named data kwargs from inference kwargs.
 
-    Uses the distribution's ``component_names`` as the sole signal:
+    Uses the distribution's ``fields`` as the sole signal:
     any kwarg whose name matches a component name is data (conditioning
     target); everything else is an inference parameter.
 
     Returns ``(data_kwargs, inference_kwargs)``.
     """
     comp_names = frozenset(
-        dist.component_names if hasattr(dist, 'component_names') else ()
+        dist.fields if hasattr(dist, 'fields') else ()
     )
     data_kwargs = {k: v for k, v in kwargs.items() if k in comp_names}
     inference_kwargs = {k: v for k, v in kwargs.items() if k not in comp_names}
@@ -267,7 +347,7 @@ def condition_on(
     from ..inference import inference_method_registry
     from .record import Record
 
-    # Separate data kwargs (names matching component_names) from
+    # Separate data kwargs (names matching fields) from
     # inference kwargs (everything else like num_results, num_warmup).
     data_kwargs, inference_kwargs = _split_data_kwargs(dist, kwargs)
 

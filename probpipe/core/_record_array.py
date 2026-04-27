@@ -21,7 +21,11 @@ from ._numeric_record import NumericRecord, _NUMERIC_DTYPE_KINDS
 from .provenance import Provenance
 from .record import Record, RecordTemplate, _spec_size
 
-__all__ = ["RecordArray", "NumericRecordArray"]
+__all__ = [
+    "RecordArray",
+    "NumericRecordArray",
+    "_RecordArrayView",
+]
 
 
 class RecordArray(Record):
@@ -153,6 +157,20 @@ class RecordArray(Record):
             f"key must be str or int, got {type(key).__name__}"
         )
 
+    def view(self, field: str) -> "_RecordArrayView":
+        """Return a single-field view carrying parent identity.
+
+        Unlike ``ra[field]`` (which returns the raw column), a view
+        remembers the parent ``RecordArray``. When multiple views of
+        the same parent land in a single ``WorkflowFunction`` call,
+        the sweep layer groups them by parent identity and iterates
+        them in lockstep (zip) rather than cartesian-producting.
+
+        Used internally by :meth:`~probpipe.record.Design.select_all`.
+        Direct construction by end-users is supported but rarely needed.
+        """
+        return _RecordArrayView(self, field)
+
     _record_cls: type = Record
     """Class used to materialise a single element via integer indexing.
 
@@ -172,7 +190,11 @@ class RecordArray(Record):
         return name in self._store
 
     def __len__(self) -> int:
-        return prod(self._batch_shape)
+        # Field count, not batch size — matches ``Record.__len__`` so
+        # ``len(ra)`` and ``len(record)`` mean the same thing across the
+        # Record family. For the flat batch count, use
+        # ``prod(ra.batch_shape)``.
+        return len(self._store)
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._store)
@@ -190,6 +212,37 @@ class RecordArray(Record):
         """Iterate over (name, batched_value) pairs."""
         for name in self._store:
             yield name, self._store[name]
+
+    # -- Selection (override to return views) ------------------------------
+
+    def select(self, *fields: str, **mapping: str) -> dict[str, Any]:
+        """Select fields as a dict of single-field **views**.
+
+        Mirrors :meth:`Record.select` but each entry is a
+        :class:`_RecordArrayView` rather than the raw column. The views
+        carry this ``RecordArray`` as their parent, so splatting the
+        result into a ``@workflow_function`` triggers the
+        parent-identity **zip sweep** (one inner call per row, matching
+        ``f(p=self)``) instead of cartesian-producting the fields as
+        independent axes.
+
+        For raw-column access, use ``self["field"]`` per field or
+        iterate ``self.items()``.
+        """
+        result: dict[str, Any] = {}
+        for f in fields:
+            if f not in self._store:
+                raise KeyError(f"No field {f!r} in {type(self).__name__}")
+            result[f] = self.view(f)
+        for arg_name, field_name in mapping.items():
+            if field_name not in self._store:
+                raise KeyError(f"No field {field_name!r} in {type(self).__name__}")
+            result[arg_name] = self.view(field_name)
+        return result
+
+    # ``select_all`` is inherited from ``Record`` and calls
+    # ``self.select(*self.fields)``, which dispatches here and returns
+    # per-field views.
 
     # -- Factory methods ----------------------------------------------------
 
@@ -452,9 +505,10 @@ class NumericRecordArray(RecordArray):
             )
         return only
 
-    def __array__(self, dtype=None):
+    def __array__(self, dtype=None, copy=None):
         leaf = self._single_numeric_leaf()
-        return np.asarray(leaf, dtype=dtype) if dtype is not None else np.asarray(leaf)
+        arr = np.asarray(leaf, dtype=dtype) if dtype is not None else np.asarray(leaf)
+        return arr.copy() if copy else arr
 
     def __jax_array__(self):
         return jnp.asarray(self._single_numeric_leaf())
@@ -476,6 +530,132 @@ class NumericRecordArray(RecordArray):
     def ndim(self) -> int:
         leaf = self._single_numeric_leaf()
         return int(getattr(leaf, "ndim", 0))
+
+
+# ---------------------------------------------------------------------------
+# Single-field view
+# ---------------------------------------------------------------------------
+#
+# A view is a ``RecordArray`` with exactly one field, aliased into the
+# parent's storage, plus a ``_parent`` reference. It's consciously a
+# *plain* ``RecordArray`` subclass — not a ``NumericRecordArray``
+# subclass — to avoid inheriting per-field batch-reduction methods
+# (``.mean`` / ``.var`` / ``.flatten``) that clash with the "act like
+# the underlying column" intuition. Users who want numeric column ops
+# convert explicitly: ``jnp.asarray(view).mean()``.
+#
+# Parallel to :class:`~probpipe.core._record_distribution._RecordDistributionView`:
+# same "thin wrapper carrying parent identity for WF-layer sweep
+# grouping" role. The WF layer detects ``view._parent`` as the
+# shared-identity key; sibling views from the same parent zip into a
+# single sweep axis, different parents product.
+# ---------------------------------------------------------------------------
+
+
+class _RecordArrayView(RecordArray):
+    """View of a single named field in a :class:`RecordArray`.
+
+    Constructed via ``parent[field]``. The underlying column is aliased
+    — no copy — and ``view._parent`` carries the parent reference used
+    by the ``WorkflowFunction`` sweep layer to group sibling views.
+
+    Minimal surface: ``__array__`` / ``__jax_array__`` for conversion,
+    ``.shape`` / ``.dtype`` / ``.ndim`` for introspection,
+    ``view[i]`` / ``view[slice]`` to slice the underlying column,
+    ``.parent`` / ``.field`` for sweep metadata. Arithmetic /
+    reductions / reshaping require explicit
+    ``jnp.asarray(view)`` conversion, matching the explicit-conversion
+    policy already used for ``NumericRecord`` / ``NumericRecordArray``.
+
+    Parameters
+    ----------
+    parent : RecordArray
+        The source RecordArray.
+    field : str
+        Name of the field to view. Must be present in ``parent``.
+    """
+
+    __slots__ = ("_parent", "_field")
+
+    def __init__(self, parent: RecordArray, field: str):
+        if field not in parent._store:
+            raise KeyError(
+                f"field {field!r} not in parent "
+                f"{type(parent).__name__}(fields={parent.fields})"
+            )
+        leaf_spec = parent.template[field]
+        store = OrderedDict([(field, parent._store[field])])
+        template = RecordTemplate({field: leaf_spec})
+        # Populate RecordArray state directly — data was validated at
+        # the parent's construction.
+        object.__setattr__(self, "_store", store)
+        object.__setattr__(self, "_template", template)
+        object.__setattr__(self, "_batch_shape", parent._batch_shape)
+        object.__setattr__(self, "_name", f"{parent._name}[{field!r}]")
+        object.__setattr__(self, "_source", None)
+        object.__setattr__(self, "_parent", parent)
+        object.__setattr__(self, "_field", field)
+
+    @property
+    def parent(self) -> RecordArray:
+        """The parent ``RecordArray`` this view points at.
+
+        Shared-identity signal for the ``WorkflowFunction`` sweep layer:
+        views with the same ``parent`` zip into one sweep axis; views
+        with different parents (and plain ``RecordArray``s) product.
+        """
+        return self._parent
+
+    @property
+    def field(self) -> str:
+        """The name of the viewed field."""
+        return self._field
+
+    # -- Column conversion + introspection ------------------------------------
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return tuple(getattr(self._store[self._field], "shape", ()))
+
+    @property
+    def dtype(self) -> "jnp.dtype | None":
+        return getattr(self._store[self._field], "dtype", None)
+
+    @property
+    def ndim(self) -> int:
+        return int(getattr(self._store[self._field], "ndim", 0))
+
+    def __array__(self, dtype=None, copy=None):
+        leaf = self._store[self._field]
+        arr = np.asarray(leaf, dtype=dtype) if dtype is not None else np.asarray(leaf)
+        return arr.copy() if copy else arr
+
+    def __jax_array__(self):
+        return jnp.asarray(self._store[self._field])
+
+    # ``view[i]`` indexes the underlying column; ``view[name]`` is
+    # idempotent (same field) or raises.
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            if key == self._field:
+                return self
+            raise KeyError(key)
+        return self._store[self._field][key]
+
+    def __len__(self) -> int:
+        # Row count, matching the column-like intuition. (``RecordArray``
+        # itself returns the field count.)
+        leaf = self._store[self._field]
+        return int(leaf.shape[0]) if getattr(leaf, "shape", ()) else 0
+
+    def __iter__(self):
+        return iter(self._store[self._field])
+
+    def __repr__(self) -> str:
+        return (
+            f"_RecordArrayView(parent={type(self._parent).__name__}, "
+            f"field={self._field!r}, batch_shape={self._batch_shape})"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -524,3 +704,9 @@ jax.tree_util.register_pytree_node(
 jax.tree_util.register_pytree_node(
     NumericRecordArray, _record_array_flatten, _numeric_record_array_unflatten
 )
+
+
+# Views are intentionally pytree leaves, not nodes — JAX routes
+# ``jnp.sum(view)`` / etc. through ``__jax_array__`` to operate on
+# the underlying column, and we avoid an unflatten that would drop
+# the ``_parent`` reference.

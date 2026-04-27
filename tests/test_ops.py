@@ -217,7 +217,7 @@ class TestExpectation:
 class TestConditionOn:
     def test_condition_product(self, joint):
         conditioned = ops.condition_on(joint, x=jnp.array(2.0))
-        assert conditioned.component_names == ("y",)
+        assert conditioned.fields == ("y",)
 
     def test_condition_sequential(self):
         sjd = SequentialJointDistribution(
@@ -225,7 +225,7 @@ class TestConditionOn:
             y=lambda x: Normal(loc=x, scale=1.0, name="y"),
         )
         conditioned = ops.condition_on(sjd, x=jnp.array(3.0))
-        assert conditioned.component_names == ("y",)
+        assert conditioned.fields == ("y",)
 
     def test_condition_type_error(self):
         """Objects with no protocols raise TypeError."""
@@ -334,8 +334,8 @@ class TestSplitDataKwargs:
         assert set(data.keys()) == {"x"}
         assert set(inference.keys()) == {"num_results"}
 
-    def test_no_component_names(self):
-        """Distribution without component_names → all kwargs are inference."""
+    def test_no_fields(self):
+        """Distribution without fields → all kwargs are inference."""
         from probpipe.core.ops import _split_data_kwargs
         dist = Normal(0.0, 1.0, name="x")
         data, inference = _split_data_kwargs(

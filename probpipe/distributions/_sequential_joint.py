@@ -209,7 +209,7 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
             raise NotImplementedError(self._sampleable_error)
 
     @property
-    def component_names(self) -> tuple[str, ...]:
+    def fields(self) -> tuple[str, ...]:
         """Component names in topological (insertion) order."""
         return tuple(self._components.keys())
 
@@ -415,7 +415,7 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
         result._conditioned_names = all_conditioned
         result._conditioned_values = {
             **self._conditioned_values,
-            **{k: jnp.asarray(v, dtype=jnp.float32) for k, v in observed.items()},
+            **{k: jnp.asarray(v) for k, v in observed.items()},
         }
         result._sampleable_error = self._compute_sampleable_error(
             result._conditioned_names, result._callable_parents,

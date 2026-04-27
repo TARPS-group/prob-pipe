@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ._tfp_base import TFPDistribution
+from .._dtype import _as_float_array, _promote_floats
 from ..core.distribution import (
     NumericRecordDistribution,
     EmpiricalDistribution,
@@ -70,8 +71,7 @@ class Normal(TFPDistribution):
         *,
         name: str,
     ):
-        self._loc = jnp.asarray(loc, dtype=jnp.float32)
-        self._scale = jnp.asarray(scale, dtype=jnp.float32)
+        _, (self._loc, self._scale) = _promote_floats(loc, scale)
         self._tfp_dist = tfd.Normal(loc=self._loc, scale=self._scale)
         super().__init__(name=name)
 
@@ -118,8 +118,7 @@ class Beta(TFPDistribution):
         *,
         name: str,
     ):
-        self._alpha = jnp.asarray(alpha, dtype=jnp.float32)
-        self._beta = jnp.asarray(beta, dtype=jnp.float32)
+        _, (self._alpha, self._beta) = _promote_floats(alpha, beta)
         self._tfp_dist = tfd.Beta(concentration1=self._alpha, concentration0=self._beta)
         super().__init__(name=name)
 
@@ -166,8 +165,7 @@ class Gamma(TFPDistribution):
         *,
         name: str,
     ):
-        self._concentration = jnp.asarray(concentration, dtype=jnp.float32)
-        self._rate = jnp.asarray(rate, dtype=jnp.float32)
+        _, (self._concentration, self._rate) = _promote_floats(concentration, rate)
         self._tfp_dist = tfd.Gamma(concentration=self._concentration, rate=self._rate)
         super().__init__(name=name)
 
@@ -214,8 +212,7 @@ class InverseGamma(TFPDistribution):
         *,
         name: str,
     ):
-        self._concentration = jnp.asarray(concentration, dtype=jnp.float32)
-        self._scale = jnp.asarray(scale, dtype=jnp.float32)
+        _, (self._concentration, self._scale) = _promote_floats(concentration, scale)
         self._tfp_dist = tfd.InverseGamma(
             concentration=self._concentration, scale=self._scale
         )
@@ -261,7 +258,7 @@ class Exponential(TFPDistribution):
         *,
         name: str,
     ):
-        self._rate = jnp.asarray(rate, dtype=jnp.float32)
+        self._rate = _as_float_array(rate)
         self._tfp_dist = tfd.Exponential(rate=self._rate)
         super().__init__(name=name)
 
@@ -304,8 +301,7 @@ class LogNormal(TFPDistribution):
         *,
         name: str,
     ):
-        self._loc = jnp.asarray(loc, dtype=jnp.float32)
-        self._scale = jnp.asarray(scale, dtype=jnp.float32)
+        _, (self._loc, self._scale) = _promote_floats(loc, scale)
         self._tfp_dist = tfd.LogNormal(loc=self._loc, scale=self._scale)
         super().__init__(name=name)
 
@@ -355,9 +351,7 @@ class StudentT(TFPDistribution):
         *,
         name: str,
     ):
-        self._df = jnp.asarray(df, dtype=jnp.float32)
-        self._loc = jnp.asarray(loc, dtype=jnp.float32)
-        self._scale = jnp.asarray(scale, dtype=jnp.float32)
+        _, (self._df, self._loc, self._scale) = _promote_floats(df, loc, scale)
         self._tfp_dist = tfd.StudentT(df=self._df, loc=self._loc, scale=self._scale)
         super().__init__(name=name)
 
@@ -408,8 +402,7 @@ class Uniform(TFPDistribution):
         *,
         name: str,
     ):
-        self._low = jnp.asarray(low, dtype=jnp.float32)
-        self._high = jnp.asarray(high, dtype=jnp.float32)
+        _, (self._low, self._high) = _promote_floats(low, high)
         self._tfp_dist = tfd.Uniform(low=self._low, high=self._high)
         super().__init__(name=name)
 
@@ -456,8 +449,7 @@ class Cauchy(TFPDistribution):
         *,
         name: str,
     ):
-        self._loc = jnp.asarray(loc, dtype=jnp.float32)
-        self._scale = jnp.asarray(scale, dtype=jnp.float32)
+        _, (self._loc, self._scale) = _promote_floats(loc, scale)
         self._tfp_dist = tfd.Cauchy(loc=self._loc, scale=self._scale)
         super().__init__(name=name)
 
@@ -504,8 +496,7 @@ class Laplace(TFPDistribution):
         *,
         name: str,
     ):
-        self._loc = jnp.asarray(loc, dtype=jnp.float32)
-        self._scale = jnp.asarray(scale, dtype=jnp.float32)
+        _, (self._loc, self._scale) = _promote_floats(loc, scale)
         self._tfp_dist = tfd.Laplace(loc=self._loc, scale=self._scale)
         super().__init__(name=name)
 
@@ -549,7 +540,7 @@ class HalfNormal(TFPDistribution):
         *,
         name: str,
     ):
-        self._scale = jnp.asarray(scale, dtype=jnp.float32)
+        self._scale = _as_float_array(scale)
         self._tfp_dist = tfd.HalfNormal(scale=self._scale)
         super().__init__(name=name)
 
@@ -592,8 +583,7 @@ class HalfCauchy(TFPDistribution):
         *,
         name: str,
     ):
-        self._loc = jnp.asarray(loc, dtype=jnp.float32)
-        self._scale = jnp.asarray(scale, dtype=jnp.float32)
+        _, (self._loc, self._scale) = _promote_floats(loc, scale)
         self._tfp_dist = tfd.HalfCauchy(loc=self._loc, scale=self._scale)
         super().__init__(name=name)
 
@@ -640,8 +630,7 @@ class Pareto(TFPDistribution):
         *,
         name: str,
     ):
-        self._concentration = jnp.asarray(concentration, dtype=jnp.float32)
-        self._scale = jnp.asarray(scale, dtype=jnp.float32)
+        _, (self._concentration, self._scale) = _promote_floats(concentration, scale)
         self._tfp_dist = tfd.Pareto(
             concentration=self._concentration, scale=self._scale
         )
@@ -696,10 +685,9 @@ class TruncatedNormal(TFPDistribution):
         *,
         name: str,
     ):
-        self._loc = jnp.asarray(loc, dtype=jnp.float32)
-        self._scale = jnp.asarray(scale, dtype=jnp.float32)
-        self._low = jnp.asarray(low, dtype=jnp.float32)
-        self._high = jnp.asarray(high, dtype=jnp.float32)
+        _, (self._loc, self._scale, self._low, self._high) = _promote_floats(
+            loc, scale, low, high
+        )
         self._tfp_dist = tfd.TruncatedNormal(
             loc=self._loc, scale=self._scale, low=self._low, high=self._high
         )

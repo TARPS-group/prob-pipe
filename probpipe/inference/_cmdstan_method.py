@@ -73,9 +73,7 @@ class CmdStanNutsMethod(InferenceMethod):
 
         chains = []
         for c in range(num_chains):
-            chain_draws = jnp.asarray(
-                fit.draws(concat_chains=False)[c], dtype=jnp.float32,
-            )
+            chain_draws = jnp.asarray(fit.draws(concat_chains=False)[c])
             chains.append(chain_draws)
 
         inference_data = az.from_cmdstanpy(fit)

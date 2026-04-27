@@ -137,31 +137,31 @@ class GaussianRandomFunction(ArrayRandomFunction):
         *other* must be a 2-D array of shape ``(d_out, d_w)`` and
         ``self.output_shape`` must be 1-D ``(d_w,)``.
         """
-        return _LinearMapGRF(self, jnp.asarray(other, dtype=jnp.float32))
+        return _LinearMapGRF(self, jnp.asarray(other))
 
     def __add__(self, other):
         if isinstance(other, GaussianRandomFunction):
             return _IndependentSumGRF(self, other)
-        return _ShiftedGRF(self, jnp.asarray(other, dtype=jnp.float32))
+        return _ShiftedGRF(self, jnp.asarray(other))
 
     def __radd__(self, other):
         if isinstance(other, GaussianRandomFunction):
             return _IndependentSumGRF(other, self)
-        return _ShiftedGRF(self, jnp.asarray(other, dtype=jnp.float32))
+        return _ShiftedGRF(self, jnp.asarray(other))
 
     def __mul__(self, other):
-        return _ScaledGRF(self, jnp.asarray(other, dtype=jnp.float32))
+        return _ScaledGRF(self, jnp.asarray(other))
 
     def __rmul__(self, other):
-        return _ScaledGRF(self, jnp.asarray(other, dtype=jnp.float32))
+        return _ScaledGRF(self, jnp.asarray(other))
 
     def __neg__(self):
-        return _ScaledGRF(self, jnp.float32(-1.0))
+        return _ScaledGRF(self, -1.0)
 
     def __sub__(self, other):
         if isinstance(other, GaussianRandomFunction):
             return self + (-other)
-        return _ShiftedGRF(self, -jnp.asarray(other, dtype=jnp.float32))
+        return _ShiftedGRF(self, -jnp.asarray(other))
 
     def __rsub__(self, other):
         return (-self) + other
@@ -302,12 +302,14 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
         self._w_mean = weights.loc          # (d_w,)
         self._w_cov = weights.cov           # (d_w, d_w)
 
+        # Bias inherits dtype from the weight distribution.
+        bias_dtype = self._w_mean.dtype
         if bias is not None:
-            self._bias = jnp.asarray(bias, dtype=jnp.float32)
+            self._bias = jnp.asarray(bias, dtype=bias_dtype)
         elif output_shape:
-            self._bias = jnp.zeros(output_shape, dtype=jnp.float32)
+            self._bias = jnp.zeros(output_shape, dtype=bias_dtype)
         else:
-            self._bias = jnp.float32(0.0)
+            self._bias = jnp.zeros((), dtype=bias_dtype)
 
         super().__init__(input_shape=input_shape, output_shape=output_shape)
 
@@ -405,8 +407,7 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
             w = self._weights._sample(key)  # (d_w,)
 
             def f_one(X: ArrayLike) -> Array:
-                X = jnp.asarray(X, dtype=jnp.float32)
-                phi = feature_map(X)  # (*eb, n, [*out,] d_w)
+                phi = feature_map(jnp.asarray(X))  # (*eb, n, [*out,] d_w)
                 return bias + jnp.einsum("...w,w->...", phi, w)
 
             return f_one
@@ -417,7 +418,7 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
         reshape_to = sample_shape
 
         def f(X: ArrayLike) -> Array:
-            X = jnp.asarray(X, dtype=jnp.float32)
+            X = jnp.asarray(X)
             phi = feature_map(X)  # (*eb, n_pts, [*out,] d_w)
             # w_samples: (n_samples, d_w), phi: (*eb, n_pts, [*out,] d_w)
             # result: (n_samples, *eb, n_pts, [*out])

@@ -37,7 +37,8 @@ from .distribution import (
 from ._broadcast_distributions import _make_stack
 from ._distribution_array import DistributionArray, _make_distribution_array
 from ._numeric_record import NumericRecord, _is_numeric_leaf
-from ._record_array import RecordArray
+from ._record_array import RecordArray, _RecordArrayView
+from ._record_distribution import _RecordDistributionView
 from .provenance import Provenance
 from .record import Record
 from .protocols import (
@@ -46,6 +47,8 @@ from .protocols import (
     SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
+    SupportsRandomLogProb,
+    SupportsRandomUnnormalizedLogProb,
     SupportsSampling,
     SupportsUnnormalizedLogProb,
     SupportsVariance,
@@ -61,6 +64,8 @@ _DISTRIBUTION_PROTOCOLS: tuple[type, ...] = (
     SupportsMean,
     SupportsVariance,
     SupportsCovariance,
+    SupportsRandomLogProb,
+    SupportsRandomUnnormalizedLogProb,
     SupportsConditioning,
 )
 from ..converters import converter_registry
@@ -191,6 +196,24 @@ __all__ = [
 
 class InputFrozenError(Exception):
     pass
+
+
+def _group_by_parent(
+    values: dict[str, Any],
+    names: list[str],
+) -> dict[int, list[str]]:
+    """Group arg names by the ``id()`` of their source parent.
+
+    Views (``_RecordArrayView`` / ``_RecordDistributionView``) expose
+    ``.parent`` and group with other views sharing it; plain container
+    args are each their own parent. First-occurrence order preserved.
+    """
+    groups: dict[int, list[str]] = {}
+    for name in names:
+        value = values[name]
+        parent = getattr(value, "parent", value)
+        groups.setdefault(id(parent), []).append(name)
+    return groups
 
 
 def workflow_method(func: Callable):
@@ -773,7 +796,10 @@ class WorkflowFunction(Node):
                     else:
                         dist = v
                         es = dist.event_shape
-                        dummy_kw[name] = jnp.zeros(es) if es else jnp.zeros(())
+                        # Match the distribution's own dtype so the probe
+                        # mirrors what the inner function actually sees.
+                        dt = getattr(dist, "dtype", None) or jnp.zeros((), dtype=float).dtype
+                        dummy_kw[name] = jnp.zeros(es, dtype=dt) if es else jnp.zeros((), dtype=dt)
                 elif name in values:
                     v = values[name]
                     if isinstance(v, jnp.ndarray):
@@ -838,18 +864,23 @@ class WorkflowFunction(Node):
                 "provenance on the stacked output."
             )
 
-        # Product rule: each array arg contributes its own batch_shape
-        # as a block of leading axes in the sweep output. The sweep
-        # iterates the Cartesian product across all blocks.
+        # Group ``ra_args`` by parent identity. Views from the same
+        # ``RecordArray`` (e.g. ``Design.select_all()`` outputs) zip —
+        # they contribute a single axis block to the sweep. Plain
+        # ``RecordArray`` / ``DistributionArray`` args and views from
+        # different parents each form their own group and product
+        # across the sweep. Insertion order of first occurrence
+        # preserves axis ordering in the output.
+        ra_groups = self._group_ra_args_by_parent(values, ra_args)
         sweep_batch_shape = tuple(
-            ax for name in ra_args for ax in values[name].batch_shape
+            ax for _, bshape, _ in ra_groups for ax in bshape
         )
         n_total = prod(sweep_batch_shape) if sweep_batch_shape else 1
 
         # ---- Pure sweep (no Distribution args) -------------------------
         if not dist_args:
             per_row = self._execute_sweep_rows(
-                values, ra_args, n_total, sweep_batch_shape,
+                values, ra_args, n_total, sweep_batch_shape, ra_groups,
             )
             aggregate = _make_stack(
                 per_row,
@@ -874,9 +905,8 @@ class WorkflowFunction(Node):
         # them into a DistributionArray that presents the sweep's
         # multi-d batch_shape.
         per_row_marginals: list[Distribution] = []
-        sizes = [prod(values[name].batch_shape) for name in ra_args]
         for i in range(n_total):
-            row_values = self._slice_ra_args(values, ra_args, i, sizes)
+            row_values = self._slice_ra_args(values, ra_args, i, ra_groups)
             inner = self._broadcast_distributions_only(
                 row_values, dist_args, n_broadcast_samples,
                 do_include_inputs=True,
@@ -905,35 +935,60 @@ class WorkflowFunction(Node):
 
     # ----- Helpers for the array-broadcast path ---------------------------
 
+    def _group_ra_args_by_parent(
+        self,
+        values: dict[str, Any],
+        ra_args: list[str],
+    ) -> list[tuple[list[str], tuple[int, ...], int]]:
+        """Group array-valued sweep args by parent identity.
+
+        Views (``_RecordArrayView``) from the same parent
+        ``RecordArray`` — e.g. the output dict of
+        ``Design.select_all()`` — belong to one group and iterate in
+        lockstep (zip). Plain ``RecordArray`` / ``DistributionArray``
+        args and views from distinct parents each form their own group
+        and product across the sweep.
+
+        Returns a list of tuples ``(arg_names, batch_shape, size)``
+        in first-occurrence order; each tuple is one axis block of the
+        sweep. ``size`` is ``prod(batch_shape)``.
+        """
+        groups: list[tuple[list[str], tuple[int, ...], int]] = []
+        for arg_names in _group_by_parent(values, ra_args).values():
+            # Sibling views share their parent's batch_shape by
+            # construction, so the first arg's batch_shape stands for
+            # the group.
+            bshape = tuple(values[arg_names[0]].batch_shape)
+            groups.append((arg_names, bshape, prod(bshape) if bshape else 1))
+        return groups
+
     def _slice_ra_args(
         self,
         values: dict[str, Any],
         ra_args: list[str],
         i: int,
-        sizes: list[int],
+        ra_groups: list[tuple[list[str], tuple[int, ...], int]],
     ) -> dict[str, Any]:
-        """Materialise the ``i``-th sweep cell under the product rule.
+        """Materialise the ``i``-th sweep cell under parent-grouped sweep.
 
-        ``sizes`` is the flat batch size of each ``ra_args`` arg — the
-        sweep caller computes it once outside the cell loop to avoid
-        repeating ``prod`` per cell.
-
-        Each array arg is integer-indexed along its own batch — yielding
-        a ``Record`` / ``NumericRecord`` (``RecordArray``) or a scalar
-        component ``Distribution`` (``DistributionArray``).
+        ``ra_groups`` is the per-parent grouping from
+        :meth:`_group_ra_args_by_parent`. Each group's args share a flat
+        in-group index (zip); groups compose by row-major unravel of
+        the outer flat index ``i`` over the concatenated batch shapes.
         """
         out = dict(values)
         rem = i
-        # Highest-index arg is the fastest-varying axis (row-major over
-        # the concatenated sweep shape).
-        for name, size in zip(reversed(ra_args), reversed(sizes)):
+        # Highest-index group varies fastest (row-major over the
+        # concatenated sweep shape).
+        for arg_names, _, size in reversed(ra_groups):
             idx = rem % size
             rem = rem // size
-            source = values[name]
-            if isinstance(source, DistributionArray):
-                out[name] = source._flat_component(idx)
-            else:
-                out[name] = source[idx]
+            for name in arg_names:
+                source = values[name]
+                if isinstance(source, DistributionArray):
+                    out[name] = source._flat_component(idx)
+                else:
+                    out[name] = source[idx]
         return out
 
     def _execute_sweep_rows(
@@ -942,6 +997,7 @@ class WorkflowFunction(Node):
         ra_args: list[str],
         n_total: int,
         sweep_batch_shape: tuple[int, ...],
+        ra_groups: list[tuple[list[str], tuple[int, ...], int]],
     ) -> Any:
         """Execute ``n_total`` inner calls, one per sweep cell in flat
         row-major order over the concatenated ``sweep_batch_shape``.
@@ -952,13 +1008,17 @@ class WorkflowFunction(Node):
         """
         vectorize = self._resolve_vectorize(values, ra_args)
 
-        # Mixed-kind arg lists (RecordArray + DistributionArray) and
-        # product-rule expansion aren't supported by the single-axis
-        # vmap path; drop to the loop.
+        # The vmap path only handles the simple single-RecordArray
+        # case: one group, one RA arg, no DistributionArray, no views
+        # (views carry parent references that would confuse vmap's
+        # leading-axis flattening).
         has_dist_array = any(
             isinstance(values[name], DistributionArray) for name in ra_args
         )
-        if has_dist_array or len(ra_args) > 1:
+        has_view = any(
+            isinstance(values[name], _RecordArrayView) for name in ra_args
+        )
+        if has_dist_array or has_view or len(ra_groups) > 1 or len(ra_args) > 1:
             vectorize = "loop"
 
         if vectorize == "jax":
@@ -985,9 +1045,9 @@ class WorkflowFunction(Node):
             return jax.vmap(single_call)(vmap_input)
 
         # Loop path.
-        sizes = [prod(values[name].batch_shape) for name in ra_args]
         per_row_values = [
-            self._slice_ra_args(values, ra_args, i, sizes) for i in range(n_total)
+            self._slice_ra_args(values, ra_args, i, ra_groups)
+            for i in range(n_total)
         ]
         return self._execute_many(per_row_values)
 
@@ -1062,40 +1122,41 @@ class WorkflowFunction(Node):
 
         vectorize = self._resolve_vectorize(values, broadcast_args)
 
-        # JAX vectorization: vmap (no enumeration path — sample everything)
-        if vectorize == "jax":
+        # Collect candidate empirical dists (small enough individually),
+        # sorted smallest first. Greedily include them while the product
+        # stays within budget.
+        candidates = []
+        sample_args: dict[str, Distribution] = {}
+        for name in broadcast_args:
+            dist = values[name]
+            if isinstance(dist, EmpiricalDistribution) and dist.n <= n_broadcast_samples:
+                candidates.append((name, dist))
+            else:
+                sample_args[name] = dist
+        candidates.sort(key=lambda pair: pair[1].n)
+
+        empirical_args: dict[str, EmpiricalDistribution] = {}
+        product_size = 1
+        for name, dist in candidates:
+            if product_size * dist.n <= n_broadcast_samples:
+                empirical_args[name] = dist
+                product_size *= dist.n
+            else:
+                # Too large to enumerate — sample from it instead.
+                sample_args[name] = dist
+
+        # Enumeration preserves exact empirical weights and must run in
+        # all vectorization modes — otherwise the cartesian-product
+        # semantics change with vectorize= (issue surfaced in the
+        # ``EmpiricalDistribution`` broadcasting example).
+        if empirical_args:
+            result = self._broadcast_enumerate(
+                values, empirical_args, sample_args, product_size, n_broadcast_samples,
+            )
+        elif vectorize == "jax":
             result = self._broadcast_jax(values, broadcast_args, n_broadcast_samples)
         else:
-            # Loop vectorization: supports empirical enumeration
-            # Collect candidate empirical dists (small enough individually), sorted smallest first
-            candidates = []
-            sample_args: dict[str, Distribution] = {}
-            for name in broadcast_args:
-                dist = values[name]
-                if isinstance(dist, EmpiricalDistribution) and dist.n <= n_broadcast_samples:
-                    candidates.append((name, dist))
-                else:
-                    sample_args[name] = dist
-
-            candidates.sort(key=lambda pair: pair[1].n)
-
-            # Greedily include smallest empirical dists while product stays within budget
-            empirical_args: dict[str, EmpiricalDistribution] = {}
-            product_size = 1
-            for name, dist in candidates:
-                if product_size * dist.n <= n_broadcast_samples:
-                    empirical_args[name] = dist
-                    product_size *= dist.n
-                else:
-                    # Too large to enumerate — sample from it instead
-                    sample_args[name] = dist
-
-            if empirical_args:
-                result = self._broadcast_enumerate(
-                    values, empirical_args, sample_args, product_size, n_broadcast_samples
-                )
-            else:
-                result = self._broadcast_sample(values, broadcast_args, n_broadcast_samples)
+            result = self._broadcast_sample(values, broadcast_args, n_broadcast_samples)
 
         # Attach provenance
         parents = tuple(
@@ -1134,50 +1195,32 @@ class WorkflowFunction(Node):
         n: int,
         key: PRNGKey,
     ) -> dict[str, Array]:
+        """Sample all broadcast arguments, handling view reconnection.
+
+        Sibling views from the same parent distribution share one
+        parent draw, preserving cross-field correlation. Plain
+        (non-view) distributions are sampled independently per kwarg,
+        even if the same object is passed under multiple names.
         """
-        Sample all broadcast arguments, handling view reconnection.
-
-        When multiple arguments are views from the same parent
-        distribution, the parent is sampled once and component samples
-        are distributed to the appropriate arguments.  This preserves
-        correlation between jointly-distributed components.
-
-        Views are detected via duck-typing (``_parent`` + ``_key_path``
-        attributes).
-        """
-        view_groups: dict[int, dict] = {}  # id(parent) → {parent, views}
-        independent: list[str] = []
-
-        for name in broadcast_args:
-            dist = values[name]
-            if hasattr(dist, "_parent") and hasattr(dist, "_key_path"):
-                pid = id(dist._parent)
-                if pid not in view_groups:
-                    view_groups[pid] = {"parent": dist._parent, "views": {}}
-                view_groups[pid]["views"][name] = dist
-            else:
-                independent.append(name)
-
         sampled: dict[str, Array] = {}
-
-        # Sample each parent once, distribute to arguments.
-        for group in view_groups.values():
+        for arg_names in _group_by_parent(values, broadcast_args).values():
+            first = values[arg_names[0]]
+            if not isinstance(first, _RecordDistributionView):
+                for arg_name in arg_names:
+                    key, subkey = jax.random.split(key)
+                    sampled[arg_name] = values[arg_name]._sample(subkey, (n,))
+                continue
             key, subkey = jax.random.split(key)
-            structured = group["parent"]._sample(subkey, (n,))
-            for arg_name, view in group["views"].items():
+            structured = first.parent._sample(subkey, (n,))
+            for arg_name in arg_names:
+                view = values[arg_name]
                 if hasattr(view, "_extract"):
                     sampled[arg_name] = view._extract(structured)
                 else:
                     val = structured
-                    for k in view._key_path:
+                    for k in getattr(view, "_key_path", (view.field,)):
                         val = val[k]
                     sampled[arg_name] = val
-
-        # Sample independent distributions
-        for name in independent:
-            key, subkey = jax.random.split(key)
-            sampled[name] = values[name]._sample(subkey, (n,))
-
         return sampled
 
     def _broadcast_jax(

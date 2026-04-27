@@ -101,7 +101,7 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsSampl
     # -- Named components interface ------------------------------------------
 
     @property
-    def component_names(self) -> tuple[str, ...]:
+    def fields(self) -> tuple[str, ...]:
         return ("parameters", "data")
 
     def __getitem__(self, key: str) -> Any:
@@ -111,7 +111,7 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsSampl
             return self._likelihood
         raise KeyError(
             f"Unknown component: {key!r}; "
-            f"available: {self.component_names}"
+            f"available: {self.fields}"
         )
 
     # -- ProbabilisticModel interface ---------------------------------------

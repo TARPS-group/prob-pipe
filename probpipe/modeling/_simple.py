@@ -27,7 +27,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
     **Named components:** merged from the prior's ``record_template``
     and the likelihood's ``data_template`` when both are available.
     For example, a GLM model might have
-    ``component_names == ("X", "intercept", "slope", "y")``.
+    ``fields == ("X", "intercept", "slope", "y")``.
     Falls back to ``("parameters", "data")`` when templates are absent.
 
     Parameters
@@ -60,7 +60,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         self._name_str = name
 
         # Build merged record_template: prior params + likelihood data fields.
-        # This makes component_names include both parameter and data names,
+        # This makes fields include both parameter and data names,
         # so condition_on can use component names as the sole signal for
         # splitting data kwargs from inference kwargs.
         prior_tpl = prior.record_template
@@ -92,7 +92,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
     # -- Named components interface ------------------------------------------
 
     @property
-    def component_names(self) -> tuple[str, ...]:
+    def fields(self) -> tuple[str, ...]:
         tpl = self.record_template
         if tpl is not None:
             return tpl.fields
@@ -120,7 +120,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
             return self._prior
         raise KeyError(
             f"Unknown component: {key!r}; "
-            f"available: {self.component_names}"
+            f"available: {self.fields}"
         )
 
     # -- ProbabilisticModel interface ---------------------------------------

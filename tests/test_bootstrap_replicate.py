@@ -342,7 +342,8 @@ class TestArrayBootstrapReplicateDistribution:
 
     def test_dtype(self):
         dist = ArrayBootstrapReplicateDistribution(jnp.ones((5, 2)))
-        assert dist.dtype == jnp.float32
+        # Inherits dtype from the source array (default float dtype here).
+        assert dist.dtype == jnp.zeros((), dtype=float).dtype
 
 
 # ---------------------------------------------------------------------------
@@ -413,9 +414,9 @@ class TestValuesEmpiricalDistribution:
         assert tpl["X"] == (3,)
         assert tpl["y"] == ()
 
-    def test_component_names(self, values_data):
+    def test_fields(self, values_data):
         emp = EmpiricalDistribution(values_data)
-        assert emp.component_names == ("X", "y")
+        assert emp.fields == ("X", "y")
 
     def test_getitem_returns_view(self, values_data):
         from probpipe.core._record_distribution import _RecordDistributionView
@@ -509,8 +510,8 @@ class TestValuesBootstrapReplicateDistribution:
         assert tpl["X"] == (20, 3)
         assert tpl["y"] == (20,)
 
-    def test_component_names(self, bootstrap):
-        assert bootstrap.component_names == ("X", "y")
+    def test_fields(self, bootstrap):
+        assert bootstrap.fields == ("X", "y")
 
     def test_getitem_returns_view(self, bootstrap):
         from probpipe.core._record_distribution import _RecordDistributionView

@@ -293,8 +293,9 @@ class TestWeightsArrayDuckTyping:
         assert w.shape == (5,)
 
     def test_dtype(self):
+        # Default for uniform Weights is JAX's default float dtype.
         w = Weights(n=5)
-        assert w.dtype == jnp.float32
+        assert w.dtype == jnp.zeros((), dtype=float).dtype
 
     def test_len(self):
         w = Weights(n=7)

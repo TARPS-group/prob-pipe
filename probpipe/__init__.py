@@ -5,14 +5,8 @@ __version__ = _version("probpipe")
 
 # Suppress known TFP-internal warnings that are harmless but noisy.
 # These are upstream issues in tfp-nightly's JAX substrate:
-#   - float64 requests truncated to float32 (TFP internals assume x64)
 #   - deprecated jax.interpreters.xla API usage
 #   - np.shape(None) deprecation in random generators
-_warnings.filterwarnings(
-    "ignore",
-    message=r"Explicitly requested dtype.*float64.*",
-    category=UserWarning,
-)
 _warnings.filterwarnings(
     "ignore",
     message=r"jax\.interpreters\.xla\.pytype_aval_mappings is deprecated",
@@ -43,6 +37,9 @@ from probpipe.core.distribution import (
     # Random functions
     RandomFunction,
     ArrayRandomFunction,
+    # Random measures
+    RandomMeasure,
+    NumericRandomMeasure,
 )
 from probpipe.core._distribution_array import DistributionArray
 from probpipe.distributions import (
@@ -89,7 +86,7 @@ from probpipe.distributions import (
     # KDE
     KDEDistribution,
 )
-from probpipe.core.record import Record, RecordTemplate
+from probpipe.core.record import Record, RecordTemplate, NumericRecordTemplate
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._record_array import RecordArray, NumericRecordArray
 from probpipe.core.config import WorkflowKind, prefect_config
@@ -135,6 +132,8 @@ from probpipe.core.protocols import (
     SupportsMean,
     SupportsVariance,
     SupportsCovariance,
+    SupportsRandomLogProb,
+    SupportsRandomUnnormalizedLogProb,
     SupportsConditioning,
 )
 from probpipe.converters import (
@@ -148,6 +147,7 @@ __all__ = [
     # Record
     "Record",
     "RecordTemplate",
+    "NumericRecordTemplate",
     "NumericRecord",
     "RecordArray",
     "NumericRecordArray",
@@ -233,6 +233,9 @@ __all__ = [
     "ArrayRandomFunction",
     "GaussianRandomFunction",
     "LinearBasisFunction",
+    # Random measures
+    "RandomMeasure",
+    "NumericRandomMeasure",
     # KDE
     "KDEDistribution",
     # Protocols
@@ -243,6 +246,8 @@ __all__ = [
     "SupportsMean",
     "SupportsVariance",
     "SupportsCovariance",
+    "SupportsRandomLogProb",
+    "SupportsRandomUnnormalizedLogProb",
     "SupportsConditioning",
     # Transition / iteration
     "iterate",
@@ -288,6 +293,8 @@ from probpipe.core.ops import (  # noqa: E402
     variance,
     cov,
     expectation,
+    random_log_prob,
+    random_unnormalized_log_prob,
     condition_on,
     from_distribution,
 )

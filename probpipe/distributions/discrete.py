@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ._tfp_base import TFPDistribution
+from .._dtype import _as_float_array, _promote_floats
 from .._utils import _auto_key
 from ..core.distribution import (
     NumericRecordDistribution,
@@ -59,11 +60,11 @@ class Bernoulli(TFPDistribution):
         if (probs is None) == (logits is None):
             raise ValueError("Exactly one of probs or logits must be provided.")
         if probs is not None:
-            self._probs = jnp.asarray(probs, dtype=jnp.float32)
+            self._probs = _as_float_array(probs)
             self._logits = None
             self._tfp_dist = tfd.Bernoulli(probs=self._probs)
         else:
-            self._logits = jnp.asarray(logits, dtype=jnp.float32)
+            self._logits = _as_float_array(logits)
             self._probs = None
             self._tfp_dist = tfd.Bernoulli(logits=self._logits)
         super().__init__(name=name)
@@ -133,15 +134,14 @@ class Binomial(TFPDistribution):
     ):
         if (probs is None) == (logits is None):
             raise ValueError("Exactly one of probs or logits must be provided.")
-        self._total_count = jnp.asarray(total_count, dtype=jnp.float32)
         if probs is not None:
-            self._probs = jnp.asarray(probs, dtype=jnp.float32)
+            _, (self._total_count, self._probs) = _promote_floats(total_count, probs)
             self._logits = None
             self._tfp_dist = tfd.Binomial(
                 total_count=self._total_count, probs=self._probs
             )
         else:
-            self._logits = jnp.asarray(logits, dtype=jnp.float32)
+            _, (self._total_count, self._logits) = _promote_floats(total_count, logits)
             self._probs = None
             self._tfp_dist = tfd.Binomial(
                 total_count=self._total_count, logits=self._logits
@@ -209,7 +209,7 @@ class Poisson(TFPDistribution):
         *,
         name: str,
     ):
-        self._rate = jnp.asarray(rate, dtype=jnp.float32)
+        self._rate = _as_float_array(rate)
         self._tfp_dist = tfd.Poisson(rate=self._rate)
         super().__init__(name=name)
 
@@ -256,11 +256,11 @@ class Categorical(TFPDistribution):
         if (probs is None) == (logits is None):
             raise ValueError("Exactly one of probs or logits must be provided.")
         if probs is not None:
-            self._probs = jnp.asarray(probs, dtype=jnp.float32)
+            self._probs = _as_float_array(probs)
             self._logits = None
             self._tfp_dist = tfd.Categorical(probs=self._probs)
         else:
-            self._logits = jnp.asarray(logits, dtype=jnp.float32)
+            self._logits = _as_float_array(logits)
             self._probs = None
             self._tfp_dist = tfd.Categorical(logits=self._logits)
         super().__init__(name=name)
@@ -331,15 +331,14 @@ class NegativeBinomial(TFPDistribution):
     ):
         if (probs is None) == (logits is None):
             raise ValueError("Exactly one of probs or logits must be provided.")
-        self._total_count = jnp.asarray(total_count, dtype=jnp.float32)
         if probs is not None:
-            self._probs = jnp.asarray(probs, dtype=jnp.float32)
+            _, (self._total_count, self._probs) = _promote_floats(total_count, probs)
             self._logits = None
             self._tfp_dist = tfd.NegativeBinomial(
                 total_count=self._total_count, probs=self._probs
             )
         else:
-            self._logits = jnp.asarray(logits, dtype=jnp.float32)
+            _, (self._total_count, self._logits) = _promote_floats(total_count, logits)
             self._probs = None
             self._tfp_dist = tfd.NegativeBinomial(
                 total_count=self._total_count, logits=self._logits

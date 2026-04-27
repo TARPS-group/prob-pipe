@@ -188,8 +188,9 @@ class TestFlattenUnflatten:
         np.testing.assert_allclose(float(nr2["phi"]), 10.0)
 
     def test_roundtrip_nested_template(self):
-        inner_tpl = RecordTemplate(x=(), y=(2,))
-        outer_tpl = RecordTemplate(params=inner_tpl, z=(3,))
+        from probpipe.core.record import NumericRecordTemplate
+        inner_tpl = NumericRecordTemplate(x=(), y=(2,))
+        outer_tpl = NumericRecordTemplate(params=inner_tpl, z=(3,))
         flat = jnp.arange(6.0)  # x=0, y=[1,2], z=[3,4,5]
         nr = NumericRecord.unflatten(flat, template=outer_tpl)
         assert isinstance(nr["params"], NumericRecord)
