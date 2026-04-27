@@ -14,7 +14,7 @@ import tensorflow_probability.substrates.jax.mcmc as tfp_mcmc
 
 from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
-from ..core.protocols import SupportsLogProb, SupportsMean
+from ..core.protocols import SupportsMean, SupportsUnnormalizedLogProb
 from ..custom_types import Array, ArrayLike
 from ..core.record import Record, RecordTemplate
 from ._approximate_distribution import ApproximateDistribution, make_posterior
@@ -85,9 +85,16 @@ def _build_target_log_prob(dist: Distribution, observed: ArrayLike | Record | No
 
     1. **SimpleModel** (has prior + likelihood):
        ``prior._log_prob(params) + likelihood.log_likelihood(params, data)``
-    2. **Bare SupportsLogProb with data**: ``dist._log_prob(params)``
-       (data is assumed already folded in, e.g., via closure).
-    3. **Joint over (params, data)**: ``dist._log_prob((params, data))``
+    2. **Bare SupportsUnnormalizedLogProb with data**:
+       ``dist._unnormalized_log_prob(params)`` (data is assumed already
+       folded in, e.g., via closure).
+    3. **Joint over (params, data)**: ``dist._unnormalized_log_prob((params, data))``
+
+    The unnormalized accessor is used for cases 2 and 3 because MCMC
+    samplers do not require a normalized density. Distributions that
+    only implement ``_log_prob`` are unaffected: the ``SupportsLogProb``
+    protocol provides a default ``_unnormalized_log_prob`` that
+    delegates to ``_log_prob``.
 
     Observed data is passed through to the likelihood as-is (may be a
     raw array, a ``Record`` object, or a dict — the likelihood handles
@@ -112,9 +119,9 @@ def _build_target_log_prob(dist: Distribution, observed: ArrayLike | Record | No
         return target_log_prob_fn
 
     if observed is not None:
-        return lambda params: dist._log_prob((params, observed))
+        return lambda params: dist._unnormalized_log_prob((params, observed))
 
-    return dist._log_prob
+    return dist._unnormalized_log_prob
 
 
 def _run_tfp_chains(
@@ -303,9 +310,9 @@ class _TFPGradientMethod(InferenceMethod):
         # Intentionally probes JAX traceability (via jax.make_jaxpr) to avoid
         # selecting a gradient-based method that would fail at execute() time.
         # The cost is ~one JAX trace, cached by JAX on subsequent calls.
-        if not isinstance(dist, SupportsLogProb):
+        if not isinstance(dist, SupportsUnnormalizedLogProb):
             return MethodInfo(feasible=False, method_name=self.name,
-                              description="Requires SupportsLogProb")
+                              description="Requires SupportsUnnormalizedLogProb")
         try:
             target = _build_target_log_prob(dist, observed)
             init = _get_init_state(_get_prior(dist), kwargs.get("init"), observed)

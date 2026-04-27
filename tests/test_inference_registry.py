@@ -192,3 +192,157 @@ class TestInferenceMethodRegistry:
             assert info.method_name == "tfp_rwmh"
         finally:
             inference_method_registry.set_priorities(tfp_rwmh=50)
+
+
+# ---------------------------------------------------------------------------
+# MCMC against unnormalized log densities
+# ---------------------------------------------------------------------------
+
+
+class _UnnormalizedTarget:
+    """Mixin: implements only ``_unnormalized_log_prob`` (no ``_log_prob``).
+
+    Used in the tests below to confirm that MCMC inference dispatches on
+    :class:`SupportsUnnormalizedLogProb`, which is the strictly weaker
+    protocol that MCMC actually needs.
+    """
+
+    def _unnormalized_log_prob(self, value):
+        # Standard normal up to an unknown additive constant. The missing
+        # log normalizer is irrelevant for accept/reject.
+        return -0.5 * jnp.sum(value ** 2)
+
+    def _mean(self):
+        return jnp.zeros(2)
+
+
+class _NormalizedTarget:
+    """Mixin: implements only ``_log_prob`` (relies on protocol default).
+
+    The :class:`SupportsLogProb` protocol provides a default
+    ``_unnormalized_log_prob`` that delegates to ``_log_prob``; this
+    fixture exercises that default path through the inference layer.
+    """
+
+    def _log_prob(self, value):
+        return -0.5 * jnp.sum(value ** 2) - jnp.log(2 * jnp.pi)
+
+    def _mean(self):
+        return jnp.zeros(2)
+
+
+def _make_unnormalized_distribution():
+    from probpipe.core._distribution_base import Distribution
+
+    class UnnormalizedDist(_UnnormalizedTarget, Distribution):
+        event_shape = (2,)
+
+        def __init__(self):
+            super().__init__(name="unnorm")
+
+    return UnnormalizedDist()
+
+
+def _make_normalized_distribution():
+    from probpipe.core._distribution_base import Distribution
+    from probpipe.core.protocols import SupportsLogProb
+
+    class NormalizedDist(_NormalizedTarget, Distribution, SupportsLogProb):
+        # Inheriting SupportsLogProb gives the default
+        # _unnormalized_log_prob (delegating to _log_prob) for free.
+        event_shape = (2,)
+
+        def __init__(self):
+            super().__init__(name="norm")
+
+    return NormalizedDist()
+
+
+class TestUnnormalizedLogProbInference:
+    """MCMC accepts distributions with only ``SupportsUnnormalizedLogProb``."""
+
+    def test_unnormalized_only_satisfies_protocol(self):
+        from probpipe.core.protocols import (
+            SupportsLogProb,
+            SupportsUnnormalizedLogProb,
+        )
+
+        dist = _make_unnormalized_distribution()
+        assert isinstance(dist, SupportsUnnormalizedLogProb)
+        assert not isinstance(dist, SupportsLogProb)
+
+    def test_auto_dispatch_to_nuts(self):
+        """Auto-dispatch picks tfp_nuts for unnormalized-only target."""
+        dist = _make_unnormalized_distribution()
+        info = inference_method_registry.check(dist, None)
+        assert info.feasible
+        assert info.method_name == "tfp_nuts"
+
+    def test_condition_on_unnormalized_runs_nuts(self):
+        from probpipe import ApproximateDistribution
+
+        dist = _make_unnormalized_distribution()
+        posterior = condition_on(
+            dist, num_results=200, num_warmup=100, random_seed=0,
+        )
+        assert isinstance(posterior, ApproximateDistribution)
+        # Standard normal: posterior mean ~0, std ~1 (loose tolerance —
+        # short chain, no thinning).
+        draws = np.asarray(posterior.draws()).reshape(-1, 2)
+        np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.4)
+        np.testing.assert_allclose(draws.std(0), [1.0, 1.0], atol=0.4)
+
+    def test_condition_on_unnormalized_runs_rwmh(self):
+        from probpipe import ApproximateDistribution
+
+        dist = _make_unnormalized_distribution()
+        posterior = condition_on(
+            dist, method="tfp_rwmh",
+            num_results=200, num_warmup=100, step_size=0.5, random_seed=0,
+        )
+        assert isinstance(posterior, ApproximateDistribution)
+
+    def test_normalized_only_still_works_via_nuts(self):
+        """SupportsLogProb-only dist still flows through unchanged.
+
+        Guards against a regression where the swap to
+        ``_unnormalized_log_prob`` accidentally breaks the protocol's
+        default delegation.
+        """
+        from probpipe import ApproximateDistribution
+
+        dist = _make_normalized_distribution()
+        posterior = condition_on(
+            dist, num_results=100, num_warmup=50, random_seed=0,
+        )
+        assert isinstance(posterior, ApproximateDistribution)
+
+    def test_normalized_only_still_works_via_rwmh(self):
+        from probpipe import ApproximateDistribution
+
+        dist = _make_normalized_distribution()
+        posterior = condition_on(
+            dist, method="tfp_rwmh",
+            num_results=100, num_warmup=50, step_size=0.5, random_seed=0,
+        )
+        assert isinstance(posterior, ApproximateDistribution)
+
+    def test_check_description_names_unnormalized_protocol(self):
+        """When MCMC methods are infeasible, error string names the right protocol."""
+        from probpipe.core._distribution_base import Distribution
+
+        class NoDensityDist(Distribution):
+            event_shape = (2,)
+
+            def __init__(self):
+                super().__init__(name="no_density")
+
+        dist = NoDensityDist()
+        for method in ("tfp_nuts", "tfp_hmc", "tfp_rwmh"):
+            m = inference_method_registry.get_method(method)
+            info = m.check(dist, None)
+            assert not info.feasible
+            assert "SupportsUnnormalizedLogProb" in info.description, (
+                f"{method}: description {info.description!r} should mention "
+                f"SupportsUnnormalizedLogProb"
+            )
