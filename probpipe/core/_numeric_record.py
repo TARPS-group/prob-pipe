@@ -181,8 +181,6 @@ class NumericRecord(Record):
                     f"array, numeric scalar, or nested NumericRecord, got "
                     f"{type(raw).__name__}"
                 )
-            # Capture backend-specific metadata before the cast to
-            # ``jnp.ndarray`` strips it.
             hooks = aux_for(raw)
             if hooks is not None:
                 aux[field_name] = (hooks, hooks.capture(raw))
@@ -246,18 +244,15 @@ class NumericRecord(Record):
     def from_record(cls, record: Record) -> NumericRecord:
         """Convert a ``Record`` to ``NumericRecord``, validating leaves.
 
-        Equivalent to ``record.to_numeric()`` for non-nested records;
-        recurses into nested ``Record`` children, preserving structure.
-        Backend-specific metadata is captured per-leaf via the aux
-        registry.
+        Equivalent to ``record.to_numeric()``; both paths consult the
+        aux registry, coerce every leaf via ``jnp.asarray``, and raise
+        ``TypeError`` on non-coercible leaves. Nested ``Record``
+        children recurse, preserving structure.
         """
-        raw_fields: dict[str, Any] = {}
-        for field_name, val in record._store.items():
-            if isinstance(val, Record):
-                raw_fields[field_name] = cls.from_record(val)
-            else:
-                raw_fields[field_name] = val
-        return cls(raw_fields)
+        return cls({
+            field_name: cls.from_record(val) if isinstance(val, Record) else val
+            for field_name, val in record._store.items()
+        })
 
     # -- Conversion back to native backends --------------------------------
 

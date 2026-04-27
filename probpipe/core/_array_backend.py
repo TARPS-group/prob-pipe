@@ -42,7 +42,6 @@ import numpy as np
 
 __all__ = [
     "AuxHooks",
-    "aux_registry",
     "register_aux",
     "aux_for",
 ]
@@ -107,8 +106,14 @@ def aux_for(obj: Any) -> AuxHooks | None:
     Walks the MRO of ``type(obj)`` so subclass instances pick up
     base-class registrations.
     """
-    for cls in type(obj).__mro__:
-        hooks = aux_registry.get(cls)
+    if not aux_registry:
+        return None
+    cls = type(obj)
+    hooks = aux_registry.get(cls)
+    if hooks is not None:
+        return hooks
+    for base in cls.__mro__[1:]:
+        hooks = aux_registry.get(base)
         if hooks is not None:
             return hooks
     return None

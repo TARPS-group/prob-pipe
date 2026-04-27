@@ -92,7 +92,6 @@ from probpipe.core._record_array import RecordArray, NumericRecordArray
 from probpipe.core._array_backend import (
     AuxHooks,
     aux_for,
-    aux_registry,
     register_aux,
 )
 from probpipe.core.node import WorkflowFunction, Module, workflow_function, workflow_method, abstract_workflow_method
@@ -159,7 +158,6 @@ __all__ = [
     # Array backend / aux registry
     "AuxHooks",
     "aux_for",
-    "aux_registry",
     "register_aux",
     # Weights
     "Weights",

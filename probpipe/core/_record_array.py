@@ -94,9 +94,8 @@ class RecordArray(Record):
                 f"Field names {sorted(fields)} do not match template "
                 f"fields {sorted(template.fields)}"
             )
-        # Reorder ``fields`` to match the template's insertion order so
-        # the RecordArray's iteration order is canonical regardless of
-        # how the caller spelled the kwargs.
+        # Reorder to match the template so iteration order is canonical
+        # regardless of kwarg order.
         store: "OrderedDict[str, Any]" = OrderedDict(
             (name, fields[name]) for name in template.fields
         )

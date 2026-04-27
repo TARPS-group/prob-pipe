@@ -12,9 +12,9 @@ from probpipe import (
     Record,
     RecordArray,
     aux_for,
-    aux_registry,
     register_aux,
 )
+from probpipe.core._array_backend import aux_registry
 
 
 # ---------------------------------------------------------------------------
@@ -189,32 +189,30 @@ class TestMixedBackendRecord:
 
 
 class TestPathEquivalence:
+    def setup_method(self):
+        self.xr = pytest.importorskip("xarray")
+        self.da = self.xr.DataArray(
+            [1.0, 2.0, 3.0], dims=["t"], coords={"t": [10, 20, 30]}
+        )
+
     def test_aux_keys_match(self):
-        xr = pytest.importorskip("xarray")
-        da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [10, 20, 30]})
-        nr_direct = NumericRecord(x=da, y=jnp.array(1.5))
-        nr_via_to_numeric = Record(x=da, y=jnp.array(1.5)).to_numeric()
-        # Aux is captured at construction; both paths should produce the
-        # same set of aux-bearing fields.
+        nr_direct = NumericRecord(x=self.da, y=jnp.array(1.5))
+        nr_via_to_numeric = Record(x=self.da, y=jnp.array(1.5)).to_numeric()
         keys_direct = set((nr_direct.aux or {}).keys())
         keys_via = set((nr_via_to_numeric.aux or {}).keys())
         assert keys_direct == keys_via == {"x"}
 
     def test_store_arrays_bitwise_equal(self):
-        xr = pytest.importorskip("xarray")
-        da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [10, 20, 30]})
-        nr_direct = NumericRecord(x=da, y=2.5)
-        nr_via_to_numeric = Record(x=da, y=2.5).to_numeric()
+        nr_direct = NumericRecord(x=self.da, y=2.5)
+        nr_via_to_numeric = Record(x=self.da, y=2.5).to_numeric()
         for f in nr_direct.fields:
             np.testing.assert_array_equal(
                 np.asarray(nr_direct[f]), np.asarray(nr_via_to_numeric[f])
             )
 
     def test_to_native_results_match(self):
-        xr = pytest.importorskip("xarray")
-        da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [10, 20, 30]})
-        b1 = NumericRecord(x=da, y=2.5).to_native()
-        b2 = Record(x=da, y=2.5).to_numeric().to_native()
+        b1 = NumericRecord(x=self.da, y=2.5).to_native()
+        b2 = Record(x=self.da, y=2.5).to_numeric().to_native()
         # xarray fields restored identically (dims + coord values).
         assert b1["x"].dims == b2["x"].dims
         np.testing.assert_array_equal(
@@ -253,30 +251,26 @@ class TestNonCoercibleLeavesRaise:
 
 
 class TestTransformsDropAux:
+    def setup_method(self):
+        self.xr = pytest.importorskip("xarray")
+        self.da = self.xr.DataArray(
+            [1.0, 2.0, 3.0], dims=["t"], coords={"t": [0, 1, 2]}
+        )
+
     def test_map_drops_aux(self):
-        xr = pytest.importorskip("xarray")
-        da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [0, 1, 2]})
-        nr = NumericRecord(x=da)
+        nr = NumericRecord(x=self.da)
         assert nr.aux is not None
-        # ``Record.map`` rebuilds via ``type(self)(fields)`` — the new
-        # NumericRecord sees only ``jax.Array`` leaves, finds no hooks,
-        # and ends up with ``_aux is None``.
         out = nr.map(jnp.log)
         assert out.aux is None
 
     def test_replace_drops_aux(self):
-        xr = pytest.importorskip("xarray")
-        da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [0, 1, 2]})
-        nr = NumericRecord(x=da, y=jnp.array(1.5))
+        nr = NumericRecord(x=self.da, y=jnp.array(1.5))
         assert nr.aux is not None
-        # Replacing y still drops the aux on x because replace rebuilds.
         out = nr.replace(y=jnp.array(2.0))
         assert out.aux is None
 
     def test_jax_tree_map_drops_aux(self):
-        xr = pytest.importorskip("xarray")
-        da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [0, 1, 2]})
-        nr = NumericRecord(x=da)
+        nr = NumericRecord(x=self.da)
         out = jax.tree.map(lambda v: v + 1, nr)
         assert isinstance(out, NumericRecord)
         assert out.aux is None
@@ -318,8 +312,7 @@ class TestPytreeRoundTrip:
         nr = NumericRecord(x=da)
         leaves, treedef = jax.tree_util.tree_flatten(nr)
         out = jax.tree_util.tree_unflatten(treedef, leaves)
+        # Aux is reconstructed from leaf types after unflatten, and the
+        # leaves are now jax.Array, so no aux is recaptured.
         assert isinstance(out, NumericRecord)
-        # Aux is not part of the pytree aux — it must be re-derived from
-        # leaf types after unflatten, and the leaves are now ``jax.Array``,
-        # so no aux is captured.
         assert out.aux is None

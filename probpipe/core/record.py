@@ -120,6 +120,18 @@ __all__ = ["Record", "RecordTemplate", "NumericRecordTemplate"]
 # A field value: nested ``Record`` or anything else (stored as-is).
 _FieldValue: TypeAlias = "Any"
 
+# Separator for nested-path access (``record["a/b/c"]``); reserved in
+# field names.
+_PATH_SEP = "/"
+
+
+def _check_no_path_sep(name: str) -> None:
+    if _PATH_SEP in name:
+        raise ValueError(
+            f"Field name {name!r} must not contain {_PATH_SEP!r} "
+            f"(reserved as the nested-path separator)."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Record
@@ -164,11 +176,7 @@ class Record:
         if not fields:
             raise ValueError("Record requires at least one named field")
         for field_name in fields:
-            if "/" in field_name:
-                raise ValueError(
-                    f"Field name {field_name!r} must not contain '/' "
-                    f"(reserved as the nested-path separator)."
-                )
+            _check_no_path_sep(field_name)
         store = dict(fields)
         object.__setattr__(self, "_store", store)
         # Auto-generate name from field names if not provided
@@ -227,20 +235,14 @@ class Record:
 
     def __getitem__(self, key: str | tuple[str, ...]) -> _FieldValue:
         if isinstance(key, str):
-            # Slash-delimited path: ``record["a/b/c"]`` is sugar for
-            # ``record["a", "b", "c"]``. Single-segment strings (no
-            # ``/``) take the fast path through the store.
-            if "/" in key:
-                v: Any = self
-                for k in key.split("/"):
-                    v = v[k]
-                return v
+            if _PATH_SEP in key:
+                return self[tuple(key.split(_PATH_SEP))]
             store = self._store
             if key not in store:
                 raise KeyError(key)
             return store[key]
         if isinstance(key, tuple):
-            v = self
+            v: Any = self
             for k in key:
                 v = v[k]
             return v
@@ -255,10 +257,7 @@ class Record:
         return len(self._store)
 
     def __contains__(self, name: str) -> bool:
-        # Accept slash-delimited paths so ``"a/b/c" in record`` mirrors
-        # ``record["a/b/c"]`` access. Single-segment names take the
-        # dict fast path.
-        if "/" in name:
+        if _PATH_SEP in name:
             try:
                 self[name]
             except (KeyError, TypeError):
@@ -654,11 +653,7 @@ class RecordTemplate:
             raise ValueError(f"{type(self).__name__} requires at least one field")
         # Validate specs
         for name, spec in field_specs.items():
-            if "/" in name:
-                raise ValueError(
-                    f"Field name {name!r} must not contain '/' "
-                    f"(reserved as the nested-path separator)."
-                )
+            _check_no_path_sep(name)
             if spec is not None and not isinstance(spec, (tuple, RecordTemplate)):
                 raise TypeError(
                     f"Field {name!r}: spec must be a shape tuple, None, "
@@ -705,9 +700,8 @@ class RecordTemplate:
         result: dict[str, tuple[int, ...] | None] = {}
         for name, spec in self._specs.items():
             if isinstance(spec, RecordTemplate):
-                # Flatten nested template into slash-delimited paths
                 for sub_name, sub_shape in spec.leaf_shapes.items():
-                    result[f"{name}/{sub_name}"] = sub_shape
+                    result[f"{name}{_PATH_SEP}{sub_name}"] = sub_shape
             else:
                 result[name] = spec
         return result
