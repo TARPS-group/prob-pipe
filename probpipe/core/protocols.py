@@ -223,6 +223,54 @@ class SupportsCovariance(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Random-measure protocols
+# ---------------------------------------------------------------------------
+
+@runtime_checkable
+class SupportsExpectedDistribution(Protocol):
+    """Distribution-valued distribution with an exact expected distribution.
+
+    For a :class:`~probpipe.core._random_measures.RandomMeasure[T]` ``M``,
+    the expected distribution is the marginalisation
+    ``D̄(A) = ∫ D(A) dM(D)`` for measurable ``A ⊆ T``; ``D̄`` is itself a
+    ``Distribution[T]``. The ops layer routes
+    :func:`~probpipe.core.ops.expected_distribution` through this protocol.
+
+    Independent of :class:`SupportsMean`: ``_mean`` returns an array on
+    every other distribution in ProbPipe, while ``_expected_distribution``
+    returns a ``Distribution[T]``. Splitting them avoids a cross-cutting
+    refactor of every ``_mean`` implementation.
+    """
+
+    def _expected_distribution(self) -> Any: ...
+
+
+@runtime_checkable
+class SupportsRandomLogProb(Protocol):
+    """Distribution over distributions with a random (normalized) log-density.
+
+    For a ``RandomMeasure[T]`` ``M``, ``_random_log_prob`` returns the
+    random function ``x ↦ log D(x)`` where ``D ~ M``. Mirrors
+    :class:`SupportsLogProb` for the random-measure setting.
+    """
+
+    def _random_log_prob(self) -> Any: ...
+
+
+@runtime_checkable
+class SupportsRandomUnnormalizedLogProb(Protocol):
+    """Distribution over distributions with a random unnormalized log-density.
+
+    Mirrors :class:`SupportsUnnormalizedLogProb` for the random-measure
+    setting. ``_random_unnormalized_log_prob`` returns the random
+    function ``x ↦ log D̃(x)`` where ``D̃`` is the unnormalized density
+    of a draw ``D ~ M``.
+    """
+
+    def _random_unnormalized_log_prob(self) -> Any: ...
+
+
+# ---------------------------------------------------------------------------
 # Conditioning
 # ---------------------------------------------------------------------------
 
@@ -272,6 +320,9 @@ __all__ = [
     "SupportsMean",
     "SupportsVariance",
     "SupportsCovariance",
+    "SupportsExpectedDistribution",
+    "SupportsRandomLogProb",
+    "SupportsRandomUnnormalizedLogProb",
     "SupportsConditioning",
     "protocols_supported_by_all",
 ]

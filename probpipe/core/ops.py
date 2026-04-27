@@ -30,8 +30,11 @@ from .protocols import (
     SupportsConditioning,
     SupportsCovariance,
     SupportsExpectation,
+    SupportsExpectedDistribution,
     SupportsLogProb,
     SupportsMean,
+    SupportsRandomLogProb,
+    SupportsRandomUnnormalizedLogProb,
     SupportsSampling,
     SupportsUnnormalizedLogProb,
     SupportsVariance,
@@ -47,6 +50,9 @@ __all__ = [
     "variance",
     "cov",
     "expectation",
+    "expected_distribution",
+    "random_log_prob",
+    "random_unnormalized_log_prob",
     "condition_on",
     "from_distribution",
 ]
@@ -191,6 +197,56 @@ def expectation(
     return dist._expectation(
         f, key=key, num_evaluations=num_evaluations, return_dist=return_dist,
     )
+
+
+@workflow_function
+def expected_distribution(dist: SupportsExpectedDistribution) -> Distribution:
+    """Compute the expected distribution of a random measure.
+
+    For a :class:`~probpipe.core._random_measures.RandomMeasure[T]`
+    ``M``, returns the marginalised ``Distribution[T]``
+    ``D̄(A) = ∫ D(A) dM(D)``.  Requires the distribution to implement
+    :class:`~probpipe.core.protocols.SupportsExpectedDistribution`.
+    """
+    if not isinstance(dist, SupportsExpectedDistribution):
+        raise TypeError(
+            f"{type(dist).__name__} does not support expected_distribution "
+            f"(does not implement SupportsExpectedDistribution)"
+        )
+    return dist._expected_distribution()
+
+
+@workflow_function
+def random_log_prob(dist: SupportsRandomLogProb) -> Any:
+    """Return the random (normalized) log-density of a random measure.
+
+    For a ``RandomMeasure[T]`` ``M``, returns the random function
+    ``x ↦ log D(x)`` where ``D ~ M``, as a
+    :class:`~probpipe.core._random_functions.RandomFunction`.
+    """
+    if not isinstance(dist, SupportsRandomLogProb):
+        raise TypeError(
+            f"{type(dist).__name__} does not support random_log_prob "
+            f"(does not implement SupportsRandomLogProb)"
+        )
+    return dist._random_log_prob()
+
+
+@workflow_function
+def random_unnormalized_log_prob(dist: SupportsRandomUnnormalizedLogProb) -> Any:
+    """Return the random unnormalized log-density of a random measure.
+
+    For a ``RandomMeasure[T]`` ``M``, returns the random function
+    ``x ↦ log D̃(x)`` where ``D̃`` is the unnormalized density of a
+    draw ``D ~ M``, as a
+    :class:`~probpipe.core._random_functions.RandomFunction`.
+    """
+    if not isinstance(dist, SupportsRandomUnnormalizedLogProb):
+        raise TypeError(
+            f"{type(dist).__name__} does not support random_unnormalized_log_prob "
+            f"(does not implement SupportsRandomUnnormalizedLogProb)"
+        )
+    return dist._random_unnormalized_log_prob()
 
 
 def _split_data_kwargs(

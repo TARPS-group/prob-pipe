@@ -37,6 +37,9 @@ from probpipe.core.distribution import (
     # Random functions
     RandomFunction,
     ArrayRandomFunction,
+    # Random measures
+    RandomMeasure,
+    NumericRandomMeasure,
 )
 from probpipe.core._distribution_array import DistributionArray
 from probpipe.distributions import (
@@ -128,6 +131,9 @@ from probpipe.core.protocols import (
     SupportsMean,
     SupportsVariance,
     SupportsCovariance,
+    SupportsExpectedDistribution,
+    SupportsRandomLogProb,
+    SupportsRandomUnnormalizedLogProb,
     SupportsConditioning,
 )
 from probpipe.converters import (
@@ -224,6 +230,9 @@ __all__ = [
     "ArrayRandomFunction",
     "GaussianRandomFunction",
     "LinearBasisFunction",
+    # Random measures
+    "RandomMeasure",
+    "NumericRandomMeasure",
     # KDE
     "KDEDistribution",
     # Protocols
@@ -234,6 +243,9 @@ __all__ = [
     "SupportsMean",
     "SupportsVariance",
     "SupportsCovariance",
+    "SupportsExpectedDistribution",
+    "SupportsRandomLogProb",
+    "SupportsRandomUnnormalizedLogProb",
     "SupportsConditioning",
     # Transition / iteration
     "iterate",
@@ -279,6 +291,9 @@ from probpipe.core.ops import (  # noqa: E402
     variance,
     cov,
     expectation,
+    expected_distribution,
+    random_log_prob,
+    random_unnormalized_log_prob,
     condition_on,
     from_distribution,
 )
