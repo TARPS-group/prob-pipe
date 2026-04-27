@@ -67,15 +67,16 @@ nav:
     - Flexible Inference with condition_on: tutorials/flexible_inference.ipynb
   - Reference Notebooks:
     - Overview: reference_notebooks.md
-    - Distributions: examples/01_distributions.ipynb
-    - Transformations: examples/02_transformations.ipynb
-    - Joint Distributions: examples/03_joint_distributions.ipynb
-    - Broadcasting: examples/04_broadcasting.ipynb
-    - Automatic Differentiation: examples/05_autodiff.ipynb
-    - Modular Forecasting: examples/06_modular_forecasting.ipynb
-    - Emulators: examples/07_emulators.ipynb
-    - Random Functions: examples/08_random_functions.ipynb
-    - PyTree Distributions: examples/09_pytree_array_distributions.ipynb
+    - Distribution basics: examples/01_distributions.ipynb
+    - Records and the Record family: examples/02_records.ipynb
+    - Broadcasting and workflow functions: examples/03_broadcasting.ipynb
+    - Joint distributions: examples/04_joint_distributions.ipynb
+    - External backends: examples/05_external_backends.ipynb
+    - Converting between representations: examples/06_converting_representations.ipynb
+    - Sequential updating: examples/07_sequential_updating.ipynb
+    - JAX interop (gradients, jit, vmap): examples/08_jax_interop.ipynb
+    - Bagged posteriors: examples/09_bagged_posteriors.ipynb
+    - Random functions and Gaussian emulators: examples/10_random_functions_and_emulators.ipynb
   - API Reference:
     - Operations: api/operations.md
     - Protocols: api/protocols.md

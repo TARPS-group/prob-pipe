@@ -505,9 +505,10 @@ class NumericRecordArray(RecordArray):
             )
         return only
 
-    def __array__(self, dtype=None):
+    def __array__(self, dtype=None, copy=None):
         leaf = self._single_numeric_leaf()
-        return np.asarray(leaf, dtype=dtype) if dtype is not None else np.asarray(leaf)
+        arr = np.asarray(leaf, dtype=dtype) if dtype is not None else np.asarray(leaf)
+        return arr.copy() if copy else arr
 
     def __jax_array__(self):
         return jnp.asarray(self._single_numeric_leaf())
@@ -624,9 +625,10 @@ class _RecordArrayView(RecordArray):
     def ndim(self) -> int:
         return int(getattr(self._store[self._field], "ndim", 0))
 
-    def __array__(self, dtype=None):
+    def __array__(self, dtype=None, copy=None):
         leaf = self._store[self._field]
-        return np.asarray(leaf, dtype=dtype) if dtype is not None else np.asarray(leaf)
+        arr = np.asarray(leaf, dtype=dtype) if dtype is not None else np.asarray(leaf)
+        return arr.copy() if copy else arr
 
     def __jax_array__(self):
         return jnp.asarray(self._store[self._field])

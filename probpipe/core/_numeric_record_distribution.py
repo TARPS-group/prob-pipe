@@ -245,7 +245,15 @@ class NumericRecordDistribution(RecordDistribution):
         """Total flat dimensionality."""
         tpl = self.record_template
         if tpl is not None:
-            return tpl.flat_size
+            from .record import NumericRecordTemplate
+            if isinstance(tpl, NumericRecordTemplate):
+                return tpl.flat_size
+            # Mixed template — sum the numeric leaves explicitly.
+            return sum(
+                prod(shape) if shape else 1
+                for shape in tpl.leaf_shapes.values()
+                if shape is not None
+            )
         return prod(self.event_shape)
 
     def flatten_value(self, value) -> Array:

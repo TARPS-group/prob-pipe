@@ -89,7 +89,7 @@ from probpipe.distributions import (
     # KDE
     KDEDistribution,
 )
-from probpipe.core.record import Record, RecordTemplate
+from probpipe.core.record import Record, RecordTemplate, NumericRecordTemplate
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._record_array import RecordArray, NumericRecordArray
 from probpipe.core.node import WorkflowFunction, Module, workflow_function, workflow_method, abstract_workflow_method
@@ -147,6 +147,7 @@ __all__ = [
     # Record
     "Record",
     "RecordTemplate",
+    "NumericRecordTemplate",
     "NumericRecord",
     "RecordArray",
     "NumericRecordArray",

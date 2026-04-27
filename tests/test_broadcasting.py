@@ -477,3 +477,121 @@ class TestNamedComponents:
         result = w(x=g, include_inputs=True)
         out = result["_output"]
         assert hasattr(out, 'samples')
+
+
+# ---------------------------------------------------------------------------
+# Cross-backend consistency: loop / auto / jax must agree
+# ---------------------------------------------------------------------------
+#
+# Empirical enumeration semantics (cartesian product of small
+# empiricals, weighted) must not depend on the vectorization backend.
+# These tests guard against regressions of the kind where the
+# ``vectorize="jax"`` path bypasses enumeration and silently samples
+# instead. The loop and auto paths already test this implicitly; the
+# jax path is the regression surface.
+# ---------------------------------------------------------------------------
+
+
+class TestVectorizationConsistency:
+    """Empirical enumeration and count semantics match across
+    ``vectorize="loop" | "auto" | "jax"``."""
+
+    VECTORIZE_MODES = ("loop", "auto", "jax")
+
+    def _run(self, mode, func, **kwargs):
+        w = WorkflowFunction(
+            func=func, n_broadcast_samples=kwargs.pop("n_broadcast_samples", 100),
+            vectorize=mode, seed=0,
+        )
+        return w(**kwargs)
+
+    def test_two_empiricals_cartesian_all_modes(self):
+        """Cartesian enumeration of two small empiricals must give the
+        exact same samples and weights in every backend."""
+        def add_them(a, b):
+            return a + b
+
+        ed1 = EmpiricalDistribution(jnp.array([[1.0], [2.0]]))
+        ed2 = EmpiricalDistribution(jnp.array([[10.0], [20.0], [30.0]]))
+
+        results = {m: self._run(m, add_them, a=ed1, b=ed2) for m in self.VECTORIZE_MODES}
+        # Same size (2 x 3 = 6) in every mode — regression guard.
+        for mode, r in results.items():
+            assert r.n == 6, f"{mode}: expected n=6, got {r.n}"
+        # Same sample set (order may differ; compare sorted).
+        ref = sorted(results["loop"].samples.ravel().tolist())
+        for mode in ("auto", "jax"):
+            got = sorted(results[mode].samples.ravel().tolist())
+            np.testing.assert_allclose(
+                got, ref,
+                err_msg=f"{mode} samples diverged from loop: {got} vs {ref}",
+            )
+        # Weights: uniform 1/6 in every mode (inputs unweighted).
+        for mode, r in results.items():
+            np.testing.assert_allclose(r.weights, jnp.full(6, 1 / 6), atol=1e-5,
+                                        err_msg=f"{mode} weights diverged")
+
+    def test_weighted_empiricals_preserve_weights_all_modes(self):
+        """Exact empirical weights survive the product in every backend."""
+        def add_them(a, b):
+            return a + b
+
+        ed1 = EmpiricalDistribution(
+            jnp.array([[1.0], [2.0]]), weights=jnp.array([0.8, 0.2]),
+        )
+        ed2 = EmpiricalDistribution(
+            jnp.array([[10.0], [20.0]]), weights=jnp.array([0.25, 0.75]),
+        )
+        expected_weights = sorted([
+            0.8 * 0.25, 0.8 * 0.75, 0.2 * 0.25, 0.2 * 0.75,
+        ])
+        for mode in self.VECTORIZE_MODES:
+            r = self._run(mode, add_them, a=ed1, b=ed2)
+            assert r.n == 4
+            got = sorted(np.asarray(r.weights).tolist())
+            np.testing.assert_allclose(
+                got, expected_weights, atol=1e-5,
+                err_msg=f"{mode} weights diverged: {got} vs {expected_weights}",
+            )
+
+    def test_mixed_empirical_and_parametric_count_all_modes(self):
+        """Mixed empirical + continuous: total evaluations (k combos × reps)
+        must match across backends even though the sampled values differ."""
+        def add_them(a, b):
+            return a + b
+
+        ed = EmpiricalDistribution(jnp.array([[1.0], [2.0], [3.0]]))
+        g = Normal(loc=0.0, scale=1.0, name="b")
+
+        for mode in self.VECTORIZE_MODES:
+            r = self._run(mode, add_them, a=ed, b=g, n_broadcast_samples=30)
+            # 3 empirical combos × 10 reps each = 30 evaluations.
+            assert r.n == 30, f"{mode}: expected n=30, got {r.n}"
+            np.testing.assert_allclose(float(r.weights.sum()), 1.0, atol=1e-5)
+
+    def test_over_budget_empirical_falls_to_sampling_all_modes(self):
+        """When a single empirical exceeds the sample budget, every
+        backend falls back to resampling and returns exactly
+        ``n_broadcast_samples`` evaluations."""
+        def identity(x):
+            return x
+
+        big = EmpiricalDistribution(
+            jnp.arange(200).reshape(-1, 1).astype(jnp.float32),
+        )
+        for mode in self.VECTORIZE_MODES:
+            r = self._run(mode, identity, x=big, n_broadcast_samples=20)
+            assert r.n == 20, f"{mode}: expected n=20, got {r.n}"
+
+    def test_no_empiricals_all_modes_same_count(self):
+        """Without empirical inputs every backend samples the full
+        budget (values differ — different RNG paths — but count is
+        identical)."""
+        def add_them(a, b):
+            return a + b
+
+        n1 = Normal(loc=0.0, scale=1.0, name="a")
+        n2 = Normal(loc=5.0, scale=1.0, name="b")
+        for mode in self.VECTORIZE_MODES:
+            r = self._run(mode, add_them, a=n1, b=n2, n_broadcast_samples=50)
+            assert r.n == 50, f"{mode}: expected n=50, got {r.n}"

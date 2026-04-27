@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from probpipe import Record
-from probpipe.core.record import RecordTemplate
+from probpipe.core.record import NumericRecordTemplate, RecordTemplate
 
 
 # ---------------------------------------------------------------------------
@@ -105,37 +105,54 @@ class TestLeafShapes:
         shapes = outer.leaf_shapes
         assert shapes == {"inner.a": (), "inner.b": (2,), "z": (3,)}
 
-    def test_numeric_leaf_shapes_excludes_opaque(self):
-        tpl = RecordTemplate(label=None, x=(), y=(3,))
+    def test_numeric_leaf_shapes_on_numeric_template(self):
+        tpl = NumericRecordTemplate(x=(), y=(3,))
         assert tpl.numeric_leaf_shapes == {"x": (), "y": (3,)}
+
+    def test_numeric_leaf_shapes_not_on_base_template(self):
+        """``flat_size`` / ``numeric_leaf_shapes`` are only meaningful
+        when every leaf is numeric — they live on
+        :class:`NumericRecordTemplate`, not the base ``RecordTemplate``.
+        """
+        tpl = RecordTemplate(label=None, x=(), y=(3,))
+        assert not hasattr(tpl, "numeric_leaf_shapes")
+        assert not hasattr(tpl, "flat_size")
 
 
 # ---------------------------------------------------------------------------
-# flat_size
+# flat_size (on NumericRecordTemplate)
 # ---------------------------------------------------------------------------
 
 
 class TestFlatSize:
     def test_scalars(self):
-        tpl = RecordTemplate(a=(), b=(), c=())
+        tpl = NumericRecordTemplate(a=(), b=(), c=())
         assert tpl.flat_size == 3
 
     def test_arrays(self):
-        tpl = RecordTemplate(x=(5,), y=(2, 3))
+        tpl = NumericRecordTemplate(x=(5,), y=(2, 3))
         assert tpl.flat_size == 11
 
     def test_nested(self):
-        inner = RecordTemplate(r=(), K=())
-        outer = RecordTemplate(params=inner, obs=(4,))
+        inner = NumericRecordTemplate(r=(), K=())
+        outer = NumericRecordTemplate(params=inner, obs=(4,))
         assert outer.flat_size == 6
 
-    def test_opaque_excluded(self):
-        tpl = RecordTemplate(label=None, x=(3,))
-        assert tpl.flat_size == 3
-
     def test_scalar_only(self):
-        tpl = RecordTemplate(a=())
+        tpl = NumericRecordTemplate(a=())
         assert tpl.flat_size == 1
+
+    def test_rejects_opaque_leaf(self):
+        with pytest.raises(TypeError, match="opaque"):
+            NumericRecordTemplate(label=None, x=(3,))
+
+    def test_rejects_non_numeric_nested(self):
+        # ``RecordTemplate(x=(), label=None)`` stays a plain base template
+        # (mixed leaves block auto-promotion), so embedding it inside a
+        # ``NumericRecordTemplate`` must be rejected.
+        inner = RecordTemplate(x=(), label=None)
+        with pytest.raises(TypeError, match="NumericRecordTemplate"):
+            NumericRecordTemplate(nested=inner, y=())
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +253,30 @@ class TestFromRecord:
         from probpipe.core._numeric_record import NumericRecord
         r = NumericRecord(a=1.0, b=jnp.zeros(4), c=jnp.zeros((2, 3)))
         tpl = RecordTemplate.from_record(r)
+        # Auto-promoted to NumericRecordTemplate because the input was a
+        # NumericRecord, so ``flat_size`` is reachable.
+        assert isinstance(tpl, NumericRecordTemplate)
         assert tpl.flat_size == r.flat_size
+
+    def test_from_numeric_record_promotes(self):
+        """Calling ``from_record`` on a ``NumericRecord`` returns a
+        :class:`NumericRecordTemplate`, even through the base
+        ``RecordTemplate.from_record`` classmethod, so downstream code
+        that needs ``flat_size`` keeps working without the caller having
+        to name the subclass explicitly."""
+        from probpipe.core._numeric_record import NumericRecord
+        r = NumericRecord(a=1.0, b=jnp.zeros(2))
+        tpl = RecordTemplate.from_record(r)
+        assert isinstance(tpl, NumericRecordTemplate)
+
+    def test_from_mixed_record_stays_base(self):
+        """A plain ``Record`` with a non-numeric leaf can't be promoted —
+        the result is a plain :class:`RecordTemplate` with an opaque
+        slot."""
+        r = Record(x=1.0, label="tag")
+        tpl = RecordTemplate.from_record(r)
+        assert type(tpl) is RecordTemplate
+        assert tpl["label"] is None
 
     def test_list_leaf_is_opaque(self):
         """A Python list leaf has no .shape / .dtype, so the field is
@@ -264,9 +304,10 @@ class TestFromRecord:
 
 class TestRepr:
     def test_simple(self):
+        # All-numeric → auto-promotes to NumericRecordTemplate.
         tpl = RecordTemplate(x=(), y=(3,))
         r = repr(tpl)
-        assert "RecordTemplate(" in r
+        assert r.startswith("NumericRecordTemplate(")
         assert "x=()" in r
         assert "y=(3,)" in r
 
@@ -274,7 +315,12 @@ class TestRepr:
         inner = RecordTemplate(a=())
         outer = RecordTemplate(sub=inner, z=(2,))
         r = repr(outer)
-        assert "sub=RecordTemplate(" in r
+        # Both auto-promote; inner's repr is nested under the outer.
+        assert "sub=NumericRecordTemplate(" in r
+
+    def test_mixed_stays_base(self):
+        tpl = RecordTemplate(label=None, x=())
+        assert repr(tpl).startswith("RecordTemplate(")
 
     def test_opaque(self):
         tpl = RecordTemplate(label=None, x=())
