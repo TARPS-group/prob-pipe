@@ -125,6 +125,11 @@ def aux_for(obj: Any) -> AuxHooks | None:
 
 
 def _register_xarray() -> None:
+    """Register the built-in ``xarray.DataArray`` aux hooks.
+
+    No-op when xarray isn't importable, so probpipe stays usable
+    without xarray installed.
+    """
     try:
         import xarray as xr
     except ImportError:
@@ -151,6 +156,10 @@ def _register_xarray() -> None:
 
 
 def _register_pandas() -> None:
+    """Register the built-in ``pandas.Series`` and ``pandas.DataFrame`` aux hooks.
+
+    No-op when pandas isn't importable.
+    """
     try:
         import pandas as pd
     except ImportError:

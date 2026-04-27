@@ -134,6 +134,31 @@ this distribution hold?"
 When adding a new class that wraps a finite collection of samples or
 components, define `.n` as a `@property` returning `int`.
 
+### 1.10 Record field iteration and path access
+
+`Record`, `RecordTemplate`, `RecordArray`, and every Record-based
+distribution iterate fields in **insertion order** — the order
+keyword arguments were passed to the constructor (or the order of
+the input dict). Code must not rely on an alphabetical or sorted
+order; the constructor preserves what the caller wrote.
+
+The `/` character is reserved as a nested-path separator. Field
+names may not contain `/` (raises `ValueError` at construction).
+Slash-delimited strings are accepted everywhere a field name is
+accepted, and are sugar for the tuple form:
+
+```python
+record["params/intercept"]   # same as record["params", "intercept"]
+"params/intercept" in record # same as record["params", "intercept"] not raising
+```
+
+`RecordTemplate.leaf_shapes` keys nested fields with the same `/`
+separator, so paths round-trip with `Record.__getitem__`.
+
+When adding new Record-based containers, follow these conventions:
+preserve insertion order, reject `/` in field names, and accept the
+slash-delimited form in any string-keyed lookup.
+
 ---
 
 ## 2. Module Granularity
@@ -164,15 +189,30 @@ positive vs bounded).
 
 ### 2.3 Private vs public modules
 
-Within subpackages that contain multiple implementation files
-(`modeling/`, `inference/`, `converters/`), implementation modules
-use a leading underscore (`_simple.py`, `_rwmh.py`). The package
-`__init__.py` re-exports the public API so users never import from
+Implementation modules use a leading underscore (`_simple.py`,
+`_rwmh.py`, `_array_backend.py`); the package `__init__.py`
+re-exports their public symbols so users never need to import from
 underscore modules directly.
 
-Within `core/` and `distributions/`, modules are public (no underscore)
-because they form the foundational layer and their names are part of the
-internal vocabulary (e.g., `from probpipe.core.protocols import ...`).
+Modules **without** the underscore are reserved for the foundational
+vocabulary that user code may reasonably import directly:
+
+```python
+from probpipe.core.protocols import SupportsSampling
+from probpipe.core.constraints import positive
+from probpipe.core.record import Record
+```
+
+A handful of `core/` and `distributions/` modules fit this profile —
+`protocols.py`, `record.py`, `distribution.py`, `ops.py`,
+`constraints.py`, `provenance.py`, `transition.py`, `node.py`,
+`continuous.py`, `discrete.py`, `multivariate.py`, `transformed.py`.
+Everything else in those subpackages (the `_*.py` files) is an
+implementation detail re-exported via the package `__init__.py`.
+
+Test: *if a user can plausibly type the module path on a doc page or
+in their own code, the module is public. If it only exists to
+factor implementation off the foundational class, it is private.*
 
 ---
 

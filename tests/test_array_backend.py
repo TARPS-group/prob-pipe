@@ -83,47 +83,49 @@ class TestRegistryLookup:
 # ---------------------------------------------------------------------------
 
 
-class TestXarrayRoundTrip:
-    def setup_method(self):
-        self.xr = pytest.importorskip("xarray")
-        self.da = self.xr.DataArray(
-            [1.0, 2.0, 3.0],
-            dims=["t"],
-            coords={"t": [10, 20, 30]},
-            attrs={"units": "meters"},
-            name="temps",
-        )
+@pytest.fixture
+def da():
+    xr = pytest.importorskip("xarray")
+    return xr.DataArray(
+        [1.0, 2.0, 3.0],
+        dims=["t"],
+        coords={"t": [10, 20, 30]},
+        attrs={"units": "meters"},
+        name="temps",
+    )
 
-    def test_to_numeric_then_to_native_preserves_dims(self):
-        back = Record(temps=self.da).to_numeric().to_native()
+
+class TestXarrayRoundTrip:
+    def test_to_numeric_then_to_native_preserves_dims(self, da):
+        back = Record(temps=da).to_numeric().to_native()
         assert back["temps"].dims == ("t",)
 
-    def test_to_numeric_then_to_native_preserves_coords(self):
-        back = Record(temps=self.da).to_numeric().to_native()
+    def test_to_numeric_then_to_native_preserves_coords(self, da):
+        back = Record(temps=da).to_numeric().to_native()
         np.testing.assert_array_equal(back["temps"].coords["t"].values, [10, 20, 30])
 
-    def test_to_numeric_then_to_native_preserves_attrs(self):
-        back = Record(temps=self.da).to_numeric().to_native()
+    def test_to_numeric_then_to_native_preserves_attrs(self, da):
+        back = Record(temps=da).to_numeric().to_native()
         assert back["temps"].attrs == {"units": "meters"}
 
-    def test_to_numeric_then_to_native_preserves_name(self):
-        back = Record(temps=self.da).to_numeric().to_native()
+    def test_to_numeric_then_to_native_preserves_name(self, da):
+        back = Record(temps=da).to_numeric().to_native()
         assert back["temps"].name == "temps"
 
-    def test_direct_numeric_record_construction_preserves_metadata(self):
+    def test_direct_numeric_record_construction_preserves_metadata(self, da):
         # The "no to_numeric() detour" path must produce identical results.
-        back = NumericRecord(temps=self.da).to_native()
+        back = NumericRecord(temps=da).to_native()
         assert back["temps"].dims == ("t",)
         np.testing.assert_array_equal(back["temps"].coords["t"].values, [10, 20, 30])
 
-    def test_to_native_returns_plain_record_not_numeric(self):
-        nr = NumericRecord(temps=self.da)
+    def test_to_native_returns_plain_record_not_numeric(self, da):
+        nr = NumericRecord(temps=da)
         back = nr.to_native()
         assert isinstance(back, Record)
         assert not isinstance(back, NumericRecord)
 
-    def test_values_round_trip_within_dtype_tolerance(self):
-        back = NumericRecord(temps=self.da).to_native()
+    def test_values_round_trip_within_dtype_tolerance(self, da):
+        back = NumericRecord(temps=da).to_native()
         np.testing.assert_allclose(np.asarray(back["temps"]), [1.0, 2.0, 3.0])
 
 
@@ -132,33 +134,41 @@ class TestXarrayRoundTrip:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def pd_module():
+    return pytest.importorskip("pandas")
+
+
+@pytest.fixture
+def datetime_series(pd_module):
+    return pd_module.Series(
+        [10.0, 20.0, 30.0],
+        index=pd_module.DatetimeIndex(
+            ["2024-01-01", "2024-01-02", "2024-01-03"]
+        ),
+        name="counts",
+    )
+
+
 class TestPandasRoundTrip:
-    def setup_method(self):
-        self.pd = pytest.importorskip("pandas")
-        self.s = self.pd.Series(
-            [10.0, 20.0, 30.0],
-            index=self.pd.DatetimeIndex(["2024-01-01", "2024-01-02", "2024-01-03"]),
-            name="counts",
-        )
+    def test_series_round_trip_preserves_index(self, pd_module, datetime_series):
+        back = NumericRecord(counts=datetime_series).to_native()
+        assert isinstance(back["counts"], pd_module.Series)
+        np.testing.assert_array_equal(back["counts"].index, datetime_series.index)
 
-    def test_series_round_trip_preserves_index(self):
-        back = NumericRecord(counts=self.s).to_native()
-        assert isinstance(back["counts"], self.pd.Series)
-        np.testing.assert_array_equal(back["counts"].index, self.s.index)
-
-    def test_series_round_trip_preserves_name(self):
-        back = NumericRecord(counts=self.s).to_native()
+    def test_series_round_trip_preserves_name(self, datetime_series):
+        back = NumericRecord(counts=datetime_series).to_native()
         assert back["counts"].name == "counts"
 
-    def test_dataframe_round_trip_preserves_columns(self):
-        df = self.pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]})
+    def test_dataframe_round_trip_preserves_columns(self, pd_module):
+        df = pd_module.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]})
         back = NumericRecord(data=df).to_native()
-        assert isinstance(back["data"], self.pd.DataFrame)
+        assert isinstance(back["data"], pd_module.DataFrame)
         assert list(back["data"].columns) == ["x", "y"]
 
-    def test_dataframe_round_trip_preserves_index(self):
-        idx = self.pd.Index(["a", "b", "c"], name="row")
-        df = self.pd.DataFrame({"v": [1.0, 2.0, 3.0]}, index=idx)
+    def test_dataframe_round_trip_preserves_index(self, pd_module):
+        idx = pd_module.Index(["a", "b", "c"], name="row")
+        df = pd_module.DataFrame({"v": [1.0, 2.0, 3.0]}, index=idx)
         back = NumericRecord(data=df).to_native()
         np.testing.assert_array_equal(back["data"].index.values, ["a", "b", "c"])
         assert back["data"].index.name == "row"
@@ -188,31 +198,33 @@ class TestMixedBackendRecord:
 # ---------------------------------------------------------------------------
 
 
-class TestPathEquivalence:
-    def setup_method(self):
-        self.xr = pytest.importorskip("xarray")
-        self.da = self.xr.DataArray(
-            [1.0, 2.0, 3.0], dims=["t"], coords={"t": [10, 20, 30]}
-        )
+@pytest.fixture
+def da_simple():
+    xr = pytest.importorskip("xarray")
+    return xr.DataArray(
+        [1.0, 2.0, 3.0], dims=["t"], coords={"t": [10, 20, 30]}
+    )
 
-    def test_aux_keys_match(self):
-        nr_direct = NumericRecord(x=self.da, y=jnp.array(1.5))
-        nr_via_to_numeric = Record(x=self.da, y=jnp.array(1.5)).to_numeric()
+
+class TestPathEquivalence:
+    def test_aux_keys_match(self, da_simple):
+        nr_direct = NumericRecord(x=da_simple, y=jnp.array(1.5))
+        nr_via_to_numeric = Record(x=da_simple, y=jnp.array(1.5)).to_numeric()
         keys_direct = set((nr_direct.aux or {}).keys())
         keys_via = set((nr_via_to_numeric.aux or {}).keys())
         assert keys_direct == keys_via == {"x"}
 
-    def test_store_arrays_bitwise_equal(self):
-        nr_direct = NumericRecord(x=self.da, y=2.5)
-        nr_via_to_numeric = Record(x=self.da, y=2.5).to_numeric()
+    def test_store_arrays_bitwise_equal(self, da_simple):
+        nr_direct = NumericRecord(x=da_simple, y=2.5)
+        nr_via_to_numeric = Record(x=da_simple, y=2.5).to_numeric()
         for f in nr_direct.fields:
             np.testing.assert_array_equal(
                 np.asarray(nr_direct[f]), np.asarray(nr_via_to_numeric[f])
             )
 
-    def test_to_native_results_match(self):
-        b1 = NumericRecord(x=self.da, y=2.5).to_native()
-        b2 = Record(x=self.da, y=2.5).to_numeric().to_native()
+    def test_to_native_results_match(self, da_simple):
+        b1 = NumericRecord(x=da_simple, y=2.5).to_native()
+        b2 = Record(x=da_simple, y=2.5).to_numeric().to_native()
         # xarray fields restored identically (dims + coord values).
         assert b1["x"].dims == b2["x"].dims
         np.testing.assert_array_equal(
@@ -250,27 +262,29 @@ class TestNonCoercibleLeavesRaise:
 # ---------------------------------------------------------------------------
 
 
-class TestTransformsDropAux:
-    def setup_method(self):
-        self.xr = pytest.importorskip("xarray")
-        self.da = self.xr.DataArray(
-            [1.0, 2.0, 3.0], dims=["t"], coords={"t": [0, 1, 2]}
-        )
+@pytest.fixture
+def da_zero_indexed():
+    xr = pytest.importorskip("xarray")
+    return xr.DataArray(
+        [1.0, 2.0, 3.0], dims=["t"], coords={"t": [0, 1, 2]}
+    )
 
-    def test_map_drops_aux(self):
-        nr = NumericRecord(x=self.da)
+
+class TestTransformsDropAux:
+    def test_map_drops_aux(self, da_zero_indexed):
+        nr = NumericRecord(x=da_zero_indexed)
         assert nr.aux is not None
         out = nr.map(jnp.log)
         assert out.aux is None
 
-    def test_replace_drops_aux(self):
-        nr = NumericRecord(x=self.da, y=jnp.array(1.5))
+    def test_replace_drops_aux(self, da_zero_indexed):
+        nr = NumericRecord(x=da_zero_indexed, y=jnp.array(1.5))
         assert nr.aux is not None
         out = nr.replace(y=jnp.array(2.0))
         assert out.aux is None
 
-    def test_jax_tree_map_drops_aux(self):
-        nr = NumericRecord(x=self.da)
+    def test_jax_tree_map_drops_aux(self, da_zero_indexed):
+        nr = NumericRecord(x=da_zero_indexed)
         out = jax.tree.map(lambda v: v + 1, nr)
         assert isinstance(out, NumericRecord)
         assert out.aux is None

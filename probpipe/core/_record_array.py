@@ -128,8 +128,8 @@ class RecordArray(Record):
         leaves, matching the permissive storage policy of ``Record``.
 
         Subclasses may return a new ``OrderedDict`` with the same keys
-        (in the same sorted order) and optionally coerced values, or
-        raise ``TypeError`` / ``ValueError`` on invalid input.
+        (in template order) and optionally coerced values, or raise
+        ``TypeError`` / ``ValueError`` on invalid input.
         """
         return store
 
