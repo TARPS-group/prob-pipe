@@ -24,7 +24,7 @@ import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
 from .._utils import _auto_key
-from .distribution import Distribution
+from .distribution import Distribution, RandomFunction
 from .node import workflow_function
 from .protocols import (
     SupportsConditioning,
@@ -217,36 +217,68 @@ def expected_distribution(dist: SupportsExpectedDistribution) -> Distribution:
 
 
 @workflow_function
-def random_log_prob(dist: SupportsRandomLogProb) -> Any:
+def random_log_prob(
+    dist: SupportsRandomLogProb,
+    value: Any = None,
+) -> RandomFunction | Distribution:
     """Return the random (normalized) log-density of a random measure.
 
-    For a ``RandomMeasure[T]`` ``M``, returns the random function
-    ``x ↦ log D(x)`` where ``D ~ M``, as a
-    :class:`~probpipe.core._random_functions.RandomFunction`.
+    For a ``RandomMeasure[T]`` ``M`` with draws ``D ~ M``, the random
+    function ``x ↦ log D(x)`` is itself a callable returning a
+    distribution over scalars at every input.
+
+    When *value* is omitted, returns that callable as a
+    :class:`~probpipe.core._random_functions.RandomFunction`. When
+    *value* is provided, returns the ``Distribution[Array]`` over
+    ``log D(value)`` directly — equivalent to
+    ``random_log_prob(dist)(value)``. The two-argument form mirrors
+    :func:`log_prob` for non-random distributions.
+
+    Concrete subclasses implement a single method
+    ``_random_log_prob()`` returning a ``RandomFunction``; the optional
+    *value* dispatch lives entirely in this op, not on the protocol.
     """
     if not isinstance(dist, SupportsRandomLogProb):
         raise TypeError(
             f"{type(dist).__name__} does not support random_log_prob "
             f"(does not implement SupportsRandomLogProb)"
         )
-    return dist._random_log_prob()
+    rf = dist._random_log_prob()
+    return rf if value is None else rf(value)
 
 
 @workflow_function
-def random_unnormalized_log_prob(dist: SupportsRandomUnnormalizedLogProb) -> Any:
+def random_unnormalized_log_prob(
+    dist: SupportsRandomUnnormalizedLogProb,
+    value: Any = None,
+) -> RandomFunction | Distribution:
     """Return the random unnormalized log-density of a random measure.
 
-    For a ``RandomMeasure[T]`` ``M``, returns the random function
-    ``x ↦ log D̃(x)`` where ``D̃`` is the unnormalized density of a
-    draw ``D ~ M``, as a
-    :class:`~probpipe.core._random_functions.RandomFunction`.
+    For a ``RandomMeasure[T]`` ``M`` with draws ``D ~ M``, the random
+    function ``x ↦ log D̃(x)`` (where ``D̃`` is the unnormalized density
+    of ``D``) is itself a callable returning a distribution over
+    scalars at every input.
+
+    When *value* is omitted, returns that callable as a
+    :class:`~probpipe.core._random_functions.RandomFunction`. When
+    *value* is provided, returns the ``Distribution[Array]`` over
+    ``log D̃(value)`` directly — equivalent to
+    ``random_unnormalized_log_prob(dist)(value)``. The two-argument
+    form mirrors :func:`unnormalized_log_prob` for non-random
+    distributions.
+
+    Concrete subclasses implement a single method
+    ``_random_unnormalized_log_prob()`` returning a ``RandomFunction``;
+    the optional *value* dispatch lives entirely in this op, not on
+    the protocol.
     """
     if not isinstance(dist, SupportsRandomUnnormalizedLogProb):
         raise TypeError(
             f"{type(dist).__name__} does not support random_unnormalized_log_prob "
             f"(does not implement SupportsRandomUnnormalizedLogProb)"
         )
-    return dist._random_unnormalized_log_prob()
+    rf = dist._random_unnormalized_log_prob()
+    return rf if value is None else rf(value)
 
 
 def _split_data_kwargs(

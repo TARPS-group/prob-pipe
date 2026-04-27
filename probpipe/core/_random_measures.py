@@ -58,6 +58,10 @@ subclasses opt into capabilities via the protocols in
   :class:`~probpipe.core.protocols.SupportsRandomUnnormalizedLogProb` —
   implement ``_random_log_prob`` / ``_random_unnormalized_log_prob``
   returning a :class:`~probpipe.core._random_functions.RandomFunction`.
+  The matching ops accept an optional ``value`` argument that, when
+  supplied, calls the returned random function and yields a
+  ``Distribution[Array]`` directly (mirroring ``log_prob(dist, value)``);
+  subclasses still implement only the zero-argument method.
 
 Forward compatibility
 ---------------------

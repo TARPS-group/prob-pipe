@@ -290,6 +290,30 @@ class TestRandomLogProb:
         rf = random_unnormalized_log_prob(rm)
         assert isinstance(rf, RandomFunction)
 
+    def test_random_log_prob_two_arg_returns_distribution(self):
+        """``random_log_prob(rm, x)`` is sugar for ``random_log_prob(rm)(x)``."""
+        comps = [Normal(loc=float(i), scale=1.0, name=f"n{i}") for i in range(3)]
+        rm = _DiracRandomMeasure(comps)
+        x = jnp.array(1.0)
+        marginal = random_log_prob(rm, x)
+        assert isinstance(marginal, Distribution)
+        assert not isinstance(marginal, RandomFunction)
+        # Equivalence with the two-step form.
+        rf = random_log_prob(rm)
+        direct = rf(x)
+        assert jnp.allclose(mean(marginal), mean(direct), atol=1e-6)
+
+    def test_random_unnormalized_log_prob_two_arg_returns_distribution(self):
+        comps = [Normal(loc=float(i), scale=1.0, name=f"n{i}") for i in range(3)]
+        rm = _DiracRandomMeasure(comps)
+        x = jnp.array(0.5)
+        marginal = random_unnormalized_log_prob(rm, x)
+        assert isinstance(marginal, Distribution)
+        assert not isinstance(marginal, RandomFunction)
+        rf = random_unnormalized_log_prob(rm)
+        direct = rf(x)
+        assert jnp.allclose(mean(marginal), mean(direct), atol=1e-6)
+
     def test_protocols_isinstance(self):
         rm = _DiracRandomMeasure(
             [Normal(loc=0.0, scale=1.0, name="n0")],

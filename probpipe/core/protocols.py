@@ -250,8 +250,14 @@ class SupportsRandomLogProb(Protocol):
     """Distribution over distributions with a random (normalized) log-density.
 
     For a ``RandomMeasure[T]`` ``M``, ``_random_log_prob`` returns the
-    random function ``x ↦ log D(x)`` where ``D ~ M``. Mirrors
-    :class:`SupportsLogProb` for the random-measure setting.
+    random function ``x ↦ log D(x)`` where ``D ~ M`` as a
+    :class:`~probpipe.core._random_functions.RandomFunction`. The op
+    layer (:func:`~probpipe.core.ops.random_log_prob`) optionally
+    forwards an input *value* by calling the returned random function;
+    that two-argument convenience is purely op-layer sugar — concrete
+    subclasses implement only the zero-argument method here.
+
+    Mirrors :class:`SupportsLogProb` for the random-measure setting.
     """
 
     def _random_log_prob(self) -> Any: ...
@@ -264,7 +270,12 @@ class SupportsRandomUnnormalizedLogProb(Protocol):
     Mirrors :class:`SupportsUnnormalizedLogProb` for the random-measure
     setting. ``_random_unnormalized_log_prob`` returns the random
     function ``x ↦ log D̃(x)`` where ``D̃`` is the unnormalized density
-    of a draw ``D ~ M``.
+    of a draw ``D ~ M``, as a
+    :class:`~probpipe.core._random_functions.RandomFunction`. The op
+    layer (:func:`~probpipe.core.ops.random_unnormalized_log_prob`)
+    optionally forwards an input *value* by calling the returned random
+    function; that two-argument convenience is purely op-layer sugar —
+    concrete subclasses implement only the zero-argument method here.
     """
 
     def _random_unnormalized_log_prob(self) -> Any: ...
