@@ -187,10 +187,26 @@ class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
 class SupportsMean(Protocol):
     """Distribution with an exact mean via ``_mean()``.
 
+    The return type is ``T``-shaped where ``T`` is the distribution's
+    sample type. For the common cases this is:
+
+    * :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`
+      and friends (``T = Array``) — returns :class:`~probpipe.custom_types.Array`.
+    * :class:`~probpipe.core._record_distribution.RecordDistribution` and
+      friends (``T = Record``) — returns :class:`~probpipe.record.Record`.
+    * :class:`~probpipe.core._random_measures.RandomMeasure[T]`
+      (``T = Distribution[T]``) — returns the marginalised
+      ``Distribution[T]`` with marginal ``D̄(A) = ∫ D(A) dM(D)``.
+
+    The protocol is sample-type-polymorphic by design: the array-valued
+    and structured paths are unchanged; ``RandomMeasure`` opts in by
+    implementing ``_mean`` to return its expected distribution.
+
     Independent of :class:`SupportsExpectation`.  The ops layer falls
     back to MC estimation via ``SupportsExpectation`` when this protocol
     is absent.  Concrete classes that want the MC default can apply
-    ``@compute_expectation`` to their ``_mean`` implementation.
+    ``@compute_expectation`` to their ``_mean`` implementation (only
+    valid when ``T`` is array-like).
     """
 
     def _mean(self) -> Any: ...
@@ -225,25 +241,6 @@ class SupportsCovariance(Protocol):
 # ---------------------------------------------------------------------------
 # Random-measure protocols
 # ---------------------------------------------------------------------------
-
-@runtime_checkable
-class SupportsExpectedDistribution(Protocol):
-    """Distribution-valued distribution with an exact expected distribution.
-
-    For a :class:`~probpipe.core._random_measures.RandomMeasure[T]` ``M``,
-    the expected distribution is the marginalisation
-    ``D̄(A) = ∫ D(A) dM(D)`` for measurable ``A ⊆ T``; ``D̄`` is itself a
-    ``Distribution[T]``. The ops layer routes
-    :func:`~probpipe.core.ops.expected_distribution` through this protocol.
-
-    Independent of :class:`SupportsMean`: ``_mean`` returns an array on
-    every other distribution in ProbPipe, while ``_expected_distribution``
-    returns a ``Distribution[T]``. Splitting them avoids a cross-cutting
-    refactor of every ``_mean`` implementation.
-    """
-
-    def _expected_distribution(self) -> Any: ...
-
 
 @runtime_checkable
 class SupportsRandomLogProb(Protocol):
@@ -331,7 +328,6 @@ __all__ = [
     "SupportsMean",
     "SupportsVariance",
     "SupportsCovariance",
-    "SupportsExpectedDistribution",
     "SupportsRandomLogProb",
     "SupportsRandomUnnormalizedLogProb",
     "SupportsConditioning",

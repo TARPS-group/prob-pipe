@@ -30,7 +30,6 @@ from .protocols import (
     SupportsConditioning,
     SupportsCovariance,
     SupportsExpectation,
-    SupportsExpectedDistribution,
     SupportsLogProb,
     SupportsMean,
     SupportsRandomLogProb,
@@ -50,7 +49,6 @@ __all__ = [
     "variance",
     "cov",
     "expectation",
-    "expected_distribution",
     "random_log_prob",
     "random_unnormalized_log_prob",
     "condition_on",
@@ -140,7 +138,18 @@ def unnormalized_prob(
 
 @workflow_function
 def mean(dist: SupportsMean) -> Any:
-    """Compute E[X].
+    """Compute ``E[X]`` where ``X ~ dist``.
+
+    The return type is ``T``-shaped where ``T`` is *dist*'s sample type:
+
+    * Numeric distributions (``T = Array``) — returns
+      :class:`~probpipe.custom_types.Array`.
+    * Structured distributions (``T = Record``) — returns
+      :class:`~probpipe.record.Record`.
+    * :class:`~probpipe.core._random_measures.RandomMeasure[T]` (``T``
+      itself a :class:`~probpipe.core._distribution_base.Distribution[T]`)
+      — returns the marginalised ``Distribution[T]`` with marginal
+      ``D̄(A) = ∫ D(A) dM(D)``.
 
     Requires the distribution to implement :class:`SupportsMean`.
     """
@@ -197,23 +206,6 @@ def expectation(
     return dist._expectation(
         f, key=key, num_evaluations=num_evaluations, return_dist=return_dist,
     )
-
-
-@workflow_function
-def expected_distribution(dist: SupportsExpectedDistribution) -> Distribution:
-    """Compute the expected distribution of a random measure.
-
-    For a :class:`~probpipe.core._random_measures.RandomMeasure[T]`
-    ``M``, returns the marginalised ``Distribution[T]``
-    ``D̄(A) = ∫ D(A) dM(D)``.  Requires the distribution to implement
-    :class:`~probpipe.core.protocols.SupportsExpectedDistribution`.
-    """
-    if not isinstance(dist, SupportsExpectedDistribution):
-        raise TypeError(
-            f"{type(dist).__name__} does not support expected_distribution "
-            f"(does not implement SupportsExpectedDistribution)"
-        )
-    return dist._expected_distribution()
 
 
 @workflow_function

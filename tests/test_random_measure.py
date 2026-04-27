@@ -13,12 +13,11 @@ from probpipe import (
     NumericRandomMeasure,
     RandomFunction,
     RandomMeasure,
-    SupportsExpectedDistribution,
+    SupportsMean,
     SupportsRandomLogProb,
     SupportsRandomUnnormalizedLogProb,
     SupportsSampling,
     Weights,
-    expected_distribution,
     mean,
     random_log_prob,
     random_unnormalized_log_prob,
@@ -67,7 +66,7 @@ class _DiracLogProbFunction(RandomFunction):
 class _DiracRandomMeasure(
     NumericRandomMeasure,
     SupportsSampling,
-    SupportsExpectedDistribution,
+    SupportsMean,
     SupportsRandomLogProb,
     SupportsRandomUnnormalizedLogProb,
 ):
@@ -130,7 +129,7 @@ class _DiracRandomMeasure(
         drawn = [self._components[int(i)] for i in indices]
         return DistributionArray(drawn, batch_shape=tuple(sample_shape))
 
-    def _expected_distribution(self):
+    def _mean(self):
         return _make_mixture_marginal(
             self._components, weights=self._w, name=f"{self.name}_expected",
         )
@@ -232,20 +231,24 @@ class TestSampling:
 
 
 # ---------------------------------------------------------------------------
-# Expected distribution
+# Mean (returns a Distribution[T] for a RandomMeasure[T])
 # ---------------------------------------------------------------------------
 
 
-class TestExpectedDistribution:
+class TestMean:
     def test_returns_distribution(self):
+        """``mean(rm)`` for a RandomMeasure returns a ``Distribution[T]``,
+        i.e. the marginalised ``D̄(A) = ∫ D(A) dM(D)``."""
         comps = [Normal(loc=float(i), scale=1.0, name=f"n{i}") for i in range(3)]
         rm = _DiracRandomMeasure(comps)
-        ed = expected_distribution(rm)
+        ed = mean(rm)
         assert isinstance(ed, Distribution)
 
-    def test_mean_matches_weighted_mean(self):
-        """E[D̄] under the marginalised distribution is the weighted mean
-        of the component means.
+    def test_outer_mean_matches_weighted_inner_mean(self):
+        """``mean(mean(rm))`` is the weighted mean of the component means.
+
+        Outer ``mean(rm)`` is the marginalised ``Distribution[T]``; inner
+        ``mean(_)`` collapses that to its array-valued mean.
         """
         locs = [0.0, 2.0, 5.0]
         comps = [
@@ -253,8 +256,7 @@ class TestExpectedDistribution:
         ]
         weights = jnp.array([0.2, 0.3, 0.5])
         rm = _DiracRandomMeasure(comps, weights=weights)
-        ed = expected_distribution(rm)
-        m = mean(ed)
+        m = mean(mean(rm))
         expected_mean = float((weights * jnp.array(locs)).sum())
         assert jnp.allclose(m, expected_mean, atol=1e-6)
 
@@ -262,7 +264,7 @@ class TestExpectedDistribution:
         rm = _DiracRandomMeasure(
             [Normal(loc=0.0, scale=1.0, name="n0")],
         )
-        assert isinstance(rm, SupportsExpectedDistribution)
+        assert isinstance(rm, SupportsMean)
 
 
 # ---------------------------------------------------------------------------
@@ -331,14 +333,14 @@ class TestProtocolOptIn:
     def test_sampling_only_rm_opts_out_of_other_protocols(self):
         rm = _SamplingOnlyRandomMeasure(Normal(loc=0.0, scale=1.0, name="n0"))
         assert isinstance(rm, SupportsSampling)
-        assert not isinstance(rm, SupportsExpectedDistribution)
+        assert not isinstance(rm, SupportsMean)
         assert not isinstance(rm, SupportsRandomLogProb)
         assert not isinstance(rm, SupportsRandomUnnormalizedLogProb)
 
     def test_unsupported_op_raises_typerror(self):
         rm = _SamplingOnlyRandomMeasure(Normal(loc=0.0, scale=1.0, name="n0"))
-        with pytest.raises(TypeError, match="expected_distribution"):
-            expected_distribution(rm)
+        with pytest.raises(TypeError, match="mean"):
+            mean(rm)
         with pytest.raises(TypeError, match="random_log_prob"):
             random_log_prob(rm)
         with pytest.raises(TypeError, match="random_unnormalized_log_prob"):

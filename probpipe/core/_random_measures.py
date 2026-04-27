@@ -51,9 +51,13 @@ subclasses opt into capabilities via the protocols in
   ``_sample(key, sample_shape)`` returning a ``Distribution[T]`` for
   ``sample_shape == ()`` and a ``DistributionArray`` of shape
   ``sample_shape`` otherwise.
-* :class:`~probpipe.core.protocols.SupportsExpectedDistribution` —
-  implement ``_expected_distribution()`` returning the marginalised
-  ``Distribution[T]``.
+* :class:`~probpipe.core.protocols.SupportsMean` — implement ``_mean()``
+  returning the marginalised ``Distribution[T]`` ``D̄(A) = ∫ D(A) dM(D)``.
+  This is the natural sample-type-polymorphic specialisation of
+  ``mean``: a draw from a ``RandomMeasure[T]`` is itself a
+  ``Distribution[T]``, so its expected value is a ``Distribution[T]``.
+  Array-path ``_mean`` implementations elsewhere in the hierarchy are
+  unaffected.
 * :class:`~probpipe.core.protocols.SupportsRandomLogProb` /
   :class:`~probpipe.core.protocols.SupportsRandomUnnormalizedLogProb` —
   implement ``_random_log_prob`` / ``_random_unnormalized_log_prob``
