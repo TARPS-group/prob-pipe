@@ -168,7 +168,7 @@ class ArrayRandomFunction(RandomFunction[Array, Array]):
             A distribution whose ``batch_shape`` and ``event_shape`` follow
             the shape table in the class docstring.
         """
-        X = jnp.asarray(X, dtype=jnp.float32)
+        X = jnp.asarray(X)
         self._validate_joint_request(joint_inputs, joint_outputs)
         self._validate_X(X)
         return self.predict(X, joint_inputs=joint_inputs, joint_outputs=joint_outputs)

@@ -9,6 +9,7 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+from .._dtype import _as_float_array, _promote_floats
 from .._utils import prod
 
 from ..custom_types import Array, ArrayLike, PRNGKey
@@ -75,8 +76,7 @@ class JointGaussian(RecordDistribution, SupportsSampling, SupportsLogProb, Suppo
         if not component_shapes:
             raise ValueError("JointGaussian requires at least one component.")
 
-        mean = jnp.asarray(mean, dtype=jnp.float32)
-        cov = jnp.asarray(cov, dtype=jnp.float32)
+        _, (mean, cov) = _promote_floats(mean, cov)
 
         total_dim = sum(component_shapes.values())
         if mean.shape != (total_dim,):
@@ -255,7 +255,7 @@ class JointGaussian(RecordDistribution, SupportsSampling, SupportsLogProb, Suppo
         for cname in self._component_shapes:
             if cname in observed:
                 o_vals_parts.append(
-                    jnp.asarray(observed[cname], dtype=jnp.float32).reshape(-1)
+                    jnp.asarray(observed[cname], dtype=self._mean_vec.dtype).reshape(-1)
                 )
         o_vals = jnp.concatenate(o_vals_parts)
 

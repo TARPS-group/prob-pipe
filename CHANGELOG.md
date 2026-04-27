@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **dtype handling** now follows JAX's rules. Distributions, weights, and
+  empirical classes preserve user-supplied dtypes and honor
+  ``jax.config.update("jax_enable_x64", True)`` end-to-end. Previously every
+  TFP-backed constructor silently downcast its parameters to ``float32``,
+  causing ``log_prob`` / ``sample`` / ``mean`` to raise ``TypeError`` under
+  x64. Multi-parameter constructors now promote inputs to a common float
+  dtype via ``jnp.result_type`` (integer inputs are promoted to JAX's
+  default float, so ``Normal(loc=0, scale=1)`` still works). Internal
+  helpers ``_default_float_dtype()`` and ``_promote_floats()`` live in
+  ``probpipe/_dtype.py``. The float64-truncation warning filter previously
+  in ``probpipe/__init__.py`` is removed.
+
 ### Added
 
 - **`_RecordArrayView`** (`RecordArray.view(field)`) — single-field view of a

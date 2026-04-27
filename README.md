@@ -53,7 +53,7 @@ x = jax.random.normal(jax.random.PRNGKey(0), shape=(200,))
 X = jnp.column_stack([jnp.ones_like(x), x])
 
 likelihood = GLMLikelihood(tfp_glm.Bernoulli(), X, seed=1)
-y = likelihood.generate_data(beta_true, 200).astype(jnp.float32)
+y = likelihood.generate_data(beta_true, 200)
 
 # --- 1. Build a model with named parameters ---
 prior = ProductDistribution(

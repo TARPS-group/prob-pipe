@@ -342,7 +342,8 @@ class TestArrayBootstrapReplicateDistribution:
 
     def test_dtype(self):
         dist = ArrayBootstrapReplicateDistribution(jnp.ones((5, 2)))
-        assert dist.dtype == jnp.float32
+        # Inherits dtype from the source array (default float dtype here).
+        assert dist.dtype == jnp.zeros((), dtype=float).dtype
 
 
 # ---------------------------------------------------------------------------

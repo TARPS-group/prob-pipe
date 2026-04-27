@@ -32,7 +32,9 @@ def dim():
 
 @pytest.fixture
 def loc(dim):
-    return jnp.arange(dim, dtype=jnp.float32)
+    # Use JAX's default float dtype so loc and cov_matrix share dtype
+    # under x64 mode.
+    return jnp.arange(dim, dtype=float)
 
 
 @pytest.fixture
@@ -167,8 +169,8 @@ class TestMultivariateNormal:
         assert "test_gaussian" in r
         assert "event_shape=(3,)" in r
 
-    def test_dtype(self, gaussian):
-        assert gaussian.dtype == jnp.float32
+    def test_dtype(self, gaussian, loc):
+        assert gaussian.dtype == loc.dtype
 
     def test_from_distribution_empirical(self, gaussian, key):
         ed = from_distribution(
@@ -464,8 +466,8 @@ class TestDistributionABC:
     def test_default_batch_shape(self, gaussian):
         assert gaussian.batch_shape == ()
 
-    def test_default_dtype(self, gaussian):
-        assert gaussian.dtype == jnp.float32
+    def test_default_dtype(self, gaussian, loc):
+        assert gaussian.dtype == loc.dtype
 
     def test_prob_delegates_to_log_prob(self, gaussian, key):
         x = sample(gaussian, key=key, sample_shape=(3,))
@@ -548,8 +550,8 @@ class TestTFPDistribution:
         assert isinstance(gaussian, TFPDistribution)
         assert isinstance(gaussian, NumericRecordDistribution)
 
-    def test_dtype(self, gaussian):
-        assert gaussian.dtype == jnp.float32
+    def test_dtype(self, gaussian, loc):
+        assert gaussian.dtype == loc.dtype
 
     def test_mean_delegates(self, gaussian, loc):
         np.testing.assert_allclose(mean(gaussian), loc, atol=1e-6)

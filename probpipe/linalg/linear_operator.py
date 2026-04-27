@@ -103,7 +103,7 @@ class LinOp(ABC):
     @property
     @abstractmethod
     def dtype(self) -> Any:
-        """Return dtype (e.g., jnp.float32)."""
+        """Return the dtype of this operator's elements."""
         ...
 
     # ---- Minimal numeric primitives ----

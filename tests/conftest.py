@@ -39,7 +39,9 @@ def dim():
 
 @pytest.fixture
 def loc(dim):
-    return jnp.arange(dim, dtype=jnp.float32)
+    # Use JAX's default float dtype so the fixture stays consistent with
+    # the cov_matrix fixture (which also uses defaults) under x64 mode.
+    return jnp.arange(dim, dtype=float)
 
 
 @pytest.fixture

@@ -24,6 +24,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+from .._dtype import _as_float_array
 from .._utils import prod, _is_numeric_array
 
 from ..custom_types import Array, ArrayLike, PRNGKey
@@ -292,8 +293,10 @@ class NumericJointEmpirical(JointEmpirical, SupportsLogProb, SupportsMean, Suppo
     Gaussian approximation), :class:`~probpipe.core.protocols.SupportsMean`,
     and :class:`~probpipe.core.protocols.SupportsVariance`.
 
-    Construction coerces every field to ``jnp.float32``; fields that
-    aren't numeric arrays raise ``TypeError``. Typically constructed via
+    Construction coerces every field to a floating-point JAX array
+    (preserving ``float64`` when JAX's x64 mode is enabled, otherwise
+    promoting integer inputs to ``float32``); fields that aren't
+    numeric arrays raise ``TypeError``. Typically constructed via
     :class:`JointEmpirical`, which dispatches here automatically when all
     fields are numeric.
     """
@@ -312,8 +315,8 @@ class NumericJointEmpirical(JointEmpirical, SupportsLogProb, SupportsMean, Suppo
         if not samples:
             raise ValueError("NumericJointEmpirical requires at least one component.")
 
-        # Coerce every field to jnp.float32 up front. Non-numeric inputs
-        # raise ``TypeError`` with a clear message before any bookkeeping.
+        # Coerce every field to a floating-point JAX array up front.
+        # Non-numeric inputs raise ``TypeError`` with a clear message.
         coerced: dict[str, Array] = {}
         for cname, arr in samples.items():
             if not _is_numeric_array(arr):
@@ -322,7 +325,7 @@ class NumericJointEmpirical(JointEmpirical, SupportsLogProb, SupportsMean, Suppo
                     f"numeric array, got {type(arr).__name__}. Use "
                     f"JointEmpirical directly for non-numeric components."
                 )
-            coerced[cname] = jnp.asarray(arr, dtype=jnp.float32)
+            coerced[cname] = _as_float_array(arr)
 
         super().__init__(
             weights=weights, log_weights=log_weights, name=name, **coerced,

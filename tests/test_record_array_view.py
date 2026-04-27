@@ -137,7 +137,8 @@ class TestViewForwarding:
 
     def test_dtype_forwards_to_column(self, numeric_ra):
         v = numeric_ra.view("x")
-        assert v.dtype == jnp.float32
+        # Default float dtype: float32 normally, float64 with jax_enable_x64.
+        assert v.dtype == jnp.zeros((), dtype=float).dtype
 
     def test_ndim_forwards_to_column(self, numeric_ra):
         v = numeric_ra.view("x")
