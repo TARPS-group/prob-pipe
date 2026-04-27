@@ -409,7 +409,11 @@ class TestGlobalDefaults:
             set_default_num_evaluations(512)
             assert dist_mod.DEFAULT_NUM_EVALUATIONS == 512
         finally:
-            dist_mod.DEFAULT_NUM_EVALUATIONS = old
+            # Restore via the setter — direct assignment to ``dist_mod``
+            # would only update the facade re-export, not the source of
+            # truth in ``_distribution_base``, which is what consumers
+            # read.
+            set_default_num_evaluations(old)
 
     def test_set_default_invalid(self):
         with pytest.raises(ValueError):
@@ -424,7 +428,8 @@ class TestGlobalDefaults:
             result = expectation(d, lambda x: x, num_evaluations=100)
             assert isinstance(result, NumericRecord)
         finally:
-            dist_mod.RETURN_APPROX_DIST = old
+            # Restore via the setter — see ``test_set_default_num_evaluations``.
+            set_return_approx_dist(old)
 
 
 # ---------------------------------------------------------------------------
