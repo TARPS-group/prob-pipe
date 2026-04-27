@@ -11,7 +11,7 @@ import jax.numpy as jnp
 from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
 from ..core.node import workflow_function
-from ..core.protocols import SupportsLogProb
+from ..core.protocols import SupportsUnnormalizedLogProb
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
@@ -29,7 +29,7 @@ __all__ = ["rwmh", "TFPRWMHMethod"]
 
 @workflow_function
 def rwmh(
-    dist: SupportsLogProb,
+    dist: SupportsUnnormalizedLogProb,
     data: ArrayLike | None = None,
     *,
     log_prob_fn: Any | None = None,
@@ -44,13 +44,15 @@ def rwmh(
 
     Parameters
     ----------
-    dist : SupportsLogProb
-        Distribution providing ``_log_prob``.
+    dist : SupportsUnnormalizedLogProb
+        Distribution providing ``_unnormalized_log_prob``.  RWMH uses
+        only the unnormalized density because the missing log
+        normalizer cancels out of every accept/reject step.
     data : array-like or None
         Observed data.
     log_prob_fn : callable or None
         ``log_prob_fn(params, data) -> float``.  Combined with
-        ``dist._log_prob(params)`` to form the target density.
+        ``dist._unnormalized_log_prob(params)`` to form the target density.
     num_results, num_warmup, num_chains, step_size, random_seed
         MCMC tuning parameters.
     init : array-like or None
@@ -61,19 +63,19 @@ def rwmh(
     ApproximateDistribution
         Posterior samples with chain structure and auxiliary DataTree.
     """
-    if not isinstance(dist, SupportsLogProb):
+    if not isinstance(dist, SupportsUnnormalizedLogProb):
         raise TypeError(
             f"{type(dist).__name__} does not support log_prob "
-            f"(does not implement SupportsLogProb)"
+            f"(does not implement SupportsUnnormalizedLogProb)"
         )
 
     if log_prob_fn is not None and data is not None:
         data_jnp = jnp.asarray(data)
         def target_log_prob(params):
-            return dist._log_prob(params) + log_prob_fn(params, data_jnp)
+            return dist._unnormalized_log_prob(params) + log_prob_fn(params, data_jnp)
     else:
         def target_log_prob(params):
-            return dist._log_prob(params)
+            return dist._unnormalized_log_prob(params)
 
     init_state = _get_init_state(dist, init, data)
 
@@ -152,9 +154,9 @@ class TFPRWMHMethod(InferenceMethod):
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         prior = _get_prior(dist)
-        if not isinstance(prior, SupportsLogProb):
+        if not isinstance(prior, SupportsUnnormalizedLogProb):
             return MethodInfo(feasible=False, method_name=self.name,
-                              description="Requires SupportsLogProb")
+                              description="Requires SupportsUnnormalizedLogProb")
         if observed is not None and isinstance(observed, dict):
             return MethodInfo(feasible=False, method_name=self.name,
                               description="Does not support dict-based conditioning")
