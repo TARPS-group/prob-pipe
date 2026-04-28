@@ -43,9 +43,14 @@ jobs:
             esac
           done
 
-          if [ "$RUN_ALL" = "true" ] || [ -z "$CHANGED" ]; then
+          if [ -z "$CHANGED" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "run_all=false" >> "$GITHUB_OUTPUT"
+            echo "No .py files changed — skipping tests."
+          elif [ "$RUN_ALL" = "true" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "run_all=true" >> "$GITHUB_OUTPUT"
-            echo "Will run ALL tests (foundational change or no .py changes detected)."
+            echo "Will run ALL tests (foundational change detected)."
           else
             # Collect test files to run.
             TEST_FILES=""
@@ -71,9 +76,11 @@ jobs:
             TEST_FILES=$(echo "$TEST_FILES" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
 
             if [ -z "$TEST_FILES" ]; then
-              echo "run_all=true" >> "$GITHUB_OUTPUT"
-              echo "No matching test files found for changes — running all tests."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "run_all=false" >> "$GITHUB_OUTPUT"
+              echo "No matching test files found — skipping tests."
             else
+              echo "skip=false" >> "$GITHUB_OUTPUT"
               echo "run_all=false" >> "$GITHUB_OUTPUT"
               echo "test_files=$TEST_FILES" >> "$GITHUB_OUTPUT"
               echo "Will run: $TEST_FILES"
@@ -99,12 +106,12 @@ jobs:
           pip install blackjax diffrax dm-haiku einops grain jrnmm optax seaborn surjectors tqdm
 
       - name: Run tests (changed files only)
-        if: steps.changed.outputs.run_all == 'false'
+        if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'false'
         run: |
           pytest ${{ steps.changed.outputs.test_files }} --cov-report=xml --cov-report=html
 
       - name: Run tests (full suite)
-        if: steps.changed.outputs.run_all == 'true'
+        if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'true'
         run: |
           pytest --cov-report=xml --cov-report=html
 
