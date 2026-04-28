@@ -138,14 +138,14 @@ class TestEventShapesUniformDict:
         assert isinstance(es, dict)
         assert es == {"x": (), "y": ()}
 
-    def test_untemplated_empirical_returns_empty_dict(self):
-        """An ``EmpiricalDistribution`` built from a raw array has no
-        ``record_template``; ``event_shapes`` reports ``{}`` and
-        ``.event_shape`` (singular) gives the whole-sample shape."""
+    def test_array_empirical_auto_wraps_single_field(self):
+        """An ``EmpiricalDistribution`` built from a raw array auto-wraps
+        as a single-field Record keyed by ``name=``; the template,
+        fields, and event shapes reflect that single field."""
         samples = np.random.randn(100, 3)
-        dist = EmpiricalDistribution(samples)
-        assert dist.record_template is None
-        assert dist.fields == ()
-        assert dist.event_shapes == {}
-        # ``.event_shape`` (singular) still gives the whole-sample shape.
+        dist = EmpiricalDistribution(samples, name="x")
+        assert dist.record_template is not None
+        assert dist.fields == ("x",)
+        assert dist.event_shapes == {"x": (3,)}
+        # Single-field shortcut.
         assert dist.event_shape == (3,)

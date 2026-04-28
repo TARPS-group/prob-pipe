@@ -7,7 +7,7 @@ import pytest
 
 from probpipe import (
     NumericRecordDistribution,
-    ArrayBootstrapReplicateDistribution,
+    RecordBootstrapReplicateDistribution,
     BootstrapDistribution,
     Distribution,
     EmpiricalDistribution,
@@ -28,39 +28,42 @@ from probpipe import (
 class TestConstruction:
     def test_from_empirical(self):
         data = jnp.arange(20.0).reshape(10, 2)
-        emp = EmpiricalDistribution(data)
-        dist = BootstrapReplicateDistribution(emp)
+        emp = EmpiricalDistribution(data, name="x")
+        dist = BootstrapReplicateDistribution(emp, name="x")
         assert dist.n == 10
 
     def test_from_array(self):
         data = jnp.arange(20.0).reshape(10, 2)
-        dist = BootstrapReplicateDistribution(data)
+        dist = BootstrapReplicateDistribution(data, name="x")
         assert dist.n == 10
 
     def test_custom_n(self):
         data = jnp.ones((50, 3))
-        dist = BootstrapReplicateDistribution(data, n=30)
+        dist = BootstrapReplicateDistribution(data, n=30, name="x")
         assert dist.n == 30
 
     def test_n_from_empirical_default(self):
-        emp = EmpiricalDistribution(jnp.ones((20, 4)))
-        dist = BootstrapReplicateDistribution(emp)
+        emp = EmpiricalDistribution(jnp.ones((20, 4)), name="x")
+        dist = BootstrapReplicateDistribution(emp, name="x")
         assert dist.n == 20
 
     def test_invalid_n(self):
         with pytest.raises(ValueError, match="positive"):
-            BootstrapReplicateDistribution(jnp.ones((5, 2)), n=0)
+            BootstrapReplicateDistribution(jnp.ones((5, 2)), n=0, name="x")
 
     def test_scalar_source_raises(self):
         with pytest.raises(ValueError, match="at least 1 dimension"):
-            BootstrapReplicateDistribution(jnp.array(1.0))
+            BootstrapReplicateDistribution(jnp.array(1.0), name="x")
 
     def test_name(self):
         dist = BootstrapReplicateDistribution(jnp.ones((5, 2)), name="boot")
         assert dist.name == "boot"
 
     def test_name_default(self):
-        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)))
+        # Numeric-array sources auto-wrap and use the (mandatory) name=
+        # as the field name. The default-name path lives on the generic
+        # base, which handles non-numeric (e.g. opaque-object) sources.
+        dist = BootstrapReplicateDistribution(["a", "b", "c"])
         assert dist.name == "bootstrap"
 
 
@@ -71,28 +74,28 @@ class TestConstruction:
 
 class TestProtocol:
     def test_supports_sampling(self):
-        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)))
+        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)), name="x")
         assert isinstance(dist, SupportsSampling)
 
     def test_supports_expectation(self):
-        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)))
+        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)), name="x")
         assert isinstance(dist, SupportsExpectation)
 
     def test_generic_numeric_dispatches_to_array(self):
-        # Factory dispatch: numeric arrays → ArrayBootstrapReplicateDistribution
-        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)))
+        # Factory dispatch: numeric arrays → RecordBootstrapReplicateDistribution
+        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)), name="x")
         assert isinstance(dist, Distribution)
         assert isinstance(dist, NumericRecordDistribution)
-        assert isinstance(dist, ArrayBootstrapReplicateDistribution)
+        assert isinstance(dist, RecordBootstrapReplicateDistribution)
 
     def test_generic_object_is_not_array(self):
         # Non-numeric (object) source stays as base class
-        dist = BootstrapReplicateDistribution(["a", "b", "c"])
+        dist = BootstrapReplicateDistribution(["a", "b", "c"], name="x")
         assert isinstance(dist, Distribution)
         assert not isinstance(dist, NumericRecordDistribution)
 
     def test_array_is_array_distribution(self):
-        dist = ArrayBootstrapReplicateDistribution(jnp.ones((5, 2)))
+        dist = RecordBootstrapReplicateDistribution(jnp.ones((5, 2)), name="x")
         assert isinstance(dist, NumericRecordDistribution)
         assert isinstance(dist, BootstrapReplicateDistribution)
         assert isinstance(dist, Distribution)
@@ -107,7 +110,7 @@ class TestSampling:
     @pytest.fixture
     def dist(self):
         data = jnp.arange(30.0).reshape(10, 3)
-        return BootstrapReplicateDistribution(data)
+        return BootstrapReplicateDistribution(data, name="x")
 
     def test_sample_empty_shape(self, dist):
         key = jax.random.PRNGKey(0)
@@ -138,21 +141,22 @@ class TestSampling:
         key = jax.random.PRNGKey(5)
         s = dist._sample(key, ())
         data = jnp.arange(30.0).reshape(10, 3)
-        # Each row in s should appear in data
-        for i in range(s.shape[0]):
-            matches = jnp.any(jnp.all(data == s[i], axis=1))
+        # Single-field auto-wrap: extract the field array.
+        s_arr = s["x"]
+        for i in range(s_arr.shape[0]):
+            matches = jnp.any(jnp.all(data == s_arr[i], axis=1))
             assert matches
 
     def test_custom_n_changes_shape(self):
         data = jnp.ones((50, 2))
-        dist = BootstrapReplicateDistribution(data, n=20)
+        dist = BootstrapReplicateDistribution(data, n=20, name="x")
         s = dist._sample(jax.random.PRNGKey(0))
         assert s.shape == (20, 2)
 
     def test_1d_source(self):
         """1D source (scalar observations)."""
         data = jnp.arange(10.0)
-        dist = BootstrapReplicateDistribution(data)
+        dist = BootstrapReplicateDistribution(data, name="x")
         s = dist._sample(jax.random.PRNGKey(0))
         assert s.shape == (10,)
 
@@ -160,8 +164,8 @@ class TestSampling:
         """Weighted EmpiricalDistribution uses weights for sampling."""
         data = jnp.array([[0.0], [1.0], [2.0]])
         weights = jnp.array([0.0, 0.0, 1.0])  # all weight on last row
-        emp = EmpiricalDistribution(data, weights=weights)
-        dist = BootstrapReplicateDistribution(emp)
+        emp = EmpiricalDistribution(data, weights=weights, name="x")
+        dist = BootstrapReplicateDistribution(emp, name="x")
         s = dist._sample(jax.random.PRNGKey(0), ())
         # All rows should be [2.0]
         np.testing.assert_allclose(s, jnp.full((3, 1), 2.0))
@@ -176,68 +180,71 @@ class TestProperties:
     """Test generic (non-array-specific) properties."""
 
     def test_data_from_array(self):
+        # Numeric-array sources auto-wrap as a single-field Record;
+        # ``dist.data`` exposes the wrapped Record. Pull the field for
+        # raw-array comparison.
         data = jnp.arange(20.0).reshape(10, 2)
-        dist = BootstrapReplicateDistribution(data)
-        np.testing.assert_array_equal(dist.data, data)
+        dist = BootstrapReplicateDistribution(data, name="x")
+        np.testing.assert_array_equal(dist.data["x"], data)
 
     def test_data_from_empirical(self):
         data = jnp.arange(20.0).reshape(10, 2)
-        emp = EmpiricalDistribution(data)
-        dist = BootstrapReplicateDistribution(emp)
-        np.testing.assert_array_equal(dist.data, data)
+        emp = EmpiricalDistribution(data, name="x")
+        dist = BootstrapReplicateDistribution(emp, name="x")
+        np.testing.assert_array_equal(dist.data["x"], data)
 
     def test_source_n(self):
-        dist = BootstrapReplicateDistribution(jnp.ones((15, 3)))
+        dist = BootstrapReplicateDistribution(jnp.ones((15, 3)), name="x")
         assert dist.source_n == 15
 
     def test_is_uniform_from_array(self):
-        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)))
+        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)), name="x")
         assert dist.is_uniform is True
 
     def test_is_uniform_from_uniform_empirical(self):
-        emp = EmpiricalDistribution(jnp.ones((5, 2)))
-        dist = BootstrapReplicateDistribution(emp)
+        emp = EmpiricalDistribution(jnp.ones((5, 2)), name="x")
+        dist = BootstrapReplicateDistribution(emp, name="x")
         assert dist.is_uniform is True
 
     def test_is_uniform_from_weighted_empirical(self):
-        emp = EmpiricalDistribution(jnp.ones((5, 2)), weights=jnp.array([1., 2., 3., 4., 5.]))
-        dist = BootstrapReplicateDistribution(emp)
+        emp = EmpiricalDistribution(jnp.ones((5, 2)), weights=jnp.array([1., 2., 3., 4., 5.]), name="x")
+        dist = BootstrapReplicateDistribution(emp, name="x")
         assert dist.is_uniform is False
 
     def test_weights_uniform(self):
-        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)))
+        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)), name="x")
         np.testing.assert_allclose(dist.weights, jnp.ones(5) / 5)
 
     def test_weights_from_weighted_empirical(self):
         weights = jnp.array([1., 2., 3.])
-        emp = EmpiricalDistribution(jnp.ones((3, 2)), weights=weights)
-        dist = BootstrapReplicateDistribution(emp)
+        emp = EmpiricalDistribution(jnp.ones((3, 2)), weights=weights, name="x")
+        dist = BootstrapReplicateDistribution(emp, name="x")
         assert dist.weights is not None
         assert dist.weights.shape == (3,)
 
     def test_approximate_flag(self):
-        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)))
+        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)), name="x")
         assert dist._approximate is True
 
     def test_numeric_has_event_shape(self):
         """Numeric arrays dispatch to Array variant with event_shape."""
-        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)))
+        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)), name="x")
         assert hasattr(dist, "event_shape")
         assert dist.event_shape == (5, 2)
 
     def test_generic_no_event_shape(self):
         """Non-numeric BootstrapReplicateDistribution has no event_shape."""
-        dist = BootstrapReplicateDistribution(["a", "b", "c"])
+        dist = BootstrapReplicateDistribution(["a", "b", "c"], name="x")
         assert not hasattr(dist, "event_shape") or "event_shape" not in type(dist).__dict__
 
     def test_generic_no_dim(self):
         """Non-numeric BootstrapReplicateDistribution has no dim."""
-        dist = BootstrapReplicateDistribution(["a", "b", "c"])
+        dist = BootstrapReplicateDistribution(["a", "b", "c"], name="x")
         assert not hasattr(dist, "dim") or "dim" not in type(dist).__dict__
 
     def test_generic_no_dtype(self):
         """Non-numeric BootstrapReplicateDistribution has no dtype."""
-        dist = BootstrapReplicateDistribution(["a", "b", "c"])
+        dist = BootstrapReplicateDistribution(["a", "b", "c"], name="x")
         assert not hasattr(dist, "dtype") or "dtype" not in type(dist).__dict__
 
 
@@ -249,7 +256,7 @@ class TestProperties:
 class TestExpectation:
     def test_expectation_returns_array(self):
         data = jnp.arange(30.0).reshape(10, 3)
-        dist = BootstrapReplicateDistribution(data)
+        dist = BootstrapReplicateDistribution(data, name="x")
         result = dist._expectation(
             lambda d: jnp.mean(d, axis=0),
             key=jax.random.PRNGKey(0),
@@ -260,7 +267,7 @@ class TestExpectation:
 
     def test_expectation_returns_bootstrap_dist(self):
         data = jnp.arange(30.0).reshape(10, 3)
-        dist = BootstrapReplicateDistribution(data)
+        dist = BootstrapReplicateDistribution(data, name="x")
         result = dist._expectation(
             lambda d: jnp.mean(d, axis=0),
             key=jax.random.PRNGKey(0),
@@ -272,7 +279,7 @@ class TestExpectation:
 
     def test_expectation_op(self):
         data = jnp.arange(30.0).reshape(10, 3)
-        dist = BootstrapReplicateDistribution(data)
+        dist = BootstrapReplicateDistribution(data, name="x")
         result = expectation(
             dist,
             lambda d: jnp.mean(d, axis=0),
@@ -285,7 +292,7 @@ class TestExpectation:
     def test_expectation_mean_converges(self):
         """E[mean(bootstrap_dataset)] should converge to mean(data)."""
         data = jnp.arange(30.0).reshape(10, 3)
-        dist = BootstrapReplicateDistribution(data)
+        dist = BootstrapReplicateDistribution(data, name="x")
         result = dist._expectation(
             lambda d: jnp.mean(d, axis=0),
             key=jax.random.PRNGKey(42),
@@ -298,50 +305,50 @@ class TestExpectation:
 
 
 # ---------------------------------------------------------------------------
-# ArrayBootstrapReplicateDistribution
+# RecordBootstrapReplicateDistribution
 # ---------------------------------------------------------------------------
 
 
-class TestArrayBootstrapReplicateDistribution:
+class TestRecordBootstrapReplicateDistribution:
     def test_support(self):
         from probpipe.core.constraints import real
-        dist = ArrayBootstrapReplicateDistribution(jnp.ones((5, 2)))
+        dist = RecordBootstrapReplicateDistribution(jnp.ones((5, 2)), name="x")
         assert dist.support == real
 
     def test_sample_shape(self):
         data = jnp.arange(30.0).reshape(10, 3)
-        dist = ArrayBootstrapReplicateDistribution(data)
+        dist = RecordBootstrapReplicateDistribution(data, name="x")
         s = dist._sample(jax.random.PRNGKey(0), sample_shape=(4,))
         assert s.shape == (4, 10, 3)
 
     def test_event_shape(self):
         data = jnp.ones((10, 3))
-        dist = ArrayBootstrapReplicateDistribution(data, n=8)
+        dist = RecordBootstrapReplicateDistribution(data, n=8, name="x")
         assert dist.event_shape == (8, 3)
 
     def test_from_empirical(self):
-        emp = EmpiricalDistribution(jnp.ones((20, 4)))
-        dist = ArrayBootstrapReplicateDistribution(emp)
+        emp = EmpiricalDistribution(jnp.ones((20, 4)), name="x")
+        dist = RecordBootstrapReplicateDistribution(emp, name="x")
         assert dist.n == 20
 
     def test_obs_shape(self):
-        dist = ArrayBootstrapReplicateDistribution(jnp.ones((10, 3, 4)))
+        dist = RecordBootstrapReplicateDistribution(jnp.ones((10, 3, 4)), name="x")
         assert dist.obs_shape == (3, 4)
 
     def test_obs_shape_scalar(self):
-        dist = ArrayBootstrapReplicateDistribution(jnp.ones((10,)))
+        dist = RecordBootstrapReplicateDistribution(jnp.ones((10,)), name="x")
         assert dist.obs_shape == ()
 
     def test_dim(self):
-        dist = ArrayBootstrapReplicateDistribution(jnp.ones((10, 3)), n=5)
+        dist = RecordBootstrapReplicateDistribution(jnp.ones((10, 3)), n=5, name="x")
         assert dist.dim == 5 * 3
 
     def test_dim_scalar_obs(self):
-        dist = ArrayBootstrapReplicateDistribution(jnp.ones((10,)), n=5)
+        dist = RecordBootstrapReplicateDistribution(jnp.ones((10,)), n=5, name="x")
         assert dist.dim == 5
 
     def test_dtype(self):
-        dist = ArrayBootstrapReplicateDistribution(jnp.ones((5, 2)))
+        dist = RecordBootstrapReplicateDistribution(jnp.ones((5, 2)), name="x")
         # Inherits dtype from the source array (default float dtype here).
         assert dist.dtype == jnp.zeros((), dtype=float).dtype
 
@@ -354,7 +361,7 @@ class TestArrayBootstrapReplicateDistribution:
 class TestRepr:
     def test_repr(self):
         data = jnp.ones((10, 3))
-        dist = BootstrapReplicateDistribution(data, n=8)
+        dist = BootstrapReplicateDistribution(data, n=8, name="x")
         r = repr(dist)
         assert "BootstrapReplicateDistribution" in r
         assert "n=8" in r
@@ -367,7 +374,7 @@ class TestRepr:
 
 
 class TestValuesEmpiricalDistribution:
-    """EmpiricalDistribution(Record(...)) → _RecordEmpiricalDistribution."""
+    """EmpiricalDistribution(Record(...)) → RecordEmpiricalDistribution."""
 
     @pytest.fixture
     def values_data(self):
@@ -376,77 +383,77 @@ class TestValuesEmpiricalDistribution:
         return Record(X=X, y=y)
 
     def test_dispatch(self, values_data):
-        from probpipe.core._empirical import _RecordEmpiricalDistribution
-        emp = EmpiricalDistribution(values_data)
-        assert isinstance(emp, _RecordEmpiricalDistribution)
+        from probpipe.core._empirical import RecordEmpiricalDistribution
+        emp = EmpiricalDistribution(values_data, name="x")
+        assert isinstance(emp, RecordEmpiricalDistribution)
 
     def test_n(self, values_data):
-        emp = EmpiricalDistribution(values_data)
+        emp = EmpiricalDistribution(values_data, name="x")
         assert emp.n == 20
 
     def test_satisfies_sampling(self, values_data):
-        emp = EmpiricalDistribution(values_data)
+        emp = EmpiricalDistribution(values_data, name="x")
         assert isinstance(emp, SupportsSampling)
 
     def test_sample_one_returns_values(self, values_data):
-        emp = EmpiricalDistribution(values_data)
+        emp = EmpiricalDistribution(values_data, name="x")
         s = sample(emp, key=jax.random.PRNGKey(0))
         assert isinstance(s, Record)
         assert "X" in s and "y" in s
 
     def test_sample_one_shapes(self, values_data):
-        emp = EmpiricalDistribution(values_data)
+        emp = EmpiricalDistribution(values_data, name="x")
         s = sample(emp, key=jax.random.PRNGKey(0))
         assert s["X"].shape == (3,)
         assert s["y"].shape == ()
 
     def test_sample_batch(self, values_data):
-        emp = EmpiricalDistribution(values_data)
+        emp = EmpiricalDistribution(values_data, name="x")
         s = emp._sample(jax.random.PRNGKey(0), sample_shape=(5,))
         assert isinstance(s, Record)
         assert s["X"].shape == (5, 3)
         assert s["y"].shape == (5,)
 
     def test_record_template(self, values_data):
-        emp = EmpiricalDistribution(values_data)
+        emp = EmpiricalDistribution(values_data, name="x")
         tpl = emp.record_template
         assert tpl is not None
         assert tpl["X"] == (3,)
         assert tpl["y"] == ()
 
     def test_fields(self, values_data):
-        emp = EmpiricalDistribution(values_data)
+        emp = EmpiricalDistribution(values_data, name="x")
         assert emp.fields == ("X", "y")
 
     def test_getitem_returns_view(self, values_data):
         from probpipe.core._record_distribution import _RecordDistributionView
-        emp = EmpiricalDistribution(values_data)
+        emp = EmpiricalDistribution(values_data, name="x")
         view = emp["X"]
         assert isinstance(view, _RecordDistributionView)
 
     def test_getitem_returns_view(self, values_data):
         from probpipe.core._record_distribution import _RecordDistributionView
-        emp = EmpiricalDistribution(values_data)
+        emp = EmpiricalDistribution(values_data, name="x")
         view = emp["X"]
         assert isinstance(view, _RecordDistributionView)
 
     def test_mean(self, values_data):
-        emp = EmpiricalDistribution(values_data)
+        emp = EmpiricalDistribution(values_data, name="x")
         m = emp._mean()
         assert isinstance(m, Record)
         np.testing.assert_allclose(m["X"], 1.0)
         np.testing.assert_allclose(m["y"], jnp.arange(20.0).mean())
 
     def test_variance(self, values_data):
-        emp = EmpiricalDistribution(values_data)
+        emp = EmpiricalDistribution(values_data, name="x")
         v = emp._variance()
         assert isinstance(v, Record)
         np.testing.assert_allclose(v["X"], 0.0, atol=1e-7)
 
     def test_repr(self, values_data):
-        emp = EmpiricalDistribution(values_data)
+        emp = EmpiricalDistribution(values_data, name="x")
         r = repr(emp)
-        assert "_RecordEmpiricalDistribution" in r
+        assert "RecordEmpiricalDistribution" in r
         assert "n=20" in r
 
 
@@ -466,26 +473,26 @@ class TestValuesBootstrapReplicateDistribution:
 
     @pytest.fixture
     def bootstrap(self, values_data):
-        emp = EmpiricalDistribution(values_data)
-        return BootstrapReplicateDistribution(emp)
+        emp = EmpiricalDistribution(values_data, name="x")
+        return BootstrapReplicateDistribution(emp, name="x")
 
     def test_dispatch_from_empirical(self, values_data):
-        from probpipe.core._empirical import _RecordBootstrapReplicateDistribution
-        emp = EmpiricalDistribution(values_data)
-        boot = BootstrapReplicateDistribution(emp)
-        assert isinstance(boot, _RecordBootstrapReplicateDistribution)
+        from probpipe.core._empirical import RecordBootstrapReplicateDistribution
+        emp = EmpiricalDistribution(values_data, name="x")
+        boot = BootstrapReplicateDistribution(emp, name="x")
+        assert isinstance(boot, RecordBootstrapReplicateDistribution)
 
     def test_dispatch_from_values(self, values_data):
-        from probpipe.core._empirical import _RecordBootstrapReplicateDistribution
-        boot = BootstrapReplicateDistribution(values_data)
-        assert isinstance(boot, _RecordBootstrapReplicateDistribution)
+        from probpipe.core._empirical import RecordBootstrapReplicateDistribution
+        boot = BootstrapReplicateDistribution(values_data, name="x")
+        assert isinstance(boot, RecordBootstrapReplicateDistribution)
 
     def test_n(self, bootstrap):
         assert bootstrap.n == 20
 
     def test_custom_n(self, values_data):
-        emp = EmpiricalDistribution(values_data)
-        boot = BootstrapReplicateDistribution(emp, n=10)
+        emp = EmpiricalDistribution(values_data, name="x")
+        boot = BootstrapReplicateDistribution(emp, n=10, name="x")
         assert boot.n == 10
 
     def test_sample_one_returns_values(self, bootstrap):
@@ -539,5 +546,5 @@ class TestValuesBootstrapReplicateDistribution:
 
     def test_repr(self, bootstrap):
         r = repr(bootstrap)
-        assert "_RecordBootstrapReplicateDistribution" in r
+        assert "RecordBootstrapReplicateDistribution" in r
         assert "n=20" in r

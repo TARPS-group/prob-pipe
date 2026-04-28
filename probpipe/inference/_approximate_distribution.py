@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 import jax.numpy as jnp
 
-from ..core.distribution import NumericEmpiricalDistribution, Distribution
+from ..core.distribution import RecordEmpiricalDistribution, Distribution
 from ..core._record_distribution import _RecordDistributionView
 from ..core.provenance import Provenance
 from ..core.record import Record, RecordTemplate
@@ -24,7 +24,7 @@ __all__ = ["ApproximateDistribution", "make_posterior"]
 # ---------------------------------------------------------------------------
 
 
-class ApproximateDistribution(NumericEmpiricalDistribution):
+class ApproximateDistribution(RecordEmpiricalDistribution):
     """Empirical distribution with chain structure.
 
     Stores per-chain sample arrays for chain-structured access via
@@ -49,6 +49,7 @@ class ApproximateDistribution(NumericEmpiricalDistribution):
         *,
         weights: ArrayLike | Weights | None = None,
         name: str | None = None,
+        record_template: RecordTemplate | None = None,
     ):
         if not chains:
             raise ValueError("Must provide at least one chain")
@@ -56,7 +57,51 @@ class ApproximateDistribution(NumericEmpiricalDistribution):
         self._chains = [jnp.asarray(c) for c in chains]
         self._concatenated: Array | None = None
 
-        super().__init__(self._concat_chains(), weights=weights, name=name)
+        # When a record_template with multiple fields is provided,
+        # slice the concatenated chain into per-field arrays so the
+        # underlying ``RecordEmpiricalDistribution`` exposes the named
+        # fields directly. Single-field user-supplied templates are
+        # also honored (rename the auto-wrap field to match).
+        flat = self._concat_chains()
+        # Track whether the user explicitly supplied a template; we use
+        # this in ``draws()`` to decide whether to wrap the output.
+        self._user_template = record_template is not None
+        # Multi-field template with all-flat-leaf fields → split per
+        # field. Nested-template fields fall back to the single-field
+        # auto-wrap path so ``draws()`` can lazily unflatten using the
+        # full template (which preserves the nesting structure).
+        all_flat_leaves = (
+            record_template is not None
+            and len(record_template.fields) > 1
+            and not any(
+                isinstance(record_template[f], RecordTemplate)
+                for f in record_template.fields
+            )
+        )
+        if all_flat_leaves:
+            from ..core.record import Record
+            from .._utils import prod
+            offset = 0
+            fields: dict[str, Array] = {}
+            for field_name in record_template.fields:
+                spec = record_template[field_name]
+                shape = spec if spec is not None else ()
+                size = prod(shape) if shape else 1
+                chunk = flat[..., offset : offset + size]
+                fields[field_name] = chunk.reshape(*flat.shape[:-1], *shape)
+                offset += size
+            super().__init__(Record(fields), weights=weights, name=name or "posterior")
+            self._record_template = record_template
+        else:
+            # Single-field path: ``name`` (default ``"posterior"``)
+            # becomes the auto-wrapped field name. If the user passed a
+            # single-field template, rename to honor it.
+            field_name = name or "posterior"
+            if record_template is not None and len(record_template.fields) == 1:
+                field_name = record_template.fields[0]
+            super().__init__(flat, weights=weights, name=field_name)
+            if record_template is not None:
+                self._record_template = record_template
 
     def _concat_chains(self) -> Array:
         """Lazily concatenated view of all chains."""
@@ -154,7 +199,11 @@ class ApproximateDistribution(NumericEmpiricalDistribution):
                              for w, c in zip(warmup, parts)]
             samples = jnp.concatenate(parts, axis=0)
 
-        if self.record_template is not None:
+        # Honor any user-supplied template (single-field or multi-field).
+        # Without one, return the raw concatenated array — matches the
+        # historical behaviour of single-field auto-wrap empiricals
+        # under the previous numeric-array hierarchy.
+        if getattr(self, "_user_template", False):
             from ..core._record_array import NumericRecordArray
             return NumericRecordArray.unflatten(samples, template=self.record_template)
         return samples
@@ -206,13 +255,12 @@ def make_posterior(
     ApproximateDistribution
         Posterior with chain structure, auxiliary DataTree, and provenance.
     """
-    result = ApproximateDistribution(chains, name="posterior")
+    result = ApproximateDistribution(
+        chains, name="posterior", record_template=record_template,
+    )
 
     if auxiliary is not None:
         result._auxiliary = auxiliary
-
-    if record_template is not None:
-        result._record_template = record_template
 
     result.with_source(
         Provenance(algorithm, parents=parents, metadata={"algorithm": algorithm, **meta})

@@ -239,19 +239,24 @@ class TestMoments:
 # ---------------------------------------------------------------------------
 
 class TestLogProb:
+    """Empirical distributions deliberately do **not** implement
+    ``SupportsLogProb`` — for a density on top of empirical samples,
+    convert via the registry (``from_distribution(emp, KDEDistribution,
+    ...)``) or fit a parametric distribution.
+    """
 
-    def test_isinstance_log_prob(self):
+    def test_does_not_claim_log_prob(self):
         from probpipe import SupportsLogProb
         je = JointEmpirical(x=jnp.array([1.0, 2.0, 3.0]),
                             y=jnp.array([4.0, 5.0, 6.0]))
-        assert isinstance(je, SupportsLogProb)
+        assert not isinstance(je, SupportsLogProb)
 
-    def test_log_prob_finite(self):
+    def test_log_prob_op_raises(self):
         je = JointEmpirical(x=jnp.array([1.0, 2.0, 3.0]),
                             y=jnp.array([4.0, 5.0, 6.0]))
         s = sample(je, key=jax.random.PRNGKey(0))
-        lp = log_prob(je, s)
-        assert jnp.isfinite(lp)
+        with pytest.raises(TypeError, match="log_prob"):
+            log_prob(je, s)
 
 
 # ---------------------------------------------------------------------------

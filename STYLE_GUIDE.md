@@ -159,6 +159,28 @@ When adding new Record-based containers, follow these conventions:
 preserve insertion order, reject `/` in field names, and accept the
 slash-delimited form in any string-keyed lookup.
 
+### 1.11 Distribution iteration
+
+A `Distribution` represents a single random variable, not a
+collection. Every concrete `Distribution` subclass —
+`Normal`, `EmpiricalDistribution`, `BootstrapReplicateDistribution`,
+joint distributions, marginals — is **non-iterable**. Stored samples
+are accessed via `.samples` / `.draws()`; `.n` reports the count.
+
+Iteration is reserved for the `Record` family — `Record`,
+`NumericRecord`, `RecordArray`, `NumericRecordArray` — which iterate
+field names dict-style (`keys()` / `values()` / `items()`).
+
+`DistributionArray` is positional: `len(da)` is `prod(batch_shape)`,
+and elements are accessed via `da[i]`. It is **not** generally
+treated as an iterable; reach for `for d in da:` only when the
+shape is one-dimensional, and even then prefer the explicit
+positional form.
+
+When adding a new `Distribution` subclass, do not define `__iter__`.
+The regression test in `tests/test_iteration_protocol.py` enforces
+this rule across every concrete distribution class.
+
 ---
 
 ## 2. Module Granularity

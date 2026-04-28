@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **Empirical / Bootstrap / Marginal class consolidation.** The
+  generic-vs-numeric pair is collapsed into a generic ``[T]`` base
+  plus a single Record-based specialisation:
+
+  | Removed | Replacement |
+  |---|---|
+  | ``NumericEmpiricalDistribution`` | ``RecordEmpiricalDistribution`` |
+  | ``ArrayBootstrapReplicateDistribution`` | ``RecordBootstrapReplicateDistribution`` |
+  | ``_ArrayMarginal`` (private) | ``_RecordMarginal`` (private) |
+  | ``_RecordEmpiricalDistribution`` (private) | ``RecordEmpiricalDistribution`` |
+  | ``_RecordBootstrapReplicateDistribution`` (private) | ``RecordBootstrapReplicateDistribution`` |
+  | ``_RecordArrayMarginal`` (private) | ``_RecordMarginal`` (private) |
+
+  Migration: a numeric array auto-wraps as a single-field ``Record``
+  keyed by the (now mandatory) ``name=`` kwarg.
+  ``EmpiricalDistribution(jnp.zeros((100, 3)))`` raises
+  ``ValueError``; pass ``name="theta"`` (or wrap explicitly:
+  ``Record(theta=arr)``).
+- **`BootstrapReplicateDistribution[T]` accepts a `SupportsSampling`
+  source.** Each replicate is ``n`` i.i.d. draws from
+  ``source._sample``; ``n`` is mandatory in this case (no canonical
+  observation count).
+  ``BootstrapReplicateDistribution(Normal(0, 1, name="x"), n=50)``.
+- **`NumericJointEmpirical` no longer claims `SupportsLogProb`.** The
+  Gaussian-approximation log-density is gone — empirical distributions
+  do not advertise a density. Migration:
+  ``from_distribution(emp, KDEDistribution, ...)`` for a non-parametric
+  density, or fit a parametric distribution and call ``log_prob`` on
+  that.
+- **Distributions are non-iterable.** Codified in STYLE_GUIDE §1.11
+  with a regression test
+  (``tests/test_iteration_protocol.py``). Stored samples live on
+  ``.samples`` / ``.draws()``; ``.n`` reports the count.
+
 - **`Record` field ordering is now insertion-order**, not alphabetical.
   ``Record(z=1, a=2)`` now iterates ``("z", "a")``. Same change applies
   to ``RecordTemplate``, ``RecordArray``, and every Record-based
@@ -32,6 +66,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   access.
 
 ### Added
+
+- **Framework abstraction hierarchy** documented in CONTRIBUTING.md.
+  Three rules: one random variable per ``Distribution``; two
+  implementations per concept (generic + Record-based); iteration is
+  a Record-family convention.
 
 - **`Record.to_numeric()` / `NumericRecord.to_native()`** — explicit
   conversion to / from ProbPipe's native JAX-array form, with metadata

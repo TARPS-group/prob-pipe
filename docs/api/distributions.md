@@ -24,13 +24,13 @@
 
 ::: probpipe.core._empirical.EmpiricalDistribution
 
-::: probpipe.core._empirical.NumericEmpiricalDistribution
+::: probpipe.core._empirical.RecordEmpiricalDistribution
 
 ::: probpipe.core._numeric_record_distribution.BootstrapDistribution
 
 ::: probpipe.core._empirical.BootstrapReplicateDistribution
 
-::: probpipe.core._empirical.ArrayBootstrapReplicateDistribution
+::: probpipe.core._empirical.RecordBootstrapReplicateDistribution
 
 ::: probpipe.core._broadcast_distributions.BroadcastDistribution
 

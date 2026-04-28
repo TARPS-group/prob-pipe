@@ -127,7 +127,7 @@ class DistributionArray[T](Distribution[T]):
         super().__init__(name=name)
         # A DistributionArray holding MC-marginal components inherits
         # their approximation status; if any component is approximate
-        # (a _MixtureMarginal or NumericEmpiricalDistribution), so is
+        # (a _MixtureMarginal or RecordEmpiricalDistribution), so is
         # the stack.
         self._approximate = any(
             getattr(c, "is_approximate", False) for c in components

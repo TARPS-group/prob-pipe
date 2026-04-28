@@ -23,7 +23,7 @@ from ..custom_types import PRNGKey
 from .._utils import _auto_key
 from ..core.constraints import _supports_compatible
 from ..core.distribution import (
-    NumericEmpiricalDistribution,
+    RecordEmpiricalDistribution,
     Distribution,
 )
 from ..core.provenance import Provenance
@@ -54,10 +54,15 @@ def _mm_provenance(source, mean_result=None, var_result=None):
 
 
 def _point_estimate(x):
-    """Extract a plain array from a value that may be a BootstrapDistribution."""
+    """Extract a plain array from a value that may be a BootstrapDistribution
+    or a single-field NumericRecord (the auto-wrap form returned by the
+    merged ``RecordEmpiricalDistribution._mean``)."""
     from ..core.distribution import BootstrapDistribution
+    from ..core._numeric_record import NumericRecord
     if isinstance(x, BootstrapDistribution):
-        return x._mean()
+        x = x._mean()
+    if isinstance(x, NumericRecord) and len(x.fields) == 1:
+        return x[x.fields[0]]
     return x
 
 
@@ -333,7 +338,7 @@ def _convert_to_multivariatenormal(source, key, **kw):
     name = kw.get("name") or source.name
     if isinstance(source, MultivariateNormal):
         return source
-    if isinstance(source, NumericEmpiricalDistribution):
+    if isinstance(source, RecordEmpiricalDistribution):
         loc = source._mean()
         cov_mat = source._cov()
         r = MultivariateNormal(loc=loc, cov=cov_mat, name=name)
@@ -425,14 +430,14 @@ def _convert_to_vonmisesfisher(source, key, **kw):
 
 
 def _convert_to_empirical(source, key, **kw):
-    """Convert any distribution to NumericEmpiricalDistribution by sampling."""
-    if isinstance(source, NumericEmpiricalDistribution):
+    """Convert any distribution to RecordEmpiricalDistribution by sampling."""
+    if isinstance(source, RecordEmpiricalDistribution):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
     if key is None:
         key = _auto_key()
     samples = source._sample(key, (num_samples,))
-    r = NumericEmpiricalDistribution(samples, name=kw.get("name") or source.name)
+    r = RecordEmpiricalDistribution(samples, name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source))
     return r
 
@@ -440,7 +445,7 @@ def _convert_to_empirical(source, key, **kw):
 def _convert_to_kde(source, key, **kw):
     """Convert any distribution to a KDEDistribution.
 
-    If the source is an ``NumericEmpiricalDistribution`` (or subclass),
+    If the source is an ``RecordEmpiricalDistribution`` (or subclass),
     the stored samples and weights are reused directly.  Otherwise,
     samples are drawn from the source.
     """
@@ -452,12 +457,18 @@ def _convert_to_kde(source, key, **kw):
     bandwidth = kw.pop("bandwidth", None)
     name = kw.get("name") or source.name
 
-    if isinstance(source, NumericEmpiricalDistribution):
-        r = KDEDistribution(
-            source._samples, weights=source._w, bandwidth=bandwidth, name=name,
-        )
-        r.with_source(_mm_provenance(source))
-        return r
+    if isinstance(source, RecordEmpiricalDistribution):
+        # Pull the underlying stacked array from the (single-field by
+        # construction) Record. Multi-field empirical sources fall
+        # through to the sample-based path below.
+        if len(source.samples.fields) == 1:
+            field = source.samples.fields[0]
+            r = KDEDistribution(
+                source.samples[field],
+                weights=source._w, bandwidth=bandwidth, name=name,
+            )
+            r.with_source(_mm_provenance(source))
+            return r
 
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
     if key is None:
@@ -500,8 +511,8 @@ def _build_dispatch_table() -> dict[str, callable]:
         "Wishart": _convert_to_wishart,
         "VonMisesFisher": _convert_to_vonmisesfisher,
         "EmpiricalDistribution": _convert_to_empirical,
-        "NumericEmpiricalDistribution": _convert_to_empirical,
-        "NumericEmpiricalDistribution": _convert_to_empirical,
+        "RecordEmpiricalDistribution": _convert_to_empirical,
+        "RecordEmpiricalDistribution": _convert_to_empirical,
         "KDEDistribution": _convert_to_kde,
     }
 

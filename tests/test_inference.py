@@ -56,7 +56,7 @@ class TestApproximateDistribution:
 
     def test_empty_chains_raises(self):
         with pytest.raises(ValueError, match="at least one chain"):
-            ApproximateDistribution([])
+            ApproximateDistribution([], name="x")
 
     def test_num_chains(self, two_chain_dist):
         assert two_chain_dist.num_chains == 2
@@ -238,14 +238,14 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_without_warmup(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain])
+        dist = ApproximateDistribution([chain], name="x")
         assert dist.warmup_samples is None
         assert dist.num_chains == 1
         assert dist.num_draws == 20
 
     def test_bare_dist_no_auxiliary(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain])
+        dist = ApproximateDistribution([chain], name="x")
         assert dist.auxiliary is None
         assert dist.inference_data is None
 
@@ -259,7 +259,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_algorithm_default_without_auxiliary(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain])
+        dist = ApproximateDistribution([chain], name="x")
         assert dist.algorithm == "unknown"
 
 
@@ -531,19 +531,28 @@ class TestRecordDistributionView:
         with pytest.raises(KeyError, match="nonexistent"):
             posterior["nonexistent"]
 
-    def test_getitem_without_template_raises(self):
+    def test_getitem_without_template_uses_single_field_autowrap(self):
+        """Without a multi-field template, ApproximateDistribution
+        auto-wraps the chain as a single-field Record keyed by ``name=``.
+        Indexing the field returns a view; accessing a different name
+        raises ``KeyError``."""
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain])
+        dist = ApproximateDistribution([chain], name="x")
+        # The auto-wrap field is "x"; that should resolve to a view.
+        view = dist["x"]
+        assert view is not None
+        # Other names raise.
         with pytest.raises(KeyError):
-            dist["x"]
+            dist["nonexistent"]
 
     def test_fields(self, posterior):
         assert posterior.fields == ("K", "phi", "r")
 
-    def test_fields_without_template(self):
+    def test_fields_with_single_field_autowrap(self):
+        """``fields`` reflects the auto-wrapped single field."""
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain])
-        assert dist.fields == ()
+        dist = ApproximateDistribution([chain], name="x")
+        assert dist.fields == ("x",)
 
     def test_view_event_shape_scalar(self, posterior):
         view = posterior["r"]
@@ -753,12 +762,18 @@ class TestRecordDistributionProperties:
         np.testing.assert_allclose(float(v2["K"]), 1.0)
         np.testing.assert_allclose(float(v2["r"]), 3.0)
 
-    def test_unflatten_without_template_raises(self):
+    def test_unflatten_without_template_uses_single_field_autowrap(self):
+        """Without a multi-field record_template, ApproximateDistribution
+        auto-wraps the chain as a single-field Record keyed by ``name=``.
+        ``unflatten_value`` round-trips a flat vector through that
+        single-field template (no RuntimeError)."""
         from probpipe.core._record_distribution import RecordDistribution
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain])
-        with pytest.raises(RuntimeError, match="record_template"):
-            RecordDistribution.unflatten_value(dist, jnp.zeros(3))
+        dist = ApproximateDistribution([chain], name="x")
+        result = RecordDistribution.unflatten_value(dist, jnp.zeros(3))
+        # Single-field auto-wrap → result has one field "x".
+        assert hasattr(result, "fields")
+        assert result.fields == ("x",)
 
     def test_record_distribution_event_shapes(self, posterior):
         """RecordDistribution.event_shapes returns per-field dict."""

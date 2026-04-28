@@ -9,7 +9,7 @@ import scipy.stats
 from probpipe import (
     Normal,
     MultivariateNormal,
-    NumericEmpiricalDistribution,
+    RecordEmpiricalDistribution,
     EmpiricalDistribution,
     BootstrapDistribution,
     ProductDistribution,
@@ -35,7 +35,7 @@ def mvn():
 @pytest.fixture
 def empirical():
     samples = jax.random.normal(jax.random.PRNGKey(0), (200, 2))
-    return NumericEmpiricalDistribution(samples)
+    return RecordEmpiricalDistribution(samples, name="x")
 
 
 @pytest.fixture
