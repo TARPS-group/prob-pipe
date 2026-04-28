@@ -108,6 +108,16 @@ class TestFieldAccess:
         assert "params/missing" not in v
         assert "missing/r" not in v
 
+    def test_path_through_non_record_raises_clear_keyerror(self):
+        """Descending past a non-Record leaf via path syntax must raise
+        ``KeyError`` with a path-aware message — not a numpy
+        ``IndexError`` (regression for PR-A review finding #5)."""
+        v = Record(a=np.array([1.0, 2.0]))
+        with pytest.raises(KeyError, match="non-Record"):
+            v["a/b"]
+        # __contains__ swallows the same case to False.
+        assert "a/b" not in v
+
     def test_fields(self, v):
         assert v.fields == ("r", "K", "phi")
 
@@ -420,6 +430,22 @@ class TestConversion:
         assert back["y"].dims == ("time",)
         np.testing.assert_array_equal(back["y"].coords["time"].values, [10, 20, 30])
         assert back["y"].attrs == {"units": "m"}
+
+    def test_to_numeric_recurses_into_nested_records(self):
+        """``to_numeric()`` and ``NumericRecord.from_record()`` both
+        recurse into nested non-NumericRecord children (regression for
+        the divergence flagged in PR-A review)."""
+        from probpipe import NumericRecord
+        outer = Record(inner=Record(a=1.0), z=2.0)
+        nr = outer.to_numeric()
+        assert isinstance(nr, NumericRecord)
+        assert isinstance(nr["inner"], NumericRecord)
+        assert nr["inner", "a"] == 1.0
+        # Equivalent to the from_record path.
+        nr2 = NumericRecord.from_record(outer)
+        assert nr.fields == nr2.fields
+        for field in nr.fields:
+            assert type(nr[field]) is type(nr2[field])
 
 
 # ---------------------------------------------------------------------------

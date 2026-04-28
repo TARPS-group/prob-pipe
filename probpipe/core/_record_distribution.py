@@ -551,16 +551,19 @@ def _register_dynamic_subclass(cls: type) -> type:
         pass
 
     # Dynamic subclasses of ProductDistribution share the same
-    # flatten/unflatten logic.  Delegate to _components + _name.
+    # flatten/unflatten logic.  Delegate to _components + _name, and
+    # capture the top-level key order explicitly so insertion order
+    # survives the round-trip (JAX's dict treedef is sorted).
     def _flatten(dist):
         leaves = jax.tree.leaves(dist._components)
         treedef = jax.tree.structure(dist._components)
-        return leaves, (treedef, dist._name)
+        return leaves, (treedef, dist._name, tuple(dist._components.keys()))
 
     def _unflatten(aux, children):
-        treedef, name = aux
+        treedef, name, key_order = aux
         components = jax.tree.unflatten(treedef, children)
-        return cls(**components, name=name)
+        ordered = {k: components[k] for k in key_order}
+        return cls(**ordered, name=name)
 
     jax.tree_util.register_pytree_node(cls, _flatten, _unflatten)
     return cls

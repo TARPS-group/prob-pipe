@@ -220,6 +220,20 @@ class TestEqualityAndHashing:
         assert t1 == t2
         assert hash(t1) == hash(t2)
 
+    def test_eq_is_order_sensitive(self):
+        """Insertion-order is part of the template's identity (#124),
+        and ``__hash__`` is order-sensitive — so ``__eq__`` must agree
+        to satisfy Python's eq/hash contract.
+        """
+        t1 = RecordTemplate(a=(), b=(2,))
+        t2 = RecordTemplate(b=(2,), a=())
+        assert t1 != t2
+        assert hash(t1) != hash(t2)
+        # And the contract holds: equal templates hash the same.
+        t3 = RecordTemplate(a=(), b=(2,))
+        assert t1 == t3
+        assert hash(t1) == hash(t3)
+
 
 # ---------------------------------------------------------------------------
 # from_record factory

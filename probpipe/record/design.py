@@ -140,8 +140,8 @@ class FullFactorialDesign(Design):
     >>> ff = FullFactorialDesign(r=[1.5, 1.8], K=[60.0, 80.0])
     >>> ff.batch_shape
     (4,)
-    >>> sorted(ff.fields)
-    ['K', 'r']
+    >>> ff.fields
+    ('r', 'K')
 
     Mixed numeric / categorical marginals are supported — columns fall
     out as ``object``-dtype arrays for the categorical fields:
@@ -156,28 +156,29 @@ class FullFactorialDesign(Design):
             raise ValueError(
                 "FullFactorialDesign requires at least one marginal"
             )
-        sorted_names = sorted(marginals)
-        lists = [list(marginals[n]) for n in sorted_names]
+        names = list(marginals)
+        lists = [list(marginals[n]) for n in names]
         sizes = [len(v) for v in lists]
         if any(s == 0 for s in sizes):
             raise ValueError(
                 "FullFactorialDesign marginals must each be non-empty; "
-                f"got sizes {dict(zip(sorted_names, sizes))}"
+                f"got sizes {dict(zip(names, sizes))}"
             )
         n_total = prod(sizes)
         # ``meshgrid(..., indexing='ij')`` then flatten: each axis
         # iterates at its own stride; C-order flatten then yields a
-        # lexicographic row-major traversal over the sorted axes.
+        # lexicographic row-major traversal over the marginals in
+        # insertion order.
         grids = np.meshgrid(
             *(np.arange(s) for s in sizes), indexing="ij",
         )
         flat_indices = {
-            name: grid.reshape(-1) for name, grid in zip(sorted_names, grids)
+            name: grid.reshape(-1) for name, grid in zip(names, grids)
         }
 
         fields: dict[str, Any] = {}
         template_spec: dict[str, Any] = {}
-        for name, values in zip(sorted_names, lists):
+        for name, values in zip(names, lists):
             col, leaf_shape = _seq_to_column(
                 values, indices=flat_indices[name],
             )
@@ -188,6 +189,6 @@ class FullFactorialDesign(Design):
             self, fields,
             batch_shape=(n_total,),
             template=RecordTemplate(template_spec),
-            name=f"FullFactorialDesign({','.join(sorted_names)})",
+            name=f"FullFactorialDesign({','.join(names)})",
         )
         object.__setattr__(self, "_marginals", dict(marginals))

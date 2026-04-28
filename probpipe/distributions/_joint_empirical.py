@@ -140,7 +140,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
         self._joint_samples = stored
         self._n = n
         if name is None:
-            name = "joint_empirical(" + ",".join(sorted(samples.keys())) + ")"
+            name = "joint_empirical(" + ",".join(samples.keys()) + ")"
         super().__init__(name=name)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._components = self._build_component_dists()

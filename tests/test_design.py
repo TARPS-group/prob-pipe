@@ -34,29 +34,29 @@ from probpipe import FullFactorialDesign
 class TestFullFactorial:
     """A FullFactorialDesign materialises the Cartesian product of its
     marginals into a RecordArray whose ``batch_shape`` is
-    ``(prod(sizes),)`` and whose rows sweep the sorted axes in
-    lexicographic (row-major) order."""
+    ``(prod(sizes),)`` and whose rows sweep the axes in marginal-
+    insertion order (row-major)."""
 
     def test_two_numeric_marginals(self):
         ff = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
         assert isinstance(ff, RecordArray)
         assert ff.batch_shape == (6,)
-        # Fields come back sorted.
-        assert ff.fields == ("K", "r")
+        # Fields come back in insertion order.
+        assert ff.fields == ("r", "K")
         # Numeric-only marginals produce ``jnp.ndarray`` column leaves.
         assert isinstance(ff["r"], jnp.ndarray)
         assert isinstance(ff["K"], jnp.ndarray)
 
     def test_row_order_is_lexicographic(self):
-        """With sorted axes K (outer) and r (inner), row order is
-        (K=60, r=1.5), (K=60, r=1.8), (K=60, r=2.0), (K=80, r=1.5), ...
+        """With insertion-order axes ``r`` (outer) and ``K`` (inner),
+        row order is (r=1.5, K=60), (r=1.5, K=80), (r=1.8, K=60), ...
         """
         ff = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
         np.testing.assert_allclose(
-            np.asarray(ff["K"]), [60., 60., 60., 80., 80., 80.],
+            np.asarray(ff["r"]), [1.5, 1.5, 1.8, 1.8, 2.0, 2.0],
         )
         np.testing.assert_allclose(
-            np.asarray(ff["r"]), [1.5, 1.8, 2.0, 1.5, 1.8, 2.0],
+            np.asarray(ff["K"]), [60., 80., 60., 80., 60., 80.],
         )
 
     def test_single_marginal_edge_case(self):
@@ -76,11 +76,11 @@ class TestFullFactorial:
         assert isinstance(ff, RecordArray)
         assert not isinstance(ff, NumericRecordArray)
         assert ff.batch_shape == (4,)
+        # Insertion order: method outer, scale inner.
+        assert list(ff["method"]) == ["nutpie", "nutpie", "pymc", "pymc"]
         np.testing.assert_allclose(
             np.asarray(ff["scale"]), [0.5, 1.0, 0.5, 1.0],
         )
-        # sorted fields: ("method", "scale"); method varies slowest
-        assert list(ff["method"]) == ["nutpie", "nutpie", "pymc", "pymc"]
 
     def test_three_axes_shape_and_count(self):
         ff = FullFactorialDesign(
@@ -108,10 +108,11 @@ class TestFullFactorial:
         """Integer-indexing a Design returns a single Record (scalar
         row), matching the RecordArray contract."""
         ff = FullFactorialDesign(r=[1.5, 1.8], K=[60.0, 80.0])
-        row = ff[1]  # second row in lex order → (K=60, r=1.8)
+        # Insertion order: r outer, K inner. Second row → (r=1.5, K=80).
+        row = ff[1]
         assert isinstance(row, Record)
-        assert float(row["r"]) == pytest.approx(1.8)
-        assert float(row["K"]) == pytest.approx(60.0)
+        assert float(row["r"]) == pytest.approx(1.5)
+        assert float(row["K"]) == pytest.approx(80.0)
 
 
 # ---------------------------------------------------------------------------
@@ -140,9 +141,10 @@ class TestDesignAsSweep:
         out = fit(p=ff)
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (6,)
+        # Insertion order: r outer, K inner.
         np.testing.assert_allclose(
             np.asarray(out["fit"]),
-            [1.5 * 60, 1.8 * 60, 2.0 * 60, 1.5 * 80, 1.8 * 80, 2.0 * 80],
+            [1.5 * 60, 1.5 * 80, 1.8 * 60, 1.8 * 80, 2.0 * 60, 2.0 * 80],
         )
 
     def test_select_all_splat_triggers_zip_sweep(self):
@@ -160,9 +162,10 @@ class TestDesignAsSweep:
         out = product(**ff.select_all())
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (6,)
+        # Insertion order: r outer, K inner.
         np.testing.assert_allclose(
             np.asarray(out["product"]),
-            [1.5 * 60, 1.8 * 60, 2.0 * 60, 1.5 * 80, 1.8 * 80, 2.0 * 80],
+            [1.5 * 60, 1.5 * 80, 1.8 * 60, 1.8 * 80, 2.0 * 60, 2.0 * 80],
         )
 
     def test_patterns_a_and_b_are_equivalent(self):

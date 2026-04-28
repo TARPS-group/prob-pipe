@@ -128,7 +128,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
     @property
     def parameter_names(self) -> tuple[str, ...]:
         if self._prior_fields:
-            return tuple(sorted(self._prior_fields))
+            return tuple(self._prior_fields)
         return ("parameters",)
 
     # -- SupportsLogProb interface -----------------------------------------

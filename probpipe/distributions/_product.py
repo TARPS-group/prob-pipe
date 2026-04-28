@@ -197,7 +197,7 @@ class ProductDistribution(
                 )
         self._components = resolved
         if name is None:
-            name = "product(" + ",".join(sorted(resolved.keys())) + ")"
+            name = "product(" + ",".join(resolved.keys()) + ")"
         super().__init__(name=name)
         self._record_template = _build_record_template(self._components)
 
@@ -220,10 +220,10 @@ class ProductDistribution(
             ``NumericRecordArray`` with ``batch_shape == sample_shape`` otherwise.
         """
         from ..core._record_array import NumericRecordArray
-        sorted_names = sorted(self._components.keys())
-        keys = jax.random.split(key, len(sorted_names))
+        names = list(self._components.keys())
+        keys = jax.random.split(key, len(names))
         fields: dict[str, jnp.ndarray | Record] = {}
-        for subkey, name in zip(keys, sorted_names):
+        for subkey, name in zip(keys, names):
             comp = self._components[name]
             if isinstance(comp, dict):
                 fields[name] = _sample_nested(comp, subkey, sample_shape)
@@ -340,7 +340,7 @@ class TFPProductDistribution(ProductDistribution):
     def _build_tfp_dist(self):
         """Construct a combined TFP distribution from the components.
 
-        Collects component TFP distributions in sorted field order
+        Collects component TFP distributions in field-insertion order
         (matching the ``Record`` layout).  For the common case of
         same-family scalar distributions, stacks parameters into a
         single ``tfd.Independent`` (bijector-compatible with sbijax).
@@ -349,7 +349,7 @@ class TFPProductDistribution(ProductDistribution):
         from tensorflow_probability.substrates.jax import distributions as tfd
 
         tfp_dists = []
-        for comp_name in sorted(self._components.keys()):
+        for comp_name in self._components.keys():
             comp = self._components[comp_name]
             if isinstance(comp, dict):
                 for sub_leaf in jax.tree.leaves(comp):
@@ -393,10 +393,10 @@ class TFPProductDistribution(ProductDistribution):
 
 def _sample_nested(components: dict, key, sample_shape) -> Record:
     """Recursively sample from nested component dicts, returning nested Record."""
-    sorted_names = sorted(components.keys())
-    keys = jax.random.split(key, len(sorted_names))
+    names = list(components.keys())
+    keys = jax.random.split(key, len(names))
     fields: dict = {}
-    for subkey, name in zip(keys, sorted_names):
+    for subkey, name in zip(keys, names):
         comp = components[name]
         if isinstance(comp, dict):
             fields[name] = _sample_nested(comp, subkey, sample_shape)
@@ -424,24 +424,31 @@ def _product_flatten(dist):
     """Flatten a ProductDistribution for JAX pytree registration.
 
     Stores the leaf ArrayDistributions as children and the component
-    pytree structure (treedef) + name as auxiliary data.  This handles
-    both flat and nested component dicts.
+    pytree structure (treedef) + name + top-level key order as
+    auxiliary data. The explicit key order matters: JAX's default
+    dict traversal sorts keys, but ``ProductDistribution`` preserves
+    insertion order (per the Record-family convention), so we restore
+    it manually on unflatten.
     """
     leaves = jax.tree.leaves(dist._components)
     comp_treedef = jax.tree.structure(dist._components)
-    aux = (comp_treedef, dist._name)
+    aux = (comp_treedef, dist._name, tuple(dist._components.keys()))
     return leaves, aux
 
 
 def _product_unflatten(aux, children):
     """Unflatten a ProductDistribution from JAX pytree data.
 
-    Reconstructs the component pytree from the stored treedef and
-    then passes it to the constructor as keyword arguments.
+    Reconstructs the component pytree from the stored treedef, then
+    re-orders the top-level dict to match the original insertion
+    order before passing to the constructor.
     """
-    comp_treedef, name = aux
+    comp_treedef, name, key_order = aux
     components = jax.tree.unflatten(comp_treedef, children)
-    return ProductDistribution(**components, name=name)
+    # Restore insertion order at the top level (JAX returns dict keys
+    # sorted; we re-key in the original order).
+    ordered = {k: components[k] for k in key_order}
+    return ProductDistribution(**ordered, name=name)
 
 
 jax.tree_util.register_pytree_node(

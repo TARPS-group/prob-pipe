@@ -243,7 +243,18 @@ class Record:
             return store[key]
         if isinstance(key, tuple):
             v: Any = self
-            for k in key:
+            for i, k in enumerate(key):
+                if i > 0 and not isinstance(v, Record):
+                    # Descending past a non-Record leaf is a path
+                    # error, not an indexing error — translate so that
+                    # ``"a/b" in record`` and ``record["a/b"]`` both
+                    # raise the user-friendly KeyError instead of
+                    # leaking a numpy/list-side IndexError.
+                    raise KeyError(
+                        f"path {'/'.join(key)!r} descends through "
+                        f"non-Record leaf {type(v).__name__} at "
+                        f"{'/'.join(key[:i])!r}"
+                    )
                 v = v[k]
             return v
         raise TypeError(f"key must be str or tuple[str, ...], got {type(key).__name__}")
@@ -260,7 +271,7 @@ class Record:
         if _PATH_SEP in name:
             try:
                 self[name]
-            except (KeyError, TypeError):
+            except (KeyError, TypeError, IndexError):
                 return False
             return True
         return name in self._store
@@ -399,10 +410,10 @@ class Record:
         :mod:`probpipe.core._array_backend` and stored on the resulting
         ``NumericRecord``. Calling :meth:`NumericRecord.to_native`
         on the result reverses the conversion, restoring each leaf to
-        its original backend type.
+        its original backend type. Nested ``Record`` children recurse
+        — every level becomes a ``NumericRecord``.
 
-        Direct ``NumericRecord(**self._store)`` construction does the
-        same thing — the two paths are semantically identical.
+        Equivalent to :meth:`NumericRecord.from_record`.
 
         Raises
         ------
@@ -413,7 +424,7 @@ class Record:
         # Lazy import to avoid the module-level circular dep:
         # _numeric_record.py imports Record from this module.
         from ._numeric_record import NumericRecord
-        return NumericRecord(self._store)
+        return NumericRecord.from_record(self)
 
     # -- Coercion -----------------------------------------------------------
 
@@ -720,7 +731,11 @@ class RecordTemplate:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, RecordTemplate):
             return NotImplemented
-        return self._specs == other._specs
+        # Order-sensitive comparison so equality matches the
+        # order-sensitive ``__hash__`` (insertion order is part of the
+        # template's identity per #124). dict.__eq__ alone would
+        # ignore order, breaking the eq/hash contract.
+        return tuple(self._specs.items()) == tuple(other._specs.items())
 
     def __hash__(self) -> int:
         def _spec_key(spec: _FieldSpec):

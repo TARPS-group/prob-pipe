@@ -58,7 +58,7 @@ class RecordArray(Record):
         Structural description of each element.
     name : str, optional
         Human-readable name for provenance / introspection. Defaults
-        to ``"{class_name}({sorted field list})"``.
+        to ``"{class_name}({field list in template order})"``.
     **fields
         Named values, each with shape ``(*batch_shape, *leaf_shape)``.
 

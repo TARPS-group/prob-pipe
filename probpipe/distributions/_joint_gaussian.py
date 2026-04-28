@@ -92,7 +92,7 @@ class JointGaussian(RecordDistribution, SupportsSampling, SupportsLogProb, Suppo
         self._mean_vec = mean
         self._cov_mat = cov
         if name is None:
-            name = "joint_gaussian(" + ",".join(sorted(component_shapes.keys())) + ")"
+            name = "joint_gaussian(" + ",".join(component_shapes.keys()) + ")"
         super().__init__(name=name)
         self._component_shapes = dict(component_shapes)
 

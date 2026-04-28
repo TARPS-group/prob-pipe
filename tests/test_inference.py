@@ -737,7 +737,7 @@ class TestRecordDistributionProperties:
         from probpipe.core._record_distribution import RecordDistribution
         v = Record(K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
         flat = RecordDistribution.flatten_value(posterior, v)
-        np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])  # sorted: K, phi, r
+        np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])  # insertion: K, phi, r
         v2 = RecordDistribution.unflatten_value(posterior, flat)
         assert isinstance(v2, Record)
         np.testing.assert_allclose(float(v2["K"]), 1.0)
