@@ -3,7 +3,42 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from probpipe import EmpiricalDistribution
+from probpipe import EmpiricalDistribution, WorkflowKind, prefect_config
+
+
+@pytest.fixture(autouse=True)
+def _disable_prefect_for_tests():
+    """Force ``WorkflowKind.OFF`` globally for each test.
+
+    The default ``WorkflowKind.DEFAULT`` auto-promotes to ``TASK`` when
+    Prefect is importable (see ``WorkflowFunction.effective_workflow_kind``).
+    That auto-promotion picks up whatever ``PREFECT_API_URL`` the user
+    has in ``~/.prefect/profiles.toml`` — if the configured server isn't
+    running, every ``WorkflowFunction`` call raises
+    ``RuntimeError: Failed to reach API at ...``. CI happens to escape
+    because it has no profile and falls back to ephemeral mode, but
+    contributors with an existing Prefect setup hit it immediately.
+
+    Function-scoped (not session-scoped) so the OFF state is restored
+    around every test — otherwise other test classes that flip the
+    global (``test_prefect_config.py`` resets to ``DEFAULT`` between
+    its tests) leak that state into later tests.
+
+    The Prefect-orchestration tests in ``test_prefect_orchestration.py``
+    don't depend on the global config — they pass ``workflow_kind="task"``
+    or ``"flow"`` explicitly, which is a per-instance override that
+    bypasses the global, so this fixture doesn't interfere with them.
+    The ``test_prefect_config.py`` tests have their own function-scoped
+    autouse fixture that resets to ``DEFAULT``; pytest runs the
+    conftest fixture first and the test-class fixture second, so those
+    tests still see ``DEFAULT`` when they expect to.
+    """
+    saved = prefect_config.workflow_kind
+    prefect_config.workflow_kind = WorkflowKind.OFF
+    try:
+        yield
+    finally:
+        prefect_config.workflow_kind = saved
 
 
 @pytest.fixture
