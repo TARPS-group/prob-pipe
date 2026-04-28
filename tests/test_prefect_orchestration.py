@@ -252,7 +252,7 @@ class TestPrefectProvenance:
         )
         result = wf(x=normal_dist)
         assert result.source is not None
-        assert result.source.metadata["orchestrate"] == "none"
+        assert result.source.metadata["orchestrate"] == "off"
 
 
 # ---------------------------------------------------------------------------
@@ -289,9 +289,9 @@ class TestPrefectNonBroadcast:
 # ---------------------------------------------------------------------------
 
 class TestPrefectImportGuard:
-    """When Prefect is not installed, workflow_kind should raise ImportError."""
+    """When Prefect is not installed, workflow_kind should warn and fall back to OFF."""
 
-    def test_task_raises_without_prefect(self, normal_dist, monkeypatch):
+    def test_task_warns_without_prefect(self, normal_dist, monkeypatch):
         import probpipe.core.node as node_mod
         monkeypatch.setattr(node_mod, "task", None)
         monkeypatch.setattr(node_mod, "flow", None)
@@ -303,10 +303,11 @@ class TestPrefectImportGuard:
             n_broadcast_samples=10,
             seed=60,
         )
-        with pytest.raises(ImportError, match="Prefect is required"):
-            wf(x=normal_dist)
+        with pytest.warns(UserWarning, match="Prefect is not installed"):
+            result = wf(x=normal_dist)
+        assert hasattr(result, "samples")
 
-    def test_flow_raises_without_prefect(self, normal_dist, monkeypatch):
+    def test_flow_warns_without_prefect(self, normal_dist, monkeypatch):
         import probpipe.core.node as node_mod
         monkeypatch.setattr(node_mod, "task", None)
         monkeypatch.setattr(node_mod, "flow", None)
@@ -318,10 +319,11 @@ class TestPrefectImportGuard:
             n_broadcast_samples=10,
             seed=61,
         )
-        with pytest.raises(ImportError, match="Prefect is required"):
-            wf(x=normal_dist)
+        with pytest.warns(UserWarning, match="Prefect is not installed"):
+            result = wf(x=normal_dist)
+        assert hasattr(result, "samples")
 
-    def test_jax_raises_without_prefect(self, normal_dist, monkeypatch):
+    def test_jax_warns_without_prefect(self, normal_dist, monkeypatch):
         import probpipe.core.node as node_mod
         monkeypatch.setattr(node_mod, "task", None)
         monkeypatch.setattr(node_mod, "flow", None)
@@ -333,5 +335,6 @@ class TestPrefectImportGuard:
             n_broadcast_samples=10,
             seed=62,
         )
-        with pytest.raises(ImportError, match="Prefect is required"):
-            wf(x=normal_dist)
+        with pytest.warns(UserWarning, match="Prefect is not installed"):
+            result = wf(x=normal_dist)
+        assert hasattr(result, "samples")

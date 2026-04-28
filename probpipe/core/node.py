@@ -18,6 +18,8 @@ try:
 except ImportError:
     task = flow = None
 
+from .config import WorkflowKind, prefect_config
+
 try:
     from graphviz import Digraph
 except ImportError:
@@ -319,11 +321,12 @@ class WorkflowFunction(Node):
     ----------
     func : Callable
         The function to wrap.
-    workflow_kind : str or None
-        Prefect orchestration mode: ``"task"`` (wrap in a Prefect task),
-        ``"flow"`` (wrap in a Prefect flow), or ``None`` (plain Python).
-        Orchestration is independent of vectorization: a JAX-vmapped
-        broadcast can still be wrapped in a Prefect task for tracing.
+    workflow_kind : WorkflowKind
+        Prefect orchestration mode.  ``DEFAULT`` inherits from
+        ``prefect_config`` (auto-uses Prefect tasks when available).
+        ``TASK`` / ``FLOW`` explicitly request Prefect orchestration.
+        ``OFF`` disables orchestration.  Legacy strings (``"task"``,
+        ``"flow"``) and ``None`` are auto-converted.
     name : str or None
         Display name; defaults to ``func.__name__``.
     bind : dict or None
@@ -357,7 +360,7 @@ class WorkflowFunction(Node):
         self,
         *,
         func: Callable,
-        workflow_kind: str | None = None,   # "task" or "flow" or None
+        workflow_kind: WorkflowKind | str | None = WorkflowKind.DEFAULT,  # TODO: remove str | None in follow-up issue
         name: str | None = None,
         bind: dict[str, Any] | None = None,         # construction-time bindings (defaults/config)
         module: Any | None = None,                  # typically a Module; kept as Any to avoid import cycles
@@ -370,15 +373,15 @@ class WorkflowFunction(Node):
     ):
         self._func = func
         self._sig = inspect.signature(func)
-        # PEP 695 type parameters (``def f[T](...)``) live on
-        # ``__type_params__`` and are not in the function's globals, so
-        # ``get_type_hints`` cannot resolve them when annotations are
-        # strings (PEP 563 / ``from __future__ import annotations``).
-        # Pass them through ``localns`` to avoid NameError on Python 3.12.
-        type_params = getattr(func, "__type_params__", ())
-        type_param_ns = {tp.__name__: tp for tp in type_params}
-        self._hints = get_type_hints(func, localns=type_param_ns or None)
-        self._workflow_kind = workflow_kind
+        self._hints = get_type_hints(func)
+        # Convert legacy string / None values to WorkflowKind enum
+        # TODO: remove this legacy conversion in follow-up issue
+        if workflow_kind is None:
+            self._workflow_kind_raw = WorkflowKind.OFF
+        elif isinstance(workflow_kind, str) and not isinstance(workflow_kind, WorkflowKind):
+            self._workflow_kind_raw = WorkflowKind(workflow_kind)
+        else:
+            self._workflow_kind_raw = workflow_kind
         self._name = name or getattr(func, "__name__", self.__class__.__name__)
 
         # Expose wrapped function's metadata for introspection (help(),
@@ -420,6 +423,48 @@ class WorkflowFunction(Node):
                 f"reserved by WorkflowFunction for call-time overrides. Rename them in "
                 f"your function signature."
             )
+
+    @property
+    def effective_workflow_kind(self) -> WorkflowKind:
+        """Resolve the orchestration mode for this instance.
+
+        Resolution order:
+
+        1. Per-instance override (anything other than ``DEFAULT``).
+        2. Global ``prefect_config.workflow_kind``.
+        3. If global is also ``DEFAULT``, auto-detect: ``TASK`` when
+           Prefect is installed, ``OFF`` otherwise.
+
+        If Prefect is not installed but ``TASK`` or ``FLOW`` is requested
+        (either per-instance or globally), a warning is emitted and the
+        mode falls back to ``OFF``.
+        """
+        raw = self._workflow_kind_raw
+
+        # 1. Per-instance explicit (non-DEFAULT) override
+        if raw is not WorkflowKind.DEFAULT:
+            if raw in (WorkflowKind.TASK, WorkflowKind.FLOW) and task is None:
+                warnings.warn(
+                    f"workflow_kind={raw!r} requested but Prefect is not installed. "
+                    f"Falling back to OFF. Install with: pip install probpipe[prefect]",
+                    stacklevel=2,
+                )
+                return WorkflowKind.OFF
+            return raw
+
+        # 2. Resolve global config
+        global_kind = prefect_config.workflow_kind
+        if global_kind is not WorkflowKind.DEFAULT:
+            kind = global_kind
+        else:
+            # 3. DEFAULT at global level = auto-detect
+            kind = WorkflowKind.TASK if task is not None else WorkflowKind.OFF
+
+        # Graceful fallback: global/auto-detected TASK/FLOW but Prefect missing
+        if kind in (WorkflowKind.TASK, WorkflowKind.FLOW) and task is None:
+            return WorkflowKind.OFF
+
+        return kind
 
     def _is_dependency_param(self, name: str) -> bool:
         """
@@ -1123,7 +1168,7 @@ class WorkflowFunction(Node):
             parents=parents,
             metadata={
                 "vectorize": vectorize,
-                "orchestrate": self._workflow_kind or "none",
+                "orchestrate": self.effective_workflow_kind.value,
                 "n_samples": n_broadcast_samples,
                 "func": self._name or self._func.__name__,
                 "broadcast_args": broadcast_args,
@@ -1213,16 +1258,16 @@ class WorkflowFunction(Node):
             return jax.vmap(single_call)(batch)
 
         # Wrap in Prefect task/flow if orchestration is requested
-        if self._workflow_kind is not None:
-            if task is None:
-                raise ImportError(
-                    "Prefect is required for workflow_kind='task'/'flow'. "
-                    "Install it with: pip install probpipe[prefect]"
-                )
-            if self._workflow_kind == "task":
+        kind = self.effective_workflow_kind
+        if kind in (WorkflowKind.TASK, WorkflowKind.FLOW):
+            if kind == WorkflowKind.TASK:
                 run_vmap = task(name=f"{self._name}_vmap")(run_vmap)
             else:
-                run_vmap = flow(name=f"{self._name}_vmap")(run_vmap)
+                runner = prefect_config.resolve_task_runner()
+                run_vmap = flow(
+                    name=f"{self._name}_vmap",
+                    **({"task_runner": runner} if runner is not None else {}),
+                )(run_vmap)
 
         results = run_vmap()
         return BroadcastDistribution(
@@ -1345,13 +1390,9 @@ class WorkflowFunction(Node):
           - parallel=True/int    → concurrent.futures.ThreadPoolExecutor
           - otherwise            → sequential list comprehension
         """
-        if self._workflow_kind in ("task", "flow"):
-            if task is None:
-                raise ImportError(
-                    "Prefect is required for workflow_kind='task'/'flow'. "
-                    "Install it with: pip install probpipe[prefect]"
-                )
-            if self._workflow_kind == "task":
+        kind = self.effective_workflow_kind
+        if kind in (WorkflowKind.TASK, WorkflowKind.FLOW):
+            if kind == WorkflowKind.TASK:
                 return self._execute_many_prefect_task(call_value_list)
             return self._execute_many_prefect_flow(call_value_list)
         if self._parallel:
@@ -1384,8 +1425,10 @@ class WorkflowFunction(Node):
         task runs are tracked but not grouped under a named flow.
         """
         outer = self
+        runner = prefect_config.resolve_task_runner()
 
-        @flow(name=f"{self._name}_map")
+        @flow(name=f"{self._name}_map",
+              **({"task_runner": runner} if runner is not None else {}))
         def _task_map_flow():
             return outer._map_task(call_value_list)
 
@@ -1394,8 +1437,10 @@ class WorkflowFunction(Node):
     def _execute_many_prefect_flow(self, call_value_list: list[dict[str, Any]]) -> list:
         """Wrap a mapped task inside a named Prefect flow."""
         outer = self
+        runner = prefect_config.resolve_task_runner()
 
-        @flow(name=self._name)
+        @flow(name=self._name,
+              **({"task_runner": runner} if runner is not None else {}))
         def mapped_flow():
             return outer._map_task(call_value_list, task_name=f"{outer._name}_run")
 
@@ -1414,8 +1459,14 @@ class Module(Node):
         - everything else becomes inputs
     """
 
-    def __init__(self, *, workflow_kind: str | None = None, **kwargs: Any):
-        self._workflow_kind = workflow_kind
+    def __init__(self, *, workflow_kind: WorkflowKind | str | None = WorkflowKind.DEFAULT, **kwargs: Any):
+        # Convert legacy string / None values to WorkflowKind enum
+        if workflow_kind is None:
+            self._workflow_kind = WorkflowKind.OFF
+        elif isinstance(workflow_kind, str) and not isinstance(workflow_kind, WorkflowKind):
+            self._workflow_kind = WorkflowKind(workflow_kind)
+        else:
+            self._workflow_kind = workflow_kind
         super().__init__(**kwargs)
         # validate abstract workflow implementations before wrapping
         self._validate_abstract_workflow_implementations()
