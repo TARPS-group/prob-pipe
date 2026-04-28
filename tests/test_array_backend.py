@@ -77,6 +77,51 @@ class TestRegistryLookup:
         finally:
             del aux_registry[MyArrayLike]
 
+    def test_aux_for_walks_mro(self):
+        """An instance of a registered type's subclass picks up the
+        base-class hooks (regression for the MRO-walk semantics
+        documented at ``_array_backend.py:103-108``)."""
+        class Base:
+            pass
+
+        class Sub(Base):
+            pass
+
+        register_aux(
+            Base,
+            capture=lambda leaf: "base-aux",
+            restore=lambda arr, aux: ("restored", aux),
+        )
+        try:
+            hooks = aux_for(Sub())
+            assert hooks is not None
+            assert hooks.capture(Sub()) == "base-aux"
+        finally:
+            del aux_registry[Base]
+
+    def test_register_aux_overwrites_silently(self):
+        """Re-registering an existing leaf type silently overwrites the
+        previous hooks (documented at ``_array_backend.py:93-99``)."""
+        class MyType:
+            pass
+
+        register_aux(
+            MyType,
+            capture=lambda leaf: "first",
+            restore=lambda arr, aux: ("first", aux),
+        )
+        try:
+            assert aux_for(MyType()).capture(MyType()) == "first"
+            register_aux(
+                MyType,
+                capture=lambda leaf: "second",
+                restore=lambda arr, aux: ("second", aux),
+            )
+            hooks = aux_for(MyType())
+            assert hooks.capture(MyType()) == "second"
+        finally:
+            del aux_registry[MyType]
+
 
 # ---------------------------------------------------------------------------
 # xarray round-trip
@@ -127,6 +172,47 @@ class TestXarrayRoundTrip:
     def test_values_round_trip_within_dtype_tolerance(self, da):
         back = NumericRecord(temps=da).to_native()
         np.testing.assert_allclose(np.asarray(back["temps"]), [1.0, 2.0, 3.0])
+
+    def test_nested_numeric_record_round_trips_xarray(self, da):
+        """Aux on a nested ``NumericRecord`` round-trips: ``to_native``
+        recurses into nested children (``_numeric_record.py:286-289``).
+        """
+        outer = NumericRecord(inner=NumericRecord(temps=da))
+        back = outer.to_native()
+        # Outer is a permissive Record after to_native (restored leaves
+        # may not satisfy the NumericRecord invariant). The inner gets
+        # the same treatment recursively.
+        assert isinstance(back, Record)
+        inner = back["inner"]
+        assert isinstance(inner, Record)
+        assert inner["temps"].dims == ("t",)
+        np.testing.assert_array_equal(
+            inner["temps"].coords["t"].values, [10, 20, 30],
+        )
+        assert inner["temps"].attrs == {"units": "meters"}
+
+    def test_xarray_multidim_coord_round_trips(self):
+        """Per-coord dims and attrs round-trip even for multi-dim coords
+        (regression for the richer-capture tweak)."""
+        xr = pytest.importorskip("xarray")
+        # 2-D ``area`` coord aligned with both axes; 1-D ``t`` coord
+        # with its own attrs.
+        area = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        da_md = xr.DataArray(
+            np.ones((2, 3)),
+            dims=("x", "t"),
+            coords={
+                "t": xr.DataArray([10, 20, 30], dims=["t"], attrs={"unit": "s"}),
+                "area": xr.DataArray(area, dims=("x", "t")),
+            },
+        )
+        back = NumericRecord(field=da_md).to_native()["field"]
+        assert back.coords["t"].dims == ("t",)
+        assert back.coords["t"].attrs == {"unit": "s"}
+        assert back.coords["area"].dims == ("x", "t")
+        np.testing.assert_array_equal(
+            back.coords["area"].values, area,
+        )
 
 
 # ---------------------------------------------------------------------------

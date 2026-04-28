@@ -108,12 +108,8 @@ def aux_for(obj: Any) -> AuxHooks | None:
     """
     if not aux_registry:
         return None
-    cls = type(obj)
-    hooks = aux_registry.get(cls)
-    if hooks is not None:
-        return hooks
-    for base in cls.__mro__[1:]:
-        hooks = aux_registry.get(base)
+    for cls in type(obj).__mro__:
+        hooks = aux_registry.get(cls)
         if hooks is not None:
             return hooks
     return None
@@ -136,18 +132,41 @@ def _register_xarray() -> None:
         return
 
     def _capture(leaf: "xr.DataArray") -> dict[str, Any]:
+        # Capture each coord's full ``(dims, values, attrs)`` triple so
+        # multi-dim coords and per-coord attrs survive the round-trip
+        # — not just the values aligned with the coord's own name.
+        coords: dict[str, dict[str, Any]] = {}
+        for k, v in leaf.coords.items():
+            coords[k] = {
+                "dims": tuple(v.dims),
+                "values": np.asarray(v.values),
+                "attrs": dict(v.attrs),
+            }
         return {
             "dims": tuple(leaf.dims),
-            "coords": {k: np.asarray(v.values) for k, v in leaf.coords.items()},
+            "coords": coords,
             "attrs": dict(leaf.attrs),
             "name": leaf.name,
         }
 
     def _restore(arr: jax.Array, aux: dict[str, Any]) -> "xr.DataArray":
+        coords_blob = aux["coords"]
+        # Rebuild each coord as a ``(dims, values)``-or-``DataArray``
+        # entry so xarray sees the original dims and attrs. Backwards
+        # compatible with the old ``{name: values}`` blob shape via
+        # the ``isinstance`` guard.
+        coords: dict[str, Any] = {}
+        for k, v in coords_blob.items():
+            if isinstance(v, dict) and "values" in v:
+                coords[k] = xr.DataArray(
+                    v["values"], dims=v["dims"], attrs=v.get("attrs", {}),
+                )
+            else:  # legacy blob shape
+                coords[k] = v
         return xr.DataArray(
             np.asarray(arr),
             dims=aux["dims"],
-            coords=aux["coords"],
+            coords=coords,
             attrs=aux["attrs"],
             name=aux.get("name"),
         )

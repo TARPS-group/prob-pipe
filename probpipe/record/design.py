@@ -100,8 +100,9 @@ class Design(RecordArray):
     Attributes
     ----------
     marginals : Mapping[str, Any]
-        The per-field marginals this design was built from, in sorted
-        field order. Kept for introspection; read-only.
+        The per-field marginals this design was built from, in
+        construction (insertion) order. Kept for introspection;
+        read-only.
     """
 
     __slots__ = ("_marginals",)
@@ -123,9 +124,8 @@ class FullFactorialDesign(Design):
     Each marginal is a Python sequence (list, tuple, numpy / jax
     array). Numeric marginals become ``jnp.ndarray`` columns and
     categorical / string marginals become ``numpy.ndarray(dtype=object)``
-    columns. Row order is lexicographic (row-major) over the sorted
-    field names — matching the sort order :class:`~probpipe.Record`
-    uses internally for field iteration.
+    columns. Row order is row-major over the marginals in **insertion
+    order** — i.e., the last-listed marginal varies fastest.
 
     Parameters
     ----------
