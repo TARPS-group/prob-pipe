@@ -17,6 +17,68 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need full history for git diff
+
+      - name: Detect changed files and resolve test targets
+        id: changed
+        run: |
+          # On PRs, diff against the base branch; on pushes, diff against the previous commit.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+
+          CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD -- '*.py' || true)
+          echo "Changed .py files:"
+          echo "$CHANGED"
+
+          # If foundational files changed, run the full suite.
+          RUN_ALL=false
+          for f in $CHANGED; do
+            case "$f" in
+              pyproject.toml|setup.cfg|setup.py|tests/conftest.py|probpipe/__init__.py)
+                RUN_ALL=true ;;
+            esac
+          done
+
+          if [ "$RUN_ALL" = "true" ] || [ -z "$CHANGED" ]; then
+            echo "run_all=true" >> "$GITHUB_OUTPUT"
+            echo "Will run ALL tests (foundational change or no .py changes detected)."
+          else
+            # Collect test files to run.
+            TEST_FILES=""
+
+            for f in $CHANGED; do
+              # If the changed file is already a test file, include it directly.
+              if echo "$f" | grep -qE '^tests/.*\.py$'; then
+                if [ -f "$f" ]; then
+                  TEST_FILES="$TEST_FILES $f"
+                fi
+                continue
+              fi
+
+              # Map source file to test file(s).
+              # e.g. probpipe/core/record.py -> tests/test_record.py
+              basename=$(basename "$f" .py)
+              for candidate in $(find tests -name "test_${basename}.py" -o -name "test_${basename}_*.py" 2>/dev/null); do
+                TEST_FILES="$TEST_FILES $candidate"
+              done
+            done
+
+            # Deduplicate
+            TEST_FILES=$(echo "$TEST_FILES" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
+
+            if [ -z "$TEST_FILES" ]; then
+              echo "run_all=true" >> "$GITHUB_OUTPUT"
+              echo "No matching test files found for changes — running all tests."
+            else
+              echo "run_all=false" >> "$GITHUB_OUTPUT"
+              echo "test_files=$TEST_FILES" >> "$GITHUB_OUTPUT"
+              echo "Will run: $TEST_FILES"
+            fi
+          fi
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -36,7 +98,13 @@ jobs:
           pip install --no-deps sbijax
           pip install blackjax diffrax dm-haiku einops grain jrnmm optax seaborn surjectors tqdm
 
-      - name: Run tests with coverage
+      - name: Run tests (changed files only)
+        if: steps.changed.outputs.run_all == 'false'
+        run: |
+          pytest ${{ steps.changed.outputs.test_files }} --cov-report=xml --cov-report=html
+
+      - name: Run tests (full suite)
+        if: steps.changed.outputs.run_all == 'true'
         run: |
           pytest --cov-report=xml --cov-report=html
 
