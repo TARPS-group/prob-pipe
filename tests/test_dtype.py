@@ -22,11 +22,19 @@ def _run_x64(snippet: str) -> str:
     Returns the captured stdout, stripped. Stderr is included only on
     failure to surface useful tracebacks.
     """
+    # Disable Prefect for the subprocess too. The session-scoped autouse
+    # fixture in tests/conftest.py only affects the parent process; this
+    # subprocess starts fresh and would otherwise pick up whatever
+    # ``WorkflowKind.DEFAULT`` auto-resolves to (TASK if Prefect is
+    # importable, which then fails for any user whose ``PREFECT_API_URL``
+    # points at an unreachable server).
     program = textwrap.dedent(
         """
         import jax
         jax.config.update("jax_enable_x64", True)
         import jax.numpy as jnp
+        from probpipe import WorkflowKind, prefect_config
+        prefect_config.workflow_kind = WorkflowKind.OFF
         """
     ) + textwrap.dedent(snippet)
     result = subprocess.run(
