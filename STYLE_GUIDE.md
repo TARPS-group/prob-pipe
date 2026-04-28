@@ -351,7 +351,26 @@ def _ensure_nutpie():
 For test files, use `pytest.importorskip("nutpie")` or mock-based
 approaches with `patch.dict(sys.modules)`.
 
-### 4.5 TYPE_CHECKING guards
+### 4.5 `Callable` and other ABCs
+
+Import `Callable`, `Iterable`, `Iterator`, `Mapping`, `Sequence`,
+`Hashable`, etc. from `collections.abc`, not from `typing`:
+
+```python
+# ✓ Preferred
+from collections.abc import Callable, Iterable, Mapping, Sequence
+
+# ✗ Soft-deprecated since Python 3.9
+from typing import Callable, Iterable, Mapping, Sequence
+```
+
+Generic aliases of the same names in `typing` have been deprecated
+since Python 3.9 (PEP 585). Use the `collections.abc` originals so the
+codebase is consistent and future-proof. The only exceptions are
+`typing.Optional` / `Union` style imports (don't use those — see §5
+for the modern `X | None` form instead).
+
+### 4.6 TYPE_CHECKING guards
 
 Use `TYPE_CHECKING` for imports needed only by type checkers:
 

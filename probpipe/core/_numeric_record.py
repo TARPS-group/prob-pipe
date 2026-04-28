@@ -30,7 +30,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import ArrayLike
-from ._array_backend import AuxHooks, aux_for
+from ._array_backend import aux_for
 from .record import Record, RecordTemplate, _record_flatten, _spec_size
 
 __all__ = ["NumericRecord", "_is_numeric_leaf", "_NUMERIC_DTYPE_KINDS"]
@@ -257,16 +257,20 @@ class NumericRecord(Record):
     # -- Conversion back to native backends --------------------------------
 
     @property
-    def aux(self) -> dict[str, tuple[AuxHooks, Any]] | None:
-        """Captured backend metadata, keyed by field name (or ``None``).
+    def aux(self) -> dict[str, Any] | None:
+        """Captured backend metadata blobs, keyed by field name (or ``None``).
 
-        Each entry is an ``(AuxHooks, aux_blob)`` pair captured from the
-        original leaf at construction. Fields whose leaf type wasn't in
-        the registry (plain numpy / jax / Python scalars) are absent.
-        Treat the inner tuple shape as implementation detail — call
-        :meth:`to_native` to materialise the original backends.
+        Each entry is the opaque ``aux_blob`` returned by the registered
+        ``capture`` hook for that field's original leaf type. Fields whose
+        leaf type wasn't in the registry (plain numpy / jax / Python
+        scalars) are absent.
+
+        The hook pair is intentionally not exposed here — call
+        :meth:`to_native` to materialise the original backend objects.
         """
-        return self._aux
+        if self._aux is None:
+            return None
+        return {name: blob for name, (_hooks, blob) in self._aux.items()}
 
     def to_native(self) -> Record:
         """Restore each leaf to its original backend type, returning a :class:`Record`.

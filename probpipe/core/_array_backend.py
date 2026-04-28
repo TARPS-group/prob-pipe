@@ -34,8 +34,9 @@ only handles round-trip metadata.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 import jax
 import numpy as np
@@ -105,11 +106,24 @@ def aux_for(obj: Any) -> AuxHooks | None:
 
     Walks the MRO of ``type(obj)`` so subclass instances pick up
     base-class registrations.
+
+    Notes
+    -----
+    Exact-type lookup is checked before the MRO walk so the common
+    ``np.ndarray`` / ``jax.Array`` leaves on the
+    ``NumericRecord.__init__`` / pytree-unflatten hot path skip a
+    multi-step MRO traversal.
     """
     if not aux_registry:
         return None
-    for cls in type(obj).__mro__:
-        hooks = aux_registry.get(cls)
+    cls = type(obj)
+    # Exact-type fast path — covers the common case where the
+    # registered key is the leaf's concrete class.
+    hooks = aux_registry.get(cls)
+    if hooks is not None:
+        return hooks
+    for base in cls.__mro__[1:]:
+        hooks = aux_registry.get(base)
         if hooks is not None:
             return hooks
     return None
@@ -135,11 +149,12 @@ def _register_xarray() -> None:
         # Capture each coord's full ``(dims, values, attrs)`` triple so
         # multi-dim coords and per-coord attrs survive the round-trip
         # — not just the values aligned with the coord's own name.
+        # ``v.values`` is already a ``np.ndarray``; no need to re-wrap.
         coords: dict[str, dict[str, Any]] = {}
         for k, v in leaf.coords.items():
             coords[k] = {
                 "dims": tuple(v.dims),
-                "values": np.asarray(v.values),
+                "values": v.values,
                 "attrs": dict(v.attrs),
             }
         return {
@@ -150,19 +165,14 @@ def _register_xarray() -> None:
         }
 
     def _restore(arr: jax.Array, aux: dict[str, Any]) -> "xr.DataArray":
-        coords_blob = aux["coords"]
-        # Rebuild each coord as a ``(dims, values)``-or-``DataArray``
-        # entry so xarray sees the original dims and attrs. Backwards
-        # compatible with the old ``{name: values}`` blob shape via
-        # the ``isinstance`` guard.
-        coords: dict[str, Any] = {}
-        for k, v in coords_blob.items():
-            if isinstance(v, dict) and "values" in v:
-                coords[k] = xr.DataArray(
-                    v["values"], dims=v["dims"], attrs=v.get("attrs", {}),
-                )
-            else:  # legacy blob shape
-                coords[k] = v
+        # Rebuild each coord as a ``DataArray(values, dims=…, attrs=…)``
+        # so xarray sees the original dims and attrs.
+        coords = {
+            k: xr.DataArray(
+                v["values"], dims=v["dims"], attrs=v.get("attrs", {}),
+            )
+            for k, v in aux["coords"].items()
+        }
         return xr.DataArray(
             np.asarray(arr),
             dims=aux["dims"],
@@ -178,6 +188,15 @@ def _register_pandas() -> None:
     """Register the built-in ``pandas.Series`` and ``pandas.DataFrame`` aux hooks.
 
     No-op when pandas isn't importable.
+
+    Notes
+    -----
+    The captured aux blob keeps live ``pandas.Index`` / ``columns`` /
+    ``dtype`` objects rather than copies. That's intentional for the
+    in-memory round-trip semantics, but it means a ``NumericRecord.aux``
+    dict containing pandas entries is not pickle-portable to a process
+    that lacks pandas — unpickling will fail to reconstruct the
+    ``Index`` type.
     """
     try:
         import pandas as pd
