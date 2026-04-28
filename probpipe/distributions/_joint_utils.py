@@ -85,11 +85,15 @@ def _component_key_paths(components) -> tuple:
     """Extract leaf key paths from a pytree of ArrayDistributions.
 
     For a flat dict ``{"x": Normal, "y": MVN}``, returns
-    ``("x", "y")`` --- plain strings for backward compatibility.
+    ``("x", "y")`` in dict insertion order --- plain strings for
+    backward compatibility.
 
     For a nested dict ``{"g": {"a": Normal}, "b": MVN}``, returns
-    ``(("b",), ("g", "a"))`` --- tuples of strings in JAX's canonical
-    traversal order (sorted dict keys, depth-first).
+    ``(("b",), ("g", "a"))`` --- tuples of strings in JAX's
+    ``tree_leaves_with_path`` traversal order. Note: JAX sorts dict
+    keys at each level, so nested key paths do not follow the
+    ``Record`` family's insertion-order convention; flat-dict callers
+    do.
 
     Parameters
     ----------

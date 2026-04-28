@@ -16,11 +16,20 @@ from probpipe import Normal, Provenance, Record, provenance_ancestors
 class TestConstruction:
     def test_kwargs(self):
         v = Record(r=1.8, K=70.0, phi=10.0)
-        assert v.fields == ("K", "phi", "r")  # sorted
+        assert v.fields == ("r", "K", "phi")  # insertion order
 
     def test_dict_positional(self):
         v = Record({"a": 1.0, "b": 2.0})
         assert v.fields == ("a", "b")
+
+    def test_insertion_order_preserved(self):
+        v = Record(z=1.0, a=2.0, m=3.0)
+        # Insertion order, NOT alphabetical.
+        assert v.fields == ("z", "a", "m")
+
+    def test_slash_in_field_name_rejected(self):
+        with pytest.raises(ValueError, match="must not contain '/'"):
+            Record(**{"a/b": 1.0})
 
     def test_dict_and_kwargs_raises(self):
         with pytest.raises(ValueError, match="Cannot pass both"):
@@ -81,12 +90,36 @@ class TestFieldAccess:
     def test_item(self, v):
         np.testing.assert_allclose(float(v["K"]), 70.0, rtol=1e-5)
 
-    def test_key_path(self):
+    def test_key_path_tuple(self):
         v = Record(params=Record(r=1.8, K=70.0), obs=Record(y=np.zeros(5)))
         np.testing.assert_allclose(float(v["params", "r"]), 1.8, rtol=1e-5)
 
+    def test_key_path_string(self):
+        v = Record(params=Record(r=1.8, K=70.0), obs=Record(y=np.zeros(5)))
+        np.testing.assert_allclose(float(v["params/r"]), 1.8, rtol=1e-5)
+
+    def test_key_path_string_three_levels(self):
+        v = Record(a=Record(b=Record(c=42.0)))
+        assert v["a/b/c"] == 42.0
+
+    def test_path_in_membership(self):
+        v = Record(params=Record(r=1.8, K=70.0))
+        assert "params/r" in v
+        assert "params/missing" not in v
+        assert "missing/r" not in v
+
+    def test_path_through_non_record_raises_clear_keyerror(self):
+        """Descending past a non-Record leaf via path syntax must raise
+        ``KeyError`` with a path-aware message — not a numpy
+        ``IndexError`` (regression for PR-A review finding #5)."""
+        v = Record(a=np.array([1.0, 2.0]))
+        with pytest.raises(KeyError, match="non-Record"):
+            v["a/b"]
+        # __contains__ swallows the same case to False.
+        assert "a/b" not in v
+
     def test_fields(self, v):
-        assert v.fields == ("K", "phi", "r")
+        assert v.fields == ("r", "K", "phi")
 
     def test_len(self, v):
         assert len(v) == 3
@@ -96,15 +129,15 @@ class TestFieldAccess:
         assert "missing" not in v
 
     def test_iter(self, v):
-        assert list(v) == ["K", "phi", "r"]
+        assert list(v) == ["r", "K", "phi"]
 
     def test_items(self, v):
         items = list(v.items())
         assert len(items) == 3
-        assert items[0][0] == "K"
+        assert items[0][0] == "r"
 
     def test_keys(self, v):
-        assert list(v.keys()) == ["K", "phi", "r"]
+        assert list(v.keys()) == ["r", "K", "phi"]
 
     def test_values_iter(self, v):
         vals = list(v.values())
@@ -375,64 +408,44 @@ class TestConversion:
         assert isinstance(d["inner"], dict)
         assert d["inner"]["x"] == 1.0
 
-    def test_to_datatree(self):
-        xr = pytest.importorskip("xarray")
-        v = Record(x=np.array([1.0, 2.0]), y=np.array(3.0))
-        dt = v.to_datatree()
-        np.testing.assert_allclose(dt["/x"]["x"].values, [1.0, 2.0])
-        np.testing.assert_allclose(float(dt["/y"]["y"].values), 3.0)
+    def test_to_numeric_returns_numeric_record(self):
+        from probpipe import NumericRecord
+        v = Record(a=1.0, b=jnp.array([2.0, 3.0]))
+        nr = v.to_numeric()
+        assert isinstance(nr, NumericRecord)
+        assert nr.fields == ("a", "b")
+        np.testing.assert_array_equal(np.asarray(nr["b"]), [2.0, 3.0])
 
-    def test_to_datatree_preserves_xarray_coords(self):
-        xr = pytest.importorskip("xarray")
-        da = xr.DataArray(
-            [1.0, 2.0, 3.0], dims=["time"],
-            coords={"time": [10, 20, 30]},
-        )
-        v = Record(y=da)
-        dt = v.to_datatree()
-        y_out = dt["/y"]["y"]
-        np.testing.assert_array_equal(y_out.coords["time"].values, [10, 20, 30])
-
-    def test_to_datatree_loses_coords_when_leaf_converted(self):
-        """Coord fidelity is only as good as the leaf survives transforms.
-
-        If the user applies a function that converts the leaf to a plain
-        JAX array (e.g., ``jnp.asarray``), the xarray structure is gone
-        and ``to_datatree`` wraps it as a bare DataArray.
+    def test_to_numeric_to_native_round_trip_xarray(self):
+        """xarray dims / coords / attrs survive the ``Record`` round-trip
+        via the aux registry (the migration replacement for the old
+        ``to_datatree`` / ``from_datatree`` pair).
         """
         xr = pytest.importorskip("xarray")
         da = xr.DataArray(
             [1.0, 2.0, 3.0], dims=["time"], coords={"time": [10, 20, 30]},
+            attrs={"units": "m"},
         )
-        v = Record(y=da)
-        # A real numeric transform: materialize to JAX array.
-        v_t = v.map(lambda x: jnp.asarray(x))
-        dt = v_t.to_datatree()
-        assert "time" not in dt["/y"]["y"].coords
+        back = Record(y=da).to_numeric().to_native()
+        assert back["y"].dims == ("time",)
+        np.testing.assert_array_equal(back["y"].coords["time"].values, [10, 20, 30])
+        assert back["y"].attrs == {"units": "m"}
 
-    def test_from_datatree_roundtrip(self):
-        xr = pytest.importorskip("xarray")
-        da = xr.DataArray(
-            [1.0, 2.0, 3.0], dims=["time"],
-            coords={"time": [10, 20, 30]},
-        )
-        ds = xr.Dataset({"y": da})
-        dt = xr.DataTree.from_dict({"/root": ds})
-        v = Record.from_datatree(dt["root"])
-        assert "y" in v
-        np.testing.assert_allclose(np.asarray(v["y"]), [1.0, 2.0, 3.0])
-
-    def test_from_datatree_nested(self):
-        """from_datatree reconstructs nested Record from child groups."""
-        xr = pytest.importorskip("xarray")
-        inner = Record(a=np.array(1.0), b=np.array(2.0))
-        outer = Record(params=inner, z=np.array(3.0))
-        dt = outer.to_datatree()
-        roundtripped = Record.from_datatree(dt)
-        assert isinstance(roundtripped["params"], Record)
-        np.testing.assert_allclose(float(np.asarray(roundtripped["params"]["a"])), 1.0)
-        np.testing.assert_allclose(float(np.asarray(roundtripped["params"]["b"])), 2.0)
-        np.testing.assert_allclose(float(np.asarray(roundtripped["z"])), 3.0)
+    def test_to_numeric_recurses_into_nested_records(self):
+        """``to_numeric()`` and ``NumericRecord.from_record()`` both
+        recurse into nested non-NumericRecord children (regression for
+        the divergence flagged in PR-A review)."""
+        from probpipe import NumericRecord
+        outer = Record(inner=Record(a=1.0), z=2.0)
+        nr = outer.to_numeric()
+        assert isinstance(nr, NumericRecord)
+        assert isinstance(nr["inner"], NumericRecord)
+        assert nr["inner", "a"] == 1.0
+        # Equivalent to the from_record path.
+        nr2 = NumericRecord.from_record(outer)
+        assert nr.fields == nr2.fields
+        for field in nr.fields:
+            assert type(nr[field]) is type(nr2[field])
 
 
 # ---------------------------------------------------------------------------

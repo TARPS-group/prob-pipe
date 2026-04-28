@@ -255,7 +255,7 @@ class TestNumericRecordArrayFlatten:
             template=tpl,
         )
         flat = nra.flatten()
-        # a comes first (sorted), then b
+        # Template insertion order: a first, then b.
         np.testing.assert_allclose(flat[0], [10.0, 1.0, 2.0])
         np.testing.assert_allclose(flat[1], [20.0, 3.0, 4.0])
 

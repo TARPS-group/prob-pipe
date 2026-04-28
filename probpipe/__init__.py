@@ -89,6 +89,11 @@ from probpipe.distributions import (
 from probpipe.core.record import Record, RecordTemplate, NumericRecordTemplate
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._record_array import RecordArray, NumericRecordArray
+from probpipe.core._array_backend import (
+    AuxHooks,
+    aux_for,
+    register_aux,
+)
 from probpipe.core.config import WorkflowKind, prefect_config
 from probpipe.core.node import WorkflowFunction, Module, workflow_function, workflow_method, abstract_workflow_method
 from probpipe.core.provenance import Provenance, provenance_ancestors, provenance_dag
@@ -151,6 +156,10 @@ __all__ = [
     "NumericRecord",
     "RecordArray",
     "NumericRecordArray",
+    # Array backend / aux registry
+    "AuxHooks",
+    "aux_for",
+    "register_aux",
     # Weights
     "Weights",
     # Base classes

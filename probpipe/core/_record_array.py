@@ -58,7 +58,7 @@ class RecordArray(Record):
         Structural description of each element.
     name : str, optional
         Human-readable name for provenance / introspection. Defaults
-        to ``"{class_name}({sorted field list})"``.
+        to ``"{class_name}({field list in template order})"``.
     **fields
         Named values, each with shape ``(*batch_shape, *leaf_shape)``.
 
@@ -94,7 +94,11 @@ class RecordArray(Record):
                 f"Field names {sorted(fields)} do not match template "
                 f"fields {sorted(template.fields)}"
             )
-        store = OrderedDict(sorted(fields.items()))
+        # Reorder to match the template so iteration order is canonical
+        # regardless of kwarg order.
+        store: "OrderedDict[str, Any]" = OrderedDict(
+            (name, fields[name]) for name in template.fields
+        )
         # Subclass validation hook. Runs after sort / name-check so
         # subclasses (e.g. NumericRecordArray) see a canonicalised view
         # of the leaves. Raises from ``_validate_fields`` propagate.
@@ -124,8 +128,8 @@ class RecordArray(Record):
         leaves, matching the permissive storage policy of ``Record``.
 
         Subclasses may return a new ``OrderedDict`` with the same keys
-        (in the same sorted order) and optionally coerced values, or
-        raise ``TypeError`` / ``ValueError`` on invalid input.
+        (in template order) and optionally coerced values, or raise
+        ``TypeError`` / ``ValueError`` on invalid input.
         """
         return store
 
@@ -256,6 +260,13 @@ class RecordArray(Record):
             Records with consistent field structure.
         template : RecordTemplate, optional
             If not provided, inferred from the first record.
+
+        Notes
+        -----
+        Any backend metadata captured on the source ``NumericRecord``
+        instances (xarray dims / coords, pandas index) is dropped — the
+        stacked leaves are plain ``jax.Array`` objects. ``RecordArray``
+        does not currently carry per-row aux.
         """
         if not records:
             raise ValueError("Cannot stack empty list of Records")

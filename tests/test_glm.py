@@ -188,9 +188,9 @@ class TestGLMLikelihoodWithValues:
         np.testing.assert_allclose(ll_v, ll_raw, rtol=1e-6)
 
     def test_coerce_multi_field_values_stacks(self, poisson_lik):
-        """Multi-field Record are stacked into a flat vector (sorted field order)."""
+        """Multi-field Record are stacked into a flat vector (insertion order)."""
         params_v = Record(intercept=jnp.array(1.0), slope=jnp.array(0.5))
-        params_raw = jnp.array([1.0, 0.5])  # intercept, slope (sorted)
+        params_raw = jnp.array([1.0, 0.5])  # intercept, slope (insertion order)
         data = jnp.ones(20)
         ll_v = float(poisson_lik.log_likelihood(params_v, data))
         ll_raw = float(poisson_lik.log_likelihood(params_raw, data))

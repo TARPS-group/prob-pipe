@@ -88,10 +88,10 @@ class TestProductDistribution:
     def test_fields(self, joint_xy):
         assert joint_xy.fields == ("x", "y")
 
-    def test_fields_sorted(self, normal_x, normal_y):
+    def test_fields_insertion_order(self, normal_x, normal_y):
         joint = ProductDistribution(y=normal_y, x=normal_x)
-        # RecordDistribution stores fields in sorted order
-        assert joint.fields == ("x", "y")
+        # Insertion order is preserved (y was passed first).
+        assert joint.fields == ("y", "x")
 
     def test_sample_returns_values(self, joint_xy):
         key = jax.random.PRNGKey(0)

@@ -178,7 +178,7 @@ full public API surface.
 |-------------|-------------|
 | `Distribution[T]` | Generic base parameterized by value type; provides `record_template` and `auxiliary` properties |
 | `Record` | Named, immutable, JAX-pytree container for structured non-random values; leaves stored verbatim (no coercion); `select()` for workflow function splatting |
-| `NumericRecord` (subclass of `Record`) | Adds numeric-leaf validation at construction plus `flatten` / `unflatten` / `flat_size`; coerces scalar / numpy leaves to `jnp.ndarray` |
+| `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is a `jax.Array` (constructor coerces via `jnp.asarray`). Adds `flatten` / `unflatten` / `flat_size`. Captures backend metadata (xarray dims/coords, pandas index) via the aux registry; `to_native()` reverses the conversion to a permissive `Record`. `Record.to_numeric()` is the symmetric forward path. |
 | `RecordArray` | Batch of `Record` elements with a `RecordTemplate`; integer index → element, field index → batched array |
 | `NumericRecordArray` (subclass of `RecordArray`) | Batch of `NumericRecord` elements; adds `flatten` / `mean` / `var` |
 | `RecordTemplate` | Structural skeleton (field names, per-field shapes or `None`); enables `NumericRecord.unflatten` without an example instance |
@@ -241,6 +241,34 @@ priorities:
 When adding a new converter, choose a priority that reflects its
 specificity – higher priority means it is tried first. Protocol-level
 converters should be above concrete-type converters.
+
+### Aux registry
+
+The `aux_registry` in `probpipe.core._array_backend` is a flat
+`dict[type, AuxHooks]` mapping a leaf type to a `(capture, restore)`
+pair. It is used only for round-tripping backend-specific metadata
+across the `Record` ↔ `NumericRecord` boundary — `jnp.asarray` drops
+xarray dims/coords/attrs and pandas index/columns/dtypes, and the
+aux registry restores them.
+
+```python
+from probpipe import register_aux
+
+register_aux(
+    MyArrayLike,
+    capture=lambda leaf: {"label": leaf.label},
+    restore=lambda arr, aux: MyArrayLike(arr, label=aux["label"]),
+)
+```
+
+Built-in registrations cover `xarray.DataArray`, `pandas.Series`,
+and `pandas.DataFrame`. Lookup walks the MRO of `type(obj)`, so
+registering a base class also covers its subclasses.
+
+This registry is **not** a behavioural-dispatch hierarchy — it has
+no priority system, no feasibility check, no `execute()`. Use
+`MethodRegistry` (inference) or `ConverterRegistry` (distribution
+conversion) when behaviour dispatch is needed.
 
 ### Generic vs array-specific pattern
 

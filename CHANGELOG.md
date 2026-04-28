@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+
+- **`Record` field ordering is now insertion-order**, not alphabetical.
+  ``Record(z=1, a=2)`` now iterates ``("z", "a")``. Same change applies
+  to ``RecordTemplate``, ``RecordArray``, and every Record-based
+  distribution that derives ``fields`` from the underlying store.
+  Previous alphabetical ordering was an accident of
+  ``OrderedDict(sorted(...))``.
+- **`/` is reserved in `Record` and `RecordTemplate` field names.**
+  Construction-time ``ValueError``. Used as the slash-delimited path
+  separator in ``record["params/intercept"]`` style access.
+- **`Record.to_datatree()` / `Record.from_datatree(...)` removed.**
+  Use ``record.to_numeric().to_native()`` for a metadata-preserving
+  round-trip via the aux registry, or ``xr.DataTree`` directly if you
+  specifically want a DataTree.
+- **`NumericRecord(...)` (and `Record.to_numeric()`) raise `TypeError`
+  on non-coercible leaves** (strings, opaque objects). Today's
+  implicit failure inside ``NumericRecord(...)`` becomes an explicit,
+  well-messaged error at construction time.
+- **`RecordTemplate.leaf_shapes` keys for nested templates use `/`**
+  instead of ``.`` (e.g. ``"physics/force"`` instead of
+  ``"physics.force"``) for consistency with ``Record["a/b"]`` path
+  access.
+
+### Added
+
+- **`Record.to_numeric()` / `NumericRecord.to_native()`** — explicit
+  conversion to / from ProbPipe's native JAX-array form, with metadata
+  round-trip via the aux registry.
+- **`probpipe.AuxHooks` / `register_aux(...)` / `aux_for(...)` /
+  `aux_registry`** in :mod:`probpipe.core._array_backend` — a registry
+  of ``(capture, restore)`` hooks for round-tripping backend-specific
+  metadata across the ``Record`` ↔ ``NumericRecord`` boundary.
+  Built-in registrations (gated on import) cover
+  ``xarray.DataArray`` (dims / coords / attrs / name),
+  ``pandas.Series`` (index / name / dtype), and ``pandas.DataFrame``
+  (index / columns / dtypes).
+- **`NumericRecord.aux`** property — captured backend metadata, keyed
+  by field name. ``None`` when no field had a registered hook.
+- **Slash-delimited path access** on nested ``Record``s:
+  ``record["params/intercept"]`` is sugar for
+  ``record["params", "intercept"]``. ``"a/b/c" in record`` works the
+  same way.
+
 ### Changed
 
 - **dtype handling** now follows JAX's rules. Distributions, weights, and

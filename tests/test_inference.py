@@ -145,12 +145,13 @@ class TestApproximateDistributionValuesTemplate:
     def test_draws_returns_values(self, posterior_with_template):
         draws = posterior_with_template.draws()
         assert isinstance(draws, (Record, RecordArray))
-        assert draws.fields == ("K", "phi", "r")
+        # Insertion order from the template fixture: r, K, phi.
+        assert draws.fields == ("r", "K", "phi")
         assert draws["r"].shape == (100,)
 
     def test_draws_has_correct_fields(self, posterior_with_template):
         draws = posterior_with_template.draws()
-        assert draws.fields == ("K", "phi", "r")
+        assert draws.fields == ("r", "K", "phi")
 
     def test_draws_field_shapes(self, posterior_with_template):
         draws = posterior_with_template.draws()
@@ -161,8 +162,8 @@ class TestApproximateDistributionValuesTemplate:
     def test_draws_values_match_raw(self, posterior_with_template):
         """Named draws must contain the same data as raw flat draws."""
         raw = posterior_with_template.draws()
-        # Reconstruct flat from named
-        flat = jnp.stack([raw["K"], raw["phi"], raw["r"]], axis=-1)  # sorted order
+        # Reconstruct flat from named (template insertion order).
+        flat = jnp.stack([raw["r"], raw["K"], raw["phi"]], axis=-1)
         chain = posterior_with_template.chains[0]
         np.testing.assert_allclose(flat, chain, atol=1e-6)
 
@@ -736,7 +737,7 @@ class TestRecordDistributionProperties:
         from probpipe.core._record_distribution import RecordDistribution
         v = Record(K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
         flat = RecordDistribution.flatten_value(posterior, v)
-        np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])  # sorted: K, phi, r
+        np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])  # insertion: K, phi, r
         v2 = RecordDistribution.unflatten_value(posterior, flat)
         assert isinstance(v2, Record)
         np.testing.assert_allclose(float(v2["K"]), 1.0)

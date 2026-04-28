@@ -99,14 +99,16 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         return ("parameters", "data")
 
     @property
-    def _prior_fields(self) -> frozenset[str]:
+    def _prior_fields(self) -> tuple[str, ...]:
+        """Prior field names in template (insertion) order."""
         tpl = self._prior.record_template
-        return frozenset(tpl.fields) if tpl is not None else frozenset()
+        return tpl.fields if tpl is not None else ()
 
     @property
-    def _data_fields(self) -> frozenset[str]:
+    def _data_fields(self) -> tuple[str, ...]:
+        """Likelihood data field names in template (insertion) order."""
         tpl = getattr(self._likelihood, 'data_template', None)
-        return frozenset(tpl.fields) if tpl is not None else frozenset()
+        return tpl.fields if tpl is not None else ()
 
     def __getitem__(self, key: str) -> Distribution | Likelihood:
         if key in self._data_fields:
@@ -128,7 +130,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
     @property
     def parameter_names(self) -> tuple[str, ...]:
         if self._prior_fields:
-            return tuple(sorted(self._prior_fields))
+            return tuple(self._prior_fields)
         return ("parameters",)
 
     # -- SupportsLogProb interface -----------------------------------------

@@ -40,7 +40,7 @@ from probpipe import (
 from probpipe.modeling import Likelihood
 
 # 1. Define a model with a named prior. ``params`` arrives flattened
-#    in sorted-field order (here ``intercept`` then ``slope``).
+#    in insertion order (here ``intercept`` then ``slope``).
 class LinearLikelihood(Likelihood):
     def log_likelihood(self, params, data):
         x, y = data[:, 0], data[:, 1]
