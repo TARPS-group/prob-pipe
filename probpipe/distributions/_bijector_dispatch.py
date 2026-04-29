@@ -64,7 +64,7 @@ from ..core.constraints import (
     _UnitInterval,
 )
 
-__all__ = ["bijector_for", "register_bijector", "unregister_bijector"]
+__all__ = ["bijector_for", "register_bijector"]
 
 
 # Factory takes the (parameterized) constraint instance and returns a bijector.
@@ -98,27 +98,13 @@ def register_bijector(
     Notes
     -----
     Re-registering an existing key silently overwrites the previous
-    factory.  Use :func:`unregister_bijector` to remove a registration
-    (e.g. to restore a default after a temporary override, typically in
-    tests).
+    factory.
 
     Avoid registering against the base :class:`Constraint` class itself:
     every constraint shares it in their MRO, so a base-class registration
     would catch every unmatched constraint.
     """
     _CONSTRAINT_BIJECTOR_REGISTRY[key] = factory
-
-
-def unregister_bijector(key: type | Constraint) -> None:
-    """Remove a previously registered bijector factory.
-
-    Parameters
-    ----------
-    key : type or Constraint
-        The same key passed to :func:`register_bijector`.  No-op if the
-        key is not currently registered.
-    """
-    _CONSTRAINT_BIJECTOR_REGISTRY.pop(key, None)
 
 
 def bijector_for(constraint: Constraint) -> tfb.Bijector:
@@ -147,9 +133,10 @@ def bijector_for(constraint: Constraint) -> tfb.Bijector:
         constraint is one for which no smooth bijector exists (discrete
         constraints, the unit sphere).
     """
-    # 1. Instance match.  Wrapped in try/except because parameterized
-    # constraints may carry unhashable params (e.g., a JAX array as
-    # ``low``); fall through to type lookup in that case.
+    # 1. Instance match.  ``Constraint.__hash__`` hashes
+    # ``(type, sorted-__dict__-items)``, which raises ``TypeError`` when
+    # ``__dict__`` contains an unhashable value (e.g., a JAX array as
+    # ``low``); catch that and fall through to type lookup.
     try:
         if constraint in _CONSTRAINT_BIJECTOR_REGISTRY:
             return _CONSTRAINT_BIJECTOR_REGISTRY[constraint](constraint)
@@ -162,7 +149,7 @@ def bijector_for(constraint: Constraint) -> tfb.Bijector:
             return _CONSTRAINT_BIJECTOR_REGISTRY[cls](constraint)
 
     raise NotImplementedError(
-        f"No bijector registered for {type(constraint).__name__!r}. "
+        f"No bijector registered for {constraint!r}. "
         f"Use ``probpipe.register_bijector`` to add one."
     )
 
@@ -200,7 +187,7 @@ register_bijector(
 def _no_smooth_bijector(reason: str) -> BijectorFactory:
     def _raise(c: Constraint) -> tfb.Bijector:
         raise NotImplementedError(
-            f"{type(c).__name__} has no canonical bijector: {reason}"
+            f"{c!r} has no canonical bijector: {reason}"
         )
     return _raise
 

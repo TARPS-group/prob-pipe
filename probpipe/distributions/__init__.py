@@ -26,7 +26,6 @@ from .transformed import TransformedDistribution
 from ._bijector_dispatch import (
     bijector_for,
     register_bijector,
-    unregister_bijector,
 )
 from .joint import (
     ProductDistribution,
@@ -77,7 +76,6 @@ __all__ = [
     "TransformedDistribution",
     "bijector_for",
     "register_bijector",
-    "unregister_bijector",
     # Joint
     "ProductDistribution",
     "SequentialJointDistribution",
