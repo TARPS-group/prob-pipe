@@ -52,8 +52,7 @@ Constraints with no canonical smooth bijector (`sphere`, `boolean`,
 `register_bijector` is the extension point for custom Constraint
 subclasses or for overriding defaults (e.g., preferring `Softplus`
 over `Exp` for `positive`). Instance registrations take precedence
-over type registrations. Use `unregister_bijector` to remove a
-registration (e.g. to restore a default after a temporary override).
+over type registrations.
 
 !!! note "Round-trip with `TransformedDistribution.support`"
 
@@ -71,5 +70,3 @@ registration (e.g. to restore a default after a temporary override).
 ::: probpipe.bijector_for
 
 ::: probpipe.register_bijector
-
-::: probpipe.unregister_bijector

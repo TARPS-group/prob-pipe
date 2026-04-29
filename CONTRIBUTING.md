@@ -284,10 +284,9 @@ Lookup precedence is:
 2. **Type match via MRO** — most-specific subclass first.
 3. `NotImplementedError` if neither matches.
 
-Use `register_bijector(key, factory)` to add or override a default
-and `unregister_bijector(key)` to remove a registration (mainly for
-test cleanup; downstream code typically just overwrites). The
-registry mirrors PyTorch's `constraint_registry` semantics.
+Use `register_bijector(key, factory)` to add or override a default;
+re-registering the same key silently overwrites. The registry
+mirrors PyTorch's `constraint_registry` semantics.
 
 Like the aux registry, this is **not** a behavioural-dispatch
 hierarchy: there is no priority system or feasibility check. Reach

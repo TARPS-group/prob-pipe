@@ -76,7 +76,6 @@ from probpipe.distributions import (
     TransformedDistribution,
     bijector_for,
     register_bijector,
-    unregister_bijector,
     # Joint
     ProductDistribution,
     SequentialJointDistribution,
@@ -224,7 +223,6 @@ __all__ = [
     "TransformedDistribution",
     "bijector_for",
     "register_bijector",
-    "unregister_bijector",
     # Joint
     "ProductDistribution",
     "SequentialJointDistribution",

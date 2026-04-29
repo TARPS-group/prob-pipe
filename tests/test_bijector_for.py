@@ -23,9 +23,27 @@ from probpipe import (
     simplex,
     sphere,
     unit_interval,
-    unregister_bijector,
 )
 from probpipe.core.constraints import Constraint
+from probpipe.distributions._bijector_dispatch import (
+    _CONSTRAINT_BIJECTOR_REGISTRY,
+)
+
+
+@pytest.fixture
+def registry_snapshot():
+    """Restore ``_CONSTRAINT_BIJECTOR_REGISTRY`` to its pre-test state.
+
+    The bijector registry is module-level mutable state; tests that
+    register custom factories use this fixture to roll back so they
+    don't leak into other tests in the same process.
+    """
+    snapshot = dict(_CONSTRAINT_BIJECTOR_REGISTRY)
+    try:
+        yield
+    finally:
+        _CONSTRAINT_BIJECTOR_REGISTRY.clear()
+        _CONSTRAINT_BIJECTOR_REGISTRY.update(snapshot)
 
 
 # ---------------------------------------------------------------------------
@@ -227,33 +245,16 @@ class TestIntegration:
 
 
 class TestCustomization:
-    def test_register_custom_constraint(self):
+    def test_register_custom_constraint(self, registry_snapshot):
         class _MyPositive(Constraint):
             def check(self, value):
                 return jnp.asarray(value) > 0
 
         register_bijector(_MyPositive, lambda c: tfb.Softplus())
-        try:
-            bij = bijector_for(_MyPositive())
-            assert isinstance(bij, tfb.Softplus)
-        finally:
-            unregister_bijector(_MyPositive)
+        bij = bijector_for(_MyPositive())
+        assert isinstance(bij, tfb.Softplus)
 
-    def test_instance_override(self):
-        """Registering on a singleton overrides the type-level default,
-        and removing the override restores it."""
+    def test_instance_override(self, registry_snapshot):
+        """Registering on a singleton overrides the type-level default."""
         register_bijector(positive, lambda c: tfb.Softplus())
-        try:
-            assert isinstance(bijector_for(positive), tfb.Softplus)
-        finally:
-            unregister_bijector(positive)
-        # Restored: type-level Exp default is back.
-        assert isinstance(bijector_for(positive), tfb.Exp)
-
-    def test_unregister_is_noop_for_missing_key(self):
-        class _NotRegistered(Constraint):
-            def check(self, value):
-                return jnp.asarray(value) >= 0
-
-        # Should not raise.
-        unregister_bijector(_NotRegistered)
+        assert isinstance(bijector_for(positive), tfb.Softplus)
