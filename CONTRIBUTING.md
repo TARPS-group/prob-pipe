@@ -270,6 +270,31 @@ no priority system, no feasibility check, no `execute()`. Use
 `MethodRegistry` (inference) or `ConverterRegistry` (distribution
 conversion) when behaviour dispatch is needed.
 
+### Constraint → Bijector registry
+
+The `_CONSTRAINT_BIJECTOR_REGISTRY` in
+`probpipe.distributions._bijector_dispatch` is a flat
+`dict[type | Constraint, BijectorFactory]` mapping a `Constraint`
+subclass *or* a specific `Constraint` instance to a factory that
+returns a TFP bijector mapping ℝⁿ to that constraint's support.
+Lookup precedence is:
+
+1. **Exact instance match** — e.g., a registration on the singleton
+   `positive` overrides the type-level `_Positive` default.
+2. **Type match via MRO** — most-specific subclass first.
+3. `NotImplementedError` if neither matches.
+
+Use `register_bijector(key, factory)` to add or override a default
+and `unregister_bijector(key)` to remove a registration (mainly for
+test cleanup; downstream code typically just overwrites). The
+registry mirrors PyTorch's `constraint_registry` semantics.
+
+Like the aux registry, this is **not** a behavioural-dispatch
+hierarchy: there is no priority system or feasibility check. Reach
+for `MethodRegistry` / `ConverterRegistry` instead when dispatch
+needs to consider the input value, environment, or installed
+backends.
+
 ### Generic vs array-specific pattern
 
 Some distribution families have a generic base and an array-specific
