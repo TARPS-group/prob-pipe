@@ -281,7 +281,7 @@ class TestPredictiveCheckNonJax:
     def test_empirical_distribution_as_source(self):
         """Use an EmpiricalDistribution (non-parametric) as the source."""
         samples = jnp.array([0.5, 1.0, 1.5, 2.0, 2.5])
-        dist = EmpiricalDistribution(samples)
+        dist = EmpiricalDistribution(samples, name="x")
         lik = NumpyGaussianLikelihood(rng_seed=11)
 
         result = predictive_check(

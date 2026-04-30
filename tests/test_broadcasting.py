@@ -174,7 +174,7 @@ class TestBroadcastingEnumeration:
 
         samples = jnp.array([[1.0], [2.0], [3.0]])
         weights = jnp.array([0.2, 0.3, 0.5])
-        ed = EmpiricalDistribution(samples, weights)
+        ed = EmpiricalDistribution(samples, weights, name="x")
 
         w = WorkflowFunction(func=identity, n_broadcast_samples=100, vectorize="loop", seed=7)
         result = w(x=ed)
@@ -185,8 +185,8 @@ class TestBroadcastingEnumeration:
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
-        ed1 = EmpiricalDistribution(jnp.array([[1.0], [2.0]]))
-        ed2 = EmpiricalDistribution(jnp.array([[10.0], [20.0], [30.0]]))
+        ed1 = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), name="x")
+        ed2 = EmpiricalDistribution(jnp.array([[10.0], [20.0], [30.0]]), name="x")
 
         w = WorkflowFunction(func=add_them, n_broadcast_samples=100, vectorize="loop", seed=8)
         result = w(a=ed1, b=ed2)
@@ -197,9 +197,9 @@ class TestBroadcastingEnumeration:
         def sum_three(a: jnp.ndarray, b: jnp.ndarray, c: jnp.ndarray) -> jnp.ndarray:
             return a + b + c
 
-        ed_small = EmpiricalDistribution(jnp.array([[1.0], [2.0]]))          # n=2
-        ed_medium = EmpiricalDistribution(jnp.arange(5).reshape(-1, 1).astype(jnp.float32))  # n=5
-        ed_large = EmpiricalDistribution(jnp.arange(20).reshape(-1, 1).astype(jnp.float32))  # n=20
+        ed_small = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), name="x")          # n=2
+        ed_medium = EmpiricalDistribution(jnp.arange(5).reshape(-1, 1).astype(jnp.float32), name="x")  # n=5
+        ed_large = EmpiricalDistribution(jnp.arange(20).reshape(-1, 1).astype(jnp.float32), name="x")  # n=20
 
         w = WorkflowFunction(func=sum_three, n_broadcast_samples=50, vectorize="loop", seed=9)
         result = w(a=ed_small, b=ed_medium, c=ed_large)
@@ -210,7 +210,7 @@ class TestBroadcastingEnumeration:
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
-        ed = EmpiricalDistribution(jnp.array([[1.0], [2.0], [3.0]]))
+        ed = EmpiricalDistribution(jnp.array([[1.0], [2.0], [3.0]]), name="x")
         g = Normal(loc=0.0, scale=1.0, name="b")
 
         w = WorkflowFunction(func=add_them, n_broadcast_samples=30, vectorize="loop", seed=10)
@@ -224,7 +224,7 @@ class TestBroadcastingEnumeration:
             return x
 
         samples = jnp.array([[1.0], [2.0], [3.0]])
-        ed = EmpiricalDistribution(samples)
+        ed = EmpiricalDistribution(samples, name="x")
 
         w = WorkflowFunction(func=identity, n_broadcast_samples=100, vectorize="loop", seed=7)
         result = w(x=ed, include_inputs=True)
@@ -511,17 +511,19 @@ class TestVectorizationConsistency:
         def add_them(a, b):
             return a + b
 
-        ed1 = EmpiricalDistribution(jnp.array([[1.0], [2.0]]))
-        ed2 = EmpiricalDistribution(jnp.array([[10.0], [20.0], [30.0]]))
+        ed1 = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), name="x")
+        ed2 = EmpiricalDistribution(jnp.array([[10.0], [20.0], [30.0]]), name="x")
 
         results = {m: self._run(m, add_them, a=ed1, b=ed2) for m in self.VECTORIZE_MODES}
         # Same size (2 x 3 = 6) in every mode — regression guard.
         for mode, r in results.items():
             assert r.n == 6, f"{mode}: expected n=6, got {r.n}"
         # Same sample set (order may differ; compare sorted).
-        ref = sorted(results["loop"].samples.ravel().tolist())
+        def _samples_array(d):
+            return d.samples[d.samples.fields[0]]
+        ref = sorted(_samples_array(results["loop"]).ravel().tolist())
         for mode in ("auto", "jax"):
-            got = sorted(results[mode].samples.ravel().tolist())
+            got = sorted(_samples_array(results[mode]).ravel().tolist())
             np.testing.assert_allclose(
                 got, ref,
                 err_msg=f"{mode} samples diverged from loop: {got} vs {ref}",
@@ -537,11 +539,9 @@ class TestVectorizationConsistency:
             return a + b
 
         ed1 = EmpiricalDistribution(
-            jnp.array([[1.0], [2.0]]), weights=jnp.array([0.8, 0.2]),
-        )
+            jnp.array([[1.0], [2.0]]), weights=jnp.array([0.8, 0.2]), name="x")
         ed2 = EmpiricalDistribution(
-            jnp.array([[10.0], [20.0]]), weights=jnp.array([0.25, 0.75]),
-        )
+            jnp.array([[10.0], [20.0]]), weights=jnp.array([0.25, 0.75]), name="x")
         expected_weights = sorted([
             0.8 * 0.25, 0.8 * 0.75, 0.2 * 0.25, 0.2 * 0.75,
         ])
@@ -560,7 +560,7 @@ class TestVectorizationConsistency:
         def add_them(a, b):
             return a + b
 
-        ed = EmpiricalDistribution(jnp.array([[1.0], [2.0], [3.0]]))
+        ed = EmpiricalDistribution(jnp.array([[1.0], [2.0], [3.0]]), name="x")
         g = Normal(loc=0.0, scale=1.0, name="b")
 
         for mode in self.VECTORIZE_MODES:
@@ -577,8 +577,7 @@ class TestVectorizationConsistency:
             return x
 
         big = EmpiricalDistribution(
-            jnp.arange(200).reshape(-1, 1).astype(jnp.float32),
-        )
+            jnp.arange(200).reshape(-1, 1).astype(jnp.float32), name="x")
         for mode in self.VECTORIZE_MODES:
             r = self._run(mode, identity, x=big, n_broadcast_samples=20)
             assert r.n == 20, f"{mode}: expected n=20, got {r.n}"

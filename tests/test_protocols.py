@@ -12,7 +12,7 @@ from probpipe import (
     Categorical,
     MultivariateNormal,
     EmpiricalDistribution,
-    NumericEmpiricalDistribution,
+    RecordEmpiricalDistribution,
     BootstrapDistribution,
     TransformedDistribution,
     ProductDistribution,
@@ -44,7 +44,7 @@ def normal():
 @pytest.fixture
 def empirical():
     samples = jax.random.normal(jax.random.PRNGKey(0), (100, 2))
-    return EmpiricalDistribution(samples)
+    return EmpiricalDistribution(samples, name="x")
 
 
 @pytest.fixture
@@ -180,14 +180,14 @@ class TestSupportsMean:
 
     def test_empirical_generic_no_moments(self):
         """Non-numeric EmpiricalDistribution does not support moments."""
-        dist = EmpiricalDistribution(["a", "b", "c"])
+        dist = EmpiricalDistribution(["a", "b", "c"], name="x")
         assert not isinstance(dist, SupportsMean)
         assert not isinstance(dist, SupportsVariance)
         assert not isinstance(dist, SupportsCovariance)
 
     def test_array_empirical(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 2))
-        dist = NumericEmpiricalDistribution(samples)
+        dist = RecordEmpiricalDistribution(samples, name="x")
         assert isinstance(dist, SupportsMean)
         assert isinstance(dist, SupportsVariance)
         assert isinstance(dist, SupportsCovariance)
@@ -414,7 +414,7 @@ class TestSampleReturnTypeConvention:
                 a=Normal(loc=0.0, scale=1.0, name="a"),
                 b=Normal(loc=0.0, scale=1.0, name="b"),
             ),
-            NumericEmpiricalDistribution(jnp.arange(5.0)),
+            RecordEmpiricalDistribution(jnp.arange(5.0), name="x"),
             BootstrapDistribution(jnp.arange(5.0)),
         ]
         for d in distributions:
@@ -573,7 +573,10 @@ class TestJointEmpiricalDispatch:
         from probpipe import JointEmpirical, NumericJointEmpirical
         je = JointEmpirical(x=jnp.zeros((5, 2)), y=jnp.zeros(5))
         assert type(je) is NumericJointEmpirical
-        assert isinstance(je, SupportsLogProb)
+        # Empirical distributions deliberately do not claim
+        # SupportsLogProb (PR-B); use the converter registry for a
+        # density on top of empirical samples.
+        assert not isinstance(je, SupportsLogProb)
         assert isinstance(je, SupportsMean)
         assert isinstance(je, SupportsVariance)
 

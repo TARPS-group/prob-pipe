@@ -31,14 +31,18 @@ def initial():
 
 def shift_step(dist, offset):
     """Shift all samples by a scalar. Returns a bare Distribution."""
-    samples = dist.samples + offset
-    return EmpiricalDistribution(samples)
+    # ``dist.samples`` is a single-field NumericRecord; pull the field
+    # for raw-array arithmetic.
+    field = dist.samples.fields[0]
+    samples = dist.samples[field] + offset
+    return EmpiricalDistribution(samples, name=field)
 
 
 def provenance_step(dist, value):
     """A step that sets its own provenance."""
-    samples = dist.samples + value
-    new_dist = EmpiricalDistribution(samples, name="custom")
+    field = dist.samples.fields[0]
+    samples = dist.samples[field] + value
+    new_dist = EmpiricalDistribution(samples, name=field)
     new_dist.with_source(
         Provenance("custom_step", parents=(dist,), metadata={"value": value})
     )
@@ -70,8 +74,8 @@ class TestIterate:
     def test_values(self, initial):
         """Step results have correct sample values."""
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0])
-        assert jnp.allclose(dists[1].samples, jnp.ones((50, 2)))
-        assert jnp.allclose(dists[2].samples, jnp.full((50, 2), 3.0))
+        assert jnp.allclose(dists[1].samples[dists[1].samples.fields[0]], jnp.ones((50, 2)))
+        assert jnp.allclose(dists[2].samples[dists[2].samples.fields[0]], jnp.full((50, 2), 3.0))
 
     def test_provenance_auto_attach(self, initial):
         """Provenance is auto-attached when step function doesn't set it."""
@@ -101,7 +105,7 @@ class TestIterate:
         recorded = []
 
         def cb(i, dist):
-            recorded.append((i, float(dist.samples[0, 0])))
+            recorded.append((i, float(dist.samples[dist.samples.fields[0]][0, 0])))
 
         iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0, 3.0], callback=cb)
         assert len(recorded) == 3
@@ -139,7 +143,7 @@ class TestIterate:
     def test_final_is_last(self, initial):
         """dists[-1] is the final distribution."""
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0])
-        assert jnp.allclose(dists[-1].samples, jnp.full((50, 2), 3.0))
+        assert jnp.allclose(dists[-1].samples[dists[-1].samples.fields[0]], jnp.full((50, 2), 3.0))
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +182,7 @@ class TestWithConversion:
         def parametric_step(dist, shift):
             key = jax.random.PRNGKey(42)
             samples = jnp.asarray(pp_sample(dist, key=key, sample_shape=(50,))) + shift
-            return EmpiricalDistribution(samples)
+            return EmpiricalDistribution(samples, name="x")
 
         initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         step = with_conversion(parametric_step, MultivariateNormal)
@@ -202,7 +206,7 @@ class TestWithResampling:
 
     def test_no_resample_uniform(self):
         """Uniform weights -> no resampling (ESS = N)."""
-        initial = EmpiricalDistribution(jnp.zeros((100, 2)))
+        initial = EmpiricalDistribution(jnp.zeros((100, 2)), name="x")
         step = with_resampling(shift_step, ess_threshold=0.5)
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0])
         # No resampling occurred, so no "resample" provenance
@@ -215,9 +219,9 @@ class TestWithResampling:
         samples = jnp.arange(n * 2, dtype=jnp.float32).reshape(n, 2)
 
         def weighted_step(dist, inp):
-            return EmpiricalDistribution(samples, log_weights=log_w)
+            return EmpiricalDistribution(samples, log_weights=log_w, name="x")
 
-        initial = EmpiricalDistribution(jnp.zeros((n, 2)))
+        initial = EmpiricalDistribution(jnp.zeros((n, 2)), name="x")
         step = with_resampling(weighted_step, ess_threshold=0.5)
         dists = iterate(step_fn=step, initial=initial, inputs=[0.0])
         resampled = dists[-1]
@@ -230,9 +234,9 @@ class TestWithResampling:
         log_w = jnp.full(n, -100.0).at[0].set(0.0)
 
         def weighted_step(dist, inp):
-            return EmpiricalDistribution(jnp.zeros((n, 2)), log_weights=log_w)
+            return EmpiricalDistribution(jnp.zeros((n, 2)), log_weights=log_w, name="x")
 
-        initial = EmpiricalDistribution(jnp.zeros((n, 2)))
+        initial = EmpiricalDistribution(jnp.zeros((n, 2)), name="x")
         step = with_resampling(weighted_step, ess_threshold=0.5)
         dists = iterate(step_fn=step, initial=initial, inputs=[0.0])
         resampled = dists[-1]
@@ -258,9 +262,9 @@ class TestWithResampling:
         samples = jnp.arange(n * 2, dtype=jnp.float32).reshape(n, 2)
 
         def weighted_step(dist, inp):
-            return EmpiricalDistribution(samples, log_weights=log_w)
+            return EmpiricalDistribution(samples, log_weights=log_w, name="x")
 
-        initial = EmpiricalDistribution(jnp.zeros((n, 2)))
+        initial = EmpiricalDistribution(jnp.zeros((n, 2)), name="x")
 
         step1 = with_resampling(weighted_step, ess_threshold=0.5, seed=42)
         dists1 = iterate(step_fn=step1, initial=initial, inputs=[0.0, 0.0])
@@ -268,7 +272,7 @@ class TestWithResampling:
         step2 = with_resampling(weighted_step, ess_threshold=0.5, seed=42)
         dists2 = iterate(step_fn=step2, initial=initial, inputs=[0.0, 0.0])
 
-        assert jnp.allclose(dists1[1].samples, dists2[1].samples)
+        assert jnp.allclose(dists1[1].samples[dists1[1].samples.fields[0]], dists2[1].samples[dists2[1].samples.fields[0]])
         assert jnp.allclose(dists1[2].samples, dists2[2].samples)
 
 
@@ -283,7 +287,7 @@ def _mock_condition_fn(model, data, **kwargs):
     key = jax.random.PRNGKey(0)
     noise = jax.random.normal(key, shape=(50, data_mean.shape[0]))
     samples = data_mean[None, :] + noise * 0.1
-    return EmpiricalDistribution(samples)
+    return EmpiricalDistribution(samples, name="x")
 
 
 class _SimpleLikelihood:
@@ -357,7 +361,10 @@ class TestNestability:
     def test_nested_iterate(self, initial):
         """A step function can call iterate internally."""
         def inner_step(dist, value):
-            return EmpiricalDistribution(dist.samples + value)
+            field = dist.samples.fields[0]
+            return EmpiricalDistribution(
+                dist.samples[field] + value, name=field,
+            )
 
         def outer_step(dist, batch):
             """Each outer step runs an inner iterate loop."""

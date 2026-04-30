@@ -9,7 +9,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from ..core.distribution import NumericEmpiricalDistribution
+from ..core.distribution import RecordEmpiricalDistribution
 from ..core.node import workflow_function
 from ..core.protocols import SupportsSampling
 from ..custom_types import PRNGKey
@@ -74,7 +74,7 @@ def predictive_check[P, D](
     dict
         Always contains:
 
-        - ``"replicated_statistics"`` — ``NumericEmpiricalDistribution``
+        - ``"replicated_statistics"`` — ``RecordEmpiricalDistribution``
           over the test statistic values from replicated data.
 
         When *observed_data* is provided, also contains:
@@ -105,7 +105,7 @@ def predictive_check[P, D](
             n_samples, n_replications, key,
         )
 
-    replicated_dist = NumericEmpiricalDistribution(
+    replicated_dist = RecordEmpiricalDistribution(
         stats_array, name="replicated_statistics",
     )
 

@@ -181,9 +181,9 @@ class TestDistributionOnlyPath:
         def f(x: float) -> float:
             return x * 2
 
-        from probpipe.core._broadcast_distributions import _ArrayMarginal
+        from probpipe.core._broadcast_distributions import _RecordMarginal
         out = f(x=Normal(loc=2.0, scale=0.1, name="x"))
-        assert isinstance(out, _ArrayMarginal)
+        assert isinstance(out, _RecordMarginal)
         # Mean of 2 * N(2, 0.1) is ~4.
         from probpipe import mean as pmean
         assert abs(float(pmean(out)) - 4.0) < 0.1

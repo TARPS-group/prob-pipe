@@ -10,7 +10,7 @@ import probpipe.core.distribution as dist_mod
 from probpipe import (
     NumericRecord,
     NumericRecordDistribution,
-    NumericEmpiricalDistribution,
+    RecordEmpiricalDistribution,
     EmpiricalDistribution,
     BootstrapDistribution,
     Normal,
@@ -118,13 +118,13 @@ class TestExpectationReturnsDist:
 
     def test_empirical_exact_returns_array(self):
         """EmpiricalDistribution with num_evaluations=None is exact → Array."""
-        d = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
+        d = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
         result = expectation(d, lambda x: x)
         assert isinstance(result, NumericRecord)
 
     def test_empirical_subsample_returns_bootstrap(self):
         """EmpiricalDistribution with num_evaluations < n is approximate → Bootstrap."""
-        d = EmpiricalDistribution(jnp.arange(100.0))
+        d = EmpiricalDistribution(jnp.arange(100.0), name="x")
         key = jax.random.PRNGKey(0)
         result = expectation(d, lambda x: x, key=key, num_evaluations=10)
         assert isinstance(result, BootstrapDistribution)
@@ -256,42 +256,42 @@ class TestExpectationEmpirical:
 
     def test_uniform_mean(self):
         samples = jnp.array([1.0, 2.0, 3.0, 4.0])
-        d = EmpiricalDistribution(samples)
+        d = EmpiricalDistribution(samples, name="x")
         result = expectation(d, lambda x: x)
         np.testing.assert_allclose(float(result), 2.5, atol=1e-6)
 
     def test_weighted_mean(self):
         samples = jnp.array([0.0, 10.0])
         weights = jnp.array([0.3, 0.7])
-        d = EmpiricalDistribution(samples, weights=weights)
+        d = EmpiricalDistribution(samples, weights=weights, name="x")
         result = expectation(d, lambda x: x)
         np.testing.assert_allclose(float(result), 7.0, atol=1e-5)
 
     def test_custom_function(self):
         samples = jnp.array([1.0, 2.0, 3.0])
         weights = jnp.array([0.2, 0.5, 0.3])
-        d = EmpiricalDistribution(samples, weights=weights)
+        d = EmpiricalDistribution(samples, weights=weights, name="x")
         result = expectation(d, lambda x: x ** 2)
         expected = 0.2 * 1.0 + 0.5 * 4.0 + 0.3 * 9.0
         np.testing.assert_allclose(float(result), expected, atol=1e-5)
 
     def test_subsample_returns_bootstrap(self):
         samples = jnp.arange(100.0)
-        d = EmpiricalDistribution(samples)
+        d = EmpiricalDistribution(samples, name="x")
         key = jax.random.PRNGKey(0)
         result = expectation(d, lambda x: x, key=key, num_evaluations=10)
         assert isinstance(result, BootstrapDistribution)
 
     def test_subsample_return_dist_false(self):
         samples = jnp.arange(100.0)
-        d = EmpiricalDistribution(samples)
+        d = EmpiricalDistribution(samples, name="x")
         key = jax.random.PRNGKey(0)
         result = expectation(d, lambda x: x, key=key, num_evaluations=10, return_dist=False)
         assert isinstance(result, NumericRecord)
 
     def test_matches_mean_method(self):
         samples = jnp.array([1.0, 3.0, 5.0, 7.0])
-        d = NumericEmpiricalDistribution(samples)
+        d = RecordEmpiricalDistribution(samples, name="x")
         ex = expectation(d, lambda x: x)
         np.testing.assert_allclose(float(ex), float(mean(d)), atol=1e-6)
 
@@ -344,7 +344,7 @@ class TestMCFallbackMethods:
         np.testing.assert_allclose(float(result), 4.0, atol=1e-6)
 
     def test_empirical_mean_still_exact(self):
-        d = NumericEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
+        d = RecordEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
         result = mean(d)
         assert isinstance(result, NumericRecord)
         np.testing.assert_allclose(float(result), 2.0, atol=1e-6)
@@ -364,7 +364,7 @@ class TestIsApproximate:
         assert not Bernoulli(probs=0.5, name="x").is_approximate
 
     def test_empirical_approximate_by_default(self):
-        d = EmpiricalDistribution(jnp.array([1.0, 2.0]))
+        d = EmpiricalDistribution(jnp.array([1.0, 2.0]), name="x")
         assert d.is_approximate
 
     def test_bootstrap_always_approximate(self):
@@ -376,7 +376,7 @@ class TestIsApproximate:
         t_exact = TransformedDistribution(exact_base, tfb.Exp())
         assert not t_exact.is_approximate
 
-        approx_base = EmpiricalDistribution(jnp.array([1.0, 2.0]))
+        approx_base = EmpiricalDistribution(jnp.array([1.0, 2.0]), name="x")
         t_approx = TransformedDistribution(approx_base, tfb.Exp())
         assert t_approx.is_approximate
 
@@ -392,7 +392,7 @@ class TestIsApproximate:
 
     def test_from_distribution_to_empirical(self):
         d = Normal(loc=0.0, scale=1.0, name="x")
-        d2 = from_distribution(d, NumericEmpiricalDistribution)
+        d2 = from_distribution(d, RecordEmpiricalDistribution)
         assert d2.is_approximate
 
 

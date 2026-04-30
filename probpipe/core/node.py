@@ -833,7 +833,7 @@ class WorkflowFunction(Node):
 
         - ``dist_args`` only — existing Monte Carlo marginalisation via
           ``_broadcast_distributions_only``. Output: marginal
-          distribution (``_MixtureMarginal`` / ``_ArrayMarginal`` / ...).
+          distribution (``_MixtureMarginal`` / ``_RecordMarginal`` / ...).
         - ``ra_args`` only — pure parameter sweep. One inner call per
           RecordArray row; no marginalisation. Output: stacked
           aggregate (``NumericRecordArray`` / ``RecordArray`` /
@@ -1322,13 +1322,39 @@ class WorkflowFunction(Node):
             for _ in range(reps_per_combo):
                 call_values = dict(values)
 
-                # Set empirical samples
+                # Set empirical samples. ``dist.samples`` is a Record
+                # of per-field stacked arrays; pull row ``i`` per field
+                # so the inner call sees the same shape it would from a
+                # single ``sample(dist)`` draw.
+                from .record import Record
                 for name, dist, i in zip(emp_names, emp_dists, combo):
-                    call_values[name] = dist.samples[i]
+                    s = dist.samples
+                    if isinstance(s, Record):
+                        if len(s.fields) == 1:
+                            call_values[name] = s[s.fields[0]][i]
+                        else:
+                            from ._numeric_record import NumericRecord
+                            call_values[name] = NumericRecord({
+                                f: s[f][i] for f in s.fields
+                            })
+                    else:
+                        call_values[name] = s[i]
 
-                # Set sampled values for non-empirical distributions
+                # Set sampled values for non-empirical distributions.
+                # ``sampled[name]`` may be a Record (auto-wrapped); use
+                # the same per-row indexing helper.
                 for name in sample_args:
-                    call_values[name] = sampled[name][sample_idx]
+                    s = sampled[name]
+                    if isinstance(s, Record):
+                        if len(s.fields) == 1:
+                            call_values[name] = s[s.fields[0]][sample_idx]
+                        else:
+                            from ._numeric_record import NumericRecord
+                            call_values[name] = NumericRecord({
+                                f: s[f][sample_idx] for f in s.fields
+                            })
+                    else:
+                        call_values[name] = s[sample_idx]
 
                 # Weight: empirical product weight divided evenly across reps
                 weights.append(emp_weight / reps_per_combo)
@@ -1363,11 +1389,29 @@ class WorkflowFunction(Node):
         key = self._get_key()
         samples_per_arg = self._sample_broadcast_args(values, broadcast_args, n_broadcast_samples, key)
 
+        from .record import Record
+        from ._numeric_record import NumericRecord
+
+        def _index_sample(s, i):
+            """Index row ``i`` of a per-arg sample batch.
+
+            ``samples_per_arg`` may hold raw arrays (legacy) or
+            ``NumericRecord``-shaped batches (the merged
+            ``EmpiricalDistribution`` returns NumericRecord with
+            stacked-along-leading-axis fields). Single-field NumericRecord
+            unwraps; multi-field becomes a per-row NumericRecord.
+            """
+            if isinstance(s, Record):
+                if len(s.fields) == 1:
+                    return s[s.fields[0]][i]
+                return NumericRecord({f: s[f][i] for f in s.fields})
+            return s[i]
+
         call_value_list = []
         for i in range(n_broadcast_samples):
             call_values = dict(values)
             for name in broadcast_args:
-                call_values[name] = samples_per_arg[name][i]
+                call_values[name] = _index_sample(samples_per_arg[name], i)
             call_value_list.append(call_values)
 
         results = self._execute_many(call_value_list)

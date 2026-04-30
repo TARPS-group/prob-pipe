@@ -472,50 +472,50 @@ class TestWeightsEquality:
 
 class TestFactoryDispatch:
     def test_empirical_numeric_returns_array_variant(self):
-        from probpipe import EmpiricalDistribution, NumericEmpiricalDistribution
-        dist = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
-        assert isinstance(dist, NumericEmpiricalDistribution)
+        from probpipe import EmpiricalDistribution, RecordEmpiricalDistribution
+        dist = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
+        assert isinstance(dist, RecordEmpiricalDistribution)
 
     def test_empirical_numpy_numeric_returns_array_variant(self):
-        from probpipe import EmpiricalDistribution, NumericEmpiricalDistribution
-        dist = EmpiricalDistribution(np.array([1.0, 2.0, 3.0]))
-        assert isinstance(dist, NumericEmpiricalDistribution)
+        from probpipe import EmpiricalDistribution, RecordEmpiricalDistribution
+        dist = EmpiricalDistribution(np.array([1.0, 2.0, 3.0]), name="x")
+        assert isinstance(dist, RecordEmpiricalDistribution)
 
     def test_empirical_object_stays_generic(self):
-        from probpipe import EmpiricalDistribution, NumericEmpiricalDistribution
-        dist = EmpiricalDistribution(["hello", "world"])
-        assert not isinstance(dist, NumericEmpiricalDistribution)
+        from probpipe import EmpiricalDistribution, RecordEmpiricalDistribution
+        dist = EmpiricalDistribution(["hello", "world"], name="x")
+        assert not isinstance(dist, RecordEmpiricalDistribution)
         assert isinstance(dist, EmpiricalDistribution)
 
     def test_empirical_numpy_object_stays_generic(self):
-        from probpipe import EmpiricalDistribution, NumericEmpiricalDistribution
-        dist = EmpiricalDistribution(np.array(["a", "b"], dtype=object))
-        assert not isinstance(dist, NumericEmpiricalDistribution)
+        from probpipe import EmpiricalDistribution, RecordEmpiricalDistribution
+        dist = EmpiricalDistribution(np.array(["a", "b"], dtype=object), name="x")
+        assert not isinstance(dist, RecordEmpiricalDistribution)
 
     def test_bootstrap_numeric_returns_array_variant(self):
-        from probpipe import BootstrapReplicateDistribution, ArrayBootstrapReplicateDistribution
-        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)))
-        assert isinstance(dist, ArrayBootstrapReplicateDistribution)
+        from probpipe import BootstrapReplicateDistribution, RecordBootstrapReplicateDistribution
+        dist = BootstrapReplicateDistribution(jnp.ones((5, 2)), name="x")
+        assert isinstance(dist, RecordBootstrapReplicateDistribution)
 
     def test_bootstrap_from_empirical_returns_array_variant(self):
         from probpipe import (
             EmpiricalDistribution,
             BootstrapReplicateDistribution,
-            ArrayBootstrapReplicateDistribution,
+            RecordBootstrapReplicateDistribution,
         )
-        emp = EmpiricalDistribution(jnp.ones((5, 2)))
-        dist = BootstrapReplicateDistribution(emp)
-        assert isinstance(dist, ArrayBootstrapReplicateDistribution)
+        emp = EmpiricalDistribution(jnp.ones((5, 2)), name="x")
+        dist = BootstrapReplicateDistribution(emp, name="x")
+        assert isinstance(dist, RecordBootstrapReplicateDistribution)
 
     def test_bootstrap_object_stays_generic(self):
-        from probpipe import BootstrapReplicateDistribution, ArrayBootstrapReplicateDistribution
-        dist = BootstrapReplicateDistribution(["a", "b", "c"])
-        assert not isinstance(dist, ArrayBootstrapReplicateDistribution)
+        from probpipe import BootstrapReplicateDistribution, RecordBootstrapReplicateDistribution
+        dist = BootstrapReplicateDistribution(["a", "b", "c"], name="x")
+        assert not isinstance(dist, RecordBootstrapReplicateDistribution)
 
     def test_subclass_not_redirected(self):
-        from probpipe import NumericEmpiricalDistribution
-        dist = NumericEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
-        assert type(dist) is NumericEmpiricalDistribution
+        from probpipe import RecordEmpiricalDistribution
+        dist = RecordEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
+        assert type(dist) is RecordEmpiricalDistribution
 
 
 # ---------------------------------------------------------------------------
@@ -524,37 +524,37 @@ class TestFactoryDispatch:
 
 class TestSampleShape:
     def test_default_single_axis(self):
-        from probpipe import NumericEmpiricalDistribution
+        from probpipe import RecordEmpiricalDistribution
         samples = jnp.ones((100, 3))
-        dist = NumericEmpiricalDistribution(samples)
+        dist = RecordEmpiricalDistribution(samples, name="x")
         assert dist.n == 100
         assert dist.event_shape == (3,)
 
     def test_explicit_1d_sample_shape(self):
-        from probpipe import NumericEmpiricalDistribution
+        from probpipe import RecordEmpiricalDistribution
         samples = jnp.ones((100, 3))
-        dist = NumericEmpiricalDistribution(samples, sample_shape=(100,))
+        dist = RecordEmpiricalDistribution(samples, sample_shape=(100,), name="x")
         assert dist.n == 100
         assert dist.event_shape == (3,)
 
     def test_2d_sample_shape(self):
-        from probpipe import NumericEmpiricalDistribution
+        from probpipe import RecordEmpiricalDistribution
         samples = jnp.ones((10, 5, 3))
-        dist = NumericEmpiricalDistribution(samples, sample_shape=(10, 5))
+        dist = RecordEmpiricalDistribution(samples, sample_shape=(10, 5), name="x")
         assert dist.n == 50
         assert dist.event_shape == (3,)
 
     def test_sample_shape_mismatch_raises(self):
-        from probpipe import NumericEmpiricalDistribution
+        from probpipe import RecordEmpiricalDistribution
         samples = jnp.ones((10, 3))
         with pytest.raises(ValueError, match="do not match"):
-            NumericEmpiricalDistribution(samples, sample_shape=(20,))
+            RecordEmpiricalDistribution(samples, sample_shape=(20,), name="x")
 
     def test_moments_with_sample_shape(self):
-        from probpipe import NumericEmpiricalDistribution, mean, variance
+        from probpipe import RecordEmpiricalDistribution, mean, variance
         key = jax.random.PRNGKey(0)
         samples = jax.random.normal(key, (10, 5, 2))
-        dist = NumericEmpiricalDistribution(samples, sample_shape=(10, 5))
+        dist = RecordEmpiricalDistribution(samples, sample_shape=(10, 5), name="x")
         m = mean(dist)
         v = variance(dist)
         assert m.shape == (2,)

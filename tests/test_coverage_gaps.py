@@ -21,7 +21,7 @@ import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from probpipe import (
-    NumericEmpiricalDistribution,
+    RecordEmpiricalDistribution,
     NumericRecord,
     BootstrapDistribution,
     EmpiricalDistribution,
@@ -152,7 +152,7 @@ class TestEmpiricalSubsampling:
         samples = jnp.arange(100.0)
         weights = jax.random.uniform(jax.random.PRNGKey(0), (100,))
         weights = weights / jnp.sum(weights)
-        ed = EmpiricalDistribution(samples, weights=weights)
+        ed = EmpiricalDistribution(samples, weights=weights, name="x")
         key = jax.random.PRNGKey(1)
         result = expectation(ed, lambda x: x, key=key, num_evaluations=10)
         assert isinstance(result, BootstrapDistribution)
@@ -162,19 +162,19 @@ class TestEmpiricalSubsampling:
         samples = jnp.arange(100.0)
         weights = jax.random.uniform(jax.random.PRNGKey(0), (100,))
         weights = weights / jnp.sum(weights)
-        ed = EmpiricalDistribution(samples, weights=weights)
+        ed = EmpiricalDistribution(samples, weights=weights, name="x")
         key = jax.random.PRNGKey(1)
         result = expectation(ed, lambda x: x, key=key, num_evaluations=10, return_dist=False)
         assert isinstance(result, NumericRecord)
         assert jnp.isfinite(jnp.asarray(result))
 
     def test_weighted_cov(self):
-        """Weighted NumericEmpiricalDistribution covariance."""
+        """Weighted RecordEmpiricalDistribution covariance."""
         key = jax.random.PRNGKey(0)
         samples = jax.random.normal(key, (50, 2))
         weights = jax.random.uniform(jax.random.PRNGKey(1), (50,))
         weights = weights / jnp.sum(weights)
-        ed = NumericEmpiricalDistribution(samples, weights=weights)
+        ed = RecordEmpiricalDistribution(samples, weights=weights, name="x")
         C = cov(ed)
         assert C.shape == (2, 2)
         assert jnp.all(jnp.isfinite(C))
@@ -288,7 +288,7 @@ class TestTransformedNonTFP:
     def td(self):
         key = jax.random.PRNGKey(0)
         samples = jax.random.normal(key, (100, 2))
-        emp = NumericEmpiricalDistribution(samples)
+        emp = RecordEmpiricalDistribution(samples, name="x")
         return TransformedDistribution(emp, tfb.Exp())
 
     def test_base_property(self, td):

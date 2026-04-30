@@ -56,7 +56,7 @@ class TestApproximateDistribution:
 
     def test_empty_chains_raises(self):
         with pytest.raises(ValueError, match="at least one chain"):
-            ApproximateDistribution([])
+            ApproximateDistribution([], name="x")
 
     def test_num_chains(self, two_chain_dist):
         assert two_chain_dist.num_chains == 2
@@ -236,16 +236,75 @@ class TestApproximateDistributionValuesTemplate:
         assert draws["params"]["b"].shape == (30,)
         assert draws["scale"].shape == (30,)
 
+    def test_nested_template_accessors_match_top_level_fields(self):
+        """Pin the accessor surface for a nested-template posterior.
+
+        With Option B's per-top-level-field split, every accessor on
+        ``ApproximateDistribution`` is keyed by the user-supplied
+        template's top-level fields. Nested ``RecordTemplate`` fields
+        are stored as a flat ``(n, nested_flat_size)`` slice under the
+        top-level field name; the nested structure is recoverable via
+        ``record_template[field]`` and ``draws()``.
+        """
+        template = RecordTemplate(
+            params=RecordTemplate(a=(), b=()),
+            scale=(),
+        )
+        flat_size = 3  # a + b + scale
+        chain = jax.random.normal(jax.random.PRNGKey(0), (40, flat_size))
+        prior = MultivariateNormal(
+            loc=jnp.zeros(flat_size), cov=jnp.eye(flat_size), name="z",
+        )
+        post = make_posterior(
+            [chain], parents=(prior,), algorithm="test",
+            record_template=template,
+        )
+        # Template + ops all keyed by the top-level template fields,
+        # with no leftover ``"posterior"`` auto-wrap leaking through.
+        expected_fields = ("params", "scale")
+        assert post.record_template.fields == expected_fields
+        assert post.fields == expected_fields
+        # ``event_shapes['params']`` reports the nested template's
+        # flat size as a 1-D event; the nested structure is
+        # recoverable via ``record_template['params']``.
+        assert post.event_shapes == {"params": (2,), "scale": ()}
+        # ``event_shape`` (singular) raises on multi-field — different
+        # code path, separate guard.
+        with pytest.raises(AttributeError, match="multiple fields"):
+            _ = post.event_shape
+        # The nested template is preserved on ``record_template``.
+        assert isinstance(post.record_template["params"], RecordTemplate)
+        assert post.record_template["params"].fields == ("a", "b")
+        # Moments key by the user's top-level fields, not by an
+        # auto-wrap leaf.
+        from probpipe import mean as op_mean, variance as op_variance
+        m = op_mean(post)
+        assert m.fields == expected_fields
+        assert m["params"].shape == (2,)  # flat per-component means
+        assert m["scale"].shape == ()
+        v = op_variance(post)
+        assert v.fields == expected_fields
+        assert v["params"].shape == (2,)
+        assert v["scale"].shape == ()
+        # ``draws()`` walks the full template (incl. nesting).
+        draws = post.draws()
+        assert draws.fields == expected_fields
+        assert draws["params"]["a"].shape == (40,)
+        assert draws["params"]["b"].shape == (40,)
+        assert draws["scale"].shape == (40,)
+        # ``flat_samples`` view is the (n, total_dim) matrix.
+        assert post.flat_samples.shape == (40, flat_size)
+
     def test_without_warmup(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain])
+        dist = ApproximateDistribution([chain], name="x")
         assert dist.warmup_samples is None
         assert dist.num_chains == 1
         assert dist.num_draws == 20
 
     def test_bare_dist_no_auxiliary(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain])
+        dist = ApproximateDistribution([chain], name="x")
         assert dist.auxiliary is None
         assert dist.inference_data is None
 
@@ -259,7 +318,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_algorithm_default_without_auxiliary(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain])
+        dist = ApproximateDistribution([chain], name="x")
         assert dist.algorithm == "unknown"
 
 
@@ -531,19 +590,28 @@ class TestRecordDistributionView:
         with pytest.raises(KeyError, match="nonexistent"):
             posterior["nonexistent"]
 
-    def test_getitem_without_template_raises(self):
+    def test_getitem_without_template_uses_single_field_autowrap(self):
+        """Without a multi-field template, ApproximateDistribution
+        auto-wraps the chain as a single-field Record keyed by ``name=``.
+        Indexing the field returns a view; accessing a different name
+        raises ``KeyError``."""
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain])
+        dist = ApproximateDistribution([chain], name="x")
+        # The auto-wrap field is "x"; that should resolve to a view.
+        view = dist["x"]
+        assert view is not None
+        # Other names raise.
         with pytest.raises(KeyError):
-            dist["x"]
+            dist["nonexistent"]
 
     def test_fields(self, posterior):
         assert posterior.fields == ("K", "phi", "r")
 
-    def test_fields_without_template(self):
+    def test_fields_with_single_field_autowrap(self):
+        """``fields`` reflects the auto-wrapped single field."""
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain])
-        assert dist.fields == ()
+        dist = ApproximateDistribution([chain], name="x")
+        assert dist.fields == ("x",)
 
     def test_view_event_shape_scalar(self, posterior):
         view = posterior["r"]
@@ -753,12 +821,18 @@ class TestRecordDistributionProperties:
         np.testing.assert_allclose(float(v2["K"]), 1.0)
         np.testing.assert_allclose(float(v2["r"]), 3.0)
 
-    def test_unflatten_without_template_raises(self):
+    def test_unflatten_without_template_uses_single_field_autowrap(self):
+        """Without a multi-field record_template, ApproximateDistribution
+        auto-wraps the chain as a single-field Record keyed by ``name=``.
+        ``unflatten_value`` round-trips a flat vector through that
+        single-field template (no RuntimeError)."""
         from probpipe.core._record_distribution import RecordDistribution
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        dist = ApproximateDistribution([chain])
-        with pytest.raises(RuntimeError, match="record_template"):
-            RecordDistribution.unflatten_value(dist, jnp.zeros(3))
+        dist = ApproximateDistribution([chain], name="x")
+        result = RecordDistribution.unflatten_value(dist, jnp.zeros(3))
+        # Single-field auto-wrap → result has one field "x".
+        assert hasattr(result, "fields")
+        assert result.fields == ("x",)
 
     def test_record_distribution_event_shapes(self, posterior):
         """RecordDistribution.event_shapes returns per-field dict."""
