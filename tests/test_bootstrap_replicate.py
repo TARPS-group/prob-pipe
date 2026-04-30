@@ -172,6 +172,64 @@ class TestSampling:
 
 
 # ---------------------------------------------------------------------------
+# SupportsSampling source (#93) — a parametric distribution as the source
+# ---------------------------------------------------------------------------
+
+
+class TestSampleableSource:
+    """Tests for the sampleable-source path (no stored observations)."""
+
+    def _normal(self):
+        from probpipe import Normal
+        return Normal(loc=0.0, scale=1.0, name="x")
+
+    def test_construction_keeps_generic_base(self):
+        # SupportsSampling sources stay in the generic base (no Record
+        # data to wrap), unlike numeric arrays / Records / Empirical.
+        d = BootstrapReplicateDistribution(self._normal(), n=10)
+        assert isinstance(d, BootstrapReplicateDistribution)
+        assert not isinstance(d, RecordBootstrapReplicateDistribution)
+        assert d.n == 10
+        assert d.source_n is None  # no canonical observation count
+
+    def test_missing_n_raises(self):
+        with pytest.raises(ValueError, match="n must be a positive int"):
+            BootstrapReplicateDistribution(self._normal())
+
+    def test_zero_n_raises(self):
+        with pytest.raises(ValueError, match="n must be a positive int"):
+            BootstrapReplicateDistribution(self._normal(), n=0)
+
+    def test_negative_n_raises(self):
+        with pytest.raises(ValueError, match="n must be a positive int"):
+            BootstrapReplicateDistribution(self._normal(), n=-3)
+
+    def test_sample_empty_shape(self):
+        # One bootstrap replicate is ``n`` i.i.d. draws from source._sample.
+        d = BootstrapReplicateDistribution(self._normal(), n=10)
+        s = d._sample(jax.random.PRNGKey(0), ())
+        assert s.shape == (10,)
+
+    def test_sample_with_shape(self):
+        # sample_shape prepends; total = sample_shape + (n,) + event_shape.
+        d = BootstrapReplicateDistribution(self._normal(), n=10)
+        s = d._sample(jax.random.PRNGKey(1), sample_shape=(3,))
+        assert s.shape == (3, 10)
+
+    def test_data_is_none_for_sampleable_source(self):
+        # No stored observations.
+        d = BootstrapReplicateDistribution(self._normal(), n=5)
+        assert d.data is None
+        assert d.weights is None
+
+    def test_repr_mentions_source(self):
+        d = BootstrapReplicateDistribution(self._normal(), n=5)
+        r = repr(d)
+        assert "n=5" in r
+        assert "Normal" in r
+
+
+# ---------------------------------------------------------------------------
 # Properties
 # ---------------------------------------------------------------------------
 
