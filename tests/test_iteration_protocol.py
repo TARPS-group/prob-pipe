@@ -125,14 +125,19 @@ def test_distribution_is_not_iterable(make_dist):
     iterator object even on classes without ``__iter__``, so we
     actually iterate (or call ``list``) to confirm the protocol does
     not yield items.
+
+    Accepted exceptions are ``TypeError`` (class explicitly forbids
+    iteration via ``__iter__`` raising or no ``__getitem__``) and
+    ``KeyError`` (Record-family ``__getitem__`` rejects integer keys
+    because fields are str-keyed). ``IndexError`` is **not** accepted:
+    Python's iter-fallback treats ``IndexError`` on integer access as
+    the end-of-iteration signal, and ``list(iter(d))`` would silently
+    return ``[]`` rather than surfacing the failure — exactly the
+    silent-iteration footgun the rule is meant to forbid.
     """
     d = make_dist()
     assert isinstance(d, Distribution)
-    # Either ``iter(d)`` raises immediately (preferred), or starting
-    # iteration raises (Python's __getitem__-fallback path). Both are
-    # acceptable; what's not acceptable is silently iterating and
-    # producing items.
-    with pytest.raises((TypeError, KeyError, IndexError)):
+    with pytest.raises((TypeError, KeyError)):
         list(iter(d))
 
 
