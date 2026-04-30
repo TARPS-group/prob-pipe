@@ -74,6 +74,41 @@ class DistributionArray[T](Distribution[T]):
     name : str, optional
         Name for provenance / introspection. Defaults to
         ``"distribution_array"``.
+
+    Notes
+    -----
+    **How ops work on a DistributionArray.** The class deliberately
+    does *not* implement ``_sample`` / ``_mean`` / ``_log_prob`` /
+    etc. — those would couple the array to specific component
+    capabilities. Vectorization is handled at a different layer:
+
+    1. ``sample(da, ...)`` calls the :class:`~probpipe.sample`
+       :class:`~probpipe.core.node.WorkflowFunction`, whose dispatch
+       sees a ``DistributionArray`` argument where the op's annotation
+       expects a scalar ``SupportsSampling``.
+    2. WF dispatches cell-by-cell: each ``da[i]`` is sampled, results
+       are stacked along ``batch_shape`` and returned as a
+       :class:`~probpipe.NumericRecordArray` (or
+       :class:`~probpipe.RecordArray` for non-numeric components).
+       For ops whose inner return is itself a ``Distribution`` (e.g.
+       posterior-predictive sweeps), the result is a nested
+       ``DistributionArray``.
+    3. Multiple swept arguments combine by the **product rule**:
+       passing two ``DistributionArray`` args of shapes ``(m,)`` and
+       ``(n,)`` produces an output of shape ``(m, n)``.
+
+    Consequences of this design:
+
+    * Calling ``da._sample(key)`` directly raises ``AttributeError`` —
+      ``DistributionArray`` doesn't have ``_sample``. Always use the
+      public op (``sample(da, key=...)``).
+    * ``isinstance(da, SupportsSampling)`` is ``False`` even when
+      every component supports sampling. The protocol attaches to
+      individual cells, not to the array.
+    * Component capabilities don't have to be uniform: an array
+      where some cells are ``SupportsLogProb`` and some are not will
+      fail at op-dispatch on the first non-supporting cell, rather
+      than rejecting at construction.
     """
 
     def __init__(

@@ -514,7 +514,24 @@ class RecordEmpiricalDistribution(
 
     @property
     def event_shape(self) -> tuple[int, ...]:
-        """Single-field shortcut. Multi-field records use ``event_shapes``."""
+        """Per-sample event shape, single-field only.
+
+        For a single-field record (the auto-wrap case from
+        ``EmpiricalDistribution(arr, name=...)``), returns the field's
+        event shape — i.e. ``arr.shape[1:]``.
+
+        For multi-field records, raises :class:`AttributeError` rather
+        than returning ``()``: a silent scalar fallback would let
+        callers that aren't multi-field-aware mis-classify a
+        structured posterior as a scalar event. Use
+        :attr:`event_shapes` (plural, dict-valued) for the multi-field
+        case.
+
+        Raises
+        ------
+        AttributeError
+            If ``len(self.fields) > 1``.
+        """
         if len(self._record_data.fields) == 1:
             f = self._record_data.fields[0]
             return tuple(jnp.asarray(self._record_data[f]).shape[1:])
@@ -527,7 +544,12 @@ class RecordEmpiricalDistribution(
 
     @property
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-field event shapes (sample axis stripped)."""
+        """Per-field event shapes (sample axis stripped).
+
+        Always available, including for single-field records. Compare
+        :attr:`event_shape` (singular), which is single-field-only and
+        raises on multi-field.
+        """
         return {
             f: tuple(jnp.asarray(self._record_data[f]).shape[1:])
             for f in self._record_data.fields
@@ -1028,7 +1050,22 @@ class RecordBootstrapReplicateDistribution(
 
     @property
     def event_shape(self) -> tuple[int, ...]:
-        """Single-field shortcut. Multi-field replicates use ``event_shapes``."""
+        """Replicate event shape, single-field only.
+
+        For a single-field replicate, returns
+        ``(n, *per_observation_event_shape)`` — i.e. the shape of one
+        bootstrap dataset. Multi-field replicates raise
+        :class:`AttributeError` rather than returning ``()`` so silent
+        scalar-fallback bugs don't slip through. Use
+        :attr:`event_shapes` (plural, per-field) for the multi-field
+        case, or :attr:`obs_shape` for the per-observation shape on
+        single-field replicates.
+
+        Raises
+        ------
+        AttributeError
+            If ``len(self.fields) > 1``.
+        """
         if len(self._record_data.fields) == 1:
             f = self._record_data.fields[0]
             return (self._n, *jnp.asarray(self._record_data[f]).shape[1:])
@@ -1041,9 +1078,18 @@ class RecordBootstrapReplicateDistribution(
 
     @property
     def obs_shape(self) -> tuple[int, ...]:
-        """Per-observation event shape for a single-field replicate.
+        """Per-observation event shape, single-field only.
 
-        Multi-field replicates use ``obs_shapes`` (per-field).
+        For a single-field replicate, returns the per-observation
+        event shape (the field's shape with the sample axis stripped).
+        Multi-field replicates raise :class:`AttributeError` rather
+        than returning ``()``; use :attr:`obs_shapes` (plural,
+        per-field) for the multi-field case.
+
+        Raises
+        ------
+        AttributeError
+            If ``len(self.fields) > 1``.
         """
         if len(self._record_data.fields) == 1:
             f = self._record_data.fields[0]
