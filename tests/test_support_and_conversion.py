@@ -106,6 +106,23 @@ class TestSupportCompatibility:
         assert _supports_compatible(interval(0, 1), interval(-1, 2))
         assert not _supports_compatible(interval(-1, 2), interval(0, 1))
 
+    def test_interval_subset_array_bounds(self):
+        # Per-dim bounds: each source dim must lie within the
+        # corresponding target dim.
+        src = interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 1.5]))
+        tgt_super = interval(jnp.array([-1.0, 0.0]), jnp.array([2.0, 2.0]))
+        tgt_partial = interval(jnp.array([-1.0, 1.0]), jnp.array([2.0, 2.0]))
+        assert _supports_compatible(src, tgt_super)
+        # src dim 1 starts at 0.5, which is below tgt_partial dim 1's 1.0.
+        assert not _supports_compatible(src, tgt_partial)
+
+    def test_greater_than_subset_array_bounds(self):
+        src = greater_than(jnp.array([1.0, 2.0]))
+        tgt_super = greater_than(jnp.array([0.0, 1.0]))
+        tgt_partial = greater_than(jnp.array([0.0, 3.0]))
+        assert _supports_compatible(src, tgt_super)
+        assert not _supports_compatible(src, tgt_partial)
+
 
 # ── Section 3: Support properties on distributions ────────────────────────────
 
@@ -126,6 +143,51 @@ class TestDistributionSupport:
 
     def test_uniform_support(self):
         assert Uniform(low=-1.0, high=2.0, name="u").support == interval(-1.0, 2.0)
+
+    def test_uniform_support_array_bounds(self):
+        # Regression: ``float(self._low)`` previously crashed for
+        # non-scalar low/high. Per-dim bounds should produce a working
+        # interval whose ``.check`` returns a per-dim boolean.
+        u = Uniform(
+            low=jnp.array([0.0, -1.0]),
+            high=jnp.array([1.0, 2.0]),
+            name="u_arr",
+        )
+        c = u.support
+        assert jnp.array_equal(c.check(jnp.array([0.5, 0.5])), jnp.array([True, True]))
+        assert jnp.array_equal(c.check(jnp.array([2.0, 0.5])), jnp.array([False, True]))
+
+    def test_half_cauchy_support_array_bounds(self):
+        hc = HalfCauchy(
+            loc=jnp.array([0.0, 1.0]),
+            scale=jnp.array([1.0, 1.0]),
+            name="hc_arr",
+        )
+        c = hc.support
+        assert jnp.array_equal(c.check(jnp.array([0.5, 1.5])), jnp.array([True, True]))
+        assert jnp.array_equal(c.check(jnp.array([-0.5, 0.5])), jnp.array([False, False]))
+
+    def test_pareto_support_array_bounds(self):
+        p = Pareto(
+            concentration=jnp.array([2.0, 2.0]),
+            scale=jnp.array([1.0, 2.0]),
+            name="p_arr",
+        )
+        c = p.support
+        assert jnp.array_equal(c.check(jnp.array([1.5, 2.5])), jnp.array([True, True]))
+        assert jnp.array_equal(c.check(jnp.array([0.5, 2.5])), jnp.array([False, True]))
+
+    def test_truncated_normal_support_array_bounds(self):
+        tn = TruncatedNormal(
+            loc=jnp.array([0.0, 0.0]),
+            scale=jnp.array([1.0, 1.0]),
+            low=jnp.array([-1.0, 0.0]),
+            high=jnp.array([1.0, 2.0]),
+            name="tn_arr",
+        )
+        c = tn.support
+        assert jnp.array_equal(c.check(jnp.array([0.0, 1.0])), jnp.array([True, True]))
+        assert jnp.array_equal(c.check(jnp.array([-2.0, 1.0])), jnp.array([False, True]))
 
     def test_bernoulli_support(self):
         assert Bernoulli(probs=0.5, name="d").support == boolean
