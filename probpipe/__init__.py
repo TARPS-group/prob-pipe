@@ -74,6 +74,8 @@ from probpipe.distributions import (
     VonMisesFisher,
     # Transformed
     TransformedDistribution,
+    bijector_for,
+    register_bijector,
     # Joint
     ProductDistribution,
     SequentialJointDistribution,
@@ -219,6 +221,8 @@ __all__ = [
     "VonMisesFisher",
     # Transformed
     "TransformedDistribution",
+    "bijector_for",
+    "register_bijector",
     # Joint
     "ProductDistribution",
     "SequentialJointDistribution",
