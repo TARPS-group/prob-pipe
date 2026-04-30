@@ -1349,8 +1349,8 @@ class WorkflowFunction(Node):
                         if len(s.fields) == 1:
                             call_values[name] = s[s.fields[0]][sample_idx]
                         else:
-                            from ._numeric_record import NumericRecord as _NR
-                            call_values[name] = _NR({
+                            from ._numeric_record import NumericRecord
+                            call_values[name] = NumericRecord({
                                 f: s[f][sample_idx] for f in s.fields
                             })
                     else:
