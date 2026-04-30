@@ -678,13 +678,13 @@ class BootstrapReplicateDistribution[T](
                 return object.__new__(RecordBootstrapReplicateDistribution)
             if _is_numeric_array(source):
                 return object.__new__(RecordBootstrapReplicateDistribution)
-            if (
-                isinstance(source, EmpiricalDistribution)
-                and _is_numeric_array(source.samples)
-            ):
-                return object.__new__(RecordBootstrapReplicateDistribution)
-            # Otherwise (incl. SupportsSampling non-array sources, generic
-            # sequences) stay in the generic base.
+            # Otherwise (SupportsSampling non-array sources or generic
+            # opaque-object sequences) stay in the generic base. Note: a
+            # generic ``EmpiricalDistribution(numeric_array)`` can never
+            # arrive here as a generic instance — the generic base's own
+            # ``__new__`` already routes numeric-array samples to
+            # ``RecordEmpiricalDistribution``, which the first branch
+            # above catches.
         return object.__new__(cls)
 
     def __init__(
