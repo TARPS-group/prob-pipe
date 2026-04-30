@@ -29,8 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``Record(theta=arr)``).
 - **`BootstrapReplicateDistribution[T]` accepts a `SupportsSampling`
   source.** Each replicate is ``n`` i.i.d. draws from
-  ``source._sample``; ``n`` is mandatory in this case (no canonical
-  observation count).
+  ``source._sample``. **``n`` is mandatory** when ``source`` is a
+  ``SupportsSampling`` distribution (no canonical observation count);
+  it remains optional for ``Record`` / numeric-array / ``Empirical``
+  sources, where it defaults to the source's row count.
   ``BootstrapReplicateDistribution(Normal(0, 1, name="x"), n=50)``.
 - **`NumericJointEmpirical` no longer claims `SupportsLogProb`.** The
   Gaussian-approximation log-density is gone — empirical distributions
