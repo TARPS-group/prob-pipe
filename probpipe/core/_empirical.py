@@ -824,9 +824,9 @@ class BootstrapReplicateDistribution[T](
             for i in range(total):
                 results[i] = self._one_bootstrap(keys[i])
             return results.reshape(sample_shape)
-        if self._source_kind == "sampleable":
-            results = jax.vmap(self._one_bootstrap)(keys)
-            return results.reshape(*sample_shape, *results.shape[1:])
+        # Non-object data: vmap is safe for both ``data`` and
+        # ``sampleable`` source kinds (the latter calls source._sample
+        # under vmap, the former does weighted-choice + slicing).
         results = jax.vmap(self._one_bootstrap)(keys)
         return results.reshape(*sample_shape, *results.shape[1:])
 
