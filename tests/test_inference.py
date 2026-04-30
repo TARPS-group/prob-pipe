@@ -236,6 +236,54 @@ class TestApproximateDistributionValuesTemplate:
         assert draws["params"]["b"].shape == (30,)
         assert draws["scale"].shape == (30,)
 
+    def test_nested_template_accessors_split_state(self):
+        """Pin the accessor surface for a nested-template posterior.
+
+        The reviewer flagged that when ``record_template`` has a nested
+        ``RecordTemplate`` field, ``__init__`` falls into the
+        single-field auto-wrap path and ``_record_data`` ends up with
+        one auto-wrap field. The user-facing surface is split:
+
+        * ``record_template`` and ``fields`` reflect the user-supplied
+          nested structure (so ``draws()`` and downstream consumers
+          that use the template see the right thing).
+        * ``_record_data`` and the accessors that read from it
+          (``event_shapes``, ``dtypes``, ``flat_samples``, ``_mean`` /
+          ``_variance`` etc.) keep the flat single-field view.
+
+        This is intentional for now — extending the per-field split to
+        recurse through nested templates would require materialising
+        nested ``NumericRecord`` leaves at construction, with knock-on
+        effects on flatten/unflatten paths. No production consumer
+        currently inspects the nested-template event_shapes/dtypes
+        surface; ``draws()`` covers the user-facing case. Pin both
+        sides of the split here so any future fix has to update the
+        test deliberately.
+        """
+        template = RecordTemplate(
+            params=RecordTemplate(a=(), b=()),
+            scale=(),
+        )
+        flat_size = 3  # a + b + scale
+        chain = jax.random.normal(jax.random.PRNGKey(0), (40, flat_size))
+        prior = MultivariateNormal(
+            loc=jnp.zeros(flat_size), cov=jnp.eye(flat_size), name="z",
+        )
+        post = make_posterior(
+            [chain], parents=(prior,), algorithm="test",
+            record_template=template,
+        )
+        # Template-side: nested structure preserved.
+        assert post.record_template.fields == ("params", "scale")
+        assert post.fields == ("params", "scale")
+        draws = post.draws()
+        assert draws["params"]["a"].shape == (40,)
+        assert draws["scale"].shape == (40,)
+        # Data-side: single-field auto-wrap form.
+        assert post._record_data.fields == ("posterior",)
+        assert post.event_shapes == {"posterior": (flat_size,)}
+        assert post.flat_samples.shape == (40, flat_size)
+
     def test_without_warmup(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = ApproximateDistribution([chain], name="x")
