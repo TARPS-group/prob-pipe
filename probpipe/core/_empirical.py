@@ -436,12 +436,11 @@ class RecordEmpiricalDistribution(
 
     @property
     def samples(self) -> NumericRecord:
-        """The stored stacked-sample data as a :class:`NumericRecord`.
+        """Stored stacked-sample data as a structured :class:`NumericRecord`.
 
-        For single-field empirical distributions (the auto-wrap case),
-        the returned ``NumericRecord``'s shape shim makes
-        ``jnp.asarray(dist.samples)`` /  ``dist.samples.shape`` /
-        ``dist.samples[i]``-via-``samples["field"][i]`` ergonomic.
+        Use ``self.samples[field_name]`` for per-field array access. For
+        a flat ``(n, dim)`` matrix view across all fields, use
+        :attr:`flat_samples` instead.
         """
         # Cache so repeated access doesn't re-validate.
         cached = getattr(self, "_samples_record", None)
@@ -452,6 +451,34 @@ class RecordEmpiricalDistribution(
             })
             object.__setattr__(self, "_samples_record", cached)
         return cached
+
+    @property
+    def flat_samples(self) -> jnp.ndarray:
+        """Flat ``(n, dim)`` view across all fields, in insertion order.
+
+        ``dim = sum_over_fields(prod(event_shape_f))``. Multi-dim event
+        shapes are flattened row-major; field order matches
+        :attr:`fields`. Use :attr:`samples` for the structured per-field
+        view.
+
+        Examples
+        --------
+        Single-field auto-wrap with a 1-D event::
+
+            EmpiricalDistribution(jnp.zeros((100, 5)), name="theta").flat_samples.shape
+            # (100, 5)
+
+        Multi-field posterior::
+
+            posterior = ApproximateDistribution(...)  # mu, log_sigma fields
+            posterior.flat_samples.shape  # (n, 2)
+            posterior.flat_samples.mean(axis=0)  # per-parameter posterior mean
+        """
+        parts = [
+            jnp.asarray(self._record_data[f]).reshape(self._n_samples, -1)
+            for f in self._record_data.fields
+        ]
+        return jnp.concatenate(parts, axis=-1)
 
     @property
     def event_shape(self) -> tuple[int, ...]:

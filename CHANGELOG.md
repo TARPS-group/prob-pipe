@@ -72,6 +72,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   implementations per concept (generic + Record-based); iteration is
   a Record-family convention.
 
+- **`RecordEmpiricalDistribution.flat_samples`** — flat ``(n, dim)``
+  matrix view across all fields, where
+  ``dim = sum(prod(event_shape_f) for f in fields)``. Field order is
+  the dist's insertion order; multi-dim event shapes flatten
+  row-major. Use ``.samples`` for the structured ``NumericRecord``
+  view (per-field access via ``.samples[name]``) and ``.flat_samples``
+  for stacked-matrix idioms — ``post.flat_samples.mean(axis=0)``,
+  per-parameter posterior summaries, etc. Replaces hand-rolled
+  ``np.column_stack([post.samples[f] for f in post.fields])``.
+
 - **`Record.to_numeric()` / `NumericRecord.to_native()`** — explicit
   conversion to / from ProbPipe's native JAX-array form, with metadata
   round-trip via the aux registry.

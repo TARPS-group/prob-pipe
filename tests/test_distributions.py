@@ -315,6 +315,79 @@ class TestEmpiricalDistribution:
         assert ed.n == 10
 
 
+class TestFlatSamples:
+    """Tests for the ``flat_samples`` ``(n, dim)`` matrix accessor."""
+
+    def test_single_field_scalar_event(self):
+        # Auto-wrap of a (n,) array → flat_samples is (n, 1) since
+        # the field's event-shape product is 1.
+        ed = EmpiricalDistribution(jnp.arange(10.0), name="x")
+        assert ed.flat_samples.shape == (10, 1)
+        np.testing.assert_array_equal(
+            ed.flat_samples, jnp.arange(10.0).reshape(10, 1),
+        )
+
+    def test_single_field_1d_event(self):
+        # (n, d) input with name= → flat_samples is (n, d).
+        samples = jnp.arange(15.0).reshape(5, 3)
+        ed = EmpiricalDistribution(samples, name="theta")
+        assert ed.flat_samples.shape == (5, 3)
+        np.testing.assert_array_equal(ed.flat_samples, samples)
+
+    def test_single_field_multi_dim_event(self):
+        # (n, 3, 2) → flatten the (3, 2) event row-major to (6,).
+        samples = jnp.arange(24.0).reshape(4, 3, 2)
+        ed = EmpiricalDistribution(samples, name="W")
+        assert ed.flat_samples.shape == (4, 6)
+        np.testing.assert_array_equal(
+            ed.flat_samples, samples.reshape(4, 6),
+        )
+
+    def test_multi_field_1d_events(self):
+        # Multi-field record → column-stack in insertion order.
+        from probpipe import Record
+        rec = Record(
+            mu=jnp.arange(8.0),
+            log_sigma=jnp.arange(8.0) + 100.0,
+        )
+        ed = RecordEmpiricalDistribution(rec)
+        assert ed.flat_samples.shape == (8, 2)
+        # First column is mu, second is log_sigma — insertion order.
+        np.testing.assert_array_equal(ed.flat_samples[:, 0], jnp.arange(8.0))
+        np.testing.assert_array_equal(
+            ed.flat_samples[:, 1], jnp.arange(8.0) + 100.0,
+        )
+
+    def test_multi_field_mixed_event_shapes(self):
+        # mu: (10,), beta: (10, 3) → flat_samples (10, 1+3) = (10, 4).
+        from probpipe import Record
+        rec = Record(
+            mu=jnp.arange(10.0),
+            beta=jnp.arange(30.0).reshape(10, 3),
+        )
+        ed = RecordEmpiricalDistribution(rec)
+        assert ed.flat_samples.shape == (10, 4)
+        np.testing.assert_array_equal(ed.flat_samples[:, 0], jnp.arange(10.0))
+        np.testing.assert_array_equal(
+            ed.flat_samples[:, 1:], jnp.arange(30.0).reshape(10, 3),
+        )
+
+    def test_field_order_matches_insertion(self):
+        # Insertion-order rule: flat_samples columns follow `dist.fields`.
+        from probpipe import Record
+        rec1 = Record(z=jnp.zeros(5), a=jnp.ones(5))
+        rec2 = Record(a=jnp.ones(5), z=jnp.zeros(5))
+        ed1 = RecordEmpiricalDistribution(rec1)
+        ed2 = RecordEmpiricalDistribution(rec2)
+        # Different insertion order → different flat_samples column order.
+        assert ed1.fields == ("z", "a")
+        assert ed2.fields == ("a", "z")
+        np.testing.assert_array_equal(ed1.flat_samples[:, 0], jnp.zeros(5))
+        np.testing.assert_array_equal(ed1.flat_samples[:, 1], jnp.ones(5))
+        np.testing.assert_array_equal(ed2.flat_samples[:, 0], jnp.ones(5))
+        np.testing.assert_array_equal(ed2.flat_samples[:, 1], jnp.zeros(5))
+
+
 class TestEmpiricalLogWeights:
     """Tests for log_weights parameterisation and uniform optimisation."""
 
