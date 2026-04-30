@@ -39,6 +39,19 @@ from probpipe import (
 )
 
 
+def _make_transformed():
+    """Build a TransformedDistribution at parametrise time.
+
+    Importing the bijector here keeps the test parametrisation
+    side-effect-free at import — TFP's bijector module is heavy
+    enough to warrant deferring.
+    """
+    import tensorflow_probability.substrates.jax.bijectors as tfb
+    return TransformedDistribution(
+        Normal(loc=0.0, scale=1.0, name="base"), tfb.Exp(), name="td",
+    )
+
+
 # User-constructible Distribution subclasses, parametrised here to pin
 # the non-iterable rule (#142). WF-output classes (BroadcastDistribution,
 # _RecordMarginal / _MixtureMarginal / _ListMarginal, BootstrapDistribution
@@ -97,19 +110,6 @@ DISTRIBUTIONS = [
         id="NumericJointEmpirical",
     ),
 ]
-
-
-def _make_transformed():
-    """Build a TransformedDistribution at parametrise time.
-
-    Importing the bijector here keeps the test parametrisation
-    side-effect-free at import — TFP's bijector module is heavy
-    enough to warrant deferring.
-    """
-    import tensorflow_probability.substrates.jax.bijectors as tfb
-    return TransformedDistribution(
-        Normal(loc=0.0, scale=1.0, name="base"), tfb.Exp(), name="td",
-    )
 
 
 @pytest.mark.parametrize("make_dist", DISTRIBUTIONS)
