@@ -393,6 +393,19 @@ class RecordEmpiricalDistribution(
     name : str, optional
         Distribution name. Required when *samples* is a numeric array
         (used as the auto-wrapped field name).
+
+    Notes
+    -----
+    Construction calls ``Distribution.__init__`` directly rather than
+    chaining through ``super().__init__()``. The reason: the generic
+    ``EmpiricalDistribution[T]`` base stores samples as a flat numpy
+    object array (``self._samples``), which is incompatible with the
+    Record-structured layout this subclass uses (``self._record_data``).
+    Subclasses that further specialise this class (e.g.
+    :class:`~probpipe.inference.ApproximateDistribution`) should likewise
+    call ``RecordEmpiricalDistribution.__init__`` rather than
+    ``super().__init__`` if they need to skip the generic-base storage
+    path.
     """
 
     _sampling_cost: str = "low"
