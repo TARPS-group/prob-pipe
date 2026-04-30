@@ -9,6 +9,17 @@ semantics. There is no third numeric-array variant — a bare numeric
 array is wrapped as a single-field :class:`Record` at the constructor
 boundary and dispatches to the Record-based class.
 
+Construction-time dispatch via ``__new__``: calling the generic base
+``EmpiricalDistribution(samples, ...)`` returns a
+:class:`RecordEmpiricalDistribution` when ``samples`` is a ``Record``
+or a numeric array (the latter requires ``name=`` so the auto-wrapped
+Record has a meaningful field key). Likewise
+``BootstrapReplicateDistribution(source, ...)`` returns a
+:class:`RecordBootstrapReplicateDistribution` for ``Record`` /
+numeric-array / numeric-array-backed ``EmpiricalDistribution``
+sources, and stays in the generic base for non-array
+``SupportsSampling`` sources or opaque-object sequences.
+
 Provides:
 
 - :class:`EmpiricalDistribution[T]` — generic weighted empirical
@@ -442,7 +453,12 @@ class RecordEmpiricalDistribution(
         a flat ``(n, dim)`` matrix view across all fields, use
         :attr:`flat_samples` instead.
         """
-        # Cache so repeated access doesn't re-validate.
+        # Cache so repeated access doesn't re-validate. ``object.__setattr__``
+        # bypasses any subclass that adds ``__slots__`` or a custom
+        # ``__setattr__`` guard (e.g. ``Record`` itself raises on direct
+        # attribute assignment to enforce immutability of user-visible
+        # state); the cache is internal-only and a controlled exception
+        # to that rule.
         cached = getattr(self, "_samples_record", None)
         if cached is None:
             cached = NumericRecord({
@@ -580,10 +596,7 @@ class RecordEmpiricalDistribution(
         constructed from an array, so they expect to operate on
         arrays). Multi-field records pass the row Record as-is.
         """
-        single_field = (
-            len(self._record_data.fields) == 1
-            and self._record_data.fields[0] != ""
-        )
+        single_field = len(self._record_data.fields) == 1
         only_field = self._record_data.fields[0] if single_field else None
 
         def _row(i):
