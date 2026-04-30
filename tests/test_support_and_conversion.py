@@ -91,6 +91,16 @@ class TestConstraints:
         assert integer_interval(jnp.array([0, 1]), jnp.array([5, 6])) == integer_interval(
             jnp.array([0, 1]), jnp.array([5, 6])
         )
+        # Cross-type and non-Constraint comparisons must short-circuit
+        # via the type guard, not raise.
+        assert interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 1.5])) != greater_than(
+            jnp.array([0.0, 0.5])
+        )
+        assert interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 1.5])) != None  # noqa: E711
+        # Shape-mismatched bounds compare unequal rather than raising.
+        assert interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 1.5])) != interval(
+            jnp.array([0.0]), jnp.array([1.0])
+        )
 
     def test_parameterized_hash_array_bounds(self):
         # __hash__ on parameterized constraints must not raise for

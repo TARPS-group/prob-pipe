@@ -183,7 +183,13 @@ class Binomial(TFPDistribution):
         return_dist: bool | None = None,
     ) -> Array:
         """Exact expectation over the finite support {0, ..., total_count}."""
-        n = int(self._total_count) + 1
+        tc = jnp.asarray(self._total_count)
+        if tc.ndim != 0:
+            raise ValueError(
+                "Binomial._expectation requires scalar total_count; "
+                f"got shape {tc.shape}"
+            )
+        n = int(tc) + 1
         support = jnp.arange(n, dtype=self.dtype)
         probs = jnp.exp(self._tfp_dist.log_prob(support))
         f_vals = jax.vmap(f)(support)
