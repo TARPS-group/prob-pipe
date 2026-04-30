@@ -166,7 +166,7 @@ class Binomial(TFPDistribution):
 
     @property
     def support(self) -> Constraint:
-        return integer_interval(0, int(self._total_count))
+        return integer_interval(0, self._total_count)
 
     @classmethod
     def _default_support(cls) -> Constraint:
