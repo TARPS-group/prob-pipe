@@ -393,6 +393,22 @@ class TestFlatSamples:
         ed = EmpiricalDistribution(jnp.arange(20.0).reshape(10, 2), name="x")
         assert ed.flat_samples is ed.flat_samples
 
+    def test_zero_sized_event(self):
+        # A field with a zero-sized event dim (e.g. an empty
+        # design-matrix slot) should reshape to (n, 0) and concatenate
+        # cleanly alongside non-empty fields. Pins that the
+        # reshape-then-concat pipeline doesn't choke on prod([0]) == 0.
+        from probpipe import Record
+        rec = Record(
+            empty=jnp.zeros((10, 0)),
+            real=jnp.arange(30.0).reshape(10, 3),
+        )
+        ed = RecordEmpiricalDistribution(rec)
+        assert ed.flat_samples.shape == (10, 3)
+        np.testing.assert_array_equal(
+            ed.flat_samples, jnp.arange(30.0).reshape(10, 3),
+        )
+
 
 class TestEmpiricalLogWeights:
     """Tests for log_weights parameterisation and uniform optimisation."""
