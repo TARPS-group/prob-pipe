@@ -489,12 +489,6 @@ class TestValuesEmpiricalDistribution:
         view = emp["X"]
         assert isinstance(view, _RecordDistributionView)
 
-    def test_getitem_returns_view(self, values_data):
-        from probpipe.core._record_distribution import _RecordDistributionView
-        emp = EmpiricalDistribution(values_data, name="x")
-        view = emp["X"]
-        assert isinstance(view, _RecordDistributionView)
-
     def test_mean(self, values_data):
         emp = EmpiricalDistribution(values_data, name="x")
         m = emp._mean()
@@ -577,11 +571,6 @@ class TestValuesBootstrapReplicateDistribution:
 
     def test_fields(self, bootstrap):
         assert bootstrap.fields == ("X", "y")
-
-    def test_getitem_returns_view(self, bootstrap):
-        from probpipe.core._record_distribution import _RecordDistributionView
-        view = bootstrap["X"]
-        assert isinstance(view, _RecordDistributionView)
 
     def test_getitem_returns_view(self, bootstrap):
         from probpipe.core._record_distribution import _RecordDistributionView
