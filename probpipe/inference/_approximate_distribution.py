@@ -12,7 +12,7 @@ import jax.numpy as jnp
 from ..core.distribution import RecordEmpiricalDistribution, Distribution
 from ..core._record_distribution import _RecordDistributionView
 from ..core.provenance import Provenance
-from ..core.record import Record, RecordTemplate
+from ..core.record import Record, RecordTemplate, _spec_size
 from ..custom_types import Array, ArrayLike, PRNGKey
 from .._weights import Weights
 
@@ -83,12 +83,34 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         # ``_spec_size``, which already handles both flat and nested
         # specs.
         if record_template is not None and len(record_template.fields) > 1:
-            from ..core.record import _spec_size
-            offset = 0
-            fields: dict[str, Array] = {}
+            # Compute per-field sizes upfront so we can sanity-check the
+            # chain's last dim against the template's total flat size
+            # (catching template/data mismatch before silent slicing past
+            # the end produces zero-sized chunks). ``_spec_size`` raises
+            # on opaque (``spec=None``) leaves; pre-validate here so the
+            # error names the offending field rather than the generic
+            # ``_spec_size`` message.
+            sizes: list[int] = []
             for field_name in record_template.fields:
                 spec = record_template[field_name]
-                size = _spec_size(spec)
+                if spec is None:
+                    raise ValueError(
+                        f"ApproximateDistribution requires a numeric "
+                        f"template; field {field_name!r} has spec=None "
+                        f"(opaque). Opaque leaves don't have a flat size."
+                    )
+                sizes.append(_spec_size(spec))
+            total = sum(sizes)
+            if flat.shape[-1] != total:
+                raise ValueError(
+                    f"chain last dim ({flat.shape[-1]}) doesn't match "
+                    f"template total flat size ({total}); template "
+                    f"fields={record_template.fields}, sizes={sizes}."
+                )
+            offset = 0
+            fields: dict[str, Array] = {}
+            for field_name, size in zip(record_template.fields, sizes):
+                spec = record_template[field_name]
                 chunk = flat[..., offset : offset + size]
                 if isinstance(spec, RecordTemplate):
                     # Nested: keep flat-per-top-level-field. Shape is
