@@ -65,7 +65,6 @@ from ._numeric_record_distribution import (
     NumericRecordDistribution,
     BootstrapDistribution,
 )
-from ._record_distribution import RecordDistribution
 from ._numeric_record import NumericRecord
 from .record import Record, RecordTemplate
 
