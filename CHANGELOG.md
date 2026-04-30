@@ -24,9 +24,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Migration: a numeric array auto-wraps as a single-field ``Record``
   keyed by the (now mandatory) ``name=`` kwarg.
-  ``EmpiricalDistribution(jnp.zeros((100, 3)))`` raises
-  ``ValueError``; pass ``name="theta"`` (or wrap explicitly:
-  ``Record(theta=arr)``).
+
+  ```python
+  # Before
+  emp = EmpiricalDistribution(arr)                    # Worked
+  emp = NumericEmpiricalDistribution(arr)             # Worked
+  emp = ArrayBootstrapReplicateDistribution(arr)      # Worked
+
+  # After
+  emp = EmpiricalDistribution(arr, name="theta")       # ✓
+  emp = EmpiricalDistribution(arr)                    # ValueError: name= required
+  ```
+
+  The ``name=`` becomes the field name of the auto-wrapped
+  ``Record``; downstream code that does ``emp.samples["theta"]`` /
+  ``emp["theta"]`` then has a meaningful key. If you want to keep the
+  old call-site shape, wrap explicitly:
+  ``EmpiricalDistribution(Record(theta=arr))``.
 - **`BootstrapReplicateDistribution[T]` accepts a `SupportsSampling`
   source.** Each replicate is ``n`` i.i.d. draws from
   ``source._sample``. **``n`` is mandatory** when ``source`` is a
