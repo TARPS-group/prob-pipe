@@ -858,6 +858,18 @@ class BootstrapReplicateDistribution[T](
 
     # -- expectation --------------------------------------------------------
 
+    def _unwrap_dataset(self, dataset: Any) -> Any:
+        """Hook for subclasses to unwrap a single-field dataset.
+
+        The generic base treats datasets opaquely (whatever
+        ``_one_bootstrap`` returns is what ``f`` sees). Record-based
+        subclasses override this to unwrap single-field auto-wrap
+        Records to their bare stacked array, so users who passed a
+        numeric array as the source see ``f`` called with arrays
+        rather than single-field Records.
+        """
+        return dataset
+
     def _expectation(
         self,
         f: Callable,
@@ -868,10 +880,9 @@ class BootstrapReplicateDistribution[T](
     ) -> Array | BootstrapDistribution:
         """Compute ``E[f(dataset)]`` via Monte Carlo over bootstrap datasets.
 
-        ``f`` receives one bootstrapped dataset per call. For
-        Record-shaped sources with a single field (the auto-wrap case),
-        the dataset is unwrapped to the bare stacked ``jax.Array`` so
-        ``f`` operates on arrays directly.
+        ``f`` receives one bootstrapped dataset per call. Subclasses
+        can override :meth:`_unwrap_dataset` to convert the dataset to
+        a bare array (e.g. the single-field Record auto-wrap case).
         """
         if key is None:
             key = _auto_key()
@@ -879,18 +890,8 @@ class BootstrapReplicateDistribution[T](
             num_evaluations = _base.DEFAULT_NUM_EVALUATIONS
         keys = jax.random.split(key, num_evaluations)
 
-        record_data = getattr(self, "_record_data", None)
-        single_field = (
-            record_data is not None
-            and len(record_data.fields) == 1
-        )
-        only_field = record_data.fields[0] if single_field else None
-
         def _ds(k):
-            d = self._one_bootstrap(k)
-            if single_field and isinstance(d, Record):
-                return d[only_field]
-            return d
+            return self._unwrap_dataset(self._one_bootstrap(k))
 
         f_vals = jnp.stack([f(_ds(k)) for k in keys])
         rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
@@ -1102,6 +1103,18 @@ class RecordBootstrapReplicateDistribution(
             arrs = jnp.stack([jnp.asarray(r[f]) for r in results])
             stacked[f] = arrs.reshape(*sample_shape, *arrs.shape[1:])
         return NumericRecord(stacked)
+
+    def _unwrap_dataset(self, dataset: Any) -> Any:
+        """Unwrap a single-field auto-wrap dataset to its bare array.
+
+        For the single-field auto-wrap case (numeric-array source),
+        the user expects ``f`` in ``_expectation`` to operate on
+        arrays directly rather than single-field Records. Multi-field
+        sources pass the Record through unchanged.
+        """
+        if len(self._record_data.fields) == 1 and isinstance(dataset, Record):
+            return dataset[self._record_data.fields[0]]
+        return dataset
 
     def __repr__(self) -> str:
         return (
