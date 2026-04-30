@@ -259,17 +259,17 @@ class TestApproximateDistributionValuesTemplate:
             [chain], parents=(prior,), algorithm="test",
             record_template=template,
         )
-        # Template + data + ops all keyed by the top-level template
-        # fields, with no leftover ``"posterior"`` auto-wrap leaking
-        # through.
+        # Template + ops all keyed by the top-level template fields,
+        # with no leftover ``"posterior"`` auto-wrap leaking through.
         expected_fields = ("params", "scale")
         assert post.record_template.fields == expected_fields
         assert post.fields == expected_fields
-        assert post._record_data.fields == expected_fields
         # ``event_shapes['params']`` reports the nested template's
         # flat size as a 1-D event; the nested structure is
         # recoverable via ``record_template['params']``.
         assert post.event_shapes == {"params": (2,), "scale": ()}
+        # ``event_shape`` (singular) is the multi-field default — ``()``.
+        assert post.event_shape == ()
         # The nested template is preserved on ``record_template``.
         assert isinstance(post.record_template["params"], RecordTemplate)
         assert post.record_template["params"].fields == ("a", "b")
@@ -280,6 +280,10 @@ class TestApproximateDistributionValuesTemplate:
         assert m.fields == expected_fields
         assert m["params"].shape == (2,)  # flat per-component means
         assert m["scale"].shape == ()
+        v = op_variance(post)
+        assert v.fields == expected_fields
+        assert v["params"].shape == (2,)
+        assert v["scale"].shape == ()
         # ``draws()`` walks the full template (incl. nesting).
         draws = post.draws()
         assert draws.fields == expected_fields
