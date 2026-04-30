@@ -127,7 +127,7 @@ this distribution hold?"
 | `BootstrapDistribution` | Number of function evaluations |
 | `BootstrapReplicateDistribution` | Number of observations per bootstrap dataset |
 | `BroadcastDistribution` | Number of input–output pairs |
-| `_ArrayMarginal` | Number of output samples |
+| `_RecordMarginal` | Number of output samples |
 | `_MixtureMarginal` | Number of mixture components |
 | `_ListMarginal` | Number of output items |
 
