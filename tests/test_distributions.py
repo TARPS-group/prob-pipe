@@ -387,6 +387,12 @@ class TestFlatSamples:
         np.testing.assert_array_equal(ed2.flat_samples[:, 0], jnp.ones(5))
         np.testing.assert_array_equal(ed2.flat_samples[:, 1], jnp.zeros(5))
 
+    def test_caches_repeated_access(self):
+        # Repeated ``.flat_samples`` should return the same cached array,
+        # not re-materialise the concatenation each time.
+        ed = EmpiricalDistribution(jnp.arange(20.0).reshape(10, 2), name="x")
+        assert ed.flat_samples is ed.flat_samples
+
 
 class TestEmpiricalLogWeights:
     """Tests for log_weights parameterisation and uniform optimisation."""
