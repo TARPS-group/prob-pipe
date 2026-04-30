@@ -518,7 +518,12 @@ class RecordEmpiricalDistribution(
         if len(self._record_data.fields) == 1:
             f = self._record_data.fields[0]
             return tuple(jnp.asarray(self._record_data[f]).shape[1:])
-        return ()
+        raise AttributeError(
+            f"{type(self).__name__} has multiple fields "
+            f"({self._record_data.fields}); ``event_shape`` is only "
+            f"defined for single-field records. Use ``event_shapes`` "
+            f"(plural) for the per-field dict."
+        )
 
     @property
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
@@ -1026,7 +1031,12 @@ class RecordBootstrapReplicateDistribution(
         if len(self._record_data.fields) == 1:
             f = self._record_data.fields[0]
             return (self._n, *jnp.asarray(self._record_data[f]).shape[1:])
-        return ()
+        raise AttributeError(
+            f"{type(self).__name__} has multiple fields "
+            f"({self._record_data.fields}); ``event_shape`` is only "
+            f"defined for single-field replicates. Use "
+            f"``event_shapes`` (plural) for the per-field dict."
+        )
 
     @property
     def obs_shape(self) -> tuple[int, ...]:
@@ -1037,7 +1047,12 @@ class RecordBootstrapReplicateDistribution(
         if len(self._record_data.fields) == 1:
             f = self._record_data.fields[0]
             return tuple(jnp.asarray(self._record_data[f]).shape[1:])
-        return ()
+        raise AttributeError(
+            f"{type(self).__name__} has multiple fields "
+            f"({self._record_data.fields}); ``obs_shape`` is only "
+            f"defined for single-field replicates. Use "
+            f"``obs_shapes`` (plural) for the per-field dict."
+        )
 
     @property
     def obs_shapes(self) -> dict[str, tuple[int, ...]]:

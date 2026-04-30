@@ -268,8 +268,10 @@ class TestApproximateDistributionValuesTemplate:
         # flat size as a 1-D event; the nested structure is
         # recoverable via ``record_template['params']``.
         assert post.event_shapes == {"params": (2,), "scale": ()}
-        # ``event_shape`` (singular) is the multi-field default — ``()``.
-        assert post.event_shape == ()
+        # ``event_shape`` (singular) raises on multi-field — different
+        # code path, separate guard.
+        with pytest.raises(AttributeError, match="multiple fields"):
+            _ = post.event_shape
         # The nested template is preserved on ``record_template``.
         assert isinstance(post.record_template["params"], RecordTemplate)
         assert post.record_template["params"].fields == ("a", "b")

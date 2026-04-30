@@ -239,12 +239,19 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         return samples
 
     def __repr__(self) -> str:
+        # Use ``event_shapes`` (plural) for multi-field posteriors so
+        # the repr stays valid; ``event_shape`` (singular) raises on
+        # multi-field by design.
+        if len(self._record_data.fields) == 1:
+            shape_part = f"event_shape={self.event_shape}"
+        else:
+            shape_part = f"event_shapes={self.event_shapes}"
         return (
             f"ApproximateDistribution("
             f"algorithm={self.algorithm!r}, "
             f"num_chains={self.num_chains}, "
             f"num_draws={self.num_draws}, "
-            f"event_shape={self.event_shape})"
+            f"{shape_part})"
         )
 
 
