@@ -234,8 +234,12 @@ def _supports_compatible(source: Constraint, target: Constraint) -> bool:
     Conservative: returns ``True`` when in doubt (e.g. for parameterized
     constraints that can't be compared structurally).
     """
-    # Identical constraints are always compatible
-    if source == target:
+    # Fast path: identical constraint instances are always compatible.
+    # Use ``is`` rather than ``==`` because ``Constraint.__eq__`` compares
+    # ``__dict__``s, which raises ValueError when constraint attributes
+    # are multi-element JAX arrays (e.g., per-dim ``interval`` bounds).
+    # The parameterized branches below cover the equal-but-distinct case.
+    if source is target:
         return True
 
     supersets = _all_supersets()
@@ -250,19 +254,25 @@ def _supports_compatible(source: Constraint, target: Constraint) -> bool:
     if source_type in supersets.get(target_type, set()):
         return False
 
-    # Parameterized constraints: interval/greater_than
+    # Parameterized constraints: interval/greater_than. Bounds may be
+    # array-valued (per-dim Uniform, TruncatedNormal, ...), so reduce
+    # element-wise comparisons with ``jnp.all``.
     if isinstance(source, _Interval) and isinstance(target, _Interval):
-        return source.low >= target.low and source.high <= target.high
+        return bool(jnp.all(source.low >= target.low)) and bool(
+            jnp.all(source.high <= target.high)
+        )
     if isinstance(source, _Interval) and isinstance(target, _Real):
         return True
     if isinstance(source, _GreaterThan) and isinstance(target, _GreaterThan):
-        return source.lower_bound >= target.lower_bound
+        return bool(jnp.all(source.lower_bound >= target.lower_bound))
     if isinstance(source, _GreaterThan) and isinstance(target, _Real):
         return True
     if isinstance(source, (_Positive, _NonNegative)) and isinstance(target, _GreaterThan):
         return True  # (0, inf) or [0, inf) ⊂ (lb, inf) when lb <= 0
     if isinstance(source, _IntegerInterval) and isinstance(target, _IntegerInterval):
-        return source.low >= target.low and source.high <= target.high
+        return bool(jnp.all(source.low >= target.low)) and bool(
+            jnp.all(source.high <= target.high)
+        )
     if isinstance(source, _IntegerInterval) and isinstance(target, (_NonNegativeInteger, _Real)):
         return True
 
