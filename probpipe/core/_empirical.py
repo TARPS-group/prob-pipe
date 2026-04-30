@@ -474,11 +474,18 @@ class RecordEmpiricalDistribution(
             posterior.flat_samples.shape  # (n, 2)
             posterior.flat_samples.mean(axis=0)  # per-parameter posterior mean
         """
-        parts = [
-            jnp.asarray(self._record_data[f]).reshape(self._n_samples, -1)
-            for f in self._record_data.fields
-        ]
-        return jnp.concatenate(parts, axis=-1)
+        # Cache so repeated access (notebook diagnostics, posterior
+        # summaries) doesn't re-materialise the (n, dim) matrix —
+        # ~8MB per call for a 100k-sample / 10-parameter posterior.
+        cached = getattr(self, "_flat_samples_cache", None)
+        if cached is None:
+            parts = [
+                jnp.asarray(self._record_data[f]).reshape(self._n_samples, -1)
+                for f in self._record_data.fields
+            ]
+            cached = jnp.concatenate(parts, axis=-1)
+            object.__setattr__(self, "_flat_samples_cache", cached)
+        return cached
 
     @property
     def event_shape(self) -> tuple[int, ...]:
