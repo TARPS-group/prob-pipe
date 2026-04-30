@@ -78,6 +78,38 @@ class TestConstraints:
         assert interval(0, 1) != interval(0, 2)
         assert real != positive
 
+    def test_parameterized_equality_array_bounds(self):
+        # __eq__ on parameterized constraints must use jnp.array_equal
+        # so it doesn't crash on multi-element JAX-array bounds.
+        a = interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 1.5]))
+        b = interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 1.5]))
+        c = interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 2.0]))
+        assert a == b
+        assert a != c
+        assert greater_than(jnp.array([1.0, 2.0])) == greater_than(jnp.array([1.0, 2.0]))
+        assert greater_than(jnp.array([1.0, 2.0])) != greater_than(jnp.array([1.0, 3.0]))
+        assert integer_interval(jnp.array([0, 1]), jnp.array([5, 6])) == integer_interval(
+            jnp.array([0, 1]), jnp.array([5, 6])
+        )
+        # Cross-type and non-Constraint comparisons must short-circuit
+        # via the type guard, not raise.
+        assert interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 1.5])) != greater_than(
+            jnp.array([0.0, 0.5])
+        )
+        assert interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 1.5])) != None  # noqa: E711
+        # Shape-mismatched bounds compare unequal rather than raising.
+        assert interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 1.5])) != interval(
+            jnp.array([0.0]), jnp.array([1.0])
+        )
+
+    def test_parameterized_hash_array_bounds(self):
+        # __hash__ on parameterized constraints must not raise for
+        # array-valued bounds (0-d or higher).
+        hash(interval(0.0, 1.0))
+        hash(interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 1.5])))
+        hash(greater_than(jnp.array([1.0, 2.0])))
+        hash(integer_interval(jnp.array([0, 1]), jnp.array([5, 6])))
+
     def test_constraint_repr(self):
         assert repr(real) == "real"
         assert repr(positive) == "positive"
@@ -121,6 +153,14 @@ class TestSupportCompatibility:
         tgt_super = greater_than(jnp.array([0.0, 1.0]))
         tgt_partial = greater_than(jnp.array([0.0, 3.0]))
         assert _supports_compatible(src, tgt_super)
+        assert not _supports_compatible(src, tgt_partial)
+
+    def test_integer_interval_subset_array_bounds(self):
+        src = integer_interval(jnp.array([1, 2]), jnp.array([5, 6]))
+        tgt_super = integer_interval(jnp.array([0, 1]), jnp.array([10, 10]))
+        tgt_partial = integer_interval(jnp.array([0, 3]), jnp.array([10, 10]))
+        assert _supports_compatible(src, tgt_super)
+        # src dim 1 starts at 2, which is below tgt_partial dim 1's 3.
         assert not _supports_compatible(src, tgt_partial)
 
 
@@ -188,6 +228,19 @@ class TestDistributionSupport:
         c = tn.support
         assert jnp.array_equal(c.check(jnp.array([0.0, 1.0])), jnp.array([True, True]))
         assert jnp.array_equal(c.check(jnp.array([-2.0, 1.0])), jnp.array([False, True]))
+
+    def test_binomial_support_array_total_count(self):
+        # Regression: ``int(self._total_count)`` previously crashed for
+        # array-valued total_count. Per-dim total_count should produce a
+        # working integer_interval.
+        b = Binomial(
+            total_count=jnp.array([5, 10]),
+            probs=jnp.array([0.3, 0.5]),
+            name="b_arr",
+        )
+        c = b.support
+        assert jnp.array_equal(c.check(jnp.array([3, 7])), jnp.array([True, True]))
+        assert jnp.array_equal(c.check(jnp.array([6, 7])), jnp.array([False, True]))
 
     def test_bernoulli_support(self):
         assert Bernoulli(probs=0.5, name="d").support == boolean
