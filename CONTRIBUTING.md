@@ -29,6 +29,21 @@ with the implementation and request another review.
 For small fixes (typos, bug fixes, test additions), skip the plan step and
 go straight to an implementation PR.
 
+### Branch naming
+
+Use `dev/<short-kebab-case-description>` for branches. Examples:
+`dev/record-array-views`, `dev/pr-129-review-fixes`,
+`dev/bijector-for-constraint`. Keep the description short (3–5 words)
+and tied to the change, not the author or date.
+
+Claude Code auto-generates branch names like
+`claude/<adjective-name>-<hash>`. Rename these to a `dev/...` name
+**before** opening a PR, or via the GitHub web UI's Branches page
+(Branches → pencil icon). The REST `rename` API does **not** redirect
+open PRs to the new branch — it silently closes them
+(see [#157](https://github.com/TARPS-group/prob-pipe/pull/157) for an
+example). If you must rename after a PR is open, use the web UI.
+
 ---
 
 ## Development Setup
