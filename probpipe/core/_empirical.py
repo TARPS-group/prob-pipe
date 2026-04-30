@@ -40,9 +40,22 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 
-from .._utils import prod, _is_numeric_array
+from .._dtype import _as_float_array
+from .._utils import _auto_key, _is_numeric_array, prod
+from .._weights import Weights
+from ..custom_types import Array, ArrayLike, PRNGKey
+from . import _distribution_base as _base
+from ._distribution_base import Distribution
+from ._numeric_record import NumericRecord
+from ._numeric_record_distribution import (
+    BootstrapDistribution,
+    NumericRecordDistribution,
+)
+from .constraints import Constraint, real
 from .protocols import (
     SupportsCovariance,
     SupportsExpectation,
@@ -50,22 +63,6 @@ from .protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-
-import jax
-import jax.numpy as jnp
-
-from ..custom_types import Array, ArrayLike, PRNGKey
-from .._dtype import _as_float_array
-from .._weights import Weights
-from .constraints import Constraint, real
-from . import _distribution_base as _base
-from .._utils import _auto_key
-from ._distribution_base import Distribution
-from ._numeric_record_distribution import (
-    NumericRecordDistribution,
-    BootstrapDistribution,
-)
-from ._numeric_record import NumericRecord
 from .record import Record, RecordTemplate
 
 
