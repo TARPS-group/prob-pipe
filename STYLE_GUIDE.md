@@ -179,7 +179,15 @@ positional form.
 
 When adding a new `Distribution` subclass, do not define `__iter__`.
 The regression test in `tests/test_iteration_protocol.py` enforces
-this rule across every concrete distribution class.
+this rule across user-constructible distribution subclasses
+(`Normal`, `Beta`, `Gamma`, `MultivariateNormal`, `ProductDistribution`,
+`TransformedDistribution`, `KDEDistribution`,
+`RecordEmpiricalDistribution`, `RecordBootstrapReplicateDistribution`,
+`NumericJointEmpirical`). WF-output classes (`BroadcastDistribution`,
+`_RecordMarginal`, `_MixtureMarginal`, `_ListMarginal`) inherit the
+constraint from their bases and aren't directly parametrised; if you
+add a new such class, verify non-iterability via the parent class's
+contract.
 
 ---
 

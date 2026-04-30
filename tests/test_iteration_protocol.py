@@ -25,6 +25,7 @@ from probpipe import (
     EmpiricalDistribution,
     Gamma,
     JointEmpirical,
+    KDEDistribution,
     MultivariateNormal,
     Normal,
     NumericRecord,
@@ -34,10 +35,17 @@ from probpipe import (
     RecordArray,
     RecordEmpiricalDistribution,
     RecordBootstrapReplicateDistribution,
+    TransformedDistribution,
 )
 
 
-# Concrete distribution constructions covering common families.
+# User-constructible Distribution subclasses, parametrised here to pin
+# the non-iterable rule (#142). WF-output classes (BroadcastDistribution,
+# _RecordMarginal / _MixtureMarginal / _ListMarginal, BootstrapDistribution
+# of an op return) are produced by the WorkflowFunction layer rather than
+# user code; they inherit non-iterability from their bases (Distribution
+# / RecordEmpiricalDistribution / Distribution) and don't need direct
+# parametrisation here.
 DISTRIBUTIONS = [
     pytest.param(lambda: Normal(loc=0.0, scale=1.0, name="x"), id="Normal"),
     pytest.param(lambda: Beta(alpha=1.0, beta=1.0, name="x"), id="Beta"),
@@ -54,6 +62,14 @@ DISTRIBUTIONS = [
             y=Normal(loc=0.0, scale=1.0, name="y"),
         ),
         id="ProductDistribution",
+    ),
+    pytest.param(
+        lambda: _make_transformed(),
+        id="TransformedDistribution",
+    ),
+    pytest.param(
+        lambda: KDEDistribution(jnp.zeros((20, 3)), name="kde"),
+        id="KDEDistribution",
     ),
     pytest.param(
         lambda: EmpiricalDistribution(
@@ -81,6 +97,19 @@ DISTRIBUTIONS = [
         id="NumericJointEmpirical",
     ),
 ]
+
+
+def _make_transformed():
+    """Build a TransformedDistribution at parametrise time.
+
+    Importing the bijector here keeps the test parametrisation
+    side-effect-free at import — TFP's bijector module is heavy
+    enough to warrant deferring.
+    """
+    import tensorflow_probability.substrates.jax.bijectors as tfb
+    return TransformedDistribution(
+        Normal(loc=0.0, scale=1.0, name="base"), tfb.Exp(), name="td",
+    )
 
 
 @pytest.mark.parametrize("make_dist", DISTRIBUTIONS)
