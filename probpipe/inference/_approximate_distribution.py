@@ -44,20 +44,17 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
     Notes
     -----
-    When ``record_template`` is a multi-field template with all-flat
-    leaves, ``__init__`` slices the concatenated chain into per-field
-    arrays so the underlying :class:`~probpipe.RecordEmpiricalDistribution`
-    exposes the named fields directly. When the template contains any
-    nested ``RecordTemplate`` field, ``__init__`` falls back to a
-    single-field auto-wrap of the flat chain — ``draws()`` still walks
-    the full template (including nested structure) using the original
-    flat samples, but the flat ``_record_data`` (and the accessors that
-    read from it: ``event_shapes`` / ``dtypes`` / ``flat_samples`` /
-    ``_mean`` / ``_variance``) only see the single auto-wrap field. A
-    user inspecting the nested template via ``record_template`` /
-    ``fields`` / ``draws()`` sees the right thing; a user inspecting
-    via ``event_shapes`` sees the flat-chain view. Tracked in
-    ``test_inference.py::test_nested_template_accessors_split_state``.
+    When ``record_template`` is multi-field, ``__init__`` slices the
+    concatenated chain into per-top-level-field arrays so
+    :attr:`fields`, :attr:`event_shapes`, :attr:`dtypes`,
+    :meth:`_mean` / :meth:`_variance`, and the public ops
+    (``mean(post)`` / ``variance(post)``) all return Records whose
+    keys match :attr:`fields`. Nested ``RecordTemplate`` fields are
+    stored as a flat ``(n, nested_flat_size)`` array under the
+    top-level field name; the nested structure is recoverable via
+    ``record_template[field]`` and via :meth:`draws`, which walks
+    the full template (including nesting) using the original
+    per-chain samples.
     """
 
     def __init__(
@@ -74,38 +71,32 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         self._chains = [jnp.asarray(c) for c in chains]
         self._concatenated: Array | None = None
 
-        # When a record_template with multiple fields is provided,
-        # slice the concatenated chain into per-field arrays so the
-        # underlying ``RecordEmpiricalDistribution`` exposes the named
-        # fields directly. Single-field user-supplied templates are
-        # also honored (rename the auto-wrap field to match).
         flat = self._concat_chains()
         # Track whether the user explicitly supplied a template; we use
         # this in ``draws()`` to decide whether to wrap the output.
         self._user_template = record_template is not None
-        # Multi-field template with all-flat-leaf fields → split per
-        # field. Nested-template fields fall back to the single-field
-        # auto-wrap path so ``draws()`` can lazily unflatten using the
-        # full template (which preserves the nesting structure).
-        all_flat_leaves = (
-            record_template is not None
-            and len(record_template.fields) > 1
-            and not any(
-                isinstance(record_template[f], RecordTemplate)
-                for f in record_template.fields
-            )
-        )
-        if all_flat_leaves:
-            from ..core.record import Record
-            from .._utils import prod
+        # Multi-field template → split the flat chain by top-level
+        # field. Nested ``RecordTemplate`` fields are stored as a
+        # 2-D ``(n, nested_flat_size)`` slice under the top-level
+        # field name; the nested structure is recovered via
+        # ``record_template[field]`` and ``draws()``. Slice sizes use
+        # ``_spec_size``, which already handles both flat and nested
+        # specs.
+        if record_template is not None and len(record_template.fields) > 1:
+            from ..core.record import _spec_size
             offset = 0
             fields: dict[str, Array] = {}
             for field_name in record_template.fields:
                 spec = record_template[field_name]
-                shape = spec if spec is not None else ()
-                size = prod(shape) if shape else 1
+                size = _spec_size(spec)
                 chunk = flat[..., offset : offset + size]
-                fields[field_name] = chunk.reshape(*flat.shape[:-1], *shape)
+                if isinstance(spec, RecordTemplate):
+                    # Nested: keep flat-per-top-level-field. Shape is
+                    # ``(*sample_shape, nested_flat_size)``.
+                    fields[field_name] = chunk
+                else:
+                    shape = spec if spec is not None else ()
+                    fields[field_name] = chunk.reshape(*flat.shape[:-1], *shape)
                 offset += size
             super().__init__(Record(fields), weights=weights, name=name or "posterior")
             self._record_template = record_template
