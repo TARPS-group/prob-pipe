@@ -512,7 +512,6 @@ def _build_dispatch_table() -> dict[str, callable]:
         "VonMisesFisher": _convert_to_vonmisesfisher,
         "EmpiricalDistribution": _convert_to_empirical,
         "RecordEmpiricalDistribution": _convert_to_empirical,
-        "RecordEmpiricalDistribution": _convert_to_empirical,
         "KDEDistribution": _convert_to_kde,
     }
 
