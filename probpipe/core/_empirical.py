@@ -539,6 +539,13 @@ class RecordEmpiricalDistribution(
         :attr:`event_shapes` (plural, dict-valued) for the multi-field
         case.
 
+        See Also
+        --------
+        :attr:`event_shapes` — the per-field dict, always available.
+        :attr:`RecordBootstrapReplicateDistribution.obs_shape` — the
+            symmetric single-field-only / multi-field-raises accessor
+            for bootstrap replicates' per-observation event shape.
+
         Raises
         ------
         AttributeError
@@ -1074,6 +1081,15 @@ class RecordBootstrapReplicateDistribution(
         case, or :attr:`obs_shape` for the per-observation shape on
         single-field replicates.
 
+        See Also
+        --------
+        :attr:`event_shapes` — the per-field dict, always available.
+        :attr:`obs_shape` — the per-observation event shape (replicate
+            axis stripped) for single-field replicates.
+        :attr:`RecordEmpiricalDistribution.event_shape` — the
+            symmetric single-field-only / multi-field-raises accessor
+            on the empirical-distribution side.
+
         Raises
         ------
         AttributeError
@@ -1098,6 +1114,12 @@ class RecordBootstrapReplicateDistribution(
         Multi-field replicates raise :class:`AttributeError` rather
         than returning ``()``; use :attr:`obs_shapes` (plural,
         per-field) for the multi-field case.
+
+        See Also
+        --------
+        :attr:`obs_shapes` — the per-field dict, always available.
+        :attr:`event_shape` — the full replicate event shape
+            ``(n, *obs_shape)`` for single-field replicates.
 
         Raises
         ------
