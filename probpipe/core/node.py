@@ -291,7 +291,40 @@ class Node(ABC):
     @property
     def inputs(self) -> Mapping[str, Any]:
         return self._inputs
-    
+
+
+def _index_sample(s: Any, i: int) -> Any:
+    """Index row ``i`` of a per-arg sample batch.
+
+    The input ``s`` may be a raw array (single-field broadcast samples
+    or legacy callers), a :class:`Record` (multi-field auto-wrap or
+    explicit Record source), or a :class:`NumericRecord` (the merged
+    ``EmpiricalDistribution`` returns ``NumericRecord`` with
+    stacked-along-leading-axis fields). The dispatch:
+
+    * Single-field ``Record`` → unwrap to the underlying field array's
+      row ``i``, so the inner call sees the same shape it would from a
+      single ``sample(dist)`` draw.
+    * Multi-field ``Record`` → fabricate a per-row :class:`NumericRecord`.
+    * Bare array → standard ``s[i]``.
+
+    Used by both ``_broadcast_enumerate_then_sample`` (for empirical-
+    enumerated rows and for the mixed sampled-rows path) and
+    ``_broadcast_sample`` (for plain MC sampling). Keeping the
+    implementation in one place avoids drift between the three
+    callsites.
+    """
+    # Local imports to avoid module-load circularity with
+    # ``record`` / ``_numeric_record``.
+    from .record import Record
+    from ._numeric_record import NumericRecord
+
+    if isinstance(s, Record):
+        if len(s.fields) == 1:
+            return s[s.fields[0]][i]
+        return NumericRecord({f: s[f][i] for f in s.fields})
+    return s[i]
+
 
 class WorkflowFunction(Node):
     """
@@ -1326,35 +1359,14 @@ class WorkflowFunction(Node):
                 # of per-field stacked arrays; pull row ``i`` per field
                 # so the inner call sees the same shape it would from a
                 # single ``sample(dist)`` draw.
-                from .record import Record
                 for name, dist, i in zip(emp_names, emp_dists, combo):
-                    s = dist.samples
-                    if isinstance(s, Record):
-                        if len(s.fields) == 1:
-                            call_values[name] = s[s.fields[0]][i]
-                        else:
-                            from ._numeric_record import NumericRecord
-                            call_values[name] = NumericRecord({
-                                f: s[f][i] for f in s.fields
-                            })
-                    else:
-                        call_values[name] = s[i]
+                    call_values[name] = _index_sample(dist.samples, i)
 
                 # Set sampled values for non-empirical distributions.
                 # ``sampled[name]`` may be a Record (auto-wrapped); use
                 # the same per-row indexing helper.
                 for name in sample_args:
-                    s = sampled[name]
-                    if isinstance(s, Record):
-                        if len(s.fields) == 1:
-                            call_values[name] = s[s.fields[0]][sample_idx]
-                        else:
-                            from ._numeric_record import NumericRecord
-                            call_values[name] = NumericRecord({
-                                f: s[f][sample_idx] for f in s.fields
-                            })
-                    else:
-                        call_values[name] = s[sample_idx]
+                    call_values[name] = _index_sample(sampled[name], sample_idx)
 
                 # Weight: empirical product weight divided evenly across reps
                 weights.append(emp_weight / reps_per_combo)
@@ -1388,24 +1400,6 @@ class WorkflowFunction(Node):
         """
         key = self._get_key()
         samples_per_arg = self._sample_broadcast_args(values, broadcast_args, n_broadcast_samples, key)
-
-        from .record import Record
-        from ._numeric_record import NumericRecord
-
-        def _index_sample(s, i):
-            """Index row ``i`` of a per-arg sample batch.
-
-            ``samples_per_arg`` may hold raw arrays (legacy) or
-            ``NumericRecord``-shaped batches (the merged
-            ``EmpiricalDistribution`` returns NumericRecord with
-            stacked-along-leading-axis fields). Single-field NumericRecord
-            unwraps; multi-field becomes a per-row NumericRecord.
-            """
-            if isinstance(s, Record):
-                if len(s.fields) == 1:
-                    return s[s.fields[0]][i]
-                return NumericRecord({f: s[f][i] for f in s.fields})
-            return s[i]
 
         call_value_list = []
         for i in range(n_broadcast_samples):
