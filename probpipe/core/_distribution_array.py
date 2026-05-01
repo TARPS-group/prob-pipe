@@ -178,6 +178,137 @@ class DistributionArray[T](Distribution[T]):
             getattr(c, "is_approximate", False) for c in components
         )
 
+    # -- public batched-construction factory --------------------------------
+
+    @classmethod
+    def from_batched_params(
+        cls,
+        dist_cls: type,
+        *,
+        name: str,
+        batch_shape: tuple[int, ...] | None = None,
+        **batched_params,
+    ) -> "DistributionArray":
+        """Construct a ``DistributionArray`` of homogeneous components.
+
+        Companion to the future-deprecated TFP-batched-parameters
+        constructor: ``Normal(loc=jnp.zeros(5), scale=1.0, name="x")``
+        will raise in PR-C.2; the migration is::
+
+            DistributionArray.from_batched_params(
+                Normal, loc=jnp.zeros(5), scale=1.0, name="x",
+            )
+
+        When ``dist_cls`` implements
+        :class:`~probpipe.core.protocols.SupportsArrayBackend` (every
+        TFP-backed concrete class does — ``Normal``, ``Beta``,
+        ``Gamma``, ``MultivariateNormal``, …), the factory dispatches
+        onto the backend's fused-storage path: a single batched
+        TFP backend owns the parameters; cells are materialised lazily
+        on demand. Otherwise the factory falls back to the
+        literal-array path: one ``dist_cls`` instance per cell with
+        per-cell parameters auto-sliced and names auto-suffixed
+        ``f"{name}_{flat_index}"``.
+
+        Parameters
+        ----------
+        dist_cls : type
+            A ``Distribution`` subclass. The factory does not
+            instantiate ``dist_cls`` directly when the protocol path
+            is taken; per-cell scalars are produced by the backend.
+        name : str
+            Base name; per-cell scalars are named
+            ``f"{name}_{flat_index}"`` (row-major over
+            ``batch_shape``).
+        batch_shape : tuple of int, optional
+            Leading shape of the batched parameters. Inferred from
+            ``batched_params`` (broadcast shape of array-valued
+            entries) when omitted.
+        **batched_params
+            Constructor kwargs for ``dist_cls`` with leading
+            ``batch_shape`` already applied. Scalars are broadcast
+            across every cell.
+
+        Returns
+        -------
+        DistributionArray
+            Backend-delegated when ``dist_cls`` implements
+            ``SupportsArrayBackend``; literal-array fallback otherwise.
+
+        Raises
+        ------
+        ValueError
+            If ``batch_shape`` cannot be inferred (no array-valued
+            params) and the caller did not pass it explicitly.
+
+        Examples
+        --------
+        Backend-delegated TFP path::
+
+            da = DistributionArray.from_batched_params(
+                Normal, loc=jnp.zeros(5), scale=1.0, name="x",
+            )
+            da.batch_shape       # (5,)
+            da[0].name           # "x_0"
+            da[0].loc            # 0.0
+            da._backend          # _TFPArrayBackend(...)
+
+        Literal-array fallback (any class without the protocol)::
+
+            da = DistributionArray.from_batched_params(
+                MyCustomDist, param=jnp.arange(4), name="z",
+            )
+            da._backend          # None — fallback path
+            da[0].name           # "z_0"
+        """
+        inferred_shape = _infer_batch_shape(batched_params, batch_shape)
+        if hasattr(dist_cls, "_make_array_backend"):
+            backend = dist_cls._make_array_backend(
+                name=name,
+                batch_shape=inferred_shape,
+                **batched_params,
+            )
+            return cls._from_backend(backend, name=name)
+        return cls._from_literal_components(
+            dist_cls,
+            name=name,
+            batch_shape=inferred_shape,
+            batched_params=batched_params,
+        )
+
+    @classmethod
+    def _from_literal_components(
+        cls,
+        dist_cls: type,
+        *,
+        name: str,
+        batch_shape: tuple[int, ...],
+        batched_params: dict,
+    ) -> "DistributionArray":
+        """Build by constructing one ``dist_cls`` instance per cell.
+
+        Used by :meth:`from_batched_params` for any ``dist_cls`` that
+        does not implement
+        :class:`~probpipe.core.protocols.SupportsArrayBackend`.
+        Per-cell parameters are sliced from ``batched_params`` at the
+        flat row-major index; cell names auto-suffix as
+        ``f"{name}_{flat}"``.
+        """
+        components = []
+        n = prod(batch_shape)
+        for flat in range(n):
+            multi = (
+                np.unravel_index(flat, batch_shape) if batch_shape else ()
+            )
+            multi_t = tuple(int(x) for x in multi)
+            cell_params = {
+                k: _slice_at(v, multi_t) for k, v in batched_params.items()
+            }
+            components.append(
+                dist_cls(name=f"{name}_{flat}", **cell_params)
+            )
+        return cls(components, batch_shape=batch_shape, name=name)
+
     # -- backend-delegated constructor --------------------------------------
 
     @classmethod
@@ -374,6 +505,74 @@ class DistributionArray[T](Distribution[T]):
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
+
+
+def _infer_batch_shape(
+    batched_params: dict, declared: tuple[int, ...] | None,
+) -> tuple[int, ...]:
+    """Return the broadcast shape of array-valued entries in
+    ``batched_params``, or ``declared`` if explicitly supplied.
+
+    Used by :meth:`DistributionArray.from_batched_params` when the
+    caller doesn't pass ``batch_shape`` explicitly. Walks the values,
+    treating scalars / 0-D arrays as broadcast-across-batch and
+    everything else by its leading shape (since trailing axes may be
+    event-shape, e.g. MVN's ``loc`` is ``(*batch, d)`` — but for
+    inference we use the full broadcast shape across non-scalar
+    params, which equals the batch leading prefix when scalars are
+    excluded).
+    """
+    if declared is not None:
+        return tuple(int(x) for x in declared)
+    import jax.numpy as jnp
+    shapes = []
+    for value in batched_params.values():
+        try:
+            arr = jnp.asarray(value)
+        except Exception:
+            continue
+        if arr.ndim > 0:
+            shapes.append(arr.shape)
+    if not shapes:
+        raise ValueError(
+            "from_batched_params: cannot infer batch_shape — no "
+            "array-valued parameters were passed (all are scalar). "
+            "Pass batch_shape=... explicitly, or use the regular "
+            "Distribution constructor for a single instance."
+        )
+    # The broadcast shape across non-scalar params is the batch prefix
+    # only when all params share the same event_shape. For families
+    # with differing per-param event ranks (e.g. ``MultivariateNormal``
+    # with ``loc.shape=(*batch, d)`` and ``scale_tril.shape=(*batch,
+    # d, d)``), the broadcast attempt fails — punt to the caller.
+    try:
+        bs = jnp.broadcast_shapes(*shapes)
+    except (ValueError, Exception) as err:  # noqa: BLE001 — JAX raises ValueError; be safe across versions
+        raise ValueError(
+            "from_batched_params: cannot infer batch_shape from the "
+            f"given parameter shapes {shapes}. This typically happens "
+            "for distributions with non-trivial event_shape (e.g. "
+            "MultivariateNormal, Dirichlet) where each parameter has "
+            "a different number of event axes. Pass batch_shape=... "
+            "explicitly."
+        ) from err
+    return tuple(int(x) for x in bs)
+
+
+def _slice_at(value, multi_index: tuple[int, ...]):
+    """Index leading ``len(multi_index)`` axes of ``value`` at the given
+    multi-d index. Scalars / lower-rank values are passed through.
+
+    Mirrors :func:`probpipe.distributions._tfp_base._slice_param_at`
+    for the literal-array fallback path.
+    """
+    if not multi_index:
+        return value
+    import jax.numpy as jnp
+    arr = jnp.asarray(value)
+    if arr.ndim < len(multi_index):
+        return value
+    return arr[multi_index]
 
 
 def _make_distribution_array(
