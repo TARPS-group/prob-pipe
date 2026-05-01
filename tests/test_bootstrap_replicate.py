@@ -389,6 +389,25 @@ class TestRecordBootstrapReplicateDistribution:
         dist = RecordBootstrapReplicateDistribution(emp, name="x")
         assert dist.n == 20
 
+    def test_rejects_object_array_empirical(self):
+        """Generic (object-array) EmpiricalDistribution is rejected.
+
+        Numeric-array empiricals dispatch to RecordEmpiricalDistribution
+        via the factory ``__new__``, so any EmpiricalDistribution that
+        reaches RecordBootstrapReplicateDistribution.__init__ as a
+        generic instance is object-backed and can't be wrapped as a
+        Record. Confirm the explicit TypeError fires (instead of the
+        unhelpful _as_float_array(object_arr) failure that used to
+        bubble up).
+        """
+        from probpipe.core._empirical import RecordEmpiricalDistribution
+        emp = EmpiricalDistribution(["a", "b", "c"])
+        assert not isinstance(emp, RecordEmpiricalDistribution)
+        with pytest.raises(
+            TypeError, match="generic .object-array. EmpiricalDistribution",
+        ):
+            RecordBootstrapReplicateDistribution(emp)
+
     def test_obs_shape(self):
         dist = RecordBootstrapReplicateDistribution(jnp.ones((10, 3, 4)), name="x")
         assert dist.obs_shape == (3, 4)
