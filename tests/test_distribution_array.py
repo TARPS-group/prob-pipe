@@ -609,3 +609,92 @@ class TestFromBatchedParams:
         for i, cell in enumerate(da):
             assert float(cell.loc) == float(da[i].loc)
             assert cell.name == da[i].name
+
+
+# ---------------------------------------------------------------------------
+# Distribution.from_batched_params alias (PR-C.1 commit 5)
+# ---------------------------------------------------------------------------
+
+
+class TestDistributionFromBatchedParamsAlias:
+    """Ergonomic per-class alias on Distribution[T]."""
+
+    def test_alias_dispatches_to_distribution_array_factory(self):
+        from probpipe import Normal, DistributionArray
+        from probpipe.distributions._tfp_base import _TFPArrayBackend
+
+        da = Normal.from_batched_params(
+            loc=jnp.arange(5.0), scale=1.0, name="x",
+        )
+        assert isinstance(da, DistributionArray)
+        assert isinstance(da._backend, _TFPArrayBackend)
+        assert da.batch_shape == (5,)
+        assert da[0].name == "x_0"
+
+    def test_alias_matches_classmethod_call(self):
+        from probpipe import Normal, DistributionArray
+        loc = jnp.arange(4.0)
+        scale = jnp.linspace(0.1, 0.4, 4)
+
+        via_alias = Normal.from_batched_params(
+            loc=loc, scale=scale, name="x",
+        )
+        via_factory = DistributionArray.from_batched_params(
+            Normal, loc=loc, scale=scale, name="x",
+        )
+        # Same backend type, same per-cell parameters / names.
+        assert type(via_alias._backend) is type(via_factory._backend)
+        for i in range(4):
+            a = via_alias[i]
+            f = via_factory[i]
+            assert a.name == f.name
+            assert float(a.loc) == float(f.loc)
+            assert float(a.scale) == float(f.scale)
+
+    def test_alias_inherited_by_all_distribution_subclasses(self):
+        from probpipe.core._distribution_base import Distribution
+        from probpipe import (
+            Normal, Beta, Gamma, MultivariateNormal,
+            EmpiricalDistribution,
+        )
+        # Every Distribution subclass inherits the alias.
+        for cls in (Distribution, Normal, Beta, Gamma,
+                    MultivariateNormal, EmpiricalDistribution):
+            assert hasattr(cls, "from_batched_params")
+            assert callable(cls.from_batched_params)
+
+    def test_alias_with_explicit_batch_shape(self):
+        from probpipe import MultivariateNormal
+        d = 3
+        da = MultivariateNormal.from_batched_params(
+            batch_shape=(2,),
+            loc=jnp.zeros((2, d)),
+            scale_tril=jnp.broadcast_to(jnp.eye(d), (2, d, d)),
+            name="z",
+        )
+        assert da.batch_shape == (2,)
+        assert da.event_shape == (d,)
+
+    def test_alias_falls_back_for_non_protocol_class(self):
+        """The alias inherits the factory's protocol-vs-fallback
+        dispatch, so non-protocol Distribution subclasses also get the
+        literal-array fallback when invoking the alias."""
+        from probpipe.core._distribution_base import Distribution
+
+        class MyDist(Distribution):
+            def __init__(self, value, *, name):
+                self._value = float(value)
+                super().__init__(name=name)
+
+            @property
+            def event_shape(self):
+                return ()
+
+            @property
+            def batch_shape(self):
+                return ()
+
+        da = MyDist.from_batched_params(value=jnp.arange(3.0), name="m")
+        assert da._backend is None
+        assert isinstance(da[0], MyDist)
+        assert da[1].name == "m_1"
