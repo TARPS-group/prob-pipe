@@ -272,8 +272,11 @@ class TestWithResampling:
         step2 = with_resampling(weighted_step, ess_threshold=0.5, seed=42)
         dists2 = iterate(step_fn=step2, initial=initial, inputs=[0.0, 0.0])
 
-        assert jnp.allclose(dists1[1].samples[dists1[1].samples.fields[0]], dists2[1].samples[dists2[1].samples.fields[0]])
-        assert jnp.allclose(dists1[2].samples, dists2[2].samples)
+        # Both assertions use explicit field-access — the auto-wrap field
+        # name is ``"x"`` (set on the initial ``EmpiricalDistribution``),
+        # not whatever the post-resampling internal default would be.
+        assert jnp.allclose(dists1[1].samples["x"], dists2[1].samples["x"])
+        assert jnp.allclose(dists1[2].samples["x"], dists2[2].samples["x"])
 
 
 # ---------------------------------------------------------------------------
