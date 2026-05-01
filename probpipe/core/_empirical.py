@@ -986,20 +986,21 @@ class RecordBootstrapReplicateDistribution(
             default_n = n_rows
             self._w = Weights.uniform(n_rows)
         elif isinstance(source, EmpiricalDistribution):
-            # Numeric-array-backed EmpiricalDistribution: dispatch wrapped
-            # us here. Auto-wrap the stacked array as a single-field
-            # Record using the source's name.
-            arr = source.samples
-            field_name = name or source.name or "data"
-            wrapped, field_name = _wrap_numeric_array_as_record(
-                arr, name=field_name,
-                role="RecordBootstrapReplicateDistribution",
+            # The factory path routes numeric-array-backed empiricals to
+            # ``RecordEmpiricalDistribution`` (caught above), so any
+            # ``EmpiricalDistribution`` reaching here is a generic-base
+            # instance with object-array storage — directly constructing
+            # ``RecordBootstrapReplicateDistribution`` with such a source
+            # is the only way in. Reject explicitly so users get a clear
+            # error instead of an ``_as_float_array(object_arr)``
+            # TypeError later.
+            raise TypeError(
+                f"RecordBootstrapReplicateDistribution does not accept "
+                f"generic (object-array) EmpiricalDistribution sources "
+                f"(got {type(source).__name__} with object samples). "
+                f"Pass a RecordEmpiricalDistribution, a numeric array, "
+                f"or wrap your samples in a Record first."
             )
-            self._record_data = wrapped
-            self._w = source._w
-            default_n = source.n
-            if name is None:
-                name = field_name
         elif _is_numeric_array(source):
             wrapped, field_name = _wrap_numeric_array_as_record(
                 source, name=name,
