@@ -771,12 +771,13 @@ class TestDistributionCoverageGaps:
         n = Normal(loc=0.0, scale=1.0, name="x")
         assert n.dtype == n._tfp_dist.dtype
 
-    def test_repr_with_batch_shape(self):
-        """TFPDistribution repr includes batch_shape when non-trivial."""
-        from probpipe import Normal
-
-        d = Normal(loc=jnp.array([0.0, 1.0]), scale=jnp.array([1.0, 1.0]), name="x")
-        assert "batch_shape" in repr(d)
+    # NOTE: ``test_repr_with_batch_shape`` was removed in PR-C.2.
+    # It exercised ``Normal(loc=arr, scale=arr)`` (now rejected by
+    # ``TFPDistribution.__init__``) to verify that the repr includes
+    # ``batch_shape``. Distributions never carry a non-trivial
+    # ``batch_shape`` after PR-C.2, so the repr branch the test
+    # asserted on is unreachable. PR-C.3 will remove ``batch_shape``
+    # from the repr entirely.
 
     def test_array_empirical_dtype(self):
         """RecordEmpiricalDistribution.dtype returns sample dtype."""

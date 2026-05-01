@@ -316,7 +316,15 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
             else:
                 sig = inspect.signature(comp)
                 call_kw = {p: structured[p] for p in sig.parameters if p in structured}
-                cond_dist = comp(**call_kw)
+                # User lambda receives batched parent values during
+                # log_prob; the rejection in TFPDistribution.__init__
+                # would refuse the resulting batched form. The
+                # log_prob path is the symmetric counterpart to the
+                # bypass already added on the sampling side
+                # (_sample_sequential).
+                from ._tfp_base import _allow_batched_tfp_init
+                with _allow_batched_tfp_init():
+                    cond_dist = comp(**call_kw)
                 lp = cond_dist._log_prob(val)
             total = lp if total is None else total + lp
 

@@ -184,49 +184,18 @@ class TestDistributionSupport:
     def test_uniform_support(self):
         assert Uniform(low=-1.0, high=2.0, name="u").support == interval(-1.0, 2.0)
 
-    # NOTE: ``test_uniform_support_array_bounds`` and
-    # ``test_half_cauchy_support_array_bounds`` were removed in PR-C.2.
-    # They exercised the legacy form ``Uniform(low=arr, high=arr)`` /
-    # ``HalfCauchy(loc=arr, scale=arr)``, which the framework
+    # NOTE: A family of "support with array bounds" tests was removed
+    # in PR-C.2. Each exercised a legacy batched constructor:
+    # ``Uniform(low=arr, high=arr)``, ``HalfCauchy(loc=arr, scale=arr)``,
+    # ``Pareto(concentration=arr, scale=arr)``,
+    # ``TruncatedNormal(loc=arr, scale=arr, low=arr, high=arr)``,
+    # ``Binomial(total_count=arr, probs=arr)``. The framework
     # hierarchy ("one random variable per Distribution") no longer
-    # permits. Migrate to ``DistributionArray.from_batched_params``
-    # for batched constructions; per-element support checks belong on
-    # ``Constraint``, not on a batched ``Distribution``.
-
-    def test_pareto_support_array_bounds(self):
-        p = Pareto(
-            concentration=jnp.array([2.0, 2.0]),
-            scale=jnp.array([1.0, 2.0]),
-            name="p_arr",
-        )
-        c = p.support
-        assert jnp.array_equal(c.check(jnp.array([1.5, 2.5])), jnp.array([True, True]))
-        assert jnp.array_equal(c.check(jnp.array([0.5, 2.5])), jnp.array([False, True]))
-
-    def test_truncated_normal_support_array_bounds(self):
-        tn = TruncatedNormal(
-            loc=jnp.array([0.0, 0.0]),
-            scale=jnp.array([1.0, 1.0]),
-            low=jnp.array([-1.0, 0.0]),
-            high=jnp.array([1.0, 2.0]),
-            name="tn_arr",
-        )
-        c = tn.support
-        assert jnp.array_equal(c.check(jnp.array([0.0, 1.0])), jnp.array([True, True]))
-        assert jnp.array_equal(c.check(jnp.array([-2.0, 1.0])), jnp.array([False, True]))
-
-    def test_binomial_support_array_total_count(self):
-        # Regression: ``int(self._total_count)`` previously crashed for
-        # array-valued total_count. Per-dim total_count should produce a
-        # working integer_interval.
-        b = Binomial(
-            total_count=jnp.array([5, 10]),
-            probs=jnp.array([0.3, 0.5]),
-            name="b_arr",
-        )
-        c = b.support
-        assert jnp.array_equal(c.check(jnp.array([3, 7])), jnp.array([True, True]))
-        assert jnp.array_equal(c.check(jnp.array([6, 7])), jnp.array([False, True]))
+    # permits these forms; migrate to
+    # ``DistributionArray.from_batched_params`` for batched
+    # constructions, and use ``Constraint`` directly for per-element
+    # support checks (those are a property of the ``Constraint``
+    # type, not of a batched ``Distribution``).
 
     def test_bernoulli_support(self):
         assert Bernoulli(probs=0.5, name="d").support == boolean

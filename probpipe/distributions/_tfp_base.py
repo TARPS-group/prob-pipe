@@ -108,11 +108,66 @@ class TFPDistribution(
     :class:`SupportsLogProb` (provides ``_prob``,
     ``_unnormalized_log_prob``, ``_unnormalized_prob`` defaults),
     :class:`SupportsMean`, and :class:`SupportsVariance`.
+
+    Rejects batched parameters
+    --------------------------
+    Per the framework hierarchy "one random variable per
+    ``Distribution``" rule (CONTRIBUTING.md), the constructor raises
+    :class:`ValueError` when the underlying ``tfd.Distribution`` has
+    a non-empty ``batch_shape``. Wrap multiple distributions in a
+    :class:`~probpipe.DistributionArray` instead — the migration
+    factory is :meth:`~probpipe.DistributionArray.from_batched_params`
+    (or the per-class alias :meth:`Distribution.from_batched_params`).
+
+    The check fires in ``__init__`` after ``super().__init__(name=name)``
+    completes, so concrete subclasses that set ``self._tfp_dist``
+    *before* calling ``super().__init__`` (the standard pattern used
+    by ``Normal``, ``Beta``, ``Gamma``, …) are validated. Subclasses
+    that set ``_tfp_dist`` *after* ``super().__init__`` (e.g.
+    :class:`~probpipe.distributions.kde.KDEDistribution`) are skipped
+    via the ``hasattr`` guard — those classes are responsible for
+    their own shape invariants and don't go through TFP's batched
+    parameter convention.
+
+    Internal infrastructure that legitimately needs the batched form
+    (the ``_TFPArrayBackend`` fused storage, converters, sequential
+    joints, GRF predictions) opts into the bypass via
+    :func:`_allow_batched_tfp_init`.
     """
 
     _tfp_dist: tfd.Distribution
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
+
+    def __init__(self, *, name: str) -> None:
+        """Final-stage initializer for TFP-backed distributions.
+
+        Concrete subclasses (``Normal``, ``Beta``, …) set
+        ``self._tfp_dist`` in their own ``__init__`` *before* calling
+        ``super().__init__(name=name)``, so by the time we get here
+        the TFP backend is fully constructed and we can validate its
+        ``batch_shape``.
+        """
+        super().__init__(name=name)
+        if _ALLOW_BATCHED_INIT:
+            return
+        # KDE-style subclasses set ``_tfp_dist`` *after* this call;
+        # skip the check rather than crash on a missing attribute.
+        # Such classes are responsible for their own shape invariants.
+        tfp_dist = getattr(self, "_tfp_dist", None)
+        if tfp_dist is None:
+            return
+        actual = tuple(tfp_dist.batch_shape)
+        if actual != ():
+            cls_name = type(self).__name__
+            raise ValueError(
+                f"{cls_name} parameters imply batch_shape={actual}; "
+                f"wrap multiple distributions in a DistributionArray "
+                f"instead. See "
+                f"DistributionArray.from_batched_params({cls_name}, ...) "
+                f"(or the alias {cls_name}.from_batched_params(...)) "
+                f"for the factory."
+            )
 
     # -- record_template auto-generation ------------------------------------
 
@@ -318,14 +373,15 @@ class _TFPArrayBackend:
             batched_params = normalised
         self._batched_params = batched_params
         # Construct the fused ProbPipe Distribution with the batched
-        # params. The backend exists *to* hold a batched form, so any
-        # downstream rejection of batched parameters at construction
-        # time must provide a bypass; this constructor is the
-        # canonical caller of that bypass.
-        self._batched_dist: TFPDistribution = dist_cls(
-            **batched_params,
-            name=f"{name}{_ARRAY_BACKEND_NAME_SUFFIX}",
-        )
+        # params. ``TFPDistribution.__init__`` rejects batched
+        # parameters for user code; the backend is internal infra that
+        # exists *to* hold a batched form, so it opts into the bypass
+        # via ``_allow_batched_tfp_init``.
+        with _allow_batched_tfp_init():
+            self._batched_dist: TFPDistribution = dist_cls(
+                **batched_params,
+                name=f"{name}{_ARRAY_BACKEND_NAME_SUFFIX}",
+            )
         # Final sanity check: TFP's inferred batch_shape must match
         # the caller's declaration. Catches the rare case where a
         # higher-rank param's *trailing* axes don't agree but the
