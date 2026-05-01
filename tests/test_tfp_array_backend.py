@@ -303,3 +303,91 @@ class TestScalarBroadcast:
         )
         for i in range(3):
             assert float(backend.cell(i).scale) == 0.5
+
+
+# ---------------------------------------------------------------------------
+# JAX pytree registration
+# ---------------------------------------------------------------------------
+
+
+class TestPytreeRegistration:
+    """``_TFPArrayBackend`` is registered as a JAX pytree node so it
+    can flow through ``jit`` / ``vmap`` / ``tree_map``.
+
+    Children are the batched parameter values (the JAX-array leaves
+    the user passed); aux carries the distribution class, name,
+    declared ``batch_shape``, and parameter keys. Reconstruction
+    rebuilds the wrapped ``_batched_dist`` from the parameter dict.
+    """
+
+    def _backend(self):
+        return Normal._make_array_backend(
+            name="x", batch_shape=(5,),
+            loc=jnp.arange(5.0), scale=1.0,
+        )
+
+    def test_flatten_yields_batched_params_in_insertion_order(self):
+        backend = self._backend()
+        leaves, treedef = jax.tree_util.tree_flatten(backend)
+        # Two children: ``loc`` (array) then ``scale`` (scalar) —
+        # insertion order from ``Normal._make_array_backend``.
+        assert len(leaves) == 2
+        assert hasattr(leaves[0], "shape") and leaves[0].shape == (5,)
+        assert leaves[1] == 1.0
+
+    def test_round_trip_preserves_behaviour(self):
+        backend = self._backend()
+        leaves, treedef = jax.tree_util.tree_flatten(backend)
+        rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
+        assert isinstance(rebuilt, _TFPArrayBackend)
+        assert rebuilt.batch_shape == backend.batch_shape
+        # Behavioural equivalence: same mean, same per-cell scalar.
+        np.testing.assert_allclose(
+            np.asarray(rebuilt._mean()), np.asarray(backend._mean())
+        )
+        assert float(rebuilt.cell(2).loc) == float(backend.cell(2).loc)
+
+    def test_jit_through_backend(self):
+        """A ``jit``-compiled function that consumes the backend
+        traces cleanly: the backend is a valid pytree node, so JAX
+        threads its leaves through the compilation."""
+        @jax.jit
+        def fn(b):
+            return b._mean()
+
+        backend = self._backend()
+        out = fn(backend)
+        np.testing.assert_allclose(
+            np.asarray(out), np.arange(5.0)
+        )
+
+    def test_tree_map_replaces_leaves(self):
+        """``tree_map`` over the backend rebuilds it with transformed
+        leaves; the surrounding aux is preserved."""
+        backend = self._backend()
+        scaled = jax.tree_util.tree_map(lambda x: jnp.asarray(x) * 2.0, backend)
+        assert isinstance(scaled, _TFPArrayBackend)
+        assert scaled.batch_shape == backend.batch_shape
+        # ``loc`` doubled, ``scale`` doubled; per-cell mean = 2 * loc.
+        np.testing.assert_allclose(
+            np.asarray(scaled._mean()), 2.0 * np.arange(5.0)
+        )
+
+    def test_vmap_over_leading_batch(self):
+        """vmap-able through ``tree_map`` lifting a fresh axis on each
+        leaf, then calling the backend's vectorised op under the lift."""
+        backend = Normal._make_array_backend(
+            name="x", batch_shape=(3,),
+            loc=jnp.zeros(3), scale=jnp.ones(3),
+        )
+        # Stack two backends along a new leading axis via tree_map.
+        stacked = jax.tree_util.tree_map(
+            lambda x: jnp.stack([jnp.asarray(x), jnp.asarray(x) + 10.0]),
+            backend,
+        )
+        # vmap pulls the new axis out and runs ``_mean`` per slice.
+        means = jax.vmap(lambda b: b._mean())(stacked)
+        # Two slices: original (zeros) and shifted by 10.
+        np.testing.assert_allclose(
+            np.asarray(means), np.array([[0.0, 0.0, 0.0], [10.0, 10.0, 10.0]])
+        )

@@ -42,10 +42,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import jax.numpy as jnp
 import numpy as np
 
+from .._array_utils import _slice_leading_axes
 from .._utils import prod
 from ._distribution_base import Distribution
+from .protocols import SupportsArrayBackend
 
 if TYPE_CHECKING:
     from .protocols import _DistributionArrayBackend
@@ -162,9 +165,8 @@ class DistributionArray[T](Distribution[T]):
                 )
         self._components: tuple[Distribution, ...] | None = components
         self._batch_shape = batch_shape
-        # ``_backend`` is set only by the ``_from_backend`` factory
-        # (commit 3 of PR-C.1). The literal-array path leaves it
-        # ``None`` and continues to use ``_components`` as the
+        # Set only by :meth:`_from_backend`. The literal-array path
+        # leaves it ``None`` and uses ``_components`` as the
         # storage-of-truth.
         self._backend: "_DistributionArrayBackend | None" = None
         if name is None:
@@ -262,7 +264,7 @@ class DistributionArray[T](Distribution[T]):
             da[0].name           # "z_0"
         """
         inferred_shape = _infer_batch_shape(batched_params, batch_shape)
-        if hasattr(dist_cls, "_make_array_backend"):
+        if isinstance(dist_cls, SupportsArrayBackend):
             backend = dist_cls._make_array_backend(
                 name=name,
                 batch_shape=inferred_shape,
@@ -302,7 +304,8 @@ class DistributionArray[T](Distribution[T]):
             )
             multi_t = tuple(int(x) for x in multi)
             cell_params = {
-                k: _slice_at(v, multi_t) for k, v in batched_params.items()
+                k: _slice_leading_axes(v, multi_t)
+                for k, v in batched_params.items()
             }
             components.append(
                 dist_cls(name=f"{name}_{flat}", **cell_params)
@@ -330,7 +333,7 @@ class DistributionArray[T](Distribution[T]):
         materialised lazily on first access via :attr:`components`.
 
         Private — public construction goes through
-        :meth:`from_batched_params` (commit 4).
+        :meth:`from_batched_params`.
 
         Parameters
         ----------
@@ -524,12 +527,11 @@ def _infer_batch_shape(
     """
     if declared is not None:
         return tuple(int(x) for x in declared)
-    import jax.numpy as jnp
     shapes = []
     for value in batched_params.values():
         try:
             arr = jnp.asarray(value)
-        except Exception:
+        except (TypeError, ValueError):
             continue
         if arr.ndim > 0:
             shapes.append(arr.shape)
@@ -547,7 +549,7 @@ def _infer_batch_shape(
     # d, d)``), the broadcast attempt fails — punt to the caller.
     try:
         bs = jnp.broadcast_shapes(*shapes)
-    except (ValueError, Exception) as err:  # noqa: BLE001 — JAX raises ValueError; be safe across versions
+    except ValueError as err:
         raise ValueError(
             "from_batched_params: cannot infer batch_shape from the "
             f"given parameter shapes {shapes}. This typically happens "
@@ -557,22 +559,6 @@ def _infer_batch_shape(
             "explicitly."
         ) from err
     return tuple(int(x) for x in bs)
-
-
-def _slice_at(value, multi_index: tuple[int, ...]):
-    """Index leading ``len(multi_index)`` axes of ``value`` at the given
-    multi-d index. Scalars / lower-rank values are passed through.
-
-    Mirrors :func:`probpipe.distributions._tfp_base._slice_param_at`
-    for the literal-array fallback path.
-    """
-    if not multi_index:
-        return value
-    import jax.numpy as jnp
-    arr = jnp.asarray(value)
-    if arr.ndim < len(multi_index):
-        return value
-    return arr[multi_index]
 
 
 def _make_distribution_array(

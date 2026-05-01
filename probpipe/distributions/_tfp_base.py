@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import tensorflow_probability.substrates.jax.distributions as tfd
 
+from .._array_utils import _slice_leading_axes
 from .._utils import prod
 from ..core._distribution_base import Distribution
 from ..core.distribution import (
@@ -162,8 +164,8 @@ class TFPDistribution(
         constructor handles the per-class param-name mapping.
 
         See :class:`probpipe.core.protocols.SupportsArrayBackend` for the
-        protocol contract. Phase 1 of PR-C — additive only; nothing yet
-        forces users through this path.
+        protocol contract. Additive — ``DistributionArray.from_batched_params``
+        is the only consumer; user code never calls this directly.
         """
         return _TFPArrayBackend(
             dist_cls=cls,
@@ -188,11 +190,10 @@ class _TFPArrayBackend:
     param.
 
     Implementation strategy: the backend wraps a *single* ProbPipe
-    ``Distribution`` instance constructed with the batched params
-    (legal in Phase 1 — Phase 2 will need a bypass for the un-batched
-    assertion this class introduces). Vectorised ops forward to that
-    wrapped instance's TFP backend; ``cell(i)`` slices the params and
-    runs the ordinary scalar constructor with a suffixed name.
+    ``Distribution`` instance constructed with the batched params.
+    Vectorised ops forward to that wrapped instance's TFP backend;
+    ``cell(i)`` slices the params and runs the ordinary scalar
+    constructor with a suffixed name.
 
     Not a :class:`Distribution` itself — the backend exists only as
     the contract between :meth:`TFPDistribution._make_array_backend`
@@ -228,9 +229,10 @@ class _TFPArrayBackend:
         self._batch_shape = tuple(batch_shape)
         self._batched_params = batched_params
         # Construct the fused ProbPipe Distribution with the batched
-        # params. This is legal in Phase 1; Phase 2's un-batched
-        # assertion will need a private bypass here (the backend's
-        # whole purpose is to hold a batched form).
+        # params. The backend exists *to* hold a batched form, so any
+        # downstream rejection of batched parameters at construction
+        # time must provide a bypass; this constructor is the
+        # canonical caller of that bypass.
         self._batched_dist: TFPDistribution = dist_cls(
             **batched_params,
             name=f"{name}__array_backend",
@@ -275,7 +277,7 @@ class _TFPArrayBackend:
         multi = self._normalize_index(index)
         flat = int(np.ravel_multi_index(multi, self._batch_shape)) if self._batch_shape else 0
         scalar_params = {
-            key: _slice_param_at(value, multi)
+            key: _slice_leading_axes(value, multi)
             for key, value in self._batched_params.items()
         }
         return self._dist_cls(
@@ -345,22 +347,48 @@ class _TFPArrayBackend:
             f"batch_shape={self._batch_shape}, name={self._name!r})"
         )
 
+    # -- JAX pytree registration --------------------------------------------
 
-def _slice_param_at(
-    value: Any, multi_index: tuple[int, ...]
-) -> Any:
-    """Index the leading ``len(multi_index)`` axes of ``value`` at ``multi_index``.
+    def tree_flatten(self):
+        """Split the backend into JAX-traceable children + static aux.
 
-    A scalar / lower-rank value (broadcast across every cell of the
-    batch) is passed through unchanged. The trailing event axes (if
-    any) are preserved in the slice — e.g., for ``MultivariateNormal``
-    with ``loc`` of shape ``(batch, d)`` and ``multi_index=(i,)``,
-    returns ``loc[i]`` of shape ``(d,)``.
-    """
-    if not multi_index:
-        return value
-    arr = jnp.asarray(value)
-    if arr.ndim < len(multi_index):
-        # Lower-rank — value is broadcast across the batch axes.
-        return value
-    return arr[multi_index]
+        Children are the batched parameter values (the JAX-array
+        leaves the user passed); aux carries everything needed to
+        reconstruct the backend (the distribution class, the cell
+        name, the declared ``batch_shape``, and the parameter keys
+        in iteration order). The wrapped ``_batched_dist`` is
+        reconstructed inside ``tree_unflatten`` from the params, so
+        successive ``jit`` / ``vmap`` traces stay consistent.
+        """
+        keys = tuple(self._batched_params.keys())
+        children = tuple(self._batched_params[k] for k in keys)
+        aux = (self._dist_cls, self._name, self._batch_shape, keys)
+        return children, aux
+
+    @classmethod
+    def tree_unflatten(cls, aux, children) -> "_TFPArrayBackend":
+        """Reconstruct the backend without re-running the
+        ``__init__`` shape sanity check.
+
+        ``tree_map`` and ``vmap`` both invoke ``tree_unflatten`` with
+        leaf shapes that may not match the originally-declared
+        ``batch_shape`` (e.g., a fresh leading axis stacked by
+        ``tree_map``, an abstract per-cell shape inside a ``vmap``
+        trace). The aux is informational and preserved for the
+        round-trip; the wrapped ``_batched_dist`` is rebuilt directly
+        from the leaves.
+        """
+        dist_cls, name, batch_shape, keys = aux
+        instance = cls.__new__(cls)
+        instance._dist_cls = dist_cls
+        instance._name = name
+        instance._batch_shape = tuple(batch_shape)
+        instance._batched_params = dict(zip(keys, children))
+        instance._batched_dist = dist_cls(
+            **instance._batched_params,
+            name=f"{name}__array_backend",
+        )
+        return instance
+
+
+jax.tree_util.register_pytree_node_class(_TFPArrayBackend)
