@@ -315,6 +315,59 @@ class TestEmpiricalDistribution:
         assert ed.n == 10
 
 
+class TestEmpiricalValidationMessages:
+    """Pin actionable error messages for ``RecordEmpiricalDistribution``
+    construction failures. The reviewer flagged that the 0-D-field
+    branch reported ``"sample-axis length None"``, which doesn't help
+    users debug. Each message must include the offending field name
+    and its actual ``arr.shape``.
+    """
+
+    def test_zero_dim_first_field_reports_shape(self):
+        """First field is 0-D → message names the field and shape."""
+        from probpipe import Record
+        rec = Record(x=jnp.array(1.0))
+        with pytest.raises(ValueError) as exc:
+            RecordEmpiricalDistribution(rec)
+        msg = str(exc.value)
+        assert "'x'" in msg
+        assert "shape ()" in msg
+
+    def test_zero_dim_later_field_reports_shape(self):
+        """A later field is 0-D → message names that field, its shape,
+        and the reference field."""
+        from probpipe import Record
+        rec = Record(x=jnp.zeros(5), y=jnp.array(2.0))
+        with pytest.raises(ValueError) as exc:
+            RecordEmpiricalDistribution(rec)
+        msg = str(exc.value)
+        assert "'y'" in msg
+        assert "shape ()" in msg
+        assert "'x'" in msg
+        assert "5" in msg
+
+    def test_mismatched_sample_axis_reports_both_fields(self):
+        """A later field has a different sample-axis length → message
+        names the field, its full shape, and the reference field."""
+        from probpipe import Record
+        rec = Record(x=jnp.zeros(5), y=jnp.zeros(7))
+        with pytest.raises(ValueError) as exc:
+            RecordEmpiricalDistribution(rec)
+        msg = str(exc.value)
+        assert "'y'" in msg
+        assert "(7,)" in msg
+        assert "'x'" in msg
+        # Reference n should appear.
+        assert "5" in msg
+
+    def test_zero_dim_numeric_array_reports_shape(self):
+        """``EmpiricalDistribution(jnp.array(1.0), name='x')`` is a 0-D
+        bare array — the auto-wrap path should reject with a clear
+        message that includes the actual shape."""
+        with pytest.raises(ValueError, match=r"shape \(\)"):
+            EmpiricalDistribution(jnp.array(1.0), name="x")
+
+
 class TestFlatSamples:
     """Tests for the ``flat_samples`` ``(n, dim)`` matrix accessor."""
 

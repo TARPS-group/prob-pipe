@@ -150,7 +150,8 @@ def _wrap_numeric_array_as_record(
     arr = _as_float_array(arr)
     if arr.ndim == 0:
         raise ValueError(
-            f"{role} samples must have at least 1 dimension (the sample axis)."
+            f"{role} samples must have at least 1 dimension (the sample "
+            f"axis); got a 0-D array (shape {arr.shape})."
         )
     if sample_shape is not None:
         n_sample_dims = len(sample_shape)
@@ -168,23 +169,34 @@ def _wrap_numeric_array_as_record(
 def _validate_record_samples(record_data: Record) -> int:
     """Validate that every field shares the same sample-axis length.
 
-    Returns the common ``n``.
+    Returns the common ``n``. Error messages always name the offending
+    field and report its shape so users can debug shape mismatches
+    without having to instrument the call site.
     """
     if not record_data.fields:
         raise ValueError("Record samples must have at least one field.")
-    first = jnp.asarray(record_data[record_data.fields[0]])
+    first_name = record_data.fields[0]
+    first = jnp.asarray(record_data[first_name])
     if first.ndim == 0:
         raise ValueError(
-            "Record empirical samples need a leading sample axis "
-            "(every field must have shape (n, *event_shape))."
+            f"Record empirical samples need a leading sample axis "
+            f"(every field must have shape (n, *event_shape)); "
+            f"field {first_name!r} has shape {first.shape}."
         )
     n = int(first.shape[0])
     for f in record_data.fields[1:]:
         arr = jnp.asarray(record_data[f])
-        if arr.ndim == 0 or int(arr.shape[0]) != n:
+        if arr.ndim == 0:
             raise ValueError(
-                f"Field {f!r} has sample-axis length "
-                f"{None if arr.ndim == 0 else arr.shape[0]}, expected {n}."
+                f"Field {f!r} has shape {arr.shape} (no sample axis), "
+                f"expected leading axis of length {n} to match field "
+                f"{first_name!r}."
+            )
+        if int(arr.shape[0]) != n:
+            raise ValueError(
+                f"Field {f!r} has shape {arr.shape} (sample-axis length "
+                f"{int(arr.shape[0])}), expected {n} to match field "
+                f"{first_name!r}."
             )
     return n
 
