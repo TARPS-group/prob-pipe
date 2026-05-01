@@ -9,11 +9,18 @@ import pytest
 
 from probpipe import (
     Distribution,
+    DistributionArray,
     Normal,
     RandomFunction,
     ArrayRandomFunction,
 )
 from probpipe import log_prob, sample
+# Test fixtures construct ``Normal`` from batched arrays; the rejection
+# in ``TFPDistribution.__init__`` (PR-C.2) makes that a user-facing
+# error. Internal infra opts into the bypass — the fixtures here mock
+# library-internal code paths (RandomFunction subclasses), so the
+# bypass is appropriate.
+from probpipe.distributions._tfp_base import _allow_batched_tfp_init
 
 
 # ---------------------------------------------------------------------------
@@ -34,7 +41,8 @@ class _MinimalRandomFunction(RandomFunction):
     """Minimal concrete RandomFunction for testing."""
 
     def __call__(self, x):
-        return Normal(loc=jnp.zeros(3), scale=jnp.ones(3), name="y")
+        with _allow_batched_tfp_init():
+            return Normal(loc=jnp.zeros(3), scale=jnp.ones(3), name="y")
 
 
 class _MinimalArrayRF(ArrayRandomFunction):
@@ -43,7 +51,8 @@ class _MinimalArrayRF(ArrayRandomFunction):
     def predict(self, X, *, joint_inputs=False, joint_outputs=False):
         extra_batch, n = self._parse_X(X)
         mean = jnp.zeros((*extra_batch, n))
-        return Normal(loc=mean, scale=jnp.ones_like(mean), name="y")
+        with _allow_batched_tfp_init():
+            return Normal(loc=mean, scale=jnp.ones_like(mean), name="y")
 
 
 class _JointCapableRF(ArrayRandomFunction):
@@ -53,11 +62,12 @@ class _JointCapableRF(ArrayRandomFunction):
 
     def predict(self, X, *, joint_inputs=False, joint_outputs=False):
         extra_batch, n = self._parse_X(X)
-        return Normal(
-            loc=jnp.zeros((*extra_batch, n)),
-            scale=jnp.ones((*extra_batch, n)),
-            name="y",
-        )
+        with _allow_batched_tfp_init():
+            return Normal(
+                loc=jnp.zeros((*extra_batch, n)),
+                scale=jnp.ones((*extra_batch, n)),
+                name="y",
+            )
 
 
 # ---------------------------------------------------------------------------

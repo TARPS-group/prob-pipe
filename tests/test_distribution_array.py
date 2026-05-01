@@ -572,33 +572,39 @@ class TestFromBatchedParams:
         assert da[2]._value == 2.0
         assert da[1].name == "m_1"
 
-    def test_factory_results_match_legacy_batched_constructor(self):
+    def test_factory_results_match_native_tfp(self):
         """Result of ``from_batched_params(Normal, loc=arr, scale=...)``
-        produces samples / log_probs / means matching the legacy
-        ``Normal(loc=arr, scale=...)`` form (the form Phase 2 will
-        reject).
+        produces samples / means / variances matching ``tfd.Normal``
+        constructed natively with the same batched params.
+
+        Pre-PR-C.2 this test compared to ``Normal(loc=arr, scale=...)``
+        directly; PR-C.2 rejects that form, so the comparison goes
+        against TFP's own batched form (which is what
+        ``_TFPArrayBackend`` wraps internally anyway).
         """
         from probpipe import Normal, DistributionArray
+        import tensorflow_probability.substrates.jax.distributions as tfd
         loc = jnp.array([0.5, -1.2, 3.7, 0.0])
         scale = jnp.array([0.1, 0.2, 0.3, 0.4])
 
-        legacy = Normal(loc=loc, scale=scale, name="legacy")
+        native = tfd.Normal(loc=loc, scale=scale)
         da = DistributionArray.from_batched_params(
             Normal, loc=loc, scale=scale, name="x",
         )
         # Sample shapes match.
         key = jax.random.PRNGKey(42)
-        legacy_samples = legacy._sample(key)
+        native_samples = native.sample(seed=key)
         da_samples = da._backend._sample(key)
         np.testing.assert_allclose(
-            np.asarray(legacy_samples), np.asarray(da_samples)
+            np.asarray(native_samples), np.asarray(da_samples)
         )
         # Mean / variance match.
         np.testing.assert_allclose(
-            np.asarray(legacy._mean()), np.asarray(da._backend._mean())
+            np.asarray(native.mean()), np.asarray(da._backend._mean())
         )
         np.testing.assert_allclose(
-            np.asarray(legacy._variance()), np.asarray(da._backend._variance())
+            np.asarray(native.variance()),
+            np.asarray(da._backend._variance()),
         )
 
     def test_iteration_matches_indexing(self):

@@ -184,28 +184,14 @@ class TestDistributionSupport:
     def test_uniform_support(self):
         assert Uniform(low=-1.0, high=2.0, name="u").support == interval(-1.0, 2.0)
 
-    def test_uniform_support_array_bounds(self):
-        # Regression: ``float(self._low)`` previously crashed for
-        # non-scalar low/high. Per-dim bounds should produce a working
-        # interval whose ``.check`` returns a per-dim boolean.
-        u = Uniform(
-            low=jnp.array([0.0, -1.0]),
-            high=jnp.array([1.0, 2.0]),
-            name="u_arr",
-        )
-        c = u.support
-        assert jnp.array_equal(c.check(jnp.array([0.5, 0.5])), jnp.array([True, True]))
-        assert jnp.array_equal(c.check(jnp.array([2.0, 0.5])), jnp.array([False, True]))
-
-    def test_half_cauchy_support_array_bounds(self):
-        hc = HalfCauchy(
-            loc=jnp.array([0.0, 1.0]),
-            scale=jnp.array([1.0, 1.0]),
-            name="hc_arr",
-        )
-        c = hc.support
-        assert jnp.array_equal(c.check(jnp.array([0.5, 1.5])), jnp.array([True, True]))
-        assert jnp.array_equal(c.check(jnp.array([-0.5, 0.5])), jnp.array([False, False]))
+    # NOTE: ``test_uniform_support_array_bounds`` and
+    # ``test_half_cauchy_support_array_bounds`` were removed in PR-C.2.
+    # They exercised the legacy form ``Uniform(low=arr, high=arr)`` /
+    # ``HalfCauchy(loc=arr, scale=arr)``, which the framework
+    # hierarchy ("one random variable per Distribution") no longer
+    # permits. Migrate to ``DistributionArray.from_batched_params``
+    # for batched constructions; per-element support checks belong on
+    # ``Constraint``, not on a batched ``Distribution``.
 
     def test_pareto_support_array_bounds(self):
         p = Pareto(
