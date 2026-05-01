@@ -40,10 +40,15 @@ to pull out the i-th element of a **batch** → ``DistributionArray``.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from .._utils import prod
 from ._distribution_base import Distribution
+
+if TYPE_CHECKING:
+    from .protocols import _DistributionArrayBackend
 
 __all__ = ["DistributionArray"]
 
@@ -155,8 +160,13 @@ class DistributionArray[T](Distribution[T]):
                     f"{prod(batch_shape)} components but got "
                     f"{len(components)}."
                 )
-        self._components = components
+        self._components: tuple[Distribution, ...] | None = components
         self._batch_shape = batch_shape
+        # ``_backend`` is set only by the ``_from_backend`` factory
+        # (commit 3 of PR-C.1). The literal-array path leaves it
+        # ``None`` and continues to use ``_components`` as the
+        # storage-of-truth.
+        self._backend: "_DistributionArrayBackend | None" = None
         if name is None:
             name = "distribution_array"
         super().__init__(name=name)
@@ -168,17 +178,80 @@ class DistributionArray[T](Distribution[T]):
             getattr(c, "is_approximate", False) for c in components
         )
 
+    # -- backend-delegated constructor --------------------------------------
+
+    @classmethod
+    def _from_backend(
+        cls,
+        backend: "_DistributionArrayBackend",
+        *,
+        name: str | None = None,
+    ) -> "DistributionArray":
+        """Construct a backend-delegated ``DistributionArray``.
+
+        Storage refactor entry point: when a homogeneous batched form
+        is available (e.g., via
+        :meth:`~probpipe.core.protocols.SupportsArrayBackend._make_array_backend`),
+        the array stores the backend rather than a tuple of eagerly
+        materialised components. Per-cell access (``__getitem__`` /
+        ``_flat_component`` / iteration) goes through
+        ``backend.cell(...)``; the literal ``_components`` tuple is
+        materialised lazily on first access via :attr:`components`.
+
+        Private — public construction goes through
+        :meth:`from_batched_params` (commit 4).
+
+        Parameters
+        ----------
+        backend : _DistributionArrayBackend
+            Storage backend produced by a ``SupportsArrayBackend``
+            distribution class. Carries ``batch_shape``,
+            ``event_shape``, and ``cell(index)`` plus whichever ops
+            the underlying distribution class supports.
+        name : str, optional
+            Name for provenance / introspection. Defaults to
+            ``"distribution_array"``.
+        """
+        instance = cls.__new__(cls)
+        # Bypass __init__ entirely — backend-delegated arrays have no
+        # eager component list. Initialise fields the same way
+        # __init__ would, but without per-component validation (the
+        # backend already vouched for shape consistency).
+        instance._components = None
+        instance._batch_shape = tuple(backend.batch_shape)
+        instance._backend = backend
+        if name is None:
+            name = "distribution_array"
+        Distribution.__init__(instance, name=name)
+        instance._approximate = False
+        return instance
+
     # -- structure -----------------------------------------------------------
 
     @property
     def n(self) -> int:
         """Total number of components (``prod(batch_shape)``)."""
-        return len(self._components)
+        return prod(self._batch_shape)
 
     @property
     def components(self) -> tuple[Distribution, ...]:
         """Flat tuple of component distributions, in row-major order
-        across the leading ``batch_shape``."""
+        across the leading ``batch_shape``.
+
+        For backend-delegated arrays the tuple is materialised lazily
+        on first access via ``backend.cell(i)`` for each flat index
+        and cached. Cells are still freshly constructed inside
+        ``cell()`` (no de-duplication), so successive ``components``
+        accesses return the same cached tuple but indexing via
+        :meth:`__getitem__` / :meth:`_flat_component` always returns a
+        fresh scalar.
+        """
+        if self._components is None:
+            assert self._backend is not None  # invariant
+            n = prod(self._batch_shape)
+            self._components = tuple(
+                self._backend.cell(i) for i in range(n)
+            )
         return self._components
 
     @property
@@ -196,6 +269,8 @@ class DistributionArray[T](Distribution[T]):
     @property
     def event_shape(self) -> tuple[int, ...]:
         """Shared ``event_shape`` across components."""
+        if self._backend is not None:
+            return tuple(self._backend.event_shape)
         return getattr(self._components[0], "event_shape", ())
 
     # -- container protocol --------------------------------------------------
@@ -244,12 +319,17 @@ class DistributionArray[T](Distribution[T]):
                 int(k) % dim for k, dim in zip(key_tuple, bshape)
             )
             flat = int(np.ravel_multi_index(indices, bshape))
+            if self._backend is not None:
+                return self._backend.cell(flat)
             return self._components[flat]
 
         # General path: object-array view for slice / mixed-key
         # support. Only materialised when slices are actually used,
-        # and only for the axes that involve them.
-        components_nd = np.asarray(self._components, dtype=object).reshape(bshape)
+        # and only for the axes that involve them. Backend-delegated
+        # arrays materialise their components on this path too — slice
+        # indexing is rare and a one-time materialisation cost is
+        # acceptable.
+        components_nd = np.asarray(self.components, dtype=object).reshape(bshape)
         sliced = components_nd[key_tuple]
         if isinstance(sliced, Distribution):
             return sliced
@@ -268,6 +348,8 @@ class DistributionArray[T](Distribution[T]):
         )
 
     def __iter__(self):
+        if self._backend is not None:
+            return (self._backend.cell(i) for i in range(self.n))
         return iter(self._components)
 
     def _flat_component(self, i: int) -> Distribution:
@@ -277,12 +359,15 @@ class DistributionArray[T](Distribution[T]):
         method bypasses it for the sweep layer, which unravels its own
         flat index across multiple array inputs.
         """
+        if self._backend is not None:
+            return self._backend.cell(i)
         return self._components[i]
 
     def __repr__(self) -> str:
+        backed = " backend=True" if self._backend is not None else ""
         return (
             f"DistributionArray(n={self.n}, "
-            f"event_shape={self.event_shape})"
+            f"event_shape={self.event_shape}{backed})"
         )
 
 

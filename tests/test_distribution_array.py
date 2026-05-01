@@ -295,3 +295,136 @@ class TestProvenance:
         da.with_source(Provenance("sweep", parents=(parent,)))
         assert da.source.operation == "sweep"
         assert da.source.parents == (parent,)
+
+
+# ---------------------------------------------------------------------------
+# Backend-delegated storage (PR-C.1 commit 3)
+# ---------------------------------------------------------------------------
+
+
+class TestBackendDelegatedStorage:
+    """Tests for the ``_from_backend`` private constructor + lazy
+    component materialisation. The factory entry point
+    (``from_batched_params``) lands in commit 4; this commit pins the
+    storage refactor in isolation.
+    """
+
+    def _make_backend(self, n=5):
+        from probpipe import Normal
+        return Normal._make_array_backend(
+            name="x",
+            batch_shape=(n,),
+            loc=jnp.arange(float(n)),
+            scale=jnp.ones(n),
+        )
+
+    def test_from_backend_returns_distribution_array(self):
+        from probpipe import DistributionArray
+        backend = self._make_backend(n=5)
+        da = DistributionArray._from_backend(backend, name="batched_x")
+        assert isinstance(da, DistributionArray)
+        assert da._backend is backend
+        assert da.batch_shape == (5,)
+        assert da.event_shape == ()
+        assert da.n == 5
+        assert len(da) == 5
+        assert da.name == "batched_x"
+
+    def test_from_backend_does_not_materialise_components_eagerly(self):
+        from probpipe import DistributionArray
+        backend = self._make_backend(n=5)
+        da = DistributionArray._from_backend(backend, name="x")
+        # Components stay None until first .components access; the
+        # storage refactor's whole point is lazy materialisation.
+        assert da._components is None
+
+    def test_indexing_routes_through_backend_cell(self):
+        from probpipe import DistributionArray, Normal
+        backend = self._make_backend(n=5)
+        da = DistributionArray._from_backend(backend, name="x")
+        # Each int access fabricates fresh; identity differs.
+        a = da[2]
+        b = da[2]
+        assert isinstance(a, Normal)
+        assert a is not b
+        # Per-cell params correctly sliced.
+        assert float(a.loc) == 2.0
+        # Components stayed None — int indexing doesn't materialise the
+        # eager tuple.
+        assert da._components is None
+
+    def test_flat_component_routes_through_backend_cell(self):
+        from probpipe import DistributionArray, Normal
+        backend = self._make_backend(n=4)
+        da = DistributionArray._from_backend(backend, name="x")
+        for i in range(4):
+            cell = da._flat_component(i)
+            assert isinstance(cell, Normal)
+            assert float(cell.loc) == float(i)
+        assert da._components is None  # still lazy
+
+    def test_iteration_lazy_via_backend(self):
+        from probpipe import DistributionArray, Normal
+        backend = self._make_backend(n=4)
+        da = DistributionArray._from_backend(backend, name="x")
+        cells = list(da)
+        assert len(cells) == 4
+        for i, cell in enumerate(cells):
+            assert isinstance(cell, Normal)
+            assert float(cell.loc) == float(i)
+        # Iteration via backend.cell does NOT cache into _components;
+        # only .components does that.
+        assert da._components is None
+
+    def test_components_property_materialises_lazily_and_caches(self):
+        from probpipe import DistributionArray
+        backend = self._make_backend(n=3)
+        da = DistributionArray._from_backend(backend, name="x")
+        c1 = da.components
+        c2 = da.components
+        assert isinstance(c1, tuple)
+        assert len(c1) == 3
+        # Cached: same tuple identity returned.
+        assert c1 is c2
+        # And now _components is populated.
+        assert da._components is c1
+
+    def test_slice_indexing_materialises_components(self):
+        from probpipe import DistributionArray
+        backend = self._make_backend(n=5)
+        da = DistributionArray._from_backend(backend, name="x")
+        sub = da[1:4]
+        # Slicing forces materialisation (rare path).
+        assert da._components is not None
+        assert isinstance(sub, DistributionArray)
+        assert sub.n == 3
+
+    def test_repr_indicates_backend_mode(self):
+        from probpipe import DistributionArray
+        backend = self._make_backend(n=3)
+        backed = DistributionArray._from_backend(backend, name="x")
+        assert "backend=True" in repr(backed)
+
+    def test_literal_path_unchanged(self):
+        """Construction via the explicit components list still works
+        identically — no _backend, eager _components tuple."""
+        from probpipe import DistributionArray, Normal
+        comps = [Normal(loc=float(i), scale=1.0, name=f"c_{i}") for i in range(3)]
+        da = DistributionArray(comps, name="literal")
+        assert da._backend is None
+        assert da._components == tuple(comps)
+        assert da[1] is comps[1]
+        assert da.components is da._components
+
+    def test_multi_d_batch_shape_via_backend(self):
+        from probpipe import DistributionArray, Normal
+        loc = jnp.arange(6.0).reshape(2, 3)
+        backend = Normal._make_array_backend(
+            name="g", batch_shape=(2, 3), loc=loc, scale=1.0,
+        )
+        da = DistributionArray._from_backend(backend, name="g")
+        assert da.batch_shape == (2, 3)
+        assert da.n == 6
+        # Row-major flat index 4 -> (1, 1) -> loc=4.0
+        assert float(da[1, 1].loc) == 4.0
+        assert float(da._flat_component(4).loc) == 4.0
