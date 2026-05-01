@@ -253,7 +253,17 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
                 # the batch is already in the distribution's batch_shape.
                 sig = inspect.signature(comp)
                 call_kw = {p: sampled[p] for p in sig.parameters if p in sampled}
-                dist = comp(**call_kw)
+                # The user lambda typically writes
+                # ``Normal(loc=z, scale=...)`` with a batched ``z``.
+                # The rejection added later in this PR would refuse
+                # that direct construction; bypass it here because
+                # sequential-joint sampling deliberately constructs
+                # a TFP-batched form to vectorise the per-cell draw.
+                # The bypass is internal infra; user-facing rejection
+                # of ``Normal(loc=arr, ...)`` still applies elsewhere.
+                from ._tfp_base import _allow_batched_tfp_init
+                with _allow_batched_tfp_init():
+                    dist = comp(**call_kw)
                 sampled[cname] = dist._sample(subkey)
 
         return sampled
