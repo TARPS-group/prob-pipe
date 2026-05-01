@@ -690,3 +690,68 @@ class TestProtocolsSupportedByAll:
         from probpipe.core.protocols import protocols_supported_by_all
         result = protocols_supported_by_all([], (SupportsLogProb, SupportsMean))
         assert result == (SupportsLogProb, SupportsMean)
+
+
+# ---------------------------------------------------------------------------
+# SupportsArrayBackend protocol surface
+# ---------------------------------------------------------------------------
+
+
+class TestSupportsArrayBackendProtocolSurface:
+    """Structural checks on :class:`SupportsArrayBackend`.
+
+    Commit 1 of PR-C.1 only adds the protocol; concrete TFP / Record
+    implementations land in later commits, and the existing
+    ``Distribution`` subclasses don't yet implement
+    ``_make_array_backend``. These tests pin the protocol's *shape*
+    (importable, runtime-checkable, classmethod-level) so later
+    commits can layer on the implementations without regressing the
+    contract.
+    """
+
+    def test_protocol_is_importable(self):
+        from probpipe.core.protocols import (
+            SupportsArrayBackend,
+            _DistributionArrayBackend,
+        )
+
+        assert SupportsArrayBackend is not None
+        assert _DistributionArrayBackend is not None
+
+    def test_protocol_in_public_all(self):
+        from probpipe.core import protocols as proto_mod
+
+        assert "SupportsArrayBackend" in proto_mod.__all__
+        # Backend-interface stays private — leading underscore, not exported.
+        assert "_DistributionArrayBackend" not in proto_mod.__all__
+
+    def test_no_existing_distribution_implements_protocol_yet(self):
+        """Until commit 2 lands ``_make_array_backend`` on
+        ``TFPDistribution``, no shipped class implements the protocol.
+
+        Pins the additive-only contract: commit 1 introduces the
+        protocol surface in isolation. The check is on the **class**
+        (the protocol method is a classmethod), not on instances.
+        """
+        from probpipe.core.protocols import SupportsArrayBackend
+
+        # The protocol is defined classmethod-level; ``isinstance`` on
+        # a class checks whether the class itself has the attribute.
+        # No shipped class has ``_make_array_backend`` after commit 1.
+        for cls in (Normal, Beta, Gamma, MultivariateNormal):
+            assert not hasattr(cls, "_make_array_backend"), (
+                f"{cls.__name__}._make_array_backend already exists; "
+                f"PR-C.1 commit 1 should only ship the protocol surface."
+            )
+
+    def test_backend_protocol_minimum_surface(self):
+        """``_DistributionArrayBackend`` Protocol declares the agreed
+        minimum surface."""
+        from probpipe.core.protocols import _DistributionArrayBackend
+
+        # Protocol attributes via __annotations__ / methods via vars.
+        members = set(dir(_DistributionArrayBackend))
+        for required in ("batch_shape", "event_shape", "cell"):
+            assert required in members, (
+                f"_DistributionArrayBackend missing required attr {required!r}"
+            )
