@@ -7,7 +7,8 @@ distribution modules in ``distributions/``.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+import contextlib
+from typing import Any, Callable, Iterator
 
 import jax
 import jax.numpy as jnp
@@ -29,6 +30,62 @@ from ..core.protocols import (
 )
 from ..core.record import Record, RecordTemplate
 from ..custom_types import Array, ArrayLike, PRNGKey
+
+
+# ---------------------------------------------------------------------------
+# Internal bypass for the upcoming batched-parameters rejection
+# ---------------------------------------------------------------------------
+# The next commit in this PR (PR-C.2) adds a runtime check inside
+# ``TFPDistribution.__init__`` that raises ``ValueError`` whenever a
+# concrete subclass (``Normal``, ``Beta``, ``Gamma``, …) is constructed
+# with parameters whose ``tfd.Distribution.batch_shape`` is non-empty.
+# The framework hierarchy rule (CONTRIBUTING.md) is "one random
+# variable per ``Distribution``"; collections live in
+# ``DistributionArray``.
+#
+# Some library-internal call sites legitimately need the legacy
+# batched form — the fused-storage ``_TFPArrayBackend`` (PR-C.1)
+# wraps a TFP-batched dist; converters, sequential joints, and
+# random functions construct ``Normal(loc=batch_array, ...)`` from
+# arrays produced inside the WF sweep. These sites bypass the
+# upcoming rejection via the ``_allow_batched_tfp_init`` context
+# manager added here. User-facing callers never use the bypass.
+#
+# This commit ships only the scaffolding (flag + context manager).
+# The rejection itself lands later in the PR after every legitimate
+# internal site has been wrapped and every test that exercises the
+# legacy user-facing form has been migrated to
+# ``DistributionArray.from_batched_params``.
+
+_ALLOW_BATCHED_INIT: bool = False
+"""Module-level toggle consulted by the upcoming
+``TFPDistribution.__init__`` rejection. Default ``False`` enforces the
+"one RV per Distribution" rule for all user-facing construction;
+internal infra opts in with :func:`_allow_batched_tfp_init`."""
+
+
+@contextlib.contextmanager
+def _allow_batched_tfp_init() -> Iterator[None]:
+    """Context manager: allow TFP-backed constructors to accept
+    parameters whose implied ``batch_shape`` is non-empty.
+
+    Used by library-internal infrastructure that legitimately needs
+    to construct a TFP-batched form (e.g. :class:`_TFPArrayBackend`,
+    converters that produce batched-Normal forms during a WF sweep,
+    sequential-joint sampling whose lambda receives a batched
+    sample). User code never uses this.
+
+    The rejection it bypasses is added in a subsequent commit in this
+    PR; until then this context manager is a no-op functionally but
+    is referenced by the internal call sites that will need it.
+    """
+    global _ALLOW_BATCHED_INIT
+    previous = _ALLOW_BATCHED_INIT
+    _ALLOW_BATCHED_INIT = True
+    try:
+        yield
+    finally:
+        _ALLOW_BATCHED_INIT = previous
 
 
 class TFPDistribution(
