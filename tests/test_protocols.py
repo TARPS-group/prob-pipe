@@ -725,23 +725,19 @@ class TestSupportsArrayBackendProtocolSurface:
         # Backend-interface stays private — leading underscore, not exported.
         assert "_DistributionArrayBackend" not in proto_mod.__all__
 
-    def test_no_existing_distribution_implements_protocol_yet(self):
-        """Until commit 2 lands ``_make_array_backend`` on
-        ``TFPDistribution``, no shipped class implements the protocol.
+    def test_tfp_distributions_implement_protocol(self):
+        """Every concrete TFP-backed distribution inherits
+        ``_make_array_backend`` from ``TFPDistribution``.
 
-        Pins the additive-only contract: commit 1 introduces the
-        protocol surface in isolation. The check is on the **class**
-        (the protocol method is a classmethod), not on instances.
+        The protocol method is a classmethod, so the check is on the
+        class itself: ``hasattr(Normal, "_make_array_backend")``. Pins
+        the post-commit-2 contract — non-TFP distributions still don't
+        implement it and stay on the literal-array fallback path.
         """
-        from probpipe.core.protocols import SupportsArrayBackend
-
-        # The protocol is defined classmethod-level; ``isinstance`` on
-        # a class checks whether the class itself has the attribute.
-        # No shipped class has ``_make_array_backend`` after commit 1.
         for cls in (Normal, Beta, Gamma, MultivariateNormal):
-            assert not hasattr(cls, "_make_array_backend"), (
-                f"{cls.__name__}._make_array_backend already exists; "
-                f"PR-C.1 commit 1 should only ship the protocol surface."
+            assert hasattr(cls, "_make_array_backend"), (
+                f"{cls.__name__} should inherit _make_array_backend "
+                f"from TFPDistribution after PR-C.1 commit 2."
             )
 
     def test_backend_protocol_minimum_surface(self):

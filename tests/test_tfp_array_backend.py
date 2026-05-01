@@ -1,0 +1,305 @@
+"""Tests for ``_TFPArrayBackend`` (PR-C.1 commit 2).
+
+The backend is the fused-storage substrate that
+:class:`~probpipe.DistributionArray` will dispatch onto in commits 3-4.
+These tests pin the backend's behaviour in isolation:
+
+* Per-cell materialisation (``cell(i)``) returns fresh scalar
+  distributions with sliced parameters.
+* Vectorised ops (``_sample`` / ``_log_prob`` / ``_mean`` / ``_variance``)
+  are numerically equivalent to constructing the same TFP-batched
+  distribution directly.
+* Multi-d ``batch_shape`` works with both flat-int and tuple indexing.
+* Scalar parameters that broadcast across the batch are passed through
+  ``cell(i)`` unchanged.
+* Mismatched ``batch_shape`` declarations are rejected.
+"""
+
+from __future__ import annotations
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+import pytest
+import tensorflow_probability.substrates.jax.distributions as tfd
+
+from probpipe import Beta, Gamma, MultivariateNormal, Normal
+from probpipe.distributions._tfp_base import _TFPArrayBackend
+
+
+# ---------------------------------------------------------------------------
+# Construction + minimum surface
+# ---------------------------------------------------------------------------
+
+
+class TestMakeArrayBackendConstruction:
+    def test_normal_returns_tfp_array_backend(self):
+        backend = Normal._make_array_backend(
+            name="x",
+            batch_shape=(5,),
+            loc=jnp.arange(5.0),
+            scale=1.0,
+        )
+        assert isinstance(backend, _TFPArrayBackend)
+        assert backend.batch_shape == (5,)
+        assert backend.event_shape == ()
+
+    def test_beta_inherits_make_array_backend(self):
+        backend = Beta._make_array_backend(
+            name="b",
+            batch_shape=(3,),
+            alpha=jnp.array([1.0, 2.0, 3.0]),
+            beta=jnp.array([1.0, 1.0, 1.0]),
+        )
+        assert isinstance(backend, _TFPArrayBackend)
+        assert backend.batch_shape == (3,)
+
+    def test_gamma_inherits_make_array_backend(self):
+        backend = Gamma._make_array_backend(
+            name="g",
+            batch_shape=(4,),
+            concentration=jnp.array([1.0, 2.0, 3.0, 4.0]),
+            rate=1.0,
+        )
+        assert isinstance(backend, _TFPArrayBackend)
+        assert backend.batch_shape == (4,)
+
+    def test_mvn_inherits_make_array_backend(self):
+        d = 3
+        backend = MultivariateNormal._make_array_backend(
+            name="z",
+            batch_shape=(2,),
+            loc=jnp.zeros((2, d)),
+            scale_tril=jnp.broadcast_to(jnp.eye(d), (2, d, d)),
+        )
+        assert isinstance(backend, _TFPArrayBackend)
+        assert backend.batch_shape == (2,)
+        assert backend.event_shape == (d,)
+
+    def test_required_minimum_surface(self):
+        backend = Normal._make_array_backend(
+            name="x", batch_shape=(2,), loc=jnp.zeros(2), scale=1.0,
+        )
+        for attr in (
+            "batch_shape", "event_shape", "cell",
+            "_sample", "_log_prob", "_mean", "_variance", "_cov",
+        ):
+            assert hasattr(backend, attr), (
+                f"_TFPArrayBackend missing required attr {attr!r}"
+            )
+
+    def test_mismatched_batch_shape_rejected(self):
+        """Declaring ``batch_shape=(5,)`` with params that broadcast to
+        ``(3,)`` raises ``ValueError`` at backend construction."""
+        with pytest.raises(ValueError, match="batch_shape"):
+            Normal._make_array_backend(
+                name="x",
+                batch_shape=(5,),
+                loc=jnp.zeros(3),  # actually batch_shape=(3,)
+                scale=1.0,
+            )
+
+
+# ---------------------------------------------------------------------------
+# Per-cell materialisation
+# ---------------------------------------------------------------------------
+
+
+class TestCellMaterialisation:
+    def test_cell_returns_fresh_scalar_normal(self):
+        loc = jnp.array([0.0, 1.0, 2.0, 3.0, 4.0])
+        backend = Normal._make_array_backend(
+            name="x", batch_shape=(5,), loc=loc, scale=1.0,
+        )
+        cell0 = backend.cell(0)
+        cell2 = backend.cell(2)
+        assert isinstance(cell0, Normal)
+        assert isinstance(cell2, Normal)
+        # Distinct fresh instances per call.
+        assert backend.cell(0) is not backend.cell(0)
+        # Per-cell parameters are correctly sliced.
+        assert float(cell0.loc) == 0.0
+        assert float(cell2.loc) == 2.0
+        # Per-cell scalar `scale` is broadcast through unchanged.
+        assert float(cell0.scale) == 1.0
+        assert float(cell2.scale) == 1.0
+
+    def test_cell_name_auto_suffixes(self):
+        backend = Normal._make_array_backend(
+            name="weights", batch_shape=(3,),
+            loc=jnp.zeros(3), scale=jnp.ones(3),
+        )
+        for i in range(3):
+            assert backend.cell(i).name == f"weights_{i}"
+
+    def test_cell_returns_unbatched_distribution(self):
+        """Cells materialise as scalar distributions
+        (``tfd batch_shape == ()``)."""
+        backend = Normal._make_array_backend(
+            name="x", batch_shape=(4,),
+            loc=jnp.arange(4.0), scale=jnp.ones(4),
+        )
+        for i in range(4):
+            cell = backend.cell(i)
+            assert tuple(cell._tfp_dist.batch_shape) == ()
+
+    def test_cell_negative_index_rejected(self):
+        backend = Normal._make_array_backend(
+            name="x", batch_shape=(3,), loc=jnp.zeros(3), scale=1.0,
+        )
+        with pytest.raises(IndexError):
+            backend.cell(-1)
+        with pytest.raises(IndexError):
+            backend.cell(3)
+
+    def test_cell_with_mvn_preserves_event_axis(self):
+        d = 3
+        loc = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        scale_tril = jnp.broadcast_to(jnp.eye(d), (2, d, d))
+        backend = MultivariateNormal._make_array_backend(
+            name="z", batch_shape=(2,), loc=loc, scale_tril=scale_tril,
+        )
+        cell0 = backend.cell(0)
+        cell1 = backend.cell(1)
+        np.testing.assert_allclose(np.asarray(cell0.loc), [1.0, 2.0, 3.0])
+        np.testing.assert_allclose(np.asarray(cell1.loc), [4.0, 5.0, 6.0])
+        # event_shape preserved on the per-cell scalar.
+        assert cell0.event_shape == (d,)
+
+
+# ---------------------------------------------------------------------------
+# Multi-d batching
+# ---------------------------------------------------------------------------
+
+
+class TestMultiDimensionalBatch:
+    def test_int_index_maps_to_row_major_position(self):
+        """Flat ``int`` indices unravel row-major over ``batch_shape``."""
+        loc = jnp.array([[10.0, 11.0, 12.0],
+                         [20.0, 21.0, 22.0]])
+        backend = Normal._make_array_backend(
+            name="x", batch_shape=(2, 3), loc=loc, scale=1.0,
+        )
+        # Row-major: index 0 -> (0, 0), index 4 -> (1, 1), index 5 -> (1, 2).
+        assert float(backend.cell(0).loc) == 10.0
+        assert float(backend.cell(4).loc) == 21.0
+        assert float(backend.cell(5).loc) == 22.0
+
+    def test_tuple_index_axis_aligned(self):
+        loc = jnp.array([[10.0, 11.0, 12.0],
+                         [20.0, 21.0, 22.0]])
+        backend = Normal._make_array_backend(
+            name="x", batch_shape=(2, 3), loc=loc, scale=1.0,
+        )
+        assert float(backend.cell((0, 0)).loc) == 10.0
+        assert float(backend.cell((1, 2)).loc) == 22.0
+
+    def test_int_and_tuple_indices_match(self):
+        loc = jnp.arange(12.0).reshape(3, 4)
+        backend = Normal._make_array_backend(
+            name="x", batch_shape=(3, 4), loc=loc, scale=1.0,
+        )
+        for flat in range(12):
+            multi = np.unravel_index(flat, (3, 4))
+            assert float(backend.cell(flat).loc) == float(
+                backend.cell(tuple(int(x) for x in multi)).loc
+            )
+
+    def test_tuple_wrong_rank_rejected(self):
+        backend = Normal._make_array_backend(
+            name="x", batch_shape=(2, 3),
+            loc=jnp.zeros((2, 3)), scale=1.0,
+        )
+        with pytest.raises(IndexError):
+            backend.cell((0,))
+
+
+# ---------------------------------------------------------------------------
+# Vectorised ops match TFP-batched native
+# ---------------------------------------------------------------------------
+
+
+class TestBatchedOpsMatchTFPNative:
+    def _make_pair(self, loc, scale):
+        backend = Normal._make_array_backend(
+            name="x",
+            batch_shape=tuple(jnp.broadcast_shapes(
+                jnp.asarray(loc).shape, jnp.asarray(scale).shape,
+            )),
+            loc=loc,
+            scale=scale,
+        )
+        tfp_native = tfd.Normal(loc=jnp.asarray(loc),
+                                scale=jnp.asarray(scale))
+        return backend, tfp_native
+
+    def test_sample_shape_matches_native(self):
+        backend, native = self._make_pair(jnp.arange(5.0), 1.0)
+        key = jax.random.PRNGKey(0)
+        b_samples = backend._sample(key)
+        n_samples = native.sample(seed=key)
+        assert b_samples.shape == n_samples.shape == (5,)
+
+    def test_sample_with_sample_shape_matches_native(self):
+        backend, native = self._make_pair(jnp.arange(3.0), jnp.ones(3))
+        key = jax.random.PRNGKey(7)
+        b_samples = backend._sample(key, sample_shape=(10,))
+        n_samples = native.sample(seed=key, sample_shape=(10,))
+        np.testing.assert_allclose(np.asarray(b_samples), np.asarray(n_samples))
+
+    def test_log_prob_matches_native(self):
+        backend, native = self._make_pair(jnp.arange(4.0), 1.5)
+        x = jnp.array([0.5, 1.0, 2.5, 3.5])
+        np.testing.assert_allclose(
+            np.asarray(backend._log_prob(x)),
+            np.asarray(native.log_prob(x)),
+            rtol=1e-6,
+        )
+
+    def test_mean_variance_match_native(self):
+        backend, native = self._make_pair(jnp.array([1.0, 2.0, 3.0]),
+                                          jnp.array([0.1, 0.2, 0.3]))
+        np.testing.assert_allclose(
+            np.asarray(backend._mean()), np.asarray(native.mean()),
+        )
+        np.testing.assert_allclose(
+            np.asarray(backend._variance()), np.asarray(native.variance()),
+        )
+
+    def test_multi_d_batch_sample_shape(self):
+        loc = jnp.zeros((2, 3))
+        backend = Normal._make_array_backend(
+            name="x", batch_shape=(2, 3), loc=loc, scale=1.0,
+        )
+        samples = backend._sample(jax.random.PRNGKey(0))
+        assert samples.shape == (2, 3)
+
+
+# ---------------------------------------------------------------------------
+# Scalar broadcast in cell()
+# ---------------------------------------------------------------------------
+
+
+class TestScalarBroadcast:
+    def test_scalar_param_passes_through_cell(self):
+        """A param given as a Python float / 0-D array (broadcast across
+        every cell) is preserved unchanged in ``cell(i)``."""
+        backend = Normal._make_array_backend(
+            name="x",
+            batch_shape=(4,),
+            loc=jnp.arange(4.0),
+            scale=2.5,  # scalar
+        )
+        for i in range(4):
+            cell = backend.cell(i)
+            assert float(cell.scale) == 2.5
+
+    def test_zero_d_jax_array_param_passes_through(self):
+        backend = Normal._make_array_backend(
+            name="x",
+            batch_shape=(3,),
+            loc=jnp.arange(3.0),
+            scale=jnp.array(0.5),
+        )
+        for i in range(3):
+            assert float(backend.cell(i).scale) == 0.5
