@@ -534,10 +534,15 @@ class _TFPArrayBackend:
         instance._name = name
         instance._batch_shape = tuple(batch_shape)
         instance._batched_params = dict(zip(keys, children))
-        instance._batched_dist = dist_cls(
-            **instance._batched_params,
-            name=f"{name}{_ARRAY_BACKEND_NAME_SUFFIX}",
-        )
+        # Rebuild the wrapped distribution with the same internal
+        # bypass that ``__init__`` uses — the leaves are batched by
+        # construction, so user-facing rejection of batched params
+        # must not fire here.
+        with _allow_batched_tfp_init():
+            instance._batched_dist = dist_cls(
+                **instance._batched_params,
+                name=f"{name}{_ARRAY_BACKEND_NAME_SUFFIX}",
+            )
         return instance
 
 
