@@ -296,18 +296,31 @@ class Node(ABC):
 def _index_sample(s: Any, i: int) -> Any:
     """Index row ``i`` of a per-arg sample batch.
 
-    The input ``s`` may be a raw array (single-field broadcast samples
-    or legacy callers), a :class:`Record` (multi-field auto-wrap or
-    explicit Record source), or a :class:`NumericRecord` (the merged
-    ``EmpiricalDistribution`` returns ``NumericRecord`` with
-    stacked-along-leading-axis fields). The dispatch:
+    Parameters
+    ----------
+    s : Any
+        Either a bare array (single-field broadcast draws / legacy
+        callers), a :class:`Record` (multi-field auto-wrap or an
+        explicit Record source), or a :class:`NumericRecord` (the
+        unified ``EmpiricalDistribution`` — numeric arrays auto-wrap
+        as a single-field Record — returns a ``NumericRecord`` with
+        per-field axes stacked along the leading axis).
+    i : int
+        Row index along the leading axis.
 
-    * Single-field ``Record`` → unwrap to the underlying field array's
-      row ``i``, so the inner call sees the same shape it would from a
-      single ``sample(dist)`` draw.
-    * Multi-field ``Record`` → fabricate a per-row :class:`NumericRecord`.
-    * Bare array → standard ``s[i]``.
+    Returns
+    -------
+    Any
+        Same shape the inner call would see from a single
+        ``sample(dist)`` draw:
 
+        * Single-field ``Record`` → the underlying field array's row
+          ``i`` (unwrapped).
+        * Multi-field ``Record`` → a per-row :class:`NumericRecord`.
+        * Bare array → ``s[i]``.
+
+    Notes
+    -----
     Used by both ``_broadcast_enumerate_then_sample`` (for empirical-
     enumerated rows and for the mixed sampled-rows path) and
     ``_broadcast_sample`` (for plain MC sampling). Keeping the
