@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from xarray import DataTree
 
+    from ._distribution_array import DistributionArray
     from .record import RecordTemplate
 
 import jax
@@ -175,7 +176,7 @@ class Distribution[T](ABC):
         name: str,
         batch_shape: tuple[int, ...] | None = None,
         **batched_params,
-    ) -> Any:
+    ) -> "DistributionArray":
         """Class-method alias for :meth:`DistributionArray.from_batched_params`.
 
         Lets users write the ergonomic per-class form::

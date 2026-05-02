@@ -119,6 +119,14 @@ class DistributionArray[T](Distribution[T]):
       than rejecting at construction.
     """
 
+    # Storage slots. ``_components`` is ``None`` for backend-delegated
+    # arrays until :attr:`components` materialises the eager tuple
+    # lazily; the literal-array constructor sets it directly.
+    # ``_backend`` is ``None`` for the literal path and set by
+    # :meth:`_from_backend`.
+    _components: "tuple[Distribution, ...] | None"
+    _backend: "_DistributionArrayBackend | None"
+
     def __init__(
         self,
         components,
@@ -163,12 +171,12 @@ class DistributionArray[T](Distribution[T]):
                     f"{prod(batch_shape)} components but got "
                     f"{len(components)}."
                 )
-        self._components: tuple[Distribution, ...] | None = components
+        self._components = components
         self._batch_shape = batch_shape
         # Set only by :meth:`_from_backend`. The literal-array path
         # leaves it ``None`` and uses ``_components`` as the
         # storage-of-truth.
-        self._backend: "_DistributionArrayBackend | None" = None
+        self._backend = None
         if name is None:
             name = "distribution_array"
         super().__init__(name=name)

@@ -115,14 +115,32 @@ class TestCellMaterialisation:
         cell2 = backend.cell(2)
         assert isinstance(cell0, Normal)
         assert isinstance(cell2, Normal)
-        # Distinct fresh instances per call.
-        assert backend.cell(0) is not backend.cell(0)
         # Per-cell parameters are correctly sliced.
         assert float(cell0.loc) == 0.0
         assert float(cell2.loc) == 2.0
         # Per-cell scalar `scale` is broadcast through unchanged.
         assert float(cell0.scale) == 1.0
         assert float(cell2.scale) == 1.0
+
+    def test_cell_value_correctness_independent_of_call(self):
+        """Each ``cell(i)`` call returns a distribution that holds
+        exactly its own per-cell parameters — even when called
+        repeatedly with different indices.
+
+        Pins observable behaviour rather than instance identity:
+        a future caching optimisation could legitimately deduplicate
+        but must not corrupt per-cell values.
+        """
+        loc = jnp.array([10.0, 20.0, 30.0])
+        backend = Normal._make_array_backend(
+            name="x", batch_shape=(3,), loc=loc, scale=1.0,
+        )
+        a = backend.cell(0)
+        b = backend.cell(2)
+        c = backend.cell(0)
+        assert float(a.loc) == 10.0
+        assert float(b.loc) == 30.0
+        assert float(c.loc) == 10.0  # second cell(0) still gets loc[0]
 
     def test_cell_name_auto_suffixes(self):
         backend = Normal._make_array_backend(
