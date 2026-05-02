@@ -743,7 +743,6 @@ class TestProtocolConversion:
         Without the explicit raise, KDE construction would fail
         somewhere deep with a confusing dtype error.
         """
-        from probpipe import EmpiricalDistribution
         emp = EmpiricalDistribution(["a", "b", "c"])
         with pytest.raises(
             TypeError, match="generic .object-array. EmpiricalDistribution",
