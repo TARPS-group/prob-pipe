@@ -329,11 +329,13 @@ class TestPytreeRegistration:
     def test_flatten_yields_batched_params_in_insertion_order(self):
         backend = self._backend()
         leaves, treedef = jax.tree_util.tree_flatten(backend)
-        # Two children: ``loc`` (array) then ``scale`` (scalar) —
-        # insertion order from ``Normal._make_array_backend``.
+        # Two children: ``loc`` then ``scale`` — insertion order from
+        # ``Normal._make_array_backend``. Both end up as ``(5,)``-
+        # shaped arrays after the constructor's scalar broadcast.
         assert len(leaves) == 2
         assert hasattr(leaves[0], "shape") and leaves[0].shape == (5,)
-        assert leaves[1] == 1.0
+        assert hasattr(leaves[1], "shape") and leaves[1].shape == (5,)
+        np.testing.assert_allclose(np.asarray(leaves[1]), np.ones(5))
 
     def test_round_trip_preserves_behaviour(self):
         backend = self._backend()
@@ -391,3 +393,132 @@ class TestPytreeRegistration:
         np.testing.assert_allclose(
             np.asarray(means), np.array([[0.0, 0.0, 0.0], [10.0, 10.0, 10.0]])
         )
+
+
+# ---------------------------------------------------------------------------
+# Scalar parameter broadcasting (review finding C4)
+# ---------------------------------------------------------------------------
+
+
+class TestScalarParamBroadcasting:
+    """Scalar parameters paired with an explicit ``batch_shape``
+    broadcast across every cell. Without this, the sanity check on
+    ``_TFPArrayBackend.__init__`` rejects the configuration with a
+    cryptic shape-mismatch error.
+    """
+
+    def test_all_scalar_params_with_explicit_shape(self):
+        """All-scalar params + ``batch_shape=(5,)`` produces five
+        identical Normals."""
+        backend = Normal._make_array_backend(
+            name="x", batch_shape=(5,), loc=0.0, scale=1.0,
+        )
+        assert backend.batch_shape == (5,)
+        for i in range(5):
+            cell = backend.cell(i)
+            assert float(cell.loc) == 0.0
+            assert float(cell.scale) == 1.0
+
+    def test_scalar_loc_array_scale(self):
+        """``loc`` scalar + ``scale`` array broadcasts ``loc`` to
+        match the batch axis."""
+        backend = Normal._make_array_backend(
+            name="x", batch_shape=(3,),
+            loc=0.0, scale=jnp.array([0.1, 0.2, 0.3]),
+        )
+        for i in range(3):
+            cell = backend.cell(i)
+            assert float(cell.loc) == 0.0
+
+    def test_multi_d_batch_with_scalar_params(self):
+        backend = Normal._make_array_backend(
+            name="x", batch_shape=(2, 3), loc=0.0, scale=1.0,
+        )
+        assert backend.batch_shape == (2, 3)
+        for i in range(6):
+            assert float(backend.cell(i).loc) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Backend-derived approximation status (review finding C2)
+# ---------------------------------------------------------------------------
+
+
+class TestBackendApproximate:
+    """``_from_backend`` propagates ``is_approximate`` from the
+    backend rather than hardcoding ``False``. This is forward-
+    compatible with a future ``_RecordArrayBackend`` over an
+    empirical source whose samples are an approximation.
+    """
+
+    def test_tfp_backend_is_exact(self):
+        """The shipping ``_TFPArrayBackend`` has no
+        ``is_approximate`` attribute, so the ``DistributionArray``
+        defaults to exact (``False``)."""
+        from probpipe import DistributionArray
+        backend = Normal._make_array_backend(
+            name="x", batch_shape=(3,), loc=jnp.zeros(3), scale=1.0,
+        )
+        da = DistributionArray._from_backend(backend, name="x")
+        assert da.is_approximate is False
+
+    def test_approximate_backend_propagates(self):
+        """A backend reporting ``is_approximate=True`` flows through
+        to the assembled DistributionArray."""
+        from probpipe import DistributionArray
+
+        class _ApproxBackend:
+            batch_shape = (3,)
+            event_shape = ()
+            is_approximate = True
+
+            def cell(self, i):
+                return Normal(loc=0.0, scale=1.0, name=f"x_{i}")
+
+        da = DistributionArray._from_backend(_ApproxBackend(), name="x")
+        assert da.is_approximate is True
+
+
+# ---------------------------------------------------------------------------
+# Negative-index alignment (review finding C5)
+# ---------------------------------------------------------------------------
+
+
+class TestFlatComponentNegativeRejection:
+    """``_flat_component`` rejects negatives in *both* the backend
+    and literal-array paths. ``__getitem__`` wraps user-facing
+    ``da[-1]`` before any flat-index call site sees it, so internal
+    sweep code (which already only passes non-negatives) and
+    direct ``_flat_component(-1)`` calls behave consistently.
+    """
+
+    def test_backed_path_rejects_negative(self):
+        from probpipe import DistributionArray
+        backend = Normal._make_array_backend(
+            name="x", batch_shape=(3,),
+            loc=jnp.zeros(3), scale=1.0,
+        )
+        da = DistributionArray._from_backend(backend, name="x")
+        with pytest.raises(IndexError):
+            da._flat_component(-1)
+
+    def test_literal_path_rejects_negative(self):
+        """The literal path used to silently allow Python tuple
+        wraparound; align with the backed path."""
+        from probpipe import DistributionArray
+        comps = [Normal(loc=float(i), scale=1.0, name=f"c_{i}")
+                 for i in range(3)]
+        da = DistributionArray(comps, name="x")
+        with pytest.raises(IndexError):
+            da._flat_component(-1)
+
+    def test_user_facing_da_minus_one_still_works(self):
+        """``da[-1]`` continues to work via ``__getitem__`` wrap."""
+        from probpipe import DistributionArray
+        backend = Normal._make_array_backend(
+            name="x", batch_shape=(3,),
+            loc=jnp.array([10.0, 20.0, 30.0]), scale=1.0,
+        )
+        da = DistributionArray._from_backend(backend, name="x")
+        assert float(da[-1].loc) == 30.0
+        assert float(da[-2].loc) == 20.0

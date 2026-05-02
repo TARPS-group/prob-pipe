@@ -357,7 +357,12 @@ class DistributionArray[T](Distribution[T]):
         if name is None:
             name = "distribution_array"
         Distribution.__init__(instance, name=name)
-        instance._approximate = False
+        # Approximation status flows from the backend. TFP-backed
+        # arrays are exact; a future Record-backend (over a
+        # ``RecordEmpiricalDistribution``) will report
+        # ``is_approximate=True`` on its own samples and the array
+        # picks that up here.
+        instance._approximate = bool(getattr(backend, "is_approximate", False))
         return instance
 
     # -- structure -----------------------------------------------------------
@@ -491,11 +496,22 @@ class DistributionArray[T](Distribution[T]):
 
         ``__getitem__`` is a leading-axis indexer (partial slicing); this
         method bypasses it for the sweep layer, which unravels its own
-        flat index across multiple array inputs.
+        flat index across multiple array inputs and always passes
+        non-negative integers. Negatives are rejected here — both
+        backend and literal paths behave identically. User-facing
+        ``da[-1]`` wraps via ``__getitem__`` before this method is
+        called.
         """
+        i_int = int(i)
+        n = self.n
+        if not 0 <= i_int < n:
+            raise IndexError(
+                f"_flat_component: index {i_int} out of range for "
+                f"DistributionArray with n={n} cells."
+            )
         if self._backend is not None:
-            return self._backend.cell(i)
-        return self._components[i]
+            return self._backend.cell(i_int)
+        return self._components[i_int]
 
     def __repr__(self) -> str:
         backed = " backend=True" if self._backend is not None else ""

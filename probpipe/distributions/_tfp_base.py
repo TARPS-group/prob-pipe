@@ -225,6 +225,38 @@ class _TFPArrayBackend:
         self._dist_cls = dist_cls
         self._name = name
         self._batch_shape = tuple(batch_shape)
+        # Pre-flight shape check + scalar broadcast.
+        #
+        # Validate every higher-rank param's leading axes against the
+        # declared ``batch_shape`` *before* construction. Raises a
+        # message that names the offending parameter and references
+        # ``batch_shape`` — clearer than letting TFP raise a generic
+        # "Arguments ... must have compatible shapes" further down
+        # the call stack. Then broadcast any 0-D scalars to
+        # ``batch_shape`` so callers can mix scalars with arrays —
+        # ``from_batched_params(Normal, loc=0.0, scale=1.0,
+        # batch_shape=(5,))`` constructs five identical Normals.
+        if self._batch_shape:
+            for key, value in batched_params.items():
+                arr = jnp.asarray(value)
+                if arr.ndim < len(self._batch_shape):
+                    continue
+                leading = arr.shape[: len(self._batch_shape)]
+                if leading != self._batch_shape:
+                    raise ValueError(
+                        f"_TFPArrayBackend: declared "
+                        f"batch_shape={self._batch_shape} but parameter "
+                        f"{key!r} has leading shape {leading}; the two "
+                        f"must match. Check that every batched parameter "
+                        f"broadcasts to batch_shape."
+                    )
+            broadcasted = {}
+            for key, value in batched_params.items():
+                arr = jnp.asarray(value)
+                if arr.ndim == 0:
+                    arr = jnp.broadcast_to(arr, self._batch_shape)
+                broadcasted[key] = arr
+            batched_params = broadcasted
         self._batched_params = batched_params
         # Construct the fused ProbPipe Distribution with the batched
         # params. The backend exists *to* hold a batched form, so any
