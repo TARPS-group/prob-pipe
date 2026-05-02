@@ -975,14 +975,27 @@ class RecordBootstrapReplicateDistribution(
 
     Parameters
     ----------
-    source : Record | RecordEmpiricalDistribution | EmpiricalDistribution | array-like
-        Data to bootstrap from.
+    source : Record | RecordEmpiricalDistribution | array-like
+        Data to bootstrap from. A bare numeric array auto-wraps as a
+        single-field ``Record`` keyed by *name*. A generic
+        ``EmpiricalDistribution`` (object-array storage) is **not**
+        accepted — see ``Raises``.
     n : int or None
         Observations per bootstrap dataset. Defaults to the source's
         observation count.
     name : str or None
         Distribution name. Mandatory when *source* is a bare numeric
         array (used as the single-field auto-wrap field name).
+
+    Raises
+    ------
+    TypeError
+        If *source* is a generic ``EmpiricalDistribution`` (i.e.,
+        object-array storage rather than numeric / Record-backed).
+        The factory path routes numeric-array empiricals to
+        :class:`RecordEmpiricalDistribution`; only the generic-base
+        instance can reach this constructor, and its non-numeric
+        samples can't be bootstrapped meaningfully.
     """
 
     _sampling_cost: str = "low"
@@ -1013,12 +1026,16 @@ class RecordBootstrapReplicateDistribution(
             # is the only way in. Reject explicitly so users get a clear
             # error instead of an ``_as_float_array(object_arr)``
             # TypeError later.
+            sample_dtype = getattr(
+                source.samples, "dtype", type(source.samples).__name__,
+            )
             raise TypeError(
                 f"RecordBootstrapReplicateDistribution does not accept "
                 f"generic (object-array) EmpiricalDistribution sources "
-                f"(got {type(source).__name__} with object samples). "
-                f"Pass a RecordEmpiricalDistribution, a numeric array, "
-                f"or wrap your samples in a Record first."
+                f"(got {type(source).__name__} with non-numeric samples; "
+                f"dtype={sample_dtype}). Pass a "
+                f"RecordEmpiricalDistribution, a numeric array, or wrap "
+                f"your samples in a Record first."
             )
         elif _is_numeric_array(source):
             wrapped, field_name = _wrap_numeric_array_as_record(
@@ -1033,9 +1050,8 @@ class RecordBootstrapReplicateDistribution(
         else:
             raise TypeError(
                 f"RecordBootstrapReplicateDistribution: source must be a "
-                f"Record, RecordEmpiricalDistribution, numeric array, or "
-                f"numeric-array-backed EmpiricalDistribution, got "
-                f"{type(source).__name__}"
+                f"Record, RecordEmpiricalDistribution, or numeric array, "
+                f"got {type(source).__name__}"
             )
         # Bootstrap-base bookkeeping. Set self._data so the base's
         # `.data` property returns the Record (matches old behaviour).

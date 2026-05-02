@@ -56,8 +56,9 @@ def _mm_provenance(source, mean_result=None, var_result=None):
 
 def _point_estimate(x):
     """Extract a plain array from a value that may be a BootstrapDistribution
-    or a single-field NumericRecord (the auto-wrap form returned by the
-    merged ``RecordEmpiricalDistribution._mean``)."""
+    or a single-field NumericRecord (the auto-wrap form returned by
+    ``RecordEmpiricalDistribution._mean`` — numeric arrays auto-wrap
+    as a single-field Record)."""
     from ..core.distribution import BootstrapDistribution
     from ..core._numeric_record import NumericRecord
     if isinstance(x, BootstrapDistribution):
@@ -453,9 +454,13 @@ def _convert_to_kde(source, key, **kw):
     view) so KDE sees one row per sample with all parameters
     concatenated. Other sources fall back to drawing fresh samples.
 
-    A generic ``EmpiricalDistribution`` (object-array storage) is
-    rejected with a clear ``TypeError`` rather than silently
-    producing a degenerate KDE.
+    Raises
+    ------
+    TypeError
+        If *source* is a generic ``EmpiricalDistribution``
+        (non-numeric / object-array storage). KDE requires numeric
+        samples; route the source through
+        ``RecordEmpiricalDistribution`` or supply a numeric source.
     """
     from ..distributions.kde import KDEDistribution
 
