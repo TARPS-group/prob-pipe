@@ -15,7 +15,6 @@ import numpy as np
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._array_utils import _slice_leading_axes
-from .._utils import prod
 from ..core._distribution_base import Distribution
 from ..core.distribution import (
     NumericRecordDistribution,
@@ -27,7 +26,6 @@ from ..core.protocols import (
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
-    _DistributionArrayBackend,
 )
 from ..core.record import Record, RecordTemplate
 from ..custom_types import Array, ArrayLike, PRNGKey
