@@ -30,11 +30,18 @@ _make_array_backend
 
 Most `Supports*` protocols are instance-level capabilities (does
 `isinstance(my_dist, SupportsSampling)` hold?). `SupportsArrayBackend`
-is the exception: its method is a `@classmethod`, so the runtime check
-is on the **class** (`isinstance(MyDistribution, SupportsArrayBackend)`),
-not on instances. The corresponding *backend* interface that
-`_make_array_backend` returns (`_DistributionArrayBackend`) is private
-to the library — user code never imports or constructs it.
+is the exception: its method is a `@classmethod`, so the contract
+lives at class scope. Always check
+`isinstance(MyDistribution, SupportsArrayBackend)` (i.e. on the
+class object). `isinstance(an_instance, SupportsArrayBackend)`
+returns `True` too — instances inherit class attributes, and
+`runtime_checkable` just looks for the named attribute — but the
+result is misleading because the protocol's contract is the class
+declaring `_make_array_backend`, not the instance.
+
+The corresponding *backend* interface that `_make_array_backend`
+returns (`_DistributionArrayBackend`) is private to the library —
+user code never imports or constructs it.
 
 ### 1.2 Ops (public API)
 
