@@ -8,6 +8,7 @@ distribution modules in ``distributions/``.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 from typing import Any, Callable, Iterator
 
 import jax
@@ -33,35 +34,30 @@ from ..custom_types import Array, ArrayLike, PRNGKey
 
 
 # ---------------------------------------------------------------------------
-# Internal bypass for the upcoming batched-parameters rejection
+# Internal bypass for the batched-parameters rejection
 # ---------------------------------------------------------------------------
-# The next commit in this PR (PR-C.2) adds a runtime check inside
-# ``TFPDistribution.__init__`` that raises ``ValueError`` whenever a
-# concrete subclass (``Normal``, ``Beta``, ``Gamma``, …) is constructed
-# with parameters whose ``tfd.Distribution.batch_shape`` is non-empty.
-# The framework hierarchy rule (CONTRIBUTING.md) is "one random
-# variable per ``Distribution``"; collections live in
-# ``DistributionArray``.
+# ``TFPDistribution.__init__`` raises ``ValueError`` whenever a concrete
+# subclass (``Normal``, ``Beta``, ``Gamma``, …) is constructed with
+# parameters whose ``tfd.Distribution.batch_shape`` is non-empty,
+# enforcing the framework rule "one random variable per ``Distribution``"
+# (CONTRIBUTING.md); collections live in ``DistributionArray``.
 #
-# Some library-internal call sites legitimately need the legacy
-# batched form — the fused-storage ``_TFPArrayBackend`` (PR-C.1)
-# wraps a TFP-batched dist; converters, sequential joints, and
-# random functions construct ``Normal(loc=batch_array, ...)`` from
-# arrays produced inside the WF sweep. These sites bypass the
-# upcoming rejection via the ``_allow_batched_tfp_init`` context
-# manager added here. User-facing callers never use the bypass.
-#
-# This commit ships only the scaffolding (flag + context manager).
-# The rejection itself lands later in the PR after every legitimate
-# internal site has been wrapped and every test that exercises the
-# legacy user-facing form has been migrated to
-# ``DistributionArray.from_batched_params``.
+# Library-internal infrastructure that legitimately holds a batched
+# form — the fused-storage ``_TFPArrayBackend``, converters that
+# fabricate batched-Normal forms during a WF sweep, sequential-joint
+# user lambdas given batched parents, ``GaussianRandomFunction.predict``
+# — opts in via :func:`_allow_batched_tfp_init`. User-facing callers
+# never use the bypass.
 
-_ALLOW_BATCHED_INIT: bool = False
-"""Module-level toggle consulted by the upcoming
-``TFPDistribution.__init__`` rejection. Default ``False`` enforces the
-"one RV per Distribution" rule for all user-facing construction;
-internal infra opts in with :func:`_allow_batched_tfp_init`."""
+_BATCHED_INIT_BYPASS: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_BATCHED_INIT_BYPASS", default=False,
+)
+"""Per-context flag consulted by ``TFPDistribution.__init__``'s
+batched-parameters rejection. ``ContextVar`` over a module-level bool
+because the bypass should be scoped to the dynamic extent of the
+``with`` block — including across threads and ``asyncio`` tasks — so
+two concurrent constructions can't bleed into each other's bypass
+state."""
 
 
 @contextlib.contextmanager
@@ -73,19 +69,15 @@ def _allow_batched_tfp_init() -> Iterator[None]:
     to construct a TFP-batched form (e.g. :class:`_TFPArrayBackend`,
     converters that produce batched-Normal forms during a WF sweep,
     sequential-joint sampling whose lambda receives a batched
-    sample). User code never uses this.
-
-    The rejection it bypasses is added in a subsequent commit in this
-    PR; until then this context manager is a no-op functionally but
-    is referenced by the internal call sites that will need it.
+    sample). User code never uses this; intra-library tests that
+    emulate internal RandomFunction subclasses may import the
+    context manager directly.
     """
-    global _ALLOW_BATCHED_INIT
-    previous = _ALLOW_BATCHED_INIT
-    _ALLOW_BATCHED_INIT = True
+    token = _BATCHED_INIT_BYPASS.set(True)
     try:
         yield
     finally:
-        _ALLOW_BATCHED_INIT = previous
+        _BATCHED_INIT_BYPASS.reset(token)
 
 
 class TFPDistribution(
@@ -149,7 +141,7 @@ class TFPDistribution(
         ``batch_shape``.
         """
         super().__init__(name=name)
-        if _ALLOW_BATCHED_INIT:
+        if _BATCHED_INIT_BYPASS.get():
             return
         # KDE-style subclasses set ``_tfp_dist`` *after* this call;
         # skip the check rather than crash on a missing attribute.
@@ -296,6 +288,26 @@ wrapped batched ``TFPDistribution``. Centralised so
 ``_TFPArrayBackend.__init__`` and ``tree_unflatten`` can't drift."""
 
 
+def _construct_batched_dist(
+    dist_cls: type,
+    *,
+    name: str,
+    batched_params: dict[str, Any],
+) -> "TFPDistribution":
+    """Construct the fused batched distribution under the internal
+    bypass, with the centralised ``__array_backend``-suffixed name.
+
+    Used by both :meth:`_TFPArrayBackend.__init__` and
+    :meth:`_TFPArrayBackend.tree_unflatten` so the suffix and bypass
+    contract live in one place.
+    """
+    with _allow_batched_tfp_init():
+        return dist_cls(
+            **batched_params,
+            name=f"{name}{_ARRAY_BACKEND_NAME_SUFFIX}",
+        )
+
+
 class _TFPArrayBackend:
     """Fused TFP-batched backend for ``DistributionArray``.
 
@@ -372,16 +384,9 @@ class _TFPArrayBackend:
                 normalised[key] = arr
             batched_params = normalised
         self._batched_params = batched_params
-        # Construct the fused ProbPipe Distribution with the batched
-        # params. ``TFPDistribution.__init__`` rejects batched
-        # parameters for user code; the backend is internal infra that
-        # exists *to* hold a batched form, so it opts into the bypass
-        # via ``_allow_batched_tfp_init``.
-        with _allow_batched_tfp_init():
-            self._batched_dist: TFPDistribution = dist_cls(
-                **batched_params,
-                name=f"{name}{_ARRAY_BACKEND_NAME_SUFFIX}",
-            )
+        self._batched_dist: TFPDistribution = _construct_batched_dist(
+            dist_cls, name=name, batched_params=batched_params,
+        )
         # Final sanity check: TFP's inferred batch_shape must match
         # the caller's declaration. Catches the rare case where a
         # higher-rank param's *trailing* axes don't agree but the
@@ -534,15 +539,9 @@ class _TFPArrayBackend:
         instance._name = name
         instance._batch_shape = tuple(batch_shape)
         instance._batched_params = dict(zip(keys, children))
-        # Rebuild the wrapped distribution with the same internal
-        # bypass that ``__init__`` uses — the leaves are batched by
-        # construction, so user-facing rejection of batched params
-        # must not fire here.
-        with _allow_batched_tfp_init():
-            instance._batched_dist = dist_cls(
-                **instance._batched_params,
-                name=f"{name}{_ARRAY_BACKEND_NAME_SUFFIX}",
-            )
+        instance._batched_dist = _construct_batched_dist(
+            dist_cls, name=name, batched_params=instance._batched_params,
+        )
         return instance
 
 

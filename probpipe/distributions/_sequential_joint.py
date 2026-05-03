@@ -33,6 +33,27 @@ from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
 )
+from ._tfp_base import _allow_batched_tfp_init
+
+
+def _resolve_callable_component(
+    comp: callable, namespace: dict[str, Array],
+) -> NumericRecordDistribution:
+    """Invoke a user-supplied component callable with the parent
+    values it requested via its signature.
+
+    Filters ``namespace`` by ``inspect.signature(comp)`` parameters,
+    then calls ``comp(**filtered)`` under the
+    :func:`_allow_batched_tfp_init` bypass — the user lambda
+    typically writes ``Normal(loc=parent, scale=...)`` with batched
+    parents, so the standard rejection of batched-parameter
+    constructors must not fire here. Internal infra; user-facing
+    construction of ``Normal(loc=arr, ...)`` is rejected as usual.
+    """
+    sig = inspect.signature(comp)
+    call_kw = {p: namespace[p] for p in sig.parameters if p in namespace}
+    with _allow_batched_tfp_init():
+        return comp(**call_kw)
 
 
 # ---------------------------------------------------------------------------
@@ -249,21 +270,9 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
                 sampled[cname] = comp._sample(subkey, sample_shape)
             else:
                 # Conditional: callable receives batched parent samples,
-                # returning a batched distribution.  Sample with () since
+                # returning a batched distribution. Sample with () since
                 # the batch is already in the distribution's batch_shape.
-                sig = inspect.signature(comp)
-                call_kw = {p: sampled[p] for p in sig.parameters if p in sampled}
-                # The user lambda typically writes
-                # ``Normal(loc=z, scale=...)`` with a batched ``z``.
-                # The rejection added later in this PR would refuse
-                # that direct construction; bypass it here because
-                # sequential-joint sampling deliberately constructs
-                # a TFP-batched form to vectorise the per-cell draw.
-                # The bypass is internal infra; user-facing rejection
-                # of ``Normal(loc=arr, ...)`` still applies elsewhere.
-                from ._tfp_base import _allow_batched_tfp_init
-                with _allow_batched_tfp_init():
-                    dist = comp(**call_kw)
+                dist = _resolve_callable_component(comp, sampled)
                 sampled[cname] = dist._sample(subkey)
 
         return sampled
@@ -314,17 +323,7 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
             if isinstance(comp, NumericRecordDistribution):
                 lp = comp._log_prob(val)
             else:
-                sig = inspect.signature(comp)
-                call_kw = {p: structured[p] for p in sig.parameters if p in structured}
-                # User lambda receives batched parent values during
-                # log_prob; the rejection in TFPDistribution.__init__
-                # would refuse the resulting batched form. The
-                # log_prob path is the symmetric counterpart to the
-                # bypass already added on the sampling side
-                # (_sample_sequential).
-                from ._tfp_base import _allow_batched_tfp_init
-                with _allow_batched_tfp_init():
-                    cond_dist = comp(**call_kw)
+                cond_dist = _resolve_callable_component(comp, structured)
                 lp = cond_dist._log_prob(val)
             total = lp if total is None else total + lp
 

@@ -192,52 +192,66 @@ class GaussianRandomFunction(ArrayRandomFunction):
 
         # GRF predictions over ``n`` input points return a single
         # batched ``Normal`` / ``MultivariateNormal`` whose
-        # ``batch_shape`` covers the input axis. The rejection added
-        # later in this PR otherwise refuses such direct construction;
-        # the GRF is library-internal infrastructure that
-        # deliberately produces a batched form for ``predict``.
-        # PR-C.3 will rework the RandomFunction shape algebra and may
-        # change this to return a ``DistributionArray``; for now we
-        # bypass to preserve current behaviour.
+        # ``batch_shape`` covers the input axis — a library-internal
+        # batched form that ``TFPDistribution.__init__``'s rejection
+        # would otherwise refuse. The bypass wraps only the
+        # constructor calls; mean / variance / covariance / cholesky
+        # work happens outside it so the global flag is mutated for
+        # the shortest possible window.
+        mean = self.predict_mean(X)  # (*eb, n, *out)
+
+        # -- Fully marginal ---------------------------------------------------
+        if not joint_inputs and not joint_outputs:
+            variance = self.predict_variance(X)
+            with _allow_batched_tfp_init():
+                return Normal(
+                    loc=mean, scale=jnp.sqrt(variance),
+                    name="grf_prediction",
+                )
+
+        # -- At least one joint axis — need covariance ------------------------
+        cov = self.predict_covariance(
+            X, joint_inputs=joint_inputs, joint_outputs=joint_outputs
+        )
+        extra_batch, n = self._parse_X(X)
+        d_out = prod(self._output_shape)
+
+        scale_tril = jnp.linalg.cholesky(cov)
+
+        if joint_inputs and joint_outputs:
+            flat_dim = n * d_out if self._output_shape else n
+            flat_mean = mean.reshape(*extra_batch, flat_dim)
+            with _allow_batched_tfp_init():
+                return MultivariateNormal(
+                    loc=flat_mean, scale_tril=scale_tril,
+                    name="grf_prediction",
+                )
+
+        if joint_inputs and not joint_outputs:
+            # Joint over n, independent over outputs.
+            # mean: (*eb, n, *out) → need (*eb, *out, n)
+            if self._output_shape:
+                ndim_eb = len(extra_batch)
+                ndim_out = len(self._output_shape)
+                source_axes = list(range(ndim_eb + 1, ndim_eb + 1 + ndim_out))
+                dest_axes = list(range(ndim_eb, ndim_eb + ndim_out))
+                mean_t = jnp.moveaxis(mean, source_axes, dest_axes)
+            else:
+                mean_t = mean  # (*eb, n) — nothing to rearrange
+            with _allow_batched_tfp_init():
+                return MultivariateNormal(
+                    loc=mean_t, scale_tril=scale_tril,
+                    name="grf_prediction",
+                )
+
+        # joint_outputs only (not joint_inputs)
+        # mean: (*eb, n, *out) → flatten output dims: (*eb, n, d_out)
+        flat_mean = mean.reshape(*extra_batch, n, d_out)
         with _allow_batched_tfp_init():
-            mean = self.predict_mean(X)  # (*eb, n, *out)
-
-            # -- Fully marginal ---------------------------------------------------
-            if not joint_inputs and not joint_outputs:
-                variance = self.predict_variance(X)
-                return Normal(loc=mean, scale=jnp.sqrt(variance), name="grf_prediction")
-
-            # -- At least one joint axis — need covariance ------------------------
-            cov = self.predict_covariance(
-                X, joint_inputs=joint_inputs, joint_outputs=joint_outputs
+            return MultivariateNormal(
+                loc=flat_mean, scale_tril=scale_tril,
+                name="grf_prediction",
             )
-            extra_batch, n = self._parse_X(X)
-            d_out = prod(self._output_shape)
-
-            scale_tril = jnp.linalg.cholesky(cov)
-
-            if joint_inputs and joint_outputs:
-                flat_dim = n * d_out if self._output_shape else n
-                flat_mean = mean.reshape(*extra_batch, flat_dim)
-                return MultivariateNormal(loc=flat_mean, scale_tril=scale_tril, name="grf_prediction")
-
-            if joint_inputs and not joint_outputs:
-                # Joint over n, independent over outputs.
-                # mean: (*eb, n, *out) → need (*eb, *out, n)
-                if self._output_shape:
-                    ndim_eb = len(extra_batch)
-                    ndim_out = len(self._output_shape)
-                    source_axes = list(range(ndim_eb + 1, ndim_eb + 1 + ndim_out))
-                    dest_axes = list(range(ndim_eb, ndim_eb + ndim_out))
-                    mean_t = jnp.moveaxis(mean, source_axes, dest_axes)
-                else:
-                    mean_t = mean  # (*eb, n) — nothing to rearrange
-                return MultivariateNormal(loc=mean_t, scale_tril=scale_tril, name="grf_prediction")
-
-            # joint_outputs only (not joint_inputs)
-            # mean: (*eb, n, *out) → flatten output dims: (*eb, n, d_out)
-            flat_mean = mean.reshape(*extra_batch, n, d_out)
-            return MultivariateNormal(loc=flat_mean, scale_tril=scale_tril, name="grf_prediction")
 
 
 # ---------------------------------------------------------------------------
