@@ -50,11 +50,21 @@ Concrete classes that want default MC implementations can use the
 from __future__ import annotations
 
 import functools
-from typing import Any, Callable, ClassVar, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    ClassVar,
+    Protocol,
+    runtime_checkable,
+)
 
 import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
+
+if TYPE_CHECKING:
+    from ._distribution_base import Distribution
 
 
 # ---------------------------------------------------------------------------
@@ -340,8 +350,7 @@ class _DistributionArrayBackend(Protocol):
     present.
 
     ``cell(index)`` materialises a fresh **scalar** ``Distribution``
-    for the cell at ``index`` (post-Phase-2: scalar means
-    parameters that don't imply ``batch_shape != ()``). Used by
+    (i.e. ``batch_shape == ()``) for the cell at ``index``. Used by
     ``DistributionArray.__getitem__`` and by the WF sweep when
     cell-level dispatch is needed.
     """
@@ -352,7 +361,7 @@ class _DistributionArrayBackend(Protocol):
     @property
     def event_shape(self) -> tuple[int, ...]: ...
 
-    def cell(self, index: int | tuple[int, ...]) -> Any:
+    def cell(self, index: int | tuple[int, ...]) -> "Distribution":
         """Fabricate a scalar ``Distribution`` for the cell at ``index``."""
         ...
 
@@ -374,9 +383,12 @@ class SupportsArrayBackend(Protocol):
 
     The protocol attaches to the **class**, not to instances. The
     runtime check is ``isinstance(MyDistribution, SupportsArrayBackend)``
-    (i.e. the class itself implements ``_make_array_backend``); calling
-    ``isinstance(an_instance, SupportsArrayBackend)`` is meaningless
-    because the protocol method is a classmethod.
+    (i.e. the class itself implements ``_make_array_backend``).
+    ``isinstance(an_instance, SupportsArrayBackend)`` returns
+    ``True`` too — instances inherit class attributes, and
+    ``runtime_checkable`` just looks for the named attribute — but
+    the result is misleading because the contract is at class
+    scope.
 
     The protocol is internal to the library; user code never calls
     ``_make_array_backend`` directly. ``DistributionArray`` is the

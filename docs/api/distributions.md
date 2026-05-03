@@ -34,6 +34,8 @@
 
 ::: probpipe.core._broadcast_distributions.BroadcastDistribution
 
+::: probpipe.core._distribution_array.DistributionArray
+
 ## Continuous
 
 ::: probpipe.Normal
