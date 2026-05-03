@@ -201,9 +201,10 @@ class DistributionArray[T](Distribution[T]):
     ) -> "DistributionArray":
         """Construct a ``DistributionArray`` of homogeneous components.
 
-        Companion to the future-deprecated TFP-batched-parameters
-        constructor: ``Normal(loc=jnp.zeros(5), scale=1.0, name="x")``
-        will raise in PR-C.2; the migration is::
+        The recommended way to build a ``DistributionArray`` whose
+        cells are all instances of the same class — most often a
+        TFP-backed family like ``Normal`` — without manually
+        constructing each cell::
 
             DistributionArray.from_batched_params(
                 Normal, loc=jnp.zeros(5), scale=1.0, name="x",

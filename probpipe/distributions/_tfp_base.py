@@ -178,6 +178,12 @@ class TFPDistribution(
 # ---------------------------------------------------------------------------
 
 
+_ARRAY_BACKEND_NAME_SUFFIX = "__array_backend"
+"""Suffix appended to a backend's base ``name`` when constructing the
+wrapped batched ``TFPDistribution``. Centralised so
+``_TFPArrayBackend.__init__`` and ``tree_unflatten`` can't drift."""
+
+
 class _TFPArrayBackend:
     """Fused TFP-batched backend for ``DistributionArray``.
 
@@ -225,38 +231,34 @@ class _TFPArrayBackend:
         self._dist_cls = dist_cls
         self._name = name
         self._batch_shape = tuple(batch_shape)
-        # Pre-flight shape check + scalar broadcast.
-        #
-        # Validate every higher-rank param's leading axes against the
-        # declared ``batch_shape`` *before* construction. Raises a
-        # message that names the offending parameter and references
-        # ``batch_shape`` — clearer than letting TFP raise a generic
-        # "Arguments ... must have compatible shapes" further down
-        # the call stack. Then broadcast any 0-D scalars to
-        # ``batch_shape`` so callers can mix scalars with arrays —
+        # Single pass: validate every higher-rank param's leading
+        # axes against the declared ``batch_shape``, broadcasting
+        # 0-D scalars up to ``batch_shape`` so callers can mix
+        # scalars with arrays —
         # ``from_batched_params(Normal, loc=0.0, scale=1.0,
-        # batch_shape=(5,))`` constructs five identical Normals.
+        # batch_shape=(5,))`` constructs five identical Normals. The
+        # leading-axes check raises with a per-parameter message
+        # before TFP gets to raise its generic "Arguments ... must
+        # have compatible shapes".
         if self._batch_shape:
-            for key, value in batched_params.items():
-                arr = jnp.asarray(value)
-                if arr.ndim < len(self._batch_shape):
-                    continue
-                leading = arr.shape[: len(self._batch_shape)]
-                if leading != self._batch_shape:
-                    raise ValueError(
-                        f"_TFPArrayBackend: declared "
-                        f"batch_shape={self._batch_shape} but parameter "
-                        f"{key!r} has leading shape {leading}; the two "
-                        f"must match. Check that every batched parameter "
-                        f"broadcasts to batch_shape."
-                    )
-            broadcasted = {}
+            normalised: dict[str, Any] = {}
             for key, value in batched_params.items():
                 arr = jnp.asarray(value)
                 if arr.ndim == 0:
                     arr = jnp.broadcast_to(arr, self._batch_shape)
-                broadcasted[key] = arr
-            batched_params = broadcasted
+                elif arr.ndim >= len(self._batch_shape):
+                    leading = arr.shape[: len(self._batch_shape)]
+                    if leading != self._batch_shape:
+                        raise ValueError(
+                            f"_TFPArrayBackend: declared "
+                            f"batch_shape={self._batch_shape} but "
+                            f"parameter {key!r} has leading shape "
+                            f"{leading}; the two must match. Check "
+                            f"that every batched parameter broadcasts "
+                            f"to batch_shape."
+                        )
+                normalised[key] = arr
+            batched_params = normalised
         self._batched_params = batched_params
         # Construct the fused ProbPipe Distribution with the batched
         # params. The backend exists *to* hold a batched form, so any
@@ -265,12 +267,14 @@ class _TFPArrayBackend:
         # canonical caller of that bypass.
         self._batched_dist: TFPDistribution = dist_cls(
             **batched_params,
-            name=f"{name}__array_backend",
+            name=f"{name}{_ARRAY_BACKEND_NAME_SUFFIX}",
         )
-        # Sanity check: the constructed TFP dist's batch_shape should
-        # match what the caller said. Mismatches usually mean the
-        # caller's params don't actually broadcast to ``batch_shape``.
-        actual = tuple(self._batched_dist._tfp_dist.batch_shape)
+        # Final sanity check: TFP's inferred batch_shape must match
+        # the caller's declaration. Catches the rare case where a
+        # higher-rank param's *trailing* axes don't agree but the
+        # leading-axes check above passed (e.g., MVN where ``loc`` /
+        # ``scale_tril`` event ranks differ).
+        actual = self._batched_dist.batch_shape
         if actual != self._batch_shape:
             raise ValueError(
                 f"_TFPArrayBackend: declared batch_shape={self._batch_shape} "
@@ -287,11 +291,11 @@ class _TFPArrayBackend:
 
     @property
     def event_shape(self) -> tuple[int, ...]:
-        return tuple(self._batched_dist._tfp_dist.event_shape)
+        return self._batched_dist.event_shape
 
     @property
     def dtype(self) -> jnp.dtype:
-        return self._batched_dist._tfp_dist.dtype
+        return self._batched_dist.dtype
 
     # -- per-cell materialisation -------------------------------------------
 
@@ -303,9 +307,13 @@ class _TFPArrayBackend:
         indices. The returned distribution is fully scalar
         (``batch_shape == ()``) — no caching; each call re-runs the
         ordinary ``dist_cls(**scalar_params, name=...)`` constructor.
+
+        ``batch_shape`` is non-empty by construction (
+        :func:`DistributionArray._infer_batch_shape` rejects scalar-
+        only param sets), so we never have to handle a degenerate
+        zero-axis backend here.
         """
-        multi = self._normalize_index(index)
-        flat = int(np.ravel_multi_index(multi, self._batch_shape)) if self._batch_shape else 0
+        multi, flat = self._normalize_index(index)
         scalar_params = {
             key: _slice_leading_axes(value, multi)
             for key, value in self._batched_params.items()
@@ -317,38 +325,37 @@ class _TFPArrayBackend:
 
     def _normalize_index(
         self, index: int | tuple[int, ...]
-    ) -> tuple[int, ...]:
+    ) -> tuple[tuple[int, ...], int]:
+        """Return ``(multi_index, flat_index)`` for the given input.
+
+        Lets :meth:`cell` slice with the multi-d index *and* name the
+        result with the flat index in one pass, without round-tripping
+        through ``np.ravel_multi_index`` / ``np.unravel_index`` for
+        the common 1-D case. Out-of-range indices raise ``IndexError``
+        via NumPy; rank mismatches are caught here with a clearer
+        message than NumPy's default.
+        """
         bshape = self._batch_shape
         if isinstance(index, (int, np.integer)) or hasattr(index, "__index__"):
             i = int(index)
-            if not bshape:
-                if i != 0:
-                    raise IndexError(
-                        f"_TFPArrayBackend.cell: scalar backend has only one "
-                        f"cell; got index={i}."
-                    )
-                return ()
             if len(bshape) == 1:
                 if not 0 <= i < bshape[0]:
                     raise IndexError(
-                        f"_TFPArrayBackend.cell: index {i} out of range for "
-                        f"batch_shape={bshape}."
+                        f"_TFPArrayBackend.cell: index {i} out of range "
+                        f"for batch_shape={bshape}."
                     )
-                return (i,)
-            return tuple(int(x) for x in np.unravel_index(i, bshape))
+                return (i,), i
+            multi = tuple(int(x) for x in np.unravel_index(i, bshape))
+            return multi, i
         idx = tuple(int(x) for x in index)
         if len(idx) != len(bshape):
             raise IndexError(
-                f"_TFPArrayBackend.cell: index {idx} has rank {len(idx)} "
-                f"but batch_shape={bshape} has rank {len(bshape)}."
+                f"_TFPArrayBackend.cell: index {idx} has rank "
+                f"{len(idx)} but batch_shape={bshape} has rank "
+                f"{len(bshape)}."
             )
-        for i, dim in zip(idx, bshape):
-            if not 0 <= i < dim:
-                raise IndexError(
-                    f"_TFPArrayBackend.cell: index {idx} out of range for "
-                    f"batch_shape={bshape}."
-                )
-        return idx
+        flat = int(np.ravel_multi_index(idx, bshape))
+        return idx, flat
 
     # -- vectorised ops (forward to the wrapped batched distribution) -------
 
@@ -416,7 +423,7 @@ class _TFPArrayBackend:
         instance._batched_params = dict(zip(keys, children))
         instance._batched_dist = dist_cls(
             **instance._batched_params,
-            name=f"{name}__array_backend",
+            name=f"{name}{_ARRAY_BACKEND_NAME_SUFFIX}",
         )
         return instance
 
