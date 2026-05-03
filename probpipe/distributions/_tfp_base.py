@@ -289,11 +289,11 @@ wrapped batched ``TFPDistribution``. Centralised so
 
 
 def _construct_batched_dist(
-    dist_cls: type,
+    dist_cls: type[TFPDistribution],
     *,
     name: str,
     batched_params: dict[str, Any],
-) -> "TFPDistribution":
+) -> TFPDistribution:
     """Construct the fused batched distribution under the internal
     bypass, with the centralised ``__array_backend``-suffixed name.
 
@@ -330,7 +330,7 @@ class _TFPArrayBackend:
 
     Parameters
     ----------
-    dist_cls : type
+    dist_cls : type[TFPDistribution]
         The concrete ``TFPDistribution`` subclass (e.g., ``Normal``).
         Used to materialise per-cell scalars.
     name : str
@@ -347,7 +347,7 @@ class _TFPArrayBackend:
     def __init__(
         self,
         *,
-        dist_cls: type,
+        dist_cls: type[TFPDistribution],
         name: str,
         batch_shape: tuple[int, ...],
         batched_params: dict[str, Any],

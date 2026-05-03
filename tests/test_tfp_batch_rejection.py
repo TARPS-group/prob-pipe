@@ -194,6 +194,43 @@ class TestBypassForInternalInfra:
         with pytest.raises(ValueError):
             Normal(loc=jnp.zeros(2), scale=1.0, name="x")
 
+    def test_bypass_does_not_leak_across_asyncio_tasks(self):
+        """The bypass uses ``contextvars.ContextVar`` so concurrent
+        coroutines see independent flag states. A task that enters
+        the bypass must not affect a sibling task running outside
+        it.
+        """
+        import asyncio
+
+        bypass_observed: list[bool] = []
+        no_bypass_failed: list[bool] = []
+
+        async def with_bypass():
+            with _allow_batched_tfp_init():
+                # Yield to the event loop so the sibling task gets to
+                # run while *this* task's bypass is active. If the
+                # bypass leaked, the sibling would silently succeed.
+                await asyncio.sleep(0)
+                Normal(loc=jnp.zeros(2), scale=1.0, name="x")
+                bypass_observed.append(True)
+
+        async def without_bypass():
+            await asyncio.sleep(0)  # interleave with the bypass task
+            try:
+                Normal(loc=jnp.zeros(2), scale=1.0, name="y")
+                no_bypass_failed.append(False)
+            except ValueError:
+                no_bypass_failed.append(True)
+
+        async def main():
+            await asyncio.gather(with_bypass(), without_bypass())
+
+        asyncio.run(main())
+        assert bypass_observed == [True]
+        # The non-bypass task must have hit the rejection even though
+        # the sibling task was inside ``with _allow_batched_tfp_init()``.
+        assert no_bypass_failed == [True]
+
 
 # ---------------------------------------------------------------------------
 # KDE-style subclasses (set _tfp_dist after super().__init__) unaffected

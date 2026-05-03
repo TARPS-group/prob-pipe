@@ -24,6 +24,7 @@ from .._utils import _auto_key
 from ..core.protocols import SupportsSampling
 from .._utils import prod
 from ..core._random_functions import ArrayRandomFunction
+from ._tfp_base import _allow_batched_tfp_init
 
 # Delay import to avoid circular import at module level; these are
 # imported from the *same* package, so we import lazily inside methods
@@ -188,7 +189,6 @@ class GaussianRandomFunction(ArrayRandomFunction):
         (e.g. structured covariance representations).
         """
         from . import MultivariateNormal, Normal
-        from ._tfp_base import _allow_batched_tfp_init
 
         # GRF predictions over ``n`` input points return a single
         # batched ``Normal`` / ``MultivariateNormal`` whose

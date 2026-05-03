@@ -8,6 +8,7 @@ that receive previously-sampled values and return a ``Distribution``
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from types import MappingProxyType
 
 import jax
@@ -37,7 +38,8 @@ from ._tfp_base import _allow_batched_tfp_init
 
 
 def _resolve_callable_component(
-    comp: callable, namespace: dict[str, Array],
+    comp: Callable[..., NumericRecordDistribution],
+    namespace: dict[str, Array],
 ) -> NumericRecordDistribution:
     """Invoke a user-supplied component callable with the parent
     values it requested via its signature.
