@@ -150,7 +150,8 @@ def _wrap_numeric_array_as_record(
     arr = _as_float_array(arr)
     if arr.ndim == 0:
         raise ValueError(
-            f"{role} samples must have at least 1 dimension (the sample axis)."
+            f"{role} samples must have at least 1 dimension (the sample "
+            f"axis); got a 0-D array (shape {arr.shape})."
         )
     if sample_shape is not None:
         n_sample_dims = len(sample_shape)
@@ -168,23 +169,34 @@ def _wrap_numeric_array_as_record(
 def _validate_record_samples(record_data: Record) -> int:
     """Validate that every field shares the same sample-axis length.
 
-    Returns the common ``n``.
+    Returns the common ``n``. Error messages always name the offending
+    field and report its shape so users can debug shape mismatches
+    without having to instrument the call site.
     """
     if not record_data.fields:
         raise ValueError("Record samples must have at least one field.")
-    first = jnp.asarray(record_data[record_data.fields[0]])
+    first_name = record_data.fields[0]
+    first = jnp.asarray(record_data[first_name])
     if first.ndim == 0:
         raise ValueError(
-            "Record empirical samples need a leading sample axis "
-            "(every field must have shape (n, *event_shape))."
+            f"Record empirical samples need a leading sample axis "
+            f"(every field must have shape (n, *event_shape)); "
+            f"field {first_name!r} has shape {first.shape}."
         )
     n = int(first.shape[0])
     for f in record_data.fields[1:]:
         arr = jnp.asarray(record_data[f])
-        if arr.ndim == 0 or int(arr.shape[0]) != n:
+        if arr.ndim == 0:
             raise ValueError(
-                f"Field {f!r} has sample-axis length "
-                f"{None if arr.ndim == 0 else arr.shape[0]}, expected {n}."
+                f"Field {f!r} has shape {arr.shape} (no sample axis), "
+                f"expected leading axis of length {n} to match field "
+                f"{first_name!r}."
+            )
+        if int(arr.shape[0]) != n:
+            raise ValueError(
+                f"Field {f!r} has shape {arr.shape} (sample-axis length "
+                f"{int(arr.shape[0])}), expected {n} to match field "
+                f"{first_name!r}."
             )
     return n
 
@@ -526,6 +538,13 @@ class RecordEmpiricalDistribution(
         structured posterior as a scalar event. Use
         :attr:`event_shapes` (plural, dict-valued) for the multi-field
         case.
+
+        See Also
+        --------
+        :attr:`event_shapes` — the per-field dict, always available.
+        :attr:`RecordBootstrapReplicateDistribution.obs_shape` — the
+            symmetric single-field-only / multi-field-raises accessor
+            for bootstrap replicates' per-observation event shape.
 
         Raises
         ------
@@ -956,14 +975,27 @@ class RecordBootstrapReplicateDistribution(
 
     Parameters
     ----------
-    source : Record | RecordEmpiricalDistribution | EmpiricalDistribution | array-like
-        Data to bootstrap from.
+    source : Record | RecordEmpiricalDistribution | array-like
+        Data to bootstrap from. A bare numeric array auto-wraps as a
+        single-field ``Record`` keyed by *name*. A generic
+        ``EmpiricalDistribution`` (object-array storage) is **not**
+        accepted — see ``Raises``.
     n : int or None
         Observations per bootstrap dataset. Defaults to the source's
         observation count.
     name : str or None
         Distribution name. Mandatory when *source* is a bare numeric
         array (used as the single-field auto-wrap field name).
+
+    Raises
+    ------
+    TypeError
+        If *source* is a generic ``EmpiricalDistribution`` (i.e.,
+        object-array storage rather than numeric / Record-backed).
+        The factory path routes numeric-array empiricals to
+        :class:`RecordEmpiricalDistribution`; only the generic-base
+        instance can reach this constructor, and its non-numeric
+        samples can't be bootstrapped meaningfully.
     """
 
     _sampling_cost: str = "low"
@@ -986,20 +1018,25 @@ class RecordBootstrapReplicateDistribution(
             default_n = n_rows
             self._w = Weights.uniform(n_rows)
         elif isinstance(source, EmpiricalDistribution):
-            # Numeric-array-backed EmpiricalDistribution: dispatch wrapped
-            # us here. Auto-wrap the stacked array as a single-field
-            # Record using the source's name.
-            arr = source.samples
-            field_name = name or source.name or "data"
-            wrapped, field_name = _wrap_numeric_array_as_record(
-                arr, name=field_name,
-                role="RecordBootstrapReplicateDistribution",
+            # The factory path routes numeric-array-backed empiricals to
+            # ``RecordEmpiricalDistribution`` (caught above), so any
+            # ``EmpiricalDistribution`` reaching here is a generic-base
+            # instance with object-array storage — directly constructing
+            # ``RecordBootstrapReplicateDistribution`` with such a source
+            # is the only way in. Reject explicitly so users get a clear
+            # error instead of an ``_as_float_array(object_arr)``
+            # TypeError later.
+            sample_dtype = getattr(
+                source.samples, "dtype", type(source.samples).__name__,
             )
-            self._record_data = wrapped
-            self._w = source._w
-            default_n = source.n
-            if name is None:
-                name = field_name
+            raise TypeError(
+                f"RecordBootstrapReplicateDistribution does not accept "
+                f"generic (object-array) EmpiricalDistribution sources "
+                f"(got {type(source).__name__} with non-numeric samples; "
+                f"dtype={sample_dtype}). Pass a "
+                f"RecordEmpiricalDistribution, a numeric array, or wrap "
+                f"your samples in a Record first."
+            )
         elif _is_numeric_array(source):
             wrapped, field_name = _wrap_numeric_array_as_record(
                 source, name=name,
@@ -1013,9 +1050,8 @@ class RecordBootstrapReplicateDistribution(
         else:
             raise TypeError(
                 f"RecordBootstrapReplicateDistribution: source must be a "
-                f"Record, RecordEmpiricalDistribution, numeric array, or "
-                f"numeric-array-backed EmpiricalDistribution, got "
-                f"{type(source).__name__}"
+                f"Record, RecordEmpiricalDistribution, or numeric array, "
+                f"got {type(source).__name__}"
             )
         # Bootstrap-base bookkeeping. Set self._data so the base's
         # `.data` property returns the Record (matches old behaviour).
@@ -1061,6 +1097,15 @@ class RecordBootstrapReplicateDistribution(
         case, or :attr:`obs_shape` for the per-observation shape on
         single-field replicates.
 
+        See Also
+        --------
+        :attr:`event_shapes` — the per-field dict, always available.
+        :attr:`obs_shape` — the per-observation event shape (replicate
+            axis stripped) for single-field replicates.
+        :attr:`RecordEmpiricalDistribution.event_shape` — the
+            symmetric single-field-only / multi-field-raises accessor
+            on the empirical-distribution side.
+
         Raises
         ------
         AttributeError
@@ -1085,6 +1130,12 @@ class RecordBootstrapReplicateDistribution(
         Multi-field replicates raise :class:`AttributeError` rather
         than returning ``()``; use :attr:`obs_shapes` (plural,
         per-field) for the multi-field case.
+
+        See Also
+        --------
+        :attr:`obs_shapes` — the per-field dict, always available.
+        :attr:`event_shape` — the full replicate event shape
+            ``(n, *obs_shape)`` for single-field replicates.
 
         Raises
         ------

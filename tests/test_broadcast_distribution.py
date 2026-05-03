@@ -896,3 +896,72 @@ class TestCoerceOutput:
             field_name="f",
         )
         assert nr.source.operation == "inner"
+
+
+# ---------------------------------------------------------------------------
+# _index_sample helper (extracted from inline code in
+# _broadcast_enumerate_then_sample / _broadcast_sample so the three
+# call sites cant drift)
+# ---------------------------------------------------------------------------
+
+
+class TestIndexSampleHelper:
+    """Direct unit tests for the module-level _index_sample helper.
+
+    Pins the dispatch contract (bare array vs. single-field Record vs.
+    multi-field Record). Integration tests through both
+    _broadcast_enumerate_then_sample and _broadcast_sample are covered
+    by the existing broadcast tests.
+    """
+
+    def test_bare_array(self):
+        """Plain array → standard s[i] indexing (gap C in the review)."""
+        from probpipe.core.node import _index_sample
+        s = jnp.arange(20.0).reshape(5, 4)
+        for i in range(5):
+            np.testing.assert_array_equal(
+                _index_sample(s, i), s[i],
+            )
+
+    def test_bare_array_1d(self):
+        from probpipe.core.node import _index_sample
+        s = jnp.arange(10.0)
+        assert float(_index_sample(s, 3)) == 3.0
+
+    def test_single_field_record_unwraps(self):
+        """Single-field Record → unwrap to the underlying field array."""
+        from probpipe import Record
+        from probpipe.core.node import _index_sample
+        s = Record(x=jnp.arange(15.0).reshape(5, 3))
+        for i in range(5):
+            row = _index_sample(s, i)
+            # Bare array, not a Record — single-field unwrap.
+            assert not hasattr(row, "fields")
+            np.testing.assert_array_equal(row, s["x"][i])
+
+    def test_multi_field_record_returns_per_row_numeric_record(self):
+        """Multi-field Record → fabricate a per-row NumericRecord."""
+        from probpipe import NumericRecord, Record
+        from probpipe.core.node import _index_sample
+        s = Record(
+            mu=jnp.arange(5.0),
+            sigma=jnp.arange(5.0) + 100.0,
+        )
+        row = _index_sample(s, 2)
+        assert isinstance(row, NumericRecord)
+        assert row.fields == ("mu", "sigma")
+        assert float(row["mu"]) == 2.0
+        assert float(row["sigma"]) == 102.0
+
+    def test_multi_field_record_with_nontrivial_event_shapes(self):
+        """Per-row NumericRecord preserves trailing event-shape axes."""
+        from probpipe import NumericRecord, Record
+        from probpipe.core.node import _index_sample
+        s = Record(
+            scalar=jnp.arange(4.0),
+            vec=jnp.arange(12.0).reshape(4, 3),
+        )
+        row = _index_sample(s, 1)
+        assert isinstance(row, NumericRecord)
+        assert float(row["scalar"]) == 1.0
+        np.testing.assert_array_equal(row["vec"], jnp.array([3.0, 4.0, 5.0]))
