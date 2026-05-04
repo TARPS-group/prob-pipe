@@ -304,16 +304,21 @@ class NumericRecord(Record):
     # When a NumericRecord has exactly one numeric field, it behaves like
     # a thin wrapper around that field's value for the common coercion
     # paths: ``float()``, ``int()``, ``bool()``, ``np.asarray()``,
-    # ``jnp.asarray()``. The shim lets workflow authors who return a
-    # single-field NumericRecord from a ``@workflow_function`` keep using
-    # idiomatic expressions like ``float(result)`` / ``np.asarray(result)``
+    # ``jnp.asarray()``, plus ``.shape`` / ``.dtype`` / ``.ndim``. The
+    # shim lets workflow authors who return a single-field NumericRecord
+    # from a ``@workflow_function`` keep using idiomatic expressions
+    # like ``float(result)`` / ``result.shape`` / ``np.asarray(result)``
     # without a manual ``result["field"]`` unwrap at every callsite.
     #
     # The shim is intentionally narrow — only single-field records
-    # qualify, and only scalar-like coercions are exposed. Multi-field
+    # qualify, and only the explicit coercion entry points are exposed
+    # (no ``.mean()`` / ``.ravel()`` / arithmetic / slicing). Multi-field
     # records raise ``TypeError`` with a message pointing at explicit
     # field access, because silently unwrapping one field of many would
-    # be ambiguous.
+    # be ambiguous. The error is loud, not silent — but the shim only
+    # covers the documented surface; for a multi-field-friendly flat
+    # matrix view, empirical / bootstrap distributions expose
+    # ``.flat_samples`` (an explicit ``(n, dim)`` accessor).
     # ---------------------------------------------------------------------
 
     def _single_numeric_leaf(self):
@@ -352,9 +357,9 @@ class NumericRecord(Record):
     def __jax_array__(self):
         return jnp.asarray(self._single_numeric_leaf())
 
-    # Single-field shape / dtype / ndim — the same "there's only one
-    # thing in here; forward to it" ergonomic as the arithmetic and
-    # array-conversion shims above.
+    # Single-field shape / dtype / ndim — same "there's only one
+    # thing in here; forward to it" ergonomic as the array-conversion
+    # shims above. Multi-field raises ``TypeError`` (loud, not silent).
     @property
     def shape(self) -> tuple[int, ...]:
         leaf = self._single_numeric_leaf()

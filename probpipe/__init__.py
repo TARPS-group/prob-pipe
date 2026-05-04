@@ -25,11 +25,11 @@ from probpipe.core.distribution import (
     NumericRecordDistribution,
     FlattenedView,
     EmpiricalDistribution,
-    NumericEmpiricalDistribution,
+    RecordEmpiricalDistribution,
     BroadcastDistribution,
     BootstrapDistribution,
     BootstrapReplicateDistribution,
-    ArrayBootstrapReplicateDistribution,
+    RecordBootstrapReplicateDistribution,
     DEFAULT_NUM_EVALUATIONS,
     RETURN_APPROX_DIST,
     set_default_num_evaluations,
@@ -74,6 +74,8 @@ from probpipe.distributions import (
     VonMisesFisher,
     # Transformed
     TransformedDistribution,
+    bijector_for,
+    register_bijector,
     # Joint
     ProductDistribution,
     SequentialJointDistribution,
@@ -170,11 +172,11 @@ __all__ = [
     "DistributionArray",
     "TFPDistribution",
     "EmpiricalDistribution",
-    "NumericEmpiricalDistribution",
+    "RecordEmpiricalDistribution",
     "BroadcastDistribution",
     "BootstrapDistribution",
     "BootstrapReplicateDistribution",
-    "ArrayBootstrapReplicateDistribution",
+    "RecordBootstrapReplicateDistribution",
     "Provenance",
     # Constraints
     "Constraint",
@@ -219,6 +221,8 @@ __all__ = [
     "VonMisesFisher",
     # Transformed
     "TransformedDistribution",
+    "bijector_for",
+    "register_bijector",
     # Joint
     "ProductDistribution",
     "SequentialJointDistribution",

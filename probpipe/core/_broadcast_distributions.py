@@ -1,7 +1,7 @@
 """Broadcast distribution and marginal types.
 
 Provides:
-  - ``_ArrayMarginal``                     – Array output marginal.
+  - ``_RecordMarginal``                    – Record-shaped output marginal.
   - ``_MixtureMarginal[T]``                – Distribution output marginal (mixture).
   - ``_ListMarginal[T]``                   – Non-stackable output marginal.
   - ``MarginalizedBroadcastDistribution``  – Union type alias.
@@ -30,9 +30,8 @@ from .._weights import Weights
 from ._distribution_base import Distribution
 from ._record_distribution import RecordDistribution
 from ._empirical import (
-    NumericEmpiricalDistribution,
     EmpiricalDistribution,
-    _RecordEmpiricalDistribution,
+    RecordEmpiricalDistribution,
 )
 from ._record_array import RecordArray
 from .record import Record, RecordTemplate
@@ -47,25 +46,46 @@ from .record import Record, RecordTemplate
 # ---------------------------------------------------------------------------
 
 
-class _ArrayMarginal(NumericEmpiricalDistribution):
-    """Output marginal when broadcast outputs are stackable arrays.
+class _RecordMarginal(RecordEmpiricalDistribution):
+    """Record-shaped output marginal of a :class:`BroadcastDistribution`.
 
-    Inherits from :class:`NumericEmpiricalDistribution` for weighted
-    resampling and exact weighted moments.
+    Wraps the broadcast outputs as a Record-valued empirical
+    distribution with per-field weighted resampling and moments. Bare
+    array outputs auto-wrap as a single-field Record keyed by ``name``
+    (defaulting to ``"marginal"`` since the WF-output context doesn't
+    carry a more meaningful name).
     """
 
     def __init__(
         self,
-        samples: Array,
+        samples: Record | RecordArray | Array,
         weights: Array | Weights | None = None,
         *,
         log_weights: Array | Weights | None = None,
         name: str | None = None,
     ):
+        # RecordArray is structurally a Record with batched leaves;
+        # peel off the rows axis so the merged constructor sees one
+        # row per batch index.
+        if isinstance(samples, RecordArray):
+            template = samples.template
+            samples = Record({f: samples[f] for f in samples.fields})
+        else:
+            template = None
+        # Default field name for bare-array outputs (the WF marginal
+        # context doesn't carry a more meaningful name).
+        if not isinstance(samples, Record) and not name:
+            name = "marginal"
         super().__init__(samples, weights=weights, log_weights=log_weights, name=name)
+        if template is not None:
+            # Preserve the exact template the RecordArray carried.
+            self._record_template = template
 
     def __repr__(self):
-        return f"MarginalizedBroadcastDistribution(n={self.n}, event_shape={self.event_shape})"
+        return (
+            f"MarginalizedBroadcastDistribution(n={self.n}, "
+            f"fields=({', '.join(self._record_data.fields)}))"
+        )
 
 
 class _MixtureMarginal[T](Distribution[T]):
@@ -254,36 +274,6 @@ def _make_mixture_marginal(
     return obj
 
 
-class _RecordArrayMarginal(_RecordEmpiricalDistribution):
-    """Output marginal when broadcast outputs are Records.
-
-    Wraps a :class:`RecordArray` as a Record-valued empirical distribution
-    with per-field weighted mean, variance, and resampling.
-    """
-
-    def __init__(
-        self,
-        record_array: RecordArray,
-        weights: Array | Weights | None = None,
-        *,
-        log_weights: Array | Weights | None = None,
-        name: str | None = None,
-    ):
-        if not isinstance(record_array, RecordArray):
-            raise TypeError(
-                f"Expected RecordArray, got {type(record_array).__name__}"
-            )
-        # RecordArray is structurally a Record with batched fields; wrap it
-        # directly so _RecordEmpiricalDistribution sees one row per batch index.
-        samples = Record({f: record_array[f] for f in record_array.fields})
-        super().__init__(samples, weights=weights, log_weights=log_weights, name=name)
-        # Preserve the original template so event_shapes stay accurate
-        self._record_template = record_array.template
-
-    def __repr__(self):
-        return f"MarginalizedBroadcastDistribution(n={self.n}, fields={self._record_data.fields})"
-
-
 class _ListMarginal[T](Distribution[T]):
     """Output marginal when broadcast outputs are non-stackable (e.g., strings).
 
@@ -321,12 +311,13 @@ class _ListMarginal[T](Distribution[T]):
 
 
 # Public alias for type checking / isinstance
-MarginalizedBroadcastDistribution = _ArrayMarginal | _RecordArrayMarginal | _MixtureMarginal | _ListMarginal
+MarginalizedBroadcastDistribution = _RecordMarginal | _MixtureMarginal | _ListMarginal
 """Union type for the output marginal of a :class:`BroadcastDistribution`.
 
 Concrete subtype depends on output kind:
 
-- :class:`_ArrayMarginal` — stackable array outputs
+- :class:`_RecordMarginal` — stackable array or Record outputs
+  (numeric arrays auto-wrap as single-field Records)
 - :class:`_MixtureMarginal` — distribution outputs (mixture)
 - :class:`_ListMarginal` — non-stackable outputs
 """
@@ -344,13 +335,10 @@ def _make_marginal(
         return _make_mixture_marginal(output_distributions, weights, name=name)
 
     if isinstance(output_samples, RecordArray):
-        return _RecordArrayMarginal(output_samples, weights, name=name)
+        return _RecordMarginal(output_samples, weights, name=name)
 
     # Record with batched leaves (e.g., from jax.vmap over a Record-returning fn).
     # All fields must be arrays with a consistent leading batch dimension.
-    # Exclude RecordArray — the earlier branch handles it already, but
-    # since ``RecordArray`` is a ``Record`` subclass we'd otherwise
-    # match here for a RecordArray whose fields have extra axes.
     if (
         isinstance(output_samples, Record)
         and not isinstance(output_samples, RecordArray)
@@ -360,13 +348,12 @@ def _make_marginal(
         if all(hasattr(v, "ndim") and v.ndim > 0 for v in resolved):
             n = resolved[0].shape[0]
             if all(v.shape[0] == n for v in resolved):
-                tpl = RecordTemplate.from_record(output_samples, batch_shape=(n,))
-                fields = dict(zip(output_samples.fields, resolved))
-                ra = RecordArray(fields, batch_shape=(n,), template=tpl)
-                return _RecordArrayMarginal(ra, weights, name=name)
+                return _RecordMarginal(output_samples, weights, name=name)
 
     if isinstance(output_samples, jnp.ndarray):
-        return _ArrayMarginal(output_samples, weights, name=name)
+        return _RecordMarginal(
+            output_samples, weights, name=name or "marginal",
+        )
 
     if isinstance(output_samples, list):
         if output_samples and all(
@@ -375,24 +362,25 @@ def _make_marginal(
         ):
             try:
                 ra = RecordArray.stack(output_samples)
-                return _RecordArrayMarginal(ra, weights, name=name)
+                return _RecordMarginal(ra, weights, name=name)
             except (ValueError, TypeError):
                 pass
         try:
             stacked = jnp.stack(
                 [jnp.asarray(r) for r in output_samples], axis=0
             )
-            return _ArrayMarginal(stacked, weights, name=name)
+            return _RecordMarginal(
+                stacked, weights, name=name or "marginal",
+            )
         except (ValueError, TypeError):
             pass
-        # Check if all results are distributions
         if output_samples and all(isinstance(r, Distribution) for r in output_samples):
             return _make_mixture_marginal(output_samples, weights, name=name)
         return _ListMarginal(output_samples, weights, name=name)
 
     # Single array result (e.g., from vmap); ensure at least 1D for the sample axis
     arr = jnp.atleast_1d(jnp.asarray(output_samples))
-    return _ArrayMarginal(arr, weights, name=name)
+    return _RecordMarginal(arr, weights, name=name or "marginal")
 
 
 # ---------------------------------------------------------------------------
@@ -787,7 +775,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
             return self.marginalize()
         if key in self._input_samples:
             arr = self._input_samples[key]
-            return EmpiricalDistribution(arr, weights=self._w)
+            return EmpiricalDistribution(arr, weights=self._w, name=key)
         raise KeyError(f"Unknown component {key!r}; available: {self.fields}")
 
     # -- joint sampling -----------------------------------------------------

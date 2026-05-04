@@ -120,7 +120,7 @@ class _Sphere(Constraint):
 
 class _Interval(Constraint):
     """Half-open or closed interval [low, high]."""
-    def __init__(self, low: float, high: float):
+    def __init__(self, low: ArrayLike, high: ArrayLike):
         self.low = low
         self.high = high
     def check(self, value: ArrayLike) -> Array:
@@ -128,19 +128,36 @@ class _Interval(Constraint):
         return (v >= self.low) & (v <= self.high)
     def __repr__(self) -> str:
         return f"interval({self.low}, {self.high})"
+    def __eq__(self, other: object) -> bool:
+        if type(self) is not type(other):
+            return False
+        return bool(jnp.array_equal(self.low, other.low)) and bool(
+            jnp.array_equal(self.high, other.high)
+        )
+    def __hash__(self) -> int:
+        # Coarse but valid: equal instances hash equal. Parameterized
+        # constraints rarely end up in sets/dicts, and array-valued
+        # bounds aren't directly hashable, so we hash on type only.
+        return hash(type(self))
 
 class _GreaterThan(Constraint):
     """Record strictly greater than a lower bound."""
-    def __init__(self, lower_bound: float):
+    def __init__(self, lower_bound: ArrayLike):
         self.lower_bound = lower_bound
     def check(self, value: ArrayLike) -> Array:
         return jnp.asarray(value) > self.lower_bound
     def __repr__(self) -> str:
         return f"greater_than({self.lower_bound})"
+    def __eq__(self, other: object) -> bool:
+        if type(self) is not type(other):
+            return False
+        return bool(jnp.array_equal(self.lower_bound, other.lower_bound))
+    def __hash__(self) -> int:
+        return hash(type(self))
 
 class _IntegerInterval(Constraint):
     """Integer values in [low, high]."""
-    def __init__(self, low: int, high: int):
+    def __init__(self, low: ArrayLike, high: ArrayLike):
         self.low = low
         self.high = high
     def check(self, value: ArrayLike) -> Array:
@@ -148,6 +165,14 @@ class _IntegerInterval(Constraint):
         return (v >= self.low) & (v <= self.high) & (v == jnp.floor(v))
     def __repr__(self) -> str:
         return f"integer_interval({self.low}, {self.high})"
+    def __eq__(self, other: object) -> bool:
+        if type(self) is not type(other):
+            return False
+        return bool(jnp.array_equal(self.low, other.low)) and bool(
+            jnp.array_equal(self.high, other.high)
+        )
+    def __hash__(self) -> int:
+        return hash(type(self))
 
 
 # ---------------------------------------------------------------------------
@@ -169,13 +194,13 @@ sphere = _Sphere()
 # Factory functions for parameterized constraints
 # ---------------------------------------------------------------------------
 
-def interval(low: float, high: float) -> _Interval:
+def interval(low: ArrayLike, high: ArrayLike) -> _Interval:
     return _Interval(low, high)
 
-def greater_than(lower_bound: float) -> _GreaterThan:
+def greater_than(lower_bound: ArrayLike) -> _GreaterThan:
     return _GreaterThan(lower_bound)
 
-def integer_interval(low: int, high: int) -> _IntegerInterval:
+def integer_interval(low: ArrayLike, high: ArrayLike) -> _IntegerInterval:
     return _IntegerInterval(low, high)
 
 
@@ -234,8 +259,9 @@ def _supports_compatible(source: Constraint, target: Constraint) -> bool:
     Conservative: returns ``True`` when in doubt (e.g. for parameterized
     constraints that can't be compared structurally).
     """
-    # Identical constraints are always compatible
-    if source == target:
+    # Fast path for identical instances; parameterized branches below
+    # handle the equal-but-distinct case for array-valued bounds.
+    if source is target:
         return True
 
     supersets = _all_supersets()
@@ -250,19 +276,25 @@ def _supports_compatible(source: Constraint, target: Constraint) -> bool:
     if source_type in supersets.get(target_type, set()):
         return False
 
-    # Parameterized constraints: interval/greater_than
+    # Parameterized constraints: interval/greater_than. Bounds may be
+    # array-valued (per-dim Uniform, TruncatedNormal, ...), so reduce
+    # element-wise comparisons with ``jnp.all``.
     if isinstance(source, _Interval) and isinstance(target, _Interval):
-        return source.low >= target.low and source.high <= target.high
+        return bool(jnp.all(source.low >= target.low)) and bool(
+            jnp.all(source.high <= target.high)
+        )
     if isinstance(source, _Interval) and isinstance(target, _Real):
         return True
     if isinstance(source, _GreaterThan) and isinstance(target, _GreaterThan):
-        return source.lower_bound >= target.lower_bound
+        return bool(jnp.all(source.lower_bound >= target.lower_bound))
     if isinstance(source, _GreaterThan) and isinstance(target, _Real):
         return True
     if isinstance(source, (_Positive, _NonNegative)) and isinstance(target, _GreaterThan):
         return True  # (0, inf) or [0, inf) ⊂ (lb, inf) when lb <= 0
     if isinstance(source, _IntegerInterval) and isinstance(target, _IntegerInterval):
-        return source.low >= target.low and source.high <= target.high
+        return bool(jnp.all(source.low >= target.low)) and bool(
+            jnp.all(source.high <= target.high)
+        )
     if isinstance(source, _IntegerInterval) and isinstance(target, (_NonNegativeInteger, _Real)):
         return True
 

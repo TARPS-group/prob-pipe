@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import pytest
 from probpipe import from_distribution
 from probpipe import (
-    NumericRecordDistribution, NumericEmpiricalDistribution, EmpiricalDistribution,
+    NumericRecordDistribution, RecordEmpiricalDistribution, EmpiricalDistribution,
     Provenance,
 )
 from probpipe.distributions import (
@@ -78,6 +78,38 @@ class TestConstraints:
         assert interval(0, 1) != interval(0, 2)
         assert real != positive
 
+    def test_parameterized_equality_array_bounds(self):
+        # __eq__ on parameterized constraints must use jnp.array_equal
+        # so it doesn't crash on multi-element JAX-array bounds.
+        a = interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 1.5]))
+        b = interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 1.5]))
+        c = interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 2.0]))
+        assert a == b
+        assert a != c
+        assert greater_than(jnp.array([1.0, 2.0])) == greater_than(jnp.array([1.0, 2.0]))
+        assert greater_than(jnp.array([1.0, 2.0])) != greater_than(jnp.array([1.0, 3.0]))
+        assert integer_interval(jnp.array([0, 1]), jnp.array([5, 6])) == integer_interval(
+            jnp.array([0, 1]), jnp.array([5, 6])
+        )
+        # Cross-type and non-Constraint comparisons must short-circuit
+        # via the type guard, not raise.
+        assert interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 1.5])) != greater_than(
+            jnp.array([0.0, 0.5])
+        )
+        assert interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 1.5])) != None  # noqa: E711
+        # Shape-mismatched bounds compare unequal rather than raising.
+        assert interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 1.5])) != interval(
+            jnp.array([0.0]), jnp.array([1.0])
+        )
+
+    def test_parameterized_hash_array_bounds(self):
+        # __hash__ on parameterized constraints must not raise for
+        # array-valued bounds (0-d or higher).
+        hash(interval(0.0, 1.0))
+        hash(interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 1.5])))
+        hash(greater_than(jnp.array([1.0, 2.0])))
+        hash(integer_interval(jnp.array([0, 1]), jnp.array([5, 6])))
+
     def test_constraint_repr(self):
         assert repr(real) == "real"
         assert repr(positive) == "positive"
@@ -106,6 +138,31 @@ class TestSupportCompatibility:
         assert _supports_compatible(interval(0, 1), interval(-1, 2))
         assert not _supports_compatible(interval(-1, 2), interval(0, 1))
 
+    def test_interval_subset_array_bounds(self):
+        # Per-dim bounds: each source dim must lie within the
+        # corresponding target dim.
+        src = interval(jnp.array([0.0, 0.5]), jnp.array([1.0, 1.5]))
+        tgt_super = interval(jnp.array([-1.0, 0.0]), jnp.array([2.0, 2.0]))
+        tgt_partial = interval(jnp.array([-1.0, 1.0]), jnp.array([2.0, 2.0]))
+        assert _supports_compatible(src, tgt_super)
+        # src dim 1 starts at 0.5, which is below tgt_partial dim 1's 1.0.
+        assert not _supports_compatible(src, tgt_partial)
+
+    def test_greater_than_subset_array_bounds(self):
+        src = greater_than(jnp.array([1.0, 2.0]))
+        tgt_super = greater_than(jnp.array([0.0, 1.0]))
+        tgt_partial = greater_than(jnp.array([0.0, 3.0]))
+        assert _supports_compatible(src, tgt_super)
+        assert not _supports_compatible(src, tgt_partial)
+
+    def test_integer_interval_subset_array_bounds(self):
+        src = integer_interval(jnp.array([1, 2]), jnp.array([5, 6]))
+        tgt_super = integer_interval(jnp.array([0, 1]), jnp.array([10, 10]))
+        tgt_partial = integer_interval(jnp.array([0, 3]), jnp.array([10, 10]))
+        assert _supports_compatible(src, tgt_super)
+        # src dim 1 starts at 2, which is below tgt_partial dim 1's 3.
+        assert not _supports_compatible(src, tgt_partial)
+
 
 # ── Section 3: Support properties on distributions ────────────────────────────
 
@@ -127,6 +184,64 @@ class TestDistributionSupport:
     def test_uniform_support(self):
         assert Uniform(low=-1.0, high=2.0, name="u").support == interval(-1.0, 2.0)
 
+    def test_uniform_support_array_bounds(self):
+        # Regression: ``float(self._low)`` previously crashed for
+        # non-scalar low/high. Per-dim bounds should produce a working
+        # interval whose ``.check`` returns a per-dim boolean.
+        u = Uniform(
+            low=jnp.array([0.0, -1.0]),
+            high=jnp.array([1.0, 2.0]),
+            name="u_arr",
+        )
+        c = u.support
+        assert jnp.array_equal(c.check(jnp.array([0.5, 0.5])), jnp.array([True, True]))
+        assert jnp.array_equal(c.check(jnp.array([2.0, 0.5])), jnp.array([False, True]))
+
+    def test_half_cauchy_support_array_bounds(self):
+        hc = HalfCauchy(
+            loc=jnp.array([0.0, 1.0]),
+            scale=jnp.array([1.0, 1.0]),
+            name="hc_arr",
+        )
+        c = hc.support
+        assert jnp.array_equal(c.check(jnp.array([0.5, 1.5])), jnp.array([True, True]))
+        assert jnp.array_equal(c.check(jnp.array([-0.5, 0.5])), jnp.array([False, False]))
+
+    def test_pareto_support_array_bounds(self):
+        p = Pareto(
+            concentration=jnp.array([2.0, 2.0]),
+            scale=jnp.array([1.0, 2.0]),
+            name="p_arr",
+        )
+        c = p.support
+        assert jnp.array_equal(c.check(jnp.array([1.5, 2.5])), jnp.array([True, True]))
+        assert jnp.array_equal(c.check(jnp.array([0.5, 2.5])), jnp.array([False, True]))
+
+    def test_truncated_normal_support_array_bounds(self):
+        tn = TruncatedNormal(
+            loc=jnp.array([0.0, 0.0]),
+            scale=jnp.array([1.0, 1.0]),
+            low=jnp.array([-1.0, 0.0]),
+            high=jnp.array([1.0, 2.0]),
+            name="tn_arr",
+        )
+        c = tn.support
+        assert jnp.array_equal(c.check(jnp.array([0.0, 1.0])), jnp.array([True, True]))
+        assert jnp.array_equal(c.check(jnp.array([-2.0, 1.0])), jnp.array([False, True]))
+
+    def test_binomial_support_array_total_count(self):
+        # Regression: ``int(self._total_count)`` previously crashed for
+        # array-valued total_count. Per-dim total_count should produce a
+        # working integer_interval.
+        b = Binomial(
+            total_count=jnp.array([5, 10]),
+            probs=jnp.array([0.3, 0.5]),
+            name="b_arr",
+        )
+        c = b.support
+        assert jnp.array_equal(c.check(jnp.array([3, 7])), jnp.array([True, True]))
+        assert jnp.array_equal(c.check(jnp.array([6, 7])), jnp.array([False, True]))
+
     def test_bernoulli_support(self):
         assert Bernoulli(probs=0.5, name="d").support == boolean
 
@@ -146,7 +261,7 @@ class TestDistributionSupport:
         assert MultivariateNormal(jnp.zeros(2), cov=jnp.eye(2), name="z").support == real
 
     def test_empirical_support(self):
-        ed = NumericEmpiricalDistribution(jnp.ones((5, 2)))
+        ed = RecordEmpiricalDistribution(jnp.ones((5, 2)), name="x")
         assert ed.support == real
 
 
@@ -223,7 +338,7 @@ class TestFromDistribution:
     # -- multivariate --
     def test_mvn_from_empirical(self, key):
         samples = jax.random.normal(key, (100, 3))
-        ed = NumericEmpiricalDistribution(samples)
+        ed = RecordEmpiricalDistribution(samples, name="x")
         mvn = from_distribution(ed, MultivariateNormal)
         assert mvn.dim == 3
 
@@ -249,5 +364,5 @@ class TestFromDistribution:
     # -- empirical from anything --
     def test_empirical_from_normal(self, key):
         n = Normal(loc=0.0, scale=1.0, name="n")
-        ed = from_distribution(n, NumericEmpiricalDistribution, key=key, num_samples=100)
+        ed = from_distribution(n, RecordEmpiricalDistribution, key=key, num_samples=100)
         assert ed.n == 100

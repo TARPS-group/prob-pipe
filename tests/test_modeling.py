@@ -111,7 +111,7 @@ def _simple_condition_fn(model, data):
     key = jax.random.PRNGKey(0)
     noise = jax.random.normal(key, shape=(50, data_mean.shape[0]))
     samples = data_mean[None, :] + noise * 0.1
-    return EmpiricalDistribution(samples)
+    return EmpiricalDistribution(samples, name="x")
 
 
 class TestIncrementalConditioner:

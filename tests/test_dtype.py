@@ -22,11 +22,19 @@ def _run_x64(snippet: str) -> str:
     Returns the captured stdout, stripped. Stderr is included only on
     failure to surface useful tracebacks.
     """
+    # Disable Prefect for the subprocess too. The session-scoped autouse
+    # fixture in tests/conftest.py only affects the parent process; this
+    # subprocess starts fresh and would otherwise pick up whatever
+    # ``WorkflowKind.DEFAULT`` auto-resolves to (TASK if Prefect is
+    # importable, which then fails for any user whose ``PREFECT_API_URL``
+    # points at an unreachable server).
     program = textwrap.dedent(
         """
         import jax
         jax.config.update("jax_enable_x64", True)
         import jax.numpy as jnp
+        from probpipe import WorkflowKind, prefect_config
+        prefect_config.workflow_kind = WorkflowKind.OFF
         """
     ) + textwrap.dedent(snippet)
     result = subprocess.run(
@@ -171,8 +179,8 @@ def test_x64_empirical_distribution_preserves_dtype():
         """
         from probpipe import EmpiricalDistribution
         samples = jnp.array([[1.0], [2.0], [3.0]])  # float64 under x64
-        d = EmpiricalDistribution(samples)
-        assert d.samples.dtype == jnp.float64, d.samples.dtype
+        d = EmpiricalDistribution(samples, name="x")
+        assert d.flat_samples.dtype == jnp.float64, d.flat_samples.dtype
         assert d.dtype == jnp.float64
         print('OK')
         """

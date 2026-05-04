@@ -15,7 +15,7 @@ from ..custom_types import PRNGKey
 from .._utils import _auto_key
 from ..core.distribution import (
     NumericRecordDistribution,
-    NumericEmpiricalDistribution,
+    RecordEmpiricalDistribution,
 )
 from ..core.provenance import Provenance
 from ._registry import ConversionInfo, ConversionMethod, Converter
@@ -112,16 +112,16 @@ class TFPConverter(Converter):
         return self._to_tfp
 
     def source_types(self) -> tuple[type, ...]:
-        return (tfd.Distribution, NumericRecordDistribution, NumericEmpiricalDistribution)
+        return (tfd.Distribution, NumericRecordDistribution, RecordEmpiricalDistribution)
 
     def target_types(self) -> tuple[type, ...]:
-        return (NumericRecordDistribution, NumericEmpiricalDistribution, tfd.Distribution)
+        return (NumericRecordDistribution, RecordEmpiricalDistribution, tfd.Distribution)
 
     @staticmethod
     def _is_probpipe_target(target_type: type) -> bool:
         return isinstance(target_type, type) and (
             issubclass(target_type, NumericRecordDistribution)
-            or issubclass(target_type, NumericEmpiricalDistribution)
+            or issubclass(target_type, RecordEmpiricalDistribution)
         )
 
     def check(self, source: Any, target_type: type) -> ConversionInfo:
@@ -146,12 +146,12 @@ class TFPConverter(Converter):
                         description=f"TFP {src_cls.__name__} -> ProbPipe -> {target_type.__name__}",
                     )
                 # Unknown TFP type -> sample fallback
-                if issubclass(target_type, (NumericRecordDistribution, NumericEmpiricalDistribution)):
+                if issubclass(target_type, (NumericRecordDistribution, RecordEmpiricalDistribution)):
                     return ConversionInfo(
                         feasible=True, method=ConversionMethod.SAMPLE,
                         estimated_time=0.2,
                         source_type=src_cls, target_type=target_type,
-                        description=f"Sample {src_cls.__name__} -> NumericEmpiricalDistribution",
+                        description=f"Sample {src_cls.__name__} -> RecordEmpiricalDistribution",
                     )
 
         # Case 2: ProbPipe -> TFP
@@ -184,14 +184,15 @@ class TFPConverter(Converter):
                     from ._registry import converter_registry
                     return converter_registry.convert(pp_dist, target_type, key=key, **kwargs)
 
-                # Unknown TFP: sample -> NumericEmpiricalDistribution
+                # Unknown TFP: sample -> RecordEmpiricalDistribution
                 if key is None:
                     key = _auto_key()
                 n = kwargs.pop("num_samples", 1024)
                 samples = source.sample(seed=key, sample_shape=(n,))
-                emp = NumericEmpiricalDistribution(samples)
+                emp_name = kwargs.get("name") or getattr(source, "name", None) or "samples"
+                emp = RecordEmpiricalDistribution(samples, name=emp_name)
                 emp.with_source(Provenance("convert_from_tfp", parents=()))
-                if issubclass(target_type, NumericEmpiricalDistribution):
+                if issubclass(target_type, RecordEmpiricalDistribution):
                     return emp
                 from ._registry import converter_registry
                 return converter_registry.convert(emp, target_type, key=key, **kwargs)

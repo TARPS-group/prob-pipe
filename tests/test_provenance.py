@@ -10,7 +10,7 @@ from probpipe import (
     Normal,
     Beta,
     MultivariateNormal,
-    NumericEmpiricalDistribution,
+    RecordEmpiricalDistribution,
     TransformedDistribution,
     ProductDistribution,
     SequentialJointDistribution,
@@ -70,7 +70,7 @@ class TestFromDistributionProvenance:
 
     def test_empirical_from_distribution(self):
         src = Normal(loc=0.0, scale=1.0, name="norm_src")
-        ed = from_distribution(src, NumericEmpiricalDistribution, n_samples=100)
+        ed = from_distribution(src, RecordEmpiricalDistribution, n_samples=100)
         assert ed.source is not None
         assert ed.source.operation == "from_distribution"
         assert ed.source.parents == (src,)
@@ -97,7 +97,7 @@ class TestTransformedDistributionProvenance:
         assert td.source.metadata["bijector"] == "Chain"
 
     def test_transform_with_empirical_base(self):
-        ed = NumericEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
+        ed = RecordEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
         td = TransformedDistribution(ed, tfb.Exp())
         assert td.source is not None
         assert td.source.operation == "transform"
@@ -192,7 +192,7 @@ class TestBroadcastingProvenance:
 
     def test_broadcast_enumerate_provenance(self):
         """Enumeration path should also get provenance."""
-        ed = NumericEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
+        ed = RecordEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
         n = Normal(loc=0.0, scale=1.0, name="n")
 
         def add(a: float, b: float) -> float:

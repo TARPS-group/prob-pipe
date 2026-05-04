@@ -16,7 +16,7 @@ from probpipe import (
     SupportsLogProb,
 )
 from probpipe.core.distribution import (
-    _ArrayMarginal,
+    _RecordMarginal,
     _ListMarginal,
     _MixtureMarginal,
     _make_marginal,
@@ -180,7 +180,7 @@ class TestBroadcastDistributionComponents:
             broadcast_args=["x"],
         )
         out = bd["_output"]
-        assert isinstance(out, _ArrayMarginal)
+        assert isinstance(out, _RecordMarginal)
 
     def test_getitem_invalid_key(self):
         bd = BroadcastDistribution(
@@ -213,13 +213,13 @@ class TestBroadcastDistributionProvenance:
 
 
 # ---------------------------------------------------------------------------
-# _ArrayMarginal (output marginal for array outputs)
+# _RecordMarginal (output marginal for array outputs)
 # ---------------------------------------------------------------------------
 
 
 class TestArrayMarginal:
     def test_protocols(self):
-        m = _ArrayMarginal(jnp.ones((10, 3)), None)
+        m = _RecordMarginal(jnp.ones((10, 3)), None)
         assert isinstance(m, SupportsSampling)
         assert isinstance(m, SupportsMean)
         assert isinstance(m, SupportsVariance)
@@ -227,35 +227,35 @@ class TestArrayMarginal:
 
     def test_mean_uniform(self):
         samples = jnp.array([[1.0], [2.0], [3.0]])
-        m = _ArrayMarginal(samples, None)
+        m = _RecordMarginal(samples, None)
         np.testing.assert_allclose(m._mean(), jnp.array([2.0]), atol=1e-5)
 
     def test_mean_weighted(self):
         samples = jnp.array([[0.0], [10.0]])
         weights = jnp.array([0.75, 0.25])
-        m = _ArrayMarginal(samples, weights)
+        m = _RecordMarginal(samples, weights)
         np.testing.assert_allclose(m._mean(), jnp.array([2.5]), atol=1e-5)
 
     def test_variance(self):
         samples = jnp.array([[1.0], [3.0]])
-        m = _ArrayMarginal(samples, None)
+        m = _RecordMarginal(samples, None)
         np.testing.assert_allclose(m._variance(), jnp.array([1.0]), atol=1e-5)
 
     def test_cov(self):
         samples = jnp.array([[1.0, 2.0], [3.0, 4.0]])
-        m = _ArrayMarginal(samples, None)
+        m = _RecordMarginal(samples, None)
         cov = m._cov()
         assert cov.shape == (2, 2)
 
     def test_sample(self, key):
         samples = jnp.arange(100, dtype=jnp.float32).reshape(-1, 1)
-        m = _ArrayMarginal(samples, None)
+        m = _RecordMarginal(samples, None)
         drawn = m._sample(key, (50,))
         assert drawn.shape == (50, 1)
 
     def test_properties(self):
         samples = jnp.ones((10, 3))
-        m = _ArrayMarginal(samples, None)
+        m = _RecordMarginal(samples, None)
         assert m.n == 10
         assert m.event_shape == (3,)
         assert m.dim == 3
@@ -352,11 +352,11 @@ class TestListMarginal:
 class TestMakeMarginal:
     def test_array_output(self):
         m = _make_marginal(jnp.ones((5, 2)), None)
-        assert isinstance(m, _ArrayMarginal)
+        assert isinstance(m, _RecordMarginal)
 
     def test_list_of_arrays(self):
         m = _make_marginal([jnp.array(1.0), jnp.array(2.0)], None)
-        assert isinstance(m, _ArrayMarginal)
+        assert isinstance(m, _RecordMarginal)
 
     def test_list_of_strings(self):
         m = _make_marginal(["a", "b", "c"], None)
@@ -473,22 +473,24 @@ class TestBroadcastDistributionListOutputSampling:
 
 
 # ---------------------------------------------------------------------------
-# _ArrayMarginal additional coverage
+# _RecordMarginal additional coverage
 # ---------------------------------------------------------------------------
 
 
 class TestArrayMarginalAdditional:
     def test_repr(self):
-        m = _ArrayMarginal(jnp.ones((10, 3)), None)
+        m = _RecordMarginal(jnp.ones((10, 3)), None)
         r = repr(m)
         assert "MarginalizedBroadcastDistribution" in r
         assert "n=10" in r
-        assert "event_shape=(3,)" in r
+        # Auto-wrapped as a single-field Record keyed by the default
+        # marginal name.
+        assert "fields=(marginal)" in r
 
     def test_sample_scalar(self, key):
         """Single draw (sample_shape=()) returns unbatched array."""
         samples = jnp.arange(100, dtype=jnp.float32).reshape(-1, 1)
-        m = _ArrayMarginal(samples, None)
+        m = _RecordMarginal(samples, None)
         drawn = m._sample(key, ())
         assert drawn.shape == (1,)
 
@@ -496,7 +498,7 @@ class TestArrayMarginalAdditional:
         """Weighted single draw."""
         samples = jnp.array([[0.0], [100.0]])
         w = jnp.array([0.0, 1.0])
-        m = _ArrayMarginal(samples, w)
+        m = _RecordMarginal(samples, w)
         drawn = m._sample(key, ())
         np.testing.assert_allclose(drawn, jnp.array([100.0]), atol=1e-5)
 
@@ -504,14 +506,14 @@ class TestArrayMarginalAdditional:
         """Weighted batch draw."""
         samples = jnp.array([[0.0], [100.0]])
         w = jnp.array([0.0, 1.0])
-        m = _ArrayMarginal(samples, w)
+        m = _RecordMarginal(samples, w)
         drawn = m._sample(key, (20,))
         np.testing.assert_allclose(drawn, jnp.full((20, 1), 100.0), atol=1e-5)
 
     def test_expectation_full(self):
         """Full expectation over all samples."""
         samples = jnp.array([[1.0], [2.0], [3.0]])
-        m = _ArrayMarginal(samples, None)
+        m = _RecordMarginal(samples, None)
         result = m._expectation(lambda x: x ** 2)
         # E[X^2] = (1+4+9)/3 = 14/3
         np.testing.assert_allclose(result, jnp.array([14.0 / 3]), atol=1e-4)
@@ -520,7 +522,7 @@ class TestArrayMarginalAdditional:
         """Weighted expectation."""
         samples = jnp.array([[0.0], [10.0]])
         w = jnp.array([0.75, 0.25])
-        m = _ArrayMarginal(samples, w)
+        m = _RecordMarginal(samples, w)
         result = m._expectation(lambda x: x)
         np.testing.assert_allclose(result, jnp.array([2.5]), atol=1e-4)
 
@@ -529,14 +531,14 @@ class TestArrayMarginalAdditional:
         from probpipe.core.distribution import BootstrapDistribution
 
         samples = jnp.arange(100, dtype=jnp.float32).reshape(-1, 1)
-        m = _ArrayMarginal(samples, None)
+        m = _RecordMarginal(samples, None)
         result = m._expectation(lambda x: x, key=key, num_evaluations=20)
         assert isinstance(result, BootstrapDistribution)
 
     def test_expectation_subsampled_no_dist(self, key):
         """Subsampled expectation with return_dist=False returns array."""
         samples = jnp.arange(100, dtype=jnp.float32).reshape(-1, 1)
-        m = _ArrayMarginal(samples, None)
+        m = _RecordMarginal(samples, None)
         result = m._expectation(
             lambda x: x, key=key, num_evaluations=20, return_dist=False
         )
@@ -549,7 +551,7 @@ class TestArrayMarginalAdditional:
         n = 50
         samples = jnp.arange(n, dtype=jnp.float32).reshape(-1, 1)
         w = jnp.ones(n) / n
-        m = _ArrayMarginal(samples, w)
+        m = _RecordMarginal(samples, w)
         result = m._expectation(lambda x: x, key=key, num_evaluations=10)
         assert isinstance(result, BootstrapDistribution)
 
@@ -558,7 +560,7 @@ class TestArrayMarginalAdditional:
         n = 50
         samples = jnp.arange(n, dtype=jnp.float32).reshape(-1, 1)
         w = jnp.ones(n) / n
-        m = _ArrayMarginal(samples, w)
+        m = _RecordMarginal(samples, w)
         result = m._expectation(
             lambda x: x, key=key, num_evaluations=10, return_dist=False
         )
@@ -568,7 +570,7 @@ class TestArrayMarginalAdditional:
         """Weighted covariance."""
         samples = jnp.array([[1.0, 2.0], [3.0, 4.0]])
         w = jnp.array([0.5, 0.5])
-        m = _ArrayMarginal(samples, w)
+        m = _RecordMarginal(samples, w)
         cov = m._cov()
         assert cov.shape == (2, 2)
 
@@ -576,7 +578,7 @@ class TestArrayMarginalAdditional:
         """Weighted variance."""
         samples = jnp.array([[0.0], [10.0]])
         w = jnp.array([0.5, 0.5])
-        m = _ArrayMarginal(samples, w)
+        m = _RecordMarginal(samples, w)
         v = m._variance()
         # Var = 0.5*(0-5)^2 + 0.5*(10-5)^2 = 25
         np.testing.assert_allclose(v, jnp.array([25.0]), atol=1e-4)
@@ -641,7 +643,7 @@ class TestMakeMarginalEdgeCases:
     def test_scalar_output(self):
         """Single scalar value (e.g., from vmap)."""
         m = _make_marginal(3.14, None)
-        assert isinstance(m, _ArrayMarginal)
+        assert isinstance(m, _RecordMarginal)
 
     def test_with_name(self):
         """Name propagates."""
@@ -650,12 +652,12 @@ class TestMakeMarginalEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# _RecordArrayMarginal (Record-returning WorkflowFunctions)
+# _RecordMarginal (Record-returning WorkflowFunctions)
 # ---------------------------------------------------------------------------
 
 
 from probpipe import Record, RecordArray, ProductDistribution  # noqa: E402
-from probpipe.core._broadcast_distributions import _RecordArrayMarginal  # noqa: E402
+from probpipe.core._broadcast_distributions import _RecordMarginal  # noqa: E402
 from probpipe.core.node import workflow_function  # noqa: E402
 from probpipe import mean, variance, sample  # noqa: E402
 
@@ -682,7 +684,7 @@ class TestRecordArrayMarginal:
         self, record_workflow, prior,
     ):
         result = record_workflow(**prior.select("x", "y"))
-        assert isinstance(result, _RecordArrayMarginal)
+        assert isinstance(result, _RecordMarginal)
 
     def test_mean_per_field(self, record_workflow, prior):
         result = record_workflow(**prior.select("x", "y"))
@@ -894,3 +896,72 @@ class TestCoerceOutput:
             field_name="f",
         )
         assert nr.source.operation == "inner"
+
+
+# ---------------------------------------------------------------------------
+# _index_sample helper (extracted from inline code in
+# _broadcast_enumerate_then_sample / _broadcast_sample so the three
+# call sites cant drift)
+# ---------------------------------------------------------------------------
+
+
+class TestIndexSampleHelper:
+    """Direct unit tests for the module-level _index_sample helper.
+
+    Pins the dispatch contract (bare array vs. single-field Record vs.
+    multi-field Record). Integration tests through both
+    _broadcast_enumerate_then_sample and _broadcast_sample are covered
+    by the existing broadcast tests.
+    """
+
+    def test_bare_array(self):
+        """Plain array → standard s[i] indexing (gap C in the review)."""
+        from probpipe.core.node import _index_sample
+        s = jnp.arange(20.0).reshape(5, 4)
+        for i in range(5):
+            np.testing.assert_array_equal(
+                _index_sample(s, i), s[i],
+            )
+
+    def test_bare_array_1d(self):
+        from probpipe.core.node import _index_sample
+        s = jnp.arange(10.0)
+        assert float(_index_sample(s, 3)) == 3.0
+
+    def test_single_field_record_unwraps(self):
+        """Single-field Record → unwrap to the underlying field array."""
+        from probpipe import Record
+        from probpipe.core.node import _index_sample
+        s = Record(x=jnp.arange(15.0).reshape(5, 3))
+        for i in range(5):
+            row = _index_sample(s, i)
+            # Bare array, not a Record — single-field unwrap.
+            assert not hasattr(row, "fields")
+            np.testing.assert_array_equal(row, s["x"][i])
+
+    def test_multi_field_record_returns_per_row_numeric_record(self):
+        """Multi-field Record → fabricate a per-row NumericRecord."""
+        from probpipe import NumericRecord, Record
+        from probpipe.core.node import _index_sample
+        s = Record(
+            mu=jnp.arange(5.0),
+            sigma=jnp.arange(5.0) + 100.0,
+        )
+        row = _index_sample(s, 2)
+        assert isinstance(row, NumericRecord)
+        assert row.fields == ("mu", "sigma")
+        assert float(row["mu"]) == 2.0
+        assert float(row["sigma"]) == 102.0
+
+    def test_multi_field_record_with_nontrivial_event_shapes(self):
+        """Per-row NumericRecord preserves trailing event-shape axes."""
+        from probpipe import NumericRecord, Record
+        from probpipe.core.node import _index_sample
+        s = Record(
+            scalar=jnp.arange(4.0),
+            vec=jnp.arange(12.0).reshape(4, 3),
+        )
+        row = _index_sample(s, 1)
+        assert isinstance(row, NumericRecord)
+        assert float(row["scalar"]) == 1.0
+        np.testing.assert_array_equal(row["vec"], jnp.array([3.0, 4.0, 5.0]))

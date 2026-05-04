@@ -237,8 +237,16 @@ def with_resampling(
                 key = jax.random.PRNGKey(seed + call_count)
                 call_count += 1
                 indices = out_dist._w.choice(key, shape=(n,))
-                new_samples = out_dist.samples[indices]
-                resampled = EmpiricalDistribution(new_samples)
+                # Resample per-field (samples is a NumericRecord; index
+                # each field's stacked array along the sample axis).
+                from .record import Record
+                new_record = Record({
+                    f: out_dist.samples[f][indices]
+                    for f in out_dist.samples.fields
+                })
+                resampled = EmpiricalDistribution(
+                    new_record, name=out_dist.name,
+                )
                 resampled.with_source(
                     Provenance(
                         "resample",

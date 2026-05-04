@@ -127,7 +127,7 @@ this distribution hold?"
 | `BootstrapDistribution` | Number of function evaluations |
 | `BootstrapReplicateDistribution` | Number of observations per bootstrap dataset |
 | `BroadcastDistribution` | Number of input–output pairs |
-| `_ArrayMarginal` | Number of output samples |
+| `_RecordMarginal` | Number of output samples |
 | `_MixtureMarginal` | Number of mixture components |
 | `_ListMarginal` | Number of output items |
 
@@ -158,6 +158,36 @@ separator, so paths round-trip with `Record.__getitem__`.
 When adding new Record-based containers, follow these conventions:
 preserve insertion order, reject `/` in field names, and accept the
 slash-delimited form in any string-keyed lookup.
+
+### 1.11 Distribution iteration
+
+A `Distribution` represents a single random variable, not a
+collection. Every concrete `Distribution` subclass —
+`Normal`, `EmpiricalDistribution`, `BootstrapReplicateDistribution`,
+joint distributions, marginals — is **non-iterable**. Stored samples
+are accessed via `.samples` / `.draws()`; `.n` reports the count.
+
+Iteration is reserved for the `Record` family — `Record`,
+`NumericRecord`, `RecordArray`, `NumericRecordArray` — which iterate
+field names dict-style (`keys()` / `values()` / `items()`).
+
+`DistributionArray` is positional: `len(da)` is `prod(batch_shape)`,
+and elements are accessed via `da[i]`. It is **not** generally
+treated as an iterable; reach for `for d in da:` only when the
+shape is one-dimensional, and even then prefer the explicit
+positional form.
+
+When adding a new `Distribution` subclass, do not define `__iter__`.
+The regression test in `tests/test_iteration_protocol.py` enforces
+this rule across user-constructible distribution subclasses
+(`Normal`, `Beta`, `Gamma`, `MultivariateNormal`, `ProductDistribution`,
+`TransformedDistribution`, `KDEDistribution`,
+`RecordEmpiricalDistribution`, `BootstrapReplicateDistribution`,
+`RecordBootstrapReplicateDistribution`, `NumericJointEmpirical`).
+WF-output classes (`BroadcastDistribution`, `_RecordMarginal`,
+`_MixtureMarginal`, `_ListMarginal`) inherit the constraint from
+their bases and aren't directly parametrised; if you add a new such
+class, verify non-iterability via the parent class's contract.
 
 ---
 

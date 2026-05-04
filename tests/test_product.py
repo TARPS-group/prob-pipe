@@ -748,7 +748,7 @@ class TestEnumerateWithDistributionViews:
         view_y = joint["y"]
 
         # Small empirical that will be enumerated
-        ed = EmpiricalDistribution(jnp.array([[10.0], [20.0]]))
+        ed = EmpiricalDistribution(jnp.array([[10.0], [20.0]]), name="x")
 
         def compute(a: float, b: float, c: float) -> float:
             return (a - b) + c

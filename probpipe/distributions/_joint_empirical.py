@@ -9,12 +9,16 @@ Two concrete classes:
 * :class:`JointEmpirical` — generic base. Accepts numeric or object
   samples; claims only ``SupportsSampling`` and ``SupportsConditioning``.
 * :class:`NumericJointEmpirical` — all fields numeric. Additionally
-  claims ``SupportsLogProb`` (Gaussian approximation),
-  ``SupportsMean``, ``SupportsVariance``.
+  claims ``SupportsMean`` and ``SupportsVariance``.
+
+Empirical distributions do **not** claim ``SupportsLogProb`` — for a
+density on top of empirical samples, use the converter registry
+(``from_distribution(emp, KDEDistribution, ...)``) or fit a parametric
+distribution.
 
 Construct via ``JointEmpirical(...)`` — when every field is a numeric
 array, the class dispatches in ``__new__`` to ``NumericJointEmpirical``
-(same pattern as ``EmpiricalDistribution`` → ``NumericEmpiricalDistribution``).
+(same pattern as ``EmpiricalDistribution`` → ``RecordEmpiricalDistribution``).
 """
 
 from __future__ import annotations
@@ -31,7 +35,7 @@ from ..custom_types import Array, ArrayLike, PRNGKey
 from .._weights import Weights
 from ..core.distribution import (
     NumericRecordDistribution,
-    NumericEmpiricalDistribution,
+    RecordEmpiricalDistribution,
     _mc_expectation,
 )
 from ..core._record_distribution import RecordDistribution, _build_record_template
@@ -39,7 +43,6 @@ from ..core.record import Record
 from ..core.provenance import Provenance
 from ..core.protocols import (
     SupportsConditioning,
-    SupportsLogProb,
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
@@ -63,9 +66,8 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
     **Dynamic dispatch via ``__new__``:** when every field is a numeric
     array (numpy, JAX, or numeric scalar), constructing ``JointEmpirical``
     returns a :class:`NumericJointEmpirical` instance, which additionally
-    supports log-prob (Gaussian approximation), mean, and variance. Fall
-    through to this base class for mixed / opaque data (e.g. object-dtype
-    arrays of labels).
+    supports mean and variance. Fall through to this base class for
+    mixed / opaque data (e.g. object-dtype arrays of labels).
 
     When used in broadcasting enumeration, the joint is treated as a single
     unit with ``n`` samples (no cartesian decomposition).
@@ -285,13 +287,16 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
 # ---------------------------------------------------------------------------
 
 
-class NumericJointEmpirical(JointEmpirical, SupportsLogProb, SupportsMean, SupportsVariance):
+class NumericJointEmpirical(JointEmpirical, SupportsMean, SupportsVariance):
     """Joint empirical where every field is a numeric array.
 
     Subclass of :class:`JointEmpirical` that additionally implements
-    :class:`~probpipe.core.protocols.SupportsLogProb` (via a diagonal
-    Gaussian approximation), :class:`~probpipe.core.protocols.SupportsMean`,
-    and :class:`~probpipe.core.protocols.SupportsVariance`.
+    :class:`~probpipe.core.protocols.SupportsMean` and
+    :class:`~probpipe.core.protocols.SupportsVariance`. Empirical
+    distributions do **not** claim ``SupportsLogProb`` — for a density
+    on top of empirical samples use the converter registry
+    (``from_distribution(emp, KDEDistribution, ...)``) or fit a
+    parametric distribution.
 
     Construction coerces every field to a floating-point JAX array
     (preserving ``float64`` when JAX's x64 mode is enabled, otherwise
@@ -333,7 +338,7 @@ class NumericJointEmpirical(JointEmpirical, SupportsLogProb, SupportsMean, Suppo
 
     def _build_component_dists(self) -> dict[str, NumericRecordDistribution]:
         return {
-            cname: NumericEmpiricalDistribution(arr, weights=self._w, name=cname)
+            cname: RecordEmpiricalDistribution(arr, weights=self._w, name=cname)
             for cname, arr in self._joint_samples.items()
         }
 
@@ -355,38 +360,6 @@ class NumericJointEmpirical(JointEmpirical, SupportsLogProb, SupportsMean, Suppo
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
         """Per-component event shapes."""
         return {k: v.event_shape for k, v in self._components.items()}
-
-    # -- Log-prob (Gaussian approximation) ---------------------------------
-
-    def _log_prob(self, value) -> Array:
-        """Gaussian-approximation log-density (same as :class:`~probpipe.NumericEmpiricalDistribution`).
-
-        Evaluates a diagonal Gaussian approximation in the flat space.
-        """
-        if not isinstance(value, Record):
-            value = Record(value)
-        flat = self.flatten_value(value)
-        mu = self._flat_mean()
-        var = self._flat_variance()
-        var = jnp.maximum(var, 1e-12)
-        log_norm = -0.5 * jnp.sum(jnp.log(2 * jnp.pi * var))
-        diff = flat - mu
-        return log_norm - 0.5 * jnp.sum(diff**2 / var, axis=-1)
-
-    def _flat_mean(self) -> Array:
-        """Flat mean vector (internal helper for log_prob)."""
-        parts = []
-        for _, arr in self._joint_samples.items():
-            parts.append(self._w.mean(arr).reshape(-1))
-        return jnp.concatenate(parts)
-
-    def _flat_variance(self) -> Array:
-        """Flat variance vector (internal helper for log_prob)."""
-        parts = []
-        for _, arr in self._joint_samples.items():
-            arr_flat = arr.reshape(self._n, -1)
-            parts.append(self._w.variance(arr_flat))
-        return jnp.concatenate(parts)
 
     # -- Moments -----------------------------------------------------------
 
