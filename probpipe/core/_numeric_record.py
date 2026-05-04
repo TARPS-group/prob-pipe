@@ -321,6 +321,9 @@ class NumericRecord(Record):
     # ``.flat_samples`` (an explicit ``(n, dim)`` accessor).
     # ---------------------------------------------------------------------
 
+    def __reduce__(self):
+        return (_unpickle_numeric_record, (dict(self._store), self._name, self._source))
+
     def _single_numeric_leaf(self):
         """Return the sole numeric leaf, or raise ``TypeError``."""
         if len(self._store) != 1:
@@ -374,6 +377,18 @@ class NumericRecord(Record):
     def ndim(self) -> int:
         leaf = self._single_numeric_leaf()
         return int(getattr(leaf, "ndim", 0))
+
+
+# ---------------------------------------------------------------------------
+# Pickle helpers
+# ---------------------------------------------------------------------------
+
+
+def _unpickle_numeric_record(store: dict, name: str, source) -> NumericRecord:
+    nr = NumericRecord(name=name, **store)
+    if source is not None:
+        object.__setattr__(nr, "_source", source)
+    return nr
 
 
 # ---------------------------------------------------------------------------
