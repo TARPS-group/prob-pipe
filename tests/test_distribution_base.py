@@ -111,3 +111,56 @@ class TestRenamedRecordTemplate:
         assert mvn.record_template["a"] == (3,)
         b = mvn.renamed("b")
         assert b.record_template["b"] == (3,)
+
+
+class TestNoBatchShape:
+    """Regression tests for the PR-C.3 framework hierarchy invariant
+    "one random variable per ``Distribution``" — no Distribution
+    instance has a ``batch_shape`` attribute. Pins the absence so a
+    future subclass can't silently reintroduce it as a defensive
+    default.
+    """
+
+    def test_no_batch_shape_on_base_class(self):
+        from probpipe import Distribution
+        assert not hasattr(Distribution, "batch_shape")
+
+    def test_no_batch_shape_on_normal_instance(self):
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        assert not hasattr(n, "batch_shape")
+
+    def test_no_batch_shape_on_gamma_instance(self):
+        g = Gamma(concentration=3.0, rate=1.0, name="g")
+        assert not hasattr(g, "batch_shape")
+
+    def test_no_batch_shape_on_mvn_instance(self):
+        m = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
+        assert not hasattr(m, "batch_shape")
+
+    def test_no_batch_shape_on_transformed(self):
+        import tensorflow_probability.substrates.jax.bijectors as tfb
+        from probpipe import TransformedDistribution
+        td = TransformedDistribution(
+            Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp(),
+        )
+        assert not hasattr(td, "batch_shape")
+
+    def test_no_batch_shape_on_kde(self):
+        from probpipe.distributions.kde import KDEDistribution
+        kde = KDEDistribution(jnp.zeros((20, 3)), name="kde")
+        assert not hasattr(kde, "batch_shape")
+
+    def test_no_batch_shape_on_record_empirical(self):
+        from probpipe import RecordEmpiricalDistribution
+        emp = RecordEmpiricalDistribution(jnp.zeros((10, 3)), name="x")
+        assert not hasattr(emp, "batch_shape")
+
+    def test_distribution_array_keeps_batch_shape(self):
+        """``DistributionArray.batch_shape`` is the array's own shape
+        and is unrelated to the per-cell ``Distribution.batch_shape``
+        that PR-C.3 removed. The container concept stays."""
+        from probpipe import DistributionArray
+        da = DistributionArray.from_batched_params(
+            Normal, loc=jnp.zeros(5), scale=1.0, name="x",
+        )
+        assert da.batch_shape == (5,)

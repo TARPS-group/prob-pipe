@@ -65,7 +65,9 @@ class TestGeneric:
     def test_log_prob_shape(self, discrete_dist, key):
         samples = sample(discrete_dist, key=key, sample_shape=(5,))
         lp = log_prob(discrete_dist, samples)
-        assert lp.shape == (5,) + discrete_dist.batch_shape
+        # Distributions are scalar (no batch_shape after PR-C.3); the
+        # log-prob shape is just the sample_shape prefix.
+        assert lp.shape == (5,)
 
     def test_repr(self, discrete_dist):
         r = repr(discrete_dist)
