@@ -392,11 +392,11 @@ class DistributionArray[T](Distribution[T]):
     def batch_shape(self) -> tuple[int, ...]:
         """Batch axes of this DistributionArray.
 
-        The components themselves are required to be scalar
-        (``batch_shape == ()``), so this is just
-        ``self._batch_shape`` — no inherit-from-component
-        composition. Multi-d broadcasting outputs pass the full
-        sweep shape; the default 1-D form is ``(n,)``.
+        Components are scalar (one random variable per
+        ``Distribution``), so this is simply ``self._batch_shape``
+        — there is no inherit-from-component composition. Multi-d
+        broadcasting outputs pass the full sweep shape; the default
+        1-D form is ``(n,)``.
         """
         return tuple(self._batch_shape)
 
@@ -603,8 +603,8 @@ def _make_distribution_array(
     Parameters
     ----------
     components : sequence of Distribution
-        Component distributions (must each be scalar,
-        ``batch_shape == ()``).
+        Component distributions. Each must be a scalar
+        ``Distribution`` (one random variable per cell).
     batch_shape : tuple of int, optional
         Leading batch shape for the DistributionArray. Defaults to
         ``(len(components),)`` for the 1-D form. Multi-d broadcasting

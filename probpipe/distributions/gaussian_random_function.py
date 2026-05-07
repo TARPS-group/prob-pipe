@@ -32,7 +32,8 @@ from ..core._random_functions import ArrayRandomFunction
 
 _PREDICTION_NAME = "grf_prediction"
 """Name passed to every distribution ``GaussianRandomFunction.predict``
-constructs. Subclasses may rebind by overriding ``predict``."""
+constructs. Subclasses can pass a different ``name=`` from an
+overridden ``predict``."""
 
 
 # ---------------------------------------------------------------------------

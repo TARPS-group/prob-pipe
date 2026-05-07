@@ -54,11 +54,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   False
   ```
 
-  Migration: drop the read — under PR-C.2 it was always `()`.
-  `GaussianRandomFunction.predict` (and every `ArrayRandomFunction`
-  subclass) now returns a `DistributionArray` rather than a
-  single batched `Normal`/`MultivariateNormal`; per-cell
-  `event_shape` is unchanged.
+  Migration: drop the read — once batched parameters were rejected,
+  it was always `()`. `GaussianRandomFunction.predict` (and every
+  `ArrayRandomFunction` subclass) now returns a `DistributionArray`
+  rather than a single batched `Normal` / `MultivariateNormal`;
+  per-cell `event_shape` is unchanged. Even fully-joint predictions
+  with no extra batch axes return a length-1 `DistributionArray` —
+  unwrap with `dist[0]` if you need the underlying scalar
+  `MultivariateNormal`.
 
 - **`RecordDistribution.n` and `DistributionArray.n` removed.**
   STYLE_GUIDE §1.9 reserves `.n` for finite-sample distribution

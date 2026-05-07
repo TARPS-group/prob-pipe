@@ -612,11 +612,9 @@ class TestDistributionABC:
         assert not hasattr(gaussian, "condition_on")
 
     def test_no_batch_shape_attribute(self, gaussian):
-        """``Distribution.batch_shape`` was removed in PR-C.3 along
-        with the framework hierarchy "one random variable per
-        Distribution" rule. Scalar distributions have no
-        ``batch_shape`` attribute at all; collections live in
-        ``DistributionArray``."""
+        """Per the "one random variable per ``Distribution``" rule,
+        scalar distributions have no ``batch_shape`` attribute;
+        collections live in ``DistributionArray``."""
         assert not hasattr(gaussian, "batch_shape")
 
     def test_default_dtype(self, gaussian, loc):
@@ -722,11 +720,11 @@ class TestTFPDistribution:
 
 class TestShapeSemantics:
     def test_sample_shape_convention(self, gaussian, key):
-        """sample(key, sample_shape) → sample_shape + batch_shape + event_shape"""
+        """sample(key, sample_shape) → sample_shape + event_shape"""
         s = sample(gaussian, key=key, sample_shape=(4, 2))
         assert s.shape == (4, 2, 3)
 
-    def test_log_prob_batch_shape(self, gaussian, key):
+    def test_log_prob_sample_shape(self, gaussian, key):
         s = sample(gaussian, key=key, sample_shape=(4, 2))
         lp = log_prob(gaussian, s)
         assert lp.shape == (4, 2)

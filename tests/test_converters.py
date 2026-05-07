@@ -803,7 +803,6 @@ class TestKDEDistribution:
         samples = jax.random.normal(jax.random.PRNGKey(0), (100,))
         kde = KDEDistribution(samples)
         assert kde.event_shape == ()
-        # ``Distribution.batch_shape`` was removed in PR-C.3.
         assert not hasattr(kde, "batch_shape")
         assert kde.n == 100
 

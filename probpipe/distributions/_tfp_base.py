@@ -388,9 +388,8 @@ class _TFPArrayBackend:
         # higher-rank param's *trailing* axes don't agree but the
         # leading-axes check above passed (e.g., MVN where ``loc`` /
         # ``scale_tril`` event ranks differ). Reads the underlying
-        # ``tfd.Distribution.batch_shape`` directly because the
-        # ProbPipe-side ``Distribution.batch_shape`` accessor was
-        # removed in PR-C.3.
+        # ``tfd.Distribution.batch_shape`` directly because
+        # ProbPipe-side ``Distribution`` has no ``batch_shape``.
         actual = tuple(self._batched_dist._tfp_dist.batch_shape)
         if actual != self._batch_shape:
             raise ValueError(
