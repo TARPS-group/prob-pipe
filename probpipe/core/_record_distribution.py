@@ -228,9 +228,8 @@ class _RecordDistributionView(Distribution):
 
     @property
     def shape(self) -> tuple[int, ...]:
-        """Shape of one draw from this view — ``batch_shape + event_shape``."""
-        batch = tuple(getattr(self._parent, "batch_shape", ()) or ())
-        return batch + self.event_shape
+        """Shape of one draw from this view — equals ``event_shape``."""
+        return self.event_shape
 
     @property
     def dtype(self) -> "jnp.dtype | None":
@@ -242,7 +241,7 @@ class _RecordDistributionView(Distribution):
 
     @property
     def ndim(self) -> int:
-        """Number of axes in a single draw (``batch_shape + event_shape``)."""
+        """Number of axes in a single draw (``len(event_shape)``)."""
         return len(self.shape)
 
     # -- Internals ----------------------------------------------------------
@@ -349,15 +348,16 @@ class RecordDistribution(Distribution[Record]):
 
     @property
     def n(self) -> int:
-        """Number of cells in the batch shape (see STYLE_GUIDE §1.9).
+        """Number of cells in this distribution (see STYLE_GUIDE §1.9).
 
-        For scalar Record distributions (``batch_shape == ()``) this
-        is ``1``; for batched variants (``NumericRecordDistribution``
-        with a nonempty ``batch_shape``) it's
-        ``prod(batch_shape)``. Parallels
-        :attr:`~probpipe.DistributionArray.n`.
+        ``Distribution`` no longer has a ``batch_shape`` (PR-C.3
+        framework hierarchy: "one random variable per
+        Distribution"); a scalar Record distribution always has
+        ``n == 1``. Collections of distributions live in
+        :class:`~probpipe.DistributionArray`, where ``n`` reports
+        ``prod(batch_shape)``.
         """
-        return prod(getattr(self, "batch_shape", ()) or ())
+        return 1
 
     def __getitem__(self, key: str) -> _RecordDistributionView:
         return _RecordDistributionView(self, key)
@@ -503,9 +503,9 @@ class RecordDistribution(Distribution[Record]):
 
     # -- Single-field array-like shims --------------------------------------
     # On a single-field distribution, ``.shape`` / ``.ndim`` delegate to
-    # the sole field's event shape (prefixed by ``batch_shape``).
-    # Multi-field distributions raise ``TypeError``; use ``.event_shapes``
-    # for a per-field dict or index into a view (``dist[field]``).
+    # the sole field's event shape. Multi-field distributions raise
+    # ``TypeError``; use ``.event_shapes`` for a per-field dict or
+    # index into a view (``dist[field]``).
 
     def _single_field_name(self) -> str:
         fields = self.fields
@@ -519,12 +519,10 @@ class RecordDistribution(Distribution[Record]):
 
     @property
     def shape(self) -> tuple[int, ...]:
-        """Shape of one draw (``batch_shape + event_shape``)."""
+        """Shape of one draw (equals the sole field's event_shape)."""
         name = self._single_field_name()
         tpl = self.record_template
-        event = self._field_event_shape(tpl[name]) if tpl is not None else ()
-        batch = tuple(getattr(self, "batch_shape", ()) or ())
-        return batch + event
+        return self._field_event_shape(tpl[name]) if tpl is not None else ()
 
     @property
     def ndim(self) -> int:
