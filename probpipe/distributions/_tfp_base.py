@@ -183,10 +183,6 @@ class TFPDistribution(
         return tuple(self._tfp_dist.event_shape)
 
     @property
-    def batch_shape(self) -> tuple[int, ...]:
-        return tuple(self._tfp_dist.batch_shape)
-
-    @property
     def dtype(self) -> jnp.dtype:
         return self._tfp_dist.dtype
 
@@ -391,8 +387,11 @@ class _TFPArrayBackend:
         # the caller's declaration. Catches the rare case where a
         # higher-rank param's *trailing* axes don't agree but the
         # leading-axes check above passed (e.g., MVN where ``loc`` /
-        # ``scale_tril`` event ranks differ).
-        actual = self._batched_dist.batch_shape
+        # ``scale_tril`` event ranks differ). Reads the underlying
+        # ``tfd.Distribution.batch_shape`` directly because the
+        # ProbPipe-side ``Distribution.batch_shape`` accessor was
+        # removed in PR-C.3.
+        actual = tuple(self._batched_dist._tfp_dist.batch_shape)
         if actual != self._batch_shape:
             raise ValueError(
                 f"_TFPArrayBackend: declared batch_shape={self._batch_shape} "

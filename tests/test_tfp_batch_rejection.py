@@ -119,7 +119,9 @@ class TestRejectionMessage:
 class TestScalarConstructionUnchanged:
     def test_scalar_normal_works(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        assert n.batch_shape == ()
+        # ``Distribution.batch_shape`` was removed in PR-C.3; scalar
+        # construction succeeds, the attribute simply doesn't exist.
+        assert not hasattr(n, "batch_shape")
         assert n.event_shape == ()
 
     def test_scalar_beta_works(self):
@@ -135,8 +137,8 @@ class TestScalarConstructionUnchanged:
             scale_tril=jnp.eye(d),
             name="z",
         )
-        # Standard d-dim MVN: event_shape=(d,), batch_shape=().
-        assert m.batch_shape == ()
+        # Standard d-dim MVN: event_shape=(d,); no batch_shape post-PR-C.3.
+        assert not hasattr(m, "batch_shape")
         assert m.event_shape == (d,)
 
 
@@ -169,8 +171,11 @@ class TestBypassForInternalInfra:
     def test_bypass_allows_batched_construction(self):
         with _allow_batched_tfp_init():
             n = Normal(loc=jnp.zeros(5), scale=1.0, name="x")
-        # Inside the bypass, the rejection does not fire.
-        assert n.batch_shape == (5,)
+        # Inside the bypass, the rejection does not fire. Verify
+        # via the underlying TFP distribution's batch_shape (the
+        # ProbPipe-side ``Distribution.batch_shape`` accessor was
+        # removed in PR-C.3).
+        assert tuple(n._tfp_dist.batch_shape) == (5,)
 
     def test_bypass_is_scoped_to_context(self):
         with _allow_batched_tfp_init():

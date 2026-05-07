@@ -380,10 +380,6 @@ class TFPProductDistribution(ProductDistribution):
         return tuple(self._tfp_dist.event_shape)
 
     @property
-    def batch_shape(self) -> tuple[int, ...]:
-        return tuple(self._tfp_dist.batch_shape)
-
-    @property
     def dtype(self):
         return self._tfp_dist.dtype
 

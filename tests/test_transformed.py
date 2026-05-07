@@ -43,10 +43,11 @@ class TestTFPBase:
         td = TransformedDistribution(base, tfb.Exp())
         assert td.event_shape == ()
 
-    def test_exp_batch_shape(self):
+    def test_exp_no_batch_shape(self):
+        """``Distribution.batch_shape`` was removed in PR-C.3."""
         base = Normal(loc=0.0, scale=1.0, name="x")
         td = TransformedDistribution(base, tfb.Exp())
-        assert td.batch_shape == ()
+        assert not hasattr(td, "batch_shape")
 
     def test_exp_sample_shape(self, key):
         base = Normal(loc=0.0, scale=1.0, name="x")

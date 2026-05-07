@@ -69,7 +69,6 @@ class TestMultivariateNormal:
     def test_construction_with_cov(self, loc, cov_matrix):
         g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
         assert g.event_shape == (3,)
-        assert g.batch_shape == ()
         assert g.dim == 3
         np.testing.assert_allclose(g.loc, loc, atol=1e-6)
 
@@ -612,8 +611,13 @@ class TestDistributionABC:
         """condition_on() is only on JointDistribution, not NumericRecordDistribution ABC."""
         assert not hasattr(gaussian, "condition_on")
 
-    def test_default_batch_shape(self, gaussian):
-        assert gaussian.batch_shape == ()
+    def test_no_batch_shape_attribute(self, gaussian):
+        """``Distribution.batch_shape`` was removed in PR-C.3 along
+        with the framework hierarchy "one random variable per
+        Distribution" rule. Scalar distributions have no
+        ``batch_shape`` attribute at all; collections live in
+        ``DistributionArray``."""
+        assert not hasattr(gaussian, "batch_shape")
 
     def test_default_dtype(self, gaussian, loc):
         assert gaussian.dtype == loc.dtype

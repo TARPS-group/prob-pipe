@@ -198,7 +198,7 @@ class TestGaussianRandomFunction:
         X = jnp.ones((5, 2))
         dist = grf(X)
         assert isinstance(dist, Normal)
-        assert dist.batch_shape == (5,)
+        assert tuple(dist._tfp_dist.batch_shape) == (5,)
         assert dist.event_shape == ()
 
     def test_marginal_multi_output(self):
@@ -206,7 +206,7 @@ class TestGaussianRandomFunction:
         X = jnp.ones((5, 2))
         dist = grf(X)
         assert isinstance(dist, Normal)
-        assert dist.batch_shape == (5, 2)
+        assert tuple(dist._tfp_dist.batch_shape) == (5, 2)
         assert dist.event_shape == ()
 
     def test_joint_inputs_returns_mvn(self):
@@ -222,7 +222,7 @@ class TestGaussianRandomFunction:
         dist = grf(X, joint_outputs=True)
         assert isinstance(dist, MultivariateNormal)
         assert dist.event_shape == (2,)
-        assert dist.batch_shape == (5,)
+        assert tuple(dist._tfp_dist.batch_shape) == (5,)
 
     def test_full_joint_returns_mvn(self):
         grf = _MultiOutputGRF()
@@ -241,7 +241,7 @@ class TestGaussianRandomFunction:
         grf = _ScalarGP()
         X = jnp.ones((3, 5, 2))  # extra_batch=(3,)
         dist = grf(X)
-        assert dist.batch_shape == (3, 5)
+        assert tuple(dist._tfp_dist.batch_shape) == (3, 5)
 
     def test_predict_covariance_raises_by_default(self):
         grf = _MarginalOnlyGRF()
@@ -323,14 +323,14 @@ class TestLinearBasisFunction:
         X = jnp.linspace(-1, 1, 10).reshape(-1, 1)
         dist = scalar_lbf(X)
         assert isinstance(dist, Normal)
-        assert dist.batch_shape == (10,)
+        assert tuple(dist._tfp_dist.batch_shape) == (10,)
         assert dist.event_shape == ()
 
     def test_marginal_multi_output(self, multi_output_lbf):
         X = jnp.linspace(-1, 1, 8).reshape(-1, 1)
         dist = multi_output_lbf(X)
         assert isinstance(dist, Normal)
-        assert dist.batch_shape == (8, 2)
+        assert tuple(dist._tfp_dist.batch_shape) == (8, 2)
 
     def test_marginal_mean_value(self, scalar_lbf):
         """Check mean matches manual computation."""
@@ -354,7 +354,7 @@ class TestLinearBasisFunction:
         dist = multi_output_lbf(X, joint_outputs=True)
         assert isinstance(dist, MultivariateNormal)
         assert dist.event_shape == (2,)
-        assert dist.batch_shape == (5,)
+        assert tuple(dist._tfp_dist.batch_shape) == (5,)
 
     def test_full_joint_multi(self, multi_output_lbf):
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
@@ -367,13 +367,13 @@ class TestLinearBasisFunction:
     def test_extra_batch_marginal(self, scalar_lbf):
         X = jnp.ones((3, 5, 1))
         dist = scalar_lbf(X)
-        assert dist.batch_shape == (3, 5)
+        assert tuple(dist._tfp_dist.batch_shape) == (3, 5)
 
     def test_extra_batch_joint_inputs(self, scalar_lbf):
         X = jnp.ones((3, 5, 1))
         dist = scalar_lbf(X, joint_inputs=True)
         assert dist.event_shape == (5,)
-        assert dist.batch_shape == (3,)
+        assert tuple(dist._tfp_dist.batch_shape) == (3,)
 
     # -- Covariance shapes --------------------------------------------------
 
@@ -518,7 +518,7 @@ class TestLinearMap:
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
         dist = h(X)
         assert isinstance(dist, Normal)
-        assert dist.batch_shape == (5, 2)
+        assert tuple(dist._tfp_dist.batch_shape) == (5, 2)
 
     def test_joint_outputs(self, weight_grf):
         A = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
@@ -527,7 +527,7 @@ class TestLinearMap:
         dist = h(X, joint_outputs=True)
         assert isinstance(dist, MultivariateNormal)
         assert dist.event_shape == (2,)
-        assert dist.batch_shape == (5,)
+        assert tuple(dist._tfp_dist.batch_shape) == (5,)
 
     def test_joint_inputs(self, weight_grf):
         A = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
@@ -535,7 +535,7 @@ class TestLinearMap:
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
         dist = h(X, joint_inputs=True)
         assert isinstance(dist, MultivariateNormal)
-        assert dist.batch_shape == (2,)
+        assert tuple(dist._tfp_dist.batch_shape) == (2,)
         assert dist.event_shape == (5,)
 
     def test_full_joint(self, weight_grf):
