@@ -120,7 +120,7 @@ class _Sphere(Constraint):
 
 class _Interval(Constraint):
     """Half-open or closed interval [low, high]."""
-    def __init__(self, low: ArrayLike, high: ArrayLike):
+    def __init__(self, low: float, high: float):
         self.low = low
         self.high = high
     def check(self, value: ArrayLike) -> Array:
@@ -128,36 +128,19 @@ class _Interval(Constraint):
         return (v >= self.low) & (v <= self.high)
     def __repr__(self) -> str:
         return f"interval({self.low}, {self.high})"
-    def __eq__(self, other: object) -> bool:
-        if type(self) is not type(other):
-            return False
-        return bool(jnp.array_equal(self.low, other.low)) and bool(
-            jnp.array_equal(self.high, other.high)
-        )
-    def __hash__(self) -> int:
-        # Coarse but valid: equal instances hash equal. Parameterized
-        # constraints rarely end up in sets/dicts, and array-valued
-        # bounds aren't directly hashable, so we hash on type only.
-        return hash(type(self))
 
 class _GreaterThan(Constraint):
     """Record strictly greater than a lower bound."""
-    def __init__(self, lower_bound: ArrayLike):
+    def __init__(self, lower_bound: float):
         self.lower_bound = lower_bound
     def check(self, value: ArrayLike) -> Array:
         return jnp.asarray(value) > self.lower_bound
     def __repr__(self) -> str:
         return f"greater_than({self.lower_bound})"
-    def __eq__(self, other: object) -> bool:
-        if type(self) is not type(other):
-            return False
-        return bool(jnp.array_equal(self.lower_bound, other.lower_bound))
-    def __hash__(self) -> int:
-        return hash(type(self))
 
 class _IntegerInterval(Constraint):
     """Integer values in [low, high]."""
-    def __init__(self, low: ArrayLike, high: ArrayLike):
+    def __init__(self, low: int, high: int):
         self.low = low
         self.high = high
     def check(self, value: ArrayLike) -> Array:
@@ -165,14 +148,6 @@ class _IntegerInterval(Constraint):
         return (v >= self.low) & (v <= self.high) & (v == jnp.floor(v))
     def __repr__(self) -> str:
         return f"integer_interval({self.low}, {self.high})"
-    def __eq__(self, other: object) -> bool:
-        if type(self) is not type(other):
-            return False
-        return bool(jnp.array_equal(self.low, other.low)) and bool(
-            jnp.array_equal(self.high, other.high)
-        )
-    def __hash__(self) -> int:
-        return hash(type(self))
 
 
 # ---------------------------------------------------------------------------
@@ -194,13 +169,13 @@ sphere = _Sphere()
 # Factory functions for parameterized constraints
 # ---------------------------------------------------------------------------
 
-def interval(low: ArrayLike, high: ArrayLike) -> _Interval:
+def interval(low: float, high: float) -> _Interval:
     return _Interval(low, high)
 
-def greater_than(lower_bound: ArrayLike) -> _GreaterThan:
+def greater_than(lower_bound: float) -> _GreaterThan:
     return _GreaterThan(lower_bound)
 
-def integer_interval(low: ArrayLike, high: ArrayLike) -> _IntegerInterval:
+def integer_interval(low: int, high: int) -> _IntegerInterval:
     return _IntegerInterval(low, high)
 
 
@@ -259,8 +234,11 @@ def _supports_compatible(source: Constraint, target: Constraint) -> bool:
     Conservative: returns ``True`` when in doubt (e.g. for parameterized
     constraints that can't be compared structurally).
     """
-    # Fast path for identical instances; parameterized branches below
-    # handle the equal-but-distinct case for array-valued bounds.
+    # Fast path: identical constraint instances are always compatible.
+    # Use ``is`` rather than ``==`` because ``Constraint.__eq__`` compares
+    # ``__dict__``s, which raises ValueError when constraint attributes
+    # are multi-element JAX arrays (e.g., per-dim ``interval`` bounds).
+    # The parameterized branches below cover the equal-but-distinct case.
     if source is target:
         return True
 
