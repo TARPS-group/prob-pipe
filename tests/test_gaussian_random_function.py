@@ -11,6 +11,7 @@ import pytest
 
 from probpipe import (
     Distribution,
+    DistributionArray,
     Normal,
     MultivariateNormal,
     RandomFunction,
@@ -197,38 +198,38 @@ class TestGaussianRandomFunction:
         grf = _ScalarGP()
         X = jnp.ones((5, 2))
         dist = grf(X)
-        assert isinstance(dist, Normal)
-        assert tuple(dist._tfp_dist.batch_shape) == (5,)
+        assert isinstance(dist, DistributionArray) and isinstance(dist._flat_component(0), Normal)
+        assert dist.batch_shape == (5,)
         assert dist.event_shape == ()
 
     def test_marginal_multi_output(self):
         grf = _MultiOutputGRF()
         X = jnp.ones((5, 2))
         dist = grf(X)
-        assert isinstance(dist, Normal)
-        assert tuple(dist._tfp_dist.batch_shape) == (5, 2)
+        assert isinstance(dist, DistributionArray) and isinstance(dist._flat_component(0), Normal)
+        assert dist.batch_shape == (5, 2)
         assert dist.event_shape == ()
 
     def test_joint_inputs_returns_mvn(self):
         grf = _ScalarGP()
         X = jnp.ones((5, 2))
         dist = grf(X, joint_inputs=True)
-        assert isinstance(dist, MultivariateNormal)
+        assert isinstance(dist, DistributionArray) and isinstance(dist._flat_component(0), MultivariateNormal)
         assert dist.event_shape == (5,)
 
     def test_joint_outputs_returns_mvn(self):
         grf = _MultiOutputGRF()
         X = jnp.ones((5, 2))
         dist = grf(X, joint_outputs=True)
-        assert isinstance(dist, MultivariateNormal)
+        assert isinstance(dist, DistributionArray) and isinstance(dist._flat_component(0), MultivariateNormal)
         assert dist.event_shape == (2,)
-        assert tuple(dist._tfp_dist.batch_shape) == (5,)
+        assert dist.batch_shape == (5,)
 
     def test_full_joint_returns_mvn(self):
         grf = _MultiOutputGRF()
         X = jnp.ones((5, 2))
         dist = grf(X, joint_inputs=True, joint_outputs=True)
-        assert isinstance(dist, MultivariateNormal)
+        assert isinstance(dist, DistributionArray) and isinstance(dist._flat_component(0), MultivariateNormal)
         assert dist.event_shape == (10,)  # 5 * 2
 
     def test_marginal_only_rejects_joint(self):
@@ -241,7 +242,7 @@ class TestGaussianRandomFunction:
         grf = _ScalarGP()
         X = jnp.ones((3, 5, 2))  # extra_batch=(3,)
         dist = grf(X)
-        assert tuple(dist._tfp_dist.batch_shape) == (3, 5)
+        assert dist.batch_shape == (3, 5)
 
     def test_predict_covariance_raises_by_default(self):
         grf = _MarginalOnlyGRF()
@@ -322,21 +323,25 @@ class TestLinearBasisFunction:
     def test_marginal_scalar(self, scalar_lbf):
         X = jnp.linspace(-1, 1, 10).reshape(-1, 1)
         dist = scalar_lbf(X)
-        assert isinstance(dist, Normal)
-        assert tuple(dist._tfp_dist.batch_shape) == (10,)
+        assert isinstance(dist, DistributionArray) and isinstance(dist._flat_component(0), Normal)
+        assert dist.batch_shape == (10,)
         assert dist.event_shape == ()
 
     def test_marginal_multi_output(self, multi_output_lbf):
         X = jnp.linspace(-1, 1, 8).reshape(-1, 1)
         dist = multi_output_lbf(X)
-        assert isinstance(dist, Normal)
-        assert tuple(dist._tfp_dist.batch_shape) == (8, 2)
+        assert isinstance(dist, DistributionArray) and isinstance(dist._flat_component(0), Normal)
+        assert dist.batch_shape == (8, 2)
 
     def test_marginal_mean_value(self, scalar_lbf):
         """Check mean matches manual computation."""
+        from probpipe import mean as mean_op
         X = jnp.array([[0.0], [1.0]])
         dist = scalar_lbf(X)
-        mean = dist.loc
+        # PR-C.3 Option A: ``scalar_lbf(X)`` returns a
+        # ``DistributionArray`` of cells; aggregate via the ``mean``
+        # op rather than reading the underlying ``loc`` parameter.
+        mean = mean_op(dist)
         # At x=0: phi=[1,0,0], mean = [1,0.5,0.1]@[1,0,0] = 1.0
         # At x=1: phi=[1,1,1], mean = [1,0.5,0.1]@[1,1,1] = 1.6
         np.testing.assert_allclose(mean, [1.0, 1.6], atol=1e-5)
@@ -346,20 +351,20 @@ class TestLinearBasisFunction:
     def test_joint_inputs_scalar(self, scalar_lbf):
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
         dist = scalar_lbf(X, joint_inputs=True)
-        assert isinstance(dist, MultivariateNormal)
+        assert isinstance(dist, DistributionArray) and isinstance(dist._flat_component(0), MultivariateNormal)
         assert dist.event_shape == (5,)
 
     def test_joint_outputs_multi(self, multi_output_lbf):
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
         dist = multi_output_lbf(X, joint_outputs=True)
-        assert isinstance(dist, MultivariateNormal)
+        assert isinstance(dist, DistributionArray) and isinstance(dist._flat_component(0), MultivariateNormal)
         assert dist.event_shape == (2,)
-        assert tuple(dist._tfp_dist.batch_shape) == (5,)
+        assert dist.batch_shape == (5,)
 
     def test_full_joint_multi(self, multi_output_lbf):
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
         dist = multi_output_lbf(X, joint_inputs=True, joint_outputs=True)
-        assert isinstance(dist, MultivariateNormal)
+        assert isinstance(dist, DistributionArray) and isinstance(dist._flat_component(0), MultivariateNormal)
         assert dist.event_shape == (10,)  # 5 * 2
 
     # -- Extra batch --------------------------------------------------------
@@ -367,13 +372,13 @@ class TestLinearBasisFunction:
     def test_extra_batch_marginal(self, scalar_lbf):
         X = jnp.ones((3, 5, 1))
         dist = scalar_lbf(X)
-        assert tuple(dist._tfp_dist.batch_shape) == (3, 5)
+        assert dist.batch_shape == (3, 5)
 
     def test_extra_batch_joint_inputs(self, scalar_lbf):
         X = jnp.ones((3, 5, 1))
         dist = scalar_lbf(X, joint_inputs=True)
         assert dist.event_shape == (5,)
-        assert tuple(dist._tfp_dist.batch_shape) == (3,)
+        assert dist.batch_shape == (3,)
 
     # -- Covariance shapes --------------------------------------------------
 
@@ -517,25 +522,25 @@ class TestLinearMap:
         h = A @ weight_grf
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
         dist = h(X)
-        assert isinstance(dist, Normal)
-        assert tuple(dist._tfp_dist.batch_shape) == (5, 2)
+        assert isinstance(dist, DistributionArray) and isinstance(dist._flat_component(0), Normal)
+        assert dist.batch_shape == (5, 2)
 
     def test_joint_outputs(self, weight_grf):
         A = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
         h = A @ weight_grf
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
         dist = h(X, joint_outputs=True)
-        assert isinstance(dist, MultivariateNormal)
+        assert isinstance(dist, DistributionArray) and isinstance(dist._flat_component(0), MultivariateNormal)
         assert dist.event_shape == (2,)
-        assert tuple(dist._tfp_dist.batch_shape) == (5,)
+        assert dist.batch_shape == (5,)
 
     def test_joint_inputs(self, weight_grf):
         A = jnp.array([[1.0, 0.0, 1.0], [0.0, 1.0, 0.0]])
         h = A @ weight_grf
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
         dist = h(X, joint_inputs=True)
-        assert isinstance(dist, MultivariateNormal)
-        assert tuple(dist._tfp_dist.batch_shape) == (2,)
+        assert isinstance(dist, DistributionArray) and isinstance(dist._flat_component(0), MultivariateNormal)
+        assert dist.batch_shape == (2,)
         assert dist.event_shape == (5,)
 
     def test_full_joint(self, weight_grf):
@@ -543,7 +548,7 @@ class TestLinearMap:
         h = A @ weight_grf
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
         dist = h(X, joint_inputs=True, joint_outputs=True)
-        assert isinstance(dist, MultivariateNormal)
+        assert isinstance(dist, DistributionArray) and isinstance(dist._flat_component(0), MultivariateNormal)
         assert dist.event_shape == (10,)  # 5 * 2
 
     def test_mean_value(self, weight_grf):
