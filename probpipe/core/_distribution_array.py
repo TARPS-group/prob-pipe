@@ -74,8 +74,8 @@ class DistributionArray[T](Distribution[T]):
     Parameters
     ----------
     components : sequence of Distribution
-        The n component distributions. Must be non-empty, share
-        ``event_shape``, and each have ``batch_shape == ()``.
+        The n component distributions. Must be non-empty and share
+        ``event_shape``.
     batch_shape : tuple of int, optional
         Leading batch shape. Defaults to ``(len(components),)`` for the
         1-D form; ``prod(batch_shape)`` must equal ``len(components)``.
@@ -138,10 +138,8 @@ class DistributionArray[T](Distribution[T]):
         if not components:
             raise ValueError("DistributionArray requires at least one component")
         # Components must share event_shape. Batching lives on the
-        # DistributionArray itself, not on its elements; the
-        # ``Distribution.batch_shape`` accessor was removed in
-        # PR-C.3 ("one random variable per Distribution"), so
-        # there's no per-component batch to validate against.
+        # DistributionArray itself; per the "one random variable per
+        # Distribution" rule, components have no batch_shape.
         es0 = getattr(components[0], "event_shape", ())
         for i, c in enumerate(components):
             es = getattr(c, "event_shape", ())
@@ -413,6 +411,20 @@ class DistributionArray[T](Distribution[T]):
         if self._backend is not None:
             return tuple(self._backend.event_shape)
         return getattr(self._components[0], "event_shape", ())
+
+    @property
+    def dtype(self):
+        """Per-cell dtype.
+
+        Cells share an event shape and (in practice) a dtype because
+        homogeneous backends produce uniformly-typed cells and
+        literal-array constructions inherit from the source.
+        Backend-delegated arrays read it from the backend; literal
+        arrays read it from the first component.
+        """
+        if self._backend is not None:
+            return getattr(self._backend, "dtype", None)
+        return getattr(self._components[0], "dtype", None)
 
     # -- container protocol --------------------------------------------------
 

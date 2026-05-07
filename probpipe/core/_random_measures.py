@@ -14,8 +14,8 @@ a ``Distribution[T]``.
 Layering: shape and support semantics
 -------------------------------------
 
-A regular ``Distribution[T]`` may carry ``support`` / ``event_shape`` /
-``batch_shape`` (these enter the hierarchy at
+A regular ``Distribution[T]`` may carry ``support`` / ``event_shape``
+(these enter the hierarchy at
 :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`,
 not on the abstract base).  A ``RandomMeasure[T]`` describes
 *two* layers simultaneously:

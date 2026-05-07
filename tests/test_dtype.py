@@ -328,10 +328,7 @@ def test_x64_gaussian_random_function():
         )
         X = jnp.linspace(-1.0, 1.0, 5)[:, None]
         d = grf(X)
-        # PR-C.3 Option A: ``grf(X)`` returns a ``DistributionArray``;
-        # query the per-cell dtype via the first cell.
-        cell = d._flat_component(0)
-        assert cell.dtype == jnp.float64, cell.dtype
+        assert d.dtype == jnp.float64, d.dtype
         # bias defaults to zeros at the weight dtype
         assert grf._bias.dtype == jnp.float64
         print('OK')

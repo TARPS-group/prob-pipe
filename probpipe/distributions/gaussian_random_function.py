@@ -30,6 +30,11 @@ from ..core._random_functions import ArrayRandomFunction
 # where needed.  For type annotations we use strings.
 
 
+_PREDICTION_NAME = "grf_prediction"
+"""Name passed to every distribution ``GaussianRandomFunction.predict``
+constructs. Subclasses may rebind by overriding ``predict``."""
+
+
 # ---------------------------------------------------------------------------
 # GaussianRandomFunction
 # ---------------------------------------------------------------------------
@@ -217,7 +222,7 @@ class GaussianRandomFunction(ArrayRandomFunction):
                 batch_shape=(*extra_batch, n, *self._output_shape),
                 loc=mean,
                 scale=jnp.sqrt(variance),
-                name="grf_prediction",
+                name=_PREDICTION_NAME,
             )
 
         # -- At least one joint axis — need covariance ------------------------
@@ -235,7 +240,7 @@ class GaussianRandomFunction(ArrayRandomFunction):
                 batch_shape=tuple(extra_batch),
                 loc=flat_mean,
                 scale_tril=scale_tril,
-                name="grf_prediction",
+                name=_PREDICTION_NAME,
             )
 
         if joint_inputs and not joint_outputs:
@@ -254,7 +259,7 @@ class GaussianRandomFunction(ArrayRandomFunction):
                 batch_shape=(*extra_batch, *self._output_shape),
                 loc=mean_t,
                 scale_tril=scale_tril,
-                name="grf_prediction",
+                name=_PREDICTION_NAME,
             )
 
         # joint_outputs only (not joint_inputs)
@@ -265,7 +270,7 @@ class GaussianRandomFunction(ArrayRandomFunction):
             batch_shape=(*extra_batch, n),
             loc=flat_mean,
             scale_tril=scale_tril,
-            name="grf_prediction",
+            name=_PREDICTION_NAME,
         )
 
 

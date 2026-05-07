@@ -751,12 +751,6 @@ class TestShapeSemantics:
 class TestDistributionCoverageGaps:
     """Cover otherwise-uncovered defaults and helpers in core.distribution."""
 
-    # NOTE: ``test_batch_shape_default`` removed in PR-C.3.
-    # ``NumericRecordDistribution.batch_shape`` no longer exists —
-    # the framework hierarchy "one random variable per Distribution"
-    # rule means scalar distributions have no batch_shape attribute
-    # at all (use ``DistributionArray`` for batched collections).
-
     def test_dtype_none_without_template(self):
         """NumericRecordDistribution.dtype is None when no template is set."""
         class Scalar(NumericRecordDistribution):
@@ -771,14 +765,6 @@ class TestDistributionCoverageGaps:
         from probpipe import Normal
         n = Normal(loc=0.0, scale=1.0, name="x")
         assert n.dtype == n._tfp_dist.dtype
-
-    # NOTE: ``test_repr_with_batch_shape`` was removed in PR-C.2.
-    # It exercised ``Normal(loc=arr, scale=arr)`` (now rejected by
-    # ``TFPDistribution.__init__``) to verify that the repr includes
-    # ``batch_shape``. Distributions never carry a non-trivial
-    # ``batch_shape`` after PR-C.2, so the repr branch the test
-    # asserted on is unreachable. PR-C.3 will remove ``batch_shape``
-    # from the repr entirely.
 
     def test_array_empirical_dtype(self):
         """RecordEmpiricalDistribution.dtype returns sample dtype."""
