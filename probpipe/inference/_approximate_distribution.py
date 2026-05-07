@@ -41,6 +41,23 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         Optional per-sample importance weights (across all chains).
     name : str or None
         Distribution name for provenance.
+
+    Notes
+    -----
+    When ``record_template`` is a multi-field template with all-flat
+    leaves, ``__init__`` slices the concatenated chain into per-field
+    arrays so the underlying :class:`~probpipe.RecordEmpiricalDistribution`
+    exposes the named fields directly. When the template contains any
+    nested ``RecordTemplate`` field, ``__init__`` falls back to a
+    single-field auto-wrap of the flat chain — ``draws()`` still walks
+    the full template (including nested structure) using the original
+    flat samples, but the flat ``_record_data`` (and the accessors that
+    read from it: ``event_shapes`` / ``dtypes`` / ``flat_samples`` /
+    ``_mean`` / ``_variance``) only see the single auto-wrap field. A
+    user inspecting the nested template via ``record_template`` /
+    ``fields`` / ``draws()`` sees the right thing; a user inspecting
+    via ``event_shapes`` sees the flat-chain view. Tracked in
+    ``test_inference.py::test_nested_template_accessors_split_state``.
     """
 
     def __init__(
