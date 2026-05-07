@@ -1,19 +1,5 @@
 """MCMC diagnostic workflow functions.
 
-All diagnostic functions accept any posterior-like object:
-
-- ProbPipe ``Distribution`` (result of ``condition_on``)
-- ``EmpiricalDistribution``
-- ArviZ ``InferenceData``
-- Plain ``dict[str, array]``
-- Bare array
-
-The ``WorkflowFunction`` wrappers type-hint ``posterior`` as
-``Distribution`` to prevent accidental broadcasting when a
-Distribution is passed. For non-Distribution inputs (plain dict,
-bare array), call the ``_*_impl`` functions directly or use
-``extract_draws`` from ``_arviz_bridge``.
-
 Usage::
 
     from probpipe.diagnostics import compute_rhat, mcmc_summary
@@ -29,6 +15,7 @@ from ..core.distribution import Distribution
 from ..core.node import WorkflowFunction
 from ._arviz_bridge import (
     check_arviz_installed,
+    extract_draws,
     to_arviz_dataset,
     build_warnings,
 )
@@ -40,7 +27,25 @@ __all__ = [
     "mcmc_summary",
     "plot_trace",
     "plot_rank",
+    "plot_kde",
+    "fit_kde",
 ]
+
+
+def _axes_to_fig(axes):
+    """Robustly extract a Figure from whatever az.plot_* returns.
+
+    ArviZ plot functions return one of:
+      - a 2-D ndarray of Axes  (plot_trace: shape (n_vars, 2))
+      - a 1-D ndarray of Axes  (plot_rank, plot_posterior: shape (n_vars,))
+      - a bare Axes object      (any of the above with n_vars == 1)
+    """
+    import matplotlib.axes
+    if isinstance(axes, matplotlib.axes.Axes):
+        return axes.get_figure()
+    # ndarray — ravel to 1-D then take first element
+    flat = axes.ravel()
+    return flat[0].get_figure()
 
 
 # ── compute_rhat ──────────────────────────────────────────────────────────────
@@ -54,15 +59,13 @@ def _compute_rhat_impl(posterior: Distribution) -> dict:
 
     .. note::
         R-hat requires at least 2 chains for a meaningful result.
-        Multi-chain posteriors should store draws as shape
-        ``(n_chains, n_draws)`` per parameter.
+        ``condition_on`` defaults to a single chain — run with
+        ``num_chains >= 2`` for reliable R-hat estimates.
 
     Parameters
     ----------
     posterior : Distribution
         Posterior from ``condition_on`` or ``EmpiricalDistribution``.
-        Accepts any format supported by
-        :func:`~probpipe.diagnostics._arviz_bridge.extract_draws`.
 
     Returns
     -------
@@ -78,9 +81,8 @@ def _compute_rhat_impl(posterior: Distribution) -> dict:
     if n_chains < 2:
         _warnings.warn(
             "R-hat requires at least 2 chains for a meaningful result. "
-            "Multi-chain draws should have shape (n_chains, n_draws) "
-            "per parameter.",
-            stacklevel=2,
+            "Run condition_on with num_chains >= 2.",
+            stacklevel=4,
         )
 
     rhat_ds = az.rhat(dataset)
@@ -106,6 +108,9 @@ def _compute_ess_impl(posterior: Distribution) -> dict:
     to, after accounting for autocorrelation. Low ESS (< 400) means
     the sampler is inefficient and estimates may be unreliable.
 
+    - **Bulk ESS** — reliability of central tendency estimates.
+    - **Tail ESS** — reliability of tail quantile estimates.
+
     Parameters
     ----------
     posterior : Distribution
@@ -114,14 +119,8 @@ def _compute_ess_impl(posterior: Distribution) -> dict:
     Returns
     -------
     dict
-        ::
-
-            {
-                "ess": {
-                    "bulk": {"intercept": 950.0, "slope": 987.0},
-                    "tail": {"intercept": 910.0, "slope": 942.0},
-                }
-            }
+        ``{"ess_bulk": {"intercept": 950.0, ...},``
+        ``"ess_tail":  {"intercept": 910.0, ...}}``
     """
     check_arviz_installed()
     import arviz as az
@@ -131,10 +130,8 @@ def _compute_ess_impl(posterior: Distribution) -> dict:
     ess_tail = az.ess(dataset, method="tail")
 
     return {
-        "ess": {
-            "bulk": {v: float(ess_bulk[v].values) for v in ess_bulk.data_vars},
-            "tail": {v: float(ess_tail[v].values) for v in ess_tail.data_vars},
-        }
+        "ess_bulk": {v: float(ess_bulk[v].values) for v in ess_bulk.data_vars},
+        "ess_tail": {v: float(ess_tail[v].values) for v in ess_tail.data_vars},
     }
 
 
@@ -160,14 +157,8 @@ def _compute_mcse_impl(posterior: Distribution) -> dict:
     Returns
     -------
     dict
-        ::
-
-            {
-                "mcse": {
-                    "mean": {"intercept": 0.003, "slope": 0.002},
-                    "sd":   {"intercept": 0.002, "slope": 0.001},
-                }
-            }
+        ``{"mcse_mean": {"intercept": 0.003, ...},``
+        ``"mcse_sd":    {"intercept": 0.002, ...}}``
     """
     check_arviz_installed()
     import arviz as az
@@ -177,10 +168,8 @@ def _compute_mcse_impl(posterior: Distribution) -> dict:
     mcse_sd   = az.mcse(dataset, method="sd")
 
     return {
-        "mcse": {
-            "mean": {v: float(mcse_mean[v].values) for v in mcse_mean.data_vars},
-            "sd":   {v: float(mcse_sd[v].values)   for v in mcse_sd.data_vars},
-        }
+        "mcse_mean": {v: float(mcse_mean[v].values) for v in mcse_mean.data_vars},
+        "mcse_sd":   {v: float(mcse_sd[v].values)   for v in mcse_sd.data_vars},
     }
 
 
@@ -196,7 +185,7 @@ def _mcmc_summary_impl(posterior: Distribution) -> dict:
 
     Runs R-hat, ESS (bulk + tail), and MCSE together — sharing a
     single ArviZ dataset conversion — and attaches human-readable
-    warnings for values outside recommended thresholds.
+    warnings for any values outside recommended thresholds.
 
     Parameters
     ----------
@@ -209,16 +198,12 @@ def _mcmc_summary_impl(posterior: Distribution) -> dict:
         ::
 
             {
-                "rhat": {"intercept": 1.002, "slope": 1.001},
-                "ess": {
-                    "bulk": {"intercept": 950.0, "slope": 987.0},
-                    "tail": {"intercept": 910.0, "slope": 942.0},
-                },
-                "mcse": {
-                    "mean": {"intercept": 0.003, "slope": 0.002},
-                    "sd":   {"intercept": 0.002, "slope": 0.001},
-                },
-                "warnings": [],
+                "rhat":      {"intercept": 1.002, "slope": 1.001},
+                "ess_bulk":  {"intercept": 950.0, "slope": 987.0},
+                "ess_tail":  {"intercept": 910.0, "slope": 942.0},
+                "mcse_mean": {"intercept": 0.003, "slope": 0.002},
+                "mcse_sd":   {"intercept": 0.002, "slope": 0.001},
+                "warnings":  [],
             }
 
         An empty ``"warnings"`` list means all diagnostics passed.
@@ -235,21 +220,19 @@ def _mcmc_summary_impl(posterior: Distribution) -> dict:
     mcse_mean = az.mcse(dataset, method="mean")
     mcse_sd   = az.mcse(dataset, method="sd")
 
-    rhat = {v: float(rhat_ds[v].values)  for v in rhat_ds.data_vars}
-    ess  = {
-        "bulk": {v: float(ess_bulk[v].values) for v in ess_bulk.data_vars},
-        "tail": {v: float(ess_tail[v].values) for v in ess_tail.data_vars},
-    }
-    mcse = {
-        "mean": {v: float(mcse_mean[v].values) for v in mcse_mean.data_vars},
-        "sd":   {v: float(mcse_sd[v].values)   for v in mcse_sd.data_vars},
-    }
+    rhat   = {v: float(rhat_ds[v].values)   for v in rhat_ds.data_vars}
+    bulk   = {v: float(ess_bulk[v].values)   for v in ess_bulk.data_vars}
+    tail   = {v: float(ess_tail[v].values)   for v in ess_tail.data_vars}
+    m_mean = {v: float(mcse_mean[v].values)  for v in mcse_mean.data_vars}
+    m_sd   = {v: float(mcse_sd[v].values)    for v in mcse_sd.data_vars}
 
     return {
-        "rhat":     rhat,
-        "ess":      ess,
-        "mcse":     mcse,
-        "warnings": build_warnings(rhat, ess),
+        "rhat":      rhat,
+        "ess_bulk":  bulk,
+        "ess_tail":  tail,
+        "mcse_mean": m_mean,
+        "mcse_sd":   m_sd,
+        "warnings":  build_warnings(rhat, bulk, tail),
     }
 
 
@@ -277,7 +260,8 @@ def _plot_trace_impl(
     posterior : Distribution
         Posterior from ``condition_on`` or ``EmpiricalDistribution``.
     figsize : tuple[int, int] or None
-        Figure size. Defaults to ``(10, 2 * n_params)``.
+        Figure size passed to matplotlib. Defaults to
+        ``(10, 2 * n_params)``.
     title : str or None
         Optional figure title.
 
@@ -295,7 +279,7 @@ def _plot_trace_impl(
     fs   = figsize or (10, 2 * n_params)
     axes = az.plot_trace(dataset, figsize=fs)
 
-    fig = axes.ravel()[0].get_figure()
+    fig = _axes_to_fig(axes)
     fig.suptitle(title or "Trace Plot", y=1.02, fontsize=12)
     fig.tight_layout()
 
@@ -317,16 +301,18 @@ def _plot_rank_impl(
     """Generate rank plots for MCMC chains.
 
     A rank plot shows the distribution of ranks of each chain's
-    samples relative to pooled samples. Uniform rank distributions
-    indicate good mixing. More sensitive than trace plots for
-    detecting subtle convergence failures.
+    samples relative to the pooled samples across all chains. Uniform
+    rank distributions indicate good mixing. Rank plots are more
+    sensitive than trace plots for detecting subtle convergence
+    failures.
 
     Parameters
     ----------
     posterior : Distribution
         Posterior from ``condition_on`` or ``EmpiricalDistribution``.
     figsize : tuple[int, int] or None
-        Figure size. Defaults to ``(10, 2 * n_params)``.
+        Figure size passed to matplotlib. Defaults to
+        ``(10, 2 * n_params)``.
     title : str or None
         Optional figure title.
 
@@ -344,7 +330,7 @@ def _plot_rank_impl(
     fs   = figsize or (10, 2 * n_params)
     axes = az.plot_rank(dataset, figsize=fs)
 
-    fig = axes.ravel()[0].get_figure()
+    fig = _axes_to_fig(axes)
     fig.suptitle(title or "Rank Plot", y=1.02, fontsize=12)
     fig.tight_layout()
 
@@ -353,4 +339,187 @@ def _plot_rank_impl(
 
 plot_rank = WorkflowFunction(
     func=_plot_rank_impl, name="plot_rank"
+)
+
+
+# ── fit_kde ───────────────────────────────────────────────────────────────────
+
+def _fit_kde_impl(
+    posterior: Distribution,
+    *,
+    bandwidth: float | None = None,
+) -> dict:
+    """Fit a :class:`~probpipe.distributions.KDEDistribution` per scalar parameter.
+
+    Pools MCMC draws across all chains and fits one
+    :class:`~probpipe.distributions.KDEDistribution` per scalar
+    parameter. The returned distributions support ``log_prob``,
+    ``sample``, and ``from_distribution`` — they are full ProbPipe
+    distribution objects, not just plot helpers.
+
+    Vector-valued parameters are skipped with a warning.
+
+    Parameters
+    ----------
+    posterior : Distribution
+        Posterior from ``condition_on`` or ``EmpiricalDistribution``.
+    bandwidth : float or None
+        Scalar bandwidth forwarded to ``KDEDistribution`` as a
+        per-dimension scale. ``None`` (default) applies Silverman's rule.
+
+    Returns
+    -------
+    dict
+        ``{"intercept": KDEDistribution, "slope": KDEDistribution, ...}``
+        One entry per scalar parameter, keyed by parameter name.
+    """
+    import numpy as np
+    from ..distributions.kde import KDEDistribution
+
+    raw_draws = extract_draws(posterior)
+    kde_distributions: dict = {}
+
+    for var, arr in raw_draws.items():
+        arr = np.asarray(arr)
+        if arr.ndim > 2:
+            _warnings.warn(
+                f"fit_kde: skipping '{var}' — vector/matrix parameters are not "
+                f"supported (shape {arr.shape[2:]}).",
+                stacklevel=4,
+            )
+            continue
+        pooled = arr.reshape(-1).astype(float)
+        bw = np.array([bandwidth], dtype=float) if bandwidth is not None else None
+        kde_distributions[var] = KDEDistribution(pooled, bandwidth=bw, name=var)
+
+    return kde_distributions
+
+
+fit_kde = WorkflowFunction(
+    func=_fit_kde_impl, name="fit_kde"
+)
+
+
+# ── plot_kde ──────────────────────────────────────────────────────────────────
+
+def _plot_kde_impl(
+    posterior: Distribution,
+    *,
+    bandwidth: float | None = None,
+    credible_interval: float = 0.94,
+    point_estimate: str = "mean",
+    figsize: tuple[int, int] | None = None,
+    title: str | None = None,
+) -> dict:
+    """Generate KDE marginal density plots using :class:`~probpipe.distributions.KDEDistribution`.
+
+    For each scalar parameter, pools the MCMC draws across all chains,
+    fits a :class:`~probpipe.distributions.KDEDistribution` (Gaussian
+    mixture backed by TFP, with Silverman's rule bandwidth by default),
+    and overlays its density curve on ArviZ's ``plot_posterior`` panels.
+    The HDI shading and point estimate are computed by ArviZ from the
+    raw pooled draws; the dashed curve is the ProbPipe KDE density.
+
+    To obtain the fitted ``KDEDistribution`` objects for downstream use
+    (log-density evaluation, sampling, ``from_distribution``), call
+    :func:`fit_kde` separately — it returns a plain dict keyed by
+    parameter name.
+
+    Vector-valued parameters are skipped with a warning.
+
+    Parameters
+    ----------
+    posterior : Distribution
+        Posterior from ``condition_on`` or ``EmpiricalDistribution``.
+    bandwidth : float or None
+        Scalar bandwidth forwarded to ``KDEDistribution``. ``None``
+        (default) applies Silverman's rule.
+    credible_interval : float
+        HDI mass to shade, in (0, 1). Default is 0.94 (94% HDI).
+    point_estimate : {"mean", "median", "mode"}
+        Point estimate marker. Forwarded to ``az.plot_posterior``.
+    figsize : tuple[int, int] or None
+        Passed to ``az.plot_posterior``. Defaults to
+        ``(4 * n_scalar_params, 3)``.
+    title : str or None
+        Figure-level suptitle. Defaults to ``"Posterior KDE"``.
+
+    Returns
+    -------
+    dict
+        ``{"fig": matplotlib.figure.Figure}``
+    """
+    check_arviz_installed()
+    import numpy as np
+    import jax.numpy as jnp
+    import arviz as az
+    import xarray as xr
+    from ..distributions.kde import KDEDistribution
+
+    raw_draws = extract_draws(posterior)
+
+    scalar_vars: list[str] = []
+    skipped: list[str] = []
+    for var, arr in raw_draws.items():
+        if np.asarray(arr).ndim <= 2:
+            scalar_vars.append(var)
+        else:
+            skipped.append(var)
+
+    if skipped:
+        _warnings.warn(
+            f"plot_kde: skipping {skipped} — vector/matrix parameters are not "
+            f"supported. Use a pair-plot for multi-dimensional marginals.",
+            stacklevel=4,
+        )
+    if not scalar_vars:
+        raise ValueError(
+            "plot_kde: no scalar parameters found. "
+            "All parameters appear to be vector-valued."
+        )
+
+    # Fit KDEDistribution per parameter and build pooled-draw dataset for ArviZ
+    kde_distributions: dict[str, KDEDistribution] = {}
+    data_vars: dict[str, xr.DataArray] = {}
+    for var in scalar_vars:
+        pooled = np.asarray(raw_draws[var]).reshape(-1).astype(float)
+        bw = np.array([bandwidth], dtype=float) if bandwidth is not None else None
+        kde_distributions[var] = KDEDistribution(pooled, bandwidth=bw, name=var)
+        data_vars[var] = xr.DataArray(pooled[np.newaxis, :], dims=["chain", "draw"])
+
+    dataset  = xr.Dataset(data_vars)
+    n_params = len(scalar_vars)
+    fs       = figsize or (4 * n_params, 3)
+
+    axes = az.plot_posterior(
+        dataset,
+        hdi_prob=credible_interval,
+        point_estimate=point_estimate,
+        figsize=fs,
+    )
+
+    # Overlay the ProbPipe KDE curve on each panel
+    import matplotlib.axes as _maxes
+    axes_list = (
+        [axes] if isinstance(axes, _maxes.Axes) else list(axes.ravel())
+    )
+    for ax, var in zip(axes_list, scalar_vars):
+        kde = kde_distributions[var]
+        pooled = np.asarray(raw_draws[var]).reshape(-1).astype(float)
+        margin = (pooled.max() - pooled.min()) * 0.15
+        grid = np.linspace(pooled.min() - margin, pooled.max() + margin, 300)
+        density = np.asarray(jnp.exp(kde._tfp_dist.log_prob(grid)))
+        ax.plot(grid, density, color="C1", lw=1.5, ls="--",
+                label=f"KDE (bw={float(kde._bandwidth[0]):.3f})")
+        ax.legend(fontsize=7, loc="upper right")
+
+    fig = _axes_to_fig(axes)
+    fig.suptitle(title or "Posterior KDE", y=1.02, fontsize=12)
+    fig.tight_layout()
+
+    return {"fig": fig}
+
+
+plot_kde = WorkflowFunction(
+    func=_plot_kde_impl, name="plot_kde"
 )
