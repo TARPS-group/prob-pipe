@@ -54,19 +54,6 @@ subclasses or for overriding defaults (e.g., preferring `Softplus`
 over `Exp` for `positive`). Instance registrations take precedence
 over type registrations.
 
-!!! note "Round-trip with `TransformedDistribution.support`"
-
-    `bijector_for` and the forward map used by
-    `TransformedDistribution.support` are **not** strict inverses.
-    `TransformedDistribution(base, bijector_for(c)).support == c`
-    holds only for `real`, `positive`, and `unit_interval`. For
-    `non_negative` (Softplus → `positive`), `interval(low, high)`
-    (parameterized Sigmoid → `unit_interval`), `simplex` and
-    `positive_definite` (Chain → `real`), and `greater_than` (Chain
-    → `real`), the round-trip drifts to a coarser support. The two
-    maps answer different questions and have different reliability
-    tiers.
-
 ::: probpipe.bijector_for
 
 ::: probpipe.register_bijector

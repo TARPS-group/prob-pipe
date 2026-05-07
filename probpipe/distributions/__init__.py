@@ -23,10 +23,7 @@ from .discrete import (
     NegativeBinomial,
 )
 from .transformed import TransformedDistribution
-from ._bijector_dispatch import (
-    bijector_for,
-    register_bijector,
-)
+from ._bijector_dispatch import bijector_for, register_bijector
 from .joint import (
     ProductDistribution,
     SequentialJointDistribution,
