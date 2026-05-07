@@ -348,19 +348,6 @@ class RecordDistribution(Distribution[Record]):
         tpl = self.record_template
         return tpl.fields if tpl is not None else ()
 
-    @property
-    def n(self) -> int:
-        """Number of cells in this distribution (see STYLE_GUIDE §1.9).
-
-        ``Distribution`` no longer has a ``batch_shape`` (PR-C.3
-        framework hierarchy: "one random variable per
-        Distribution"); a scalar Record distribution always has
-        ``n == 1``. Collections of distributions live in
-        :class:`~probpipe.DistributionArray`, where ``n`` reports
-        ``prod(batch_shape)``.
-        """
-        return 1
-
     def __getitem__(self, key: str) -> _RecordDistributionView:
         return _RecordDistributionView(self, key)
 

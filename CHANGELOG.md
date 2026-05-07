@@ -60,6 +60,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   single batched `Normal`/`MultivariateNormal`; per-cell
   `event_shape` is unchanged.
 
+- **`RecordDistribution.n` and `DistributionArray.n` removed.**
+  STYLE_GUIDE §1.9 reserves `.n` for finite-sample distribution
+  classes that hold a finite collection of samples / observations
+  / components (`EmpiricalDistribution`, `BootstrapDistribution`,
+  `BroadcastDistribution`, …). The two cases removed here did
+  not fit the contract: parametric `Normal(0, 1)` does not "hold"
+  any items, and `DistributionArray` is a positional collection of
+  independent cells, not a finite-sample distribution. Migration:
+  for `DistributionArray`, use `len(da)` (leading-axis size) or
+  `prod(da.batch_shape)` (total cell count) — `__repr__` now shows
+  `batch_shape=...`. For parametric distributions, drop the
+  call — it always returned `1`. Finite-sample distributions
+  retain `.n` (see STYLE_GUIDE §1.9 for the full table).
+
 - **TFP-backed distribution constructors reject batched parameters.**
   `Normal(loc=jnp.zeros(5), scale=1.0, name="x")` (and the same
   pattern for every other TFP-backed class — `Beta`, `Gamma`,

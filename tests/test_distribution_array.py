@@ -6,7 +6,7 @@ collection of scalar distributions indexed by a (multi-d)
 sweep layer, not on the DistArray itself. This file covers:
 
 - Construction + invariants + container surface (indexing, iteration,
-  shape, slicing, ``.n``).
+  shape, slicing, ``len()``).
 - Sweep-layer behavior for the four canonical ops (``sample``,
   ``mean``, ``variance``, ``log_prob``) on DistArray inputs — axis
   ordering, return-type contract, per-cell values.
@@ -44,7 +44,6 @@ class TestConstruction:
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(4)]
         da = _make_distribution_array(comps)
         assert isinstance(da, DistributionArray)
-        assert da.n == 4
         assert len(da) == 4
         assert da.batch_shape == (4,)
         assert da.event_shape == ()
@@ -77,11 +76,11 @@ class TestConstruction:
             _make_distribution_array([])
 
     def test_single_component(self):
-        """Edge case: n=1 works; batch_shape=(1,), indexing, sampling,
-        and reductions all behave uniformly with the n>1 path."""
+        """Edge case: a single-cell DA works; batch_shape=(1,), indexing,
+        sampling, and reductions all behave uniformly with the multi-cell path."""
         comp = Normal(loc=7.0, scale=0.5, name="only")
         da = _make_distribution_array([comp])
-        assert da.n == 1
+        assert len(da) == 1
         assert da.batch_shape == (1,)
         assert da[0] is comp
         m = mean(da)
@@ -99,7 +98,7 @@ class TestConstruction:
         da = _make_distribution_array(comps)
         r = repr(da)
         assert "DistributionArray" in r
-        assert "n=3" in r
+        assert "batch_shape=(3,)" in r
 
     # The factory demands uniform event_shape across components so the
     # shared event_shape contract holds. Mismatches raise at construction.
@@ -326,7 +325,6 @@ class TestBackendDelegatedStorage:
         assert da._backend is backend
         assert da.batch_shape == (5,)
         assert da.event_shape == ()
-        assert da.n == 5
         assert len(da) == 5
         assert da.name == "batched_x"
 
@@ -397,7 +395,7 @@ class TestBackendDelegatedStorage:
         # Slicing forces materialisation (rare path).
         assert da._components is not None
         assert isinstance(sub, DistributionArray)
-        assert sub.n == 3
+        assert len(sub) == 3
 
     def test_repr_indicates_backend_mode(self):
         from probpipe import DistributionArray
@@ -424,7 +422,6 @@ class TestBackendDelegatedStorage:
         )
         da = DistributionArray._from_backend(backend, name="g")
         assert da.batch_shape == (2, 3)
-        assert da.n == 6
         # Row-major flat index 4 -> (1, 1) -> loc=4.0
         assert float(da[1, 1].loc) == 4.0
         assert float(da._flat_component(4).loc) == 4.0
@@ -448,7 +445,7 @@ class TestFromBatchedParams:
         assert isinstance(da._backend, _TFPArrayBackend)
         assert da.batch_shape == (5,)
         assert da.event_shape == ()
-        assert da.n == 5
+        assert len(da) == 5
 
     def test_per_cell_name_auto_suffix(self):
         from probpipe import Normal, DistributionArray
@@ -496,7 +493,6 @@ class TestFromBatchedParams:
             name="g",
         )
         assert da.batch_shape == (2, 3)
-        assert da.n == 6
         # Row-major: (1, 2) -> flat 5 -> loc=5.0, name="g_5".
         assert float(da[1, 2].loc) == 5.0
         assert da[1, 2].name == "g_5"

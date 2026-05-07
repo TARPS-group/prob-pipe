@@ -368,11 +368,6 @@ class DistributionArray[T](Distribution[T]):
     # -- structure -----------------------------------------------------------
 
     @property
-    def n(self) -> int:
-        """Total number of components (``prod(batch_shape)``)."""
-        return prod(self._batch_shape)
-
-    @property
     def components(self) -> tuple[Distribution, ...]:
         """Flat tuple of component distributions, in row-major order
         across the leading ``batch_shape``.
@@ -502,7 +497,7 @@ class DistributionArray[T](Distribution[T]):
 
     def __iter__(self):
         if self._backend is not None:
-            return (self._backend.cell(i) for i in range(self.n))
+            return (self._backend.cell(i) for i in range(prod(self._batch_shape)))
         return iter(self._components)
 
     def _flat_component(self, i: int) -> Distribution:
@@ -517,11 +512,11 @@ class DistributionArray[T](Distribution[T]):
         called.
         """
         i_int = int(i)
-        n = self.n
-        if not 0 <= i_int < n:
+        n_cells = prod(self._batch_shape)
+        if not 0 <= i_int < n_cells:
             raise IndexError(
                 f"_flat_component: index {i_int} out of range for "
-                f"DistributionArray with n={n} cells."
+                f"DistributionArray with batch_shape={self._batch_shape}."
             )
         if self._backend is not None:
             return self._backend.cell(i_int)
@@ -530,7 +525,7 @@ class DistributionArray[T](Distribution[T]):
     def __repr__(self) -> str:
         backed = " backend=True" if self._backend is not None else ""
         return (
-            f"DistributionArray(n={self.n}, "
+            f"DistributionArray(batch_shape={self._batch_shape}, "
             f"event_shape={self.event_shape}{backed})"
         )
 
