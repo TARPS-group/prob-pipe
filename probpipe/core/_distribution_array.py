@@ -137,26 +137,19 @@ class DistributionArray[T](Distribution[T]):
         components = tuple(components)
         if not components:
             raise ValueError("DistributionArray requires at least one component")
-        # Components must share event_shape and each be scalar
-        # (``batch_shape == ()``); batching lives on the
-        # DistributionArray itself, not on its elements.
+        # Components must share event_shape. Batching lives on the
+        # DistributionArray itself, not on its elements; the
+        # ``Distribution.batch_shape`` accessor was removed in
+        # PR-C.3 ("one random variable per Distribution"), so
+        # there's no per-component batch to validate against.
         es0 = getattr(components[0], "event_shape", ())
         for i, c in enumerate(components):
             es = getattr(c, "event_shape", ())
-            bs = getattr(c, "batch_shape", ())
             if es != es0:
                 raise ValueError(
                     f"DistributionArray requires matching event_shape "
                     f"across components; components[0].event_shape={es0} "
                     f"but components[{i}].event_shape={es}."
-                )
-            if bs != ():
-                raise ValueError(
-                    f"DistributionArray components must be scalar "
-                    f"(batch_shape == ()); components[{i}] has "
-                    f"batch_shape={bs}. Batching is expressed by "
-                    f"DistributionArray itself — pass scalar components "
-                    f"and set batch_shape=... on the DistributionArray."
                 )
         # ``batch_shape`` defaults to (n,) for backward compatibility
         # with the 1-D-only form used until now. Multi-d broadcasting
