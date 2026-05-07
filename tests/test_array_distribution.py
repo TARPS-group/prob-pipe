@@ -194,9 +194,10 @@ class TestFlattenedView:
         flat_dist = vector_mvn.as_flat_distribution()
         assert flat_dist.event_shape == (3,)
 
-    def test_batch_shape(self, vector_mvn):
-        flat_dist = vector_mvn.as_flat_distribution()
-        assert flat_dist.batch_shape == vector_mvn.batch_shape
+    # NOTE: ``test_batch_shape`` removed in PR-C.3. The
+    # ``FlattenedView.batch_shape`` override delegated to the base
+    # distribution's batch_shape, which itself no longer exists per
+    # the "one random variable per Distribution" rule.
 
     def test_sample_shape(self, vector_mvn, key):
         flat_dist = vector_mvn.as_flat_distribution()

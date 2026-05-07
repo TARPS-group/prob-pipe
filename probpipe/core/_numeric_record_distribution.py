@@ -184,11 +184,6 @@ class NumericRecordDistribution(RecordDistribution):
         raise NotImplementedError(f"{type(self).__name__}.supports")
 
     @property
-    def batch_shape(self) -> tuple[int, ...]:
-        """Batch shape (default: scalar, no batching)."""
-        return ()
-
-    @property
     def dtype(self) -> jnp.dtype | None:
         """Scalar dtype if all fields share one, else ``None``.
 
@@ -314,8 +309,6 @@ class NumericRecordDistribution(RecordDistribution):
         if self.name:
             parts.append(f"name={self.name!r}")
         parts.append(f"event_shape={self.event_shape}")
-        if self.batch_shape:
-            parts.append(f"batch_shape={self.batch_shape}")
         return f"{parts[0]}({', '.join(parts[1:])})"
 
 
@@ -519,10 +512,6 @@ class FlattenedView(NumericRecordDistribution):
     @property
     def event_shape(self) -> tuple[int, ...]:
         return (self._base.event_size,)
-
-    @property
-    def batch_shape(self) -> tuple[int, ...]:
-        return getattr(self._base, "batch_shape", ())
 
     def _expectation(
         self,

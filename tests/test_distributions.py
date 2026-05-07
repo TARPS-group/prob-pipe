@@ -747,14 +747,11 @@ class TestShapeSemantics:
 class TestDistributionCoverageGaps:
     """Cover otherwise-uncovered defaults and helpers in core.distribution."""
 
-    def test_batch_shape_default(self):
-        """NumericRecordDistribution.batch_shape defaults to ()."""
-        class Scalar(NumericRecordDistribution):
-            @property
-            def event_shape(self):
-                return ()
-
-        assert Scalar(name="s").batch_shape == ()
+    # NOTE: ``test_batch_shape_default`` removed in PR-C.3.
+    # ``NumericRecordDistribution.batch_shape`` no longer exists —
+    # the framework hierarchy "one random variable per Distribution"
+    # rule means scalar distributions have no batch_shape attribute
+    # at all (use ``DistributionArray`` for batched collections).
 
     def test_dtype_none_without_template(self):
         """NumericRecordDistribution.dtype is None when no template is set."""
