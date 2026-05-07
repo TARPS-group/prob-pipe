@@ -180,7 +180,7 @@ def test_x64_empirical_distribution_preserves_dtype():
         from probpipe import EmpiricalDistribution
         samples = jnp.array([[1.0], [2.0], [3.0]])  # float64 under x64
         d = EmpiricalDistribution(samples, name="x")
-        assert d.samples.dtype == jnp.float64, d.samples.dtype
+        assert d.flat_samples.dtype == jnp.float64, d.flat_samples.dtype
         assert d.dtype == jnp.float64
         print('OK')
         """
