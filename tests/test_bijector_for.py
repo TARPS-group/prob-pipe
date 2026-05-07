@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
 import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
@@ -24,13 +23,9 @@ from probpipe import (
     simplex,
     sphere,
     unit_interval,
+    unregister_bijector,
 )
 from probpipe.core.constraints import Constraint
-
-
-@pytest.fixture
-def key():
-    return jax.random.PRNGKey(0)
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +188,11 @@ class TestBoundary:
 
 
 class TestIntegration:
+    """``TransformedDistribution.support`` reads the bijector class name
+    from ``_BIJECTOR_SUPPORT_MAP`` in ``transformed.py``.  That map and
+    ``bijector_for`` are not strict inverses: they only round-trip for the
+    unparameterized bijectors that appear in the forward map."""
+
     def test_transformed_distribution_inherits_support_positive(self):
         base = Normal(loc=0.0, scale=1.0, name="x")
         td = TransformedDistribution(base, bijector_for(positive))
@@ -203,6 +203,23 @@ class TestIntegration:
         td = TransformedDistribution(base, bijector_for(unit_interval))
         assert td.support == unit_interval
 
+    def test_round_trip_drifts_for_parameterized_interval(self):
+        # ``bijector_for(interval(2,5))`` returns a parameterized
+        # ``Sigmoid``; the forward map only knows the bijector class name
+        # ``Sigmoid`` → ``unit_interval`` and cannot recover the bounds.
+        base = Normal(loc=0.0, scale=1.0, name="x")
+        td = TransformedDistribution(base, bijector_for(interval(2.0, 5.0)))
+        assert td.support == unit_interval
+
+    def test_round_trip_drifts_for_chain_bijectors(self):
+        # ``bijector_for(greater_than(...))`` and
+        # ``bijector_for(positive_definite)`` both return ``tfb.Chain``
+        # whose outermost bijectors (Shift, CholeskyOuterProduct) aren't
+        # in the forward map; ``support`` falls through to ``real``.
+        base = Normal(loc=0.0, scale=1.0, name="x")
+        td_gt = TransformedDistribution(base, bijector_for(greater_than(3.0)))
+        assert td_gt.support == real
+
 
 # ---------------------------------------------------------------------------
 # Custom registration & override
@@ -211,10 +228,6 @@ class TestIntegration:
 
 class TestCustomization:
     def test_register_custom_constraint(self):
-        from probpipe.distributions._bijector_dispatch import (
-            _CONSTRAINT_BIJECTOR_REGISTRY,
-        )
-
         class _MyPositive(Constraint):
             def check(self, value):
                 return jnp.asarray(value) > 0
@@ -224,19 +237,23 @@ class TestCustomization:
             bij = bijector_for(_MyPositive())
             assert isinstance(bij, tfb.Softplus)
         finally:
-            _CONSTRAINT_BIJECTOR_REGISTRY.pop(_MyPositive, None)
+            unregister_bijector(_MyPositive)
 
     def test_instance_override(self):
         """Registering on a singleton overrides the type-level default,
         and removing the override restores it."""
-        from probpipe.distributions._bijector_dispatch import (
-            _CONSTRAINT_BIJECTOR_REGISTRY,
-        )
-
         register_bijector(positive, lambda c: tfb.Softplus())
         try:
             assert isinstance(bijector_for(positive), tfb.Softplus)
         finally:
-            _CONSTRAINT_BIJECTOR_REGISTRY.pop(positive, None)
+            unregister_bijector(positive)
         # Restored: type-level Exp default is back.
         assert isinstance(bijector_for(positive), tfb.Exp)
+
+    def test_unregister_is_noop_for_missing_key(self):
+        class _NotRegistered(Constraint):
+            def check(self, value):
+                return jnp.asarray(value) >= 0
+
+        # Should not raise.
+        unregister_bijector(_NotRegistered)

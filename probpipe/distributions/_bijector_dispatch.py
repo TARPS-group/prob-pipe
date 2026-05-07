@@ -25,11 +25,21 @@ than on :class:`Constraint` itself: ``probpipe/core/`` is
 backend-agnostic and has no TFP imports today, while
 ``probpipe/distributions/`` already pairs Constraints with TFP
 bijectors (see :data:`_BIJECTOR_SUPPORT_MAP` in
-:mod:`probpipe.distributions.transformed`).  The forward direction
-(bijector → support) and inverse direction (support → bijector)
-remain separate structures because they answer different questions
-with different reliability tiers; see the issue tracker for
-proposals to unify them.
+:mod:`probpipe.distributions.transformed`).
+
+The forward direction (bijector → support) in ``_BIJECTOR_SUPPORT_MAP``
+and the inverse direction (support → bijector) implemented here are
+**not** strict inverses of each other.  In particular,
+``TransformedDistribution(base, bijector_for(c)).support == c`` holds
+only for ``real``, ``positive``, and ``unit_interval`` (the cases where
+the canonical bijector is unparameterized and is in the forward map).
+For ``non_negative`` (Softplus → ``positive``), ``interval(low, high)``
+(parameterized Sigmoid → ``unit_interval``), ``simplex`` and
+``positive_definite`` (Chain → not in forward map → ``real``), and
+``greater_than`` (Chain → ``real``), the round-trip drifts to a
+coarser support.  The two maps answer different questions with
+different reliability tiers; see the issue tracker for proposals to
+unify them.
 """
 
 from __future__ import annotations
@@ -54,7 +64,7 @@ from ..core.constraints import (
     _UnitInterval,
 )
 
-__all__ = ["bijector_for", "register_bijector"]
+__all__ = ["bijector_for", "register_bijector", "unregister_bijector"]
 
 
 # Factory takes the (parameterized) constraint instance and returns a bijector.
@@ -88,11 +98,27 @@ def register_bijector(
     Notes
     -----
     Re-registering an existing key silently overwrites the previous
-    factory.  This is intentional: it lets downstream code customize
-    defaults (e.g., prefer ``Softplus`` over ``Exp`` for ``positive``)
-    without needing an unregister API.
+    factory.  Use :func:`unregister_bijector` to remove a registration
+    (e.g. to restore a default after a temporary override, typically in
+    tests).
+
+    Avoid registering against the base :class:`Constraint` class itself:
+    every constraint shares it in their MRO, so a base-class registration
+    would catch every unmatched constraint.
     """
     _CONSTRAINT_BIJECTOR_REGISTRY[key] = factory
+
+
+def unregister_bijector(key: type | Constraint) -> None:
+    """Remove a previously registered bijector factory.
+
+    Parameters
+    ----------
+    key : type or Constraint
+        The same key passed to :func:`register_bijector`.  No-op if the
+        key is not currently registered.
+    """
+    _CONSTRAINT_BIJECTOR_REGISTRY.pop(key, None)
 
 
 def bijector_for(constraint: Constraint) -> tfb.Bijector:
