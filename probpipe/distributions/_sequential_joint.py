@@ -273,7 +273,9 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
             else:
                 # Conditional: callable receives batched parent samples,
                 # returning a batched distribution. Sample with () since
-                # the batch is already in the distribution's batch_shape.
+                # the batched form (TFP-side) already covers the leading
+                # axes; the resolver invokes the user lambda under the
+                # internal bypass.
                 dist = _resolve_callable_component(comp, sampled)
                 sampled[cname] = dist._sample(subkey)
 

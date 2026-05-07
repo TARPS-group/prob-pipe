@@ -3,9 +3,9 @@
 The primary class is :class:`NumericRecordDistribution` — a
 :class:`~probpipe.core._record_distribution.RecordDistribution` that
 additionally enforces numeric-leaf shape semantics (``event_shape``,
-``batch_shape``, ``flat_event_shapes``, ``event_size``) and serves as
-the base class for every numeric ProbPipe distribution (``Normal``,
-``Beta``, ``ProductDistribution``, ...).
+``flat_event_shapes``, ``event_size``) and serves as the base class
+for every numeric ProbPipe distribution (``Normal``, ``Beta``,
+``ProductDistribution``, ...).
 
 Provides:
 
@@ -141,14 +141,14 @@ class NumericRecordDistribution(RecordDistribution):
     """Distribution over numeric arrays with Record support.
 
     Extends :class:`RecordDistribution` with numeric-specific metadata:
-    dtype, support, batch_shape, event_shape.
+    ``dtype``, ``support``, ``event_shape``.
 
-    Shape semantics follow TFP conventions:
-
-    * ``event_shape``  -- shape of a single draw (e.g. ``(d,)`` for a
-      *d*-dimensional vector distribution).
-    * ``batch_shape``  -- shape of independent-but-not-identically-distributed
-      parameter batches.
+    Shape semantics: ``event_shape`` is the shape of a single draw
+    (e.g. ``(d,)`` for a *d*-dimensional vector distribution). A
+    ``Distribution`` represents one random variable; collections of
+    independent distributions live in
+    :class:`~probpipe.DistributionArray` (which has its own
+    ``batch_shape``).
 
     When ``record_template`` is set (named distribution), samples are
     wrapped as :class:`~probpipe.Record`.  Otherwise, raw arrays are

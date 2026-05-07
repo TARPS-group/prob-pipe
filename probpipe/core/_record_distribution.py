@@ -1,9 +1,10 @@
 """RecordDistribution — generic Record-based distribution base.
 
 Provides the named-component layer (``fields``, ``__getitem__``,
-``select()``) and Record-aware flatten/unflatten, without imposing TFP
-shape conventions (dtype, support, batch_shape).  Those live on
-``NumericRecordDistribution`` and its consumers.
+``select()``) and Record-aware flatten/unflatten, without imposing
+the numeric shape / dtype conventions (``dtype``, ``support``,
+``event_shape``).  Those live on ``NumericRecordDistribution`` and
+its consumers.
 
 ``_RecordDistributionView`` is the lightweight component reference,
 analogous to the former ``DistributionView`` but for any distribution
@@ -318,8 +319,9 @@ class RecordDistribution(Distribution[Record]):
 
     Provides named component access (``fields``, ``__getitem__``,
     ``select()``) and Record-aware flatten / unflatten.  Does NOT impose
-    TFP shape conventions (dtype, support, batch_shape) — those belong
-    on ``NumericRecordDistribution`` and its consumers.
+    numeric shape / dtype conventions (``dtype``, ``support``,
+    ``event_shape``) — those belong on ``NumericRecordDistribution``
+    and its consumers.
 
     Concrete subclasses must set ``_record_template`` (a
     :class:`~probpipe.core.record.RecordTemplate` describing the named

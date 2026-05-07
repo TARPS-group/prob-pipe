@@ -208,7 +208,7 @@ full public API surface.
 | `RecordArray` | Batch of `Record` elements with a `RecordTemplate`; integer index → element, field index → batched array |
 | `NumericRecordArray` (subclass of `RecordArray`) | Batch of `NumericRecord` elements; adds `flatten` / `mean` / `var` |
 | `RecordTemplate` | Structural skeleton (field names, per-field shapes or `None`); enables `NumericRecord.unflatten` without an example instance |
-| `RecordDistribution` | Record-based distribution base; `fields`, `__getitem__` → `_RecordDistributionView`, `select()` / `select_all()` for correlated broadcasting; `.n` = cells in `batch_shape` |
+| `RecordDistribution` | Record-based distribution base; `fields`, `__getitem__` → `_RecordDistributionView`, `select()` / `select_all()` for correlated broadcasting; `.n` = `1` (a `Distribution` is one random variable; use `DistributionArray` for collections) |
 | `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
 | `NumericRecordDistribution` | Numeric-array distribution base; per-field `dtypes`, `supports`, `event_shapes`; base for all TFP-backed distributions |
 | `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `n`, `components`). Vectorized ops are delivered by the `WorkflowFunction` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordArray` / `RecordArray` / (nested) `DistributionArray`. Produced by parameter-sweep workflow functions whose inner call returns a `Distribution`. |
@@ -365,7 +365,13 @@ Three rules govern how the framework's universal types relate.
 1. **One random variable per `Distribution`.** A single `Distribution`
    instance represents one random quantity. To carry a *collection*
    of distributions (a parameter sweep, a per-component posterior,
-   ...), wrap them in a `DistributionArray`.
+   ...), wrap them in a `DistributionArray`. The rule is enforced
+   structurally: `Distribution` has no `batch_shape` accessor, and
+   TFP-backed constructors raise `ValueError` if their parameters
+   imply a non-empty `tfd.Distribution.batch_shape`. Use
+   `DistributionArray.from_batched_params` (or the per-class
+   `Normal.from_batched_params(...)` alias) for batched
+   constructions.
 
 2. **Two implementations per concept.** Each abstraction has at most
    two concrete pairs:

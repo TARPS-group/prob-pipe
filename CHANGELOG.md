@@ -42,6 +42,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`Distribution.batch_shape` removed.** The accessor that returned
+  `()` for every shipped scalar distribution post-PR-C.2 is now
+  gone end-to-end. The framework hierarchy rule "one random
+  variable per `Distribution`" (CONTRIBUTING.md) is no longer
+  merely enforced at construction; the property simply doesn't
+  exist on `Distribution` or any of its subclasses.
+
+  ```python
+  >>> from probpipe import Normal, Distribution
+  >>> hasattr(Normal(loc=0.0, scale=1.0, name="x"), "batch_shape")
+  False
+  >>> hasattr(Distribution, "batch_shape")
+  False
+  ```
+
+  No user code that worked under PR-C.2 (where `dist.batch_shape ==
+  ()` was always true) breaks at the `dist.batch_shape == ()`
+  assertion form, but any code that *reads* `dist.batch_shape`
+  (e.g. for shape arithmetic) hits `AttributeError`. Migration:
+  drop the read; it was always returning `()`. Collections of
+  distributions live in `DistributionArray`, which retains its own
+  `batch_shape` (the array's outer shape, not a per-cell concept).
+
+  Knock-on changes:
+  - `GaussianRandomFunction.predict` (and every
+    `ArrayRandomFunction` subclass) now returns a
+    `DistributionArray` rather than a single batched
+    `Normal`/`MultivariateNormal`. The outer `batch_shape` covers
+    axes that were previously the underlying `tfd.batch_shape`;
+    per-cell `event_shape` is unchanged. The bypass scaffold
+    PR-C.2 added for GRF is gone.
+  - `RecordDistribution.n` is hardcoded to `1` (was
+    `prod(batch_shape)` via defensive `getattr`). Scalar
+    distributions have one cell.
+  - `_RecordDistributionView.shape` and
+    `RecordDistribution.shape` now equal `event_shape` (was
+    `batch_shape + event_shape` via defensive `getattr`).
+  - `__repr__` no longer includes a `batch_shape=...` branch.
+  - `FlattenedView.batch_shape` override removed.
+  - `DistributionArray.__init__`'s per-component `batch_shape != ()`
+    guard removed (no Distribution has the attribute anyway).
+
 - **TFP-backed distribution constructors reject batched parameters.**
   `Normal(loc=jnp.zeros(5), scale=1.0, name="x")` (and the same
   pattern for every other TFP-backed class — `Beta`, `Gamma`,
