@@ -127,7 +127,7 @@ this distribution hold?"
 | `BootstrapDistribution` | Number of function evaluations |
 | `BootstrapReplicateDistribution` | Number of observations per bootstrap dataset |
 | `BroadcastDistribution` | Number of input–output pairs |
-| `_RecordMarginal` | Number of output samples |
+| `_ArrayMarginal` | Number of output samples |
 | `_MixtureMarginal` | Number of mixture components |
 | `_ListMarginal` | Number of output items |
 
@@ -179,15 +179,7 @@ positional form.
 
 When adding a new `Distribution` subclass, do not define `__iter__`.
 The regression test in `tests/test_iteration_protocol.py` enforces
-this rule across user-constructible distribution subclasses
-(`Normal`, `Beta`, `Gamma`, `MultivariateNormal`, `ProductDistribution`,
-`TransformedDistribution`, `KDEDistribution`,
-`RecordEmpiricalDistribution`, `BootstrapReplicateDistribution`,
-`RecordBootstrapReplicateDistribution`, `NumericJointEmpirical`).
-WF-output classes (`BroadcastDistribution`, `_RecordMarginal`,
-`_MixtureMarginal`, `_ListMarginal`) inherit the constraint from
-their bases and aren't directly parametrised; if you add a new such
-class, verify non-iterability via the parent class's contract.
+this rule across every concrete distribution class.
 
 ---
 

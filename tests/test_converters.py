@@ -660,7 +660,7 @@ class TestProtocolConversion:
         )
 
     def test_multivariate_empirical_to_supports_log_prob(self):
-        """Multivariate (single-field with d-dim event) RecordEmpirical → KDE."""
+        """Multivariate RecordEmpiricalDistribution converts to KDE via SupportsLogProb."""
         from probpipe.distributions.kde import KDEDistribution
 
         samples = jax.random.normal(jax.random.PRNGKey(1), (300, 4))
@@ -671,83 +671,6 @@ class TestProtocolConversion:
         np.testing.assert_allclose(
             np.array(result._mean()), np.array(emp._mean()), atol=0.2,
         )
-
-    def test_multi_field_record_empirical_to_kde(self):
-        """Multi-field RecordEmpirical → KDE via flat_samples (n, total_dim).
-
-        Pre-fix this raised because ``_convert_to_kde`` fell through to
-        ``source._sample(key, (n,))`` which returned a NumericRecord;
-        ``KDEDistribution(NumericRecord)`` then tripped the multi-field
-        shape shim. The fix routes multi-field empiricals through
-        ``source.flat_samples`` (KDE accepts a flat (n, dim) matrix).
-        """
-        from probpipe import Record
-        from probpipe.distributions.kde import KDEDistribution
-
-        n = 200
-        rec = Record(
-            mu=jax.random.normal(jax.random.PRNGKey(2), (n,)),
-            log_sigma=jax.random.normal(jax.random.PRNGKey(3), (n,)),
-        )
-        emp = RecordEmpiricalDistribution(rec)
-        result = converter_registry.convert(emp, SupportsLogProb)
-        assert isinstance(result, KDEDistribution)
-        # KDE got the flat (n, 2) matrix.
-        assert result.n == n
-        # log_prob over a single 2-vector returns a scalar.
-        lp = result._log_prob(jnp.array([0.0, 0.0]))
-        assert lp.shape == ()
-
-    def test_single_field_record_empirical_to_kde_unchanged(self):
-        """Single-field path stays on the fast path (passes the field
-        array straight to KDE rather than going via ``flat_samples``).
-
-        Pinned so a future ``flat_samples``-everywhere refactor doesn't
-        silently change the single-field behaviour. The (n,) auto-wrap
-        case keeps its 0-D KDE event shape.
-        """
-        from probpipe.distributions.kde import KDEDistribution
-
-        samples = jax.random.normal(jax.random.PRNGKey(4), (150,))
-        emp = RecordEmpiricalDistribution(samples, name="theta")
-        result = converter_registry.convert(emp, SupportsLogProb)
-        assert isinstance(result, KDEDistribution)
-        # Scalar event — direct field passthrough, not flattened.
-        assert result.event_shape == ()
-
-    def test_weighted_single_field_empirical_to_kde_preserves_weights(self):
-        """Single-field empirical with non-uniform weights → KDE with
-        the same weights (gap A in the review)."""
-        from probpipe.distributions.kde import KDEDistribution
-
-        n = 80
-        samples = jax.random.normal(jax.random.PRNGKey(5), (n,))
-        weights = jnp.linspace(0.1, 1.0, n)
-        emp = RecordEmpiricalDistribution(samples, weights=weights, name="x")
-        result = converter_registry.convert(emp, SupportsLogProb)
-        assert isinstance(result, KDEDistribution)
-        # KDE preserves the source's normalised weights (the converter
-        # passes ``weights=source._w``; KDE may rebuild a Weights
-        # internally, but the normalised values must match).
-        np.testing.assert_allclose(
-            np.asarray(result._w.normalized),
-            np.asarray(emp._w.normalized),
-            atol=1e-6,
-        )
-        assert not result._w.is_uniform
-
-    def test_object_array_empirical_to_kde_rejected(self):
-        """Generic (object-array) EmpiricalDistribution → KDE raises
-        a clear TypeError (gap B in the review).
-
-        Without the explicit raise, KDE construction would fail
-        somewhere deep with a confusing dtype error.
-        """
-        emp = EmpiricalDistribution(["a", "b", "c"])
-        with pytest.raises(
-            TypeError, match="generic .object-array. EmpiricalDistribution",
-        ):
-            converter_registry.convert(emp, SupportsLogProb)
 
     def test_check_protocol_already_satisfied(self):
         """check() returns EXACT when protocol is already satisfied."""

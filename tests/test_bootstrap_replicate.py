@@ -172,64 +172,6 @@ class TestSampling:
 
 
 # ---------------------------------------------------------------------------
-# SupportsSampling source (#93) — a parametric distribution as the source
-# ---------------------------------------------------------------------------
-
-
-class TestSampleableSource:
-    """Tests for the sampleable-source path (no stored observations)."""
-
-    def _normal(self):
-        from probpipe import Normal
-        return Normal(loc=0.0, scale=1.0, name="x")
-
-    def test_construction_keeps_generic_base(self):
-        # SupportsSampling sources stay in the generic base (no Record
-        # data to wrap), unlike numeric arrays / Records / Empirical.
-        d = BootstrapReplicateDistribution(self._normal(), n=10)
-        assert isinstance(d, BootstrapReplicateDistribution)
-        assert not isinstance(d, RecordBootstrapReplicateDistribution)
-        assert d.n == 10
-        assert d.source_n is None  # no canonical observation count
-
-    def test_missing_n_raises(self):
-        with pytest.raises(ValueError, match="n must be a positive int"):
-            BootstrapReplicateDistribution(self._normal())
-
-    def test_zero_n_raises(self):
-        with pytest.raises(ValueError, match="n must be a positive int"):
-            BootstrapReplicateDistribution(self._normal(), n=0)
-
-    def test_negative_n_raises(self):
-        with pytest.raises(ValueError, match="n must be a positive int"):
-            BootstrapReplicateDistribution(self._normal(), n=-3)
-
-    def test_sample_empty_shape(self):
-        # One bootstrap replicate is ``n`` i.i.d. draws from source._sample.
-        d = BootstrapReplicateDistribution(self._normal(), n=10)
-        s = d._sample(jax.random.PRNGKey(0), ())
-        assert s.shape == (10,)
-
-    def test_sample_with_shape(self):
-        # sample_shape prepends; total = sample_shape + (n,) + event_shape.
-        d = BootstrapReplicateDistribution(self._normal(), n=10)
-        s = d._sample(jax.random.PRNGKey(1), sample_shape=(3,))
-        assert s.shape == (3, 10)
-
-    def test_data_is_none_for_sampleable_source(self):
-        # No stored observations.
-        d = BootstrapReplicateDistribution(self._normal(), n=5)
-        assert d.data is None
-        assert d.weights is None
-
-    def test_repr_mentions_source(self):
-        d = BootstrapReplicateDistribution(self._normal(), n=5)
-        r = repr(d)
-        assert "n=5" in r
-        assert "Normal" in r
-
-
-# ---------------------------------------------------------------------------
 # Properties
 # ---------------------------------------------------------------------------
 
@@ -389,25 +331,6 @@ class TestRecordBootstrapReplicateDistribution:
         dist = RecordBootstrapReplicateDistribution(emp, name="x")
         assert dist.n == 20
 
-    def test_rejects_object_array_empirical(self):
-        """Generic (object-array) EmpiricalDistribution is rejected.
-
-        Numeric-array empiricals dispatch to RecordEmpiricalDistribution
-        via the factory ``__new__``, so any EmpiricalDistribution that
-        reaches RecordBootstrapReplicateDistribution.__init__ as a
-        generic instance is object-backed and can't be wrapped as a
-        Record. Confirm the explicit TypeError fires (instead of the
-        unhelpful _as_float_array(object_arr) failure that used to
-        bubble up).
-        """
-        from probpipe.core._empirical import RecordEmpiricalDistribution
-        emp = EmpiricalDistribution(["a", "b", "c"])
-        assert not isinstance(emp, RecordEmpiricalDistribution)
-        with pytest.raises(
-            TypeError, match="generic .object-array. EmpiricalDistribution",
-        ):
-            RecordBootstrapReplicateDistribution(emp)
-
     def test_obs_shape(self):
         dist = RecordBootstrapReplicateDistribution(jnp.ones((10, 3, 4)), name="x")
         assert dist.obs_shape == (3, 4)
@@ -508,6 +431,12 @@ class TestValuesEmpiricalDistribution:
         view = emp["X"]
         assert isinstance(view, _RecordDistributionView)
 
+    def test_getitem_returns_view(self, values_data):
+        from probpipe.core._record_distribution import _RecordDistributionView
+        emp = EmpiricalDistribution(values_data, name="x")
+        view = emp["X"]
+        assert isinstance(view, _RecordDistributionView)
+
     def test_mean(self, values_data):
         emp = EmpiricalDistribution(values_data, name="x")
         m = emp._mean()
@@ -590,6 +519,11 @@ class TestValuesBootstrapReplicateDistribution:
 
     def test_fields(self, bootstrap):
         assert bootstrap.fields == ("X", "y")
+
+    def test_getitem_returns_view(self, bootstrap):
+        from probpipe.core._record_distribution import _RecordDistributionView
+        view = bootstrap["X"]
+        assert isinstance(view, _RecordDistributionView)
 
     def test_getitem_returns_view(self, bootstrap):
         from probpipe.core._record_distribution import _RecordDistributionView

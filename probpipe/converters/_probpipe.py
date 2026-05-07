@@ -23,9 +23,8 @@ from ..custom_types import PRNGKey
 from .._utils import _auto_key
 from ..core.constraints import _supports_compatible
 from ..core.distribution import (
-    Distribution,
-    EmpiricalDistribution,
     RecordEmpiricalDistribution,
+    Distribution,
 )
 from ..core.provenance import Provenance
 from ._registry import ConversionInfo, ConversionMethod, Converter
@@ -56,9 +55,8 @@ def _mm_provenance(source, mean_result=None, var_result=None):
 
 def _point_estimate(x):
     """Extract a plain array from a value that may be a BootstrapDistribution
-    or a single-field NumericRecord (the auto-wrap form returned by
-    ``RecordEmpiricalDistribution._mean`` — numeric arrays auto-wrap
-    as a single-field Record)."""
+    or a single-field NumericRecord (the auto-wrap form returned by the
+    merged ``RecordEmpiricalDistribution._mean``)."""
     from ..core.distribution import BootstrapDistribution
     from ..core._numeric_record import NumericRecord
     if isinstance(x, BootstrapDistribution):
@@ -447,20 +445,9 @@ def _convert_to_empirical(source, key, **kw):
 def _convert_to_kde(source, key, **kw):
     """Convert any distribution to a KDEDistribution.
 
-    For a ``RecordEmpiricalDistribution`` source the stored samples
-    and weights are reused directly: single-field empiricals pass the
-    field's stacked array straight to KDE; multi-field empiricals
-    pass ``source.flat_samples`` (the ``(n, total_dim)`` flat-matrix
-    view) so KDE sees one row per sample with all parameters
-    concatenated. Other sources fall back to drawing fresh samples.
-
-    Raises
-    ------
-    TypeError
-        If *source* is a generic ``EmpiricalDistribution``
-        (non-numeric / object-array storage). KDE requires numeric
-        samples; route the source through
-        ``RecordEmpiricalDistribution`` or supply a numeric source.
+    If the source is an ``RecordEmpiricalDistribution`` (or subclass),
+    the stored samples and weights are reused directly.  Otherwise,
+    samples are drawn from the source.
     """
     from ..distributions.kde import KDEDistribution
 
@@ -471,30 +458,17 @@ def _convert_to_kde(source, key, **kw):
     name = kw.get("name") or source.name
 
     if isinstance(source, RecordEmpiricalDistribution):
-        # Single-field: pass the field array directly so KDE keeps the
-        # original event shape. Multi-field: collapse to the
-        # ``(n, total_dim)`` flat-matrix view.
+        # Pull the underlying stacked array from the (single-field by
+        # construction) Record. Multi-field empirical sources fall
+        # through to the sample-based path below.
         if len(source.samples.fields) == 1:
             field = source.samples.fields[0]
-            arr = source.samples[field]
-        else:
-            arr = source.flat_samples
-        r = KDEDistribution(
-            arr, weights=source._w, bandwidth=bandwidth, name=name,
-        )
-        r.with_source(_mm_provenance(source))
-        return r
-
-    if isinstance(source, EmpiricalDistribution):
-        # Generic (object-array) EmpiricalDistribution: KDE is
-        # nonsensical because the samples aren't numeric.
-        raise TypeError(
-            f"Cannot KDE-convert generic (object-array) "
-            f"EmpiricalDistribution (got samples of dtype "
-            f"{getattr(source.samples, 'dtype', type(source.samples).__name__)}). "
-            f"KDE requires numeric samples; route through "
-            f"RecordEmpiricalDistribution or supply a numeric source."
-        )
+            r = KDEDistribution(
+                source.samples[field],
+                weights=source._w, bandwidth=bandwidth, name=name,
+            )
+            r.with_source(_mm_provenance(source))
+            return r
 
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
     if key is None:
@@ -537,6 +511,7 @@ def _build_dispatch_table() -> dict[str, callable]:
         "Wishart": _convert_to_wishart,
         "VonMisesFisher": _convert_to_vonmisesfisher,
         "EmpiricalDistribution": _convert_to_empirical,
+        "RecordEmpiricalDistribution": _convert_to_empirical,
         "RecordEmpiricalDistribution": _convert_to_empirical,
         "KDEDistribution": _convert_to_kde,
     }

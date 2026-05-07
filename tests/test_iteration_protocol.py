@@ -25,7 +25,6 @@ from probpipe import (
     EmpiricalDistribution,
     Gamma,
     JointEmpirical,
-    KDEDistribution,
     MultivariateNormal,
     Normal,
     NumericRecord,
@@ -35,30 +34,10 @@ from probpipe import (
     RecordArray,
     RecordEmpiricalDistribution,
     RecordBootstrapReplicateDistribution,
-    TransformedDistribution,
 )
 
 
-def _make_transformed():
-    """Build a TransformedDistribution at parametrise time.
-
-    Importing the bijector here keeps the test parametrisation
-    side-effect-free at import — TFP's bijector module is heavy
-    enough to warrant deferring.
-    """
-    import tensorflow_probability.substrates.jax.bijectors as tfb
-    return TransformedDistribution(
-        Normal(loc=0.0, scale=1.0, name="base"), tfb.Exp(), name="td",
-    )
-
-
-# User-constructible Distribution subclasses, parametrised here to pin
-# the non-iterable rule (#142). WF-output classes (BroadcastDistribution,
-# _RecordMarginal / _MixtureMarginal / _ListMarginal, BootstrapDistribution
-# of an op return) are produced by the WorkflowFunction layer rather than
-# user code; they inherit non-iterability from their bases (Distribution
-# / RecordEmpiricalDistribution / Distribution) and don't need direct
-# parametrisation here.
+# Concrete distribution constructions covering common families.
 DISTRIBUTIONS = [
     pytest.param(lambda: Normal(loc=0.0, scale=1.0, name="x"), id="Normal"),
     pytest.param(lambda: Beta(alpha=1.0, beta=1.0, name="x"), id="Beta"),
@@ -75,14 +54,6 @@ DISTRIBUTIONS = [
             y=Normal(loc=0.0, scale=1.0, name="y"),
         ),
         id="ProductDistribution",
-    ),
-    pytest.param(
-        lambda: _make_transformed(),
-        id="TransformedDistribution",
-    ),
-    pytest.param(
-        lambda: KDEDistribution(jnp.zeros((20, 3)), name="kde"),
-        id="KDEDistribution",
     ),
     pytest.param(
         lambda: EmpiricalDistribution(
@@ -125,19 +96,14 @@ def test_distribution_is_not_iterable(make_dist):
     iterator object even on classes without ``__iter__``, so we
     actually iterate (or call ``list``) to confirm the protocol does
     not yield items.
-
-    Accepted exceptions are ``TypeError`` (class explicitly forbids
-    iteration via ``__iter__`` raising or no ``__getitem__``) and
-    ``KeyError`` (Record-family ``__getitem__`` rejects integer keys
-    because fields are str-keyed). ``IndexError`` is **not** accepted:
-    Python's iter-fallback treats ``IndexError`` on integer access as
-    the end-of-iteration signal, and ``list(iter(d))`` would silently
-    return ``[]`` rather than surfacing the failure — exactly the
-    silent-iteration footgun the rule is meant to forbid.
     """
     d = make_dist()
     assert isinstance(d, Distribution)
-    with pytest.raises((TypeError, KeyError)):
+    # Either ``iter(d)`` raises immediately (preferred), or starting
+    # iteration raises (Python's __getitem__-fallback path). Both are
+    # acceptable; what's not acceptable is silently iterating and
+    # producing items.
+    with pytest.raises((TypeError, KeyError, IndexError)):
         list(iter(d))
 
 

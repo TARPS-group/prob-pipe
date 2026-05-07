@@ -9,17 +9,6 @@ semantics. There is no third numeric-array variant — a bare numeric
 array is wrapped as a single-field :class:`Record` at the constructor
 boundary and dispatches to the Record-based class.
 
-Construction-time dispatch via ``__new__``: calling the generic base
-``EmpiricalDistribution(samples, ...)`` returns a
-:class:`RecordEmpiricalDistribution` when ``samples`` is a ``Record``
-or a numeric array (the latter requires ``name=`` so the auto-wrapped
-Record has a meaningful field key). Likewise
-``BootstrapReplicateDistribution(source, ...)`` returns a
-:class:`RecordBootstrapReplicateDistribution` for ``Record`` /
-numeric-array / numeric-array-backed ``EmpiricalDistribution``
-sources, and stays in the generic base for non-array
-``SupportsSampling`` sources or opaque-object sequences.
-
 Provides:
 
 - :class:`EmpiricalDistribution[T]` — generic weighted empirical
@@ -40,22 +29,9 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 
-from .._dtype import _as_float_array
-from .._utils import _auto_key, _is_numeric_array, prod
-from .._weights import Weights
-from ..custom_types import Array, ArrayLike, PRNGKey
-from . import _distribution_base as _base
-from ._distribution_base import Distribution
-from ._numeric_record import NumericRecord
-from ._numeric_record_distribution import (
-    BootstrapDistribution,
-    NumericRecordDistribution,
-)
-from .constraints import Constraint, real
+from .._utils import prod, _is_numeric_array
 from .protocols import (
     SupportsCovariance,
     SupportsExpectation,
@@ -63,6 +39,23 @@ from .protocols import (
     SupportsSampling,
     SupportsVariance,
 )
+
+import jax
+import jax.numpy as jnp
+
+from ..custom_types import Array, ArrayLike, PRNGKey
+from .._dtype import _as_float_array
+from .._weights import Weights
+from .constraints import Constraint, real
+from . import _distribution_base as _base
+from .._utils import _auto_key
+from ._distribution_base import Distribution
+from ._numeric_record_distribution import (
+    NumericRecordDistribution,
+    BootstrapDistribution,
+)
+from ._record_distribution import RecordDistribution
+from ._numeric_record import NumericRecord
 from .record import Record, RecordTemplate
 
 
@@ -150,8 +143,7 @@ def _wrap_numeric_array_as_record(
     arr = _as_float_array(arr)
     if arr.ndim == 0:
         raise ValueError(
-            f"{role} samples must have at least 1 dimension (the sample "
-            f"axis); got a 0-D array (shape {arr.shape})."
+            f"{role} samples must have at least 1 dimension (the sample axis)."
         )
     if sample_shape is not None:
         n_sample_dims = len(sample_shape)
@@ -169,34 +161,23 @@ def _wrap_numeric_array_as_record(
 def _validate_record_samples(record_data: Record) -> int:
     """Validate that every field shares the same sample-axis length.
 
-    Returns the common ``n``. Error messages always name the offending
-    field and report its shape so users can debug shape mismatches
-    without having to instrument the call site.
+    Returns the common ``n``.
     """
     if not record_data.fields:
         raise ValueError("Record samples must have at least one field.")
-    first_name = record_data.fields[0]
-    first = jnp.asarray(record_data[first_name])
+    first = jnp.asarray(record_data[record_data.fields[0]])
     if first.ndim == 0:
         raise ValueError(
-            f"Record empirical samples need a leading sample axis "
-            f"(every field must have shape (n, *event_shape)); "
-            f"field {first_name!r} has shape {first.shape}."
+            "Record empirical samples need a leading sample axis "
+            "(every field must have shape (n, *event_shape))."
         )
     n = int(first.shape[0])
     for f in record_data.fields[1:]:
         arr = jnp.asarray(record_data[f])
-        if arr.ndim == 0:
+        if arr.ndim == 0 or int(arr.shape[0]) != n:
             raise ValueError(
-                f"Field {f!r} has shape {arr.shape} (no sample axis), "
-                f"expected leading axis of length {n} to match field "
-                f"{first_name!r}."
-            )
-        if int(arr.shape[0]) != n:
-            raise ValueError(
-                f"Field {f!r} has shape {arr.shape} (sample-axis length "
-                f"{int(arr.shape[0])}), expected {n} to match field "
-                f"{first_name!r}."
+                f"Field {f!r} has sample-axis length "
+                f"{None if arr.ndim == 0 else arr.shape[0]}, expected {n}."
             )
     return n
 
@@ -405,19 +386,6 @@ class RecordEmpiricalDistribution(
     name : str, optional
         Distribution name. Required when *samples* is a numeric array
         (used as the auto-wrapped field name).
-
-    Notes
-    -----
-    Construction calls ``Distribution.__init__`` directly rather than
-    chaining through ``super().__init__()``. The reason: the generic
-    ``EmpiricalDistribution[T]`` base stores samples as a flat numpy
-    object array (``self._samples``), which is incompatible with the
-    Record-structured layout this subclass uses (``self._record_data``).
-    Subclasses that further specialise this class (e.g.
-    :class:`~probpipe.inference.ApproximateDistribution`) should likewise
-    call ``RecordEmpiricalDistribution.__init__`` rather than
-    ``super().__init__`` if they need to skip the generic-base storage
-    path.
     """
 
     _sampling_cost: str = "low"
@@ -468,18 +436,14 @@ class RecordEmpiricalDistribution(
 
     @property
     def samples(self) -> NumericRecord:
-        """Stored stacked-sample data as a structured :class:`NumericRecord`.
+        """The stored stacked-sample data as a :class:`NumericRecord`.
 
-        Use ``self.samples[field_name]`` for per-field array access. For
-        a flat ``(n, dim)`` matrix view across all fields, use
-        :attr:`flat_samples` instead.
+        For single-field empirical distributions (the auto-wrap case),
+        the returned ``NumericRecord``'s shape shim makes
+        ``jnp.asarray(dist.samples)`` /  ``dist.samples.shape`` /
+        ``dist.samples[i]``-via-``samples["field"][i]`` ergonomic.
         """
-        # Cache so repeated access doesn't re-validate. ``object.__setattr__``
-        # bypasses any subclass that adds ``__slots__`` or a custom
-        # ``__setattr__`` guard (e.g. ``Record`` itself raises on direct
-        # attribute assignment to enforce immutability of user-visible
-        # state); the cache is internal-only and a controlled exception
-        # to that rule.
+        # Cache so repeated access doesn't re-validate.
         cached = getattr(self, "_samples_record", None)
         if cached is None:
             cached = NumericRecord({
@@ -490,85 +454,16 @@ class RecordEmpiricalDistribution(
         return cached
 
     @property
-    def flat_samples(self) -> jnp.ndarray:
-        """Flat ``(n, dim)`` view across all fields, in insertion order.
-
-        ``dim = sum_over_fields(prod(event_shape_f))``. Multi-dim event
-        shapes are flattened row-major; field order matches
-        :attr:`fields`. Use :attr:`samples` for the structured per-field
-        view.
-
-        Examples
-        --------
-        Single-field auto-wrap with a 1-D event::
-
-            EmpiricalDistribution(jnp.zeros((100, 5)), name="theta").flat_samples.shape
-            # (100, 5)
-
-        Multi-field posterior::
-
-            posterior = ApproximateDistribution(...)  # mu, log_sigma fields
-            posterior.flat_samples.shape  # (n, 2)
-            posterior.flat_samples.mean(axis=0)  # per-parameter posterior mean
-        """
-        # Cache so repeated access (notebook diagnostics, posterior
-        # summaries) doesn't re-materialise the (n, dim) matrix —
-        # ~8MB per call for a 100k-sample / 10-parameter posterior.
-        cached = getattr(self, "_flat_samples_cache", None)
-        if cached is None:
-            parts = [
-                jnp.asarray(self._record_data[f]).reshape(self._n_samples, -1)
-                for f in self._record_data.fields
-            ]
-            cached = jnp.concatenate(parts, axis=-1)
-            object.__setattr__(self, "_flat_samples_cache", cached)
-        return cached
-
-    @property
     def event_shape(self) -> tuple[int, ...]:
-        """Per-sample event shape, single-field only.
-
-        For a single-field record (the auto-wrap case from
-        ``EmpiricalDistribution(arr, name=...)``), returns the field's
-        event shape — i.e. ``arr.shape[1:]``.
-
-        For multi-field records, raises :class:`AttributeError` rather
-        than returning ``()``: a silent scalar fallback would let
-        callers that aren't multi-field-aware mis-classify a
-        structured posterior as a scalar event. Use
-        :attr:`event_shapes` (plural, dict-valued) for the multi-field
-        case.
-
-        See Also
-        --------
-        :attr:`event_shapes` — the per-field dict, always available.
-        :attr:`RecordBootstrapReplicateDistribution.obs_shape` — the
-            symmetric single-field-only / multi-field-raises accessor
-            for bootstrap replicates' per-observation event shape.
-
-        Raises
-        ------
-        AttributeError
-            If ``len(self.fields) > 1``.
-        """
+        """Single-field shortcut. Multi-field records use ``event_shapes``."""
         if len(self._record_data.fields) == 1:
             f = self._record_data.fields[0]
             return tuple(jnp.asarray(self._record_data[f]).shape[1:])
-        raise AttributeError(
-            f"{type(self).__name__} has multiple fields "
-            f"({self._record_data.fields}); ``event_shape`` is only "
-            f"defined for single-field records. Use ``event_shapes`` "
-            f"(plural) for the per-field dict."
-        )
+        return ()
 
     @property
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-field event shapes (sample axis stripped).
-
-        Always available, including for single-field records. Compare
-        :attr:`event_shape` (singular), which is single-field-only and
-        raises on multi-field.
-        """
+        """Per-field event shapes (sample axis stripped)."""
         return {
             f: tuple(jnp.asarray(self._record_data[f]).shape[1:])
             for f in self._record_data.fields
@@ -612,20 +507,9 @@ class RecordEmpiricalDistribution(
         for f in self._record_data.fields:
             arr = jnp.asarray(self._record_data[f])
             fields[f] = arr[indices].reshape(*sample_shape, *arr.shape[1:])
-        # Return a ``NumericRecord`` rather than a ``NumericRecordArray``
-        # for the batched case. ``NumericRecordArray`` would carry a
-        # ``batch_shape`` that ``jax.vmap``'s pytree validation rejects
-        # when the empirical's ``_sample`` is wrapped inside a vmap'd
-        # callable (the array variant treats its leading axes as
-        # structural batch dims and refuses to be flattened/unflattened
-        # across that axis). Returning the looser ``NumericRecord``
-        # form is a deliberate deviation from the WF "uniform output
-        # wrap" contract; downstream consumers that need a batched
-        # container instead of per-field arrays don't currently exist
-        # — every callsite either iterates fields, indexes by name,
-        # or calls ``flatten_value`` (which handles both types).
-        # Single-field consumers still get the shape shim via the
-        # NumericRecord coercion path.
+        # ``NumericRecord`` (not ``NumericRecordArray``) so the pytree
+        # round-trip through ``jax.vmap`` doesn't trip over batch-axis
+        # validation. Single-field consumers still get the shape shim.
         return NumericRecord(fields)
 
     # -- moments ------------------------------------------------------------
@@ -662,7 +546,10 @@ class RecordEmpiricalDistribution(
         constructed from an array, so they expect to operate on
         arrays). Multi-field records pass the row Record as-is.
         """
-        single_field = len(self._record_data.fields) == 1
+        single_field = (
+            len(self._record_data.fields) == 1
+            and self._record_data.fields[0] != ""
+        )
         only_field = self._record_data.fields[0] if single_field else None
 
         def _row(i):
@@ -745,13 +632,13 @@ class BootstrapReplicateDistribution[T](
                 return object.__new__(RecordBootstrapReplicateDistribution)
             if _is_numeric_array(source):
                 return object.__new__(RecordBootstrapReplicateDistribution)
-            # Otherwise (SupportsSampling non-array sources or generic
-            # opaque-object sequences) stay in the generic base. Note: a
-            # generic ``EmpiricalDistribution(numeric_array)`` can never
-            # arrive here as a generic instance — the generic base's own
-            # ``__new__`` already routes numeric-array samples to
-            # ``RecordEmpiricalDistribution``, which the first branch
-            # above catches.
+            if (
+                isinstance(source, EmpiricalDistribution)
+                and _is_numeric_array(source.samples)
+            ):
+                return object.__new__(RecordBootstrapReplicateDistribution)
+            # Otherwise (incl. SupportsSampling non-array sources, generic
+            # sequences) stay in the generic base.
         return object.__new__(cls)
 
     def __init__(
@@ -891,25 +778,13 @@ class BootstrapReplicateDistribution[T](
             for i in range(total):
                 results[i] = self._one_bootstrap(keys[i])
             return results.reshape(sample_shape)
-        # Non-object data: vmap is safe for both ``data`` and
-        # ``sampleable`` source kinds (the latter calls source._sample
-        # under vmap, the former does weighted-choice + slicing).
+        if self._source_kind == "sampleable":
+            results = jax.vmap(self._one_bootstrap)(keys)
+            return results.reshape(*sample_shape, *results.shape[1:])
         results = jax.vmap(self._one_bootstrap)(keys)
         return results.reshape(*sample_shape, *results.shape[1:])
 
     # -- expectation --------------------------------------------------------
-
-    def _unwrap_dataset(self, dataset: Any) -> Any:
-        """Hook for subclasses to unwrap a single-field dataset.
-
-        The generic base treats datasets opaquely (whatever
-        ``_one_bootstrap`` returns is what ``f`` sees). Record-based
-        subclasses override this to unwrap single-field auto-wrap
-        Records to their bare stacked array, so users who passed a
-        numeric array as the source see ``f`` called with arrays
-        rather than single-field Records.
-        """
-        return dataset
 
     def _expectation(
         self,
@@ -921,9 +796,10 @@ class BootstrapReplicateDistribution[T](
     ) -> Array | BootstrapDistribution:
         """Compute ``E[f(dataset)]`` via Monte Carlo over bootstrap datasets.
 
-        ``f`` receives one bootstrapped dataset per call. Subclasses
-        can override :meth:`_unwrap_dataset` to convert the dataset to
-        a bare array (e.g. the single-field Record auto-wrap case).
+        ``f`` receives one bootstrapped dataset per call. For
+        Record-shaped sources with a single field (the auto-wrap case),
+        the dataset is unwrapped to the bare stacked ``jax.Array`` so
+        ``f`` operates on arrays directly.
         """
         if key is None:
             key = _auto_key()
@@ -931,8 +807,18 @@ class BootstrapReplicateDistribution[T](
             num_evaluations = _base.DEFAULT_NUM_EVALUATIONS
         keys = jax.random.split(key, num_evaluations)
 
+        record_data = getattr(self, "_record_data", None)
+        single_field = (
+            record_data is not None
+            and len(record_data.fields) == 1
+        )
+        only_field = record_data.fields[0] if single_field else None
+
         def _ds(k):
-            return self._unwrap_dataset(self._one_bootstrap(k))
+            d = self._one_bootstrap(k)
+            if single_field and isinstance(d, Record):
+                return d[only_field]
+            return d
 
         f_vals = jnp.stack([f(_ds(k)) for k in keys])
         rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
@@ -975,27 +861,14 @@ class RecordBootstrapReplicateDistribution(
 
     Parameters
     ----------
-    source : Record | RecordEmpiricalDistribution | array-like
-        Data to bootstrap from. A bare numeric array auto-wraps as a
-        single-field ``Record`` keyed by *name*. A generic
-        ``EmpiricalDistribution`` (object-array storage) is **not**
-        accepted — see ``Raises``.
+    source : Record | RecordEmpiricalDistribution | EmpiricalDistribution | array-like
+        Data to bootstrap from.
     n : int or None
         Observations per bootstrap dataset. Defaults to the source's
         observation count.
     name : str or None
         Distribution name. Mandatory when *source* is a bare numeric
         array (used as the single-field auto-wrap field name).
-
-    Raises
-    ------
-    TypeError
-        If *source* is a generic ``EmpiricalDistribution`` (i.e.,
-        object-array storage rather than numeric / Record-backed).
-        The factory path routes numeric-array empiricals to
-        :class:`RecordEmpiricalDistribution`; only the generic-base
-        instance can reach this constructor, and its non-numeric
-        samples can't be bootstrapped meaningfully.
     """
 
     _sampling_cost: str = "low"
@@ -1018,25 +891,20 @@ class RecordBootstrapReplicateDistribution(
             default_n = n_rows
             self._w = Weights.uniform(n_rows)
         elif isinstance(source, EmpiricalDistribution):
-            # The factory path routes numeric-array-backed empiricals to
-            # ``RecordEmpiricalDistribution`` (caught above), so any
-            # ``EmpiricalDistribution`` reaching here is a generic-base
-            # instance with object-array storage — directly constructing
-            # ``RecordBootstrapReplicateDistribution`` with such a source
-            # is the only way in. Reject explicitly so users get a clear
-            # error instead of an ``_as_float_array(object_arr)``
-            # TypeError later.
-            sample_dtype = getattr(
-                source.samples, "dtype", type(source.samples).__name__,
+            # Numeric-array-backed EmpiricalDistribution: dispatch wrapped
+            # us here. Auto-wrap the stacked array as a single-field
+            # Record using the source's name.
+            arr = source.samples
+            field_name = name or source.name or "data"
+            wrapped, field_name = _wrap_numeric_array_as_record(
+                arr, name=field_name,
+                role="RecordBootstrapReplicateDistribution",
             )
-            raise TypeError(
-                f"RecordBootstrapReplicateDistribution does not accept "
-                f"generic (object-array) EmpiricalDistribution sources "
-                f"(got {type(source).__name__} with non-numeric samples; "
-                f"dtype={sample_dtype}). Pass a "
-                f"RecordEmpiricalDistribution, a numeric array, or wrap "
-                f"your samples in a Record first."
-            )
+            self._record_data = wrapped
+            self._w = source._w
+            default_n = source.n
+            if name is None:
+                name = field_name
         elif _is_numeric_array(source):
             wrapped, field_name = _wrap_numeric_array_as_record(
                 source, name=name,
@@ -1050,8 +918,9 @@ class RecordBootstrapReplicateDistribution(
         else:
             raise TypeError(
                 f"RecordBootstrapReplicateDistribution: source must be a "
-                f"Record, RecordEmpiricalDistribution, or numeric array, "
-                f"got {type(source).__name__}"
+                f"Record, RecordEmpiricalDistribution, numeric array, or "
+                f"numeric-array-backed EmpiricalDistribution, got "
+                f"{type(source).__name__}"
             )
         # Bootstrap-base bookkeeping. Set self._data so the base's
         # `.data` property returns the Record (matches old behaviour).
@@ -1086,71 +955,22 @@ class RecordBootstrapReplicateDistribution(
 
     @property
     def event_shape(self) -> tuple[int, ...]:
-        """Replicate event shape, single-field only.
-
-        For a single-field replicate, returns
-        ``(n, *per_observation_event_shape)`` — i.e. the shape of one
-        bootstrap dataset. Multi-field replicates raise
-        :class:`AttributeError` rather than returning ``()`` so silent
-        scalar-fallback bugs don't slip through. Use
-        :attr:`event_shapes` (plural, per-field) for the multi-field
-        case, or :attr:`obs_shape` for the per-observation shape on
-        single-field replicates.
-
-        See Also
-        --------
-        :attr:`event_shapes` — the per-field dict, always available.
-        :attr:`obs_shape` — the per-observation event shape (replicate
-            axis stripped) for single-field replicates.
-        :attr:`RecordEmpiricalDistribution.event_shape` — the
-            symmetric single-field-only / multi-field-raises accessor
-            on the empirical-distribution side.
-
-        Raises
-        ------
-        AttributeError
-            If ``len(self.fields) > 1``.
-        """
+        """Single-field shortcut. Multi-field replicates use ``event_shapes``."""
         if len(self._record_data.fields) == 1:
             f = self._record_data.fields[0]
             return (self._n, *jnp.asarray(self._record_data[f]).shape[1:])
-        raise AttributeError(
-            f"{type(self).__name__} has multiple fields "
-            f"({self._record_data.fields}); ``event_shape`` is only "
-            f"defined for single-field replicates. Use "
-            f"``event_shapes`` (plural) for the per-field dict."
-        )
+        return ()
 
     @property
     def obs_shape(self) -> tuple[int, ...]:
-        """Per-observation event shape, single-field only.
+        """Per-observation event shape for a single-field replicate.
 
-        For a single-field replicate, returns the per-observation
-        event shape (the field's shape with the sample axis stripped).
-        Multi-field replicates raise :class:`AttributeError` rather
-        than returning ``()``; use :attr:`obs_shapes` (plural,
-        per-field) for the multi-field case.
-
-        See Also
-        --------
-        :attr:`obs_shapes` — the per-field dict, always available.
-        :attr:`event_shape` — the full replicate event shape
-            ``(n, *obs_shape)`` for single-field replicates.
-
-        Raises
-        ------
-        AttributeError
-            If ``len(self.fields) > 1``.
+        Multi-field replicates use ``obs_shapes`` (per-field).
         """
         if len(self._record_data.fields) == 1:
             f = self._record_data.fields[0]
             return tuple(jnp.asarray(self._record_data[f]).shape[1:])
-        raise AttributeError(
-            f"{type(self).__name__} has multiple fields "
-            f"({self._record_data.fields}); ``obs_shape`` is only "
-            f"defined for single-field replicates. Use "
-            f"``obs_shapes`` (plural) for the per-field dict."
-        )
+        return ()
 
     @property
     def obs_shapes(self) -> dict[str, tuple[int, ...]]:
@@ -1200,18 +1020,6 @@ class RecordBootstrapReplicateDistribution(
             arrs = jnp.stack([jnp.asarray(r[f]) for r in results])
             stacked[f] = arrs.reshape(*sample_shape, *arrs.shape[1:])
         return NumericRecord(stacked)
-
-    def _unwrap_dataset(self, dataset: Any) -> Any:
-        """Unwrap a single-field auto-wrap dataset to its bare array.
-
-        For the single-field auto-wrap case (numeric-array source),
-        the user expects ``f`` in ``_expectation`` to operate on
-        arrays directly rather than single-field Records. Multi-field
-        sources pass the Record through unchanged.
-        """
-        if len(self._record_data.fields) == 1 and isinstance(dataset, Record):
-            return dataset[self._record_data.fields[0]]
-        return dataset
 
     def __repr__(self) -> str:
         return (

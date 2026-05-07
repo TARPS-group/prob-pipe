@@ -201,7 +201,9 @@ full public API surface.
 | `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
 | `NumericRecordDistribution` | Numeric-array distribution base; per-field `dtypes`, `supports`, `event_shapes`; base for all TFP-backed distributions |
 | `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `n`, `components`). Vectorized ops are delivered by the `WorkflowFunction` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordArray` / `RecordArray` / (nested) `DistributionArray`. Produced by parameter-sweep workflow functions whose inner call returns a `Distribution`. |
-| `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling + conditioning; the numeric subclass adds Gaussian-approximation `SupportsLogProb` and exact `SupportsMean` / `SupportsVariance`. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. |
+| `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling + conditioning; the numeric subclass adds exact `SupportsMean` / `SupportsVariance`. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. (Empirical distributions do not claim `SupportsLogProb`; use `from_distribution(emp, KDEDistribution, …)` for a density.) |
+| `EmpiricalDistribution[T]` / `RecordEmpiricalDistribution` | Weighted empirical distribution. Generic base over arbitrary sample type ``T``; Record-based specialisation adds `event_shapes`, exact moments (`SupportsMean` / `SupportsVariance` / `SupportsCovariance`), and TFP-style shape semantics. Numeric-array sources auto-wrap as a single-field Record (requires `name=`). |
+| `BootstrapReplicateDistribution[T]` / `RecordBootstrapReplicateDistribution` | N-fold product over a source: each draw is a bootstrapped dataset of `n` i.i.d. observations. Accepts a `Record`, `RecordEmpiricalDistribution`, numeric array, or any `SupportsSampling` source (in which case `n` is mandatory). |
 | `WorkflowFunction` | Orchestration-aware function wrapper; groups views by parent for correlated broadcasting |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
@@ -309,33 +311,72 @@ for `MethodRegistry` / `ConverterRegistry` instead when dispatch
 needs to consider the input value, environment, or installed
 backends.
 
-### Generic vs array-specific pattern
+### Generic vs Record-based pattern
 
-Some distribution families have a generic base and an array-specific
+Some distribution families have a generic base parameterised over the
+sample type ``T`` and a Record-based specialisation:
+
+- `EmpiricalDistribution[T]` / `RecordEmpiricalDistribution`
+- `BootstrapReplicateDistribution[T]` / `RecordBootstrapReplicateDistribution`
+
+The generic base carries only type-agnostic features (sampling,
+expectation). The Record-based variant adds `event_shapes`, `dim`,
+`dtypes`, `support`, and moment protocols (`SupportsMean`,
+`SupportsVariance`, `SupportsCovariance`).
+
+**Automatic factory dispatch.** Constructing the generic base with
+a numeric array or a `Record` automatically returns the Record-based
 subclass:
 
-- `EmpiricalDistribution[T]` / `NumericEmpiricalDistribution`
-- `BootstrapReplicateDistribution[T]` / `ArrayBootstrapReplicateDistribution`
-
-The generic base carries only type-agnostic features (sampling, expectation).
-The numeric variant adds `event_shape`, `dim`, `dtype`, `support`, and moment
-protocols (`SupportsMean`, `SupportsVariance`, `SupportsCovariance`).
-
-**Automatic factory dispatch:** Constructing a generic base with a numeric
-array automatically returns the numeric-specific subclass:
-
 ```python
-EmpiricalDistribution(jnp.ones((100, 3)))
-# → returns NumericEmpiricalDistribution
+EmpiricalDistribution(jnp.ones((100, 3)), name="theta")
+# → returns RecordEmpiricalDistribution; auto-wraps the array as
+#   Record(theta=arr)
 
-BootstrapReplicateDistribution(jnp.ones((50, 2)))
-# → returns ArrayBootstrapReplicateDistribution
+EmpiricalDistribution(Record(x=jnp.zeros((50,)), y=jnp.zeros((50,))))
+# → returns RecordEmpiricalDistribution; multi-field record
 ```
 
-This is implemented via `__new__` on the generic base classes.  Non-numeric
-inputs (e.g. lists of objects, numpy object arrays) remain as the generic
-base class.  Calling the numeric subclass directly (e.g.
-`NumericEmpiricalDistribution(...)`) is unaffected by the dispatch.
+`__new__` on the generic base implements the dispatch. Non-array,
+non-Record inputs (lists of objects, opaque sequences) stay in the
+generic base. The numeric-array path requires `name=` so the
+auto-wrapped Record has a meaningful field key.
+
+`BootstrapReplicateDistribution[T]` additionally accepts a
+`SupportsSampling` source (e.g. `Normal(0, 1, name="x")`); each
+replicate is `n` i.i.d. draws from `source._sample`. `n` is
+mandatory in this case (no canonical observation count).
+
+### Framework abstraction hierarchy
+
+Three rules govern how the framework's universal types relate.
+
+1. **One random variable per `Distribution`.** A single `Distribution`
+   instance represents one random quantity. To carry a *collection*
+   of distributions (a parameter sweep, a per-component posterior,
+   ...), wrap them in a `DistributionArray`.
+
+2. **Two implementations per concept.** Each abstraction has at most
+   two concrete pairs:
+   - a generic implementation parameterised over `T`
+     (`EmpiricalDistribution[T]`,
+     `BootstrapReplicateDistribution[T]`, `Distribution[T]`),
+   - and a Record-based specialisation
+     (`RecordEmpiricalDistribution`,
+     `RecordBootstrapReplicateDistribution`, `RecordDistribution`).
+
+   No third "numeric-array" variant. Records *are* array-based — a
+   single numeric array becomes a single-field Record at the
+   constructor boundary.
+
+3. **Iteration is a Record-family convention.** `Record`,
+   `NumericRecord`, `RecordArray`, `NumericRecordArray` iterate field
+   names dict-style. `DistributionArray` is positional (``len(da) ==
+   prod(da.batch_shape)``; access via ``da[i]``). Every other
+   `Distribution` subclass — including `EmpiricalDistribution`,
+   `BootstrapReplicateDistribution`, marginals — is non-iterable;
+   stored samples are accessed via `.samples` / `.draws()`, and `.n`
+   reports the count.
 
 ---
 

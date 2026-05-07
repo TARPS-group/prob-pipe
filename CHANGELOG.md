@@ -24,29 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Migration: a numeric array auto-wraps as a single-field ``Record``
   keyed by the (now mandatory) ``name=`` kwarg.
-
-  ```python
-  # Before
-  emp = EmpiricalDistribution(arr)                    # Worked
-  emp = NumericEmpiricalDistribution(arr)             # Worked
-  emp = ArrayBootstrapReplicateDistribution(arr)      # Worked
-
-  # After
-  emp = EmpiricalDistribution(arr, name="theta")       # ✓
-  emp = EmpiricalDistribution(arr)                    # ValueError: name= required
-  ```
-
-  The ``name=`` becomes the field name of the auto-wrapped
-  ``Record``; downstream code that does ``emp.samples["theta"]`` /
-  ``emp["theta"]`` then has a meaningful key. If you want to keep the
-  old call-site shape, wrap explicitly:
-  ``EmpiricalDistribution(Record(theta=arr))``.
+  ``EmpiricalDistribution(jnp.zeros((100, 3)))`` raises
+  ``ValueError``; pass ``name="theta"`` (or wrap explicitly:
+  ``Record(theta=arr)``).
 - **`BootstrapReplicateDistribution[T]` accepts a `SupportsSampling`
   source.** Each replicate is ``n`` i.i.d. draws from
-  ``source._sample``. **``n`` is mandatory** when ``source`` is a
-  ``SupportsSampling`` distribution (no canonical observation count);
-  it remains optional for ``Record`` / numeric-array / ``Empirical``
-  sources, where it defaults to the source's row count.
+  ``source._sample``; ``n`` is mandatory in this case (no canonical
+  observation count).
   ``BootstrapReplicateDistribution(Normal(0, 1, name="x"), n=50)``.
 - **`NumericJointEmpirical` no longer claims `SupportsLogProb`.** The
   Gaussian-approximation log-density is gone — empirical distributions
@@ -87,16 +71,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Three rules: one random variable per ``Distribution``; two
   implementations per concept (generic + Record-based); iteration is
   a Record-family convention.
-
-- **`RecordEmpiricalDistribution.flat_samples`** — flat ``(n, dim)``
-  matrix view across all fields, where
-  ``dim = sum(prod(event_shape_f) for f in fields)``. Field order is
-  the dist's insertion order; multi-dim event shapes flatten
-  row-major. Use ``.samples`` for the structured ``NumericRecord``
-  view (per-field access via ``.samples[name]``) and ``.flat_samples``
-  for stacked-matrix idioms — ``post.flat_samples.mean(axis=0)``,
-  per-parameter posterior summaries, etc. Replaces hand-rolled
-  ``np.column_stack([post.samples[f] for f in post.fields])``.
 
 - **`Record.to_numeric()` / `NumericRecord.to_native()`** — explicit
   conversion to / from ProbPipe's native JAX-array form, with metadata
