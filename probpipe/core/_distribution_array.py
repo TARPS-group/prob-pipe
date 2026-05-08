@@ -1,8 +1,8 @@
 """``DistributionArray`` — shape-indexed collection of independent distributions.
 
-A ``DistributionArray`` is ``Array[Distribution]``: ``n`` independent
-scalar distributions addressed by a (multi-d) ``batch_shape``. It is
-**not** a mixture.
+A ``DistributionArray`` is ``Array[Distribution]``: an ordered
+collection of independent scalar distributions addressed by a
+(multi-d) ``batch_shape``. It is **not** a mixture.
 
 Vectorized ops are delivered by the :class:`~probpipe.WorkflowFunction`
 sweep layer — when a ``DistributionArray`` is passed to an op like
@@ -62,10 +62,11 @@ __all__ = ["DistributionArray"]
 
 
 class DistributionArray[T](Distribution[T]):
-    """Ordered collection of ``n`` independent scalar distributions.
+    """Ordered collection of independent scalar distributions
+    addressed by a (multi-d) ``batch_shape``.
 
     Exposes only the container surface (indexing, iteration,
-    ``components``, ``batch_shape``, ``event_shape``, ``n``). Vectorized
+    ``components``, ``batch_shape``, ``event_shape``). Vectorized
     ops (``sample``, ``mean``, ``variance``, ``log_prob``, …) are
     delivered by the :class:`~probpipe.core.node.WorkflowFunction`
     sweep layer, which treats the array as ``Array[Distribution]`` and

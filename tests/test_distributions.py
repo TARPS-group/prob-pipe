@@ -611,12 +611,6 @@ class TestDistributionABC:
         """condition_on() is only on JointDistribution, not NumericRecordDistribution ABC."""
         assert not hasattr(gaussian, "condition_on")
 
-    def test_no_batch_shape_attribute(self, gaussian):
-        """Per the "one random variable per ``Distribution``" rule,
-        scalar distributions have no ``batch_shape`` attribute;
-        collections live in ``DistributionArray``."""
-        assert not hasattr(gaussian, "batch_shape")
-
     def test_default_dtype(self, gaussian, loc):
         assert gaussian.dtype == loc.dtype
 

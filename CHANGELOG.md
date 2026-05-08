@@ -177,8 +177,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that.
 - **Distributions are non-iterable.** Codified in STYLE_GUIDE §1.11
   with a regression test
-  (``tests/test_iteration_protocol.py``). Stored samples live on
-  ``.samples`` / ``.draws()``; ``.n`` reports the count.
+  (``tests/test_iteration_protocol.py``). Finite-sample subclasses
+  (see §1.9) expose stored samples via ``.samples`` / ``.draws()``
+  and ``.n``; parametric distributions do not have ``.n``.
 
 - **`Record` field ordering is now insertion-order**, not alphabetical.
   ``Record(z=1, a=2)`` now iterates ``("z", "a")``. Same change applies
@@ -263,8 +264,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and plain splats fields on scalar ``Record``.
 - **Public `.parent` / `.field`** properties on both
   ``_RecordArrayView`` and ``_RecordDistributionView``.
-- **`.n`** property on ``RecordDistribution`` — ``prod(batch_shape)``
-  (STYLE_GUIDE §1.9).
 - **Single-field `.shape` / `.ndim` shims** on ``RecordDistribution`` and
   ``_RecordDistributionView`` (mirror the existing shims on
   ``NumericRecord`` / ``NumericRecordArray``). Multi-field distributions
