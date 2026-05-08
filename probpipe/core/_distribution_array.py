@@ -2,7 +2,7 @@
 
 A ``DistributionArray`` is ``Array[Distribution]``: an ordered
 collection of independent scalar distributions addressed by a
-(multi-d) ``batch_shape``. It is **not** a mixture.
+(multi-d) ``batch_shape``.
 
 Vectorized ops are delivered by the :class:`~probpipe.WorkflowFunction`
 sweep layer — when a ``DistributionArray`` is passed to an op like
