@@ -21,10 +21,10 @@ not on the abstract base).  A ``RandomMeasure[T]`` describes
 *two* layers simultaneously:
 
 * **Outer layer** — the random measure itself. A draw is a
-  ``Distribution[T]``, not a tensor; outer ``support`` and outer
-  ``event_shape`` have no useful tensor content and are deliberately
-  *not* exposed on ``RandomMeasure``. This mirrors the abstract
-  ``Distribution`` base, which also exposes neither.
+  ``Distribution[T]``. Outer ``support`` / ``event_shape`` would
+  carry no useful tensor content for a distribution-valued draw,
+  so ``RandomMeasure`` exposes only the inner-layer metadata —
+  matching the abstract ``Distribution`` base.
 
 * **Inner layer** — properties of the inner ``Distribution[T]`` draws.
   ``inner_support`` (the support of every inner ``D``'s samples) and
