@@ -114,6 +114,130 @@ class TestConstruction:
 
 
 # ---------------------------------------------------------------------------
+# Container surface — len, size, iteration (numpy / jax alignment, #178)
+# ---------------------------------------------------------------------------
+
+
+class TestContainerSurface:
+    """Pin the numpy / jax conventions on the container surface:
+
+    * ``len(da)`` is the leading-axis dim (mirrors ``np.ndarray.__len__``).
+    * ``da.size`` is the total cell count (mirrors ``np.ndarray.size``).
+    * ``iter(da)`` walks the leading axis: 1-D yields scalar cells;
+      multi-d yields sub-``DistributionArray`` of shape ``batch_shape[1:]``.
+    """
+
+    def test_len_is_leading_axis_1d(self):
+        comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(4)]
+        da = _make_distribution_array(comps)
+        assert len(da) == 4
+
+    def test_len_is_leading_axis_multi_d(self):
+        from probpipe import DistributionArray
+        da = DistributionArray.from_batched_params(
+            Normal,
+            batch_shape=(2, 3),
+            loc=jnp.arange(6.0).reshape(2, 3),
+            scale=1.0,
+            name="g",
+        )
+        assert len(da) == 2  # leading axis only — matches np.zeros((2,3))
+
+    def test_size_is_total_cells_1d(self):
+        comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(4)]
+        da = _make_distribution_array(comps)
+        assert da.size == 4
+
+    def test_size_is_total_cells_multi_d(self):
+        from probpipe import DistributionArray
+        da = DistributionArray.from_batched_params(
+            Normal,
+            batch_shape=(2, 3),
+            loc=jnp.arange(6.0).reshape(2, 3),
+            scale=1.0,
+            name="g",
+        )
+        assert da.size == 6  # prod(batch_shape) — matches np.zeros((2,3)).size
+
+    def test_size_matches_numpy_convention(self):
+        """``da.size`` follows the numpy / jax rule ``size == prod(shape)``."""
+        from probpipe import DistributionArray
+        da = DistributionArray.from_batched_params(
+            Normal,
+            batch_shape=(2, 3),
+            loc=jnp.arange(6.0).reshape(2, 3),
+            scale=1.0,
+            name="g",
+        )
+        ref = np.zeros(da.batch_shape)
+        assert da.size == ref.size
+        assert len(da) == len(ref)
+
+    def test_iter_yields_scalar_cells_1d(self):
+        comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(3)]
+        da = _make_distribution_array(comps)
+        items = list(da)
+        assert items == comps  # 1-D iteration yields the cells
+
+    def test_iter_yields_subarrays_multi_d(self):
+        """Multi-d iteration yields leading-axis slices as sub-arrays
+        (mirrors ``iter(np.zeros((2, 3)))``)."""
+        from probpipe import DistributionArray
+        da = DistributionArray.from_batched_params(
+            Normal,
+            batch_shape=(2, 3),
+            loc=jnp.arange(6.0).reshape(2, 3),
+            scale=1.0,
+            name="g",
+        )
+        items = list(da)
+        assert len(items) == 2  # one per leading-axis index
+        for sub in items:
+            assert isinstance(sub, DistributionArray)
+            assert sub.batch_shape == (3,)
+        # First sub-array has loc=[0,1,2], second has loc=[3,4,5].
+        for i, sub in enumerate(items):
+            for j in range(3):
+                assert float(sub[j].loc) == float(i * 3 + j)
+
+    def test_zero_d_iter_raises_like_numpy(self):
+        """``iter(np.zeros(()))`` raises ``TypeError``; so does
+        ``iter(da)`` on a 0-d ``DistributionArray``. Reach for
+        ``_flat_component`` / ``components`` for the single cell.
+        Fully-joint GRF predictions with no extra batch axes return
+        a 0-d DA."""
+        from probpipe import DistributionArray, MultivariateNormal as _MVN
+        da = DistributionArray.from_batched_params(
+            _MVN,
+            batch_shape=(),
+            loc=jnp.zeros(3),
+            cov=jnp.eye(3),
+            name="m",
+        )
+        with pytest.raises(TypeError, match="0-d"):
+            iter(da)
+        # Single-cell access still works.
+        assert da.size == 1
+        assert isinstance(da._flat_component(0), _MVN)
+
+    def test_zero_d_len_raises_like_numpy(self):
+        """``len(np.zeros(()))`` raises ``TypeError``; so does
+        ``len(da)`` on a 0-d ``DistributionArray``. ``da.size``
+        still works."""
+        from probpipe import DistributionArray, MultivariateNormal as _MVN
+        da = DistributionArray.from_batched_params(
+            _MVN,
+            batch_shape=(),
+            loc=jnp.zeros(3),
+            cov=jnp.eye(3),
+            name="m",
+        )
+        with pytest.raises(TypeError, match="0-d"):
+            len(da)
+        assert da.size == 1
+
+
+# ---------------------------------------------------------------------------
 # WF sweep — ops dispatched cell-by-cell
 # ---------------------------------------------------------------------------
 

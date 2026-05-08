@@ -73,9 +73,12 @@ def _dense_lbf_full_joint_cov(phi_X, w_cov):
 def _assert_da_of(dist, cls):
     """Assert ``dist`` is a ``DistributionArray`` whose every cell is
     an instance of ``cls``. Walks all cells so homogeneity is
-    verified, not just the first one."""
+    verified, not just the first one. Uses ``_flat_component`` so
+    the helper works uniformly for 0-d, 1-d, and multi-d arrays
+    (``iter(da)`` raises on 0-d to match ``iter(np.zeros(()))``)."""
     assert isinstance(dist, DistributionArray)
-    for i, cell in enumerate(dist):
+    for i in range(dist.size):
+        cell = dist._flat_component(i)
         assert isinstance(cell, cls), (
             f"cell {i} is {type(cell).__name__}, expected {cls.__name__}"
         )

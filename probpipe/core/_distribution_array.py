@@ -422,9 +422,23 @@ class DistributionArray[T](Distribution[T]):
             return getattr(self._backend, "dtype", None)
         return getattr(self._components[0], "dtype", None)
 
+    @property
+    def size(self) -> int:
+        """Total number of cells (``prod(batch_shape)``).
+
+        Mirrors ``np.ndarray.size`` / ``jax.Array.size``: ``len(da)``
+        is the leading-axis dim, ``da.size`` is the total cell count.
+        """
+        return prod(self._batch_shape)
+
     # -- container protocol --------------------------------------------------
 
     def __len__(self) -> int:
+        if not self._batch_shape:
+            raise TypeError(
+                "len() of unsized 0-d DistributionArray "
+                "(batch_shape=()). Use da.size for the cell count."
+            )
         return self._batch_shape[0]
 
     def __getitem__(self, key):
@@ -497,9 +511,42 @@ class DistributionArray[T](Distribution[T]):
         )
 
     def __iter__(self):
-        if self._backend is not None:
-            return (self._backend.cell(i) for i in range(prod(self._batch_shape)))
-        return iter(self._components)
+        """Iterate the leading axis (numpy / jax convention).
+
+        ``len(self)`` items are yielded:
+
+        * ``ndim == 1`` (the common case): each item is a scalar
+          :class:`~probpipe.Distribution` cell.
+        * ``ndim >= 2``: each item is a ``DistributionArray`` of
+          shape ``batch_shape[1:]`` — a leading-axis slice, mirroring
+          ``iter(np.zeros((2, 3)))`` yielding two ``(3,)``-shaped
+          views.
+        * ``ndim == 0`` (``batch_shape == ()``): raises
+          ``TypeError`` to match ``iter(np.zeros(()))``. Reach for
+          :meth:`_flat_component` (or :attr:`components`) to access
+          the single cell — those work uniformly across every
+          ``batch_shape`` including ``()``.
+
+        For flat row-major access over every cell (the pre-#178
+        behaviour), use :attr:`components` or
+        ``range(self.size)`` with :meth:`_flat_component`.
+        """
+        bshape = self._batch_shape
+        if not bshape:
+            raise TypeError(
+                "iteration over a 0-d DistributionArray "
+                f"(batch_shape={bshape}). Reach for "
+                "da.components or da._flat_component(0) for the "
+                "single cell."
+            )
+        n_lead = bshape[0]
+        if len(bshape) == 1:
+            if self._backend is not None:
+                return (self._backend.cell(i) for i in range(n_lead))
+            return iter(self._components)
+        # Multi-d: __getitem__(int) on a multi-d DA returns a
+        # sub-DistributionArray of shape batch_shape[1:].
+        return (self[i] for i in range(n_lead))
 
     def _flat_component(self, i: int) -> Distribution:
         """Return the i-th component in row-major order over ``batch_shape``.

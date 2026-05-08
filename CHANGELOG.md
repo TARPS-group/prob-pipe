@@ -63,6 +63,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unwrap with `dist[0]` if you need the underlying scalar
   `MultivariateNormal`.
 
+- **`DistributionArray` container surface aligned with numpy / jax**
+  (#178). `iter(da)` now walks the leading axis: a 1-D array yields
+  its scalar cells (unchanged); a multi-d array yields
+  ``DistributionArray`` slices of shape ``batch_shape[1:]``,
+  mirroring ``iter(np.zeros((2, 3)))``. Use ``da.components`` for
+  flat row-major access over every cell (the pre-#178 default).
+  Adds ``DistributionArray.size`` returning ``prod(batch_shape)``,
+  matching ``np.ndarray.size`` / ``jax.Array.size``.
+
 - **`RecordDistribution.n` and `DistributionArray.n` removed.**
   STYLE_GUIDE §1.9 reserves `.n` for finite-sample distribution
   classes that hold a finite collection of samples / observations

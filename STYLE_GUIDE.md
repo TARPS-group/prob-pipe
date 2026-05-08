@@ -190,11 +190,13 @@ Iteration is reserved for the `Record` family — `Record`,
 `NumericRecord`, `RecordArray`, `NumericRecordArray` — which iterate
 field names dict-style (`keys()` / `values()` / `items()`).
 
-`DistributionArray` is positional: `len(da)` is the leading-axis
-size, `prod(da.batch_shape)` is the total cell count, and elements
-are accessed via `da[i]`. It is **not** generally treated as an
-iterable; reach for `for d in da:` only when the shape is
-one-dimensional, and even then prefer the explicit positional form.
+`DistributionArray` is positional and follows numpy/jax conventions:
+`len(da)` is the leading-axis dim and `da.size` is the total cell
+count (`prod(da.batch_shape)`); elements are accessed via `da[i]`.
+Iteration walks the leading axis — for a 1-D `DistributionArray`
+it yields scalar cells; for a multi-d one it yields sub-arrays of
+shape `batch_shape[1:]`, mirroring `iter(np.zeros((2, 3)))`. For
+flat row-major access over every cell, use `da.components`.
 
 When adding a new `Distribution` subclass, do not define `__iter__`.
 The regression test in `tests/test_iteration_protocol.py` enforces
