@@ -42,6 +42,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`NumericRecordDistribution.dtypes` is canonical; subclasses must
+  override.** The base accessor previously returned
+  ``{name: default_float_dtype()}`` for every field of the
+  ``record_template`` (a silent lie for every integer-valued TFP
+  distribution — ``Bernoulli`` / ``Categorical`` reported
+  ``float32``). The base now raises ``NotImplementedError`` so the
+  truth direction is unambiguous; concrete subclasses declare
+  ``dtypes`` directly via the new
+  ``_spread_to_fields(value)`` helper:
+
+  ```python
+  >>> from probpipe import Bernoulli
+  >>> Bernoulli(probs=0.5, name="x").dtype
+  jnp.int32   # was float32 (the lie)
+  >>> Categorical(probs=jnp.array([0.5, 0.5]), name="x").dtype
+  jnp.int32   # was float32
+  ```
+
+  Migration for custom subclasses: implement
+  ``dtypes`` returning ``{field: dtype}`` aligned with
+  ``record_template.fields``. The single-leaf shortcut for
+  uniform-dtype subclasses is
+  ``return self._spread_to_fields(my_dtype)``. The convenience
+  ``dtype`` accessor derives automatically.
+
+  Related cleanups landing in the same PR:
+
+  - ``supports`` is also canonical now (raises if not overridden);
+    ``support`` is a convenience that derives via
+    ``_single_field_name``. The legacy single-field override
+    pattern on the 26 concrete TFP-backed classes is preserved
+    via ``TFPDistribution.supports`` reading ``self.support``.
+  - ``record_template`` auto-build (single-field
+    ``RecordTemplate(**{name: event_shape})``) moved from
+    ``TFPDistribution`` to the base, so any concrete subclass
+    with a ``name=`` and ``event_shape`` gets a template
+    automatically.
+  - ``treedef`` derives from ``record_template`` (leaf for
+    single-leaf, ``NumericRecord`` skeleton for multi-leaf) and
+    is cached on first read.
+  - ``flat_event_shapes`` tree-walks ``event_shapes`` rather than
+    hardcoding ``[event_shape]``.
+  - ``_check_support_compatible`` reads canonical ``supports``
+    (per-field check on multi-leaf source, single-leaf message
+    preserved).
+
 - **`Distribution.batch_shape` removed.** The property is gone
   from `Distribution` and every subclass; reads now raise
   `AttributeError`. Collections of distributions live in
