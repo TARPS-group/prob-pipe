@@ -286,13 +286,41 @@ class NumericRecordDistribution(RecordDistribution):
 
     @property
     def treedef(self) -> jax.tree_util.PyTreeDef:
-        """Treedef for a single array (one-leaf pytree)."""
-        return jax.tree.structure(None)
+        """Treedef of one sample, derived from :attr:`record_template`.
+
+        Locks the relationship between the structural template and
+        the sample's pytree shape:
+
+        - Single-leaf template (``len(fields) <= 1``) → a leaf
+          treedef (``jax.tree.structure(None)``). Matches the
+          ``_sample`` contract that single-leaf distributions
+          return a raw ``jax.Array``.
+        - Multi-leaf template → the treedef of a ``NumericRecord``
+          skeleton with the same field names. Matches the
+          ``_sample`` contract that multi-leaf distributions
+          return a ``NumericRecord``.
+        """
+        tpl = self.record_template
+        if tpl is None or len(tpl.fields) <= 1:
+            return jax.tree.structure(None)
+        from ._numeric_record import NumericRecord
+        placeholder = NumericRecord(**{
+            name: jnp.zeros(
+                tpl[name] if isinstance(tpl[name], tuple) else ()
+            )
+            for name in tpl.fields
+        })
+        return jax.tree.structure(placeholder)
 
     @property
     def flat_event_shapes(self) -> list[tuple[int, ...]]:
-        """Single-leaf: just the one event_shape."""
-        return [self.event_shape]
+        """List of per-field event shapes in template field order.
+
+        Tree-walk over :attr:`event_shapes`: ``list(event_shapes.values())``.
+        For a single-field distribution this is ``[event_shape]``;
+        for a multi-leaf distribution it's one entry per leaf.
+        """
+        return list(self.event_shapes.values())
 
     def flatten_value(self, value) -> Array:
         """Flatten a sample (Record, NumericRecordArray, or array) to flat trailing axis.
