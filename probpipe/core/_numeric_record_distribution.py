@@ -2,8 +2,10 @@
 
 The primary class is :class:`NumericRecordDistribution` — a
 :class:`~probpipe.core._record_distribution.RecordDistribution` that
-additionally enforces numeric-leaf shape semantics (``event_shape``,
-``flat_event_shapes``, ``event_size``) and serves as the base class
+additionally enforces numeric-leaf shape, dtype, and support
+semantics via the canonical ``event_shapes`` / ``dtypes`` /
+``supports`` accessors and their scalar convenience shortcuts
+(``event_shape`` / ``dtype`` / ``support``). It is the base class
 for every numeric ProbPipe distribution (``Normal``, ``Beta``,
 ``ProductDistribution``, ...).
 
@@ -30,7 +32,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import Any, Callable
 
-from .._dtype import _as_float_array, _default_float_dtype
+from .._dtype import _as_float_array
 from .._utils import prod
 from .protocols import (
     SupportsLogProb,
@@ -280,9 +282,9 @@ class NumericRecordDistribution(RecordDistribution):
 
         Derived from :attr:`supports`. ``supports`` is the canonical
         per-field accessor; subclasses override that (or, for
-        ``TFPDistribution``-backed classes that follow the legacy
-        single-field pattern, override ``support`` directly to
-        short-circuit this derivation).
+        ``TFPDistribution``-backed classes that follow the existing
+        single-field override pattern, override ``support`` directly
+        to short-circuit this derivation).
 
         Raises ``TypeError`` (via :meth:`_single_field_name`) on
         multi-field distributions; reach for :attr:`supports` then.

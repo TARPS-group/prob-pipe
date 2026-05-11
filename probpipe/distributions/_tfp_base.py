@@ -18,6 +18,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._array_utils import _slice_leading_axes
 from ..core._distribution_base import Distribution
+from ..core.constraints import Constraint
 from ..core.distribution import (
     NumericRecordDistribution,
     _mc_expectation,
@@ -182,7 +183,7 @@ class TFPDistribution(
         raise NotImplementedError(f"{type(self).__name__}.support")
 
     @property
-    def supports(self) -> dict[str, any]:
+    def supports(self) -> dict[str, Constraint]:
         """Per-field support constraints — spreads the single-field
         ``support`` (overridden by each concrete TFP-backed
         subclass) across the auto-built template."""

@@ -71,9 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - ``supports`` is also canonical now (raises if not overridden);
     ``support`` is a convenience that derives via
-    ``_single_field_name``. The legacy single-field override
-    pattern on the 26 concrete TFP-backed classes is preserved
-    via ``TFPDistribution.supports`` reading ``self.support``.
+    ``_single_field_name``. Existing single-field ``support``
+    overrides on concrete TFP-backed classes continue to work.
   - ``record_template`` auto-build (single-field
     ``RecordTemplate(**{name: event_shape})``) moved from
     ``TFPDistribution`` to the base, so any concrete subclass
