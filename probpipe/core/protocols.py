@@ -34,6 +34,10 @@ Protocol hierarchy
         ↑ inherits
     SupportsLogProb           provides _unnormalized_log_prob via _log_prob
 
+    SupportsArrayBackend      classmethod-level capability; declares that a
+                              ``Distribution`` subclass can produce a fused
+                              storage backend for ``DistributionArray``
+
 The moment protocols (SupportsMean, SupportsVariance, SupportsCovariance)
 are independent of SupportsExpectation.  The ops layer falls back to
 MC estimation via SupportsExpectation when the exact protocol is absent.
@@ -46,11 +50,21 @@ Concrete classes that want default MC implementations can use the
 from __future__ import annotations
 
 import functools
-from typing import Any, Callable, ClassVar, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    ClassVar,
+    Protocol,
+    runtime_checkable,
+)
 
 import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
+
+if TYPE_CHECKING:
+    from ._distribution_base import Distribution
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +317,135 @@ class SupportsConditioning(Protocol):
     def _condition_on(self, observed: Any, /, **kwargs: Any) -> Any: ...
 
 
+# ---------------------------------------------------------------------------
+# Array backend (fused storage for DistributionArray)
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class _DistributionArrayBackend(Protocol):
+    """Internal storage backend that ``DistributionArray`` consumes.
+
+    A backend owns the *batched* parameters of a homogeneous
+    ``DistributionArray`` and delivers vectorised ops directly — TFP's
+    native batch axis, a single ``RecordEmpiricalDistribution`` with a
+    leading batch dim, etc. It is **not** a :class:`Distribution`; it
+    has no ``name`` / ``provenance`` and lives only as the contract
+    between a distribution class's
+    :meth:`SupportsArrayBackend._make_array_backend` and the array
+    consumer.
+
+    Backends are private to the library. User code never imports or
+    constructs them; they exist solely so a
+    :class:`~probpipe.DistributionArray` can fuse storage instead of
+    materialising one ``Distribution`` per cell.
+
+    Required surface
+    ----------------
+    Every backend exposes ``batch_shape``, ``event_shape``, ``cell``,
+    and the ``_sample``/``_log_prob``/``_mean``/``_variance``/``_cov``
+    methods that mirror whichever moment / density protocols the
+    underlying distribution class supports. ``DistributionArray``
+    introspects via ``isinstance`` and forwards to whichever ones are
+    present.
+
+    ``cell(index)`` materialises a fresh **scalar** ``Distribution``
+    (i.e. ``batch_shape == ()``) for the cell at ``index``. Used by
+    ``DistributionArray.__getitem__`` and by the WF sweep when
+    cell-level dispatch is needed.
+    """
+
+    @property
+    def batch_shape(self) -> tuple[int, ...]: ...
+
+    @property
+    def event_shape(self) -> tuple[int, ...]: ...
+
+    def cell(self, index: int | tuple[int, ...]) -> "Distribution":
+        """Fabricate a scalar ``Distribution`` for the cell at ``index``."""
+        ...
+
+
+@runtime_checkable
+class SupportsArrayBackend(Protocol):
+    """Distribution class that supports efficient batched construction.
+
+    Used by :meth:`DistributionArray.from_batched_params` to fuse
+    storage when the caller's components are homogeneous instances of
+    the same class. Implementations construct an internal
+    :class:`_DistributionArrayBackend` that owns the batched parameters
+    and the vectorised ops; ``DistributionArray`` becomes a thin
+    consumer.
+
+    Distribution classes that don't implement this protocol still work
+    in a ``DistributionArray`` via the literal-array fallback (one
+    ``Distribution`` instance per cell) — slower but correct.
+
+    The protocol attaches to the **class**, not to instances. The
+    runtime check is ``isinstance(MyDistribution, SupportsArrayBackend)``
+    (i.e. the class itself implements ``_make_array_backend``).
+    ``isinstance(an_instance, SupportsArrayBackend)`` returns
+    ``True`` too — instances inherit class attributes, and
+    ``runtime_checkable`` just looks for the named attribute — but
+    the result is misleading because the contract is at class
+    scope.
+
+    The protocol is internal to the library; user code never calls
+    ``_make_array_backend`` directly. ``DistributionArray`` is the
+    sole consumer.
+
+    Examples
+    --------
+    A distribution class declares the capability by implementing the
+    classmethod::
+
+        class MyDistribution(Distribution[T]):
+            @classmethod
+            def _make_array_backend(
+                cls,
+                *,
+                name: str,
+                batch_shape: tuple[int, ...],
+                **batched_params,
+            ) -> _DistributionArrayBackend:
+                return _MyArrayBackend(
+                    cls=cls, name=name, batch_shape=batch_shape,
+                    **batched_params,
+                )
+    """
+
+    @classmethod
+    def _make_array_backend(
+        cls,
+        *,
+        name: str,
+        batch_shape: tuple[int, ...],
+        **batched_params: Any,
+    ) -> _DistributionArrayBackend:
+        """Construct an array backend for this class.
+
+        Parameters
+        ----------
+        name : str
+            Base name; per-cell distributions auto-suffix as
+            ``f"{name}_{i}"``.
+        batch_shape : tuple of int
+            The leading shape of the batched parameters. The backend
+            stores parameters with this shape prepended to each
+            ``cls(**kwargs)``-style argument.
+        **batched_params
+            Same keys as ``cls(**kwargs)`` would take, but with
+            ``batch_shape`` prepended to each array argument.
+
+        Returns
+        -------
+        _DistributionArrayBackend
+            Backend instance owning the batched parameters and
+            delivering vectorised ops.
+        """
+        ...
+
+
 def protocols_supported_by_all(
     leaves: list, candidates: tuple[type, ...],
 ) -> tuple[type, ...]:
@@ -331,5 +474,6 @@ __all__ = [
     "SupportsRandomLogProb",
     "SupportsRandomUnnormalizedLogProb",
     "SupportsConditioning",
+    "SupportsArrayBackend",
     "protocols_supported_by_all",
 ]

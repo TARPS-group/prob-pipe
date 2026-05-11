@@ -295,3 +295,406 @@ class TestProvenance:
         da.with_source(Provenance("sweep", parents=(parent,)))
         assert da.source.operation == "sweep"
         assert da.source.parents == (parent,)
+
+
+# ---------------------------------------------------------------------------
+# Backend-delegated storage (PR-C.1 commit 3)
+# ---------------------------------------------------------------------------
+
+
+class TestBackendDelegatedStorage:
+    """Tests for the ``_from_backend`` private constructor + lazy
+    component materialisation. The factory entry point
+    (``from_batched_params``) lands in commit 4; this commit pins the
+    storage refactor in isolation.
+    """
+
+    def _make_backend(self, n=5):
+        from probpipe import Normal
+        return Normal._make_array_backend(
+            name="x",
+            batch_shape=(n,),
+            loc=jnp.arange(float(n)),
+            scale=jnp.ones(n),
+        )
+
+    def test_from_backend_returns_distribution_array(self):
+        from probpipe import DistributionArray
+        backend = self._make_backend(n=5)
+        da = DistributionArray._from_backend(backend, name="batched_x")
+        assert isinstance(da, DistributionArray)
+        assert da._backend is backend
+        assert da.batch_shape == (5,)
+        assert da.event_shape == ()
+        assert da.n == 5
+        assert len(da) == 5
+        assert da.name == "batched_x"
+
+    def test_from_backend_does_not_materialise_components_eagerly(self):
+        from probpipe import DistributionArray
+        backend = self._make_backend(n=5)
+        da = DistributionArray._from_backend(backend, name="x")
+        # Components stay None until first .components access; the
+        # storage refactor's whole point is lazy materialisation.
+        assert da._components is None
+
+    def test_indexing_routes_through_backend_cell(self):
+        from probpipe import DistributionArray, Normal
+        backend = self._make_backend(n=5)
+        da = DistributionArray._from_backend(backend, name="x")
+        # Each int access fabricates fresh; identity differs.
+        a = da[2]
+        b = da[2]
+        assert isinstance(a, Normal)
+        assert a is not b
+        # Per-cell params correctly sliced.
+        assert float(a.loc) == 2.0
+        # Components stayed None — int indexing doesn't materialise the
+        # eager tuple.
+        assert da._components is None
+
+    def test_flat_component_routes_through_backend_cell(self):
+        from probpipe import DistributionArray, Normal
+        backend = self._make_backend(n=4)
+        da = DistributionArray._from_backend(backend, name="x")
+        for i in range(4):
+            cell = da._flat_component(i)
+            assert isinstance(cell, Normal)
+            assert float(cell.loc) == float(i)
+        assert da._components is None  # still lazy
+
+    def test_iteration_lazy_via_backend(self):
+        from probpipe import DistributionArray, Normal
+        backend = self._make_backend(n=4)
+        da = DistributionArray._from_backend(backend, name="x")
+        cells = list(da)
+        assert len(cells) == 4
+        for i, cell in enumerate(cells):
+            assert isinstance(cell, Normal)
+            assert float(cell.loc) == float(i)
+        # Iteration via backend.cell does NOT cache into _components;
+        # only .components does that.
+        assert da._components is None
+
+    def test_components_property_materialises_lazily_and_caches(self):
+        from probpipe import DistributionArray
+        backend = self._make_backend(n=3)
+        da = DistributionArray._from_backend(backend, name="x")
+        c1 = da.components
+        c2 = da.components
+        assert isinstance(c1, tuple)
+        assert len(c1) == 3
+        # Cached: same tuple identity returned.
+        assert c1 is c2
+        # And now _components is populated.
+        assert da._components is c1
+
+    def test_slice_indexing_materialises_components(self):
+        from probpipe import DistributionArray
+        backend = self._make_backend(n=5)
+        da = DistributionArray._from_backend(backend, name="x")
+        sub = da[1:4]
+        # Slicing forces materialisation (rare path).
+        assert da._components is not None
+        assert isinstance(sub, DistributionArray)
+        assert sub.n == 3
+
+    def test_repr_indicates_backend_mode(self):
+        from probpipe import DistributionArray
+        backend = self._make_backend(n=3)
+        backed = DistributionArray._from_backend(backend, name="x")
+        assert "backend=True" in repr(backed)
+
+    def test_literal_path_unchanged(self):
+        """Construction via the explicit components list still works
+        identically — no _backend, eager _components tuple."""
+        from probpipe import DistributionArray, Normal
+        comps = [Normal(loc=float(i), scale=1.0, name=f"c_{i}") for i in range(3)]
+        da = DistributionArray(comps, name="literal")
+        assert da._backend is None
+        assert da._components == tuple(comps)
+        assert da[1] is comps[1]
+        assert da.components is da._components
+
+    def test_multi_d_batch_shape_via_backend(self):
+        from probpipe import DistributionArray, Normal
+        loc = jnp.arange(6.0).reshape(2, 3)
+        backend = Normal._make_array_backend(
+            name="g", batch_shape=(2, 3), loc=loc, scale=1.0,
+        )
+        da = DistributionArray._from_backend(backend, name="g")
+        assert da.batch_shape == (2, 3)
+        assert da.n == 6
+        # Row-major flat index 4 -> (1, 1) -> loc=4.0
+        assert float(da[1, 1].loc) == 4.0
+        assert float(da._flat_component(4).loc) == 4.0
+
+
+# ---------------------------------------------------------------------------
+# from_batched_params factory (PR-C.1 commit 4)
+# ---------------------------------------------------------------------------
+
+
+class TestFromBatchedParams:
+    """Public entry point that dispatches on ``SupportsArrayBackend``."""
+
+    def test_normal_uses_tfp_backend(self):
+        from probpipe import Normal, DistributionArray
+        from probpipe.distributions._tfp_base import _TFPArrayBackend
+        da = DistributionArray.from_batched_params(
+            Normal, loc=jnp.arange(5.0), scale=1.0, name="x",
+        )
+        assert isinstance(da, DistributionArray)
+        assert isinstance(da._backend, _TFPArrayBackend)
+        assert da.batch_shape == (5,)
+        assert da.event_shape == ()
+        assert da.n == 5
+
+    def test_per_cell_name_auto_suffix(self):
+        from probpipe import Normal, DistributionArray
+        da = DistributionArray.from_batched_params(
+            Normal, loc=jnp.arange(3.0), scale=jnp.ones(3), name="weights",
+        )
+        assert da[0].name == "weights_0"
+        assert da[1].name == "weights_1"
+        assert da[2].name == "weights_2"
+
+    def test_per_cell_params_correctly_sliced(self):
+        from probpipe import Normal, DistributionArray
+        da = DistributionArray.from_batched_params(
+            Normal, loc=jnp.arange(4.0), scale=jnp.linspace(0.1, 0.4, 4),
+            name="x",
+        )
+        for i in range(4):
+            cell = da[i]
+            assert float(cell.loc) == float(i)
+            assert float(cell.scale) == pytest.approx(0.1 + 0.1 * i, abs=1e-6)
+
+    def test_scalar_param_broadcasts_through_cells(self):
+        from probpipe import Normal, DistributionArray
+        da = DistributionArray.from_batched_params(
+            Normal, loc=jnp.zeros(3), scale=2.5, name="x",
+        )
+        for i in range(3):
+            assert float(da[i].scale) == 2.5
+
+    def test_inferred_batch_shape_uses_broadcast(self):
+        from probpipe import Normal, DistributionArray
+        # Both arrays imply batch_shape=(4,) — broadcast convention.
+        da = DistributionArray.from_batched_params(
+            Normal, loc=jnp.arange(4.0), scale=jnp.ones(4), name="x",
+        )
+        assert da.batch_shape == (4,)
+
+    def test_explicit_batch_shape_honored(self):
+        from probpipe import Normal, DistributionArray
+        da = DistributionArray.from_batched_params(
+            Normal,
+            batch_shape=(2, 3),
+            loc=jnp.arange(6.0).reshape(2, 3),
+            scale=1.0,
+            name="g",
+        )
+        assert da.batch_shape == (2, 3)
+        assert da.n == 6
+        # Row-major: (1, 2) -> flat 5 -> loc=5.0, name="g_5".
+        assert float(da[1, 2].loc) == 5.0
+        assert da[1, 2].name == "g_5"
+
+    def test_no_array_params_requires_explicit_batch_shape(self):
+        from probpipe import Normal, DistributionArray
+        with pytest.raises(ValueError, match="batch_shape"):
+            DistributionArray.from_batched_params(
+                Normal, loc=0.0, scale=1.0, name="x",
+            )
+
+    def test_multivariate_normal_via_factory(self):
+        """MVN-style classes need explicit ``batch_shape`` because
+        their per-param event ranks differ (``loc`` is
+        ``(*batch, d)``, ``scale_tril`` is ``(*batch, d, d)``)."""
+        from probpipe import MultivariateNormal, DistributionArray
+        from probpipe.distributions._tfp_base import _TFPArrayBackend
+        d = 3
+        da = DistributionArray.from_batched_params(
+            MultivariateNormal,
+            batch_shape=(2,),
+            loc=jnp.zeros((2, d)),
+            scale_tril=jnp.broadcast_to(jnp.eye(d), (2, d, d)),
+            name="z",
+        )
+        assert isinstance(da._backend, _TFPArrayBackend)
+        assert da.batch_shape == (2,)
+        assert da.event_shape == (d,)
+        assert da[0].event_shape == (d,)
+
+    def test_inference_punts_on_event_rank_mismatch(self):
+        """Without explicit ``batch_shape``, MVN-style heterogeneous
+        event-rank params raise a clear ``ValueError``."""
+        from probpipe import MultivariateNormal, DistributionArray
+        d = 3
+        with pytest.raises(ValueError, match="batch_shape"):
+            DistributionArray.from_batched_params(
+                MultivariateNormal,
+                loc=jnp.zeros((2, d)),
+                scale_tril=jnp.broadcast_to(jnp.eye(d), (2, d, d)),
+                name="z",
+            )
+
+    def test_non_protocol_class_falls_back_to_literal(self):
+        """A Distribution subclass that doesn't implement
+        ``SupportsArrayBackend`` gets the literal-array fallback path:
+        eager construction, no backend.
+        """
+        from probpipe import DistributionArray
+        from probpipe.core._distribution_base import Distribution
+
+        class MyDist(Distribution):
+            def __init__(self, value, *, name):
+                self._value = float(value)
+                super().__init__(name=name)
+
+            @property
+            def event_shape(self):
+                return ()
+
+            @property
+            def batch_shape(self):
+                return ()
+
+        da = DistributionArray.from_batched_params(
+            MyDist, value=jnp.arange(3.0), name="m",
+        )
+        # Fallback path: literal components, no backend.
+        assert da._backend is None
+        assert da._components is not None
+        assert isinstance(da[0], MyDist)
+        assert da[0]._value == 0.0
+        assert da[2]._value == 2.0
+        assert da[1].name == "m_1"
+
+    def test_factory_results_match_legacy_batched_constructor(self):
+        """Result of ``from_batched_params(Normal, loc=arr, scale=...)``
+        produces samples / log_probs / means matching the legacy
+        ``Normal(loc=arr, scale=...)`` form (the form Phase 2 will
+        reject).
+        """
+        from probpipe import Normal, DistributionArray
+        loc = jnp.array([0.5, -1.2, 3.7, 0.0])
+        scale = jnp.array([0.1, 0.2, 0.3, 0.4])
+
+        legacy = Normal(loc=loc, scale=scale, name="legacy")
+        da = DistributionArray.from_batched_params(
+            Normal, loc=loc, scale=scale, name="x",
+        )
+        # Sample shapes match.
+        key = jax.random.PRNGKey(42)
+        legacy_samples = legacy._sample(key)
+        da_samples = da._backend._sample(key)
+        np.testing.assert_allclose(
+            np.asarray(legacy_samples), np.asarray(da_samples)
+        )
+        # Mean / variance match.
+        np.testing.assert_allclose(
+            np.asarray(legacy._mean()), np.asarray(da._backend._mean())
+        )
+        np.testing.assert_allclose(
+            np.asarray(legacy._variance()), np.asarray(da._backend._variance())
+        )
+
+    def test_iteration_matches_indexing(self):
+        from probpipe import Normal, DistributionArray
+        da = DistributionArray.from_batched_params(
+            Normal, loc=jnp.arange(4.0), scale=jnp.ones(4), name="x",
+        )
+        for i, cell in enumerate(da):
+            assert float(cell.loc) == float(da[i].loc)
+            assert cell.name == da[i].name
+
+
+# ---------------------------------------------------------------------------
+# Distribution.from_batched_params alias (PR-C.1 commit 5)
+# ---------------------------------------------------------------------------
+
+
+class TestDistributionFromBatchedParamsAlias:
+    """Ergonomic per-class alias on Distribution[T]."""
+
+    def test_alias_dispatches_to_distribution_array_factory(self):
+        from probpipe import Normal, DistributionArray
+        from probpipe.distributions._tfp_base import _TFPArrayBackend
+
+        da = Normal.from_batched_params(
+            loc=jnp.arange(5.0), scale=1.0, name="x",
+        )
+        assert isinstance(da, DistributionArray)
+        assert isinstance(da._backend, _TFPArrayBackend)
+        assert da.batch_shape == (5,)
+        assert da[0].name == "x_0"
+
+    def test_alias_matches_classmethod_call(self):
+        from probpipe import Normal, DistributionArray
+        loc = jnp.arange(4.0)
+        scale = jnp.linspace(0.1, 0.4, 4)
+
+        via_alias = Normal.from_batched_params(
+            loc=loc, scale=scale, name="x",
+        )
+        via_factory = DistributionArray.from_batched_params(
+            Normal, loc=loc, scale=scale, name="x",
+        )
+        # Same backend type, same per-cell parameters / names.
+        assert type(via_alias._backend) is type(via_factory._backend)
+        for i in range(4):
+            a = via_alias[i]
+            f = via_factory[i]
+            assert a.name == f.name
+            assert float(a.loc) == float(f.loc)
+            assert float(a.scale) == float(f.scale)
+
+    def test_alias_inherited_by_all_distribution_subclasses(self):
+        from probpipe.core._distribution_base import Distribution
+        from probpipe import (
+            Normal, Beta, Gamma, MultivariateNormal,
+            EmpiricalDistribution,
+        )
+        # Every Distribution subclass inherits the alias.
+        for cls in (Distribution, Normal, Beta, Gamma,
+                    MultivariateNormal, EmpiricalDistribution):
+            assert hasattr(cls, "from_batched_params")
+            assert callable(cls.from_batched_params)
+
+    def test_alias_with_explicit_batch_shape(self):
+        from probpipe import MultivariateNormal
+        d = 3
+        da = MultivariateNormal.from_batched_params(
+            batch_shape=(2,),
+            loc=jnp.zeros((2, d)),
+            scale_tril=jnp.broadcast_to(jnp.eye(d), (2, d, d)),
+            name="z",
+        )
+        assert da.batch_shape == (2,)
+        assert da.event_shape == (d,)
+
+    def test_alias_falls_back_for_non_protocol_class(self):
+        """The alias inherits the factory's protocol-vs-fallback
+        dispatch, so non-protocol Distribution subclasses also get the
+        literal-array fallback when invoking the alias."""
+        from probpipe.core._distribution_base import Distribution
+
+        class MyDist(Distribution):
+            def __init__(self, value, *, name):
+                self._value = float(value)
+                super().__init__(name=name)
+
+            @property
+            def event_shape(self):
+                return ()
+
+            @property
+            def batch_shape(self):
+                return ()
+
+        da = MyDist.from_batched_params(value=jnp.arange(3.0), name="m")
+        assert da._backend is None
+        assert isinstance(da[0], MyDist)
+        assert da[1].name == "m_1"

@@ -690,3 +690,64 @@ class TestProtocolsSupportedByAll:
         from probpipe.core.protocols import protocols_supported_by_all
         result = protocols_supported_by_all([], (SupportsLogProb, SupportsMean))
         assert result == (SupportsLogProb, SupportsMean)
+
+
+# ---------------------------------------------------------------------------
+# SupportsArrayBackend protocol surface
+# ---------------------------------------------------------------------------
+
+
+class TestSupportsArrayBackendProtocolSurface:
+    """Structural checks on :class:`SupportsArrayBackend`.
+
+    Commit 1 of PR-C.1 only adds the protocol; concrete TFP / Record
+    implementations land in later commits, and the existing
+    ``Distribution`` subclasses don't yet implement
+    ``_make_array_backend``. These tests pin the protocol's *shape*
+    (importable, runtime-checkable, classmethod-level) so later
+    commits can layer on the implementations without regressing the
+    contract.
+    """
+
+    def test_protocol_is_importable(self):
+        from probpipe.core.protocols import (
+            SupportsArrayBackend,
+            _DistributionArrayBackend,
+        )
+
+        assert SupportsArrayBackend is not None
+        assert _DistributionArrayBackend is not None
+
+    def test_protocol_in_public_all(self):
+        from probpipe.core import protocols as proto_mod
+
+        assert "SupportsArrayBackend" in proto_mod.__all__
+        # Backend-interface stays private — leading underscore, not exported.
+        assert "_DistributionArrayBackend" not in proto_mod.__all__
+
+    def test_tfp_distributions_implement_protocol(self):
+        """Every concrete TFP-backed distribution inherits
+        ``_make_array_backend`` from ``TFPDistribution``.
+
+        The protocol method is a classmethod, so the check is on the
+        class itself: ``hasattr(Normal, "_make_array_backend")``. Pins
+        the post-commit-2 contract — non-TFP distributions still don't
+        implement it and stay on the literal-array fallback path.
+        """
+        for cls in (Normal, Beta, Gamma, MultivariateNormal):
+            assert hasattr(cls, "_make_array_backend"), (
+                f"{cls.__name__} should inherit _make_array_backend "
+                f"from TFPDistribution after PR-C.1 commit 2."
+            )
+
+    def test_backend_protocol_minimum_surface(self):
+        """``_DistributionArrayBackend`` Protocol declares the agreed
+        minimum surface."""
+        from probpipe.core.protocols import _DistributionArrayBackend
+
+        # Protocol attributes via __annotations__ / methods via vars.
+        members = set(dir(_DistributionArrayBackend))
+        for required in ("batch_shape", "event_shape", "cell"):
+            assert required in members, (
+                f"_DistributionArrayBackend missing required attr {required!r}"
+            )

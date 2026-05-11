@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`SupportsArrayBackend` capability protocol** (`probpipe.SupportsArrayBackend`)
+  declares that a `Distribution` subclass can produce a fused storage
+  backend for `DistributionArray`. Implemented by every TFP-backed
+  concrete class (`Normal`, `Beta`, `Gamma`, `MultivariateNormal`,
+  `Dirichlet`, …) via inheritance from `TFPDistribution`. Distribution
+  classes that don't implement the protocol still work in a
+  `DistributionArray` via the literal-array fallback path.
+
+- **`DistributionArray.from_batched_params(dist_cls, *, name, batch_shape=None, **batched_params)`**
+  factory + ergonomic per-class alias **`Distribution.from_batched_params(*, name, batch_shape=None, **batched_params)`**.
+  Constructs a `DistributionArray` of homogeneous components,
+  dispatching on `SupportsArrayBackend`: TFP-backed classes get a
+  fused TFP-batched backend; other classes fall back to one
+  `dist_cls` instance per cell. Per-cell names auto-suffix
+  `f"{name}_{flat_index}"`. `batch_shape` is inferred from broadcast
+  of array-valued params; classes with heterogeneous per-param event
+  ranks (`MultivariateNormal`, `Dirichlet`) require explicit
+  `batch_shape=...`.
+
+  ```python
+  # Recommended ergonomic form
+  da = Normal.from_batched_params(loc=jnp.zeros(5), scale=1.0, name="x")
+  da.batch_shape       # (5,)
+  da[2].name           # "x_2"
+
+  # Equivalent universal form
+  da = DistributionArray.from_batched_params(
+      Normal, loc=jnp.zeros(5), scale=1.0, name="x",
+  )
+  ```
+
+  **Preview of upcoming PR-C.2 breaking change:** in the next release,
+  `Normal(loc=jnp.zeros(5), scale=1.0, name="x")` (and similar
+  TFP-backed classes constructed with batched parameters) will raise
+  `ValueError` with a hint pointing at this factory. Migrate now to
+  avoid the breaking change. The factory is performance-equivalent
+  to the legacy form because it shares the TFP-batched backend under
+  the hood.
+
 ### Changed (breaking)
 
 - **Empirical / Bootstrap / Marginal class consolidation.** The

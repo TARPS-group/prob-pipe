@@ -137,6 +137,17 @@ full public API surface.
    dispatch time.  Protocols are dynamically included on composite
    distributions (`ProductDistribution`, `TransformedDistribution`)
    based on component capabilities.
+
+   Most protocols are *instance-level*: the contract is "this
+   `Distribution` instance can do X" and the runtime check is
+   `isinstance(my_dist, SupportsX)`. A small number are *class-level*:
+   `SupportsArrayBackend` declares `_make_array_backend` as a
+   `@classmethod`, so the contract is "this class can produce a
+   batched form" and the runtime check is on the class itself
+   (`isinstance(MyDistribution, SupportsArrayBackend)`). New
+   protocols default to instance-level; reach for class-level only
+   when the capability is genuinely a class concern (e.g., a fused-
+   storage factory that doesn't depend on per-instance state).
 4. **Private method convention** — protocols define `_method()` (e.g.,
    `_sample`, `_log_prob`, `_mean`). The public API is via ops:
    `sample(dist)`, not `dist.sample()`.

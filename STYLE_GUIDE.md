@@ -16,15 +16,32 @@ It is intended for contributors and AI assistants working on the codebase.
 Protocol classes are named `Supports<Capability>` in CamelCase:
 
 ```python
-SupportsSampling, SupportsLogProb, SupportsMean, SupportsConditioning
+SupportsSampling, SupportsLogProb, SupportsMean, SupportsConditioning,
+SupportsArrayBackend
 ```
 
 Protocol methods use a **single leading underscore** to distinguish the
 primitive implementation from the public op:
 
 ```python
-_sample, _log_prob, _mean, _variance, _cov, _condition_on, _expectation
+_sample, _log_prob, _mean, _variance, _cov, _condition_on, _expectation,
+_make_array_backend
 ```
+
+Most `Supports*` protocols are instance-level capabilities (does
+`isinstance(my_dist, SupportsSampling)` hold?). `SupportsArrayBackend`
+is the exception: its method is a `@classmethod`, so the contract
+lives at class scope. Always check
+`isinstance(MyDistribution, SupportsArrayBackend)` (i.e. on the
+class object). `isinstance(an_instance, SupportsArrayBackend)`
+returns `True` too — instances inherit class attributes, and
+`runtime_checkable` just looks for the named attribute — but the
+result is misleading because the protocol's contract is the class
+declaring `_make_array_backend`, not the instance.
+
+The corresponding *backend* interface that `_make_array_backend`
+returns (`_DistributionArrayBackend`) is private to the library —
+user code never imports or constructs it.
 
 ### 1.2 Ops (public API)
 
