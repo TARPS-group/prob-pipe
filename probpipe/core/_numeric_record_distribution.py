@@ -219,6 +219,35 @@ class NumericRecordDistribution(RecordDistribution):
         unique = set(per_field.values())
         return unique.pop() if len(unique) == 1 else None
 
+    @property
+    def support(self) -> Constraint:
+        """Convenience: support for a single-field distribution.
+
+        Derived from :attr:`supports`. ``supports`` is the canonical
+        per-field accessor; subclasses override that (or, for
+        ``TFPDistribution``-backed classes that follow the legacy
+        single-field pattern, override ``support`` directly to
+        short-circuit this derivation).
+
+        Raises
+        ------
+        TypeError
+            If the distribution has more than one field. Reach for
+            :attr:`supports` instead.
+        """
+        per_field = self.supports
+        if not per_field:
+            raise TypeError(
+                f"{type(self).__name__} has no declared supports; "
+                f"subclasses must override either ``support`` or ``supports``."
+            )
+        if len(per_field) > 1:
+            raise TypeError(
+                f"{type(self).__name__} with {len(per_field)} fields is "
+                f"not single-field; use .supports for the per-field dict."
+            )
+        return next(iter(per_field.values()))
+
     @classmethod
     def _check_support_compatible(cls, other: NumericRecordDistribution) -> None:
         """Raise ValueError if *other*'s support is incompatible with *cls*."""
@@ -430,8 +459,9 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
         )
 
     @property
-    def support(self) -> Constraint:
-        return real
+    def supports(self) -> dict[str, Constraint]:
+        """Per-field support — bootstrap of mean values is real-valued."""
+        return {name: real for name in self.record_template.fields}
 
     def __repr__(self) -> str:
         return f"BootstrapDistribution(n={self._n}, event_shape={self.event_shape})"
@@ -538,8 +568,9 @@ class FlattenedView(NumericRecordDistribution):
         )
 
     @property
-    def support(self) -> Constraint:
-        return real
+    def supports(self) -> dict[str, Constraint]:
+        """Per-field support — the flattened view is real-valued."""
+        return {name: real for name in self.record_template.fields}
 
     @property
     def base_distribution(self) -> Distribution:
