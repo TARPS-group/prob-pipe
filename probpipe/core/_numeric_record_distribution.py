@@ -293,21 +293,39 @@ class NumericRecordDistribution(RecordDistribution):
 
     @classmethod
     def _check_support_compatible(cls, other: NumericRecordDistribution) -> None:
-        """Raise ValueError if *other*'s support is incompatible with *cls*."""
+        """Raise ``ValueError`` if *other*'s per-field supports are
+        incompatible with *cls*'s default target support.
+
+        Reads ``other.supports`` (canonical, per-leaf) so multi-leaf
+        sources are checked field-by-field against the single target
+        support. Single-leaf sources keep the original error
+        message; multi-leaf sources include the field name.
+        """
         try:
             target_support = cls._default_support()
         except NotImplementedError:
             return
         try:
-            source_support = other.support
+            per_field = other.supports
         except NotImplementedError:
             return
-        if not _supports_compatible(source_support, target_support):
-            raise ValueError(
-                f"Cannot convert {type(other).__name__} (support={source_support}) "
-                f"to {cls.__name__} (support={target_support}). "
-                f"Pass check_support=False to override."
-            )
+        if len(per_field) == 1:
+            source_support = next(iter(per_field.values()))
+            if not _supports_compatible(source_support, target_support):
+                raise ValueError(
+                    f"Cannot convert {type(other).__name__} (support={source_support}) "
+                    f"to {cls.__name__} (support={target_support}). "
+                    f"Pass check_support=False to override."
+                )
+            return
+        for field_name, source_support in per_field.items():
+            if not _supports_compatible(source_support, target_support):
+                raise ValueError(
+                    f"Cannot convert {type(other).__name__} field "
+                    f"{field_name!r} (support={source_support}) to "
+                    f"{cls.__name__} (support={target_support}). "
+                    f"Pass check_support=False to override."
+                )
 
     @classmethod
     def _default_support(cls) -> Constraint:
