@@ -249,9 +249,14 @@ class TestZeroDDispatch:
     behave as if the user had passed the cell directly.
 
     The natural extension of the sweep convention "iterate over batch
-    axes": with zero axes, the sweep collapses to "one call with the
+    cells": with zero axes, the sweep collapses to "one call with the
     cell". This avoids forcing callers to write ``da._flat_component(0)``
     when a fully-joint GRF prediction returns a 0-d DA.
+
+    Size-1 DAs (``batch_shape == (1,)``) are intentionally *not*
+    collapsed here: their sweep is well-defined and propagates the
+    batch shape through ops, so collapsing would silently change the
+    result type for any deliberately one-element batch.
     """
 
     def _make_zero_d_da(self):
@@ -294,6 +299,22 @@ class TestZeroDDispatch:
             jnp.asarray(lp), jnp.asarray(log_prob(cell, jnp.zeros(3))),
             atol=1e-6,
         )
+
+    def test_size_one_da_is_not_unwrapped(self):
+        """``batch_shape == (1,)`` keeps the sweep semantics: ops
+        return a 1-element batch, not a scalar. Only ``batch_shape
+        == ()`` collapses."""
+        from probpipe import DistributionArray
+        da = DistributionArray.from_batched_params(
+            Normal,
+            batch_shape=(1,),
+            loc=jnp.zeros(1),
+            scale=jnp.ones(1),
+            name="single",
+        )
+        # ``mean(da)`` sweeps over the 1-cell batch → 1-element output.
+        m = mean(da)
+        assert getattr(m, "batch_shape", None) == (1,)
 
 
 # ---------------------------------------------------------------------------
