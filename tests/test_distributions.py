@@ -743,14 +743,22 @@ class TestShapeSemantics:
 class TestDistributionCoverageGaps:
     """Cover otherwise-uncovered defaults and helpers in core.distribution."""
 
-    def test_dtype_none_without_template(self):
-        """NumericRecordDistribution.dtype is None when no template is set."""
+    def test_auto_template_from_name_and_event_shape(self):
+        """``NumericRecordDistribution`` auto-builds a single-field
+        ``RecordTemplate`` from ``name`` + ``event_shape``, so every
+        concrete subclass has a non-None template (and a derived
+        ``dtype``) without per-subclass boilerplate.
+        """
         class Scalar(NumericRecordDistribution):
             @property
             def event_shape(self):
                 return ()
 
-        assert Scalar(name="s").dtype is None
+        s = Scalar(name="s")
+        assert s.record_template is not None
+        assert s.record_template.fields == ("s",)
+        # ``dtype`` derives from ``dtypes`` (default float pending PR-D commit 3).
+        assert s.dtype is not None
 
     def test_dtype_uniform_with_template(self):
         """NumericRecordDistribution.dtype is the common dtype when all fields match."""

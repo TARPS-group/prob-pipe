@@ -29,7 +29,6 @@ from ..core.protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-from ..core.record import Record, RecordTemplate
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 
@@ -160,21 +159,6 @@ class TFPDistribution(
                 f"(or the alias {cls_name}.from_batched_params(...)) "
                 f"for the factory."
             )
-
-    # -- record_template auto-generation ------------------------------------
-
-    @property
-    def record_template(self):
-        """Auto-build record_template from name + event_shape when named."""
-        tpl = getattr(self, "_record_template", None)
-        if tpl is not None:
-            return tpl
-        name = getattr(self, "_name", None)
-        if name is not None:
-            tpl = RecordTemplate(**{name: self.event_shape})
-            object.__setattr__(self, "_record_template", tpl)
-            return tpl
-        return None
 
     # -- shape delegation ---------------------------------------------------
 

@@ -150,13 +150,39 @@ class NumericRecordDistribution(RecordDistribution):
     :class:`~probpipe.DistributionArray` (which has its own
     ``batch_shape``).
 
-    When ``record_template`` is set (named distribution), samples are
-    wrapped as :class:`~probpipe.Record`.  Otherwise, raw arrays are
-    returned for backward compatibility.
+    Single-field auto-template. Any concrete subclass that declares
+    an ``event_shape`` and is constructed with a ``name=`` gets an
+    auto-built single-field :class:`RecordTemplate`
+    (``RecordTemplate(**{name: event_shape})``) on first read of
+    :attr:`record_template`. Subclasses that need a multi-field
+    template (joint distributions) override ``record_template``
+    directly to skip the auto-build.
 
     Standard distributions (Normal, Gamma, Poisson, etc.) inherit from
     this class via :class:`TFPDistribution`.
     """
+
+    # -- record_template auto-generation ------------------------------------
+
+    @property
+    def record_template(self):
+        """Auto-build a single-field ``RecordTemplate`` from
+        ``name`` + ``event_shape`` when the subclass hasn't set one.
+
+        Cached via :meth:`object.__setattr__` on first read.
+        Multi-field subclasses (joint distributions) override this
+        property to skip the auto-build.
+        """
+        from .record import RecordTemplate
+        tpl = getattr(self, "_record_template", None)
+        if tpl is not None:
+            return tpl
+        name = getattr(self, "_name", None)
+        if name is not None:
+            tpl = RecordTemplate(**{name: self.event_shape})
+            object.__setattr__(self, "_record_template", tpl)
+            return tpl
+        return None
 
     # -- per-field metadata ---------------------------------------------------
 
@@ -240,22 +266,6 @@ class NumericRecordDistribution(RecordDistribution):
     def flat_event_shapes(self) -> list[tuple[int, ...]]:
         """Single-leaf: just the one event_shape."""
         return [self.event_shape]
-
-    @property
-    def event_size(self) -> int:
-        """Total flat dimensionality."""
-        tpl = self.record_template
-        if tpl is not None:
-            from .record import NumericRecordTemplate
-            if isinstance(tpl, NumericRecordTemplate):
-                return tpl.flat_size
-            # Mixed template — sum the numeric leaves explicitly.
-            return sum(
-                prod(shape) if shape else 1
-                for shape in tpl.leaf_shapes.values()
-                if shape is not None
-            )
-        return prod(self.event_shape)
 
     def flatten_value(self, value) -> Array:
         """Flatten a sample (Record, NumericRecordArray, or array) to flat trailing axis.
