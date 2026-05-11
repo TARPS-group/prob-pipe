@@ -292,13 +292,10 @@ class TestCanonicalConvenience:
         from probpipe.core.record import RecordTemplate
 
         class TwoField(NumericRecordDistribution):
-            # ``event_shape`` is still abstract on the base (the
-            # auto-template helper reads it for single-leaf subclasses);
-            # multi-leaf subclasses bypass that by overriding
-            # ``record_template`` directly and let the convenience raise.
-            @property
-            def event_shape(self):
-                raise TypeError("multi-leaf; use event_shapes")
+            # Multi-leaf subclasses bypass the single-field auto-template
+            # by overriding ``record_template`` directly. ``event_shape``
+            # is still abstract on the base; a stub satisfies the ABC.
+            event_shape = ()
 
             @property
             def record_template(self):
@@ -325,8 +322,9 @@ class TestCanonicalConvenience:
         assert multi_leaf_dist.dtype is None
 
     def test_support_raises_typeerror_on_multi_leaf(self, multi_leaf_dist):
-        """Multi-leaf: ``support`` (the convenience) raises TypeError."""
-        with pytest.raises(TypeError, match="not single-field"):
+        """Multi-leaf: ``support`` (the convenience) raises TypeError
+        via the shared ``_single_field_name`` guard."""
+        with pytest.raises(TypeError, match="not array-like"):
             _ = multi_leaf_dist.support
 
     def test_supports_canonical_on_multi_leaf(self, multi_leaf_dist):

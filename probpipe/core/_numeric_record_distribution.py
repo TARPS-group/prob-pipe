@@ -227,6 +227,18 @@ class NumericRecordDistribution(RecordDistribution):
             return tpl
         return None
 
+    def _spread_to_fields(self, value):
+        """Spread a single value across every field of
+        :attr:`record_template`.
+
+        Single-field auto-template subclasses (the common case)
+        declare a scalar ``dtype`` / ``support`` / etc. but the
+        canonical accessor is a per-field dict. This helper
+        materialises ``{name: value for name in record_template.fields}``
+        without each override having to spell it out.
+        """
+        return {name: value for name in self.record_template.fields}
+
     # -- per-field metadata ---------------------------------------------------
 
     @property
@@ -272,24 +284,10 @@ class NumericRecordDistribution(RecordDistribution):
         single-field pattern, override ``support`` directly to
         short-circuit this derivation).
 
-        Raises
-        ------
-        TypeError
-            If the distribution has more than one field. Reach for
-            :attr:`supports` instead.
+        Raises ``TypeError`` (via :meth:`_single_field_name`) on
+        multi-field distributions; reach for :attr:`supports` then.
         """
-        per_field = self.supports
-        if not per_field:
-            raise TypeError(
-                f"{type(self).__name__} has no declared supports; "
-                f"subclasses must override either ``support`` or ``supports``."
-            )
-        if len(per_field) > 1:
-            raise TypeError(
-                f"{type(self).__name__} with {len(per_field)} fields is "
-                f"not single-field; use .supports for the per-field dict."
-            )
-        return next(iter(per_field.values()))
+        return self.supports[self._single_field_name()]
 
     @classmethod
     def _check_support_compatible(cls, other: NumericRecordDistribution) -> None:
@@ -309,23 +307,17 @@ class NumericRecordDistribution(RecordDistribution):
             per_field = other.supports
         except NotImplementedError:
             return
-        if len(per_field) == 1:
-            source_support = next(iter(per_field.values()))
-            if not _supports_compatible(source_support, target_support):
-                raise ValueError(
-                    f"Cannot convert {type(other).__name__} (support={source_support}) "
-                    f"to {cls.__name__} (support={target_support}). "
-                    f"Pass check_support=False to override."
-                )
-            return
+        multi_leaf = len(per_field) > 1
         for field_name, source_support in per_field.items():
-            if not _supports_compatible(source_support, target_support):
-                raise ValueError(
-                    f"Cannot convert {type(other).__name__} field "
-                    f"{field_name!r} (support={source_support}) to "
-                    f"{cls.__name__} (support={target_support}). "
-                    f"Pass check_support=False to override."
-                )
+            if _supports_compatible(source_support, target_support):
+                continue
+            field_part = f" field {field_name!r}" if multi_leaf else ""
+            raise ValueError(
+                f"Cannot convert {type(other).__name__}{field_part} "
+                f"(support={source_support}) to {cls.__name__} "
+                f"(support={target_support}). "
+                f"Pass check_support=False to override."
+            )
 
     @classmethod
     def _default_support(cls) -> Constraint:
@@ -360,18 +352,27 @@ class NumericRecordDistribution(RecordDistribution):
           skeleton with the same field names. Matches the
           ``_sample`` contract that multi-leaf distributions
           return a ``NumericRecord``.
+
+        Cached on first read; the underlying template is immutable
+        post-construction so the cache is always valid.
         """
+        cached = getattr(self, "_treedef", None)
+        if cached is not None:
+            return cached
         tpl = self.record_template
         if tpl is None or len(tpl.fields) <= 1:
-            return jax.tree.structure(None)
-        from ._numeric_record import NumericRecord
-        placeholder = NumericRecord(**{
-            name: jnp.zeros(
-                tpl[name] if isinstance(tpl[name], tuple) else ()
-            )
-            for name in tpl.fields
-        })
-        return jax.tree.structure(placeholder)
+            td = jax.tree.structure(None)
+        else:
+            from ._numeric_record import NumericRecord
+            placeholder = NumericRecord(**{
+                name: jnp.zeros(
+                    tpl[name] if isinstance(tpl[name], tuple) else ()
+                )
+                for name in tpl.fields
+            })
+            td = jax.tree.structure(placeholder)
+        object.__setattr__(self, "_treedef", td)
+        return td
 
     @property
     def flat_event_shapes(self) -> list[tuple[int, ...]]:
@@ -504,8 +505,7 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
     def dtypes(self) -> dict[str, jnp.dtype]:
         """Per-field dtype — the evaluations' dtype spread across
         the auto-built single-field template."""
-        eval_dtype = self._evaluations.dtype
-        return {name: eval_dtype for name in self.record_template.fields}
+        return self._spread_to_fields(self._evaluations.dtype)
 
     def _mean(self) -> Array:
         """Point estimate: (weighted) mean of evaluations."""
@@ -550,7 +550,7 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
     @property
     def supports(self) -> dict[str, Constraint]:
         """Per-field support — bootstrap of mean values is real-valued."""
-        return {name: real for name in self.record_template.fields}
+        return self._spread_to_fields(real)
 
     def __repr__(self) -> str:
         return f"BootstrapDistribution(n={self._n}, event_shape={self.event_shape})"
@@ -659,7 +659,7 @@ class FlattenedView(NumericRecordDistribution):
     @property
     def supports(self) -> dict[str, Constraint]:
         """Per-field support — the flattened view is real-valued."""
-        return {name: real for name in self.record_template.fields}
+        return self._spread_to_fields(real)
 
     @property
     def base_distribution(self) -> Distribution:

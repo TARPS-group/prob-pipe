@@ -174,8 +174,7 @@ class TFPDistribution(
         single-field template. ``dtype`` (the convenience) is
         inherited from the base and derives from this dict.
         """
-        tfp_dtype = self._tfp_dist.dtype
-        return {name: tfp_dtype for name in self.record_template.fields}
+        return self._spread_to_fields(self._tfp_dist.dtype)
 
     @property
     def support(self):
@@ -184,11 +183,10 @@ class TFPDistribution(
 
     @property
     def supports(self) -> dict[str, any]:
-        """Per-field support constraints (single field for TFPDistribution)."""
-        tpl = self.record_template
-        if tpl is not None:
-            return {name: self.support for name in tpl.fields}
-        return {}
+        """Per-field support constraints — spreads the single-field
+        ``support`` (overridden by each concrete TFP-backed
+        subclass) across the auto-built template."""
+        return self._spread_to_fields(self.support)
 
     # -- sampling & density -------------------------------------------------
 
