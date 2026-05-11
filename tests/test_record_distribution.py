@@ -2,7 +2,6 @@
 
 - Public ``.parent`` / ``.field`` properties on ``_RecordDistributionView``
   (parallel to ``_RecordArrayView``).
-- ``.n`` property on ``RecordDistribution`` (STYLE_GUIDE §1.9).
 - Single-field ``.shape`` / ``.ndim`` shims on ``RecordDistribution``
   and ``_RecordDistributionView`` — and their multi-field ``TypeError``.
 - ``event_shapes`` returns ``dict[str, tuple[int, ...]]`` uniformly,
@@ -69,30 +68,14 @@ class TestViewParentField:
 
 
 # ---------------------------------------------------------------------------
-# RecordDistribution.n
-# ---------------------------------------------------------------------------
-
-
-class TestRecordDistributionN:
-    """STYLE_GUIDE §1.9 — finite-collection distributions expose ``.n``
-    as ``prod(batch_shape)``."""
-
-    def test_scalar_dist_n_is_one(self, multi_field_dist):
-        assert multi_field_dist.n == 1
-
-    def test_single_field_dist_n_is_one(self, single_field_dist):
-        assert single_field_dist.n == 1
-
-
-# ---------------------------------------------------------------------------
 # Single-field .shape / .ndim shims
 # ---------------------------------------------------------------------------
 
 
 class TestSingleFieldShapeShim:
     """A single-field ``RecordDistribution`` exposes ``.shape`` and
-    ``.ndim`` as thin delegates to the sole field's event shape (with
-    the ``batch_shape`` prefix). Multi-field raises ``TypeError``."""
+    ``.ndim`` as thin delegates to the sole field's event shape.
+    Multi-field raises ``TypeError``."""
 
     def test_shape_on_single_field_dist(self, single_field_dist):
         # Scalar Normal has event_shape = (), so .shape == ().

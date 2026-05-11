@@ -5,12 +5,13 @@ The rule (codified in STYLE_GUIDE.md §1.11):
 
 * :class:`Record`, :class:`NumericRecord`, :class:`RecordArray`,
   :class:`NumericRecordArray` iterate field names dict-style.
-* :class:`DistributionArray` has ``__len__ == prod(batch_shape)`` and
-  is positional (access via ``da[i]``); not generally treated as an
-  iterable.
-* Every other :class:`Distribution` subclass is non-iterable. Stored
-  samples live on ``.samples`` / ``.draws()``; ``.n`` reports the
-  count.
+* :class:`DistributionArray` is positional (access via ``da[i]``);
+  ``len(da)`` is the leading-axis size, ``prod(da.batch_shape)`` is
+  the total cell count. Not generally treated as an iterable.
+* Every other :class:`Distribution` subclass is non-iterable.
+  Finite-sample subclasses (see STYLE_GUIDE §1.9) expose stored
+  samples on ``.samples`` / ``.draws()`` with ``.n`` reporting the
+  count; parametric distributions do not have ``.n``.
 """
 from __future__ import annotations
 
@@ -117,9 +118,9 @@ def test_distribution_is_not_iterable(make_dist):
     """Every Distribution subclass must reject iteration.
 
     The rule: distributions represent a single random variable, not a
-    collection. Use ``.samples`` / ``.draws()`` for stored samples,
-    ``.n`` for count, and ``DistributionArray`` for batched
-    distributions.
+    collection. Finite-sample subclasses expose ``.samples`` /
+    ``.draws()`` and ``.n``; ``DistributionArray`` covers batched
+    cases.
 
     Python's iter-via-``__getitem__`` fallback returns a non-empty
     iterator object even on classes without ``__iter__``, so we

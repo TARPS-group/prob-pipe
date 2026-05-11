@@ -69,7 +69,6 @@ class TestMultivariateNormal:
     def test_construction_with_cov(self, loc, cov_matrix):
         g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
         assert g.event_shape == (3,)
-        assert g.batch_shape == ()
         assert g.dim == 3
         np.testing.assert_allclose(g.loc, loc, atol=1e-6)
 
@@ -612,9 +611,6 @@ class TestDistributionABC:
         """condition_on() is only on JointDistribution, not NumericRecordDistribution ABC."""
         assert not hasattr(gaussian, "condition_on")
 
-    def test_default_batch_shape(self, gaussian):
-        assert gaussian.batch_shape == ()
-
     def test_default_dtype(self, gaussian, loc):
         assert gaussian.dtype == loc.dtype
 
@@ -718,11 +714,11 @@ class TestTFPDistribution:
 
 class TestShapeSemantics:
     def test_sample_shape_convention(self, gaussian, key):
-        """sample(key, sample_shape) → sample_shape + batch_shape + event_shape"""
+        """sample(key, sample_shape) → sample_shape + event_shape"""
         s = sample(gaussian, key=key, sample_shape=(4, 2))
         assert s.shape == (4, 2, 3)
 
-    def test_log_prob_batch_shape(self, gaussian, key):
+    def test_log_prob_sample_shape(self, gaussian, key):
         s = sample(gaussian, key=key, sample_shape=(4, 2))
         lp = log_prob(gaussian, s)
         assert lp.shape == (4, 2)
@@ -747,15 +743,6 @@ class TestShapeSemantics:
 class TestDistributionCoverageGaps:
     """Cover otherwise-uncovered defaults and helpers in core.distribution."""
 
-    def test_batch_shape_default(self):
-        """NumericRecordDistribution.batch_shape defaults to ()."""
-        class Scalar(NumericRecordDistribution):
-            @property
-            def event_shape(self):
-                return ()
-
-        assert Scalar(name="s").batch_shape == ()
-
     def test_dtype_none_without_template(self):
         """NumericRecordDistribution.dtype is None when no template is set."""
         class Scalar(NumericRecordDistribution):
@@ -770,14 +757,6 @@ class TestDistributionCoverageGaps:
         from probpipe import Normal
         n = Normal(loc=0.0, scale=1.0, name="x")
         assert n.dtype == n._tfp_dist.dtype
-
-    # NOTE: ``test_repr_with_batch_shape`` was removed in PR-C.2.
-    # It exercised ``Normal(loc=arr, scale=arr)`` (now rejected by
-    # ``TFPDistribution.__init__``) to verify that the repr includes
-    # ``batch_shape``. Distributions never carry a non-trivial
-    # ``batch_shape`` after PR-C.2, so the repr branch the test
-    # asserted on is unreachable. PR-C.3 will remove ``batch_shape``
-    # from the repr entirely.
 
     def test_array_empirical_dtype(self):
         """RecordEmpiricalDistribution.dtype returns sample dtype."""

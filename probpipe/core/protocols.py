@@ -329,9 +329,8 @@ class _DistributionArrayBackend(Protocol):
     A backend owns the *batched* parameters of a homogeneous
     ``DistributionArray`` and delivers vectorised ops directly — TFP's
     native batch axis, a single ``RecordEmpiricalDistribution`` with a
-    leading batch dim, etc. It is **not** a :class:`Distribution`; it
-    has no ``name`` / ``provenance`` and lives only as the contract
-    between a distribution class's
+    leading batch dim, etc. It carries no ``name`` / ``provenance``
+    and lives only as the contract between a distribution class's
     :meth:`SupportsArrayBackend._make_array_backend` and the array
     consumer.
 

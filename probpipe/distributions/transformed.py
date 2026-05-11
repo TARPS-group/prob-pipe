@@ -228,12 +228,6 @@ class TransformedDistribution(NumericRecordDistribution):
         )
 
     @property
-    def batch_shape(self) -> tuple[int, ...]:
-        if self._tfp_transformed is not None:
-            return tuple(self._tfp_transformed.batch_shape)
-        return self._base.batch_shape
-
-    @property
     def dtype(self) -> jnp.dtype:
         if self._tfp_transformed is not None:
             return self._tfp_transformed.dtype

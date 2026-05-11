@@ -688,11 +688,34 @@ class WorkflowFunction(Node):
 
         for name, value in values.items():
             expected = self._hints.get(name)
-            if expected is None:
-                continue
             # DistributionArray is ``Array[Distribution]`` — handled by
             # the sweep path, not the scalar-distribution conversion.
+            # A 0-d DA (``batch_shape == ()``) has zero axes to sweep
+            # over, so the sweep path would skip it and the op would
+            # see a raw ``DistributionArray`` in a scalar-Distribution
+            # slot. Unwrap it here unless the hint explicitly asks for
+            # a DA (or ``Any``), so the cell flows through dispatch as
+            # any scalar Distribution would — the natural extension of
+            # the sweep convention "no batch cells to iterate → one
+            # call with the cell". Size-1 DAs (``batch_shape == (1,)``)
+            # are *not* collapsed here: their sweep is well-defined
+            # (one cell → ``batch_shape=(1,)`` output), and treating
+            # them as scalars would silently change the result shape
+            # of ``mean(da)`` / ``sample(da)`` for any deliberately
+            # one-element batch.
             if isinstance(value, DistributionArray):
+                if value.batch_shape == ():
+                    try:
+                        wants_da = (
+                            isinstance(expected, type)
+                            and issubclass(expected, DistributionArray)
+                        )
+                    except TypeError:
+                        wants_da = False
+                    if not wants_da and expected is not Any:
+                        out[name] = value._flat_component(0)
+                continue
+            if expected is None:
                 continue
 
             try:

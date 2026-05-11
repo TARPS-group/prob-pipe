@@ -1,8 +1,8 @@
 """``DistributionArray`` — shape-indexed collection of independent distributions.
 
-A ``DistributionArray`` is ``Array[Distribution]``: ``n`` independent
-scalar distributions addressed by a (multi-d) ``batch_shape``. It is
-**not** a mixture.
+A ``DistributionArray`` is ``Array[Distribution]``: an ordered
+collection of independent scalar distributions addressed by a
+(multi-d) ``batch_shape``.
 
 Vectorized ops are delivered by the :class:`~probpipe.WorkflowFunction`
 sweep layer — when a ``DistributionArray`` is passed to an op like
@@ -62,10 +62,11 @@ __all__ = ["DistributionArray"]
 
 
 class DistributionArray[T](Distribution[T]):
-    """Ordered collection of ``n`` independent scalar distributions.
+    """Ordered collection of independent scalar distributions
+    addressed by a (multi-d) ``batch_shape``.
 
     Exposes only the container surface (indexing, iteration,
-    ``components``, ``batch_shape``, ``event_shape``, ``n``). Vectorized
+    ``components``, ``batch_shape``, ``event_shape``). Vectorized
     ops (``sample``, ``mean``, ``variance``, ``log_prob``, …) are
     delivered by the :class:`~probpipe.core.node.WorkflowFunction`
     sweep layer, which treats the array as ``Array[Distribution]`` and
@@ -74,8 +75,8 @@ class DistributionArray[T](Distribution[T]):
     Parameters
     ----------
     components : sequence of Distribution
-        The n component distributions. Must be non-empty, share
-        ``event_shape``, and each have ``batch_shape == ()``.
+        The n component distributions. Must be non-empty and share
+        ``event_shape``.
     batch_shape : tuple of int, optional
         Leading batch shape. Defaults to ``(len(components),)`` for the
         1-D form; ``prod(batch_shape)`` must equal ``len(components)``.
@@ -137,26 +138,17 @@ class DistributionArray[T](Distribution[T]):
         components = tuple(components)
         if not components:
             raise ValueError("DistributionArray requires at least one component")
-        # Components must share event_shape and each be scalar
-        # (``batch_shape == ()``); batching lives on the
-        # DistributionArray itself, not on its elements.
+        # Components must share event_shape. Batching lives on the
+        # DistributionArray itself; per the "one random variable per
+        # Distribution" rule, components have no batch_shape.
         es0 = getattr(components[0], "event_shape", ())
         for i, c in enumerate(components):
             es = getattr(c, "event_shape", ())
-            bs = getattr(c, "batch_shape", ())
             if es != es0:
                 raise ValueError(
                     f"DistributionArray requires matching event_shape "
                     f"across components; components[0].event_shape={es0} "
                     f"but components[{i}].event_shape={es}."
-                )
-            if bs != ():
-                raise ValueError(
-                    f"DistributionArray components must be scalar "
-                    f"(batch_shape == ()); components[{i}] has "
-                    f"batch_shape={bs}. Batching is expressed by "
-                    f"DistributionArray itself — pass scalar components "
-                    f"and set batch_shape=... on the DistributionArray."
                 )
         # ``batch_shape`` defaults to (n,) for backward compatibility
         # with the 1-D-only form used until now. Multi-d broadcasting
@@ -377,11 +369,6 @@ class DistributionArray[T](Distribution[T]):
     # -- structure -----------------------------------------------------------
 
     @property
-    def n(self) -> int:
-        """Total number of components (``prod(batch_shape)``)."""
-        return prod(self._batch_shape)
-
-    @property
     def components(self) -> tuple[Distribution, ...]:
         """Flat tuple of component distributions, in row-major order
         across the leading ``batch_shape``.
@@ -406,11 +393,11 @@ class DistributionArray[T](Distribution[T]):
     def batch_shape(self) -> tuple[int, ...]:
         """Batch axes of this DistributionArray.
 
-        The components themselves are required to be scalar
-        (``batch_shape == ()``), so this is just
-        ``self._batch_shape`` — no inherit-from-component
-        composition. Multi-d broadcasting outputs pass the full
-        sweep shape; the default 1-D form is ``(n,)``.
+        Components are scalar (one random variable per
+        ``Distribution``), so this is simply ``self._batch_shape``
+        — there is no inherit-from-component composition. Multi-d
+        broadcasting outputs pass the full sweep shape; the default
+        1-D form is ``(n,)``.
         """
         return tuple(self._batch_shape)
 
@@ -421,9 +408,37 @@ class DistributionArray[T](Distribution[T]):
             return tuple(self._backend.event_shape)
         return getattr(self._components[0], "event_shape", ())
 
+    @property
+    def dtype(self):
+        """Per-cell dtype.
+
+        Cells share an event shape and (in practice) a dtype because
+        homogeneous backends produce uniformly-typed cells and
+        literal-array constructions inherit from the source.
+        Backend-delegated arrays read it from the backend; literal
+        arrays read it from the first component.
+        """
+        if self._backend is not None:
+            return getattr(self._backend, "dtype", None)
+        return getattr(self._components[0], "dtype", None)
+
+    @property
+    def size(self) -> int:
+        """Total number of cells (``prod(batch_shape)``).
+
+        Mirrors ``np.ndarray.size`` / ``jax.Array.size``: ``len(da)``
+        is the leading-axis dim, ``da.size`` is the total cell count.
+        """
+        return prod(self._batch_shape)
+
     # -- container protocol --------------------------------------------------
 
     def __len__(self) -> int:
+        if not self._batch_shape:
+            raise TypeError(
+                "len() of unsized 0-d DistributionArray "
+                "(batch_shape=()). Use da.size for the cell count."
+            )
         return self._batch_shape[0]
 
     def __getitem__(self, key):
@@ -496,9 +511,42 @@ class DistributionArray[T](Distribution[T]):
         )
 
     def __iter__(self):
-        if self._backend is not None:
-            return (self._backend.cell(i) for i in range(self.n))
-        return iter(self._components)
+        """Iterate the leading axis (numpy / jax convention).
+
+        ``len(self)`` items are yielded:
+
+        * ``ndim == 1`` (the common case): each item is a scalar
+          :class:`~probpipe.Distribution` cell.
+        * ``ndim >= 2``: each item is a ``DistributionArray`` of
+          shape ``batch_shape[1:]`` — a leading-axis slice, mirroring
+          ``iter(np.zeros((2, 3)))`` yielding two ``(3,)``-shaped
+          views.
+        * ``ndim == 0`` (``batch_shape == ()``): raises
+          ``TypeError`` to match ``iter(np.zeros(()))``. Reach for
+          :meth:`_flat_component` (or :attr:`components`) to access
+          the single cell — those work uniformly across every
+          ``batch_shape`` including ``()``.
+
+        For flat row-major access over every cell (the pre-#178
+        behaviour), use :attr:`components` or
+        ``range(self.size)`` with :meth:`_flat_component`.
+        """
+        bshape = self._batch_shape
+        if not bshape:
+            raise TypeError(
+                "iteration over a 0-d DistributionArray "
+                f"(batch_shape={bshape}). Reach for "
+                "da.components or da._flat_component(0) for the "
+                "single cell."
+            )
+        n_lead = bshape[0]
+        if len(bshape) == 1:
+            if self._backend is not None:
+                return (self._backend.cell(i) for i in range(n_lead))
+            return iter(self._components)
+        # Multi-d: __getitem__(int) on a multi-d DA returns a
+        # sub-DistributionArray of shape batch_shape[1:].
+        return (self[i] for i in range(n_lead))
 
     def _flat_component(self, i: int) -> Distribution:
         """Return the i-th component in row-major order over ``batch_shape``.
@@ -512,11 +560,11 @@ class DistributionArray[T](Distribution[T]):
         called.
         """
         i_int = int(i)
-        n = self.n
-        if not 0 <= i_int < n:
+        n_cells = prod(self._batch_shape)
+        if not 0 <= i_int < n_cells:
             raise IndexError(
                 f"_flat_component: index {i_int} out of range for "
-                f"DistributionArray with n={n} cells."
+                f"DistributionArray with batch_shape={self._batch_shape}."
             )
         if self._backend is not None:
             return self._backend.cell(i_int)
@@ -525,7 +573,7 @@ class DistributionArray[T](Distribution[T]):
     def __repr__(self) -> str:
         backed = " backend=True" if self._backend is not None else ""
         return (
-            f"DistributionArray(n={self.n}, "
+            f"DistributionArray(batch_shape={self._batch_shape}, "
             f"event_shape={self.event_shape}{backed})"
         )
 
@@ -603,8 +651,8 @@ def _make_distribution_array(
     Parameters
     ----------
     components : sequence of Distribution
-        Component distributions (must each be scalar,
-        ``batch_shape == ()``).
+        Component distributions. Each must be a scalar
+        ``Distribution`` (one random variable per cell).
     batch_shape : tuple of int, optional
         Leading batch shape for the DistributionArray. Defaults to
         ``(len(components),)`` for the 1-D form. Multi-d broadcasting

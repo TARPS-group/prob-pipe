@@ -211,7 +211,7 @@ class TestSampling:
         batch = sample(rm, key=key, sample_shape=(5,))
         assert isinstance(batch, DistributionArray)
         assert batch.batch_shape == (5,)
-        assert batch.n == 5
+        assert len(batch) == 5
         for i in range(5):
             assert isinstance(batch[i], Distribution)
 
@@ -221,7 +221,7 @@ class TestSampling:
         batch = sample(rm, key=key, sample_shape=(2, 3))
         assert isinstance(batch, DistributionArray)
         assert batch.batch_shape == (2, 3)
-        assert batch.n == 6
+        assert batch.size == 6
 
     def test_sampling_protocol_opt_in_present(self, key):
         rm = _DiracRandomMeasure(
@@ -404,7 +404,7 @@ class TestBatchOfRandomMeasures:
             name="rm2",
         )
         batch = DistributionArray([rm1, rm2])
-        assert batch.n == 2
+        assert len(batch) == 2
         assert batch[0] is rm1
         assert batch[1] is rm2
         # Each element is itself a random measure

@@ -181,18 +181,22 @@ slash-delimited form in any string-keyed lookup.
 A `Distribution` represents a single random variable, not a
 collection. Every concrete `Distribution` subclass —
 `Normal`, `EmpiricalDistribution`, `BootstrapReplicateDistribution`,
-joint distributions, marginals — is **non-iterable**. Stored samples
-are accessed via `.samples` / `.draws()`; `.n` reports the count.
+joint distributions, marginals — is **non-iterable**. For the
+finite-sample subclasses listed in §1.9, stored samples are
+accessed via `.samples` / `.draws()` and `.n` reports the count.
+Parametric distributions do not have `.n`.
 
 Iteration is reserved for the `Record` family — `Record`,
 `NumericRecord`, `RecordArray`, `NumericRecordArray` — which iterate
 field names dict-style (`keys()` / `values()` / `items()`).
 
-`DistributionArray` is positional: `len(da)` is `prod(batch_shape)`,
-and elements are accessed via `da[i]`. It is **not** generally
-treated as an iterable; reach for `for d in da:` only when the
-shape is one-dimensional, and even then prefer the explicit
-positional form.
+`DistributionArray` is positional and follows numpy/jax conventions:
+`len(da)` is the leading-axis dim and `da.size` is the total cell
+count (`prod(da.batch_shape)`); elements are accessed via `da[i]`.
+Iteration walks the leading axis — for a 1-D `DistributionArray`
+it yields scalar cells; for a multi-d one it yields sub-arrays of
+shape `batch_shape[1:]`, mirroring `iter(np.zeros((2, 3)))`. For
+flat row-major access over every cell, use `da.components`.
 
 When adding a new `Distribution` subclass, do not define `__iter__`.
 The regression test in `tests/test_iteration_protocol.py` enforces

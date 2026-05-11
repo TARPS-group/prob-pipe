@@ -11,6 +11,7 @@ import pytest
 
 from probpipe import (
     Distribution,
+    DistributionArray,
     Normal,
     MultivariateNormal,
     RandomFunction,
@@ -67,6 +68,20 @@ def _dense_lbf_full_joint_cov(phi_X, w_cov):
     n, d_out, d_w = phi_X.shape
     phi_flat = phi_X.reshape(n * d_out, d_w)
     return phi_flat @ w_cov @ phi_flat.T
+
+
+def _assert_da_of(dist, cls):
+    """Assert ``dist`` is a ``DistributionArray`` whose every cell is
+    an instance of ``cls``. Walks all cells so homogeneity is
+    verified, not just the first one. Uses ``_flat_component`` so
+    the helper works uniformly for 0-d, 1-d, and multi-d arrays
+    (``iter(da)`` raises on 0-d to match ``iter(np.zeros(()))``)."""
+    assert isinstance(dist, DistributionArray)
+    for i in range(dist.size):
+        cell = dist._flat_component(i)
+        assert isinstance(cell, cls), (
+            f"cell {i} is {type(cell).__name__}, expected {cls.__name__}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +212,7 @@ class TestGaussianRandomFunction:
         grf = _ScalarGP()
         X = jnp.ones((5, 2))
         dist = grf(X)
-        assert isinstance(dist, Normal)
+        _assert_da_of(dist, Normal)
         assert dist.batch_shape == (5,)
         assert dist.event_shape == ()
 
@@ -205,7 +220,7 @@ class TestGaussianRandomFunction:
         grf = _MultiOutputGRF()
         X = jnp.ones((5, 2))
         dist = grf(X)
-        assert isinstance(dist, Normal)
+        _assert_da_of(dist, Normal)
         assert dist.batch_shape == (5, 2)
         assert dist.event_shape == ()
 
@@ -213,14 +228,14 @@ class TestGaussianRandomFunction:
         grf = _ScalarGP()
         X = jnp.ones((5, 2))
         dist = grf(X, joint_inputs=True)
-        assert isinstance(dist, MultivariateNormal)
+        _assert_da_of(dist, MultivariateNormal)
         assert dist.event_shape == (5,)
 
     def test_joint_outputs_returns_mvn(self):
         grf = _MultiOutputGRF()
         X = jnp.ones((5, 2))
         dist = grf(X, joint_outputs=True)
-        assert isinstance(dist, MultivariateNormal)
+        _assert_da_of(dist, MultivariateNormal)
         assert dist.event_shape == (2,)
         assert dist.batch_shape == (5,)
 
@@ -228,7 +243,7 @@ class TestGaussianRandomFunction:
         grf = _MultiOutputGRF()
         X = jnp.ones((5, 2))
         dist = grf(X, joint_inputs=True, joint_outputs=True)
-        assert isinstance(dist, MultivariateNormal)
+        _assert_da_of(dist, MultivariateNormal)
         assert dist.event_shape == (10,)  # 5 * 2
 
     def test_marginal_only_rejects_joint(self):
@@ -322,21 +337,25 @@ class TestLinearBasisFunction:
     def test_marginal_scalar(self, scalar_lbf):
         X = jnp.linspace(-1, 1, 10).reshape(-1, 1)
         dist = scalar_lbf(X)
-        assert isinstance(dist, Normal)
+        _assert_da_of(dist, Normal)
         assert dist.batch_shape == (10,)
         assert dist.event_shape == ()
 
     def test_marginal_multi_output(self, multi_output_lbf):
         X = jnp.linspace(-1, 1, 8).reshape(-1, 1)
         dist = multi_output_lbf(X)
-        assert isinstance(dist, Normal)
+        _assert_da_of(dist, Normal)
         assert dist.batch_shape == (8, 2)
 
     def test_marginal_mean_value(self, scalar_lbf):
         """Check mean matches manual computation."""
+        from probpipe import mean as mean_op
         X = jnp.array([[0.0], [1.0]])
         dist = scalar_lbf(X)
-        mean = dist.loc
+        # ``scalar_lbf(X)`` returns a ``DistributionArray`` of cells;
+        # aggregate via the ``mean`` op rather than reading the
+        # underlying ``loc`` parameter.
+        mean = mean_op(dist)
         # At x=0: phi=[1,0,0], mean = [1,0.5,0.1]@[1,0,0] = 1.0
         # At x=1: phi=[1,1,1], mean = [1,0.5,0.1]@[1,1,1] = 1.6
         np.testing.assert_allclose(mean, [1.0, 1.6], atol=1e-5)
@@ -346,20 +365,20 @@ class TestLinearBasisFunction:
     def test_joint_inputs_scalar(self, scalar_lbf):
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
         dist = scalar_lbf(X, joint_inputs=True)
-        assert isinstance(dist, MultivariateNormal)
+        _assert_da_of(dist, MultivariateNormal)
         assert dist.event_shape == (5,)
 
     def test_joint_outputs_multi(self, multi_output_lbf):
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
         dist = multi_output_lbf(X, joint_outputs=True)
-        assert isinstance(dist, MultivariateNormal)
+        _assert_da_of(dist, MultivariateNormal)
         assert dist.event_shape == (2,)
         assert dist.batch_shape == (5,)
 
     def test_full_joint_multi(self, multi_output_lbf):
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
         dist = multi_output_lbf(X, joint_inputs=True, joint_outputs=True)
-        assert isinstance(dist, MultivariateNormal)
+        _assert_da_of(dist, MultivariateNormal)
         assert dist.event_shape == (10,)  # 5 * 2
 
     # -- Extra batch --------------------------------------------------------
@@ -517,7 +536,7 @@ class TestLinearMap:
         h = A @ weight_grf
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
         dist = h(X)
-        assert isinstance(dist, Normal)
+        _assert_da_of(dist, Normal)
         assert dist.batch_shape == (5, 2)
 
     def test_joint_outputs(self, weight_grf):
@@ -525,7 +544,7 @@ class TestLinearMap:
         h = A @ weight_grf
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
         dist = h(X, joint_outputs=True)
-        assert isinstance(dist, MultivariateNormal)
+        _assert_da_of(dist, MultivariateNormal)
         assert dist.event_shape == (2,)
         assert dist.batch_shape == (5,)
 
@@ -534,7 +553,7 @@ class TestLinearMap:
         h = A @ weight_grf
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
         dist = h(X, joint_inputs=True)
-        assert isinstance(dist, MultivariateNormal)
+        _assert_da_of(dist, MultivariateNormal)
         assert dist.batch_shape == (2,)
         assert dist.event_shape == (5,)
 
@@ -543,7 +562,7 @@ class TestLinearMap:
         h = A @ weight_grf
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
         dist = h(X, joint_inputs=True, joint_outputs=True)
-        assert isinstance(dist, MultivariateNormal)
+        _assert_da_of(dist, MultivariateNormal)
         assert dist.event_shape == (10,)  # 5 * 2
 
     def test_mean_value(self, weight_grf):

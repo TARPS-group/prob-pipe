@@ -803,7 +803,7 @@ class TestKDEDistribution:
         samples = jax.random.normal(jax.random.PRNGKey(0), (100,))
         kde = KDEDistribution(samples)
         assert kde.event_shape == ()
-        assert kde.batch_shape == ()
+        assert not hasattr(kde, "batch_shape")
         assert kde.n == 100
 
     def test_multivariate_construction(self):
