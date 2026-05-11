@@ -746,8 +746,31 @@ class TestDistributionCoverageGaps:
     def test_auto_template_from_name_and_event_shape(self):
         """``NumericRecordDistribution`` auto-builds a single-field
         ``RecordTemplate`` from ``name`` + ``event_shape``, so every
-        concrete subclass has a non-None template (and a derived
-        ``dtype``) without per-subclass boilerplate.
+        concrete subclass has a non-None template without per-subclass
+        boilerplate. ``dtypes`` is canonical (subclass must override);
+        ``dtype`` derives from it.
+        """
+        class Scalar(NumericRecordDistribution):
+            @property
+            def event_shape(self):
+                return ()
+
+            @property
+            def dtypes(self):
+                return {name: jnp.float32 for name in self.record_template.fields}
+
+        s = Scalar(name="s")
+        assert s.record_template is not None
+        assert s.record_template.fields == ("s",)
+        assert s.dtypes == {"s": jnp.float32}
+        # ``dtype`` derives from ``dtypes`` (unique value → that dtype).
+        assert s.dtype == jnp.float32
+
+    def test_dtypes_raises_when_not_overridden(self):
+        """``NumericRecordDistribution.dtypes`` is canonical: subclasses
+        must override. The default raises ``NotImplementedError`` rather
+        than returning a silent default-float for every field (which
+        would lie for integer-valued distributions like ``Bernoulli``).
         """
         class Scalar(NumericRecordDistribution):
             @property
@@ -755,10 +778,8 @@ class TestDistributionCoverageGaps:
                 return ()
 
         s = Scalar(name="s")
-        assert s.record_template is not None
-        assert s.record_template.fields == ("s",)
-        # ``dtype`` derives from ``dtypes`` (default float pending PR-D commit 3).
-        assert s.dtype is not None
+        with pytest.raises(NotImplementedError, match="Scalar.dtypes"):
+            _ = s.dtypes
 
     def test_dtype_uniform_with_template(self):
         """NumericRecordDistribution.dtype is the common dtype when all fields match."""

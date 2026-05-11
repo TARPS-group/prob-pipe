@@ -167,16 +167,15 @@ class TFPDistribution(
         return tuple(self._tfp_dist.event_shape)
 
     @property
-    def dtype(self) -> jnp.dtype:
-        return self._tfp_dist.dtype
-
-    @property
     def dtypes(self) -> dict[str, jnp.dtype]:
-        """Per-field dtypes (single field for TFPDistribution)."""
-        tpl = self.record_template
-        if tpl is not None:
-            return {name: self.dtype for name in tpl.fields}
-        return {}
+        """Per-field dtypes — the canonical accessor for
+        ``TFPDistribution``. Reads ``self._tfp_dist.dtype`` and
+        spreads it across every field of the auto-built
+        single-field template. ``dtype`` (the convenience) is
+        inherited from the base and derives from this dict.
+        """
+        tfp_dtype = self._tfp_dist.dtype
+        return {name: tfp_dtype for name in self.record_template.fields}
 
     @property
     def support(self):

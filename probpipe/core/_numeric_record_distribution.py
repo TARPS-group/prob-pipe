@@ -188,21 +188,18 @@ class NumericRecordDistribution(RecordDistribution):
 
     @property
     def dtypes(self) -> dict[str, jnp.dtype]:
-        """Per-field dtypes.
+        """Per-field dtypes — **canonical**, subclasses must override.
 
-        Default: JAX's current default float dtype (``float32`` normally,
-        ``float64`` when ``jax_enable_x64`` is set).  Subclasses with
-        concrete arrays should override to report the actual dtype.
+        Returns a ``{field: dtype}`` dict aligned with ``record_template.fields``.
+        Default raises ``NotImplementedError`` rather than returning a
+        silent default-float for every field (which lied for integer-
+        valued distributions like ``Bernoulli``, ``Poisson``, ``Categorical``).
         """
-        tpl = self.record_template
-        if tpl is not None:
-            default = _default_float_dtype()
-            return {name: default for name in tpl.fields}
-        return {}
+        raise NotImplementedError(f"{type(self).__name__}.dtypes")
 
     @property
     def supports(self) -> dict[str, Constraint]:
-        """Per-field support constraints.
+        """Per-field support constraints — **canonical**, subclasses must override.
 
         Subclasses should override to provide meaningful constraints.
         Default raises ``NotImplementedError``.
@@ -211,9 +208,10 @@ class NumericRecordDistribution(RecordDistribution):
 
     @property
     def dtype(self) -> jnp.dtype | None:
-        """Scalar dtype if all fields share one, else ``None``.
+        """Convenience: scalar dtype if all fields share one, else ``None``.
 
-        Subclasses like ``TFPDistribution`` override with a concrete dtype.
+        Derived from :attr:`dtypes`. ``dtypes`` is the canonical
+        per-field accessor; subclasses override that, not this.
         """
         per_field = self.dtypes
         if not per_field:
@@ -385,8 +383,11 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
         return self._evaluations.shape[1:]
 
     @property
-    def dtype(self) -> jnp.dtype:
-        return self._evaluations.dtype
+    def dtypes(self) -> dict[str, jnp.dtype]:
+        """Per-field dtype — the evaluations' dtype spread across
+        the auto-built single-field template."""
+        eval_dtype = self._evaluations.dtype
+        return {name: eval_dtype for name in self.record_template.fields}
 
     def _mean(self) -> Array:
         """Point estimate: (weighted) mean of evaluations."""
