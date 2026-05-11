@@ -1,4 +1,11 @@
-"""Distributed bagged posteriors with a real Prefect server.
+"""Distributed bagged posteriors with Prefect + Ray.
+
+Runs the same bagged posterior workflow as ``run_prefect_demo.py``, but
+uses ``RayTaskRunner`` so each bootstrap MCMC fit runs in a separate Ray
+worker process — true parallelism across CPU cores.
+
+This works because ``Record.__reduce__`` was added to make Records
+pickle-serializable, which is required for Ray to ship arguments to workers.
 
 Usage
 -----
@@ -12,14 +19,15 @@ Usage
 
 3. Run this script (assuming you're in the ``prob-pipe`` root directory):
 
-       python docs/examples/run_prefect_demo.py
+       python docs/examples/run_ray_demo.py
 
 You will see each bootstrap MCMC fit appear as a task in the Prefect
-dashboard.
+dashboard, dispatched across Ray worker processes.
 
 Prerequisites
 -------------
     pip install probpipe[prefect]
+    pip install ray prefect-ray
 
 """
 
@@ -44,22 +52,23 @@ from probpipe import (
 )
 
 
-# 1. Configure Prefect globally
+# ---------------------------------------------------------------------------
+# 1. Configure Prefect to use RayTaskRunner
+# ---------------------------------------------------------------------------
 
-# Use Prefect tasks with the default ThreadPool runner.
-# Ray auto-detection is disabled because Record is not yet
-# pickle-serializable (see docstring above).
-from prefect.task_runners import ThreadPoolTaskRunner
+from prefect_ray import RayTaskRunner
 
 probpipe.prefect_config.workflow_kind = WorkflowKind.TASK
-probpipe.prefect_config.task_runner = ThreadPoolTaskRunner()
+probpipe.prefect_config.task_runner = RayTaskRunner()
 
 print(f"Workflow kind: {probpipe.prefect_config.workflow_kind}")
 print(f"Task runner:   {type(probpipe.prefect_config.task_runner).__name__}")
 print()
 
 
+# ---------------------------------------------------------------------------
 # 2. Load data and build models (same as Getting Started tutorial)
+# ---------------------------------------------------------------------------
 
 df = pd.read_csv("./docs/tutorials/data/horseshoe_crabs.csv")
 
@@ -91,13 +100,15 @@ print(f"Models: {model_poisson.name}, {model_nb.name}")
 print()
 
 
-# 3. Run bagged posteriors — tracked by Prefect
+# ---------------------------------------------------------------------------
+# 3. Run bagged posteriors — dispatched to Ray workers via Prefect
+# ---------------------------------------------------------------------------
 
 N_REPLICATES = 16
 
 bootstrap = BootstrapReplicateDistribution(EmpiricalDistribution(data))
 
-print(f"Running {N_REPLICATES} bootstrap replicates per model...")
+print(f"Running {N_REPLICATES} bootstrap replicates per model via Ray...")
 print("Check the Prefect dashboard at http://127.0.0.1:4200 to see tasks.\n")
 
 t0 = time.perf_counter()
@@ -122,7 +133,9 @@ print(f"  NegBin:  {t_nb:.1f}s")
 print()
 
 
+# ---------------------------------------------------------------------------
 # 4. Results
+# ---------------------------------------------------------------------------
 
 # Turn off Prefect for post-processing
 probpipe.prefect_config.workflow_kind = WorkflowKind.OFF
@@ -140,7 +153,9 @@ for label, bagged in [("Poisson", bagged_poisson), ("NegBin", bagged_nb)]:
     print()
 
 
+# ---------------------------------------------------------------------------
 # 5. Provenance
+# ---------------------------------------------------------------------------
 
 src = bagged_nb.source
 print("Provenance (NegBin bagged posterior):")
@@ -148,4 +163,5 @@ print(f"  Operation:   {src.operation}")
 print(f"  Orchestrate: {src.metadata['orchestrate']}")
 print(f"  N replicates: {src.metadata['n_samples']}")
 print()
-print("Done! Check the Prefect dashboard for the full task history.")
+print("Done! Each replicate ran in a separate Ray worker process.")
+print("Check the Prefect dashboard for the full task history.")

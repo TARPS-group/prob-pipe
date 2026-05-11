@@ -201,6 +201,9 @@ class ProductDistribution(
         super().__init__(name=name)
         self._record_template = _build_record_template(self._components)
 
+    def __reduce__(self):
+        return (_unpickle_product_distribution, (dict(self._components), self._name))
+
     # -- Sampling (returns Record) ------------------------------------------
 
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
@@ -314,6 +317,11 @@ class ProductDistribution(
         )
         name_str = f", name='{self._name}'" if self._name else ""
         return f"ProductDistribution({comp_str}{name_str})"
+
+
+def _unpickle_product_distribution(components, name):
+    """Reconstruct a ProductDistribution (or dynamic subclass) from its components."""
+    return ProductDistribution(**components, name=name)
 
 
 # ---------------------------------------------------------------------------
