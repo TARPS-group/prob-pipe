@@ -692,7 +692,23 @@ class WorkflowFunction(Node):
                 continue
             # DistributionArray is ``Array[Distribution]`` — handled by
             # the sweep path, not the scalar-distribution conversion.
+            # A 0-d DA (``batch_shape == ()``) has zero axes to sweep
+            # over, so the sweep path would skip it too. Unwrap it
+            # here unless the hint explicitly asks for a DA, so a
+            # scalar-Distribution slot sees the single cell — the
+            # natural extension of the sweep convention "zero batch
+            # axes → one call with the cell".
             if isinstance(value, DistributionArray):
+                if value.batch_shape == ():
+                    try:
+                        wants_da = (
+                            isinstance(expected, type)
+                            and issubclass(expected, DistributionArray)
+                        )
+                    except TypeError:
+                        wants_da = False
+                    if not wants_da and expected is not Any:
+                        out[name] = value._flat_component(0)
                 continue
 
             try:

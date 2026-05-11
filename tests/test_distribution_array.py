@@ -238,6 +238,65 @@ class TestContainerSurface:
 
 
 # ---------------------------------------------------------------------------
+# WF dispatch — 0-d DistributionArray transparently unwraps
+# ---------------------------------------------------------------------------
+
+
+class TestZeroDDispatch:
+    """A 0-d ``DistributionArray`` (``batch_shape == ()``) has zero
+    axes to sweep over. The WF dispatch transparently unwraps it to
+    its single cell so ops like ``sample`` / ``mean`` / ``log_prob``
+    behave as if the user had passed the cell directly.
+
+    The natural extension of the sweep convention "iterate over batch
+    axes": with zero axes, the sweep collapses to "one call with the
+    cell". This avoids forcing callers to write ``da._flat_component(0)``
+    when a fully-joint GRF prediction returns a 0-d DA.
+    """
+
+    def _make_zero_d_da(self):
+        """A 0-d DA wrapping a single MVN cell — mirrors the shape a
+        GRF with ``joint_inputs=joint_outputs=True`` produces when
+        there are no extra batch axes."""
+        from probpipe import DistributionArray, MultivariateNormal
+        return DistributionArray.from_batched_params(
+            MultivariateNormal,
+            batch_shape=(),
+            loc=jnp.zeros(3),
+            cov=jnp.eye(3),
+            name="m",
+        )
+
+    def test_sample_unwraps_zero_d_da(self):
+        da = self._make_zero_d_da()
+        s = sample(da, key=jax.random.PRNGKey(0), sample_shape=(5,))
+        # The unwrapped cell is an MVN with event_shape (3,);
+        # sample with sample_shape (5,) returns shape (5, 3).
+        assert jnp.asarray(s).shape == (5, 3)
+
+    def test_mean_unwraps_zero_d_da(self):
+        da = self._make_zero_d_da()
+        m = mean(da)
+        # MVN(loc=zeros(3), cov=I).mean() == zeros(3).
+        np.testing.assert_allclose(jnp.asarray(m), jnp.zeros(3), atol=1e-6)
+
+    def test_variance_unwraps_zero_d_da(self):
+        da = self._make_zero_d_da()
+        v = variance(da)
+        np.testing.assert_allclose(jnp.asarray(v), jnp.ones(3), atol=1e-6)
+
+    def test_log_prob_unwraps_zero_d_da(self):
+        da = self._make_zero_d_da()
+        lp = log_prob(da, jnp.zeros(3))
+        # Standard 3-D MVN log-density at the origin.
+        cell = da._flat_component(0)
+        np.testing.assert_allclose(
+            jnp.asarray(lp), jnp.asarray(log_prob(cell, jnp.zeros(3))),
+            atol=1e-6,
+        )
+
+
+# ---------------------------------------------------------------------------
 # WF sweep — ops dispatched cell-by-cell
 # ---------------------------------------------------------------------------
 

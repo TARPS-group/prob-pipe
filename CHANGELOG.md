@@ -58,10 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it was always `()`. `GaussianRandomFunction.predict` (and every
   `ArrayRandomFunction` subclass) now returns a `DistributionArray`
   rather than a single batched `Normal` / `MultivariateNormal`;
-  per-cell `event_shape` is unchanged. Even fully-joint predictions
-  with no extra batch axes return a length-1 `DistributionArray` —
-  unwrap with `dist[0]` if you need the underlying scalar
-  `MultivariateNormal`.
+  per-cell `event_shape` is unchanged. Fully-joint predictions with
+  no extra batch axes return a 0-d `DistributionArray`; ops
+  (`sample`, `mean`, `log_prob`, …) auto-unwrap a 0-d DA to its
+  single cell, so call sites stay unchanged.
 
 - **`DistributionArray` container surface aligned with numpy / jax**
   (#178). `iter(da)` now walks the leading axis: a 1-D array yields
