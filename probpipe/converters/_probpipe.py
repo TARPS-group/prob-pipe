@@ -28,6 +28,7 @@ from ..core.distribution import (
     RecordEmpiricalDistribution,
 )
 from ..core.provenance import Provenance
+from ..distributions._tfp_base import _allow_batched_tfp_init
 from ._registry import ConversionInfo, ConversionMethod, Converter
 
 # Default sample count for moment-matching conversions
@@ -637,7 +638,18 @@ class ProbPipeConverter(Converter):
             except (NotImplementedError, AttributeError):
                 pass
 
-        result = fn(source, key, **kwargs)
+        # Some converters (e.g., ``_convert_to_normal``) fabricate
+        # TFP-backed scalars from a source's ``_mean`` / ``_variance``.
+        # When the source's moments are ``(d,)``-shaped (a 1-d
+        # empirical with one observation, or a Normal whose source
+        # was tracked through a WF sweep), the implied ``batch_shape``
+        # is non-empty — which ``TFPDistribution.__init__``'s rejection
+        # would otherwise refuse. The converter is library-internal
+        # infra, not user code, so we opt into the bypass for the
+        # dispatch. A proper fix (route to ``DistributionArray`` for
+        # batched moments) is tracked as a follow-up.
+        with _allow_batched_tfp_init():
+            result = fn(source, key, **kwargs)
 
         # Mark approximate if source is approximate or conversion used sampling
         if source.is_approximate or not isinstance(source, target_type):

@@ -7,7 +7,9 @@ distribution modules in ``distributions/``.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+import contextlib
+import contextvars
+from typing import Any, Callable, Iterator
 
 import jax
 import jax.numpy as jnp
@@ -31,6 +33,53 @@ from ..core.record import Record, RecordTemplate
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 
+# ---------------------------------------------------------------------------
+# Internal bypass for the batched-parameters rejection
+# ---------------------------------------------------------------------------
+# ``TFPDistribution.__init__`` raises ``ValueError`` whenever a concrete
+# subclass (``Normal``, ``Beta``, ``Gamma``, …) is constructed with
+# parameters whose ``tfd.Distribution.batch_shape`` is non-empty,
+# enforcing the framework rule "one random variable per ``Distribution``"
+# (CONTRIBUTING.md); collections live in ``DistributionArray``.
+#
+# Library-internal infrastructure that legitimately holds a batched
+# form — the fused-storage ``_TFPArrayBackend``, converters that
+# fabricate batched-Normal forms during a WF sweep, sequential-joint
+# user lambdas given batched parents, ``GaussianRandomFunction.predict``
+# — opts in via :func:`_allow_batched_tfp_init`. User-facing callers
+# never use the bypass.
+
+_BATCHED_INIT_BYPASS: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_BATCHED_INIT_BYPASS", default=False,
+)
+"""Per-context flag consulted by ``TFPDistribution.__init__``'s
+batched-parameters rejection. ``ContextVar`` over a module-level bool
+because the bypass should be scoped to the dynamic extent of the
+``with`` block — including across threads and ``asyncio`` tasks — so
+two concurrent constructions can't bleed into each other's bypass
+state."""
+
+
+@contextlib.contextmanager
+def _allow_batched_tfp_init() -> Iterator[None]:
+    """Context manager: allow TFP-backed constructors to accept
+    parameters whose implied ``batch_shape`` is non-empty.
+
+    Used by library-internal infrastructure that legitimately needs
+    to construct a TFP-batched form (e.g. :class:`_TFPArrayBackend`,
+    converters that produce batched-Normal forms during a WF sweep,
+    sequential-joint sampling whose lambda receives a batched
+    sample). User code never uses this; intra-library tests that
+    emulate internal RandomFunction subclasses may import the
+    context manager directly.
+    """
+    token = _BATCHED_INIT_BYPASS.set(True)
+    try:
+        yield
+    finally:
+        _BATCHED_INIT_BYPASS.reset(token)
+
+
 class TFPDistribution(
     NumericRecordDistribution,
     SupportsSampling,
@@ -51,11 +100,66 @@ class TFPDistribution(
     :class:`SupportsLogProb` (provides ``_prob``,
     ``_unnormalized_log_prob``, ``_unnormalized_prob`` defaults),
     :class:`SupportsMean`, and :class:`SupportsVariance`.
+
+    Rejects batched parameters
+    --------------------------
+    Per the framework hierarchy "one random variable per
+    ``Distribution``" rule (CONTRIBUTING.md), the constructor raises
+    :class:`ValueError` when the underlying ``tfd.Distribution`` has
+    a non-empty ``batch_shape``. Wrap multiple distributions in a
+    :class:`~probpipe.DistributionArray` instead — the migration
+    factory is :meth:`~probpipe.DistributionArray.from_batched_params`
+    (or the per-class alias :meth:`Distribution.from_batched_params`).
+
+    The check fires in ``__init__`` after ``super().__init__(name=name)``
+    completes, so concrete subclasses that set ``self._tfp_dist``
+    *before* calling ``super().__init__`` (the standard pattern used
+    by ``Normal``, ``Beta``, ``Gamma``, …) are validated. Subclasses
+    that set ``_tfp_dist`` *after* ``super().__init__`` (e.g.
+    :class:`~probpipe.distributions.kde.KDEDistribution`) are skipped
+    via the ``hasattr`` guard — those classes are responsible for
+    their own shape invariants and don't go through TFP's batched
+    parameter convention.
+
+    Internal infrastructure that legitimately needs the batched form
+    (the ``_TFPArrayBackend`` fused storage, converters, sequential
+    joints, GRF predictions) opts into the bypass via
+    :func:`_allow_batched_tfp_init`.
     """
 
     _tfp_dist: tfd.Distribution
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
+
+    def __init__(self, *, name: str) -> None:
+        """Final-stage initializer for TFP-backed distributions.
+
+        Concrete subclasses (``Normal``, ``Beta``, …) set
+        ``self._tfp_dist`` in their own ``__init__`` *before* calling
+        ``super().__init__(name=name)``, so by the time we get here
+        the TFP backend is fully constructed and we can validate its
+        ``batch_shape``.
+        """
+        super().__init__(name=name)
+        if _BATCHED_INIT_BYPASS.get():
+            return
+        # KDE-style subclasses set ``_tfp_dist`` *after* this call;
+        # skip the check rather than crash on a missing attribute.
+        # Such classes are responsible for their own shape invariants.
+        tfp_dist = getattr(self, "_tfp_dist", None)
+        if tfp_dist is None:
+            return
+        actual = tuple(tfp_dist.batch_shape)
+        if actual != ():
+            cls_name = type(self).__name__
+            raise ValueError(
+                f"{cls_name} parameters imply batch_shape={actual}; "
+                f"wrap multiple distributions in a DistributionArray "
+                f"instead. See "
+                f"DistributionArray.from_batched_params({cls_name}, ...) "
+                f"(or the alias {cls_name}.from_batched_params(...)) "
+                f"for the factory."
+            )
 
     # -- record_template auto-generation ------------------------------------
 
@@ -184,6 +288,26 @@ wrapped batched ``TFPDistribution``. Centralised so
 ``_TFPArrayBackend.__init__`` and ``tree_unflatten`` can't drift."""
 
 
+def _construct_batched_dist(
+    dist_cls: type[TFPDistribution],
+    *,
+    name: str,
+    batched_params: dict[str, Any],
+) -> TFPDistribution:
+    """Construct the fused batched distribution under the internal
+    bypass, with the centralised ``__array_backend``-suffixed name.
+
+    Used by both :meth:`_TFPArrayBackend.__init__` and
+    :meth:`_TFPArrayBackend.tree_unflatten` so the suffix and bypass
+    contract live in one place.
+    """
+    with _allow_batched_tfp_init():
+        return dist_cls(
+            **batched_params,
+            name=f"{name}{_ARRAY_BACKEND_NAME_SUFFIX}",
+        )
+
+
 class _TFPArrayBackend:
     """Fused TFP-batched backend for ``DistributionArray``.
 
@@ -206,7 +330,7 @@ class _TFPArrayBackend:
 
     Parameters
     ----------
-    dist_cls : type
+    dist_cls : type[TFPDistribution]
         The concrete ``TFPDistribution`` subclass (e.g., ``Normal``).
         Used to materialise per-cell scalars.
     name : str
@@ -223,7 +347,7 @@ class _TFPArrayBackend:
     def __init__(
         self,
         *,
-        dist_cls: type,
+        dist_cls: type[TFPDistribution],
         name: str,
         batch_shape: tuple[int, ...],
         batched_params: dict[str, Any],
@@ -260,14 +384,8 @@ class _TFPArrayBackend:
                 normalised[key] = arr
             batched_params = normalised
         self._batched_params = batched_params
-        # Construct the fused ProbPipe Distribution with the batched
-        # params. The backend exists *to* hold a batched form, so any
-        # downstream rejection of batched parameters at construction
-        # time must provide a bypass; this constructor is the
-        # canonical caller of that bypass.
-        self._batched_dist: TFPDistribution = dist_cls(
-            **batched_params,
-            name=f"{name}{_ARRAY_BACKEND_NAME_SUFFIX}",
+        self._batched_dist: TFPDistribution = _construct_batched_dist(
+            dist_cls, name=name, batched_params=batched_params,
         )
         # Final sanity check: TFP's inferred batch_shape must match
         # the caller's declaration. Catches the rare case where a
@@ -421,9 +539,8 @@ class _TFPArrayBackend:
         instance._name = name
         instance._batch_shape = tuple(batch_shape)
         instance._batched_params = dict(zip(keys, children))
-        instance._batched_dist = dist_cls(
-            **instance._batched_params,
-            name=f"{name}{_ARRAY_BACKEND_NAME_SUFFIX}",
+        instance._batched_dist = _construct_batched_dist(
+            dist_cls, name=name, batched_params=instance._batched_params,
         )
         return instance
 

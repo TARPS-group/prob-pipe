@@ -33,7 +33,6 @@ from typing import Any, Callable
 from .._dtype import _as_float_array, _default_float_dtype
 from .._utils import prod
 from .protocols import (
-    SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
@@ -270,9 +269,9 @@ class NumericRecordDistribution(RecordDistribution):
         inputs.  For raw arrays, flattens event dimensions preserving
         leading batch/sample dims.
         """
-        from .record import Record as _Values
+        from .record import Record
         from ._record_array import NumericRecordArray
-        if isinstance(value, (NumericRecordArray, _Values)):
+        if isinstance(value, (NumericRecordArray, Record)):
             return super().flatten_value(value)
         value = jnp.asarray(value)
         es = self.event_shape

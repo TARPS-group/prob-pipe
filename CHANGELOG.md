@@ -40,15 +40,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   )
   ```
 
-  **Preview of upcoming PR-C.2 breaking change:** in the next release,
-  `Normal(loc=jnp.zeros(5), scale=1.0, name="x")` (and similar
-  TFP-backed classes constructed with batched parameters) will raise
-  `ValueError` with a hint pointing at this factory. Migrate now to
-  avoid the breaking change. The factory is performance-equivalent
-  to the legacy form because it shares the TFP-batched backend under
+### Changed (breaking)
+
+- **TFP-backed distribution constructors reject batched parameters.**
+  `Normal(loc=jnp.zeros(5), scale=1.0, name="x")` (and the same
+  pattern for every other TFP-backed class — `Beta`, `Gamma`,
+  `MultivariateNormal`, `Pareto`, `TruncatedNormal`, `Binomial`, …)
+  now raises `ValueError` whenever the parameters imply a non-empty
+  TFP `batch_shape`. The framework hierarchy rule "one random
+  variable per `Distribution`" (CONTRIBUTING.md) is enforced at
+  construction time.
+
+  ```text
+  ValueError: Normal parameters imply batch_shape=(5,); wrap multiple
+  distributions in a DistributionArray instead. See
+  DistributionArray.from_batched_params(Normal, ...) (or the alias
+  Normal.from_batched_params(...)) for the factory.
+  ```
+
+  Migration: route through the
+  `DistributionArray.from_batched_params` factory (or its per-class
+  alias) added in the previous release. The factory is
+  performance-equivalent to the legacy form because the fused
+  `_TFPArrayBackend` wraps the same TFP-batched distribution under
   the hood.
 
-### Changed (breaking)
+  ```python
+  # Before (rejected)
+  n = Normal(loc=jnp.zeros(5), scale=1.0, name="x")
+
+  # After (recommended ergonomic form)
+  da = Normal.from_batched_params(loc=jnp.zeros(5), scale=1.0, name="x")
+
+  # After (universal entry point)
+  da = DistributionArray.from_batched_params(
+      Normal, loc=jnp.zeros(5), scale=1.0, name="x",
+  )
+  ```
+
+  Removed associated tests that exercised the legacy form's
+  per-element support checks: ``test_uniform_support_array_bounds``,
+  ``test_half_cauchy_support_array_bounds``,
+  ``test_pareto_support_array_bounds``,
+  ``test_truncated_normal_support_array_bounds``,
+  ``test_binomial_support_array_total_count``,
+  ``test_repr_with_batch_shape``. Per-element support checks belong
+  on `Constraint` directly; batched constructions migrate to
+  `DistributionArray.from_batched_params`.
+
+  Internal infrastructure that legitimately needs the batched form
+  (the `_TFPArrayBackend` fused-storage backend, the
+  `ProbPipeConverter` dispatch, sequential-joint sampling /
+  log_prob, `GaussianRandomFunction.predict`) opts into a private
+  bypass; user code is unaffected by the bypass and always sees the
+  rejection.
 
 - **Empirical / Bootstrap / Marginal class consolidation.** The
   generic-vs-numeric pair is collapsed into a generic ``[T]`` base

@@ -24,6 +24,7 @@ from .._utils import _auto_key
 from ..core.protocols import SupportsSampling
 from .._utils import prod
 from ..core._random_functions import ArrayRandomFunction
+from ._tfp_base import _allow_batched_tfp_init
 
 # Delay import to avoid circular import at module level; these are
 # imported from the *same* package, so we import lazily inside methods
@@ -189,12 +190,24 @@ class GaussianRandomFunction(ArrayRandomFunction):
         """
         from . import MultivariateNormal, Normal
 
+        # GRF predictions over ``n`` input points return a single
+        # batched ``Normal`` / ``MultivariateNormal`` whose
+        # ``batch_shape`` covers the input axis — a library-internal
+        # batched form that ``TFPDistribution.__init__``'s rejection
+        # would otherwise refuse. The bypass wraps only the
+        # constructor calls; mean / variance / covariance / cholesky
+        # work happens outside it so the global flag is mutated for
+        # the shortest possible window.
         mean = self.predict_mean(X)  # (*eb, n, *out)
 
         # -- Fully marginal ---------------------------------------------------
         if not joint_inputs and not joint_outputs:
             variance = self.predict_variance(X)
-            return Normal(loc=mean, scale=jnp.sqrt(variance), name="grf_prediction")
+            with _allow_batched_tfp_init():
+                return Normal(
+                    loc=mean, scale=jnp.sqrt(variance),
+                    name="grf_prediction",
+                )
 
         # -- At least one joint axis — need covariance ------------------------
         cov = self.predict_covariance(
@@ -208,7 +221,11 @@ class GaussianRandomFunction(ArrayRandomFunction):
         if joint_inputs and joint_outputs:
             flat_dim = n * d_out if self._output_shape else n
             flat_mean = mean.reshape(*extra_batch, flat_dim)
-            return MultivariateNormal(loc=flat_mean, scale_tril=scale_tril, name="grf_prediction")
+            with _allow_batched_tfp_init():
+                return MultivariateNormal(
+                    loc=flat_mean, scale_tril=scale_tril,
+                    name="grf_prediction",
+                )
 
         if joint_inputs and not joint_outputs:
             # Joint over n, independent over outputs.
@@ -221,12 +238,20 @@ class GaussianRandomFunction(ArrayRandomFunction):
                 mean_t = jnp.moveaxis(mean, source_axes, dest_axes)
             else:
                 mean_t = mean  # (*eb, n) — nothing to rearrange
-            return MultivariateNormal(loc=mean_t, scale_tril=scale_tril, name="grf_prediction")
+            with _allow_batched_tfp_init():
+                return MultivariateNormal(
+                    loc=mean_t, scale_tril=scale_tril,
+                    name="grf_prediction",
+                )
 
         # joint_outputs only (not joint_inputs)
         # mean: (*eb, n, *out) → flatten output dims: (*eb, n, d_out)
         flat_mean = mean.reshape(*extra_batch, n, d_out)
-        return MultivariateNormal(loc=flat_mean, scale_tril=scale_tril, name="grf_prediction")
+        with _allow_batched_tfp_init():
+            return MultivariateNormal(
+                loc=flat_mean, scale_tril=scale_tril,
+                name="grf_prediction",
+            )
 
 
 # ---------------------------------------------------------------------------
