@@ -25,6 +25,12 @@ ProbPipe manages representations and algorithms automatically by default, while 
 - **`WorkflowFunction`s** natively handle conversion between distribution representations and automatically compute **pushforward distributions** when functions defined on fixed inputs receive distributions as arguments.  Use `dist.select("x", "y")` to pass named components while preserving correlation.
 - **`Module`s** wrap multiple workflow functions with shared state, enabling reusable inferential components.
 
+### Values and distributions: one design twice
+
+ProbPipe applies a single design idea twice. **`Record`** is the universal container for *non-random* named structured values; its random counterpart is **`RecordDistribution`**. Both expose the same named-field surface — `.fields`, `dist[name]`, `record.select_all()` / `dist.select_all()` — so the same code can ferry priors, posterior draws, or fixed configurations through a workflow without representation churn. Numeric specialisations (`NumericRecord` / `NumericRecordDistribution`) add flatten / unflatten and the canonical `event_shapes` / `dtypes` / `supports` accessors; the "array of" forms (`RecordArray`, `DistributionArray`) follow numpy / jax conventions for `len` and iteration.
+
+See *Records and Record Distributions* in the reference notebooks for the full walk.
+
 ## Quick Example
 
 Fit a Bayesian model with named parameters, then propagate posterior uncertainty through a prediction function:
