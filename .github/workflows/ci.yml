@@ -52,25 +52,91 @@ jobs:
             echo "run_all=true" >> "$GITHUB_OUTPUT"
             echo "Will run ALL tests (foundational change detected)."
           else
-            # Collect test files to run.
+            # Write an import-graph expander: given changed source files, it
+            # uses AST parsing to find all probpipe modules that *transitively*
+            # depend on them, so a change to provenance.py also runs
+            # tests/test_record.py (because record.py imports provenance.py).
+            cat > /tmp/expand_deps.py << 'PYEOF'
+          import ast, sys
+          from pathlib import Path
+          from collections import defaultdict
+
+          def file_to_module(p):
+              return str(Path(p).with_suffix('')).replace('/', '.')
+
+          def module_to_file(m):
+              path = m.replace('.', '/')
+              for candidate in [path + '.py', path + '/__init__.py']:
+                  if Path(candidate).exists():
+                      return candidate
+              return None
+
+          # Build reverse import graph: module -> {modules that directly import it}
+          rdeps = defaultdict(set)
+          for fpath in Path('probpipe').rglob('*.py'):
+              importer = file_to_module(str(fpath))
+              try:
+                  tree = ast.parse(fpath.read_text())
+              except Exception:
+                  continue
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.ImportFrom):
+                      lvl = node.level or 0
+                      if lvl == 0:
+                          if not node.module or not node.module.startswith('probpipe'):
+                              continue
+                          imported = node.module
+                      else:
+                          parts = importer.split('.')
+                          base = parts[:-lvl] if lvl < len(parts) else []
+                          imported = '.'.join(base + node.module.split('.')) if node.module else '.'.join(base)
+                      rdeps[imported].add(importer)
+                  elif isinstance(node, ast.Import):
+                      for alias in node.names:
+                          if alias.name.startswith('probpipe'):
+                              rdeps[alias.name].add(importer)
+
+          # BFS: expand changed source files to all transitively dependent modules
+          changed_sources = [f for f in sys.argv[1:] if f.startswith('probpipe')]
+          seen = set(file_to_module(f) for f in changed_sources)
+          queue = list(seen)
+          while queue:
+              m = queue.pop(0)
+              for dep in rdeps.get(m, []):
+                  if dep not in seen:
+                      seen.add(dep)
+                      queue.append(dep)
+
+          for m in sorted(seen):
+              f = module_to_file(m)
+              if f:
+                  print(f)
+          PYEOF
+
+            # Split CHANGED into test files (include directly) and source
+            # files (expand via import graph before mapping to tests).
+            CHANGED_SOURCE=""
             TEST_FILES=""
-
             for f in $CHANGED; do
-              # If the changed file is already a test file, include it directly.
               if echo "$f" | grep -qE '^tests/.*\.py$'; then
-                if [ -f "$f" ]; then
-                  TEST_FILES="$TEST_FILES $f"
-                fi
-                continue
+                [ -f "$f" ] && TEST_FILES="$TEST_FILES $f"
+              else
+                CHANGED_SOURCE="$CHANGED_SOURCE $f"
               fi
-
-              # Map source file to test file(s).
-              # e.g. probpipe/core/record.py -> tests/test_record.py
-              basename=$(basename "$f" .py)
-              for candidate in $(find tests -name "test_${basename}.py" -o -name "test_${basename}_*.py" 2>/dev/null); do
-                TEST_FILES="$TEST_FILES $candidate"
-              done
             done
+
+            # Expand source files transitively and map each to its tests.
+            if [ -n "$CHANGED_SOURCE" ]; then
+              EXPANDED=$(python3 /tmp/expand_deps.py $CHANGED_SOURCE)
+              echo "Expanded source files (via import graph):"
+              echo "$EXPANDED"
+              for f in $EXPANDED; do
+                basename=$(basename "$f" .py)
+                for candidate in $(find tests -name "test_${basename}.py" -o -name "test_${basename}_*.py" 2>/dev/null); do
+                  TEST_FILES="$TEST_FILES $candidate"
+                done
+              done
+            fi
 
             # Deduplicate
             TEST_FILES=$(echo "$TEST_FILES" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
@@ -133,17 +199,41 @@ jobs:
     # Execute every docs/examples notebook to keep the reference set
     # honest against the current codebase. Separate job so the
     # ~10-15 min notebook pass does not gate the unit-test matrix.
+    # Skipped when neither example notebooks nor probpipe source files change.
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need full history for git diff
+
+      - name: Check if notebooks or source files changed
+        id: nb_check
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
+            -- 'docs/examples/*.ipynb' 'probpipe/' || true)
+          if [ -z "$CHANGED" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No docs/examples notebook or probpipe source changes — skipping notebook CI."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Changes detected:"
+            echo "$CHANGED"
+          fi
 
       - name: Set up Python
+        if: steps.nb_check.outputs.skip != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
+        if: steps.nb_check.outputs.skip != 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev,nutpie]"
@@ -151,6 +241,7 @@ jobs:
           pip install blackjax diffrax dm-haiku einops grain jrnmm optax seaborn surjectors tqdm
 
       - name: Execute every docs/examples notebook
+        if: steps.nb_check.outputs.skip != 'true'
         run: |
           set -euo pipefail
           for nb in docs/examples/*.ipynb; do
