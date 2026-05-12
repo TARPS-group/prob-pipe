@@ -12,7 +12,7 @@ from probpipe import (
     Categorical,
     MultivariateNormal,
     EmpiricalDistribution,
-    NumericEmpiricalDistribution,
+    RecordEmpiricalDistribution,
     BootstrapDistribution,
     TransformedDistribution,
     ProductDistribution,
@@ -44,7 +44,7 @@ def normal():
 @pytest.fixture
 def empirical():
     samples = jax.random.normal(jax.random.PRNGKey(0), (100, 2))
-    return EmpiricalDistribution(samples)
+    return EmpiricalDistribution(samples, name="x")
 
 
 @pytest.fixture
@@ -180,14 +180,14 @@ class TestSupportsMean:
 
     def test_empirical_generic_no_moments(self):
         """Non-numeric EmpiricalDistribution does not support moments."""
-        dist = EmpiricalDistribution(["a", "b", "c"])
+        dist = EmpiricalDistribution(["a", "b", "c"], name="x")
         assert not isinstance(dist, SupportsMean)
         assert not isinstance(dist, SupportsVariance)
         assert not isinstance(dist, SupportsCovariance)
 
     def test_array_empirical(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 2))
-        dist = NumericEmpiricalDistribution(samples)
+        dist = RecordEmpiricalDistribution(samples, name="x")
         assert isinstance(dist, SupportsMean)
         assert isinstance(dist, SupportsVariance)
         assert isinstance(dist, SupportsCovariance)
@@ -414,7 +414,7 @@ class TestSampleReturnTypeConvention:
                 a=Normal(loc=0.0, scale=1.0, name="a"),
                 b=Normal(loc=0.0, scale=1.0, name="b"),
             ),
-            NumericEmpiricalDistribution(jnp.arange(5.0)),
+            RecordEmpiricalDistribution(jnp.arange(5.0), name="x"),
             BootstrapDistribution(jnp.arange(5.0)),
         ]
         for d in distributions:
@@ -573,7 +573,10 @@ class TestJointEmpiricalDispatch:
         from probpipe import JointEmpirical, NumericJointEmpirical
         je = JointEmpirical(x=jnp.zeros((5, 2)), y=jnp.zeros(5))
         assert type(je) is NumericJointEmpirical
-        assert isinstance(je, SupportsLogProb)
+        # Empirical distributions deliberately do not claim
+        # SupportsLogProb (PR-B); use the converter registry for a
+        # density on top of empirical samples.
+        assert not isinstance(je, SupportsLogProb)
         assert isinstance(je, SupportsMean)
         assert isinstance(je, SupportsVariance)
 
@@ -687,3 +690,64 @@ class TestProtocolsSupportedByAll:
         from probpipe.core.protocols import protocols_supported_by_all
         result = protocols_supported_by_all([], (SupportsLogProb, SupportsMean))
         assert result == (SupportsLogProb, SupportsMean)
+
+
+# ---------------------------------------------------------------------------
+# SupportsArrayBackend protocol surface
+# ---------------------------------------------------------------------------
+
+
+class TestSupportsArrayBackendProtocolSurface:
+    """Structural checks on :class:`SupportsArrayBackend`.
+
+    Commit 1 of PR-C.1 only adds the protocol; concrete TFP / Record
+    implementations land in later commits, and the existing
+    ``Distribution`` subclasses don't yet implement
+    ``_make_array_backend``. These tests pin the protocol's *shape*
+    (importable, runtime-checkable, classmethod-level) so later
+    commits can layer on the implementations without regressing the
+    contract.
+    """
+
+    def test_protocol_is_importable(self):
+        from probpipe.core.protocols import (
+            SupportsArrayBackend,
+            _DistributionArrayBackend,
+        )
+
+        assert SupportsArrayBackend is not None
+        assert _DistributionArrayBackend is not None
+
+    def test_protocol_in_public_all(self):
+        from probpipe.core import protocols as proto_mod
+
+        assert "SupportsArrayBackend" in proto_mod.__all__
+        # Backend-interface stays private — leading underscore, not exported.
+        assert "_DistributionArrayBackend" not in proto_mod.__all__
+
+    def test_tfp_distributions_implement_protocol(self):
+        """Every concrete TFP-backed distribution inherits
+        ``_make_array_backend`` from ``TFPDistribution``.
+
+        The protocol method is a classmethod, so the check is on the
+        class itself: ``hasattr(Normal, "_make_array_backend")``. Pins
+        the post-commit-2 contract — non-TFP distributions still don't
+        implement it and stay on the literal-array fallback path.
+        """
+        for cls in (Normal, Beta, Gamma, MultivariateNormal):
+            assert hasattr(cls, "_make_array_backend"), (
+                f"{cls.__name__} should inherit _make_array_backend "
+                f"from TFPDistribution after PR-C.1 commit 2."
+            )
+
+    def test_backend_protocol_minimum_surface(self):
+        """``_DistributionArrayBackend`` Protocol declares the agreed
+        minimum surface."""
+        from probpipe.core.protocols import _DistributionArrayBackend
+
+        # Protocol attributes via __annotations__ / methods via vars.
+        members = set(dir(_DistributionArrayBackend))
+        for required in ("batch_shape", "event_shape", "cell"):
+            assert required in members, (
+                f"_DistributionArrayBackend missing required attr {required!r}"
+            )

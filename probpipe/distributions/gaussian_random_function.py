@@ -30,6 +30,12 @@ from ..core._random_functions import ArrayRandomFunction
 # where needed.  For type annotations we use strings.
 
 
+_PREDICTION_NAME = "grf_prediction"
+"""Name passed to every distribution ``GaussianRandomFunction.predict``
+constructs. Subclasses can pass a different ``name=`` from an
+overridden ``predict``."""
+
+
 # ---------------------------------------------------------------------------
 # GaussianRandomFunction
 # ---------------------------------------------------------------------------
@@ -175,40 +181,68 @@ class GaussianRandomFunction(ArrayRandomFunction):
         joint_inputs: bool = False,
         joint_outputs: bool = False,
     ):
-        """Assemble a Gaussian distribution from mean / variance / covariance.
+        """Assemble a Gaussian-valued :class:`DistributionArray` from
+        mean / variance / covariance.
 
-        1. Compute the mean: shape ``(*extra_batch, n, *output_shape)``.
-        2. If neither joint flag is set, return a batch of independent
-           :class:`~probpipe.Normal` distributions from marginal variances.
-        3. Otherwise, compute the appropriate covariance matrix via
-           :meth:`predict_covariance` and return a
-           :class:`~probpipe.MultivariateNormal`.
+        Returns a :class:`~probpipe.DistributionArray` whose cells
+        are :class:`~probpipe.Normal` (fully marginal) or
+        :class:`~probpipe.MultivariateNormal` (any joint axis); the
+        outer ``batch_shape`` covers axes that are independent
+        across cells, the per-cell ``event_shape`` covers axes that
+        are jointly modeled.
 
-        Subclasses may override this if they need non-standard assembly
-        (e.g. structured covariance representations).
+        ============== ============== ================ ============================== ===================
+        joint_inputs   joint_outputs  Cell type        Outer ``batch_shape``          Cell ``event_shape``
+        ============== ============== ================ ============================== ===================
+        ``False``      ``False``      ``Normal``       ``(*extra_batch, n, *out)``    ``()``
+        ``True``       ``False``      ``MVN``          ``(*extra_batch, *out)``       ``(n,)``
+        ``False``      ``True``       ``MVN``          ``(*extra_batch, n)``          ``output_shape``
+        ``True``       ``True``       ``MVN``          ``(*extra_batch,)``            ``(n, *out)``
+        ============== ============== ================ ============================== ===================
+
+        ``out`` is shorthand for ``output_shape``. In all modes a
+        sample has total shape
+        ``(*sample_shape, *extra_batch, n, *output_shape)``; the
+        flags only change which axes are jointly modeled (event)
+        vs independent (batch).
+
+        Subclasses may override this if they need non-standard
+        assembly (e.g. structured covariance representations).
         """
+        from ..core._distribution_array import DistributionArray
         from . import MultivariateNormal, Normal
 
         mean = self.predict_mean(X)  # (*eb, n, *out)
+        extra_batch, n = self._parse_X(X)
 
         # -- Fully marginal ---------------------------------------------------
         if not joint_inputs and not joint_outputs:
             variance = self.predict_variance(X)
-            return Normal(loc=mean, scale=jnp.sqrt(variance), name="grf_prediction")
+            return DistributionArray.from_batched_params(
+                Normal,
+                batch_shape=(*extra_batch, n, *self._output_shape),
+                loc=mean,
+                scale=jnp.sqrt(variance),
+                name=_PREDICTION_NAME,
+            )
 
         # -- At least one joint axis — need covariance ------------------------
         cov = self.predict_covariance(
             X, joint_inputs=joint_inputs, joint_outputs=joint_outputs
         )
-        extra_batch, n = self._parse_X(X)
         d_out = prod(self._output_shape)
-
         scale_tril = jnp.linalg.cholesky(cov)
 
         if joint_inputs and joint_outputs:
             flat_dim = n * d_out if self._output_shape else n
             flat_mean = mean.reshape(*extra_batch, flat_dim)
-            return MultivariateNormal(loc=flat_mean, scale_tril=scale_tril, name="grf_prediction")
+            return DistributionArray.from_batched_params(
+                MultivariateNormal,
+                batch_shape=tuple(extra_batch),
+                loc=flat_mean,
+                scale_tril=scale_tril,
+                name=_PREDICTION_NAME,
+            )
 
         if joint_inputs and not joint_outputs:
             # Joint over n, independent over outputs.
@@ -221,12 +255,24 @@ class GaussianRandomFunction(ArrayRandomFunction):
                 mean_t = jnp.moveaxis(mean, source_axes, dest_axes)
             else:
                 mean_t = mean  # (*eb, n) — nothing to rearrange
-            return MultivariateNormal(loc=mean_t, scale_tril=scale_tril, name="grf_prediction")
+            return DistributionArray.from_batched_params(
+                MultivariateNormal,
+                batch_shape=(*extra_batch, *self._output_shape),
+                loc=mean_t,
+                scale_tril=scale_tril,
+                name=_PREDICTION_NAME,
+            )
 
         # joint_outputs only (not joint_inputs)
         # mean: (*eb, n, *out) → flatten output dims: (*eb, n, d_out)
         flat_mean = mean.reshape(*extra_batch, n, d_out)
-        return MultivariateNormal(loc=flat_mean, scale_tril=scale_tril, name="grf_prediction")
+        return DistributionArray.from_batched_params(
+            MultivariateNormal,
+            batch_shape=(*extra_batch, n),
+            loc=flat_mean,
+            scale_tril=scale_tril,
+            name=_PREDICTION_NAME,
+        )
 
 
 # ---------------------------------------------------------------------------

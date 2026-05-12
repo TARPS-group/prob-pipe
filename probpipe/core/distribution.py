@@ -51,17 +51,17 @@ from ._numeric_record_distribution import (
 
 # -- _empirical -------------------------------------------------------------
 from ._empirical import (
-    NumericEmpiricalDistribution,
-    ArrayBootstrapReplicateDistribution,
     EmpiricalDistribution,
+    RecordEmpiricalDistribution,
     BootstrapReplicateDistribution,
+    RecordBootstrapReplicateDistribution,
 )
 
 # -- _broadcast_distributions -----------------------------------------------
 from ._broadcast_distributions import (
     BroadcastDistribution,
     MarginalizedBroadcastDistribution,
-    _ArrayMarginal,
+    _RecordMarginal,
     _ListMarginal,
     _MixtureMarginal,
     _make_marginal,
@@ -100,10 +100,10 @@ __all__ = [
     "FlattenedView",
     # Empirical
     "EmpiricalDistribution",
-    "NumericEmpiricalDistribution",
-    # Joint bootstrap
+    "RecordEmpiricalDistribution",
+    # Bootstrap replicate
     "BootstrapReplicateDistribution",
-    "ArrayBootstrapReplicateDistribution",
+    "RecordBootstrapReplicateDistribution",
     # Random functions
     "RandomFunction",
     "ArrayRandomFunction",
@@ -113,7 +113,7 @@ __all__ = [
     # Broadcast
     "BroadcastDistribution",
     "MarginalizedBroadcastDistribution",
-    "_ArrayMarginal",
+    "_RecordMarginal",
     "_MixtureMarginal",
     "_ListMarginal",
     "_make_marginal",

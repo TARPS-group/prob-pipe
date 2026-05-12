@@ -33,3 +33,12 @@ to distinguish the primitive implementation from the public
 
 ::: probpipe.core.protocols.SupportsConditioning
 
+## Array backend
+
+`SupportsArrayBackend` is the only **class-level** protocol in ProbPipe — its
+declared method (`_make_array_backend`) is a `@classmethod`, so the runtime
+check is `isinstance(MyDistribution, SupportsArrayBackend)` against the class
+itself.
+
+::: probpipe.core.protocols.SupportsArrayBackend
+

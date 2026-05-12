@@ -9,7 +9,7 @@ import pytest
 from probpipe import (
     Distribution,
     NumericRecordDistribution,
-    NumericEmpiricalDistribution,
+    RecordEmpiricalDistribution,
     FlattenedView,
     Normal,
     MultivariateNormal,
@@ -194,10 +194,6 @@ class TestFlattenedView:
         flat_dist = vector_mvn.as_flat_distribution()
         assert flat_dist.event_shape == (3,)
 
-    def test_batch_shape(self, vector_mvn):
-        flat_dist = vector_mvn.as_flat_distribution()
-        assert flat_dist.batch_shape == vector_mvn.batch_shape
-
     def test_sample_shape(self, vector_mvn, key):
         flat_dist = vector_mvn.as_flat_distribution()
         s = sample(flat_dist, key=key)
@@ -279,7 +275,7 @@ class TestSupports:
 class TestFlattenedViewEmpirical:
     def test_empirical_flatten_roundtrip(self, key):
         samples = jax.random.normal(key, shape=(100, 5))
-        emp = NumericEmpiricalDistribution(samples)
+        emp = RecordEmpiricalDistribution(samples, name="x")
 
         flat_dist = emp.as_flat_distribution()
         assert flat_dist.event_shape == (5,)

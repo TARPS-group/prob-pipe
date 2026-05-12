@@ -12,7 +12,7 @@ Usage
 
 3. Run this script (assuming you're in the ``prob-pipe`` root directory):
 
-       python docs/examples/run_prefect_demo.py
+       python example_scripts/run_prefect_demo.py
 
 You will see each bootstrap MCMC fit appear as a task in the Prefect
 dashboard.
@@ -48,9 +48,6 @@ from probpipe import (
 # 1. Configure Prefect globally
 # ---------------------------------------------------------------------------
 
-# Use Prefect tasks with the default ThreadPool runner.
-# Ray auto-detection is disabled because Record is not yet
-# pickle-serializable (see docstring above).
 from prefect.task_runners import ThreadPoolTaskRunner
 
 probpipe.prefect_config.workflow_kind = WorkflowKind.TASK
@@ -136,7 +133,7 @@ print()
 probpipe.prefect_config.workflow_kind = WorkflowKind.OFF
 
 for label, bagged in [("Poisson", bagged_poisson), ("NegBin", bagged_nb)]:
-    ind_means = np.array([np.array(mean(p)) for p in bagged.components])
+    ind_means = np.array([np.array(mean(p).flatten()) for p in bagged.components])
     all_draws = np.concatenate(
         [np.asarray(p.draws().flatten()) for p in bagged.components]
     )

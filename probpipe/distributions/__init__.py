@@ -23,6 +23,10 @@ from .discrete import (
     NegativeBinomial,
 )
 from .transformed import TransformedDistribution
+from ._bijector_dispatch import (
+    bijector_for,
+    register_bijector,
+)
 from .joint import (
     ProductDistribution,
     SequentialJointDistribution,
@@ -70,6 +74,8 @@ __all__ = [
     "NegativeBinomial",
     # Transformed
     "TransformedDistribution",
+    "bijector_for",
+    "register_bijector",
     # Joint
     "ProductDistribution",
     "SequentialJointDistribution",

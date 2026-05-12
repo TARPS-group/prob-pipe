@@ -7,8 +7,47 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Normal, Gamma, Record, MultivariateNormal
+from probpipe import (
+    Normal,
+    Gamma,
+    Record,
+    MultivariateNormal,
+    RecordEmpiricalDistribution,
+    TransformedDistribution,
+)
 from probpipe.core.provenance import Provenance, provenance_ancestors
+from probpipe.distributions.kde import KDEDistribution
+
+
+def _make_transformed():
+    import tensorflow_probability.substrates.jax.bijectors as tfb
+    return TransformedDistribution(
+        Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp(),
+    )
+
+
+# Distribution-instance factories used by ``TestNoBatchShape``. Mirrors
+# the ``DISTRIBUTIONS`` table in ``test_iteration_protocol.py`` but with
+# a smaller set covering the canonical TFP-backed scalars + the most
+# distinct subclasses (TransformedDistribution / KDEDistribution /
+# RecordEmpiricalDistribution).
+_NO_BATCH_SHAPE_DISTS = [
+    pytest.param(lambda: Normal(loc=0.0, scale=1.0, name="x"), id="Normal"),
+    pytest.param(lambda: Gamma(concentration=3.0, rate=1.0, name="g"), id="Gamma"),
+    pytest.param(
+        lambda: MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z"),
+        id="MultivariateNormal",
+    ),
+    pytest.param(_make_transformed, id="TransformedDistribution"),
+    pytest.param(
+        lambda: KDEDistribution(jnp.zeros((20, 3)), name="kde"),
+        id="KDEDistribution",
+    ),
+    pytest.param(
+        lambda: RecordEmpiricalDistribution(jnp.zeros((10, 3)), name="x"),
+        id="RecordEmpiricalDistribution",
+    ),
+]
 
 
 class TestRenamedBasics:
@@ -111,3 +150,36 @@ class TestRenamedRecordTemplate:
         assert mvn.record_template["a"] == (3,)
         b = mvn.renamed("b")
         assert b.record_template["b"] == (3,)
+
+
+class TestNoBatchShape:
+    """``Distribution`` has no ``batch_shape`` attribute. Pins the
+    absence across the public Distribution family so a future
+    subclass can't silently reintroduce it as a defensive default.
+    Container types (``DistributionArray``, ``RecordArray``) keep
+    their own ``batch_shape`` — that's a different concept and is
+    asserted separately at the bottom.
+    """
+
+    def test_no_batch_shape_on_base_class(self):
+        from probpipe import Distribution
+        assert not hasattr(Distribution, "batch_shape")
+
+    @pytest.mark.parametrize(
+        "make_dist", _NO_BATCH_SHAPE_DISTS,
+    )
+    def test_no_batch_shape_on_instance(self, make_dist):
+        dist = make_dist()
+        assert not hasattr(dist, "batch_shape"), (
+            f"{type(dist).__name__} unexpectedly exposes a "
+            f"batch_shape attribute."
+        )
+
+    def test_distribution_array_keeps_batch_shape(self):
+        """Container types are unaffected: ``DistributionArray``
+        retains its own ``batch_shape`` (the array's outer shape)."""
+        from probpipe import DistributionArray
+        da = DistributionArray.from_batched_params(
+            Normal, loc=jnp.zeros(5), scale=1.0, name="x",
+        )
+        assert da.batch_shape == (5,)

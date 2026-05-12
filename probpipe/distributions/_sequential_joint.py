@@ -8,6 +8,7 @@ that receive previously-sampled values and return a ``Distribution``
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from types import MappingProxyType
 
 import jax
@@ -33,6 +34,28 @@ from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
 )
+from ._tfp_base import _allow_batched_tfp_init
+
+
+def _resolve_callable_component(
+    comp: Callable[..., NumericRecordDistribution],
+    namespace: dict[str, Array],
+) -> NumericRecordDistribution:
+    """Invoke a user-supplied component callable with the parent
+    values it requested via its signature.
+
+    Filters ``namespace`` by ``inspect.signature(comp)`` parameters,
+    then calls ``comp(**filtered)`` under the
+    :func:`_allow_batched_tfp_init` bypass — the user lambda
+    typically writes ``Normal(loc=parent, scale=...)`` with batched
+    parents, so the standard rejection of batched-parameter
+    constructors must not fire here. Internal infra; user-facing
+    construction of ``Normal(loc=arr, ...)`` is rejected as usual.
+    """
+    sig = inspect.signature(comp)
+    call_kw = {p: namespace[p] for p in sig.parameters if p in namespace}
+    with _allow_batched_tfp_init():
+        return comp(**call_kw)
 
 
 # ---------------------------------------------------------------------------
@@ -249,11 +272,11 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
                 sampled[cname] = comp._sample(subkey, sample_shape)
             else:
                 # Conditional: callable receives batched parent samples,
-                # returning a batched distribution.  Sample with () since
-                # the batch is already in the distribution's batch_shape.
-                sig = inspect.signature(comp)
-                call_kw = {p: sampled[p] for p in sig.parameters if p in sampled}
-                dist = comp(**call_kw)
+                # returning a batched distribution. Sample with () since
+                # the batched form (TFP-side) already covers the leading
+                # axes; the resolver invokes the user lambda under the
+                # internal bypass.
+                dist = _resolve_callable_component(comp, sampled)
                 sampled[cname] = dist._sample(subkey)
 
         return sampled
@@ -304,9 +327,7 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
             if isinstance(comp, NumericRecordDistribution):
                 lp = comp._log_prob(val)
             else:
-                sig = inspect.signature(comp)
-                call_kw = {p: structured[p] for p in sig.parameters if p in structured}
-                cond_dist = comp(**call_kw)
+                cond_dist = _resolve_callable_component(comp, structured)
                 lp = cond_dist._log_prob(val)
             total = lp if total is None else total + lp
 

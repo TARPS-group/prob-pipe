@@ -13,7 +13,7 @@ import jax.numpy as jnp
 from .._utils import _auto_key
 from ..core.distribution import (
     NumericRecordDistribution,
-    NumericEmpiricalDistribution,
+    RecordEmpiricalDistribution,
 )
 from ..core.provenance import Provenance
 from ._registry import ConversionInfo, ConversionMethod, Converter
@@ -114,18 +114,18 @@ class ScipyConverter(Converter):
     def source_types(self) -> tuple[type, ...]:
         if not _HAS_SCIPY:
             return ()
-        return (_rv_frozen, NumericRecordDistribution, NumericEmpiricalDistribution)
+        return (_rv_frozen, NumericRecordDistribution, RecordEmpiricalDistribution)
 
     def target_types(self) -> tuple[type, ...]:
         if not _HAS_SCIPY:
             return ()
-        return (NumericRecordDistribution, NumericEmpiricalDistribution, _rv_frozen)
+        return (NumericRecordDistribution, RecordEmpiricalDistribution, _rv_frozen)
 
     @staticmethod
     def _is_probpipe_target(target_type: type) -> bool:
         return isinstance(target_type, type) and (
             issubclass(target_type, NumericRecordDistribution)
-            or issubclass(target_type, NumericEmpiricalDistribution)
+            or issubclass(target_type, RecordEmpiricalDistribution)
         )
 
     def check(self, source: Any, target_type: type) -> ConversionInfo:
@@ -190,12 +190,13 @@ class ScipyConverter(Converter):
                 from ._registry import converter_registry
                 return converter_registry.convert(pp_dist, target_type, key=key, **kwargs)
 
-            # Unknown scipy: sample -> NumericEmpiricalDistribution
+            # Unknown scipy: sample -> RecordEmpiricalDistribution
             n = kwargs.pop("num_samples", 1024)
             samples = jnp.asarray(source.rvs(size=n))
-            emp = NumericEmpiricalDistribution(samples)
+            emp_name = kwargs.get("name") or getattr(source, "name", None) or "samples"
+            emp = RecordEmpiricalDistribution(samples, name=emp_name)
             emp.with_source(Provenance("convert_from_scipy", parents=()))
-            if issubclass(target_type, NumericEmpiricalDistribution):
+            if issubclass(target_type, RecordEmpiricalDistribution):
                 return emp
             from ._registry import converter_registry
             return converter_registry.convert(emp, target_type, key=key, **kwargs)

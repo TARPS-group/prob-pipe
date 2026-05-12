@@ -25,11 +25,11 @@ from probpipe.core.distribution import (
     NumericRecordDistribution,
     FlattenedView,
     EmpiricalDistribution,
-    NumericEmpiricalDistribution,
+    RecordEmpiricalDistribution,
     BroadcastDistribution,
     BootstrapDistribution,
     BootstrapReplicateDistribution,
-    ArrayBootstrapReplicateDistribution,
+    RecordBootstrapReplicateDistribution,
     DEFAULT_NUM_EVALUATIONS,
     RETURN_APPROX_DIST,
     set_default_num_evaluations,
@@ -74,6 +74,8 @@ from probpipe.distributions import (
     VonMisesFisher,
     # Transformed
     TransformedDistribution,
+    bijector_for,
+    register_bijector,
     # Joint
     ProductDistribution,
     SequentialJointDistribution,
@@ -140,6 +142,7 @@ from probpipe.core.protocols import (
     SupportsRandomLogProb,
     SupportsRandomUnnormalizedLogProb,
     SupportsConditioning,
+    SupportsArrayBackend,
 )
 from probpipe.converters import (
     converter_registry,
@@ -170,11 +173,11 @@ __all__ = [
     "DistributionArray",
     "TFPDistribution",
     "EmpiricalDistribution",
-    "NumericEmpiricalDistribution",
+    "RecordEmpiricalDistribution",
     "BroadcastDistribution",
     "BootstrapDistribution",
     "BootstrapReplicateDistribution",
-    "ArrayBootstrapReplicateDistribution",
+    "RecordBootstrapReplicateDistribution",
     "Provenance",
     # Constraints
     "Constraint",
@@ -219,6 +222,8 @@ __all__ = [
     "VonMisesFisher",
     # Transformed
     "TransformedDistribution",
+    "bijector_for",
+    "register_bijector",
     # Joint
     "ProductDistribution",
     "SequentialJointDistribution",
@@ -258,6 +263,7 @@ __all__ = [
     "SupportsRandomLogProb",
     "SupportsRandomUnnormalizedLogProb",
     "SupportsConditioning",
+    "SupportsArrayBackend",
     # Transition / iteration
     "iterate",
     "with_conversion",

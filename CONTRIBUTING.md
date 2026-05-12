@@ -29,6 +29,21 @@ with the implementation and request another review.
 For small fixes (typos, bug fixes, test additions), skip the plan step and
 go straight to an implementation PR.
 
+### Branch naming
+
+Use `dev/<short-kebab-case-description>` for branches. Examples:
+`dev/record-array-views`, `dev/pr-129-review-fixes`,
+`dev/bijector-for-constraint`. Keep the description short (3–5 words)
+and tied to the change, not the author or date.
+
+Claude Code auto-generates branch names like
+`claude/<adjective-name>-<hash>`. Rename these to a `dev/...` name
+**before** opening a PR, or via the GitHub web UI's Branches page
+(Branches → pencil icon). The REST `rename` API does **not** redirect
+open PRs to the new branch — it silently closes them
+(see [#157](https://github.com/TARPS-group/prob-pipe/pull/157) for an
+example). If you must rename after a PR is open, use the web UI.
+
 ---
 
 ## Development Setup
@@ -122,6 +137,17 @@ full public API surface.
    dispatch time.  Protocols are dynamically included on composite
    distributions (`ProductDistribution`, `TransformedDistribution`)
    based on component capabilities.
+
+   Most protocols are *instance-level*: the contract is "this
+   `Distribution` instance can do X" and the runtime check is
+   `isinstance(my_dist, SupportsX)`. A small number are *class-level*:
+   `SupportsArrayBackend` declares `_make_array_backend` as a
+   `@classmethod`, so the contract is "this class can produce a
+   batched form" and the runtime check is on the class itself
+   (`isinstance(MyDistribution, SupportsArrayBackend)`). New
+   protocols default to instance-level; reach for class-level only
+   when the capability is genuinely a class concern (e.g., a fused-
+   storage factory that doesn't depend on per-instance state).
 4. **Private method convention** — protocols define `_method()` (e.g.,
    `_sample`, `_log_prob`, `_mean`). The public API is via ops:
    `sample(dist)`, not `dist.sample()`.
@@ -182,11 +208,13 @@ full public API surface.
 | `RecordArray` | Batch of `Record` elements with a `RecordTemplate`; integer index → element, field index → batched array |
 | `NumericRecordArray` (subclass of `RecordArray`) | Batch of `NumericRecord` elements; adds `flatten` / `mean` / `var` |
 | `RecordTemplate` | Structural skeleton (field names, per-field shapes or `None`); enables `NumericRecord.unflatten` without an example instance |
-| `RecordDistribution` | Record-based distribution base; `fields`, `__getitem__` → `_RecordDistributionView`, `select()` / `select_all()` for correlated broadcasting; `.n` = cells in `batch_shape` |
+| `RecordDistribution` | Record-based distribution base; `fields`, `__getitem__` → `_RecordDistributionView`, `select()` / `select_all()` for correlated broadcasting. A `Distribution` represents one random variable; use `DistributionArray` for collections. |
 | `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
 | `NumericRecordDistribution` | Numeric-array distribution base; per-field `dtypes`, `supports`, `event_shapes`; base for all TFP-backed distributions |
-| `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `n`, `components`). Vectorized ops are delivered by the `WorkflowFunction` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordArray` / `RecordArray` / (nested) `DistributionArray`. Produced by parameter-sweep workflow functions whose inner call returns a `Distribution`. |
-| `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling + conditioning; the numeric subclass adds Gaussian-approximation `SupportsLogProb` and exact `SupportsMean` / `SupportsVariance`. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. |
+| `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `components`). Vectorized ops are delivered by the `WorkflowFunction` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordArray` / `RecordArray` / (nested) `DistributionArray`. Produced by parameter-sweep workflow functions whose inner call returns a `Distribution`. |
+| `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling + conditioning; the numeric subclass adds exact `SupportsMean` / `SupportsVariance`. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. (Empirical distributions do not claim `SupportsLogProb`; use `from_distribution(emp, KDEDistribution, …)` for a density.) |
+| `EmpiricalDistribution[T]` / `RecordEmpiricalDistribution` | Weighted empirical distribution. Generic base over arbitrary sample type ``T``; Record-based specialisation adds `event_shapes`, exact moments (`SupportsMean` / `SupportsVariance` / `SupportsCovariance`), and TFP-style shape semantics. Numeric-array sources auto-wrap as a single-field Record (requires `name=`). Two views on the stored draws: `samples` (structured `NumericRecord`, per-field access via `samples[name]`) and `flat_samples` (flat `(n, dim)` matrix across all fields, in insertion order). Use `flat_samples` for stacked-matrix idioms like `post.flat_samples.mean(axis=0)` for per-parameter posterior summaries. |
+| `BootstrapReplicateDistribution[T]` / `RecordBootstrapReplicateDistribution` | N-fold product over a source: each draw is a bootstrapped dataset of `n` i.i.d. observations. Accepts a `Record`, `RecordEmpiricalDistribution`, numeric array, or any `SupportsSampling` source (in which case `n` is mandatory). |
 | `WorkflowFunction` | Orchestration-aware function wrapper; groups views by parent for correlated broadcasting |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
@@ -270,33 +298,104 @@ no priority system, no feasibility check, no `execute()`. Use
 `MethodRegistry` (inference) or `ConverterRegistry` (distribution
 conversion) when behaviour dispatch is needed.
 
-### Generic vs array-specific pattern
+### Constraint → Bijector registry
 
-Some distribution families have a generic base and an array-specific
+The `_CONSTRAINT_BIJECTOR_REGISTRY` in
+`probpipe.distributions._bijector_dispatch` is a flat
+`dict[type | Constraint, BijectorFactory]` mapping a `Constraint`
+subclass *or* a specific `Constraint` instance to a factory that
+returns a TFP bijector mapping ℝⁿ to that constraint's support.
+Lookup precedence is:
+
+1. **Exact instance match** — e.g., a registration on the singleton
+   `positive` overrides the type-level `_Positive` default.
+2. **Type match via MRO** — most-specific subclass first.
+3. `NotImplementedError` if neither matches.
+
+Use `register_bijector(key, factory)` to add or override a default;
+re-registering the same key silently overwrites. The registry
+mirrors PyTorch's `constraint_registry` semantics.
+
+Like the aux registry, this is **not** a behavioural-dispatch
+hierarchy: there is no priority system or feasibility check. Reach
+for `MethodRegistry` / `ConverterRegistry` instead when dispatch
+needs to consider the input value, environment, or installed
+backends.
+
+### Generic vs Record-based pattern
+
+Some distribution families have a generic base parameterised over the
+sample type ``T`` and a Record-based specialisation:
+
+- `EmpiricalDistribution[T]` / `RecordEmpiricalDistribution`
+- `BootstrapReplicateDistribution[T]` / `RecordBootstrapReplicateDistribution`
+
+The generic base carries only type-agnostic features (sampling,
+expectation). The Record-based variant adds `event_shapes`, `dim`,
+`dtypes`, `support`, and moment protocols (`SupportsMean`,
+`SupportsVariance`, `SupportsCovariance`).
+
+**Automatic factory dispatch.** Constructing the generic base with
+a numeric array or a `Record` automatically returns the Record-based
 subclass:
 
-- `EmpiricalDistribution[T]` / `NumericEmpiricalDistribution`
-- `BootstrapReplicateDistribution[T]` / `ArrayBootstrapReplicateDistribution`
-
-The generic base carries only type-agnostic features (sampling, expectation).
-The numeric variant adds `event_shape`, `dim`, `dtype`, `support`, and moment
-protocols (`SupportsMean`, `SupportsVariance`, `SupportsCovariance`).
-
-**Automatic factory dispatch:** Constructing a generic base with a numeric
-array automatically returns the numeric-specific subclass:
-
 ```python
-EmpiricalDistribution(jnp.ones((100, 3)))
-# → returns NumericEmpiricalDistribution
+EmpiricalDistribution(jnp.ones((100, 3)), name="theta")
+# → returns RecordEmpiricalDistribution; auto-wraps the array as
+#   Record(theta=arr)
 
-BootstrapReplicateDistribution(jnp.ones((50, 2)))
-# → returns ArrayBootstrapReplicateDistribution
+EmpiricalDistribution(Record(x=jnp.zeros((50,)), y=jnp.zeros((50,))))
+# → returns RecordEmpiricalDistribution; multi-field record
 ```
 
-This is implemented via `__new__` on the generic base classes.  Non-numeric
-inputs (e.g. lists of objects, numpy object arrays) remain as the generic
-base class.  Calling the numeric subclass directly (e.g.
-`NumericEmpiricalDistribution(...)`) is unaffected by the dispatch.
+`__new__` on the generic base implements the dispatch. Non-array,
+non-Record inputs (lists of objects, opaque sequences) stay in the
+generic base. The numeric-array path requires `name=` so the
+auto-wrapped Record has a meaningful field key.
+
+`BootstrapReplicateDistribution[T]` additionally accepts a
+`SupportsSampling` source (e.g. `Normal(0, 1, name="x")`); each
+replicate is `n` i.i.d. draws from `source._sample`. `n` is
+mandatory in this case (no canonical observation count).
+
+### Framework abstraction hierarchy
+
+Three rules govern how the framework's universal types relate.
+
+1. **One random variable per `Distribution`.** A single `Distribution`
+   instance represents one random quantity. To carry a *collection*
+   of distributions (a parameter sweep, a per-component posterior,
+   ...), wrap them in a `DistributionArray`. The rule is enforced
+   structurally: `Distribution` has no `batch_shape` accessor, and
+   TFP-backed constructors raise `ValueError` if their parameters
+   imply a non-empty `tfd.Distribution.batch_shape`. Use
+   `DistributionArray.from_batched_params` (or the per-class
+   `Normal.from_batched_params(...)` alias) for batched
+   constructions.
+
+2. **Two implementations per concept.** Each abstraction has at most
+   two concrete pairs:
+   - a generic implementation parameterised over `T`
+     (`EmpiricalDistribution[T]`,
+     `BootstrapReplicateDistribution[T]`, `Distribution[T]`),
+   - and a Record-based specialisation
+     (`RecordEmpiricalDistribution`,
+     `RecordBootstrapReplicateDistribution`, `RecordDistribution`).
+
+   No third "numeric-array" variant. Records *are* array-based — a
+   single numeric array becomes a single-field Record at the
+   constructor boundary.
+
+3. **Iteration is a Record-family convention.** `Record`,
+   `NumericRecord`, `RecordArray`, `NumericRecordArray` iterate field
+   names dict-style. `DistributionArray` is positional (``len(da)``
+   is the leading-axis size, ``prod(da.batch_shape)`` is the total
+   cell count; access via ``da[i]``). Every other `Distribution`
+   subclass — including `EmpiricalDistribution`,
+   `BootstrapReplicateDistribution`, marginals — is non-iterable;
+   finite-sample subclasses (see STYLE_GUIDE §1.9) expose stored
+   samples on `.samples` / `.draws()` with `.n` reporting the count;
+   parametric distributions do not have `.n`.
 
 ---
 

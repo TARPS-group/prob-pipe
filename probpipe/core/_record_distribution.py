@@ -1,9 +1,10 @@
 """RecordDistribution — generic Record-based distribution base.
 
 Provides the named-component layer (``fields``, ``__getitem__``,
-``select()``) and Record-aware flatten/unflatten, without imposing TFP
-shape conventions (dtype, support, batch_shape).  Those live on
-``NumericRecordDistribution`` and its consumers.
+``select()``) and Record-aware flatten/unflatten, without imposing
+the numeric shape / dtype conventions (``dtype``, ``support``,
+``event_shape``).  Those live on ``NumericRecordDistribution`` and
+its consumers.
 
 ``_RecordDistributionView`` is the lightweight component reference,
 analogous to the former ``DistributionView`` but for any distribution
@@ -228,9 +229,8 @@ class _RecordDistributionView(Distribution):
 
     @property
     def shape(self) -> tuple[int, ...]:
-        """Shape of one draw from this view — ``batch_shape + event_shape``."""
-        batch = tuple(getattr(self._parent, "batch_shape", ()) or ())
-        return batch + self.event_shape
+        """Shape of one draw from this view — equals ``event_shape``."""
+        return self.event_shape
 
     @property
     def dtype(self) -> "jnp.dtype | None":
@@ -242,7 +242,7 @@ class _RecordDistributionView(Distribution):
 
     @property
     def ndim(self) -> int:
-        """Number of axes in a single draw (``batch_shape + event_shape``)."""
+        """Number of axes in a single draw (``len(event_shape)``)."""
         return len(self.shape)
 
     # -- Internals ----------------------------------------------------------
@@ -319,8 +319,9 @@ class RecordDistribution(Distribution[Record]):
 
     Provides named component access (``fields``, ``__getitem__``,
     ``select()``) and Record-aware flatten / unflatten.  Does NOT impose
-    TFP shape conventions (dtype, support, batch_shape) — those belong
-    on ``NumericRecordDistribution`` and its consumers.
+    numeric shape / dtype conventions (``dtype``, ``support``,
+    ``event_shape``) — those belong on ``NumericRecordDistribution``
+    and its consumers.
 
     Concrete subclasses must set ``_record_template`` (a
     :class:`~probpipe.core.record.RecordTemplate` describing the named
@@ -346,18 +347,6 @@ class RecordDistribution(Distribution[Record]):
         """Field names from the record_template, or empty tuple."""
         tpl = self.record_template
         return tpl.fields if tpl is not None else ()
-
-    @property
-    def n(self) -> int:
-        """Number of cells in the batch shape (see STYLE_GUIDE §1.9).
-
-        For scalar Record distributions (``batch_shape == ()``) this
-        is ``1``; for batched variants (``NumericRecordDistribution``
-        with a nonempty ``batch_shape``) it's
-        ``prod(batch_shape)``. Parallels
-        :attr:`~probpipe.DistributionArray.n`.
-        """
-        return prod(getattr(self, "batch_shape", ()) or ())
 
     def __getitem__(self, key: str) -> _RecordDistributionView:
         return _RecordDistributionView(self, key)
@@ -503,9 +492,9 @@ class RecordDistribution(Distribution[Record]):
 
     # -- Single-field array-like shims --------------------------------------
     # On a single-field distribution, ``.shape`` / ``.ndim`` delegate to
-    # the sole field's event shape (prefixed by ``batch_shape``).
-    # Multi-field distributions raise ``TypeError``; use ``.event_shapes``
-    # for a per-field dict or index into a view (``dist[field]``).
+    # the sole field's event shape. Multi-field distributions raise
+    # ``TypeError``; use ``.event_shapes`` for a per-field dict or
+    # index into a view (``dist[field]``).
 
     def _single_field_name(self) -> str:
         fields = self.fields
@@ -519,12 +508,10 @@ class RecordDistribution(Distribution[Record]):
 
     @property
     def shape(self) -> tuple[int, ...]:
-        """Shape of one draw (``batch_shape + event_shape``)."""
+        """Shape of one draw (equals the sole field's event_shape)."""
         name = self._single_field_name()
         tpl = self.record_template
-        event = self._field_event_shape(tpl[name]) if tpl is not None else ()
-        batch = tuple(getattr(self, "batch_shape", ()) or ())
-        return batch + event
+        return self._field_event_shape(tpl[name]) if tpl is not None else ()
 
     @property
     def ndim(self) -> int:

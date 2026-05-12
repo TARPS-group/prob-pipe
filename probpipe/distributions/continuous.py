@@ -416,7 +416,7 @@ class Uniform(TFPDistribution):
 
     @property
     def support(self) -> Constraint:
-        return interval(float(self._low), float(self._high))
+        return interval(self._low, self._high)
 
     @classmethod
     def _default_support(cls) -> Constraint:
@@ -597,7 +597,7 @@ class HalfCauchy(TFPDistribution):
 
     @property
     def support(self) -> Constraint:
-        return greater_than(float(self._loc))
+        return greater_than(self._loc)
 
     @classmethod
     def _default_support(cls) -> Constraint:
@@ -646,7 +646,7 @@ class Pareto(TFPDistribution):
 
     @property
     def support(self) -> Constraint:
-        return greater_than(float(self._scale))
+        return greater_than(self._scale)
 
     @classmethod
     def _default_support(cls) -> Constraint:
@@ -711,7 +711,7 @@ class TruncatedNormal(TFPDistribution):
 
     @property
     def support(self) -> Constraint:
-        return interval(float(self._low), float(self._high))
+        return interval(self._low, self._high)
 
     @classmethod
     def _default_support(cls) -> Constraint:

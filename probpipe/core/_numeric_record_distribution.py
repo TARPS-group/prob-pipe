@@ -3,9 +3,9 @@
 The primary class is :class:`NumericRecordDistribution` — a
 :class:`~probpipe.core._record_distribution.RecordDistribution` that
 additionally enforces numeric-leaf shape semantics (``event_shape``,
-``batch_shape``, ``flat_event_shapes``, ``event_size``) and serves as
-the base class for every numeric ProbPipe distribution (``Normal``,
-``Beta``, ``ProductDistribution``, ...).
+``flat_event_shapes``, ``event_size``) and serves as the base class
+for every numeric ProbPipe distribution (``Normal``, ``Beta``,
+``ProductDistribution``, ...).
 
 Provides:
 
@@ -33,7 +33,6 @@ from typing import Any, Callable
 from .._dtype import _as_float_array, _default_float_dtype
 from .._utils import prod
 from .protocols import (
-    SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
@@ -142,14 +141,14 @@ class NumericRecordDistribution(RecordDistribution):
     """Distribution over numeric arrays with Record support.
 
     Extends :class:`RecordDistribution` with numeric-specific metadata:
-    dtype, support, batch_shape, event_shape.
+    ``dtype``, ``support``, ``event_shape``.
 
-    Shape semantics follow TFP conventions:
-
-    * ``event_shape``  -- shape of a single draw (e.g. ``(d,)`` for a
-      *d*-dimensional vector distribution).
-    * ``batch_shape``  -- shape of independent-but-not-identically-distributed
-      parameter batches.
+    Shape semantics: ``event_shape`` is the shape of a single draw
+    (e.g. ``(d,)`` for a *d*-dimensional vector distribution). A
+    ``Distribution`` represents one random variable; collections of
+    independent distributions live in
+    :class:`~probpipe.DistributionArray` (which has its own
+    ``batch_shape``).
 
     When ``record_template`` is set (named distribution), samples are
     wrapped as :class:`~probpipe.Record`.  Otherwise, raw arrays are
@@ -183,11 +182,6 @@ class NumericRecordDistribution(RecordDistribution):
         Default raises ``NotImplementedError``.
         """
         raise NotImplementedError(f"{type(self).__name__}.supports")
-
-    @property
-    def batch_shape(self) -> tuple[int, ...]:
-        """Batch shape (default: scalar, no batching)."""
-        return ()
 
     @property
     def dtype(self) -> jnp.dtype | None:
@@ -270,9 +264,9 @@ class NumericRecordDistribution(RecordDistribution):
         inputs.  For raw arrays, flattens event dimensions preserving
         leading batch/sample dims.
         """
-        from .record import Record as _Values
+        from .record import Record
         from ._record_array import NumericRecordArray
-        if isinstance(value, (NumericRecordArray, _Values)):
+        if isinstance(value, (NumericRecordArray, Record)):
             return super().flatten_value(value)
         value = jnp.asarray(value)
         es = self.event_shape
@@ -315,8 +309,6 @@ class NumericRecordDistribution(RecordDistribution):
         if self.name:
             parts.append(f"name={self.name!r}")
         parts.append(f"event_shape={self.event_shape}")
-        if self.batch_shape:
-            parts.append(f"batch_shape={self.batch_shape}")
         return f"{parts[0]}({', '.join(parts[1:])})"
 
 
@@ -520,10 +512,6 @@ class FlattenedView(NumericRecordDistribution):
     @property
     def event_shape(self) -> tuple[int, ...]:
         return (self._base.event_size,)
-
-    @property
-    def batch_shape(self) -> tuple[int, ...]:
-        return getattr(self._base, "batch_shape", ())
 
     def _expectation(
         self,

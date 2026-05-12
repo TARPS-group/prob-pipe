@@ -16,15 +16,32 @@ It is intended for contributors and AI assistants working on the codebase.
 Protocol classes are named `Supports<Capability>` in CamelCase:
 
 ```python
-SupportsSampling, SupportsLogProb, SupportsMean, SupportsConditioning
+SupportsSampling, SupportsLogProb, SupportsMean, SupportsConditioning,
+SupportsArrayBackend
 ```
 
 Protocol methods use a **single leading underscore** to distinguish the
 primitive implementation from the public op:
 
 ```python
-_sample, _log_prob, _mean, _variance, _cov, _condition_on, _expectation
+_sample, _log_prob, _mean, _variance, _cov, _condition_on, _expectation,
+_make_array_backend
 ```
+
+Most `Supports*` protocols are instance-level capabilities (does
+`isinstance(my_dist, SupportsSampling)` hold?). `SupportsArrayBackend`
+is the exception: its method is a `@classmethod`, so the contract
+lives at class scope. Always check
+`isinstance(MyDistribution, SupportsArrayBackend)` (i.e. on the
+class object). `isinstance(an_instance, SupportsArrayBackend)`
+returns `True` too — instances inherit class attributes, and
+`runtime_checkable` just looks for the named attribute — but the
+result is misleading because the protocol's contract is the class
+declaring `_make_array_backend`, not the instance.
+
+The corresponding *backend* interface that `_make_array_backend`
+returns (`_DistributionArrayBackend`) is private to the library —
+user code never imports or constructs it.
 
 ### 1.2 Ops (public API)
 
@@ -127,7 +144,7 @@ this distribution hold?"
 | `BootstrapDistribution` | Number of function evaluations |
 | `BootstrapReplicateDistribution` | Number of observations per bootstrap dataset |
 | `BroadcastDistribution` | Number of input–output pairs |
-| `_ArrayMarginal` | Number of output samples |
+| `_RecordMarginal` | Number of output samples |
 | `_MixtureMarginal` | Number of mixture components |
 | `_ListMarginal` | Number of output items |
 
@@ -158,6 +175,40 @@ separator, so paths round-trip with `Record.__getitem__`.
 When adding new Record-based containers, follow these conventions:
 preserve insertion order, reject `/` in field names, and accept the
 slash-delimited form in any string-keyed lookup.
+
+### 1.11 Distribution iteration
+
+A `Distribution` represents a single random variable, not a
+collection. Every concrete `Distribution` subclass —
+`Normal`, `EmpiricalDistribution`, `BootstrapReplicateDistribution`,
+joint distributions, marginals — is **non-iterable**. For the
+finite-sample subclasses listed in §1.9, stored samples are
+accessed via `.samples` / `.draws()` and `.n` reports the count.
+Parametric distributions do not have `.n`.
+
+Iteration is reserved for the `Record` family — `Record`,
+`NumericRecord`, `RecordArray`, `NumericRecordArray` — which iterate
+field names dict-style (`keys()` / `values()` / `items()`).
+
+`DistributionArray` is positional and follows numpy/jax conventions:
+`len(da)` is the leading-axis dim and `da.size` is the total cell
+count (`prod(da.batch_shape)`); elements are accessed via `da[i]`.
+Iteration walks the leading axis — for a 1-D `DistributionArray`
+it yields scalar cells; for a multi-d one it yields sub-arrays of
+shape `batch_shape[1:]`, mirroring `iter(np.zeros((2, 3)))`. For
+flat row-major access over every cell, use `da.components`.
+
+When adding a new `Distribution` subclass, do not define `__iter__`.
+The regression test in `tests/test_iteration_protocol.py` enforces
+this rule across user-constructible distribution subclasses
+(`Normal`, `Beta`, `Gamma`, `MultivariateNormal`, `ProductDistribution`,
+`TransformedDistribution`, `KDEDistribution`,
+`RecordEmpiricalDistribution`, `BootstrapReplicateDistribution`,
+`RecordBootstrapReplicateDistribution`, `NumericJointEmpirical`).
+WF-output classes (`BroadcastDistribution`, `_RecordMarginal`,
+`_MixtureMarginal`, `_ListMarginal`) inherit the constraint from
+their bases and aren't directly parametrised; if you add a new such
+class, verify non-iterability via the parent class's contract.
 
 ---
 

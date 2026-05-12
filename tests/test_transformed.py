@@ -43,10 +43,11 @@ class TestTFPBase:
         td = TransformedDistribution(base, tfb.Exp())
         assert td.event_shape == ()
 
-    def test_exp_batch_shape(self):
+    def test_exp_no_batch_shape(self):
+        """``Distribution`` has no ``batch_shape`` attribute."""
         base = Normal(loc=0.0, scale=1.0, name="x")
         td = TransformedDistribution(base, tfb.Exp())
-        assert td.batch_shape == ()
+        assert not hasattr(td, "batch_shape")
 
     def test_exp_sample_shape(self, key):
         base = Normal(loc=0.0, scale=1.0, name="x")
@@ -113,7 +114,7 @@ class TestTFPBase:
 class TestNonTFPBase:
     def test_exp_on_empirical(self, key):
         samples = jax.random.normal(key, (50, 2))
-        emp = EmpiricalDistribution(samples)
+        emp = EmpiricalDistribution(samples, name="x")
         td = TransformedDistribution(emp, tfb.Exp())
         s = jnp.asarray(sample(td, key=key, sample_shape=(10,)))
         assert s.shape == (10, 2)
@@ -122,7 +123,7 @@ class TestNonTFPBase:
     def test_mean_mc_fallback_on_non_tfp(self, key):
         """Non-TFP base: mean falls back to MC via expectation."""
         samples = jax.random.normal(key, (50, 2))
-        emp = EmpiricalDistribution(samples)
+        emp = EmpiricalDistribution(samples, name="x")
         td = TransformedDistribution(emp, tfb.Exp())
         m = mean(td)
         assert jnp.all(jnp.isfinite(m))
@@ -227,16 +228,16 @@ class TestTransformedProtocolDuckTyping:
         assert isinstance(td, SupportsMean)
 
     def test_empirical_base_has_mean(self):
-        """NumericEmpiricalDistribution supports SupportsMean → transformed does too."""
+        """RecordEmpiricalDistribution supports SupportsMean → transformed does too."""
         from probpipe import SupportsMean
-        emp = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
+        emp = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
         td = TransformedDistribution(emp, tfb.Exp())
         assert isinstance(td, SupportsMean)
 
     def test_empirical_base_no_log_prob(self):
-        """NumericEmpiricalDistribution lacks SupportsLogProb → transformed lacks it."""
+        """RecordEmpiricalDistribution lacks SupportsLogProb → transformed lacks it."""
         from probpipe import SupportsLogProb
-        emp = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]))
+        emp = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
         td = TransformedDistribution(emp, tfb.Exp())
         assert not isinstance(td, SupportsLogProb)
 

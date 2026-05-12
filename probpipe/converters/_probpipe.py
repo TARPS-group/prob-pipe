@@ -23,10 +23,12 @@ from ..custom_types import PRNGKey
 from .._utils import _auto_key
 from ..core.constraints import _supports_compatible
 from ..core.distribution import (
-    NumericEmpiricalDistribution,
     Distribution,
+    EmpiricalDistribution,
+    RecordEmpiricalDistribution,
 )
 from ..core.provenance import Provenance
+from ..distributions._tfp_base import _allow_batched_tfp_init
 from ._registry import ConversionInfo, ConversionMethod, Converter
 
 # Default sample count for moment-matching conversions
@@ -54,10 +56,16 @@ def _mm_provenance(source, mean_result=None, var_result=None):
 
 
 def _point_estimate(x):
-    """Extract a plain array from a value that may be a BootstrapDistribution."""
+    """Extract a plain array from a value that may be a BootstrapDistribution
+    or a single-field NumericRecord (the auto-wrap form returned by
+    ``RecordEmpiricalDistribution._mean`` — numeric arrays auto-wrap
+    as a single-field Record)."""
     from ..core.distribution import BootstrapDistribution
+    from ..core._numeric_record import NumericRecord
     if isinstance(x, BootstrapDistribution):
-        return x._mean()
+        x = x._mean()
+    if isinstance(x, NumericRecord) and len(x.fields) == 1:
+        return x[x.fields[0]]
     return x
 
 
@@ -333,7 +341,7 @@ def _convert_to_multivariatenormal(source, key, **kw):
     name = kw.get("name") or source.name
     if isinstance(source, MultivariateNormal):
         return source
-    if isinstance(source, NumericEmpiricalDistribution):
+    if isinstance(source, RecordEmpiricalDistribution):
         loc = source._mean()
         cov_mat = source._cov()
         r = MultivariateNormal(loc=loc, cov=cov_mat, name=name)
@@ -425,14 +433,14 @@ def _convert_to_vonmisesfisher(source, key, **kw):
 
 
 def _convert_to_empirical(source, key, **kw):
-    """Convert any distribution to NumericEmpiricalDistribution by sampling."""
-    if isinstance(source, NumericEmpiricalDistribution):
+    """Convert any distribution to RecordEmpiricalDistribution by sampling."""
+    if isinstance(source, RecordEmpiricalDistribution):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
     if key is None:
         key = _auto_key()
     samples = source._sample(key, (num_samples,))
-    r = NumericEmpiricalDistribution(samples, name=kw.get("name") or source.name)
+    r = RecordEmpiricalDistribution(samples, name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source))
     return r
 
@@ -440,9 +448,20 @@ def _convert_to_empirical(source, key, **kw):
 def _convert_to_kde(source, key, **kw):
     """Convert any distribution to a KDEDistribution.
 
-    If the source is an ``NumericEmpiricalDistribution`` (or subclass),
-    the stored samples and weights are reused directly.  Otherwise,
-    samples are drawn from the source.
+    For a ``RecordEmpiricalDistribution`` source the stored samples
+    and weights are reused directly: single-field empiricals pass the
+    field's stacked array straight to KDE; multi-field empiricals
+    pass ``source.flat_samples`` (the ``(n, total_dim)`` flat-matrix
+    view) so KDE sees one row per sample with all parameters
+    concatenated. Other sources fall back to drawing fresh samples.
+
+    Raises
+    ------
+    TypeError
+        If *source* is a generic ``EmpiricalDistribution``
+        (non-numeric / object-array storage). KDE requires numeric
+        samples; route the source through
+        ``RecordEmpiricalDistribution`` or supply a numeric source.
     """
     from ..distributions.kde import KDEDistribution
 
@@ -452,12 +471,31 @@ def _convert_to_kde(source, key, **kw):
     bandwidth = kw.pop("bandwidth", None)
     name = kw.get("name") or source.name
 
-    if isinstance(source, NumericEmpiricalDistribution):
+    if isinstance(source, RecordEmpiricalDistribution):
+        # Single-field: pass the field array directly so KDE keeps the
+        # original event shape. Multi-field: collapse to the
+        # ``(n, total_dim)`` flat-matrix view.
+        if len(source.samples.fields) == 1:
+            field = source.samples.fields[0]
+            arr = source.samples[field]
+        else:
+            arr = source.flat_samples
         r = KDEDistribution(
-            source._samples, weights=source._w, bandwidth=bandwidth, name=name,
+            arr, weights=source._w, bandwidth=bandwidth, name=name,
         )
         r.with_source(_mm_provenance(source))
         return r
+
+    if isinstance(source, EmpiricalDistribution):
+        # Generic (object-array) EmpiricalDistribution: KDE is
+        # nonsensical because the samples aren't numeric.
+        raise TypeError(
+            f"Cannot KDE-convert generic (object-array) "
+            f"EmpiricalDistribution (got samples of dtype "
+            f"{getattr(source.samples, 'dtype', type(source.samples).__name__)}). "
+            f"KDE requires numeric samples; route through "
+            f"RecordEmpiricalDistribution or supply a numeric source."
+        )
 
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
     if key is None:
@@ -500,8 +538,7 @@ def _build_dispatch_table() -> dict[str, callable]:
         "Wishart": _convert_to_wishart,
         "VonMisesFisher": _convert_to_vonmisesfisher,
         "EmpiricalDistribution": _convert_to_empirical,
-        "NumericEmpiricalDistribution": _convert_to_empirical,
-        "NumericEmpiricalDistribution": _convert_to_empirical,
+        "RecordEmpiricalDistribution": _convert_to_empirical,
         "KDEDistribution": _convert_to_kde,
     }
 
@@ -601,7 +638,18 @@ class ProbPipeConverter(Converter):
             except (NotImplementedError, AttributeError):
                 pass
 
-        result = fn(source, key, **kwargs)
+        # Some converters (e.g., ``_convert_to_normal``) fabricate
+        # TFP-backed scalars from a source's ``_mean`` / ``_variance``.
+        # When the source's moments are ``(d,)``-shaped (a 1-d
+        # empirical with one observation, or a Normal whose source
+        # was tracked through a WF sweep), the implied ``batch_shape``
+        # is non-empty — which ``TFPDistribution.__init__``'s rejection
+        # would otherwise refuse. The converter is library-internal
+        # infra, not user code, so we opt into the bypass for the
+        # dispatch. A proper fix (route to ``DistributionArray`` for
+        # batched moments) is tracked as a follow-up.
+        with _allow_batched_tfp_init():
+            result = fn(source, key, **kwargs)
 
         # Mark approximate if source is approximate or conversion used sampling
         if source.is_approximate or not isinstance(source, target_type):

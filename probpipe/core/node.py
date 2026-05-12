@@ -291,7 +291,53 @@ class Node(ABC):
     @property
     def inputs(self) -> Mapping[str, Any]:
         return self._inputs
-    
+
+
+def _index_sample(s: Any, i: int) -> Any:
+    """Index row ``i`` of a per-arg sample batch.
+
+    Parameters
+    ----------
+    s : Any
+        Either a bare array (single-field broadcast draws / legacy
+        callers), a :class:`Record` (multi-field auto-wrap or an
+        explicit Record source), or a :class:`NumericRecord` (the
+        unified ``EmpiricalDistribution`` — numeric arrays auto-wrap
+        as a single-field Record — returns a ``NumericRecord`` with
+        per-field axes stacked along the leading axis).
+    i : int
+        Row index along the leading axis.
+
+    Returns
+    -------
+    Any
+        Same shape the inner call would see from a single
+        ``sample(dist)`` draw:
+
+        * Single-field ``Record`` → the underlying field array's row
+          ``i`` (unwrapped).
+        * Multi-field ``Record`` → a per-row :class:`NumericRecord`.
+        * Bare array → ``s[i]``.
+
+    Notes
+    -----
+    Used by both ``_broadcast_enumerate_then_sample`` (for empirical-
+    enumerated rows and for the mixed sampled-rows path) and
+    ``_broadcast_sample`` (for plain MC sampling). Keeping the
+    implementation in one place avoids drift between the three
+    callsites.
+    """
+    # Local imports to avoid module-load circularity with
+    # ``record`` / ``_numeric_record``.
+    from .record import Record
+    from ._numeric_record import NumericRecord
+
+    if isinstance(s, Record):
+        if len(s.fields) == 1:
+            return s[s.fields[0]][i]
+        return NumericRecord({f: s[f][i] for f in s.fields})
+    return s[i]
+
 
 class WorkflowFunction(Node):
     """
@@ -642,11 +688,34 @@ class WorkflowFunction(Node):
 
         for name, value in values.items():
             expected = self._hints.get(name)
-            if expected is None:
-                continue
             # DistributionArray is ``Array[Distribution]`` — handled by
             # the sweep path, not the scalar-distribution conversion.
+            # A 0-d DA (``batch_shape == ()``) has zero axes to sweep
+            # over, so the sweep path would skip it and the op would
+            # see a raw ``DistributionArray`` in a scalar-Distribution
+            # slot. Unwrap it here unless the hint explicitly asks for
+            # a DA (or ``Any``), so the cell flows through dispatch as
+            # any scalar Distribution would — the natural extension of
+            # the sweep convention "no batch cells to iterate → one
+            # call with the cell". Size-1 DAs (``batch_shape == (1,)``)
+            # are *not* collapsed here: their sweep is well-defined
+            # (one cell → ``batch_shape=(1,)`` output), and treating
+            # them as scalars would silently change the result shape
+            # of ``mean(da)`` / ``sample(da)`` for any deliberately
+            # one-element batch.
             if isinstance(value, DistributionArray):
+                if value.batch_shape == ():
+                    try:
+                        wants_da = (
+                            isinstance(expected, type)
+                            and issubclass(expected, DistributionArray)
+                        )
+                    except TypeError:
+                        wants_da = False
+                    if not wants_da and expected is not Any:
+                        out[name] = value._flat_component(0)
+                continue
+            if expected is None:
                 continue
 
             try:
@@ -833,7 +902,7 @@ class WorkflowFunction(Node):
 
         - ``dist_args`` only — existing Monte Carlo marginalisation via
           ``_broadcast_distributions_only``. Output: marginal
-          distribution (``_MixtureMarginal`` / ``_ArrayMarginal`` / ...).
+          distribution (``_MixtureMarginal`` / ``_RecordMarginal`` / ...).
         - ``ra_args`` only — pure parameter sweep. One inner call per
           RecordArray row; no marginalisation. Output: stacked
           aggregate (``NumericRecordArray`` / ``RecordArray`` /
@@ -1322,13 +1391,18 @@ class WorkflowFunction(Node):
             for _ in range(reps_per_combo):
                 call_values = dict(values)
 
-                # Set empirical samples
+                # Set empirical samples. ``dist.samples`` is a Record
+                # of per-field stacked arrays; pull row ``i`` per field
+                # so the inner call sees the same shape it would from a
+                # single ``sample(dist)`` draw.
                 for name, dist, i in zip(emp_names, emp_dists, combo):
-                    call_values[name] = dist.samples[i]
+                    call_values[name] = _index_sample(dist.samples, i)
 
-                # Set sampled values for non-empirical distributions
+                # Set sampled values for non-empirical distributions.
+                # ``sampled[name]`` may be a Record (auto-wrapped); use
+                # the same per-row indexing helper.
                 for name in sample_args:
-                    call_values[name] = sampled[name][sample_idx]
+                    call_values[name] = _index_sample(sampled[name], sample_idx)
 
                 # Weight: empirical product weight divided evenly across reps
                 weights.append(emp_weight / reps_per_combo)
@@ -1367,7 +1441,7 @@ class WorkflowFunction(Node):
         for i in range(n_broadcast_samples):
             call_values = dict(values)
             for name in broadcast_args:
-                call_values[name] = samples_per_arg[name][i]
+                call_values[name] = _index_sample(samples_per_arg[name], i)
             call_value_list.append(call_values)
 
         results = self._execute_many(call_value_list)

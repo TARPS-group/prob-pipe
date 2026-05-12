@@ -201,6 +201,9 @@ class ProductDistribution(
         super().__init__(name=name)
         self._record_template = _build_record_template(self._components)
 
+    def __reduce__(self):
+        return (_unpickle_product_distribution, (dict(self._components), self._name))
+
     # -- Sampling (returns Record) ------------------------------------------
 
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
@@ -316,6 +319,11 @@ class ProductDistribution(
         return f"ProductDistribution({comp_str}{name_str})"
 
 
+def _unpickle_product_distribution(components, name):
+    """Reconstruct a ProductDistribution (or dynamic subclass) from its components."""
+    return ProductDistribution(**components, name=name)
+
+
 # ---------------------------------------------------------------------------
 # TFPProductDistribution — TFP-backed subclass
 # ---------------------------------------------------------------------------
@@ -378,10 +386,6 @@ class TFPProductDistribution(ProductDistribution):
     @property
     def event_shape(self) -> tuple[int, ...]:
         return tuple(self._tfp_dist.event_shape)
-
-    @property
-    def batch_shape(self) -> tuple[int, ...]:
-        return tuple(self._tfp_dist.batch_shape)
 
     @property
     def dtype(self):
