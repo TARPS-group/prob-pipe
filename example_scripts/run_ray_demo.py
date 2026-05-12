@@ -13,13 +13,25 @@ Usage
 
        prefect server start
 
-2. Open the Prefect dashboard in your browser:
+2. Start a persistent local Ray head in another terminal:
+
+       ray start --head
+
+   This is required, not optional. ``RayTaskRunner.__exit__`` calls
+   ``ray.shutdown()`` after every flow run, which tears down any
+   cluster the driver process owns. Starting Ray externally first means
+   ``ray.shutdown()`` only disconnects the driver — the head survives,
+   and subsequent flows reuse it instead of bootstrapping their own.
+   See https://docs.prefect.io/integrations/prefect-ray for the full
+   deployment topology guide.
+
+3. Open the Prefect dashboard in your browser:
 
        http://127.0.0.1:4200
 
-3. Run this script (assuming you're in the ``prob-pipe`` root directory):
+4. Run this script (assuming you're in the ``prob-pipe`` root directory):
 
-       python docs/examples/run_ray_demo.py
+       python example_scripts/run_ray_demo.py
 
 You will see each bootstrap MCMC fit appear as a task in the Prefect
 dashboard, dispatched across Ray worker processes.
@@ -58,8 +70,18 @@ from probpipe import (
 
 from prefect_ray import RayTaskRunner
 
+# ``address="auto"`` attaches to the persistent Ray head you launched with
+# ``ray start --head`` (see Usage above). Without that head, each flow would
+# bootstrap a fresh local cluster — and tear it down — because
+# ``RayTaskRunner.__exit__`` calls ``ray.shutdown()`` unconditionally.
+#
+# For a production setup with a remote head node, use the Ray Client URL
+# instead — e.g. ``RayTaskRunner(address="ray://<head>:10001")``. That path
+# has different tradeoffs (30s Client-disconnect timeouts, head-side
+# dependency requirements); see
+# https://docs.prefect.io/integrations/prefect-ray for guidance.
 probpipe.prefect_config.workflow_kind = WorkflowKind.TASK
-probpipe.prefect_config.task_runner = RayTaskRunner()
+probpipe.prefect_config.task_runner = RayTaskRunner(address="auto")
 
 print(f"Workflow kind: {probpipe.prefect_config.workflow_kind}")
 print(f"Task runner:   {type(probpipe.prefect_config.task_runner).__name__}")

@@ -12,7 +12,7 @@ Usage
 
 3. Run this script (assuming you're in the ``prob-pipe`` root directory):
 
-       python docs/examples/run_prefect_demo.py
+       python example_scripts/run_prefect_demo.py
 
 You will see each bootstrap MCMC fit appear as a task in the Prefect
 dashboard.
@@ -44,11 +44,10 @@ from probpipe import (
 )
 
 
+# ---------------------------------------------------------------------------
 # 1. Configure Prefect globally
+# ---------------------------------------------------------------------------
 
-# Use Prefect tasks with the default ThreadPool runner.
-# Ray auto-detection is disabled because Record is not yet
-# pickle-serializable (see docstring above).
 from prefect.task_runners import ThreadPoolTaskRunner
 
 probpipe.prefect_config.workflow_kind = WorkflowKind.TASK
@@ -59,7 +58,9 @@ print(f"Task runner:   {type(probpipe.prefect_config.task_runner).__name__}")
 print()
 
 
+# ---------------------------------------------------------------------------
 # 2. Load data and build models (same as Getting Started tutorial)
+# ---------------------------------------------------------------------------
 
 df = pd.read_csv("./docs/tutorials/data/horseshoe_crabs.csv")
 
@@ -91,7 +92,9 @@ print(f"Models: {model_poisson.name}, {model_nb.name}")
 print()
 
 
+# ---------------------------------------------------------------------------
 # 3. Run bagged posteriors — tracked by Prefect
+# ---------------------------------------------------------------------------
 
 N_REPLICATES = 16
 
@@ -122,7 +125,9 @@ print(f"  NegBin:  {t_nb:.1f}s")
 print()
 
 
+# ---------------------------------------------------------------------------
 # 4. Results
+# ---------------------------------------------------------------------------
 
 # Turn off Prefect for post-processing
 probpipe.prefect_config.workflow_kind = WorkflowKind.OFF
@@ -140,7 +145,9 @@ for label, bagged in [("Poisson", bagged_poisson), ("NegBin", bagged_nb)]:
     print()
 
 
+# ---------------------------------------------------------------------------
 # 5. Provenance
+# ---------------------------------------------------------------------------
 
 src = bagged_nb.source
 print("Provenance (NegBin bagged posterior):")
