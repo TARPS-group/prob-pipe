@@ -289,6 +289,7 @@ class TestCanonicalConvenience:
         accessor multi-leaf guards that no concrete subclass shipping
         today triggers (every shipped class is single-leaf via the
         auto-template helper)."""
+        from probpipe import NumericRecord
         from probpipe.core.record import RecordTemplate
 
         class TwoField(NumericRecordDistribution):
@@ -310,10 +311,26 @@ class TestCanonicalConvenience:
                 from probpipe import real
                 return {"a": real, "b": real}
 
+            def _sample(self, key, sample_shape=()):
+                # Story A: multi-leaf templates return a ``NumericRecord``
+                # (or ``NumericRecordArray`` for a non-empty sample shape).
+                # This stub returns zero placeholders sized from the
+                # template's per-field event shapes.
+                return NumericRecord(
+                    a=jnp.zeros(sample_shape),
+                    b=jnp.zeros(sample_shape + (2,)),
+                )
+
         return TwoField(name="two_field")
 
     def test_dtype_derives_from_dtypes_single_leaf(self, scalar_normal):
-        """Single-leaf: ``dtype`` returns the sole dtype in ``dtypes``."""
+        """Single-leaf: ``dtype`` returns the sole dtype in ``dtypes``.
+
+        Checks both the independent value (TFP's known dtype for
+        ``Normal`` is ``float32``) and the derivation consistency
+        (``dtype`` equals the single value in ``dtypes``).
+        """
+        assert scalar_normal.dtype == jnp.float32
         assert scalar_normal.dtype == list(scalar_normal.dtypes.values())[0]
 
     def test_dtype_returns_none_when_dtypes_mixed(self, multi_leaf_dist):
@@ -327,10 +344,23 @@ class TestCanonicalConvenience:
         with pytest.raises(TypeError, match="not array-like"):
             _ = multi_leaf_dist.support
 
-    def test_supports_canonical_on_multi_leaf(self, multi_leaf_dist):
-        """Multi-leaf: ``supports`` returns the per-field dict."""
-        from probpipe import real
-        assert multi_leaf_dist.supports == {"a": real, "b": real}
+    def test_check_support_compatible_includes_field_name_on_multi_leaf(
+        self, multi_leaf_dist,
+    ):
+        """``_check_support_compatible`` reads canonical ``supports``
+        (per-leaf) on the source. For a multi-leaf source, the field
+        name appears in the error message — single-leaf sources get
+        the original message without a field prefix.
+
+        Target: ``Gamma._default_support() == positive``; source
+        fields are ``real`` → incompatible, so the first field that
+        fails the check raises with its name.
+        """
+        from probpipe import Gamma
+        with pytest.raises(
+            ValueError, match=r"TwoField field 'a' \(support=real\)",
+        ):
+            Gamma._check_support_compatible(multi_leaf_dist)
 
     def test_treedef_leaf_for_single_leaf(self, scalar_normal):
         """Single-leaf: ``treedef`` is the leaf treedef (one-leaf pytree)."""
@@ -346,10 +376,29 @@ class TestCanonicalConvenience:
         )
         assert multi_leaf_dist.treedef == expected
 
+    def test_treedef_is_cached(self, multi_leaf_dist):
+        """``treedef`` caches via ``object.__setattr__`` on first read;
+        the same object is returned on subsequent reads. Guards against
+        accidental removal of the cache."""
+        first = multi_leaf_dist.treedef
+        second = multi_leaf_dist.treedef
+        assert first is second
+
     def test_flat_event_shapes_tree_walks_multi_leaf(self, multi_leaf_dist):
         """``flat_event_shapes`` is one entry per leaf in template
         field order — not a single-leaf-only ``[event_shape]``."""
         assert multi_leaf_dist.flat_event_shapes == [(), (2,)]
+
+    def test_sample_returns_record_multi_leaf(self, multi_leaf_dist):
+        """Story A end-to-end: a multi-leaf ``_sample`` returns a
+        ``NumericRecord`` (matching the ``treedef`` derivation).
+        Locks the class-docstring contract: single-leaf →
+        ``jax.Array``, multi-leaf → ``NumericRecord``.
+        """
+        from probpipe import NumericRecord
+        out = multi_leaf_dist._sample(jax.random.PRNGKey(0), ())
+        assert isinstance(out, NumericRecord)
+        assert tuple(out.keys()) == ("a", "b")
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +427,15 @@ class TestIntegerDtypeReporting:
         always-float family)."""
         from probpipe import Normal
         assert jnp.issubdtype(Normal(loc=0.0, scale=1.0, name="x").dtype, jnp.floating)
+
+    def test_poisson_dtype_is_float(self):
+        """``Poisson`` uses ``float32`` because TFP's ``tfd.Poisson``
+        models the count as a real number. Pins this so a future TFP
+        change to ``int32`` doesn't silently desync from the
+        CHANGELOG-documented behaviour.
+        """
+        from probpipe import Poisson
+        assert Poisson(rate=2.0, name="x").dtype == jnp.float32
 
 
 # ---------------------------------------------------------------------------
