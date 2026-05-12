@@ -81,7 +81,7 @@ nav:
   - Reference Notebooks:
     - Overview: reference_notebooks.md
     - Distribution basics: examples/01_distributions.ipynb
-    - Records and the Record family: examples/02_records.ipynb
+    - Records and Record Distributions: examples/02_records.ipynb
     - Broadcasting and workflow functions: examples/03_broadcasting.ipynb
     - Joint distributions: examples/04_joint_distributions.ipynb
     - External backends: examples/05_external_backends.ipynb
