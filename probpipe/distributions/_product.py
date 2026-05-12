@@ -383,7 +383,7 @@ class TFPProductDistribution(ProductDistribution):
     def dtypes(self) -> dict[str, "jnp.dtype"]:
         """Per-field dtype — the TFP Blockwise's dtype spread
         across the auto-built single-field template."""
-        return self._spread_to_fields(self._tfp_dist.dtype)
+        return self._per_field_dict(self._tfp_dist.dtype)
 
 
 # -- Helpers for nested component pytrees ----------------------------------

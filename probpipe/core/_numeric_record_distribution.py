@@ -229,15 +229,15 @@ class NumericRecordDistribution(RecordDistribution):
             return tpl
         return None
 
-    def _spread_to_fields(self, value):
-        """Spread a single value across every field of
-        :attr:`record_template`.
+    def _per_field_dict(self, value):
+        """Build a ``{field: value}`` dict keyed by every field of
+        :attr:`record_template`, with *value* repeated as the value.
 
         Single-field auto-template subclasses (the common case)
-        declare a scalar ``dtype`` / ``support`` / etc. but the
-        canonical accessor is a per-field dict. This helper
-        materialises ``{name: value for name in record_template.fields}``
-        without each override having to spell it out.
+        declare one scalar dtype / support / etc., but the
+        canonical accessor is a per-field dict. This helper saves
+        each override from spelling out
+        ``{name: value for name in record_template.fields}``.
         """
         return {name: value for name in self.record_template.fields}
 
@@ -507,7 +507,7 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
     def dtypes(self) -> dict[str, jnp.dtype]:
         """Per-field dtype — the evaluations' dtype spread across
         the auto-built single-field template."""
-        return self._spread_to_fields(self._evaluations.dtype)
+        return self._per_field_dict(self._evaluations.dtype)
 
     def _mean(self) -> Array:
         """Point estimate: (weighted) mean of evaluations."""
@@ -552,7 +552,7 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
     @property
     def supports(self) -> dict[str, Constraint]:
         """Per-field support — bootstrap of mean values is real-valued."""
-        return self._spread_to_fields(real)
+        return self._per_field_dict(real)
 
     def __repr__(self) -> str:
         return f"BootstrapDistribution(n={self._n}, event_shape={self.event_shape})"
@@ -661,7 +661,7 @@ class FlattenedView(NumericRecordDistribution):
     @property
     def supports(self) -> dict[str, Constraint]:
         """Per-field support — the flattened view is real-valued."""
-        return self._spread_to_fields(real)
+        return self._per_field_dict(real)
 
     @property
     def base_distribution(self) -> Distribution:

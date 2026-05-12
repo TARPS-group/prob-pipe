@@ -505,7 +505,7 @@ class TestRWMH:
 
             @property
             def dtypes(self):
-                return self._spread_to_fields(jnp.float32)
+                return self._per_field_dict(jnp.float32)
 
             def _log_prob(self, value):
                 return -0.5 * jnp.sum(value ** 2)
@@ -541,7 +541,7 @@ class TestRWMH:
 
             @property
             def dtypes(self):
-                return self._spread_to_fields(jnp.float32)
+                return self._per_field_dict(jnp.float32)
 
             def _log_prob(self, value):
                 return -0.5 * jnp.sum(value ** 2)

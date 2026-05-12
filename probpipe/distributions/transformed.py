@@ -237,7 +237,7 @@ class TransformedDistribution(NumericRecordDistribution):
             out_dtype = self._tfp_transformed.dtype
         else:
             out_dtype = self._base.dtype
-        return self._spread_to_fields(out_dtype)
+        return self._per_field_dict(out_dtype)
 
     # -- support ------------------------------------------------------------
 
