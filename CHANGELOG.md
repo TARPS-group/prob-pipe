@@ -7,7 +7,137 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`SupportsArrayBackend` capability protocol** (`probpipe.SupportsArrayBackend`)
+  declares that a `Distribution` subclass can produce a fused storage
+  backend for `DistributionArray`. Implemented by every TFP-backed
+  concrete class (`Normal`, `Beta`, `Gamma`, `MultivariateNormal`,
+  `Dirichlet`, …) via inheritance from `TFPDistribution`. Distribution
+  classes that don't implement the protocol still work in a
+  `DistributionArray` via the literal-array fallback path.
+
+- **`DistributionArray.from_batched_params(dist_cls, *, name, batch_shape=None, **batched_params)`**
+  factory + ergonomic per-class alias **`Distribution.from_batched_params(*, name, batch_shape=None, **batched_params)`**.
+  Constructs a `DistributionArray` of homogeneous components,
+  dispatching on `SupportsArrayBackend`: TFP-backed classes get a
+  fused TFP-batched backend; other classes fall back to one
+  `dist_cls` instance per cell. Per-cell names auto-suffix
+  `f"{name}_{flat_index}"`. `batch_shape` is inferred from broadcast
+  of array-valued params; classes with heterogeneous per-param event
+  ranks (`MultivariateNormal`, `Dirichlet`) require explicit
+  `batch_shape=...`.
+
+  ```python
+  # Recommended ergonomic form
+  da = Normal.from_batched_params(loc=jnp.zeros(5), scale=1.0, name="x")
+  da.batch_shape       # (5,)
+  da[2].name           # "x_2"
+
+  # Equivalent universal form
+  da = DistributionArray.from_batched_params(
+      Normal, loc=jnp.zeros(5), scale=1.0, name="x",
+  )
+  ```
+
 ### Changed (breaking)
+
+- **`Distribution.batch_shape` removed.** The property is gone
+  from `Distribution` and every subclass; reads now raise
+  `AttributeError`. Collections of distributions live in
+  `DistributionArray`, which retains its own `batch_shape` (the
+  outer array shape).
+
+  ```python
+  >>> from probpipe import Normal
+  >>> hasattr(Normal(loc=0.0, scale=1.0, name="x"), "batch_shape")
+  False
+  ```
+
+  Migration: drop the read — once batched parameters were rejected,
+  it was always `()`. `GaussianRandomFunction.predict` (and every
+  `ArrayRandomFunction` subclass) now returns a `DistributionArray`
+  rather than a single batched `Normal` / `MultivariateNormal`;
+  per-cell `event_shape` is unchanged. Fully-joint predictions with
+  no extra batch axes return a 0-d `DistributionArray`; ops
+  (`sample`, `mean`, `log_prob`, …) auto-unwrap a 0-d DA to its
+  single cell, so call sites stay unchanged.
+
+- **`DistributionArray` container surface aligned with numpy / jax**
+  (#178). `iter(da)` now walks the leading axis: a 1-D array yields
+  its scalar cells (unchanged); a multi-d array yields
+  ``DistributionArray`` slices of shape ``batch_shape[1:]``,
+  mirroring ``iter(np.zeros((2, 3)))``. Use ``da.components`` for
+  flat row-major access over every cell (the pre-#178 default).
+  Adds ``DistributionArray.size`` returning ``prod(batch_shape)``,
+  matching ``np.ndarray.size`` / ``jax.Array.size``.
+
+- **`RecordDistribution.n` and `DistributionArray.n` removed.**
+  STYLE_GUIDE §1.9 reserves `.n` for finite-sample distribution
+  classes that hold a finite collection of samples / observations
+  / components (`EmpiricalDistribution`, `BootstrapDistribution`,
+  `BroadcastDistribution`, …). The two cases removed here did
+  not fit the contract: parametric `Normal(0, 1)` does not "hold"
+  any items, and `DistributionArray` is a positional collection of
+  independent cells, not a finite-sample distribution. Migration:
+  for `DistributionArray`, use `len(da)` (leading-axis size) or
+  `prod(da.batch_shape)` (total cell count) — `__repr__` now shows
+  `batch_shape=...`. For parametric distributions, drop the
+  call — it always returned `1`. Finite-sample distributions
+  retain `.n` (see STYLE_GUIDE §1.9 for the full table).
+
+- **TFP-backed distribution constructors reject batched parameters.**
+  `Normal(loc=jnp.zeros(5), scale=1.0, name="x")` (and the same
+  pattern for every other TFP-backed class — `Beta`, `Gamma`,
+  `MultivariateNormal`, `Pareto`, `TruncatedNormal`, `Binomial`, …)
+  now raises `ValueError` whenever the parameters imply a non-empty
+  TFP `batch_shape`. The framework hierarchy rule "one random
+  variable per `Distribution`" (CONTRIBUTING.md) is enforced at
+  construction time.
+
+  ```text
+  ValueError: Normal parameters imply batch_shape=(5,); wrap multiple
+  distributions in a DistributionArray instead. See
+  DistributionArray.from_batched_params(Normal, ...) (or the alias
+  Normal.from_batched_params(...)) for the factory.
+  ```
+
+  Migration: route through the
+  `DistributionArray.from_batched_params` factory (or its per-class
+  alias) added in the previous release. The factory is
+  performance-equivalent to the legacy form because the fused
+  `_TFPArrayBackend` wraps the same TFP-batched distribution under
+  the hood.
+
+  ```python
+  # Before (rejected)
+  n = Normal(loc=jnp.zeros(5), scale=1.0, name="x")
+
+  # After (recommended ergonomic form)
+  da = Normal.from_batched_params(loc=jnp.zeros(5), scale=1.0, name="x")
+
+  # After (universal entry point)
+  da = DistributionArray.from_batched_params(
+      Normal, loc=jnp.zeros(5), scale=1.0, name="x",
+  )
+  ```
+
+  Removed associated tests that exercised the legacy form's
+  per-element support checks: ``test_uniform_support_array_bounds``,
+  ``test_half_cauchy_support_array_bounds``,
+  ``test_pareto_support_array_bounds``,
+  ``test_truncated_normal_support_array_bounds``,
+  ``test_binomial_support_array_total_count``,
+  ``test_repr_with_batch_shape``. Per-element support checks belong
+  on `Constraint` directly; batched constructions migrate to
+  `DistributionArray.from_batched_params`.
+
+  Internal infrastructure that legitimately needs the batched form
+  (the `_TFPArrayBackend` fused-storage backend, the
+  `ProbPipeConverter` dispatch, sequential-joint sampling /
+  log_prob, `GaussianRandomFunction.predict`) opts into a private
+  bypass; user code is unaffected by the bypass and always sees the
+  rejection.
 
 - **Empirical / Bootstrap / Marginal class consolidation.** The
   generic-vs-numeric pair is collapsed into a generic ``[T]`` base
@@ -56,8 +186,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that.
 - **Distributions are non-iterable.** Codified in STYLE_GUIDE §1.11
   with a regression test
-  (``tests/test_iteration_protocol.py``). Stored samples live on
-  ``.samples`` / ``.draws()``; ``.n`` reports the count.
+  (``tests/test_iteration_protocol.py``). Finite-sample subclasses
+  (see §1.9) expose stored samples via ``.samples`` / ``.draws()``
+  and ``.n``; parametric distributions do not have ``.n``.
 
 - **`Record` field ordering is now insertion-order**, not alphabetical.
   ``Record(z=1, a=2)`` now iterates ``("z", "a")``. Same change applies
@@ -142,8 +273,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and plain splats fields on scalar ``Record``.
 - **Public `.parent` / `.field`** properties on both
   ``_RecordArrayView`` and ``_RecordDistributionView``.
-- **`.n`** property on ``RecordDistribution`` — ``prod(batch_shape)``
-  (STYLE_GUIDE §1.9).
 - **Single-field `.shape` / `.ndim` shims** on ``RecordDistribution`` and
   ``_RecordDistributionView`` (mirror the existing shims on
   ``NumericRecord`` / ``NumericRecordArray``). Multi-field distributions

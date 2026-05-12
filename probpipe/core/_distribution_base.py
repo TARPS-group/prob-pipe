@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from xarray import DataTree
 
+    from ._distribution_array import DistributionArray
     from .record import RecordTemplate
 
 import jax
@@ -165,6 +166,46 @@ class Distribution[T](ABC):
             )
         )
         return clone
+
+    # -- batched-construction alias ----------------------------------------
+
+    @classmethod
+    def from_batched_params(
+        cls,
+        *,
+        name: str,
+        batch_shape: tuple[int, ...] | None = None,
+        **batched_params,
+    ) -> "DistributionArray":
+        """Class-method alias for :meth:`DistributionArray.from_batched_params`.
+
+        Lets users write the ergonomic per-class form::
+
+            Normal.from_batched_params(loc=jnp.zeros(5), scale=1.0, name="x")
+
+        instead of the universal entry point::
+
+            DistributionArray.from_batched_params(
+                Normal, loc=jnp.zeros(5), scale=1.0, name="x",
+            )
+
+        Both produce the same ``DistributionArray`` — the alias is a
+        thin classmethod that calls the universal factory with
+        ``cls`` bound. Subclasses inherit the alias automatically;
+        no per-family override is needed.
+
+        See :meth:`DistributionArray.from_batched_params` for the full
+        contract (dispatch on
+        :class:`~probpipe.core.protocols.SupportsArrayBackend`,
+        ``batch_shape`` inference, per-cell name suffixing).
+        """
+        # Local import: ``DistributionArray`` lives in the same
+        # subpackage and importing at module top would create a cycle
+        # (DistributionArray inherits from Distribution).
+        from ._distribution_array import DistributionArray
+        return DistributionArray.from_batched_params(
+            cls, name=name, batch_shape=batch_shape, **batched_params,
+        )
 
     # -- repr ---------------------------------------------------------------
 

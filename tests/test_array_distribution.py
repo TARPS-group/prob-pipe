@@ -194,10 +194,6 @@ class TestFlattenedView:
         flat_dist = vector_mvn.as_flat_distribution()
         assert flat_dist.event_shape == (3,)
 
-    def test_batch_shape(self, vector_mvn):
-        flat_dist = vector_mvn.as_flat_distribution()
-        assert flat_dist.batch_shape == vector_mvn.batch_shape
-
     def test_sample_shape(self, vector_mvn, key):
         flat_dist = vector_mvn.as_flat_distribution()
         s = sample(flat_dist, key=key)

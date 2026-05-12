@@ -81,25 +81,29 @@ class RandomFunction[X, Y](Distribution[Callable[[X], Y]]):
 class ArrayRandomFunction(RandomFunction[Array, Array]):
     """A random function mapping arrays to arrays.
 
-    Follows the shape semantics as implemented in ``NumericRecordDistribution``.
-    Given prediction input ``X`` with shape ``(*extra_batch, n, *input_shape)``,
-    where ``n`` is the number of input points:
+    Given prediction input ``X`` with shape
+    ``(*extra_batch, n, *input_shape)`` (``n`` = number of input
+    points), :meth:`predict` returns a
+    :class:`~probpipe.DistributionArray` whose outer ``batch_shape``
+    covers axes that are *independent* across cells and whose
+    per-cell ``event_shape`` covers axes that are *jointly modeled*:
 
-    +----------------+-----------------+------------------------+-----------------------------------+
-    | joint_inputs   | joint_outputs   | event_shape            | batch_shape                       |
-    +================+=================+========================+===================================+
-    | False          | False           | ()                     | (*extra_batch, n, *output_shape)  |
-    +----------------+-----------------+------------------------+-----------------------------------+
-    | True           | False           | (n,)                   | (*extra_batch, *output_shape)     |
-    +----------------+-----------------+------------------------+-----------------------------------+
-    | False          | True            | (*output_shape,)       | (*extra_batch, n)                 |
-    +----------------+-----------------+------------------------+-----------------------------------+
-    | True           | True            | (n, *output_shape)     | (*extra_batch,)                   |
-    +----------------+-----------------+------------------------+-----------------------------------+
+    +----------------+-----------------+----------------+------------------------------+----------------------+
+    | joint_inputs   | joint_outputs   | Cell type      | Outer batch_shape            | Cell event_shape     |
+    +================+=================+================+==============================+======================+
+    | False          | False           | Normal         | (\\*extra_batch, n, \\*out)  | ()                   |
+    +----------------+-----------------+----------------+------------------------------+----------------------+
+    | True           | False           | MVN            | (\\*extra_batch, \\*out)     | (n,)                 |
+    +----------------+-----------------+----------------+------------------------------+----------------------+
+    | False          | True            | MVN            | (\\*extra_batch, n)          | output_shape         |
+    +----------------+-----------------+----------------+------------------------------+----------------------+
+    | True           | True            | MVN            | (\\*extra_batch,)            | (n, \\*out)          |
+    +----------------+-----------------+----------------+------------------------------+----------------------+
 
-    In all modes a sample has the same total shape:
-    ``(*sample_shape, *extra_batch, n, *output_shape)``.
-    The flags only change which axes are jointly modeled (event) vs
+    ``out`` is shorthand for ``output_shape``. In all modes a
+    sample has the same total shape:
+    ``(*sample_shape, *extra_batch, n, *output_shape)``. The flags
+    only change which axes are jointly modeled (event) vs
     independent (batch).
 
     Parameters
@@ -164,9 +168,11 @@ class ArrayRandomFunction(RandomFunction[Array, Array]):
 
         Returns
         -------
-        NumericRecordDistribution
-            A distribution whose ``batch_shape`` and ``event_shape`` follow
-            the shape table in the class docstring.
+        DistributionArray
+            A ``DistributionArray`` of ``Normal`` (fully marginal) or
+            ``MultivariateNormal`` (any joint axis) cells, with
+            outer ``batch_shape`` and per-cell ``event_shape``
+            following the shape table in the class docstring.
         """
         X = jnp.asarray(X)
         self._validate_joint_request(joint_inputs, joint_outputs)
@@ -186,9 +192,11 @@ class ArrayRandomFunction(RandomFunction[Array, Array]):
         """Subclass implementation of prediction.
 
         When this method is called, ``X`` has already been validated and
-        converted to a JAX array.  Subclasses should return a distribution
-        whose ``batch_shape`` and ``event_shape`` conform to the shape
-        table in the :class:`ArrayRandomFunction` class docstring.
+        converted to a JAX array.  Subclasses should return a
+        :class:`~probpipe.DistributionArray` whose outer
+        ``batch_shape`` and per-cell ``event_shape`` conform to the
+        shape table in the :class:`ArrayRandomFunction` class
+        docstring.
 
         Parameters
         ----------
