@@ -83,6 +83,35 @@ mkdocs serve            # local preview
 API docs use `mkdocstrings` directives in `docs/api/*.md` referencing
 fully-qualified Python paths.
 
+### Prefect orchestration
+
+ProbPipe ships with Prefect orchestration **off** by default — every
+`WorkflowFunction` runs in-process unless the caller opts in. Two
+ways to opt in:
+
+```python
+# Per-process (notebook, REPL, script):
+import probpipe
+probpipe.prefect_config.workflow_kind = probpipe.WorkflowKind.TASK
+```
+
+```bash
+# Per-deployment (Docker, systemd, CI), read once at import:
+export PROBPIPE_WORKFLOW_KIND=task   # or flow / off / default
+```
+
+Per-call overrides via `@workflow_function(workflow_kind="task")` and
+explicit `WorkflowFunction(..., workflow_kind=WorkflowKind.FLOW)`
+continue to work and are unaffected by either of the above.
+
+The off-by-default behaviour exists because the prior auto-detect path
+("Prefect importable → tasks enabled") confused notebook and REPL
+users who happened to have Prefect on `sys.path` as a transitive
+dependency: every `sample(...)` then tried to reach
+`http://127.0.0.1:4200/api/` and raised `httpx.ConnectError`. See
+[#182](https://github.com/TARPS-group/prob-pipe/issues/182) for the
+full rationale.
+
 ---
 
 ## CI

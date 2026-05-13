@@ -12,6 +12,7 @@ dispatch work.  Users import from the top-level package::
 
 from __future__ import annotations
 
+import os
 from enum import Enum
 from typing import Any
 
@@ -26,9 +27,11 @@ class WorkflowKind(Enum):
     Members
     -------
     DEFAULT
-        Auto-detect: use ``TASK`` if Prefect is installed, otherwise
-        ``OFF``.  At the per-instance level, ``DEFAULT`` means "inherit
-        from global config".
+        Inherit from global config; the shipped global default is
+        ``OFF`` unless overridden via ``PROBPIPE_WORKFLOW_KIND`` or
+        explicit assignment to ``prefect_config.workflow_kind``. At
+        the per-instance level, ``DEFAULT`` means "inherit from
+        global config".
     OFF
         No Prefect orchestration.  Plain Python execution.
     TASK
@@ -43,6 +46,33 @@ class WorkflowKind(Enum):
     OFF = "off"
     TASK = "task"
     FLOW = "flow"
+
+
+# ---------------------------------------------------------------------------
+# Environment-variable override
+# ---------------------------------------------------------------------------
+
+_WORKFLOW_KIND_ENV_VAR = "PROBPIPE_WORKFLOW_KIND"
+
+
+def _initial_workflow_kind() -> WorkflowKind:
+    """Resolve the initial ``workflow_kind`` from the environment.
+
+    Reads ``PROBPIPE_WORKFLOW_KIND`` (case-insensitive). Unset →
+    ``OFF``. Unknown values raise ``ValueError`` so deployment-config
+    typos surface loudly rather than silently falling back to ``OFF``.
+    """
+    raw = os.environ.get(_WORKFLOW_KIND_ENV_VAR)
+    if raw is None:
+        return WorkflowKind.OFF
+    try:
+        return WorkflowKind(raw.lower())
+    except ValueError as e:
+        valid = ", ".join(repr(k.value) for k in WorkflowKind)
+        raise ValueError(
+            f"{_WORKFLOW_KIND_ENV_VAR}={raw!r} is not a valid WorkflowKind. "
+            f"Expected one of: {valid}."
+        ) from e
 
 
 # ---------------------------------------------------------------------------
@@ -78,8 +108,14 @@ class PrefectConfig:
     ----------
     workflow_kind : WorkflowKind
         Default orchestration mode for all ``WorkflowFunction`` instances
-        that do not override their own.  Default: ``WorkflowKind.DEFAULT``
-        (use Prefect tasks if available, otherwise off).
+        that do not override their own.  Initial value is ``OFF`` unless
+        the ``PROBPIPE_WORKFLOW_KIND`` environment variable is set, in
+        which case its value (``off`` / ``task`` / ``flow`` / ``default``,
+        case-insensitive) is used. Production callers wanting Prefect
+        orchestration opt in explicitly::
+
+            import probpipe
+            probpipe.prefect_config.workflow_kind = probpipe.WorkflowKind.TASK
     task_runner : object or None
         Prefect task runner instance (e.g., ``RayTaskRunner()``).
         ``None`` means auto-detect: use ``RayTaskRunner`` if
@@ -94,8 +130,8 @@ class PrefectConfig:
     # -- Public API ---------------------------------------------------------
 
     def reset(self) -> None:
-        """Restore all settings to defaults."""
-        self._workflow_kind: WorkflowKind = WorkflowKind.DEFAULT
+        """Restore all settings to defaults (re-reading the env var)."""
+        self._workflow_kind: WorkflowKind = _initial_workflow_kind()
         self._task_runner: Any = None
 
     @property
