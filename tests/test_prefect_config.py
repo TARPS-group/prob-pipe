@@ -11,6 +11,8 @@ Exercises:
 - PROBPIPE_WORKFLOW_KIND environment-variable override
 """
 
+import os
+
 import pytest
 
 from probpipe.core.config import (
@@ -164,22 +166,11 @@ class TestEffectiveWorkflowKind:
         prefect_config.reset()
 
     def test_default_resolves_to_off(self):
-        """DEFAULT global → OFF (Prefect is opt-in, not auto-detected)."""
-        from probpipe.core.node import WorkflowFunction
+        """DEFAULT global → OFF (Prefect is opt-in, not auto-detected).
 
-        def noop(x):
-            return x
-
-        wf = WorkflowFunction(func=noop, vectorize="loop", seed=0)
-        # The shipped default is OFF regardless of Prefect importability.
-        assert wf.effective_workflow_kind is WorkflowKind.OFF
-
-    def test_default_global_resolves_to_off_when_prefect_missing(self, monkeypatch):
-        """DEFAULT + Prefect not installed → OFF (no change from above)."""
-        import probpipe.core.node as node_mod
-        monkeypatch.setattr(node_mod, "task", None)
-        monkeypatch.setattr(node_mod, "flow", None)
-
+        The shipped default is OFF regardless of Prefect importability,
+        so this case subsumes the prior `prefect missing` variant.
+        """
         from probpipe.core.node import WorkflowFunction
 
         def noop(x):
@@ -411,6 +402,26 @@ class TestEnvVarOverride:
         monkeypatch.setenv(_WORKFLOW_KIND_ENV_VAR, "banana")
         with pytest.raises(ValueError, match="banana"):
             PrefectConfig()
+
+    def test_invalid_value_fails_at_import(self):
+        """A bad env var should fail loudly at ``import probpipe`` time.
+
+        Uses a subprocess so the module-level singleton instantiation
+        runs under the bad env var (the in-process singleton was already
+        constructed with the current env var when this test suite loaded).
+        """
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [sys.executable, "-c", "import probpipe"],
+            env={**os.environ, _WORKFLOW_KIND_ENV_VAR: "banana"},
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0
+        assert "banana" in result.stderr
+        assert "PROBPIPE_WORKFLOW_KIND" in result.stderr
 
     def test_explicit_assignment_overrides_env(self, monkeypatch):
         monkeypatch.setenv(_WORKFLOW_KIND_ENV_VAR, "task")

@@ -369,10 +369,12 @@ class WorkflowFunction(Node):
         The function to wrap.
     workflow_kind : WorkflowKind
         Prefect orchestration mode.  ``DEFAULT`` inherits from
-        ``prefect_config`` (auto-uses Prefect tasks when available).
-        ``TASK`` / ``FLOW`` explicitly request Prefect orchestration.
-        ``OFF`` disables orchestration.  Legacy strings (``"task"``,
-        ``"flow"``) and ``None`` are auto-converted.
+        ``prefect_config.workflow_kind`` (shipped default: ``OFF``;
+        set via the ``PROBPIPE_WORKFLOW_KIND`` environment variable
+        or explicit assignment).  ``TASK`` / ``FLOW`` explicitly
+        request Prefect orchestration.  ``OFF`` disables
+        orchestration.  Legacy strings (``"task"``, ``"flow"``) and
+        ``None`` are auto-converted.
     name : str or None
         Display name; defaults to ``func.__name__``.
     bind : dict or None
