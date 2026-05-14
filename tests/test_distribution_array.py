@@ -293,12 +293,13 @@ class TestZeroDDispatch:
     def test_log_prob_unwraps_zero_d_da(self):
         da = self._make_zero_d_da()
         lp = log_prob(da, jnp.zeros(3))
-        # Standard 3-D MVN log-density at the origin.
-        cell = da._flat_component(0)
-        np.testing.assert_allclose(
-            jnp.asarray(lp), jnp.asarray(log_prob(cell, jnp.zeros(3))),
-            atol=1e-6,
-        )
+        # Analytical baseline: a standard d-D MVN(0, I) at the origin
+        # has log p(0) = -d/2 * log(2π). Independent of the dispatch
+        # path under test (which goes ``log_prob(da)`` → unwrap to
+        # the single cell → MVN ``_log_prob``).
+        import math
+        expected = -0.5 * 3 * math.log(2 * math.pi)
+        np.testing.assert_allclose(float(jnp.asarray(lp)), expected, atol=1e-5)
 
     def test_size_one_da_is_not_unwrapped(self):
         """``batch_shape == (1,)`` keeps the sweep semantics: ops
@@ -669,7 +670,9 @@ class TestFromBatchedParams:
         for i in range(4):
             cell = da[i]
             assert float(cell.loc) == float(i)
-            assert float(cell.scale) == pytest.approx(0.1 + 0.1 * i, abs=1e-6)
+            np.testing.assert_allclose(
+                float(cell.scale), 0.1 + 0.1 * i, atol=1e-6,
+            )
 
     def test_scalar_param_broadcasts_through_cells(self):
         from probpipe import Normal, DistributionArray
