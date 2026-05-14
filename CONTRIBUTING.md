@@ -83,6 +83,35 @@ mkdocs serve            # local preview
 API docs use `mkdocstrings` directives in `docs/api/*.md` referencing
 fully-qualified Python paths.
 
+### Prefect orchestration
+
+ProbPipe ships with Prefect orchestration **off** by default — every
+`WorkflowFunction` runs in-process unless the caller opts in. Two
+ways to opt in:
+
+```python
+# Per-process (notebook, REPL, script):
+import probpipe
+probpipe.prefect_config.workflow_kind = probpipe.WorkflowKind.TASK
+```
+
+```bash
+# Per-deployment (Docker, systemd, CI), read once at import:
+export PROBPIPE_WORKFLOW_KIND=task   # or flow / off / default
+```
+
+Per-call overrides via `@workflow_function(workflow_kind="task")` and
+explicit `WorkflowFunction(..., workflow_kind=WorkflowKind.FLOW)`
+continue to work and are unaffected by either of the above.
+
+The off-by-default behaviour exists because the prior auto-detect path
+("Prefect importable → tasks enabled") confused notebook and REPL
+users who happened to have Prefect on `sys.path` as a transitive
+dependency: every `sample(...)` then tried to reach
+`http://127.0.0.1:4200/api/` and raised `httpx.ConnectError`. See
+[#182](https://github.com/TARPS-group/prob-pipe/issues/182) for the
+full rationale.
+
 ---
 
 ## CI
@@ -215,7 +244,7 @@ full public API surface.
 | `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling + conditioning; the numeric subclass adds exact `SupportsMean` / `SupportsVariance`. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. (Empirical distributions do not claim `SupportsLogProb`; use `from_distribution(emp, KDEDistribution, …)` for a density.) |
 | `EmpiricalDistribution[T]` / `RecordEmpiricalDistribution` | Weighted empirical distribution. Generic base over arbitrary sample type ``T``; Record-based specialisation adds `event_shapes`, exact moments (`SupportsMean` / `SupportsVariance` / `SupportsCovariance`), and TFP-style shape semantics. Numeric-array sources auto-wrap as a single-field Record (requires `name=`). Two views on the stored draws: `samples` (structured `NumericRecord`, per-field access via `samples[name]`) and `flat_samples` (flat `(n, dim)` matrix across all fields, in insertion order). Use `flat_samples` for stacked-matrix idioms like `post.flat_samples.mean(axis=0)` for per-parameter posterior summaries. |
 | `BootstrapReplicateDistribution[T]` / `RecordBootstrapReplicateDistribution` | N-fold product over a source: each draw is a bootstrapped dataset of `n` i.i.d. observations. Accepts a `Record`, `RecordEmpiricalDistribution`, numeric array, or any `SupportsSampling` source (in which case `n` is mandatory). |
-| `WorkflowFunction` | Orchestration-aware function wrapper; groups views by parent for correlated broadcasting |
+| `WorkflowFunction` | Orchestration-aware function wrapper (Prefect off by default; see the Prefect-orchestration section above); groups views by parent for correlated broadcasting |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
 | `MethodRegistry` | Generic priority-based dispatch; used by the inference method registry |

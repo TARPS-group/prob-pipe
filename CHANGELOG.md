@@ -42,6 +42,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **Prefect orchestration is now opt-in** (#182). The shipped global
+  default for `prefect_config.workflow_kind` is `WorkflowKind.OFF`
+  instead of the prior `WorkflowKind.DEFAULT` (which auto-promoted to
+  `TASK` whenever Prefect was importable). The old behaviour silently
+  enabled Prefect for any environment with Prefect on `sys.path` —
+  including environments where Prefect was pulled in as a transitive
+  dependency — and produced a confusing `httpx.ConnectError` when no
+  Prefect server was running. The new default produces no surprise
+  network traffic; users who want orchestration opt in once per
+  session or deployment:
+
+  ```python
+  import probpipe
+  probpipe.prefect_config.workflow_kind = probpipe.WorkflowKind.TASK
+  ```
+
+  Or via the new `PROBPIPE_WORKFLOW_KIND` environment variable
+  (`off` / `task` / `flow` / `default`, case-insensitive), which is
+  read once at import time. Per-call overrides via
+  `@workflow_function(workflow_kind="task")` are unchanged.
+  Migration: production callers that relied on the implicit
+  "Prefect importable → tasks enabled" path must add the one-line
+  assignment or env var above.
+
 - **`NumericRecordDistribution.dtypes` is canonical; subclasses must
   override.** The base accessor previously returned
   ``{name: default_float_dtype()}`` for every field of the
