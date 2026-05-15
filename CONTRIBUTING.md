@@ -98,6 +98,30 @@ from probpipe import (
 )
 ```
 
+Same idea applies to *where* you break a function call, container
+literal, or import — prefer keeping the first argument on the opener
+line and aligning subsequent lines under it, rather than breaking
+right after the open paren / bracket / brace. Break after `(` only
+when the opener line is already long enough that aligned continuation
+would have too little horizontal room.
+
+```python
+# Avoid — gratuitous break after `(`:
+result = expectation(
+    n, lambda x: jnp.sin(x),
+    key=jax.random.PRNGKey(10),
+)
+
+# Prefer — first arg on opener line, continuation aligned:
+result = expectation(n, lambda x: jnp.sin(x),
+                     key=jax.random.PRNGKey(10))
+
+# OK to break after `(` when the opener is already long:
+result = some.deeply.nested.module.function_with_long_name(
+    arg1, arg2, kwarg=value,
+)
+```
+
 The exception is constructions where each kwarg's value is itself a
 meaningful sub-expression — `MultivariateNormal(loc=..., cov=...)`,
 `xr.DataArray(data, dims=..., coords=...)`, etc. Per-kwarg vertical
