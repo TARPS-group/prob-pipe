@@ -29,7 +29,7 @@ ProbPipe manages representations and algorithms automatically by default, while 
 
 ProbPipe applies a single design idea twice. **`Record`** is the universal container for *non-random* named structured values; its random counterpart is **`RecordDistribution`**. Both expose the same named-field surface — `.fields`, `dist[name]`, `record.select_all()` / `dist.select_all()` — so the same code can ferry priors, posterior draws, or fixed configurations through a workflow without representation churn. Numeric specialisations (`NumericRecord` / `NumericRecordDistribution`) add flatten / unflatten and the canonical `event_shapes` / `dtypes` / `supports` accessors; the "array of" forms (`RecordArray`, `DistributionArray`) follow numpy / jax conventions for `len` and iteration.
 
-See *Records and Record Distributions* in the reference notebooks for the full walk.
+See *Records and Record Distributions* in the User Guide for the full walk.
 
 ## Quick Example
 
@@ -94,5 +94,5 @@ sampled jointly.
 ## Next Steps
 
 - [Getting Started tutorial](tutorials/getting_started.ipynb) -- iterative Bayesian model building following the Bayesian Workflow (Gelman et al., 2020)
-- [Reference Notebooks](reference_notebooks.md) -- in-depth coverage of specific ProbPipe features
+- [User Guide](user_guide.md) -- in-depth coverage of specific ProbPipe features
 - [API Reference](api/index.md) -- full class and function documentation
