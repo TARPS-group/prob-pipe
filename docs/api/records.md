@@ -19,8 +19,6 @@ helpers backed by a `RecordTemplate`.
 
 ::: probpipe.NumericRecord
 
-### Templates
-
 `RecordTemplate` is the structural skeleton (field names + per-field shapes
 or `None`); `NumericRecordTemplate` is the numeric specialisation that backs
 flatten / unflatten round-trips. Calling `RecordTemplate(...)` directly

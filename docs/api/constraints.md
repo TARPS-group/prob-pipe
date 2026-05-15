@@ -1,5 +1,7 @@
 # Constraints
 
+## Base class
+
 ::: probpipe.Constraint
 
 ## Built-in Constraints

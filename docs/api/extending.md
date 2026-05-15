@@ -36,13 +36,13 @@ the underscore method (`_sample`, `_log_prob`, ...) on your class.
 Protocol methods use an underscore prefix to distinguish the primitive
 implementation from the public [op](operations.md).
 
-### Sampling and expectations
+The protocols below are grouped by capability — sampling and expectations,
+density evaluation, moments, conditioning, and the one class-level protocol
+for array backends.
 
 ::: probpipe.SupportsSampling
 
 ::: probpipe.SupportsExpectation
-
-### Density evaluation
 
 ::: probpipe.SupportsLogProb
 
@@ -52,19 +52,13 @@ implementation from the public [op](operations.md).
 
 ::: probpipe.SupportsRandomUnnormalizedLogProb
 
-### Moments
-
 ::: probpipe.SupportsMean
 
 ::: probpipe.SupportsVariance
 
 ::: probpipe.SupportsCovariance
 
-### Conditioning
-
 ::: probpipe.SupportsConditioning
-
-### Array backend
 
 `SupportsArrayBackend` is the only **class-level** protocol — its declared
 method (`_make_array_backend`) is a `@classmethod`, so the runtime check is
@@ -88,19 +82,10 @@ The shipped registry is `inference_method_registry` (see
 for the built-ins table and override examples).
 
 ::: probpipe.core._registry.MethodRegistry
-    options:
-      show_root_heading: true
-      heading_level: 3
 
 ::: probpipe.core._registry.Method
-    options:
-      show_root_heading: true
-      heading_level: 3
 
 ::: probpipe.core._registry.MethodInfo
-    options:
-      show_root_heading: true
-      heading_level: 3
 
 ## Custom converters
 

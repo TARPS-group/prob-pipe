@@ -54,7 +54,7 @@ inference_method_registry.list_methods()
 inference_method_registry.set_priorities(tfp_rwmh=200, tfp_nuts=50)
 ```
 
-### Built-in methods
+**Built-in methods:**
 
 | Name | Priority | Requires | Backend |
 |------|----------|----------|---------|
@@ -67,23 +67,17 @@ inference_method_registry.set_priorities(tfp_rwmh=200, tfp_nuts=50)
 | `sbijax_smcabc` | 40 | `SimpleGenerativeModel` + sbijax | sbijax |
 | `pymc_advi` | 35 | `PyMCModel` + pymc | PyMC |
 
-### Result types
-
 `ApproximateDistribution` is the common posterior result type returned by
-`condition_on`. It is a `NumericJointEmpirical`-like container that carries
-samples plus diagnostics from the underlying method.
+`condition_on`. `rwmh` and `condition_on_nutpie` are direct entry points
+for the corresponding MCMC backends. `sbi_learn_conditional` and
+`sbi_learn_likelihood` are likelihood-free entry points for
+`SimpleGenerativeModel` instances.
 
 ::: probpipe.ApproximateDistribution
-
-### MCMC convenience entry points
 
 ::: probpipe.rwmh
 
 ::: probpipe.condition_on_nutpie
-
-### Simulation-based inference
-
-For likelihood-free inference on `SimpleGenerativeModel` instances:
 
 ::: probpipe.sbi_learn_conditional
 
