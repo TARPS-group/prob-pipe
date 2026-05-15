@@ -1,7 +1,7 @@
 # Records and data
 
 `Record` is the universal container for non-random structured data;
-[`Distribution`](distributions.md) is the universal container for random
+[`Distribution`](distributions/index.md) is the universal container for random
 quantities. Both support named fields, `select()` for workflow-function
 splatting, and JAX pytree traversal — see CONTRIBUTING.md for the full
 "parallel containers" framing.

@@ -24,6 +24,7 @@ theme:
   features:
     - navigation.sections
     - navigation.expand
+    - navigation.indexes
     - navigation.top
     - search.highlight
     - content.code.copy
@@ -80,7 +81,14 @@ nav:
   - API Reference:
     - Overview: api/index.md
     - Operations: api/operations.md
-    - Distributions: api/distributions.md
+    - Distributions:
+      - api/distributions/index.md
+      - Continuous: api/distributions/continuous.md
+      - Discrete: api/distributions/discrete.md
+      - Multivariate: api/distributions/multivariate.md
+      - Composite and joint: api/distributions/composite.md
+      - Empirical and bootstrap: api/distributions/empirical.md
+      - Random functions: api/distributions/random_functions.md
     - Records and data: api/records.md
     - Modeling and inference: api/inference.md
     - Workflows and orchestration: api/workflows.md

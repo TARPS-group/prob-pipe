@@ -11,9 +11,9 @@ want, the search box (top right) is the fastest path.
 | Goal | Look here |
 |---|---|
 | Sample, evaluate density, compute moments, condition | [Operations](operations.md) |
-| Use a built-in distribution family | [Distributions](distributions.md) |
-| Compose, transform, or stack distributions | [Distributions → Composite and joint](distributions.md#composite-and-joint) |
-| Work with empirical samples or bootstrap replicates | [Distributions → Empirical and bootstrap](distributions.md#empirical-and-bootstrap) |
+| Use a built-in distribution family | [Distributions](distributions/index.md) |
+| Compose, transform, or stack distributions | [Distributions → Composite and joint](distributions/composite.md) |
+| Work with empirical samples or bootstrap replicates | [Distributions → Empirical and bootstrap](distributions/empirical.md) |
 | Hold structured, immutable data | [Records and data](records.md) |
 | Define a probabilistic model | [Modeling and inference → Models](inference.md#models) |
 | Run inference (MCMC, VI, SBI) | [Modeling and inference → Inference methods](inference.md#inference-methods) |
@@ -30,9 +30,9 @@ want, the search box (top right) is the fastest path.
   `unnormalized_log_prob`, `unnormalized_prob`, `mean`, `variance`, `cov`,
   `expectation`, `condition_on`, `from_distribution`,
   `random_log_prob`, `random_unnormalized_log_prob`.
-- **[Distributions](distributions.md)** — continuous, discrete, multivariate,
-  composite (product / sequential / transformed / joint), empirical and
-  bootstrap, random functions.
+- **[Distributions](distributions/index.md)** — continuous, discrete,
+  multivariate, composite (product / sequential / transformed / joint),
+  empirical and bootstrap, random functions.
 - **[Records and data](records.md)** — `Record`, `NumericRecord`, the
   `RecordArray` family, `Weights`, parameter-sweep `Design`s, and the
   auxiliary-metadata registry.
@@ -55,6 +55,6 @@ want, the search box (top right) is the fastest path.
   surprise.
 
 [Operations]: operations.md
-[Distributions]: distributions.md
+[Distributions]: distributions/index.md
 [Records]: records.md
 [Models]: inference.md

@@ -5,7 +5,7 @@ method, converter, bijector, or auxiliary-metadata adapter.
 
 If you are only using ProbPipe's built-ins, you can skip this page — every
 public verb lives on [Operations](operations.md) and every concrete container
-on [Distributions](distributions.md), [Records](records.md), or
+on [Distributions](distributions/index.md), [Records](records.md), or
 [Modeling and inference](inference.md).
 
 ## Distribution base classes

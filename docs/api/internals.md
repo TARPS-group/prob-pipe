@@ -8,7 +8,7 @@ Signatures may change without deprecation warnings between PRs.
 
 If you find yourself reaching for something on this page in user code, there's
 probably a public replacement — check [Operations](operations.md),
-[Distributions](distributions.md), [Records](records.md), or
+[Distributions](distributions/index.md), [Records](records.md), or
 [Extending ProbPipe](extending.md) first, and open an issue if there isn't.
 
 ## Record-distribution views
