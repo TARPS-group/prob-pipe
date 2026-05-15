@@ -1,9 +1,8 @@
 # Random functions
 
-Distributions over function-valued random variables. `RandomFunction` is the
-base; `GaussianRandomFunction` is the workhorse for GP emulation and BO.
-`RandomMeasure` represents a measure-valued random variable — used by SBI
-and posterior-sample workflows.
+Distributions over function-valued random variables (`RandomFunction`,
+`GaussianRandomFunction`) and over measure-valued random variables
+(`RandomMeasure`).
 
 ::: probpipe.RandomFunction
 

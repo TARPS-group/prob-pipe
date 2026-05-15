@@ -1,10 +1,9 @@
 # Composite and joint
 
-Composite distributions combine named components into a joint over a
-[`Record`](../records.md). Component access uses `dist["name"]` (returns a
-lightweight view that preserves correlation across broadcast samples — see
-[Internals](../internals.md)) and `dist.select("x", "y")` for
-workflow-function splatting.
+Distributions combining named components into a joint over a
+[`Record`](../records.md). Component access: `dist["name"]` returns a view
+(see [Internals](../internals.md) for the correlation semantics);
+`dist.select("x", "y")` splats into a workflow function.
 
 ::: probpipe.ProductDistribution
 
@@ -12,7 +11,8 @@ workflow-function splatting.
 
 ::: probpipe.TransformedDistribution
 
-For unconstrained-to-constrained reparameterization (e.g. for MCMC / VI), see
-[Constraints → Bijectors](../constraints.md#bijectors-for-unconstrained-reparameterization).
+The [bijector](../constraints.md#bijectors-for-unconstrained-reparameterization)
+machinery pairs naturally with `TransformedDistribution` for
+unconstrained-to-constrained reparameterization.
 
 ::: probpipe.JointGaussian

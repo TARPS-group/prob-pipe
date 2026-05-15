@@ -28,13 +28,9 @@ The following constraint singletons are available:
 
 ## Bijectors for Unconstrained Reparameterization
 
-Given a `Constraint`, `probpipe.bijector_for` returns a canonical
-TFP bijector mapping unconstrained ℝⁿ to values satisfying the
-constraint. This is useful for unconstrained continuous optimization
-(e.g., BFGS over a box-constrained acquisition function), MAP, and
-reparameterized MCMC / VI.
-
-Defaults follow Pyro / NumPyro conventions:
+`bijector_for(c)` returns the canonical TFP bijector mapping unconstrained
+ℝⁿ to values satisfying the constraint `c`. Defaults follow Pyro /
+NumPyro conventions:
 
 | Constraint | Bijector |
 |---|---|

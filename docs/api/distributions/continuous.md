@@ -1,10 +1,7 @@
 # Continuous
 
-Univariate continuous distributions over the real line, the positive half-line,
-or a bounded interval. Each class delegates to a TFP-backed implementation and
-satisfies `SupportsSampling`, `SupportsLogProb`, and (where exact) the
-moment protocols. Multivariate continuous distributions live on the
-[Multivariate](multivariate.md) page.
+Univariate continuous distributions over the real line, the positive
+half-line, or a bounded interval.
 
 ::: probpipe.Normal
 

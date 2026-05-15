@@ -1,31 +1,15 @@
 # Conversion and interop
 
-ProbPipe's `from_distribution` op dispatches via a **converter registry** of
-priority-ordered `Converter` classes. Built-ins cover ProbPipe-internal
-conversions, bidirectional TFP, and bidirectional scipy.stats; user code
-can register more.
-
-The op itself is documented under
-[Operations → Conversion](operations.md#conversion):
-
-```python
-from probpipe import from_distribution
-target = from_distribution(source, TargetClass)
-```
-
-For Record-side conversion of xarray / pandas metadata (which is metadata,
-not a distribution), see
-[Records and data → Auxiliary-metadata registry](records.md#auxiliary-metadata-registry).
+[`from_distribution`](operations.md#conversion) dispatches through the
+converter registry, trying registered `Converter` classes in descending
+priority order. Built-ins cover ProbPipe-to-ProbPipe, TFP, and
+scipy.stats. Backend-specific `Record` metadata (xarray dims, pandas
+index) round-trips through the
+[auxiliary-metadata registry](records.md#auxiliary-metadata-registry).
 
 ## Registry
 
-The shipped registry instance is `converter_registry`. It is rarely
-imported directly — `from_distribution` does the lookup — but is the entry
-point for registering new converters.
-
 ::: probpipe.converter_registry
-    options:
-      show_root_heading: true
 
 ::: probpipe.converters.ConverterRegistry
     options:
@@ -47,10 +31,9 @@ point for registering new converters.
 
 | Priority | Converter | Role |
 |----------|-----------|------|
-| 200 | `ProtocolConverter` | Intercepts protocol targets (e.g., `SupportsLogProb`), resolves to a concrete type, and delegates back to the registry |
-| 100 | `ProbPipeConverter` | ProbPipe-to-ProbPipe conversions (same-class passthrough or cross-family moment-matching) |
-| 50 | `TFPConverter` | Bidirectional TFP ↔ ProbPipe conversions |
-| 25 | `ScipyConverter` | Bidirectional scipy.stats ↔ ProbPipe conversions (optional) |
+| 200 | `ProtocolConverter` | Resolves protocol targets (e.g., `SupportsLogProb`) to a concrete type and delegates back to the registry |
+| 100 | `ProbPipeConverter` | ProbPipe-to-ProbPipe (same-class passthrough or cross-family moment-matching) |
+| 50 | `TFPConverter` | Bidirectional TFP ↔ ProbPipe |
+| 25 | `ScipyConverter` | Bidirectional scipy.stats ↔ ProbPipe (optional) |
 
-Higher priority is tried first. Protocol-level converters should be above
-concrete-type converters.
+Higher priority is tried first.

@@ -1,8 +1,8 @@
 # Provenance
 
-Every `Distribution` and `Record` returned by a `WorkflowFunction` carries a
-`Provenance` link describing how it was produced. The ancestor and DAG
-helpers walk the chain backwards from a value.
+`Provenance` records how a `Distribution` or `Record` was produced.
+`provenance_ancestors` and `provenance_dag` walk the chain backwards from
+a value.
 
 ::: probpipe.Provenance
 

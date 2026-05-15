@@ -1,10 +1,7 @@
 # API Reference
 
-ProbPipe is organized around a small set of generic verbs ([Operations]) that
-act on a few container abstractions ([Distributions], [Records], and
-[Models]). This page is a map from "what are you trying to do" to the
-section that documents it; if you already know the name of the symbol you
-want, the search box (top right) is the fastest path.
+A task-to-section map for the public API. Use the search box (top right)
+for known-name lookups.
 
 ## What are you trying to do?
 
@@ -26,35 +23,29 @@ want, the search box (top right) is the fastest path.
 
 ## Pages
 
-- **[Operations](operations.md)** — the verbs: `sample`, `log_prob`, `prob`,
-  `unnormalized_log_prob`, `unnormalized_prob`, `mean`, `variance`, `cov`,
-  `expectation`, `condition_on`, `from_distribution`,
-  `random_log_prob`, `random_unnormalized_log_prob`.
+- **[Operations](operations.md)** — `sample`, `log_prob`, `prob`,
+  `unnormalized_log_prob`, `unnormalized_prob`, `random_log_prob`,
+  `random_unnormalized_log_prob`, `mean`, `variance`, `cov`,
+  `expectation`, `condition_on`, `from_distribution`.
 - **[Distributions](distributions/index.md)** — continuous, discrete,
-  multivariate, composite (product / sequential / transformed / joint),
-  empirical and bootstrap, random functions.
+  multivariate, composite and joint, empirical and bootstrap, random
+  functions.
 - **[Records and data](records.md)** — `Record`, `NumericRecord`, the
   `RecordArray` family, `Weights`, parameter-sweep `Design`s, and the
   auxiliary-metadata registry.
-- **[Modeling and inference](inference.md)** — model / likelihood classes,
-  the inference-method registry and built-in methods, iterative
-  transformations, and predictive checks.
+- **[Modeling and inference](inference.md)** — model and likelihood
+  classes, the inference-method registry and built-ins, iterative
+  transformations, predictive checks.
 - **[Workflows and orchestration](workflows.md)** — `WorkflowFunction`,
-  `Module`, the workflow decorators, and Prefect-orchestration configuration.
-- **[Constraints and bijectors](constraints.md)** — `Constraint` singletons
-  and factories, plus the `bijector_for` map used for reparameterization.
+  `Module`, the workflow decorators, and Prefect-orchestration
+  configuration.
+- **[Constraints and bijectors](constraints.md)** — `Constraint`
+  singletons and factories, the `bijector_for` map for reparameterization.
 - **[Conversion and interop](converters.md)** — `converter_registry`,
-  `Converter`, and the conversion-info dataclasses.
+  `Converter`, the conversion-info dataclasses.
 - **[Provenance](provenance.md)** — `Provenance`, `provenance_ancestors`,
   `provenance_dag`.
-- **[Extending ProbPipe](extending.md)** — base classes, protocols, and the
-  extension points for distributions, inference methods, converters,
-  bijectors, and auxiliary metadata.
+- **[Extending ProbPipe](extending.md)** — base classes, protocols, and
+  extension contracts.
 - **[Internals](internals.md)** — implementation details that may move
-  between releases; useful when debugging a `isinstance(obj, SupportsX)`
-  surprise.
-
-[Operations]: operations.md
-[Distributions]: distributions/index.md
-[Records]: records.md
-[Models]: inference.md
+  between releases.

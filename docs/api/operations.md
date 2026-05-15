@@ -1,14 +1,10 @@
 # Operations
 
-Built-in operations are standalone workflow functions that form the primary
-public API. Each op checks the relevant [protocol](extending.md#protocols)
-at dispatch time and delegates to the distribution's private implementation
-method. All ops participate in [broadcasting](../examples/03_broadcasting.ipynb)
-and Prefect orchestration ([Workflows](workflows.md)).
-
-```python
-from probpipe import sample, mean, log_prob, condition_on
-```
+Standalone workflow functions for sampling, density evaluation, moments,
+conditioning, and conversion. Each op dispatches via the matching
+[protocol](extending.md#protocols), participates in
+[broadcasting](../examples/03_broadcasting.ipynb), and is subject to
+[Prefect orchestration](workflows.md) when configured.
 
 ## Sampling
 
@@ -42,13 +38,12 @@ from probpipe import sample, mean, log_prob, condition_on
 
 ::: probpipe.core.ops.condition_on
 
-`condition_on` dispatches inference via the inference-method registry; see
-[Modeling and inference → Inference methods](inference.md#inference-methods)
-for the built-ins and how to override the auto-selected method.
+`condition_on` dispatches inference via the
+[inference-method registry](inference.md#inference-methods); override the
+auto-selection with `method="<name>"`.
 
 ## Conversion
 
 ::: probpipe.core.ops.from_distribution
 
-See [Conversion and interop](converters.md) for the converter registry and
-the bidirectional converters that back this op.
+Backed by the [converter registry](converters.md).
