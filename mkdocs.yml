@@ -29,6 +29,9 @@ theme:
     - search.highlight
     - content.code.copy
 
+hooks:
+  - mkdocs_hooks.py
+
 plugins:
   - search
   - mkdocstrings:
