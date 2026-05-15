@@ -26,7 +26,6 @@ point for registering new converters.
 ::: probpipe.converter_registry
     options:
       show_root_heading: true
-      heading_level: 3
 
 ::: probpipe.converters.ConverterRegistry
     options:

@@ -57,6 +57,10 @@ markdown_extensions:
       generic: true
   - toc:
       permalink: true
+      # Right-rail TOC shows only h1+h2 entries — i.e. page titles and
+      # mkdocstrings symbol root headings — but not class methods or
+      # properties (rendered at h3+ by mkdocstrings).
+      toc_depth: 2
 
 extra_javascript:
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js

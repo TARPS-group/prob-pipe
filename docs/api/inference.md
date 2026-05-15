@@ -89,12 +89,9 @@ For likelihood-free inference on `SimpleGenerativeModel` instances:
 
 ::: probpipe.sbi_learn_likelihood
 
-### Registry handle
-
 ::: probpipe.inference_method_registry
     options:
       show_root_heading: true
-      heading_level: 4
 
 ## Iterative transformations
 
