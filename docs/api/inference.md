@@ -1,25 +1,40 @@
-# Inference
+# Modeling and inference
 
-## Modeling
+Probabilistic models, likelihoods, inference methods, iterative transformations,
+and predictive checks.
 
-::: probpipe.modeling.Likelihood
+The extension surface — `MethodRegistry`, `Method`, `MethodInfo`, and the
+custom-method walkthrough — lives on [Extending ProbPipe → Custom inference
+methods](extending.md#custom-inference-methods).
 
-::: probpipe.modeling.GenerativeLikelihood
+## Models
 
-::: probpipe.modeling.IncrementalConditioner
+`ProbabilisticModel` is the abstract base for models; `SimpleModel` is the
+prior + likelihood workhorse used in the tutorials. `SimpleGenerativeModel`
+is the simulator-only wrapper for likelihood-free / SBI workflows.
 
-## Probabilistic Models
+::: probpipe.ProbabilisticModel
 
-::: probpipe.modeling.ProbabilisticModel
+::: probpipe.SimpleModel
 
-::: probpipe.modeling.SimpleModel
+::: probpipe.SimpleGenerativeModel
 
-## Inference Method Registry
+## Likelihoods
+
+::: probpipe.Likelihood
+
+::: probpipe.GenerativeLikelihood
+
+::: probpipe.GLMLikelihood
+
+::: probpipe.IncrementalConditioner
+
+## Inference methods
 
 The **inference method registry** is the dispatch system behind
-[`condition_on()`](operations.md#conditioning).  When you call
+[`condition_on()`](operations.md#conditioning). When you call
 `condition_on(model, data)`, the registry auto-selects the highest-priority
-feasible method.  Pass `method="tfp_nuts"` (or any registered name) to
+feasible method. Pass `method="tfp_nuts"` (or any registered name) to
 override.
 
 ```python
@@ -45,31 +60,54 @@ inference_method_registry.set_priorities(tfp_rwmh=200, tfp_nuts=50)
 |------|----------|----------|---------|
 | `tfp_nuts` | 100 | `SupportsLogProb` + JAX-traceable | TFP |
 | `tfp_hmc` | 90 | `SupportsLogProb` + JAX-traceable | TFP |
-| `nutpie_nuts` | 80 | StanModel or PyMCModel + nutpie | nutpie |
-| `cmdstan_nuts` | 70 | StanModel + cmdstanpy | CmdStan |
-| `pymc_nuts` | 60 | PyMCModel + pymc | PyMC |
+| `nutpie_nuts` | 80 | `StanModel` or `PyMCModel` + nutpie | nutpie |
+| `cmdstan_nuts` | 70 | `StanModel` + cmdstanpy | CmdStan |
+| `pymc_nuts` | 60 | `PyMCModel` + pymc | PyMC |
 | `tfp_rwmh` | 50 | `SupportsLogProb` | TFP |
-| `pymc_advi` | 35 | PyMCModel + pymc | PyMC |
+| `sbijax_smcabc` | 40 | `SimpleGenerativeModel` + sbijax | sbijax |
+| `pymc_advi` | 35 | `PyMCModel` + pymc | PyMC |
 
-::: probpipe.core._registry.MethodRegistry
+### Result types
+
+`ApproximateDistribution` is the common posterior result type returned by
+`condition_on`. It is a `NumericJointEmpirical`-like container that carries
+samples plus diagnostics from the underlying method.
+
+::: probpipe.ApproximateDistribution
+
+### MCMC convenience entry points
+
+::: probpipe.rwmh
+
+::: probpipe.condition_on_nutpie
+
+### Simulation-based inference
+
+For likelihood-free inference on `SimpleGenerativeModel` instances:
+
+::: probpipe.sbi_learn_conditional
+
+::: probpipe.sbi_learn_likelihood
+
+### Registry handle
+
+::: probpipe.inference_method_registry
     options:
       show_root_heading: true
-      heading_level: 3
+      heading_level: 4
 
-::: probpipe.core._registry.Method
-    options:
-      show_root_heading: true
-      heading_level: 3
+## Iterative transformations
 
-::: probpipe.core._registry.MethodInfo
-    options:
-      show_root_heading: true
-      heading_level: 3
+Step functions are folded over inputs to produce sequences of distributions.
+`iterate` is the workhorse; `with_conversion` and `with_resampling` are
+step-function wrappers that compose with it.
 
-## MCMC
+::: probpipe.iterate
 
-::: probpipe.inference.ApproximateDistribution
+::: probpipe.with_conversion
 
-::: probpipe.inference.rwmh
+::: probpipe.with_resampling
 
-::: probpipe.inference.condition_on_nutpie
+## Predictive checks
+
+::: probpipe.predictive_check

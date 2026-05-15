@@ -78,16 +78,14 @@ nav:
     - Bagged posteriors: examples/09_bagged_posteriors.ipynb
     - Random functions and Gaussian emulators: examples/10_random_functions_and_emulators.ipynb
   - API Reference:
+    - Overview: api/index.md
     - Operations: api/operations.md
-    - Protocols: api/protocols.md
     - Distributions: api/distributions.md
-    - Joint Distributions: api/joint.md
-    - Transformations: api/transformed.md
-    - Workflows: api/workflows.md
-    - Inference: api/inference.md
-    - Validation: api/validation.md
-    - Converters: api/converters.md
+    - Records and data: api/records.md
+    - Modeling and inference: api/inference.md
+    - Workflows and orchestration: api/workflows.md
+    - Constraints and bijectors: api/constraints.md
+    - Conversion and interop: api/converters.md
     - Provenance: api/provenance.md
-    - Random Functions: api/random_functions.md
-    - Constraints: api/constraints.md
+    - Extending ProbPipe: api/extending.md
     - Internals: api/internals.md
