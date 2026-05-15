@@ -1,5 +1,13 @@
 # Constraints
 
+A `Constraint` describes the value set on which a distribution is
+supported — positivity, the unit interval, the simplex, a
+positive-definite cone, and so on. Built-in singletons cover the common
+cases; factories (`interval`, `greater_than`, `integer_interval`)
+parameterise the rest. `bijector_for` maps any `Constraint` to a TFP
+bijector that takes unconstrained ℝⁿ into the constrained set, which is
+the usual route for MAP estimation, reparameterized MCMC, and VI.
+
 ## Base class
 
 ::: probpipe.Constraint

@@ -1,11 +1,20 @@
 # Conversion and interop
 
-[`from_distribution`](operations.md#conversion) dispatches through the
-converter registry, trying registered `Converter` classes in descending
-priority order. Built-ins cover ProbPipe-to-ProbPipe, TFP, and
-scipy.stats. Backend-specific `Record` metadata (xarray dims, pandas
-index) round-trips through the
-[auxiliary-metadata registry](records.md#auxiliary-metadata-registry).
+ProbPipe converts between distribution representations through a registry
+of `Converter` classes. The [`from_distribution`](operations.md#conversion)
+op tries registered converters in descending priority order and runs the
+first whose `check()` reports a feasible conversion. Built-ins cover:
+
+- ProbPipe-to-ProbPipe (same-class passthrough; cross-family
+  moment-matching)
+- TFP ↔ ProbPipe (bidirectional)
+- scipy.stats ↔ ProbPipe (bidirectional, optional dependency)
+
+For `Record`-side metadata interop — preserving xarray `dims` / `coords`
+or pandas `index` / `columns` through a `NumericRecord` round-trip — see
+the [auxiliary-metadata registry](records.md#auxiliary-metadata-registry)
+instead. That's a separate, simpler registry; this page is only about
+distribution-to-distribution conversion.
 
 ## Registry
 

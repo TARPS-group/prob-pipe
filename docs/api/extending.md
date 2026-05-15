@@ -1,8 +1,22 @@
 # Extending ProbPipe
 
-Base classes, protocols, and registry contracts for adding new
-distributions, inference methods, converters, bijectors, and auxiliary
-metadata.
+ProbPipe's extension surface is small and grouped by capability. The
+table below maps each kind of extension to the contract you implement
+against and the registry (if any) you register with. Each row links to
+the section on this page that covers it in detail.
+
+| To add a... | Implement | Register with |
+|---|---|---|
+| New distribution family | Subclass of [`Distribution`](#distribution-base-classes), `RecordDistribution`, `NumericRecordDistribution`, or `TFPDistribution` | (none — capability is detected by `isinstance` against the matching [protocol](#protocols)) |
+| New op support on an existing distribution | The matching underscore method (`_sample`, `_log_prob`, `_mean`, ...) on the class | (none — see [Protocols](#protocols) for which method backs which op) |
+| New inference method (custom sampler, optimiser, ...) | Subclass of `Method` declaring `supported_types`, `priority`, `check()`, and `execute()` | `inference_method_registry.register(...)` — see [Custom inference methods](#custom-inference-methods) |
+| New distribution-to-distribution converter | Subclass of `Converter` with `check()` / `convert()` | `converter_registry.register(...)` — see [Custom converters](#custom-converters) |
+| New canonical bijector for a `Constraint` | A factory returning a TFP bijector | `register_bijector(constraint_or_class, factory)` — see [Custom bijectors](#custom-bijectors) |
+| New auxiliary-metadata adapter (custom array-like) | `capture` and `restore` callables | `register_aux(leaf_type, capture, restore)` — see [Custom auxiliary metadata](#custom-auxiliary-metadata) |
+
+The two remaining sections — [Broadcasting internals](#broadcasting-internals-exposed-for-extension)
+and the [Internals](internals.md) page — document classes that an
+extension rarely constructs directly but may need to reference.
 
 ## Distribution base classes
 
@@ -56,9 +70,11 @@ itself, not an instance.
 
 ## Custom inference methods
 
-`Method` subclasses register with `inference_method_registry` and declare
-`supported_types`, a `priority`, and `check()` / `execute()` methods. The
-built-ins are listed under
+`Method` subclasses register with `inference_method_registry` and
+declare `supported_types`, a `priority`, and `check()` / `execute()`
+methods. When [`condition_on`](operations.md#conditioning) runs, the
+registry tries methods in descending priority order and the first whose
+`check()` reports feasibility wins. The built-in methods table is on
 [Modeling and inference → Inference methods](inference.md#inference-methods).
 
 ::: probpipe.core._registry.MethodRegistry
@@ -69,20 +85,21 @@ built-ins are listed under
 
 ## Custom converters
 
-Subclass `Converter`, implement `check()` / `convert()`, and register with
-`converter_registry.register(...)`. The built-in priorities and registry
-handle are documented under [Conversion and interop](converters.md).
+Subclass `Converter`, implement `check()` / `convert()`, and register
+with `converter_registry.register(...)`. The built-in priorities and the
+registry handle itself are documented under
+[Conversion and interop](converters.md).
 
 ## Custom bijectors
 
 `register_bijector` overrides the canonical bijector returned by
-`bijector_for(c)` for a given `Constraint` `c` (or class). See
+`bijector_for(c)` for a given `Constraint` instance or class. See
 [Constraints → Bijectors](constraints.md#bijectors-for-unconstrained-reparameterization).
 
 ## Custom auxiliary metadata
 
-`register_aux` extends the `Record` ↔ `NumericRecord` round-trip to a new
-array-like type. See
+`register_aux` extends the `Record` ↔ `NumericRecord` round-trip to a
+new array-like type. See
 [Records → Auxiliary-metadata registry](records.md#auxiliary-metadata-registry).
 
 ## Broadcasting internals (exposed for extension)
