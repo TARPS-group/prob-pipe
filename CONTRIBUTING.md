@@ -91,11 +91,8 @@ from probpipe import (
     log_prob,
 )
 
-# Prefer — packed:
-from probpipe import (
-    Normal, Beta, Gamma,
-    sample, log_prob,
-)
+# Prefer — packed (drop the parens when the whole import fits one line):
+from probpipe import Normal, Beta, Gamma, sample, log_prob
 ```
 
 Same idea applies to *where* you break a function call, container
