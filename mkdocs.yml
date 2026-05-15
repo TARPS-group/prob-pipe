@@ -78,8 +78,8 @@ nav:
   - Tutorials:
     - Getting Started: tutorials/getting_started.ipynb
     - Flexible Inference with condition_on: tutorials/flexible_inference.ipynb
-  - Reference Notebooks:
-    - Overview: reference_notebooks.md
+  - User Guide:
+    - Overview: user_guide.md
     - Distribution basics: examples/01_distributions.ipynb
     - Records and Record Distributions: examples/02_records.ipynb
     - Broadcasting and workflow functions: examples/03_broadcasting.ipynb

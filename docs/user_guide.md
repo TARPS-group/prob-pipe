@@ -1,8 +1,8 @@
-# Reference Notebooks
+# User Guide
 
 These notebooks provide in-depth coverage of specific ProbPipe features. For a guided introduction, start with the [Getting Started tutorial](tutorials/getting_started.ipynb).
 
-The set below matches the 10-notebook target tracked in [issue #127](https://github.com/TARPS-group/prob-pipe/issues/127).
+The chapters below match the 10-notebook target tracked in [issue #127](https://github.com/TARPS-group/prob-pipe/issues/127).
 
 | # | Notebook | Description |
 |---|----------|-------------|
