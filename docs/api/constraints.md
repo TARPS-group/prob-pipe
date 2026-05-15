@@ -1,5 +1,15 @@
 # Constraints
 
+A `Constraint` describes the value set on which a distribution is
+supported — positivity, the unit interval, the simplex, a
+positive-definite cone, and so on. Built-in singletons cover the common
+cases; factories (`interval`, `greater_than`, `integer_interval`)
+parameterise the rest. `bijector_for` maps any `Constraint` to a TFP
+bijector that takes unconstrained ℝⁿ into the constrained set, which is
+the usual route for MAP estimation, reparameterized MCMC, and VI.
+
+## Base class
+
 ::: probpipe.Constraint
 
 ## Built-in Constraints
@@ -26,13 +36,9 @@ The following constraint singletons are available:
 
 ## Bijectors for Unconstrained Reparameterization
 
-Given a `Constraint`, `probpipe.bijector_for` returns a canonical
-TFP bijector mapping unconstrained ℝⁿ to values satisfying the
-constraint. This is useful for unconstrained continuous optimization
-(e.g., BFGS over a box-constrained acquisition function), MAP, and
-reparameterized MCMC / VI.
-
-Defaults follow Pyro / NumPyro conventions:
+`bijector_for(c)` returns the canonical TFP bijector mapping unconstrained
+ℝⁿ to values satisfying the constraint `c`. Defaults follow Pyro /
+NumPyro conventions:
 
 | Constraint | Bijector |
 |---|---|
