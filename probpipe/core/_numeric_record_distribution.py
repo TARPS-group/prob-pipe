@@ -35,6 +35,8 @@ from typing import Any, Callable
 from .._dtype import _as_float_array
 from .._utils import prod
 from .protocols import (
+    SupportsCovariance,
+    SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
@@ -431,6 +433,84 @@ class NumericRecordDistribution(RecordDistribution):
         """
         return FlattenedView(self)
 
+    def as_record_distribution(
+        self,
+        *,
+        template,
+        name: str | None = None,
+    ):
+        """Lift a single-field flat distribution to a Record-keyed view.
+
+        Inverse of :meth:`as_flat_distribution`. The lifted view carries
+        ``template`` as its :attr:`record_template`; samples come back
+        as :class:`NumericRecord` / :class:`NumericRecordArray` keyed by
+        ``template.fields``.
+
+        Only valid on **single-field** :class:`NumericRecordDistribution`
+        instances. Every flat-vector posterior produced in ProbPipe is
+        single-field by construction (``MultivariateNormal``,
+        ``FlattenedView``, and the upcoming ``MultivariateNormalPrecision``
+        / ``MultivariateNormalLowRank`` / ``PathfinderDistribution``).
+        For a multi-field source, chain explicitly:
+        ``source.as_flat_distribution().as_record_distribution(template=...)``.
+
+        Parameters
+        ----------
+        template : NumericRecordTemplate
+            Target structural skeleton. Must be a
+            ``NumericRecordTemplate`` — opaque (``None``) leaves cannot
+            be reconstructed from a flat numeric array.
+        name : str, optional
+            Name for the lifted distribution. Defaults to ``self.name``.
+
+        Returns
+        -------
+        NumericRecordDistribution
+            A thin view over ``self``. Sampling, log-prob, moments, and
+            ``expectation`` delegate to the source and reshape via the
+            template. Capability protocols match the source.
+
+        Raises
+        ------
+        TypeError
+            If ``template`` is not a ``NumericRecordTemplate``.
+        ValueError
+            If ``self`` is multi-field, or if
+            ``self.event_size != template.flat_size``.
+        """
+        from .record import NumericRecordTemplate
+        if not isinstance(template, NumericRecordTemplate):
+            raise TypeError(
+                f"as_record_distribution requires a NumericRecordTemplate, "
+                f"got {type(template).__name__}. Opaque (None) leaves "
+                f"cannot be reconstructed from a flat numeric array."
+            )
+        # ``event_shape`` raises on multi-field NumericRecordDistribution
+        # (per the canonical/convenience accessor split). Catch and
+        # re-raise with a more actionable message.
+        try:
+            es = self.event_shape
+        except TypeError as exc:
+            raise ValueError(
+                "as_record_distribution requires a single-field source. "
+                "Chain explicitly to re-template a multi-field source: "
+                "source.as_flat_distribution().as_record_distribution(template=...)."
+            ) from exc
+        if len(es) > 1:
+            raise ValueError(
+                f"as_record_distribution requires a flat source (event_shape "
+                f"with at most one dimension), got event_shape={es}. Call "
+                f"as_flat_distribution() first to flatten a structured source."
+            )
+        flat_size = int(prod(es))
+        if flat_size != template.flat_size:
+            raise ValueError(
+                f"event_size mismatch: source flat_size={flat_size}, "
+                f"template.flat_size={template.flat_size}."
+            )
+        cls = _lifted_view_class_for_base(self)
+        return cls(self, template, name=name)
+
     # -- repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
@@ -676,4 +756,204 @@ class FlattenedView(NumericRecordDistribution):
         return (
             f"FlattenedView(base={type(self._base).__name__}, "
             f"event_shape={self.event_shape})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# _RecordLiftedView — lift a single-field flat distribution to a Record view
+# ---------------------------------------------------------------------------
+
+_LIFTED_VIEW_CLASS_CACHE: dict[frozenset[str], type] = {}
+
+
+def _lifted_view_class_for_base(base: Distribution) -> type:
+    """Return a ``_RecordLiftedView`` subclass advertising the same
+    capability protocols as *base*.
+
+    Mirrors :func:`_flattened_view_class_for_base` for the inverse
+    direction. The protocol-bearing methods (``_sample``, ``_log_prob``,
+    ``_mean``, ``_variance``, ``_cov``, ``_expectation``) are attached
+    dynamically by this factory rather than living on
+    :class:`_RecordLiftedView` itself — otherwise every view would
+    appear to satisfy every protocol by virtue of method presence
+    (``@runtime_checkable`` semantics).
+    """
+    protocols: set[str] = set()
+    if isinstance(base, SupportsSampling):    protocols.add("sample")
+    if isinstance(base, SupportsLogProb):     protocols.add("log_prob")
+    if isinstance(base, SupportsMean):        protocols.add("mean")
+    if isinstance(base, SupportsVariance):    protocols.add("variance")
+    if isinstance(base, SupportsCovariance):  protocols.add("cov")
+    if isinstance(base, SupportsExpectation): protocols.add("expectation")
+
+    key = frozenset(protocols)
+    if key in _LIFTED_VIEW_CLASS_CACHE:
+        return _LIFTED_VIEW_CLASS_CACHE[key]
+
+    extra_bases: list[type] = []
+    extra_methods: dict[str, object] = {}
+
+    if "sample" in protocols:
+        extra_bases.append(SupportsSampling)
+
+        def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
+            from ._numeric_record import NumericRecord
+            from ._record_array import NumericRecordArray
+            base_sample = self._base._sample(key, sample_shape)
+            flat = self._base.flatten_value(base_sample)
+            tpl = self.record_template
+            if sample_shape == ():
+                return NumericRecord.unflatten(flat, template=tpl)
+            return NumericRecordArray.unflatten(
+                flat, template=tpl, batch_shape=sample_shape,
+            )
+
+        extra_methods["_sample"] = _sample
+
+    if "log_prob" in protocols:
+        extra_bases.append(SupportsLogProb)
+
+        def _log_prob(self, x) -> Array:
+            flat = x.flatten() if hasattr(x, "flatten") else jnp.asarray(x)
+            value = self._base.unflatten_value(flat)
+            return self._base._log_prob(value)
+
+        extra_methods["_log_prob"] = _log_prob
+
+    if "mean" in protocols:
+        extra_bases.append(SupportsMean)
+
+        def _mean(self):
+            from ._numeric_record import NumericRecord
+            base_mean = self._base._mean()
+            flat = self._base.flatten_value(base_mean)
+            return NumericRecord.unflatten(flat, template=self.record_template)
+
+        extra_methods["_mean"] = _mean
+
+    if "variance" in protocols:
+        extra_bases.append(SupportsVariance)
+
+        def _variance(self):
+            from ._numeric_record import NumericRecord
+            base_var = self._base._variance()
+            flat = self._base.flatten_value(base_var)
+            return NumericRecord.unflatten(flat, template=self.record_template)
+
+        extra_methods["_variance"] = _variance
+
+    if "cov" in protocols:
+        extra_bases.append(SupportsCovariance)
+
+        def _cov(self):
+            # Covariance stays flat (event_size × event_size matrix).
+            # The Record / field-block structure is implicit in the
+            # template's flat ordering.
+            return self._base._cov()
+
+        extra_methods["_cov"] = _cov
+
+    if "expectation" in protocols:
+        extra_bases.append(SupportsExpectation)
+
+        def _expectation(
+            self,
+            f: Callable,
+            *,
+            key: PRNGKey | None = None,
+            num_evaluations: int | None = None,
+            return_dist: bool | None = None,
+        ) -> Any:
+            # ``f`` operates on a Record-shaped sample. ``_mc_expectation``
+            # draws Records via ``self._sample`` and applies ``f`` directly.
+            return _mc_expectation(
+                self, f, key=key, num_evaluations=num_evaluations,
+                return_dist=return_dist,
+            )
+
+        extra_methods["_expectation"] = _expectation
+
+    if not extra_bases:
+        _LIFTED_VIEW_CLASS_CACHE[key] = _RecordLiftedView
+        return _RecordLiftedView
+
+    new_cls = type(
+        "_RecordLiftedView", (_RecordLiftedView, *extra_bases), extra_methods,
+    )
+    _LIFTED_VIEW_CLASS_CACHE[key] = new_cls
+    return new_cls
+
+
+class _RecordLiftedView(NumericRecordDistribution):
+    """View over a single-field flat distribution under a user-supplied template.
+
+    Inverse of :class:`FlattenedView`. ``self._base`` is a single-field
+    flat source (any ``NumericRecordDistribution`` with one field);
+    ``self.record_template`` is the user-supplied
+    :class:`NumericRecordTemplate` (not the source's auto-template).
+
+    Sampling, log-prob, and moments delegate to ``self._base`` and
+    reshape via the template's flatten / unflatten machinery.
+    Capability protocols match the source via
+    :func:`_lifted_view_class_for_base`.
+    """
+
+    _sampling_cost: str = "low"
+    _preferred_orchestration: str | None = None
+
+    def __new__(cls, base: Distribution, template, *, name: str | None = None):
+        actual_cls = _lifted_view_class_for_base(base)
+        return object.__new__(actual_cls)
+
+    def __init__(self, base: Distribution, template, *, name: str | None = None):
+        self._base = base
+        # Bypass auto-template: the user supplied a multi-field template
+        # that should drive sample / log-prob shaping.
+        object.__setattr__(self, "_record_template", template)
+        # Inherit the source's name unless overridden — keeps provenance
+        # readable in repr / diagnostics.
+        self._name = name if name is not None else getattr(base, "_name", None)
+
+    # ---- structural ---------------------------------------------------------
+
+    @property
+    def event_shape(self) -> tuple[int, ...]:
+        """Defers to ``NumericRecordDistribution.event_shape``, which raises
+        on multi-leaf templates via the single-field shortcut. Users of a
+        multi-field lifted view reach for ``event_shapes`` (dict) instead.
+        """
+        return super().event_shape
+
+    @property
+    def event_shapes(self) -> dict[str, tuple[int, ...]]:
+        """Per-field event shapes from the user-supplied template."""
+        return dict(self.record_template.numeric_leaf_shapes)
+
+    @property
+    def dtypes(self) -> dict[str, jnp.dtype]:
+        """Per-field dtypes — all fields inherit the source's single dtype."""
+        base_dtype = next(iter(self._base.dtypes.values()))
+        return {f: base_dtype for f in self.record_template.fields}
+
+    @property
+    def supports(self) -> dict[str, Constraint]:
+        """Per-field supports — all fields inherit the source's single support."""
+        base_support = next(iter(self._base.supports.values()))
+        return {f: base_support for f in self.record_template.fields}
+
+    @property
+    def base_distribution(self) -> Distribution:
+        """The underlying single-field flat distribution."""
+        return self._base
+
+    # Protocol-bearing methods (_sample / _log_prob / _mean / _variance /
+    # _cov / _expectation) are attached dynamically by
+    # :func:`_lifted_view_class_for_base` based on the base's capabilities,
+    # so the view's runtime-checkable ``isinstance(..., SupportsX)`` checks
+    # match the base exactly.
+
+    def __repr__(self) -> str:
+        return (
+            f"_RecordLiftedView(base={type(self._base).__name__}, "
+            f"template={self.record_template!r})"
         )

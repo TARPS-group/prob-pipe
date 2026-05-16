@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`NumericRecordDistribution.as_record_distribution(template=...)`** —
+  inverse of `as_flat_distribution()`. Lifts a single-field flat
+  distribution to a Record-keyed view under a user-supplied
+  `NumericRecordTemplate`. Sampling, log-prob, and moments delegate to
+  the source and reshape via the template; capability protocols
+  (`SupportsX`) match the source via dynamic isinstance dispatch. The
+  view is a thin wrapper — no value copying. Useful for any flat
+  parametric posterior that should be exposed under a structured
+  record (e.g., variational-inference loc / scale vectors viewed under
+  the model's parameter template; future consumers in the Bayesian
+  inference extensions plan).
+
+  ```python
+  from probpipe import MultivariateNormal, NumericRecordTemplate
+
+  mvn = MultivariateNormal(
+      loc=jnp.array([1.0, 2.0, 3.0, 4.0]),
+      cov=jnp.diag(jnp.array([0.5, 1.0, 1.5, 2.0])),
+      name="theta",
+  )
+  template = NumericRecordTemplate(intercept=(), slope=(3,))
+  posterior = mvn.as_record_distribution(template=template)
+  draw = sample(posterior, key=k)         # NumericRecord(intercept, slope)
+  mean(posterior)["slope"]                # vector mean of the slope block
+  ```
+
 - **`SupportsArrayBackend` capability protocol** (`probpipe.SupportsArrayBackend`)
   declares that a `Distribution` subclass can produce a fused storage
   backend for `DistributionArray`. Implemented by every TFP-backed
