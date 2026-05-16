@@ -766,7 +766,7 @@ class FlattenedView(NumericRecordDistribution):
 # _RecordLiftedView — lift a single-field flat distribution to a Record view
 # ---------------------------------------------------------------------------
 
-_LIFTED_VIEW_CLASS_CACHE: dict[frozenset[str], type] = {}
+_LIFTED_VIEW_CLASS_CACHE: dict[type, type] = {}
 
 
 def _lifted_view_class_for_base(base: Distribution) -> type:
@@ -781,6 +781,19 @@ def _lifted_view_class_for_base(base: Distribution) -> type:
     appear to satisfy every protocol by virtue of method presence
     (``@runtime_checkable`` semantics).
     """
+    # Cache on the source's concrete type: any two instances of the same
+    # Distribution subclass advertise the same protocol set, so the
+    # frozenset key would collide anyway. Type-based caching avoids
+    # six runtime_checkable isinstance scans on every construction.
+    cached = _LIFTED_VIEW_CLASS_CACHE.get(type(base))
+    if cached is not None:
+        return cached
+
+    # Imports hoisted once for all closures below (and to avoid
+    # circular-import risk at module load time).
+    from ._numeric_record import NumericRecord
+    from ._record_array import NumericRecordArray
+
     protocols: set[str] = set()
     if isinstance(base, SupportsSampling):    protocols.add("sample")
     if isinstance(base, SupportsLogProb):     protocols.add("log_prob")
@@ -789,10 +802,6 @@ def _lifted_view_class_for_base(base: Distribution) -> type:
     if isinstance(base, SupportsCovariance):  protocols.add("cov")
     if isinstance(base, SupportsExpectation): protocols.add("expectation")
 
-    key = frozenset(protocols)
-    if key in _LIFTED_VIEW_CLASS_CACHE:
-        return _LIFTED_VIEW_CLASS_CACHE[key]
-
     extra_bases: list[type] = []
     extra_methods: dict[str, object] = {}
 
@@ -800,8 +809,6 @@ def _lifted_view_class_for_base(base: Distribution) -> type:
         extra_bases.append(SupportsSampling)
 
         def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
-            from ._numeric_record import NumericRecord
-            from ._record_array import NumericRecordArray
             base_sample = self._base._sample(key, sample_shape)
             flat = self._base.flatten_value(base_sample)
             tpl = self.record_template
@@ -817,8 +824,6 @@ def _lifted_view_class_for_base(base: Distribution) -> type:
         extra_bases.append(SupportsLogProb)
 
         def _log_prob(self, x) -> Array:
-            from ._numeric_record import NumericRecord
-            from ._record_array import NumericRecordArray
             if isinstance(x, (NumericRecord, NumericRecordArray)):
                 flat = x.flatten()
             else:
@@ -832,9 +837,7 @@ def _lifted_view_class_for_base(base: Distribution) -> type:
         extra_bases.append(SupportsMean)
 
         def _mean(self):
-            from ._numeric_record import NumericRecord
-            base_mean = self._base._mean()
-            flat = self._base.flatten_value(base_mean)
+            flat = self._base.flatten_value(self._base._mean())
             return NumericRecord.unflatten(flat, template=self.record_template)
 
         extra_methods["_mean"] = _mean
@@ -843,9 +846,7 @@ def _lifted_view_class_for_base(base: Distribution) -> type:
         extra_bases.append(SupportsVariance)
 
         def _variance(self):
-            from ._numeric_record import NumericRecord
-            base_var = self._base._variance()
-            flat = self._base.flatten_value(base_var)
+            flat = self._base.flatten_value(self._base._variance())
             return NumericRecord.unflatten(flat, template=self.record_template)
 
         extra_methods["_variance"] = _variance
@@ -882,13 +883,13 @@ def _lifted_view_class_for_base(base: Distribution) -> type:
         extra_methods["_expectation"] = _expectation
 
     if not extra_bases:
-        _LIFTED_VIEW_CLASS_CACHE[key] = _RecordLiftedView
+        _LIFTED_VIEW_CLASS_CACHE[type(base)] = _RecordLiftedView
         return _RecordLiftedView
 
     new_cls = type(
         "_RecordLiftedView", (_RecordLiftedView, *extra_bases), extra_methods,
     )
-    _LIFTED_VIEW_CLASS_CACHE[key] = new_cls
+    _LIFTED_VIEW_CLASS_CACHE[type(base)] = new_cls
     return new_cls
 
 
@@ -926,13 +927,17 @@ class _RecordLiftedView(NumericRecordDistribution):
         *,
         name: str | None = None,
     ):
+        # Match ``FlattenedView``'s convention of skipping
+        # ``Distribution.__init__``: the base may itself be a view with
+        # no ``_name`` set, so going through ``super().__init__(name=...)``
+        # would raise. Set the attribute directly and accept ``None`` —
+        # ``self.name`` will raise on access in that case, consistent
+        # with ``FlattenedView``.
         self._base = base
+        self._name = name if name is not None else getattr(base, "_name", None)
         # Pre-set the user-supplied template so the auto-build path in
         # ``NumericRecordDistribution.record_template`` is skipped.
         object.__setattr__(self, "_record_template", template)
-        # Inherit the source's name unless overridden — keeps provenance
-        # readable in repr / diagnostics.
-        self._name = name if name is not None else getattr(base, "_name", None)
 
     # ---- structural ---------------------------------------------------------
 
@@ -940,19 +945,11 @@ class _RecordLiftedView(NumericRecordDistribution):
     def event_shape(self) -> tuple[int, ...]:
         """Single-field shortcut: the lone field's shape.
 
-        Raises ``TypeError`` for multi-field templates (matching the
-        canonical/convenience accessor pattern elsewhere on
-        :class:`NumericRecordDistribution`); reach for
-        :attr:`event_shapes` (dict) in that case.
+        Raises ``TypeError`` via :meth:`_single_field_name` for
+        multi-field templates; reach for :attr:`event_shapes` (dict)
+        in that case.
         """
-        tpl = self.record_template
-        if len(tpl.fields) != 1:
-            raise TypeError(
-                f"event_shape is only defined for single-field distributions; "
-                f"this view has {len(tpl.fields)} fields {tpl.fields!r}. "
-                f"Use event_shapes (dict) instead."
-            )
-        return tpl[tpl.fields[0]]
+        return self.event_shapes[self._single_field_name()]
 
     @property
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
@@ -962,25 +959,17 @@ class _RecordLiftedView(NumericRecordDistribution):
     @property
     def dtypes(self) -> dict[str, jnp.dtype]:
         """Per-field dtypes — all fields inherit the source's single dtype."""
-        base_dtype = next(iter(self._base.dtypes.values()))
-        return {f: base_dtype for f in self.record_template.fields}
+        return self._per_field_dict(self._base.dtype)
 
     @property
     def supports(self) -> dict[str, Constraint]:
         """Per-field supports — all fields inherit the source's single support."""
-        base_support = next(iter(self._base.supports.values()))
-        return {f: base_support for f in self.record_template.fields}
+        return self._per_field_dict(self._base.support)
 
     @property
     def base_distribution(self) -> Distribution:
         """The underlying single-field flat distribution."""
         return self._base
-
-    # Protocol-bearing methods (_sample / _log_prob / _mean / _variance /
-    # _cov / _expectation) are attached dynamically by
-    # :func:`_lifted_view_class_for_base` based on the base's capabilities,
-    # so the view's runtime-checkable ``isinstance(..., SupportsX)`` checks
-    # match the base exactly.
 
     def __repr__(self) -> str:
         return (
