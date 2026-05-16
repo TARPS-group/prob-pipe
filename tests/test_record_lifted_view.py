@@ -67,6 +67,18 @@ class TestConstruction:
         rec = mvn4.as_record_distribution(template=split_template)
         assert rec.event_shapes == {"intercept": (), "slope": (3,)}
 
+    def test_event_shape_single_field(self, mvn4):
+        """Single-field template: event_shape returns that field's shape."""
+        single = NumericRecordTemplate(theta=(4,))
+        rec = mvn4.as_record_distribution(template=single)
+        assert rec.event_shape == (4,)
+
+    def test_event_shape_multi_field_raises(self, mvn4, split_template):
+        """Multi-field template: event_shape raises, point user at event_shapes."""
+        rec = mvn4.as_record_distribution(template=split_template)
+        with pytest.raises(TypeError, match="event_shapes"):
+            _ = rec.event_shape
+
     def test_base_distribution_accessor(self, mvn4, split_template):
         rec = mvn4.as_record_distribution(template=split_template)
         assert rec.base_distribution is mvn4
@@ -123,6 +135,34 @@ class TestSampling:
                                    jnp.asarray(ref["intercept"]))
         np.testing.assert_allclose(jnp.asarray(rec_draw["slope"]),
                                    jnp.asarray(ref["slope"]))
+
+    def test_chain_flatten_then_lift_on_product(self):
+        """``ProductDistribution.as_flat_distribution().as_record_distribution(...)``
+        produces a Record view that samples consistently with the source.
+
+        ``FlattenedView`` only carries Sampling + LogProb (per its factory),
+        so the lifted view advertises the same subset.
+        """
+        joint = ProductDistribution(
+            a=Normal(loc=1.0, scale=0.5, name="a"),
+            b=Normal(loc=-2.0, scale=2.0, name="b"),
+        )
+        flat = joint.as_flat_distribution()
+        rec = flat.as_record_distribution(template=joint.record_template)
+        assert rec.record_template is joint.record_template
+
+        # Capability passthrough: FlattenedView has Sampling + LogProb only.
+        assert isinstance(rec, SupportsSampling)
+        assert isinstance(rec, SupportsLogProb)
+        assert not isinstance(rec, SupportsMean)
+
+        # Sample through the chain; verify shape + field structure.
+        from probpipe import NumericRecord
+        draw = rec._sample(jax.random.PRNGKey(0))
+        assert isinstance(draw, NumericRecord)
+        assert draw.fields == ("a", "b")
+        assert draw["a"].shape == ()
+        assert draw["b"].shape == ()
 
 
 # -- Log-prob ------------------------------------------------------------------
@@ -181,10 +221,10 @@ class TestMoments:
         np.testing.assert_allclose(c_rec, c_src, rtol=1e-5)
 
 
-# -- Capability protocols ------------------------------------------------------
+# -- Error paths + protocol passthrough ----------------------------------------
 
 
-class TestProtocols:
+class TestErrors:
     def test_lifted_view_advertises_all_source_protocols(self, mvn4, split_template):
         """MVN supports everything; the lifted view should too."""
         rec = mvn4.as_record_distribution(template=split_template)
@@ -195,11 +235,6 @@ class TestProtocols:
         assert isinstance(rec, SupportsCovariance)
         assert isinstance(rec, SupportsExpectation)
 
-
-# -- Error paths ---------------------------------------------------------------
-
-
-class TestErrors:
     def test_type_error_on_base_record_template(self, mvn4):
         """Passing a base RecordTemplate (allows None leaves) is rejected."""
         bad = RecordTemplate(intercept=(), label=None)
@@ -207,23 +242,44 @@ class TestErrors:
             mvn4.as_record_distribution(template=bad)
 
     def test_value_error_on_size_mismatch(self, mvn4):
-        bad = NumericRecordTemplate(a=(), b=(7,))  # flat_size=8 vs source event_size=4
-        with pytest.raises(ValueError, match="event_size mismatch"):
+        bad = NumericRecordTemplate(a=(), b=(7,))  # flat_size=8 vs source flat_size=4
+        with pytest.raises(ValueError, match="flat_size mismatch"):
             mvn4.as_record_distribution(template=bad)
 
-    def test_value_error_on_non_flat_source(self):
-        """Sources with multi-dimensional event_shape are rejected."""
-        # MultivariateNormal accepts only flat loc; we can't easily build a
-        # multi-dim event_shape source through public APIs. Instead, test the
-        # multi-field error path by going through a `ProductDistribution`'s
-        # base RecordDistribution (which doesn't have `as_record_distribution`
-        # but the check would catch it if it did — covered by the next test).
+    def test_value_error_on_non_flat_source(self, split_template):
+        """Sources with event_shape having >1 dimensions are rejected.
 
-        # The reachable error path: build a multi-field numeric source via
-        # the flat path and confirm the chain works in the round-trip test,
-        # while a direct single-field check would fail.
-        # Sanity: confirm ProductDistribution doesn't even expose
-        # as_record_distribution (it's RecordDistribution, not Numeric).
+        No public constructor builds a ``NumericRecordDistribution`` with a
+        multi-dim event_shape — ``Normal`` is scalar, ``MultivariateNormal``
+        is flat. We define a minimal in-test subclass with a hand-set
+        event_shape, the pattern STYLE_GUIDE.md §8.4 recommends for
+        backend-stubbing.
+        """
+        from probpipe.core._numeric_record_distribution import (
+            NumericRecordDistribution,
+        )
+
+        class _MultiDimStub(NumericRecordDistribution):
+            def __init__(self):
+                self._name = "stub"
+                self._record_template = NumericRecordTemplate(stub=(2, 3))
+
+            @property
+            def event_shape(self):
+                return (2, 3)
+
+        stub = _MultiDimStub()
+        assert stub.event_shape == (2, 3)
+
+        with pytest.raises(ValueError, match="at most one dimension"):
+            stub.as_record_distribution(
+                template=NumericRecordTemplate(a=(), b=(5,)),
+            )
+
+    def test_sanity_product_distribution_has_no_method(self):
+        """Multi-field ``ProductDistribution`` is not a ``NumericRecordDistribution``
+        and so does not expose ``as_record_distribution`` at all. Documents
+        the intended class-hierarchy boundary."""
         joint = ProductDistribution(
             a=Normal(loc=0.0, scale=1.0, name="a"),
             b=Normal(loc=0.0, scale=1.0, name="b"),
@@ -231,36 +287,3 @@ class TestErrors:
         assert not hasattr(joint, "as_record_distribution")
 
 
-# -- Integration with as_flat_distribution -------------------------------------
-
-
-class TestRoundtripWithFlatten:
-    def test_chain_flatten_then_lift_on_product(self):
-        """``ProductDistribution.as_flat_distribution().as_record_distribution(...)``
-        produces a Record view that samples consistently with the source.
-
-        FlattenedView only carries Sampling + LogProb (per its factory), so
-        the lifted view advertises the same subset. Samples through the
-        chain should match component-wise draws from the original joint
-        (same seed → same component samples after the flat round-trip).
-        """
-        joint = ProductDistribution(
-            a=Normal(loc=1.0, scale=0.5, name="a"),
-            b=Normal(loc=-2.0, scale=2.0, name="b"),
-        )
-        flat = joint.as_flat_distribution()
-        rec = flat.as_record_distribution(template=joint.record_template)
-        assert rec.record_template is joint.record_template
-
-        # Capability passthrough: FlattenedView has Sampling + LogProb only.
-        assert isinstance(rec, SupportsSampling)
-        assert isinstance(rec, SupportsLogProb)
-        assert not isinstance(rec, SupportsMean)
-
-        # Sample through the chain; verify shape + field structure.
-        from probpipe import NumericRecord
-        draw = rec._sample(jax.random.PRNGKey(0))
-        assert isinstance(draw, NumericRecord)
-        assert draw.fields == ("a", "b")
-        assert draw["a"].shape == ()
-        assert draw["b"].shape == ()

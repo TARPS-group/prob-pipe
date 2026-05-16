@@ -30,7 +30,10 @@ with a numeric-valued event structure".
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from .record import NumericRecordTemplate
 
 from .._dtype import _as_float_array
 from .._utils import prod
@@ -436,9 +439,9 @@ class NumericRecordDistribution(RecordDistribution):
     def as_record_distribution(
         self,
         *,
-        template,
+        template: NumericRecordTemplate,
         name: str | None = None,
-    ):
+    ) -> NumericRecordDistribution:
         """Lift a single-field flat distribution to a Record-keyed view.
 
         Inverse of :meth:`as_flat_distribution`. The lifted view carries
@@ -475,8 +478,8 @@ class NumericRecordDistribution(RecordDistribution):
         TypeError
             If ``template`` is not a ``NumericRecordTemplate``.
         ValueError
-            If ``self`` is multi-field, or if
-            ``self.event_size != template.flat_size``.
+            If ``self`` is multi-field, has non-flat ``event_shape``,
+            or if its flat size does not match ``template.flat_size``.
         """
         from .record import NumericRecordTemplate
         if not isinstance(template, NumericRecordTemplate):
@@ -505,7 +508,7 @@ class NumericRecordDistribution(RecordDistribution):
         flat_size = int(prod(es))
         if flat_size != template.flat_size:
             raise ValueError(
-                f"event_size mismatch: source flat_size={flat_size}, "
+                f"flat_size mismatch: source flat_size={flat_size}, "
                 f"template.flat_size={template.flat_size}."
             )
         cls = _lifted_view_class_for_base(self)
@@ -814,7 +817,12 @@ def _lifted_view_class_for_base(base: Distribution) -> type:
         extra_bases.append(SupportsLogProb)
 
         def _log_prob(self, x) -> Array:
-            flat = x.flatten() if hasattr(x, "flatten") else jnp.asarray(x)
+            from ._numeric_record import NumericRecord
+            from ._record_array import NumericRecordArray
+            if isinstance(x, (NumericRecord, NumericRecordArray)):
+                flat = x.flatten()
+            else:
+                flat = jnp.asarray(x)
             value = self._base.unflatten_value(flat)
             return self._base._log_prob(value)
 
@@ -901,14 +909,26 @@ class _RecordLiftedView(NumericRecordDistribution):
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
 
-    def __new__(cls, base: Distribution, template, *, name: str | None = None):
+    def __new__(
+        cls,
+        base: Distribution,
+        template: NumericRecordTemplate,
+        *,
+        name: str | None = None,
+    ):
         actual_cls = _lifted_view_class_for_base(base)
         return object.__new__(actual_cls)
 
-    def __init__(self, base: Distribution, template, *, name: str | None = None):
+    def __init__(
+        self,
+        base: Distribution,
+        template: NumericRecordTemplate,
+        *,
+        name: str | None = None,
+    ):
         self._base = base
-        # Bypass auto-template: the user supplied a multi-field template
-        # that should drive sample / log-prob shaping.
+        # Pre-set the user-supplied template so the auto-build path in
+        # ``NumericRecordDistribution.record_template`` is skipped.
         object.__setattr__(self, "_record_template", template)
         # Inherit the source's name unless overridden — keeps provenance
         # readable in repr / diagnostics.
@@ -918,11 +938,21 @@ class _RecordLiftedView(NumericRecordDistribution):
 
     @property
     def event_shape(self) -> tuple[int, ...]:
-        """Defers to ``NumericRecordDistribution.event_shape``, which raises
-        on multi-leaf templates via the single-field shortcut. Users of a
-        multi-field lifted view reach for ``event_shapes`` (dict) instead.
+        """Single-field shortcut: the lone field's shape.
+
+        Raises ``TypeError`` for multi-field templates (matching the
+        canonical/convenience accessor pattern elsewhere on
+        :class:`NumericRecordDistribution`); reach for
+        :attr:`event_shapes` (dict) in that case.
         """
-        return super().event_shape
+        tpl = self.record_template
+        if len(tpl.fields) != 1:
+            raise TypeError(
+                f"event_shape is only defined for single-field distributions; "
+                f"this view has {len(tpl.fields)} fields {tpl.fields!r}. "
+                f"Use event_shapes (dict) instead."
+            )
+        return tpl[tpl.fields[0]]
 
     @property
     def event_shapes(self) -> dict[str, tuple[int, ...]]:

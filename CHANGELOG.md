@@ -17,9 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`SupportsX`) match the source via dynamic isinstance dispatch. The
   view is a thin wrapper — no value copying. Useful for any flat
   parametric posterior that should be exposed under a structured
-  record (e.g., variational-inference loc / scale vectors viewed under
-  the model's parameter template; future consumers in the Bayesian
-  inference extensions plan).
+  Record (e.g., the output of Laplace approximation or variational
+  inference, lifted under the model's parameter template).
 
   ```python
   from probpipe import MultivariateNormal, NumericRecordTemplate
