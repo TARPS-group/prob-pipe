@@ -81,7 +81,7 @@ class TestConstruction:
     def test_construction_from_simple_model(self, model, data_record):
         m = MinibatchedDistribution(model, data_record, batch_size=32)
         assert isinstance(m, MinibatchedDistribution)
-        assert m.n == 200
+        assert m.dataset_size == 200
         assert m.batch_size == 32
 
     def test_construction_explicit_callable(self, model, data_record):
@@ -118,6 +118,39 @@ class TestConstruction:
     def test_construction_validates_batch_size_too_large(self, model, data_record):
         with pytest.raises(ValueError, match="batch_size must be in"):
             MinibatchedDistribution(model, data_record, batch_size=999)
+
+    def test_construction_rejects_nested_records(self, model):
+        """Nested Records fail at construction with an actionable error."""
+        nested = Record(
+            features=Record(X=jnp.zeros((200, 2)), extra=jnp.zeros((200,))),
+            y=jnp.zeros((200,)),
+        )
+        with pytest.raises(ValueError, match="flat Record"):
+            MinibatchedDistribution(model, nested, batch_size=32)
+
+
+# -- Property accessors -------------------------------------------------------
+
+
+class TestAccessors:
+    """The convenience properties exposed for inspection / debugging."""
+
+    def test_properties_match_constructor_args(self, model, data_record):
+        m = MinibatchedDistribution(
+            model, data_record, batch_size=25,
+            with_replacement=True, rescale=False,
+            name="custom_name",
+        )
+        assert m.dataset_size == 200
+        assert m.batch_size == 25
+        assert m.with_replacement is True
+        assert m.rescale is False
+        assert m.model is model
+        assert m.data is data_record
+        assert m.name == "custom_name"
+
+    def test_default_name_includes_batch_size(self, measure):
+        assert "batch_size=40" in measure.name
 
 
 # -- Protocol membership -------------------------------------------------------
@@ -190,6 +223,53 @@ class TestSampling:
         assert repeats_seen > 0, (
             "Expected at least one minibatch with repeats under with_replacement=True"
         )
+
+    def test_rescale_false_skips_n_over_b_factor(self, model, data_record):
+        """``rescale=False`` produces the raw per-datum sum (no N/b factor)."""
+        m_unrescaled = MinibatchedDistribution(
+            model, data_record, batch_size=20, rescale=False,
+        )
+        inner = m_unrescaled._sample(jax.random.PRNGKey(3))
+        assert inner.rescale_factor == 1.0
+
+        # The unnormalized log-density is just prior + sum over batch.
+        theta = jnp.array([0.1, -0.1])
+        batch = inner.batch
+        prior_lp = model.prior._log_prob(theta)
+        per_datum = jax.vmap(
+            model.likelihood.per_datum_log_likelihood, in_axes=(None, 0),
+        )(theta, batch)
+        expected = prior_lp + jnp.sum(per_datum)  # no N/b multiplier
+
+        actual = inner._unnormalized_log_prob(theta)
+        np.testing.assert_allclose(float(actual), float(expected), rtol=1e-5)
+
+    def test_batch_size_equals_dataset_size_matches_full(
+        self, model, data_record, regression_data,
+    ):
+        """``batch_size == N`` is the degenerate full-batch case.
+
+        Without replacement, this picks a permutation of all observations,
+        and the rescale factor is 1.0, so the surrogate exactly equals
+        the full-data unnormalized log-density (up to FP).
+        """
+        X, _ = regression_data
+        N = X.shape[0]
+        m_full = MinibatchedDistribution(
+            model, data_record, batch_size=N, with_replacement=False,
+        )
+        inner = m_full._sample(jax.random.PRNGKey(11))
+        assert inner.rescale_factor == 1.0
+
+        theta = jnp.array([0.2, -0.3])
+        # Full-data log-density
+        per_datum = jax.vmap(
+            model.likelihood.per_datum_log_likelihood, in_axes=(None, 0),
+        )(theta, data_record)
+        full = model.prior._log_prob(theta) + jnp.sum(per_datum)
+
+        actual = inner._unnormalized_log_prob(theta)
+        np.testing.assert_allclose(float(actual), float(full), rtol=1e-5)
 
 
 # -- Mathematical correctness --------------------------------------------------
