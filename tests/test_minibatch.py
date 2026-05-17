@@ -176,18 +176,42 @@ class TestProtocols:
 
 class TestSampling:
     def test_sample_returns_inner_distribution(self, measure):
-        inner = sample(measure, key=jax.random.PRNGKey(0))
-        # WorkflowFunction wraps the inner Distribution in a single-field
-        # NumericRecord — the .fields layer is harmless; just unwrap.
-        # Easier: call _sample directly to check type.
-        inner_raw = measure._sample(jax.random.PRNGKey(0))
-        assert isinstance(inner_raw, _FixedMinibatchDistribution)
-        assert isinstance(inner_raw, SupportsUnnormalizedLogProb)
+        inner = measure._sample(jax.random.PRNGKey(0))
+        assert isinstance(inner, _FixedMinibatchDistribution)
+        assert isinstance(inner, SupportsUnnormalizedLogProb)
+
+    def test_op_layer_sample_returns_distribution(self, measure):
+        """The op-layer ``sample(measure, key=...)`` wraps the inner draw
+        in the standard WorkflowFunction Record envelope but still produces
+        a Distribution-valued result (the random measure draws distributions,
+        not arrays)."""
+        from probpipe.core._distribution_base import Distribution
+        result = sample(measure, key=jax.random.PRNGKey(0))
+        # The WF output coercion lands a Distribution inside a single-field
+        # Record; either form should resolve to a Distribution we can probe.
+        underlying = result if isinstance(result, Distribution) else result[result.fields[0]]
+        assert isinstance(underlying, Distribution)
 
     def test_sample_batched_returns_distribution_array(self, measure):
         draws = measure._sample(jax.random.PRNGKey(0), sample_shape=(5,))
         assert isinstance(draws, DistributionArray)
         assert draws.batch_shape == (5,)
+        # Each component is a fixed-minibatch realisation (catches a
+        # wrong-typed DistArray returned by a regression).
+        components = list(draws.components)
+        assert len(components) == 5
+        assert all(isinstance(c, _FixedMinibatchDistribution) for c in components)
+
+    def test_batch_size_one(self, model, data_record):
+        """Exercise the vmap-over-1-element-axis edge case."""
+        m = MinibatchedDistribution(model, data_record, batch_size=1)
+        inner = m._sample(jax.random.PRNGKey(0))
+        assert inner.batch["X"].shape == (1, 2)
+        assert inner.batch["y"].shape == (1,)
+        # log_prob still works (vmap over a length-1 axis).
+        lp = inner._unnormalized_log_prob(jnp.zeros(2))
+        assert jnp.asarray(lp).shape == ()
+        assert jnp.isfinite(lp)
 
     def test_inner_log_prob_factorises(self, measure, regression_data):
         """For a fixed minibatch, log~D_B(theta) = log_prior(theta) + (N/b)*sum_batch."""
@@ -279,7 +303,13 @@ class TestMathematicalCorrectness:
     """Unbiasedness checks (parent plan §3.4)."""
 
     def test_unbiased_log_density(self, measure, model, data_record):
-        """Average of random log-densities at fixed theta ≈ full-data log-density."""
+        """Average of random log-densities at fixed theta ≈ full-data log-density.
+
+        2000 minibatches at the test parameters gives MC SE ~0.15-0.3;
+        atol=0.5 is ~2 SE — tight enough to catch off-by-rescale-factor
+        bugs (~N) and sign bugs (~|full_lp|), loose enough not to flake
+        on the fixed PRNG seed.
+        """
         theta = jnp.array([0.3, -0.2])
         # Full reference:
         per_datum = jax.vmap(
@@ -287,18 +317,21 @@ class TestMathematicalCorrectness:
         )(theta, data_record)
         full_lp = float(model.prior._log_prob(theta) + jnp.sum(per_datum))
 
-        # MC estimate over 500 minibatches.
+        # MC estimate over 2000 minibatches (vmapped for speed).
         rf = measure._random_unnormalized_log_prob()
-        keys = jax.random.split(jax.random.PRNGKey(1), 500)
-        vals = jnp.array([rf._sample(k)(theta) for k in keys])
+        keys = jax.random.split(jax.random.PRNGKey(1), 2000)
+        vals = jax.vmap(lambda k: rf._sample(k)(theta))(keys)
         mc_mean = float(jnp.mean(vals))
 
-        # With batch_size=40 from N=200, the MC SE is moderate. atol=1 is
-        # generous but catches off-by-rescale-factor bugs (which would be ~N).
-        np.testing.assert_allclose(mc_mean, full_lp, atol=1.0)
+        np.testing.assert_allclose(mc_mean, full_lp, atol=0.5)
 
     def test_unbiased_gradient(self, measure, model, data_record):
-        """Average gradient over minibatches ≈ full-data gradient."""
+        """Average gradient over minibatches ≈ full-data gradient.
+
+        2000 vmapped minibatches → per-coord SE ~0.3-0.5. atol=0.75 is
+        ~1.5-2.5 SE; catches sign-flip and rescale bugs, tolerates the
+        moderate MC noise from a stochastic-gradient estimator.
+        """
         theta = jnp.array([0.3, -0.2])
 
         def full_log_density(t):
@@ -310,15 +343,15 @@ class TestMathematicalCorrectness:
         full_grad = np.asarray(jax.grad(full_log_density)(theta))
 
         rf = measure._random_unnormalized_log_prob()
-        keys = jax.random.split(jax.random.PRNGKey(2), 500)
-        grads = [
-            np.asarray(jax.grad(lambda t: rf._sample(k)(t))(theta))
-            for k in keys
-        ]
-        mc_grad = np.mean(grads, axis=0)
+        keys = jax.random.split(jax.random.PRNGKey(2), 2000)
 
-        # Coordinate-wise tolerance — 500 samples gives ~SE 0.5 here.
-        np.testing.assert_allclose(mc_grad, full_grad, atol=2.0)
+        def one_grad(k):
+            return jax.grad(lambda t: rf._sample(k)(t))(theta)
+
+        grads = jax.vmap(one_grad)(keys)
+        mc_grad = np.asarray(jnp.mean(grads, axis=0))
+
+        np.testing.assert_allclose(mc_grad, full_grad, atol=0.75)
 
 
 # -- random_unnormalized_log_prob op ------------------------------------------
@@ -333,8 +366,8 @@ class TestRandomLogProbOp:
     def test_random_function_sample_returns_callable(self, measure):
         rf = measure._random_unnormalized_log_prob()
         callable_at_k = rf._sample(jax.random.PRNGKey(0))
-        assert callable(callable_at_k)
-        # Calling with theta gives a scalar log-density
+        # The contract is "callable that returns a scalar log-density"; the
+        # shape assertion below is the load-bearing part of that contract.
         theta = jnp.zeros(2)
         result = callable_at_k(theta)
         assert jnp.asarray(result).shape == ()
