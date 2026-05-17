@@ -92,6 +92,13 @@ class TestSimpleModel:
     def test_parameter_names(self, model):
         assert model.parameter_names == ("params",)
 
+    def test_prior_and_likelihood_properties(self, prior, likelihood, model):
+        """Public accessor surface: ``model.prior`` and ``model.likelihood``
+        return the underlying components without poking at private state.
+        """
+        assert model.prior is prior
+        assert model.likelihood is likelihood
+
     def test_supports_named_components(self, model):
         assert hasattr(model, 'fields')
 

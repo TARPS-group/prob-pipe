@@ -121,7 +121,10 @@ from probpipe.core.transition import (
     with_conversion,
     with_resampling,
 )
-from probpipe.modeling import GLMLikelihood, Likelihood, GenerativeLikelihood, IncrementalConditioner
+from probpipe.modeling import (
+    GLMLikelihood, Likelihood, ConditionallyIndependentLikelihood,
+    GenerativeLikelihood, IncrementalConditioner,
+)
 from probpipe.record import Design, FullFactorialDesign
 from probpipe.inference import (
     ApproximateDistribution,
@@ -275,6 +278,7 @@ __all__ = [
     # Modeling
     "GLMLikelihood",
     "Likelihood",
+    "ConditionallyIndependentLikelihood",
     "GenerativeLikelihood",
     "IncrementalConditioner",
     "ProbabilisticModel",

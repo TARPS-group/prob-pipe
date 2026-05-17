@@ -58,6 +58,13 @@ class TestConstruction:
         with pytest.raises(TypeError, match="GenerativeLikelihood"):
             SimpleGenerativeModel(prior, BadLikelihood())
 
+    def test_prior_and_likelihood_properties(self, prior, simulator, model):
+        """Public accessor surface mirrors ``SimpleModel.prior`` /
+        ``SimpleModel.likelihood`` so the two model wrappers stay symmetric.
+        """
+        assert model.prior is prior
+        assert model.likelihood is simulator
+
 
 class TestProtocols:
     def test_is_probabilistic_model(self, model):
