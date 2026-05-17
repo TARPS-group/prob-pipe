@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "Likelihood",
+    "ConditionallyIndependentLikelihood",
     "GenerativeLikelihood",
     "IncrementalConditioner",
 ]
@@ -39,6 +40,72 @@ class Likelihood[P, D](Protocol):
     """
 
     def log_likelihood(self, params: P, data: D) -> float: ...
+
+
+@runtime_checkable
+class ConditionallyIndependentLikelihood[P, D](Likelihood[P, D], Protocol):
+    """Likelihood whose observations factorise across observations.
+
+    Formally, a ``ConditionallyIndependentLikelihood`` represents
+
+    .. math::
+
+        \\log p(D \\mid \\theta) = \\sum_i \\log p(d_i \\mid \\theta).
+
+    "Conditionally independent" rather than "i.i.d.": each datum
+    ``d_i`` may carry covariates (e.g. ``d_i = (x_i, y_i)`` for
+    regression), so per-datum density varies with the input but the
+    factorisation across ``i`` still holds.
+
+    Required by
+    :class:`~probpipe.MinibatchedDistribution` (stochastic-gradient
+    inference, Phase 3) and useful independently for held-out
+    predictive log-likelihoods, leave-one-out cross-validation, and
+    PSIS-LOO.
+
+    Implementations expose :meth:`per_datum_log_likelihood`; the helper
+    :func:`_default_per_datum_log_likelihood` provides a length-1-batch
+    fallback for likelihoods that want a default rather than an
+    efficient override.
+    """
+
+    def per_datum_log_likelihood(self, params: P, datum: Any) -> Any:
+        """Log-density of a single datum given parameters.
+
+        Parameters
+        ----------
+        params : P
+            Model parameters.
+        datum : Any
+            One observation. The exact shape depends on the data format
+            the likelihood was constructed against — for a regression
+            model that's a single row ``(x_i, y_i)``; for a scalar
+            response, it's a single value. Subclasses define the shape.
+
+        Returns
+        -------
+        Array
+            Scalar log-density of the datum under ``params``.
+        """
+        ...
+
+
+def _default_per_datum_log_likelihood(
+    likelihood: "Likelihood",
+    params: Any,
+    datum: Any,
+) -> Any:
+    """Default per-datum log-likelihood — evaluate ``log_likelihood`` on a length-1 batch.
+
+    Fallback for :class:`ConditionallyIndependentLikelihood`
+    implementations that don't have a row-specific shortcut. Adds a
+    leading axis to ``datum`` via ``jax.tree.map(lambda x: x[None, ...], datum)``
+    and calls ``likelihood.log_likelihood(params, batch)``. Less
+    efficient than an override that skips the per-batch tile.
+    """
+    import jax
+    batch = jax.tree.map(lambda x: x[None, ...], datum)
+    return likelihood.log_likelihood(params, batch)
 
 
 @runtime_checkable

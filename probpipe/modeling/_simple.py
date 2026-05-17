@@ -89,6 +89,16 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
     def name(self) -> str | None:
         return self._name_str
 
+    @property
+    def prior(self) -> Distribution[P]:
+        """The prior distribution over parameters."""
+        return self._prior
+
+    @property
+    def likelihood(self) -> Likelihood[P, D]:
+        """The likelihood function ``log p(D | params)``."""
+        return self._likelihood
+
     # -- Named components interface ------------------------------------------
 
     @property

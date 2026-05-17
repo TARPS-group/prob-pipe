@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`ConditionallyIndependentLikelihood`** (`probpipe.ConditionallyIndependentLikelihood`)
+  — a `Likelihood` subclass / Protocol whose observations factorise as
+  `log p(D | theta) = sum_i log p(d_i | theta)`. Adds a
+  `per_datum_log_likelihood(params, datum)` method on top of the base
+  `Likelihood`'s `log_likelihood(params, data)`. Required by
+  stochastic-gradient inference (the upcoming `MinibatchedDistribution`)
+  and independently useful for held-out predictive log-likelihoods,
+  leave-one-out cross-validation, and PSIS-LOO. The existing concrete
+  likelihoods (`GLMLikelihood`, `_NLELikelihood`, `_NRELikelihood`) all
+  satisfy the Protocol — `GLMLikelihood` via a direct family
+  `log_prob` evaluation that skips the per-batch tile, the two
+  sbijax-backed classes via a length-1-batch fallback.
+
+  A standalone helper `_default_per_datum_log_likelihood(likelihood,
+  params, datum)` provides the length-1-batch implementation for
+  subclasses that want a default rather than an efficient override.
+
+- **`SimpleModel.prior` / `SimpleModel.likelihood`** and
+  **`SimpleGenerativeModel.prior` / `SimpleGenerativeModel.likelihood`**
+  — public read-only properties that expose the underlying components
+  without poking at private state. The two model wrappers stay
+  symmetric: `SimpleModel.likelihood` is typed `Likelihood`,
+  `SimpleGenerativeModel.likelihood` is typed `GenerativeLikelihood`.
+
 - **`FlatNumericRecordDistribution`** (`probpipe.FlatNumericRecordDistribution`)
   — a `NumericRecordDistribution` subclass that enforces the flat
   contract (single field, `event_shape == (N,)`). Algorithms that

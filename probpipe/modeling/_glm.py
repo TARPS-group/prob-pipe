@@ -119,6 +119,47 @@ class GLMLikelihood:
         eta = X @ _coerce_array(params)
         return jnp.sum(self.family.log_prob(y, eta))
 
+    def per_datum_log_likelihood(
+        self, params: ArrayLike | Record, datum: ArrayLike | Record,
+    ) -> Array:
+        """Log-density of a single observation given parameters.
+
+        Satisfies :class:`~probpipe.ConditionallyIndependentLikelihood`.
+        Direct evaluation of ``family.log_prob`` on a scalar response —
+        skips the length-1 vmap tile that the default fallback would
+        incur, important when this is called inside an SGMCMC inner
+        loop.
+
+        Parameters
+        ----------
+        params : Array or Record
+            Coefficient vector of shape ``(p,)``.
+        datum : Array or Record
+            Either ``Record(X=x_i, y=y_i)`` with ``x_i`` of shape
+            ``(p,)`` and ``y_i`` scalar, or a stacked ``(p + 1,)``
+            array ``[x_i, y_i]``. Both forms route through
+            :meth:`_extract_X_y`'s single-observation branch.
+        """
+        # Reuse _extract_X_y for the Record path; for the array path,
+        # reshape to a length-1 batch so the parser sees a (1, p+1)
+        # design+response matrix.
+        if isinstance(datum, Record) and "X" in datum and "y" in datum:
+            x_i = jnp.asarray(datum["X"])
+            y_i = jnp.asarray(datum["y"])
+        else:
+            arr = _coerce_array(datum)
+            if arr.ndim == 1:
+                # Stacked (x_i, y_i) with last element the response
+                x_i = arr[:-1]
+                y_i = arr[-1]
+            else:
+                raise ValueError(
+                    "per_datum_log_likelihood expects a single observation: "
+                    "either Record(X=..., y=...) or a 1-D stacked array."
+                )
+        eta = x_i @ _coerce_array(params)
+        return self.family.log_prob(y_i, eta)
+
     def generate_data(
         self,
         params: ArrayLike | Record,

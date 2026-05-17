@@ -7,13 +7,17 @@ concrete probabilistic model classes that wrap external PPL backends
 
 from ._base import ProbabilisticModel
 from ._glm import GLMLikelihood
-from ._likelihood import GenerativeLikelihood, IncrementalConditioner, Likelihood
+from ._likelihood import (
+    ConditionallyIndependentLikelihood, GenerativeLikelihood,
+    IncrementalConditioner, Likelihood,
+)
 from ._simple import SimpleModel
 from ._simple_generative import SimpleGenerativeModel
 
 __all__ = [
     "GLMLikelihood",
     "Likelihood",
+    "ConditionallyIndependentLikelihood",
     "GenerativeLikelihood",
     "IncrementalConditioner",
     "ProbabilisticModel",
