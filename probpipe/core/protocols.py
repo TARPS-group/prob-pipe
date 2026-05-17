@@ -452,7 +452,7 @@ def protocols_supported_by_all(
 
     Used by dynamic-protocol factories (``ProductDistribution``,
     ``SequentialJointDistribution``, ``TransformedDistribution``,
-    ``_RecordDistributionView``, ``FlattenedView``) when building a
+    ``_RecordDistributionView``, ``FlattenedDistributionView``) when building a
     cached subclass whose protocol bases track the capabilities of the
     underlying distribution(s). Pass in the leaves to check and the
     tuple of ``SupportsFoo`` protocols to test against; get back the

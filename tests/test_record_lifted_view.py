@@ -2,7 +2,7 @@
 
 The method lifts a single-field flat distribution to a Record-keyed view
 under a user-supplied :class:`NumericRecordTemplate`. Tests mirror the
-existing :class:`FlattenedView` test patterns (its inverse).
+existing :class:`FlattenedDistributionView` test patterns (its inverse).
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from probpipe import (
     sample,
     variance,
 )
-from probpipe.core._numeric_record_distribution import _RecordLiftedView
+from probpipe.core._numeric_record_distribution import NumericRecordDistributionView
 from probpipe.core.protocols import (
     SupportsCovariance,
     SupportsExpectation,
@@ -57,7 +57,7 @@ def split_template():
 class TestConstruction:
     def test_as_record_returns_lifted_view(self, mvn4, split_template):
         rec = mvn4.as_record_distribution(template=split_template)
-        assert isinstance(rec, _RecordLiftedView)
+        assert isinstance(rec, NumericRecordDistributionView)
 
     def test_record_template_carried_through(self, mvn4, split_template):
         rec = mvn4.as_record_distribution(template=split_template)
@@ -140,7 +140,7 @@ class TestSampling:
         """``ProductDistribution.as_flat_distribution().as_record_distribution(...)``
         produces a Record view that samples consistently with the source.
 
-        ``FlattenedView`` only carries Sampling + LogProb (per its factory),
+        ``FlattenedDistributionView`` only carries Sampling + LogProb (per its factory),
         so the lifted view advertises the same subset.
         """
         joint = ProductDistribution(
@@ -151,7 +151,7 @@ class TestSampling:
         rec = flat.as_record_distribution(template=joint.record_template)
         assert rec.record_template is joint.record_template
 
-        # Capability passthrough: FlattenedView has Sampling + LogProb only.
+        # Capability passthrough: FlattenedDistributionView has Sampling + LogProb only.
         assert isinstance(rec, SupportsSampling)
         assert isinstance(rec, SupportsLogProb)
         assert not isinstance(rec, SupportsMean)
@@ -269,40 +269,24 @@ class TestErrors:
         with pytest.raises(ValueError, match="flat_size mismatch"):
             mvn4.as_record_distribution(template=bad)
 
-    def test_value_error_on_non_flat_source(self, split_template):
-        """Sources with event_shape having >1 dimensions are rejected.
-
-        No public constructor builds a ``NumericRecordDistribution`` with a
-        multi-dim event_shape — ``Normal`` is scalar, ``MultivariateNormal``
-        is flat. We define a minimal in-test subclass with a hand-set
-        event_shape, the pattern STYLE_GUIDE.md §8.4 recommends for
-        backend-stubbing.
+    def test_type_error_on_non_flat_source(self, split_template):
+        """Non-``FlatNumericRecordDistribution`` sources can't call
+        ``as_record_distribution`` directly — the method is only on the
+        flat subclass. The stub on ``NumericRecordDistribution`` raises
+        ``TypeError`` with a migration hint pointing at
+        ``as_flat_distribution()``.
         """
-        from probpipe.core._numeric_record_distribution import (
-            NumericRecordDistribution,
-        )
+        n = Normal(loc=0.0, scale=1.0, name="x")  # not Flat (event_shape == ())
+        assert not isinstance(n, __import__("probpipe").FlatNumericRecordDistribution)
+        with pytest.raises(TypeError, match="FlatNumericRecordDistribution"):
+            n.as_record_distribution(template=NumericRecordTemplate(x=(1,)))
 
-        class _MultiDimStub(NumericRecordDistribution):
-            def __init__(self):
-                self._name = "stub"
-                self._record_template = NumericRecordTemplate(stub=(2, 3))
-
-            @property
-            def event_shape(self):
-                return (2, 3)
-
-        stub = _MultiDimStub()
-        assert stub.event_shape == (2, 3)
-
-        with pytest.raises(ValueError, match="at most one dimension"):
-            stub.as_record_distribution(
-                template=NumericRecordTemplate(a=(), b=(5,)),
-            )
-
-    def test_sanity_product_distribution_has_no_method(self):
-        """Multi-field ``ProductDistribution`` is not a ``NumericRecordDistribution``
-        and so does not expose ``as_record_distribution`` at all. Documents
-        the intended class-hierarchy boundary."""
+    def test_no_method_on_record_distribution(self):
+        """``ProductDistribution`` inherits from ``RecordDistribution``
+        rather than ``NumericRecordDistribution``, so it doesn't expose
+        ``as_record_distribution`` at all. Documents the intended
+        class-hierarchy boundary.
+        """
         joint = ProductDistribution(
             a=Normal(loc=0.0, scale=1.0, name="a"),
             b=Normal(loc=0.0, scale=1.0, name="b"),

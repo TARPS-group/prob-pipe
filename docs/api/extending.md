@@ -113,5 +113,7 @@ by `@workflow_function` when `include_inputs=True`.
 
 ::: probpipe.BroadcastDistribution
 
-The truly private machinery (`_RecordDistributionView`, `FlattenedView`,
-`_vmap_sample`, `_mc_expectation`) lives on [Internals](internals.md).
+The truly private machinery (`_RecordDistributionView`, `_vmap_sample`,
+`_mc_expectation`) lives on [Internals](internals.md), alongside the
+public-but-rarely-constructed `FlattenedDistributionView` and
+`NumericRecordDistributionView`.

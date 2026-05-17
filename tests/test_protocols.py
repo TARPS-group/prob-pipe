@@ -251,7 +251,7 @@ class TestOrchestrationHints:
 
 # ---------------------------------------------------------------------------
 # Dynamic-protocol views (regression for hard-coded SupportsMean/Variance/
-# Sampling on _RecordDistributionView and FlattenedView)
+# Sampling on _RecordDistributionView and FlattenedDistributionView)
 # ---------------------------------------------------------------------------
 
 
@@ -298,26 +298,26 @@ class TestRecordDistributionViewDynamicProtocols:
         assert isinstance(view, SupportsVariance)
 
 
-class TestFlattenedViewDynamicProtocols:
-    """FlattenedView must only claim the protocols its base supports."""
+class TestFlattenedDistributionViewDynamicProtocols:
+    """FlattenedDistributionView must only claim the protocols its base supports."""
 
     def test_flattened_view_inherits_sampling_and_log_prob(self):
-        from probpipe.core._numeric_record_distribution import FlattenedView
+        from probpipe.core._numeric_record_distribution import FlattenedDistributionView
         dist = ProductDistribution(
             x=Normal(loc=0.0, scale=1.0, name="x"),
             y=Normal(loc=0.0, scale=1.0, name="y"),
         )
-        flat = FlattenedView(dist)
+        flat = FlattenedDistributionView(dist)
         assert isinstance(flat, SupportsSampling)
         assert isinstance(flat, SupportsLogProb)
 
     def test_flattened_view_over_sampling_only_base(self):
-        """A sampling-only base produces a FlattenedView that isn't
+        """A sampling-only base produces a FlattenedDistributionView that isn't
         SupportsLogProb."""
         import jax.numpy as jnp
         import jax
         from probpipe.core._numeric_record_distribution import (
-            FlattenedView, NumericRecordDistribution,
+            FlattenedDistributionView, NumericRecordDistribution,
         )
         from probpipe.core.record import RecordTemplate
 
@@ -335,16 +335,16 @@ class TestFlattenedViewDynamicProtocols:
                 return jax.random.normal(key, sample_shape)
 
         base = _SampleOnlyBase()
-        flat = FlattenedView(base)
+        flat = FlattenedDistributionView(base)
         assert isinstance(flat, SupportsSampling)
         assert not isinstance(flat, SupportsLogProb)
 
     def test_flattened_view_over_log_prob_only_base(self):
-        """A log-prob-only base produces a FlattenedView that isn't
+        """A log-prob-only base produces a FlattenedDistributionView that isn't
         ``SupportsSampling`` (reverse direction of the sampling-only test)."""
         import jax.numpy as jnp
         from probpipe.core._numeric_record_distribution import (
-            FlattenedView, NumericRecordDistribution,
+            FlattenedDistributionView, NumericRecordDistribution,
         )
         from probpipe.core.record import RecordTemplate
 
@@ -362,7 +362,7 @@ class TestFlattenedViewDynamicProtocols:
                 return jnp.asarray(0.0)
 
         base = _LogProbOnlyBase()
-        flat = FlattenedView(base)
+        flat = FlattenedDistributionView(base)
         assert isinstance(flat, SupportsLogProb)
         assert not isinstance(flat, SupportsSampling)
 

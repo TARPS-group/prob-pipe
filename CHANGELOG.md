@@ -9,21 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`NumericRecordDistribution.as_record_distribution(template=...)`** —
-  inverse of `as_flat_distribution()`. Lifts a single-field flat
-  distribution to a Record-keyed view under a user-supplied
-  `NumericRecordTemplate`. Sampling, log-prob, and moments delegate to
-  the source and reshape via the template; capability protocols
-  (`SupportsX`) match the source via dynamic isinstance dispatch. The
-  view is a thin wrapper — no value copying. Useful for any flat
-  parametric posterior that should be exposed under a structured
-  Record (e.g., the output of Laplace approximation or variational
-  inference, lifted under the model's parameter template).
+- **`FlatNumericRecordDistribution`** (`probpipe.FlatNumericRecordDistribution`)
+  — a `NumericRecordDistribution` subclass that enforces the flat
+  contract (single field, `event_shape == (N,)`). Algorithms that
+  operate on a flat parameter vector (MCMC kernels, optimisers,
+  Hessian / curvature builders, variational families, Pathfinder /
+  Laplace surrogates) can require this type rather than runtime
+  shape probes. Carries the `flat_size: int` shortcut (=
+  `event_shape[0]`) and the `as_record_distribution(template=...)`
+  method.
+
+  The natively-multivariate parametrics
+  (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `VonMisesFisher`)
+  now inherit from `FlatNumericRecordDistribution` in addition to
+  `TFPDistribution`. `FlattenedDistributionView` also implements the
+  contract by construction. Scalar parametrics (`Normal`, `Beta`,
+  `Bernoulli`, …) have `event_shape == ()` and do not satisfy the
+  contract directly; call `.as_flat_distribution()` to obtain a
+  `FlattenedDistributionView` with `event_shape == (1,)`.
+
+- **`FlatNumericRecordDistribution.as_record_distribution(template=...)`**
+  — inverse of `as_flat_distribution()`. Lifts a flat distribution to
+  a Record-keyed view under a user-supplied `NumericRecordTemplate`.
+  Sampling, log-prob, and moments delegate to the source and reshape
+  via the template; capability protocols (`SupportsX`) match the
+  source via dynamic isinstance dispatch. The view is a thin wrapper —
+  no value copying.
 
   ```python
   from probpipe import MultivariateNormal, NumericRecordTemplate
 
-  mvn = MultivariateNormal(
+  mvn = MultivariateNormal(                     # already a FlatNRD
       loc=jnp.array([1.0, 2.0, 3.0, 4.0]),
       cov=jnp.diag(jnp.array([0.5, 1.0, 1.5, 2.0])),
       name="theta",
@@ -33,6 +49,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   draw = sample(posterior, key=k)         # NumericRecord(intercept, slope)
   mean(posterior)["slope"]                # vector mean of the slope block
   ```
+
+### Changed
+
+- **`FlattenedView` renamed to `FlattenedDistributionView`** and now
+  inherits from `FlatNumericRecordDistribution` (formerly
+  `NumericRecordDistribution`). The view's flat contract was always
+  satisfied structurally; the new base class makes it explicit and
+  enables receiver-type-driven dispatch for `as_record_distribution`.
+- **`_RecordLiftedView` renamed to `NumericRecordDistributionView`** and
+  made public. Constructed via
+  `FlatNumericRecordDistribution.as_record_distribution(template=...)`.
+
+### Migration
+
+- Code that imports `FlattenedView`: rename to `FlattenedDistributionView`.
+- Code that imports `_RecordLiftedView`: rename to
+  `NumericRecordDistributionView`.
+- Code that calls `as_record_distribution` on a non-flat distribution
+  (e.g., a scalar `Normal`): chain via `.as_flat_distribution()` first.
+  Calling it directly on a non-flat `NumericRecordDistribution` now
+  raises `TypeError` instead of `ValueError` and points at the
+  `as_flat_distribution()` chain.
 
 - **`SupportsArrayBackend` capability protocol** (`probpipe.SupportsArrayBackend`)
   declares that a `Distribution` subclass can produce a fused storage

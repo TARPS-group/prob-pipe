@@ -9,6 +9,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ._tfp_base import TFPDistribution
 from .._dtype import _as_float_array, _promote_floats
+from ..core._numeric_record_distribution import FlatNumericRecordDistribution
 from ..core.constraints import (
     Constraint,
     real,
@@ -33,7 +34,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-class MultivariateNormal(TFPDistribution):
+class MultivariateNormal(TFPDistribution, FlatNumericRecordDistribution):
     """
     Multivariate normal (Gaussian) distribution.
 
@@ -120,7 +121,7 @@ class MultivariateNormal(TFPDistribution):
 # ---------------------------------------------------------------------------
 
 
-class Dirichlet(TFPDistribution):
+class Dirichlet(TFPDistribution, FlatNumericRecordDistribution):
     """
     Dirichlet distribution over the probability simplex.
 
@@ -172,7 +173,7 @@ class Dirichlet(TFPDistribution):
 # ---------------------------------------------------------------------------
 
 
-class Multinomial(TFPDistribution):
+class Multinomial(TFPDistribution, FlatNumericRecordDistribution):
     """
     Multinomial distribution over count vectors.
 
@@ -328,7 +329,7 @@ class Wishart(TFPDistribution):
 # ---------------------------------------------------------------------------
 
 
-class VonMisesFisher(TFPDistribution):
+class VonMisesFisher(TFPDistribution, FlatNumericRecordDistribution):
     """
     Von Mises-Fisher distribution on the unit hypersphere.
 
