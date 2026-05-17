@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **BlackJAX-backed SGMCMC methods** registered with
+  ``inference_method_registry``:
+  - ``blackjax_sgld`` — Stochastic Gradient Langevin Dynamics. Priority 30.
+  - ``blackjax_sghmc`` — Stochastic Gradient Hamiltonian Monte Carlo. Priority 25.
+
+  Both consume a `SimpleModel` whose `likelihood` satisfies
+  `ConditionallyIndependentLikelihood`, plus a required `batch_size=`
+  kwarg. Internally they wrap the model+data in a
+  `MinibatchedDistribution` and feed BlackJAX's gradient estimator
+  via the per-step random-measure draw — the kernel stays oblivious
+  to the minibatching convention.
+
+  ```python
+  posterior = condition_on(
+      model, data,
+      method="blackjax_sgld",
+      batch_size=64, num_steps=2000, num_warmup=500, step_size=1e-3,
+  )
+  ```
+
+  Priorities sit below the full-batch gradient methods
+  (`tfp_nuts=100`, `tfp_hmc=90`, …, `tfp_rwmh=50`), so SGMCMC is
+  opt-in via `method=...` — it does not auto-win on a routine
+  `condition_on(model, observed)` call.
+
 - **`MinibatchedDistribution`** (`probpipe.MinibatchedDistribution`)
   — a `RandomMeasure[Record]` over fixed-minibatch stochastic
   surrogates of the full-data unnormalized log-posterior. A draw is a

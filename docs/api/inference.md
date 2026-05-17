@@ -45,6 +45,8 @@ runtime.
 | `tfp_rwmh` | 50 | `SupportsLogProb` | TFP |
 | `sbijax_smcabc` | 40 | `SimpleGenerativeModel` + sbijax | sbijax |
 | `pymc_advi` | 35 | `PyMCModel` + pymc | PyMC |
+| `blackjax_sgld` | 30 | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX |
+| `blackjax_sghmc` | 25 | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX |
 
 ::: probpipe.ApproximateDistribution
 
