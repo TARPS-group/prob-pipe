@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`MinibatchedDistribution`** (`probpipe.MinibatchedDistribution`)
+  — a `RandomMeasure[Record]` over fixed-minibatch stochastic
+  surrogates of the full-data unnormalized log-posterior. A draw is a
+  `Distribution[Record]` with unnormalized log-density
+  `log p(theta) + (N/b) * sum_{d in B} log p(d|theta)`, which is an
+  unbiased stochastic surrogate (in expectation over the minibatch
+  `B`) of the full-data target. The `N/b` rescaling makes the
+  gradient an unbiased estimator. Carries
+  `SupportsSampling` and `SupportsRandomUnnormalizedLogProb`; the
+  latter returns a `RandomFunction[Record, Array]` whose `_sample(key)`
+  yields a deterministic log-density callable for one minibatch — the
+  primary form consumed by stochastic-gradient MCMC kernels
+  (Phase 3) and tempered SMC (Phase 5).
+
+  ```python
+  from probpipe import MinibatchedDistribution, Record
+
+  # Construct from a SimpleModel with a ConditionallyIndependent likelihood:
+  m = MinibatchedDistribution(model, Record(X=X, y=y), batch_size=64)
+
+  # Sample one inner target and evaluate its log-density at theta:
+  inner = sample(m, key=k)
+  inner._unnormalized_log_prob(theta)        # one stochastic estimate
+
+  # Or, for SGMCMC: get a random log-density callable per minibatch
+  rf = random_unnormalized_log_prob(m)
+  target = rf._sample(k)                     # callable: theta -> log~D_B(theta)
+  grad = jax.grad(target)(theta)             # unbiased gradient estimate
+  ```
+
+  Construction paths: (a) a `SimpleModel` whose `likelihood` satisfies
+  `ConditionallyIndependentLikelihood` (the common case); (b) any
+  `SupportsLogProb` model plus an explicit
+  `per_datum_log_likelihood=` callable (the power-user escape hatch).
+
 - **`ConditionallyIndependentLikelihood`** (`probpipe.ConditionallyIndependentLikelihood`)
   — a `Likelihood` subclass / Protocol whose observations factorise as
   `log p(D | theta) = sum_i log p(d_i | theta)`. Adds a

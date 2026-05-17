@@ -131,6 +131,7 @@ from probpipe.inference import (
     inference_method_registry,
     rwmh,
     condition_on_nutpie,
+    MinibatchedDistribution,
     sbi_learn_conditional,
     sbi_learn_likelihood,
 )
@@ -292,6 +293,7 @@ __all__ = [
     "inference_method_registry",
     "rwmh",
     "condition_on_nutpie",
+    "MinibatchedDistribution",
     "sbi_learn_conditional",
     "sbi_learn_likelihood",
     # Validation

@@ -25,8 +25,10 @@ from probpipe import (
     Distribution,
     EmpiricalDistribution,
     Gamma,
+    GLMLikelihood,
     JointEmpirical,
     KDEDistribution,
+    MinibatchedDistribution,
     MultivariateNormal,
     Normal,
     NumericRecord,
@@ -36,6 +38,7 @@ from probpipe import (
     RecordArray,
     RecordEmpiricalDistribution,
     RecordBootstrapReplicateDistribution,
+    SimpleModel,
     TransformedDistribution,
 )
 
@@ -110,7 +113,22 @@ DISTRIBUTIONS = [
         ),
         id="NumericJointEmpirical",
     ),
+    pytest.param(
+        lambda: _make_minibatched_distribution(),
+        id="MinibatchedDistribution",
+    ),
 ]
+
+
+def _make_minibatched_distribution():
+    """Build a MinibatchedDistribution at parametrise time."""
+    import tensorflow_probability.substrates.jax.glm as tfp_glm
+    X = jnp.eye(4)
+    y = jnp.array([1.0, 0.0, 1.0, 0.0])
+    prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="theta")
+    lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
+    model = SimpleModel(prior=prior, likelihood=lik)
+    return MinibatchedDistribution(model, Record(X=X, y=y), batch_size=2)
 
 
 @pytest.mark.parametrize("make_dist", DISTRIBUTIONS)
