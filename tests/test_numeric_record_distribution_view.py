@@ -15,12 +15,17 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    Dirichlet,
+    FlatNumericRecordDistribution,
     MultivariateNormal,
     Normal,
+    NumericRecord,
+    NumericRecordArray,
     NumericRecordTemplate,
     ProductDistribution,
     RecordTemplate,
     cov,
+    expectation,
     log_prob,
     mean,
     sample,
@@ -108,9 +113,6 @@ class TestSampling:
     def test_sample_unbatched_is_numeric_record(self, mvn4, split_template):
         rec = mvn4.as_record_distribution(template=split_template)
         draw = sample(rec, key=jax.random.PRNGKey(0))
-        # sample() wraps with the function-name field. Unwrap to the
-        # actual draw the distribution emitted.
-        from probpipe import NumericRecord
         assert isinstance(draw, NumericRecord)
         assert draw.fields == ("intercept", "slope")
         assert draw["intercept"].shape == ()
@@ -119,7 +121,6 @@ class TestSampling:
     def test_sample_batched_is_record_array(self, mvn4, split_template):
         rec = mvn4.as_record_distribution(template=split_template)
         draws = sample(rec, key=jax.random.PRNGKey(0), sample_shape=(5,))
-        from probpipe import NumericRecordArray
         assert isinstance(draws, NumericRecordArray)
         assert draws.batch_shape == (5,)
         assert draws["intercept"].shape == (5,)
@@ -127,7 +128,6 @@ class TestSampling:
 
     def test_sample_roundtrip_with_flat(self, mvn4, split_template):
         """Same seed: lifted-view sample equals NumericRecord.unflatten(flat_sample)."""
-        from probpipe import NumericRecord
         rec = mvn4.as_record_distribution(template=split_template)
         key = jax.random.PRNGKey(7)
         rec_draw = rec._sample(key)
@@ -159,7 +159,6 @@ class TestSampling:
         assert not isinstance(rec, SupportsMean)
 
         # Sample through the chain; verify shape + field structure.
-        from probpipe import NumericRecord
         draw = rec._sample(jax.random.PRNGKey(0))
         assert isinstance(draw, NumericRecord)
         assert draw.fields == ("a", "b")
@@ -175,7 +174,6 @@ class TestLogProb:
         rec = mvn4.as_record_distribution(template=split_template)
         key = jax.random.PRNGKey(3)
         flat_x = mvn4._sample(key)
-        from probpipe import NumericRecord
         rec_x = NumericRecord.unflatten(flat_x, template=split_template)
 
         lp_rec = float(log_prob(rec, rec_x))
@@ -187,7 +185,6 @@ class TestLogProb:
         rec = mvn4.as_record_distribution(template=split_template)
         key = jax.random.PRNGKey(5)
         flat_xs = mvn4._sample(key, sample_shape=(10,))
-        from probpipe import NumericRecordArray
         rec_xs = NumericRecordArray.unflatten(
             flat_xs, template=split_template, batch_shape=(10,),
         )
@@ -229,7 +226,6 @@ class TestMoments:
         estimate should match the analytic E[intercept^2 + sum(slope^2)]
         = (loc^2 + var) summed across fields to MC tolerance.
         """
-        from probpipe import expectation
         rec = mvn4.as_record_distribution(template=split_template)
 
         def f(r):
@@ -237,13 +233,14 @@ class TestMoments:
 
         est = expectation(
             rec, f, key=jax.random.PRNGKey(0),
-            num_evaluations=2000, return_dist=False,
+            num_evaluations=5000, return_dist=False,
         )
-        # E[X^2] = loc^2 + var per coordinate.
+        # E[X^2] = loc^2 + var per coordinate. 5k samples puts MC SE
+        # around ~0.15 for these parameters; atol=0.2 stays meaningful.
         loc = jnp.array([1.0, -1.0, 2.0, 0.5])
         var = jnp.array([0.5, 1.0, 1.5, 2.0])
         analytic = float(jnp.sum(loc ** 2 + var))
-        np.testing.assert_allclose(float(jnp.asarray(est)), analytic, atol=0.3)
+        np.testing.assert_allclose(float(jnp.asarray(est)), analytic, atol=0.2)
 
 
 # -- Error paths + protocol passthrough ----------------------------------------
@@ -279,8 +276,12 @@ class TestErrors:
         ``as_flat_distribution()``.
         """
         n = Normal(loc=0.0, scale=1.0, name="x")  # not Flat (event_shape == ())
-        assert not isinstance(n, __import__("probpipe").FlatNumericRecordDistribution)
+        assert not isinstance(n, FlatNumericRecordDistribution)
+        # Match both the type name and the migration hint so a future
+        # shortening of either part trips the test.
         with pytest.raises(TypeError, match="FlatNumericRecordDistribution"):
+            n.as_record_distribution(template=NumericRecordTemplate(x=(1,)))
+        with pytest.raises(TypeError, match="as_flat_distribution"):
             n.as_record_distribution(template=NumericRecordTemplate(x=(1,)))
 
     def test_no_method_on_record_distribution(self):
@@ -294,5 +295,85 @@ class TestErrors:
             b=Normal(loc=0.0, scale=1.0, name="b"),
         )
         assert not hasattr(joint, "as_record_distribution")
+
+
+# -- FlatNumericRecordDistribution membership ----------------------------------
+
+
+class TestFlatContract:
+    """Pins the class-hierarchy promises that the refactor turned into
+    type invariants. A regression here (an accidental MRO change, a
+    deleted base, …) would silently undo the one-hop
+    ``mvn.as_record_distribution(...)`` ergonomic the refactor was about.
+    """
+
+    def test_multivariate_normal_is_flat(self):
+        mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="x")
+        assert isinstance(mvn, FlatNumericRecordDistribution)
+        assert mvn.flat_size == 3
+
+    def test_dirichlet_is_flat(self):
+        d = Dirichlet(concentration=jnp.ones(4), name="p")
+        assert isinstance(d, FlatNumericRecordDistribution)
+        assert d.flat_size == 4
+
+    def test_flattened_view_is_flat(self):
+        """``as_flat_distribution()`` produces a ``FlatNumericRecordDistribution``
+        even when the base is non-flat (e.g. a scalar ``Normal`` or a
+        multi-field ``ProductDistribution``).
+        """
+        flat_scalar = Normal(loc=0.0, scale=1.0, name="x").as_flat_distribution()
+        assert isinstance(flat_scalar, FlatNumericRecordDistribution)
+        assert flat_scalar.flat_size == 1
+
+        flat_joint = ProductDistribution(
+            a=Normal(loc=0.0, scale=1.0, name="a"),
+            b=Normal(loc=0.0, scale=1.0, name="b"),
+        ).as_flat_distribution()
+        assert isinstance(flat_joint, FlatNumericRecordDistribution)
+        assert flat_joint.flat_size == 2
+
+    def test_flat_size_raises_on_non_1d_event_shape(self):
+        """A misdeclared subclass with rank-≥2 event_shape surfaces on
+        ``flat_size`` access rather than silently truncating to the
+        first dim.
+        """
+        from probpipe.core._numeric_record_distribution import (
+            FlatNumericRecordDistribution as _FlatNRD,
+        )
+
+        class _BadFlat(_FlatNRD):
+            def __init__(self):
+                self._name = "bad"
+                self._record_template = NumericRecordTemplate(bad=(2, 3))
+
+            @property
+            def event_shape(self):
+                return (2, 3)
+
+        bad = _BadFlat()
+        with pytest.raises(TypeError, match="event_shape"):
+            _ = bad.flat_size
+
+
+# -- Cross-class smoke: lifting from Dirichlet (a non-MVN FlatNRD) -------------
+
+
+class TestLiftFromOtherFlatParametrics:
+    """The four multivariate parametrics inherit from
+    ``FlatNumericRecordDistribution``, so each one can serve as a flat
+    source for ``as_record_distribution`` — not just MVN. One smoke
+    test ensures the type-system change actually unlocks the
+    cross-family lift path.
+    """
+
+    def test_dirichlet_as_record_distribution_preserves_simplex(self):
+        d = Dirichlet(concentration=jnp.array([1.0, 2.0, 3.0]), name="p")
+        rec = d.as_record_distribution(template=NumericRecordTemplate(probs=(3,)))
+        assert isinstance(rec, NumericRecordDistributionView)
+
+        draw = sample(rec, key=jax.random.PRNGKey(0))
+        # Simplex invariant must survive the lift.
+        np.testing.assert_allclose(float(jnp.sum(draw["probs"])), 1.0, rtol=1e-5)
 
 

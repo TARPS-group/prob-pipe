@@ -8,6 +8,7 @@ import pytest
 
 from probpipe import (
     Distribution,
+    FlatNumericRecordDistribution,
     NumericRecordDistribution,
     RecordEmpiricalDistribution,
     FlattenedDistributionView,
@@ -189,6 +190,10 @@ class TestFlattenedDistributionView:
         flat_dist = vector_mvn.as_flat_distribution()
         assert isinstance(flat_dist, FlattenedDistributionView)
         assert isinstance(flat_dist, NumericRecordDistribution)
+        # The view satisfies the FlatNumericRecordDistribution contract
+        # by construction; consumers (Pathfinder / Laplace / VI) rely
+        # on this membership for receiver-type dispatch.
+        assert isinstance(flat_dist, FlatNumericRecordDistribution)
 
     def test_event_shape(self, vector_mvn):
         flat_dist = vector_mvn.as_flat_distribution()
