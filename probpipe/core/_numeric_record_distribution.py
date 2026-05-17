@@ -873,12 +873,27 @@ def _lifted_view_class_for_base(base: Distribution) -> type:
             num_evaluations: int | None = None,
             return_dist: bool | None = None,
         ) -> Any:
-            # ``f`` operates on a Record-shaped sample. ``_mc_expectation``
-            # draws Records via ``self._sample`` and applies ``f`` directly.
-            return _mc_expectation(
-                self, f, key=key, num_evaluations=num_evaluations,
-                return_dist=return_dist,
-            )
+            # ``f`` operates on a Record-shaped sample. We can't pass the
+            # batched ``NumericRecordArray`` returned by ``self._sample``
+            # through ``jax.vmap(f)`` directly — vmap strips the leading
+            # axis from each leaf while preserving ``batch_shape`` aux,
+            # producing an invariant violation. Instead, sample the base
+            # in flat form (no aux-shape invariants) and run vmap over a
+            # closure that unflattens to a Record inside the loop body.
+            n = num_evaluations if num_evaluations is not None else _base.DEFAULT_NUM_EVALUATIONS
+            sample_key = key if key is not None else _auto_key()
+            base_samples = self._base._sample(sample_key, sample_shape=(n,))
+            flat_samples = self._base.flatten_value(base_samples)
+            template = self.record_template
+
+            def _f_on_flat(flat_row):
+                return f(NumericRecord.unflatten(flat_row, template=template))
+
+            evals = jax.vmap(_f_on_flat)(flat_samples)
+            rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
+            if rd:
+                return BootstrapDistribution(evals, name="E[f(X)]")
+            return jax.tree.map(lambda v: jnp.mean(v, axis=0), evals)
 
         extra_methods["_expectation"] = _expectation
 
