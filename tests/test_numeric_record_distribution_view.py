@@ -1,7 +1,9 @@
-"""Tests for ``NumericRecordDistribution.as_record_distribution``.
+"""Tests for :class:`NumericRecordDistributionView`.
 
-The method lifts a single-field flat distribution to a Record-keyed view
-under a user-supplied :class:`NumericRecordTemplate`. Tests mirror the
+Constructed via
+:meth:`FlatNumericRecordDistribution.as_record_distribution`, the view
+lifts a flat distribution to a Record-keyed structure under a
+user-supplied :class:`NumericRecordTemplate`. Tests mirror the
 existing :class:`FlattenedDistributionView` test patterns (its inverse).
 """
 
