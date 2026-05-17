@@ -95,24 +95,54 @@ class TestGLMLikelihood:
         lp_stacked = glm.per_datum_log_likelihood(params, stacked)
         np.testing.assert_allclose(float(lp_record), float(lp_stacked), rtol=1e-5)
 
+    def test_per_datum_with_normal_family(self):
+        """A continuous-response GLM exercises ``family.log_prob`` on a
+        scalar response, a different family path from Bernoulli's
+        sigmoid-of-eta logic.
+        """
+        # Build by hand to avoid the Bernoulli-specific design above.
+        X = jnp.array([
+            [1.0, 0.5],
+            [1.0, -0.5],
+            [1.0, 1.0],
+        ])
+        glm = GLMLikelihood(tfp_glm.Normal(), x=X)
+        params = jnp.array([0.0, 1.0])
+        y = jnp.array([0.6, -0.4, 1.1])
+
+        full = glm.log_likelihood(params, y)
+        per_row = jnp.stack([
+            glm.per_datum_log_likelihood(
+                params, Record(X=X[i], y=y[i]),
+            )
+            for i in range(X.shape[0])
+        ])
+        np.testing.assert_allclose(float(full), float(jnp.sum(per_row)), rtol=1e-5)
+
 
 # -- Optional sbijax-backed likelihoods ----------------------------------------
 
 
-@pytest.mark.skipif(
-    pytest.importorskip("sbijax", reason="sbijax not installed") is None,
-    reason="sbijax not installed",
-)
 class TestSBIJaxLikelihoods:
-    """NLE / NRE likelihoods satisfy the Protocol via the default fallback."""
+    """NLE / NRE likelihoods satisfy the Protocol via the default fallback.
+
+    Note: ``_NLELikelihood.__new__(...)`` constructs a bare instance
+    without exercising the method body. The structural-protocol check
+    confirms the class declares ``per_datum_log_likelihood``; the
+    method body itself relies on a trained sbijax model which is too
+    heavy to construct in a unit test. Integration tests in
+    ``test_inference.py``'s sbijax block exercise the call path
+    end-to-end when sbijax is installed.
+    """
 
     def test_nle_satisfies_protocol(self):
+        pytest.importorskip("sbijax")
         from probpipe.inference._sbijax import _NLELikelihood
-        # Stub: we only check structural conformance, not behaviour
         stub = _NLELikelihood.__new__(_NLELikelihood)
         assert isinstance(stub, ConditionallyIndependentLikelihood)
 
     def test_nre_satisfies_protocol(self):
+        pytest.importorskip("sbijax")
         from probpipe.inference._sbijax import _NRELikelihood
         stub = _NRELikelihood.__new__(_NRELikelihood)
         assert isinstance(stub, ConditionallyIndependentLikelihood)
@@ -138,6 +168,25 @@ class TestDefaultFallback:
         lp = _default_per_datum_log_likelihood(lkl, params, datum)
         # log_likelihood on shape (1, 2) batch is sum(datum) = 5.0
         np.testing.assert_allclose(float(lp), 5.0, rtol=1e-5)
+
+    def test_fallback_with_record_datum(self):
+        """The fallback's ``jax.tree.map(lambda x: x[None, ...], datum)``
+        also works on Record-shaped data — each leaf gets a leading axis.
+        """
+        class _RecordLikelihood:
+            """Sum across all leaves of the Record."""
+            def log_likelihood(self, params, data):
+                # data is Record(X=..., y=...) with shape (n, ...) leaves
+                return jnp.sum(jnp.asarray(data["X"])) + jnp.sum(jnp.asarray(data["y"]))
+
+        lkl = _RecordLikelihood()
+        params = jnp.array([0.0])
+        # A single observation as Record: X.shape == (2,), y.shape == ()
+        datum = Record(X=jnp.array([3.0, 2.0]), y=jnp.array(7.0))
+
+        lp = _default_per_datum_log_likelihood(lkl, params, datum)
+        # After tree-map: X→shape (1, 2), y→shape (1,). sum(X)+sum(y) = 5+7 = 12
+        np.testing.assert_allclose(float(lp), 12.0, rtol=1e-5)
 
 
 # -- Negative space: bare Likelihood does NOT satisfy CIL ---------------------
