@@ -634,33 +634,19 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
 
     @property
     def flat_size(self) -> int:
-        """Number of scalar elements — equal to ``event_shape[0]``."""
-        return self.event_shape[0]
+        """Number of scalar elements — equal to ``event_shape[0]``.
 
-    def _validate_flat_contract(self) -> None:
-        """Raise ``ValueError`` if this instance violates the flat contract.
-
-        Not called automatically — subclasses opt in by invoking this
-        from their ``__init__`` after ``event_shape`` is available.
+        Validates the flat contract on access: subclasses with
+        non-1-D ``event_shape`` raise ``TypeError`` here rather than
+        silently truncating to the first dimension.
         """
-        try:
-            fields = self.fields
-        except Exception:
-            return
-        if len(fields) != 1:
-            raise ValueError(
-                f"{type(self).__name__} must have exactly one field to "
-                f"satisfy the flat contract; got fields={fields!r}."
-            )
-        try:
-            es = self.event_shape
-        except Exception:
-            return
+        es = self.event_shape
         if len(es) != 1:
-            raise ValueError(
-                f"{type(self).__name__} must have a 1-D event_shape (N,) "
-                f"to satisfy the flat contract; got event_shape={es}."
+            raise TypeError(
+                f"{type(self).__name__} declares FlatNumericRecordDistribution "
+                f"but has event_shape={es}; expected 1-D (N,)."
             )
+        return es[0]
 
     def as_record_distribution(
         self,
