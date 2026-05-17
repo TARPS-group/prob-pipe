@@ -66,13 +66,23 @@ __all__ = ["MinibatchedDistribution"]
 def _data_size(data: Any) -> int:
     """Return the leading-axis length of *data*.
 
-    Accepts a ``RecordArray`` (uses ``batch_shape[0]``), a ``Record``
-    of equal-leading-axis leaves, an array-like with ``.shape``, or
-    any object with ``__len__``.
+    Accepts a ``RecordArray`` (uses ``batch_shape[0]``), a flat
+    ``Record`` of equal-leading-axis array leaves, an array-like with
+    ``.shape``, or any object with ``__len__``. Nested Records are
+    rejected — minibatching expects a flat-field layout.
     """
     if isinstance(data, RecordArray):
         return data.batch_shape[0]
     if isinstance(data, Record):
+        for f in data.fields:
+            leaf = data[f]
+            if isinstance(leaf, Record):
+                raise ValueError(
+                    f"MinibatchedDistribution requires a flat Record "
+                    f"(no nested fields). Got nested Record at field "
+                    f"{f!r}; flatten the structure or use a "
+                    f"RecordArray instead."
+                )
         leading = {jnp.asarray(data[f]).shape[0] for f in data.fields}
         if len(leading) != 1:
             raise ValueError(
@@ -245,8 +255,15 @@ class MinibatchedDistribution(
     # -- read-only metadata --------------------------------------------------
 
     @property
-    def n(self) -> int:
-        """Total number of observations in the dataset (``len(data)``)."""
+    def dataset_size(self) -> int:
+        """Total number of observations in the dataset (``len(data)``).
+
+        Named ``dataset_size`` rather than ``.n`` to avoid colliding
+        with STYLE_GUIDE §1.9's "how many items does this hold?"
+        semantics — :class:`MinibatchedDistribution` is not a
+        finite-sample distribution; it doesn't hold a finite
+        collection of realisations.
+        """
         return self._n
 
     @property
@@ -282,10 +299,18 @@ class MinibatchedDistribution(
         """Draw one (or several) fixed-minibatch realisations.
 
         For ``sample_shape == ()`` returns a single
-        :class:`_FixedMinibatchDistribution`. For non-empty
-        ``sample_shape``, returns a
+        :class:`_FixedMinibatchDistribution` — the primary path,
+        fully JIT-traceable through downstream
+        ``_unnormalized_log_prob``.
+
+        For non-empty ``sample_shape``, returns a
         :class:`~probpipe.DistributionArray` of independent
-        realisations, each on its own minibatch.
+        realisations, each on its own minibatch. **The batched path
+        builds a Python list of Distribution instances and is not
+        JIT-traceable.** SGMCMC kernels that want many minibatch
+        draws should ``vmap`` or scan over per-step
+        ``M._random_unnormalized_log_prob()._sample(key)`` instead —
+        that path *is* JIT-traceable.
         """
         if sample_shape == ():
             return self._draw_one(key)
@@ -321,7 +346,7 @@ class MinibatchedDistribution(
     def __repr__(self) -> str:
         return (
             f"MinibatchedDistribution(model={type(self._model).__name__}, "
-            f"n={self._n}, batch_size={self._batch_size}, "
+            f"dataset_size={self._n}, batch_size={self._batch_size}, "
             f"rescale={self._rescale})"
         )
 
