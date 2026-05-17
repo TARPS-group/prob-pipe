@@ -16,6 +16,8 @@ predictive checks. Registering a new inference method is documented under
 
 ::: probpipe.Likelihood
 
+::: probpipe.ConditionallyIndependentLikelihood
+
 ::: probpipe.GenerativeLikelihood
 
 ::: probpipe.GLMLikelihood
@@ -53,6 +55,8 @@ runtime.
 ::: probpipe.sbi_learn_conditional
 
 ::: probpipe.sbi_learn_likelihood
+
+::: probpipe.MinibatchedDistribution
 
 ::: probpipe.inference_method_registry
     options:
