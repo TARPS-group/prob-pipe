@@ -18,6 +18,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Avoids the axis-position ambiguity of stacking the intercept slot
   into ``X``; matches the pattern in sklearn / statsmodels GLM APIs.
 
+- **Inference-method registry priorities re-anchored with a semantic
+  convention (issue #189).**
+  - `priority > 50` marks *exact* methods; `0 < priority <= 50` marks
+    *inexact* methods; `priority == 0` is the opt-in-only sentinel
+    (selectable by name via `method="..."` but skipped during
+    auto-dispatch). This is the new default value inherited from
+    `Method.priority`.
+  - Built-in priorities re-anchored: `nutpie_nuts` 80→85,
+    `cmdstan_nuts` 70→82, `pymc_nuts` 60→81, `tfp_nuts` 100→75,
+    `tfp_hmc` 90→65, `tfp_rwmh` 50→55, `blackjax_sgld` 30→45,
+    `blackjax_sghmc` 25→42, `pymc_advi` 35→25, `sbijax_smcabc` 40→5.
+    The relative ordering among exact methods is corrected so that
+    optimised backends (`nutpie_nuts`, `cmdstan_nuts`, `pymc_nuts`)
+    sit above the general-purpose `tfp_nuts`.
+  - `MethodRegistry._find_methods()` now skips priority-0 methods
+    during auto-dispatch. `MethodRegistry.set_priorities()` emits a
+    `UserWarning` when an override crosses into or out of `0`;
+    crossings of the documentary `50` break do not warn.
+  - The `OPT_IN_ONLY_PRIORITY` sentinel is exported from
+    `probpipe.core._registry` for use in `Method` subclasses that
+    want to opt out of auto-dispatch by name.
+  - The contributor-facing selection criteria and tier ranges for
+    setting a new method's priority are documented under
+    [Extending ProbPipe → Setting priority for a new method](docs/api/extending.md#setting-priority-for-a-new-method).
+  - Migration: a `Method` subclass that previously relied on
+    inheriting `priority = 0` from the base class while expecting
+    auto-dispatch must now set a positive priority explicitly.
+    `set_priorities` calls that stay within positive priorities are
+    unaffected; calls that move a method to or from `0` emit a
+    warning explaining the auto-dispatch participation change.
+
 - **PyMC-backed posteriors now carry RV-keyed Record structure.**
   ``PyMCModel`` exposes a ``record_template`` property that pairs each
   free RV with its event shape (scalar RVs → ``()``; shape-`k` RVs →
@@ -57,8 +88,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **BlackJAX-backed SGMCMC methods** registered with
   ``inference_method_registry``:
-  - ``blackjax_sgld`` — Stochastic Gradient Langevin Dynamics. Priority 30.
-  - ``blackjax_sghmc`` — Stochastic Gradient Hamiltonian Monte Carlo. Priority 25.
+  - ``blackjax_sgld`` — Stochastic Gradient Langevin Dynamics. Priority 45.
+  - ``blackjax_sghmc`` — Stochastic Gradient Hamiltonian Monte Carlo. Priority 42.
 
   Both consume a `SimpleModel` whose `likelihood` satisfies
   `ConditionallyIndependentLikelihood`, plus a required `batch_size=`
@@ -75,10 +106,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   )
   ```
 
-  Priorities sit below the full-batch gradient methods
-  (`tfp_nuts=100`, `tfp_hmc=90`, …, `tfp_rwmh=50`), so SGMCMC is
-  opt-in via `method=...` — it does not auto-win on a routine
-  `condition_on(model, observed)` call.
+  Priorities sit in the refinement-based MC tier (1–50), below every
+  exact full-batch gradient method (`tfp_nuts=75`, `tfp_hmc=65`,
+  `tfp_rwmh=55`). SGMCMC's `check()` also requires `batch_size=`, so
+  it does not fire on a routine `condition_on(model, observed)` call —
+  the user opts in by passing `batch_size=` (and typically the
+  matching `method=`).
 
 - **`MinibatchedDistribution`** (`probpipe.MinibatchedDistribution`)
   — a `RandomMeasure[Record]` over fixed-minibatch stochastic

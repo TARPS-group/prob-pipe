@@ -17,9 +17,13 @@ kernel via the ``grad_estimator(position, measure_key)`` closure
 convention — the per-step ``measure_key`` is passed through BlackJAX's
 opaque ``minibatch`` slot.
 
-Methods are registered at low priority (30 / 25) so they only fire when
-explicitly requested via ``condition_on(model, observed,
-method="blackjax_sgld", batch_size=…, …)``.
+Priorities (45 / 42) sit in the refinement-based MC tier (1–50, above
+parametric and below all exact methods); the per-method ``check()``
+further requires ``batch_size=`` to be passed, so SGMCMC only applies
+when the user has opted into minibatching via
+``condition_on(model, observed, method="blackjax_sgld", batch_size=…)``
+or by selecting it explicitly. See the inference-method registry
+docs for the full priority convention.
 """
 
 from __future__ import annotations

@@ -310,6 +310,12 @@ class TestBuiltInPriorityAnchors:
     }
 
     def test_priorities_match_anchors(self):
+        # Asserts on the *registered* (class-level) priority via
+        # ``Method.priority`` so the test stays valid even if another
+        # test runs ``set_priorities(...)`` and forgets to clean up:
+        # the override sits on the registry, not on the class. To assert
+        # on the *effective* dispatch ordering instead, use
+        # ``MethodRegistry._effective_priority(method)``.
         for name, expected in self.EXPECTED_PRIORITIES.items():
             if name not in inference_method_registry.list_methods():
                 continue   # optional backend not installed

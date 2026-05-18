@@ -27,7 +27,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-__all__ = ["Method", "MethodInfo", "MethodRegistry"]
+__all__ = ["Method", "MethodInfo", "MethodRegistry", "OPT_IN_ONLY_PRIORITY"]
 
 # Priority value for methods that should not auto-dispatch. The registry
 # excludes any method whose effective priority equals this sentinel from
@@ -98,6 +98,10 @@ class MethodRegistry[M: Method]:
     Methods are tried in descending priority order.  The first method
     whose ``check()`` returns ``feasible=True`` wins.  Users can also
     select a specific method by name.
+
+    Methods whose effective priority equals :data:`OPT_IN_ONLY_PRIORITY`
+    (``0``) are excluded from the auto-dispatch walk and are reachable
+    only by name via ``method="..."``.
     """
 
     def __init__(self) -> None:

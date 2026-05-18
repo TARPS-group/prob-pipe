@@ -325,18 +325,27 @@ handled entirely by registered methods.  The removed protocol
 `SupportsConditionableComponents` is no longer part of the public API;
 use `fields` and the inference registry instead.
 
+Priorities follow a semantic convention (issue #189): values above
+``50`` mark *exact* methods, values in ``(0, 50]`` mark *inexact*
+methods, and ``0`` is the opt-in-only sentinel (selectable by name but
+skipped during auto-dispatch). The contributor-facing tier criteria
+for picking a number when registering a new method live under
+[Extending ProbPipe → Setting priority for a new method](docs/api/extending.md#setting-priority-for-a-new-method).
+
 Built-in methods:
 
 | Priority | Name | Backend | Applies to |
 |----------|------|---------|------------|
-| 100 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable) |
-| 90 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable) |
-| 80 | `nutpie_nuts` | nutpie | `StanModel`, `PyMCModel` |
-| 70 | `cmdstan_nuts` | CmdStanPy | `StanModel` |
-| 60 | `pymc_nuts` | PyMC | `PyMCModel` |
-| 50 | `tfp_rwmh` | TFP | Any `SupportsLogProb` |
-| 40 | `sbijax_smcabc` | sbijax | `SimpleGenerativeModel` |
-| 35 | `pymc_advi` | PyMC | `PyMCModel` |
+| 85 | `nutpie_nuts` | nutpie | `StanModel`, `PyMCModel` |
+| 82 | `cmdstan_nuts` | CmdStanPy | `StanModel` |
+| 81 | `pymc_nuts` | PyMC | `PyMCModel` |
+| 75 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable) |
+| 65 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable) |
+| 55 | `tfp_rwmh` | TFP | Any `SupportsLogProb` |
+| 45 | `blackjax_sgld` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
+| 42 | `blackjax_sghmc` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
+| 25 | `pymc_advi` | PyMC | `PyMCModel` |
+| 5 | `sbijax_smcabc` | sbijax | `SimpleGenerativeModel` |
 
 ### Converter priority system
 
