@@ -40,7 +40,10 @@ class CmdStanNutsMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        return 70
+        # Tier 81-90 (optimised backend; Stan-compiled NUTS via the
+        # cmdstanpy subprocess interface). Below nutpie_nuts (85) due
+        # to subprocess overhead.
+        return 82
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         if not isinstance(dist, self._model_type):

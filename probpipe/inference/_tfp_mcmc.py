@@ -352,10 +352,17 @@ class _TFPGradientMethod(InferenceMethod):
 
 
 def TFPNutsMethod() -> _TFPGradientMethod:
-    """TFP No-U-Turn Sampler (gradient-based MCMC)."""
-    return _TFPGradientMethod("nuts", "tfp_nuts", 100)
+    """TFP No-U-Turn Sampler (gradient-based MCMC).
+
+    Tier 71-80 (self-tuning, broadly applicable). Priority 75.
+    """
+    return _TFPGradientMethod("nuts", "tfp_nuts", 75)
 
 
 def TFPHmcMethod() -> _TFPGradientMethod:
-    """TFP Hamiltonian Monte Carlo."""
-    return _TFPGradientMethod("hmc", "tfp_hmc", 90)
+    """TFP Hamiltonian Monte Carlo.
+
+    Tier 61-70 (well-understood, requires hand-tuned step size).
+    Priority 65.
+    """
+    return _TFPGradientMethod("hmc", "tfp_hmc", 65)

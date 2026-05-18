@@ -150,7 +150,9 @@ class TFPRWMHMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        return 50
+        # Tier 51-60 (slow per effective sample in high dimensions even
+        # when tuned). Priority 55.
+        return 55
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         prior = _get_prior(dist)

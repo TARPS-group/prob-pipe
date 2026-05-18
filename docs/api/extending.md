@@ -77,6 +77,86 @@ registry tries methods in descending priority order and the first whose
 `check()` reports feasibility wins. The built-in methods table is on
 [Modeling and inference → Inference methods](inference.md#inference-methods).
 
+### Setting priority for a new method
+
+The integer returned by `priority` carries semantics: it tells the registry
+whether your method should auto-dispatch, and if so, where it ranks
+against the alternatives.
+
+- **`priority > 50`** — *exact*: auto-dispatched, higher = preferred
+  among exact alternatives.
+- **`0 < priority <= 50`** — *inexact*: auto-dispatched, higher =
+  preferred among inexact alternatives. The `50` break is documentary;
+  the registry walks every positive priority uniformly.
+- **`priority == 0`** — *opt-in only*: the registry skips the method
+  during auto-dispatch. The method is reachable by name via
+  `method="..."`. This is the default; a `Method` subclass that doesn't
+  override `priority` gets opt-in behaviour automatically.
+
+#### Selection criteria
+
+Choose a number with these axes in mind, roughly in order of weight:
+
+1. **Robustness when applicable** — how often the method gives a usable
+   answer without per-model tuning, conditional on `check()` passing.
+2. **Computational cost per effective sample (or per converged result)**.
+   Two kinds of cost advantage deserve separate consideration:
+   *algorithmic* specialisation that exploits model structure for an
+   asymptotic speedup (Kalman, INLA, conjugate updates), and
+   *engineering* specialisation — same algorithm, faster backend
+   (nutpie's Rust-backed NUTS vs. TFP's; Stan's compiled gradients vs.
+   JAX traces).
+3. **Approximation quality** — analytical exact > controlled-error
+   approximations > asymptotically-exact MCMC > intrinsic approximations.
+4. **Diagnostic richness** — methods that fail silently rank below
+   methods with built-in failure signals, all else equal.
+5. **Model-class breadth** as a tiebreaker only. A broader-applicability
+   method does not need a higher priority than a narrow one; whichever
+   applies wins via `check()`.
+
+#### Tier ranges — exact (51–100)
+
+Five tiers, each 10 wide. Criteria are stated as positive properties of
+the method.
+
+| Range | Criterion |
+|---|---|
+| 91–100 | Per-call cost in a strictly better complexity class than general-purpose alternatives; the speedup comes from exploiting model structure. |
+| 81–90 | Optimised implementation of a more general algorithm; lower constant-factor cost than the reference implementation within its applicable model class. |
+| 71–80 | Self-tuning; converges robustly without per-model hyperparameter selection. |
+| 61–70 | Well-understood with strong convergence theory; performs well once hand-tuned. |
+| 51–60 | Slow per effective sample or unreliable in typical use. |
+
+#### Tier ranges — inexact (1–50)
+
+Four named tiers ordered by the strength of the asymptotic-to-exact
+story. The slot at 11–20 is intentionally reserved for methods with
+intermediate guarantees that don't fit cleanly into a named tier.
+
+| Range | Criterion |
+|---|---|
+| 41–50 | Asymptotically exact under algorithmic refinement; bias is a knob the user can tighten (step size, mini-batch size). |
+| 31–40 | Particle-based approximation refinable by particle count; quality improves with more particles, though convergence may be slow or unstable. |
+| 21–30 | Parametric posterior approximation; error bounded by family expressiveness or by regularity conditions on the posterior shape. |
+| 11–20 | *(reserved for methods with intermediate guarantees not covered by neighbouring tiers)* |
+| 1–10 | No asymptotic-to-exact guarantee in practice; quality bounded by intrinsic information loss (summary statistics, fixed tolerance, learned representations). |
+
+#### Setting `priority` on a `Method` subclass
+
+```python
+class MyNutsMethod(Method):
+    @property
+    def priority(self) -> int:
+        # Tier 71-80 (self-tuning, broadly applicable).
+        return 75
+```
+
+A method that should not auto-dispatch — perhaps it's experimental, has
+sharp failure modes, or exists only for `method=` testing — leaves
+`priority` at the inherited default of `0`. The registry will exclude
+it from the auto-dispatch walk; users can still invoke it explicitly by
+name.
+
 ::: probpipe.core._registry.MethodRegistry
 
 ::: probpipe.core._registry.Method
