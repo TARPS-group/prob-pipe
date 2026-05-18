@@ -21,6 +21,19 @@ logger = logging.getLogger(__name__)
 __all__ = ["PyMCModel"]
 
 
+def _to_numpy(value: Any) -> Any:
+    """Coerce JAX / Record-leaf arrays to numpy for PyMC compatibility.
+
+    PyMC's PyTensor backend doesn't multiply tensor variables against
+    raw JAX arrays; numpy arrays work transparently. Pass-through for
+    values that don't expose ``__array__`` (e.g. plain Python ints).
+    """
+    import numpy as _np
+    if hasattr(value, "__array__"):
+        return _np.asarray(value)
+    return value
+
+
 class PyMCModel(ProbabilisticModel):
     """PyMC model wrapper.
 
@@ -197,13 +210,38 @@ class PyMCModel(ProbabilisticModel):
     # -- PyMC model access (for nutpie integration) -------------------------
 
     def _pymc_model(self, data: Any = None) -> Any:
-        """Build a PyMC model, optionally with data."""
-        if data is not None:
-            if isinstance(data, dict):
-                return self._model_fn(**data)
-            # If data is an array, pass as first observed variable
-            return self._model_fn(**{self._observed_names[0]: data})
-        return self._model_fn()
+        """Build a PyMC model, optionally with data.
+
+        Three accepted input forms for ``data``:
+
+        * ``None`` — build the unconditioned model (used at
+          construction time to discover free RVs).
+        * ``dict`` or ``Record`` (incl. ``RecordArray``) — unpack the
+          fields named by ``_observed_names`` and pass them as keyword
+          arguments to the model function. This is the canonical
+          multi-observed-variable path: provenance tracks every named
+          input rather than reading covariates from a closure.
+        * Bare array — pass as the first observed variable. Only
+          unambiguous when the model has exactly one observed name.
+
+        Array-typed values are coerced to numpy before being passed to
+        the user's model function — PyMC's tensor backend doesn't
+        multiply with raw JAX arrays.
+        """
+        import numpy as _np
+        if data is None:
+            return self._model_fn()
+        if isinstance(data, dict):
+            return self._model_fn(**{k: _to_numpy(v) for k, v in data.items()})
+        # Local import to avoid a modeling→core cycle at module load.
+        from ..core.record import Record
+        if isinstance(data, Record):
+            return self._model_fn(**{
+                name: _to_numpy(data[name])
+                for name in self._observed_names
+                if name in data.fields
+            })
+        return self._model_fn(**{self._observed_names[0]: _to_numpy(data)})
 
     def __repr__(self) -> str:
         params = ", ".join(self._param_names)
