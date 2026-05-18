@@ -21,6 +21,14 @@ LOO-PSIS::
 
     from probpipe.diagnostics import loo, compare_loo
 
+Sensitivity analysis::
+
+    from probpipe.diagnostics import (
+        prior_sensitivity,
+        data_sensitivity,
+        power_scale_sensitivity,
+    )
+
 Orchestrated module::
 
     from probpipe.diagnostics import DiagnosticsModule
@@ -42,6 +50,11 @@ from .mcmc import (
 )
 from ._ppc_spc import run_ppc, run_spc
 from ._loo import loo, compare_loo
+from ._sensitivity import (
+    prior_sensitivity,
+    data_sensitivity,
+    power_scale_sensitivity,
+)
 from .diagnostics_workflow import DiagnosticsModule
 
 __all__ = [
@@ -61,6 +74,10 @@ __all__ = [
     # LOO-PSIS
     "loo",
     "compare_loo",
+    # Sensitivity analysis
+    "prior_sensitivity",
+    "data_sensitivity",
+    "power_scale_sensitivity",
     # Orchestrated module
     "DiagnosticsModule",
 ]
