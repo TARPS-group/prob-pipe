@@ -5,7 +5,7 @@ Provides:
 * :class:`MinibatchedDistribution` — a ``RandomMeasure[Record]`` whose
   draws are unbiased stochastic surrogates of the full-data
   unnormalized log-posterior. Consumed by stochastic-gradient MCMC
-  kernels (Phase 3) and by tempered SMC (Phase 5).
+  kernels and (future) tempered SMC.
 * :class:`_FixedMinibatchDistribution` (private) — one realisation of
   the measure, holding a single fixed minibatch.
 * :class:`_RandomMinibatchLogProb` (private) — the
@@ -499,8 +499,8 @@ class _MinibatchLogProbAtPoint(Distribution[Array], SupportsSampling):
 
     Monte Carlo mean over enough draws recovers
     :math:`\\log p_\\text{full}(\\theta)` (the full-data unnormalized
-    log-posterior at ``theta``) — the unbiased log-density estimator
-    documented in the parent plan §3.5.
+    log-posterior at ``theta``) — i.e. this is the unbiased
+    log-density estimator the random-measure machinery promises.
     """
 
     _sampling_cost: str = "low"

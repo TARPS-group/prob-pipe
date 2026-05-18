@@ -81,19 +81,19 @@ class TestGLMLikelihood:
         ])
         np.testing.assert_allclose(float(full), float(jnp.sum(per_row)), rtol=1e-5)
 
-    def test_per_datum_accepts_stacked_array(self, bernoulli_glm):
-        """``(p+1,)`` stacked array form for a single observation."""
+    def test_per_datum_rejects_stacked_array(self, bernoulli_glm):
+        """Stacked ``[x_i, y_i]`` arrays are intentionally rejected.
+
+        ProbPipe uses named Records to avoid axis-position ambiguity;
+        the GLM ``per_datum`` insists on the Record form rather than
+        guessing which column is the response.
+        """
         glm, X = bernoulli_glm
         params = jnp.array([0.5, -0.5, 0.25])
-        y_i = 1.0
-        # Stacked: [x_0, x_1, x_2, y]
-        stacked = jnp.concatenate([X[0], jnp.array([y_i])])
+        stacked = jnp.concatenate([X[0], jnp.array([1.0])])
 
-        lp_record = glm.per_datum_log_likelihood(
-            params, Record(X=X[0], y=jnp.array(y_i)),
-        )
-        lp_stacked = glm.per_datum_log_likelihood(params, stacked)
-        np.testing.assert_allclose(float(lp_record), float(lp_stacked), rtol=1e-5)
+        with pytest.raises(TypeError, match="Record"):
+            glm.per_datum_log_likelihood(params, stacked)
 
     def test_per_datum_with_normal_family(self):
         """A continuous-response GLM exercises ``family.log_prob`` on a

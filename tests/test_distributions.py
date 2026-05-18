@@ -1,4 +1,4 @@
-"""Tests for the refactored distribution classes (Phase 1)."""
+"""Tests for the refactored distribution classes."""
 
 import jax
 import jax.numpy as jnp

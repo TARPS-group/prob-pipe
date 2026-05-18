@@ -57,11 +57,10 @@ class ConditionallyIndependentLikelihood[P, D](Likelihood[P, D], Protocol):
     regression), so per-datum density varies with the input but the
     factorisation across ``i`` still holds.
 
-    Required by
-    :class:`~probpipe.MinibatchedDistribution` (stochastic-gradient
-    inference, Phase 3) and useful independently for held-out
-    predictive log-likelihoods, leave-one-out cross-validation, and
-    PSIS-LOO.
+    Required by :class:`~probpipe.MinibatchedDistribution` for
+    stochastic-gradient inference, and useful independently for
+    held-out predictive log-likelihoods, leave-one-out
+    cross-validation, and PSIS-LOO.
 
     Implementations expose :meth:`per_datum_log_likelihood`; the helper
     :func:`_default_per_datum_log_likelihood` provides a length-1-batch
@@ -101,7 +100,9 @@ def _default_per_datum_log_likelihood(
     implementations that don't have a row-specific shortcut. Adds a
     leading axis to ``datum`` via ``jax.tree.map(lambda x: x[None, ...], datum)``
     and calls ``likelihood.log_likelihood(params, batch)``. Less
-    efficient than an override that skips the per-batch tile.
+    efficient than an override that evaluates the family directly on
+    the un-reshaped datum (no length-1-batch wrap, no associated
+    broadcasting overhead inside ``log_likelihood``).
     """
     import jax
     batch = jax.tree.map(lambda x: x[None, ...], datum)
