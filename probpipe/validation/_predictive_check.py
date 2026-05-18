@@ -9,7 +9,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from ..core.distribution import RecordEmpiricalDistribution
+from ..core.distribution import RecordEmpiricalDistribution, NumericRecord
 from ..core.node import workflow_function
 from ..core.protocols import SupportsSampling
 from ..custom_types import PRNGKey
@@ -93,6 +93,13 @@ def predictive_check[P, D](
     if key is None:
         key = _auto_key()
 
+    # -- Unwrap NumericRecord if the node system resolved the distribution --
+    if isinstance(distribution, NumericRecord):
+        distribution = RecordEmpiricalDistribution(
+            distribution.values,
+            name=getattr(distribution, "name", "posterior"),
+        )
+    
     # -- Fast path: batched generation + vmap test_fn -----------------------
     if _supports_key_arg(generative_likelihood):
         stats_array = _predictive_check_batched(
