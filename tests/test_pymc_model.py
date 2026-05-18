@@ -181,3 +181,70 @@ class TestRecordTemplate:
 
         with pytest.raises(ValueError, match="non-concrete shape"):
             _ = PyMCModel(model_fn).record_template
+
+
+class TestRecordDataUnpacking:
+    """``_pymc_model`` unpacks Record-shaped observed data by field name.
+
+    The canonical multi-observed-variable path: ``condition_on(model,
+    record_data)`` should pass each declared observed name as its own
+    kwarg to the model function so provenance captures every named input.
+    """
+
+    @staticmethod
+    def _xy_model(X=None, y=None):
+        # Sentinel so the unconditioned model build during
+        # PyMCModel.__init__ has a concrete X to multiply against.
+        if X is None:
+            X = np.ones((1, 2), dtype=np.float32)
+        with pm.Model() as m:
+            intercept = pm.Normal("intercept", 0, 1)
+            slope = pm.Normal("slope", 0, 1)
+            rate = pm.math.exp(intercept + slope * X[:, 1])
+            pm.Poisson("y", mu=rate, observed=y)
+        return m
+
+    def test_record_input_unpacked_by_field_name(self):
+        """A ``Record(X=..., y=...)`` populates both observed slots."""
+        from probpipe import Record
+        rng = np.random.RandomState(0)
+        N = 20
+        X = np.column_stack([np.ones(N), rng.randn(N)]).astype(np.float32)
+        y = rng.poisson(2.0, size=N).astype(np.float32)
+        data = Record(X=jnp.asarray(X), y=jnp.asarray(y))
+
+        model = PyMCModel(self._xy_model)
+        # _pymc_model unpacks and coerces. Result is a PyMC model built
+        # against the *real* X and y (not the unconditioned-build sentinel).
+        built = model._pymc_model(data=data)
+        # The 'y' observed RV should have N observations.
+        y_rv = next(rv for rv in built.observed_RVs if rv.name == "y")
+        assert y_rv.eval().shape == (N,)
+
+    def test_dict_input_still_works(self):
+        """Plain ``dict`` data path unchanged."""
+        rng = np.random.RandomState(0)
+        N = 15
+        X = np.column_stack([np.ones(N), rng.randn(N)]).astype(np.float32)
+        y = rng.poisson(2.0, size=N).astype(np.float32)
+        model = PyMCModel(self._xy_model)
+        built = model._pymc_model(data={"X": X, "y": y})
+        y_rv = next(rv for rv in built.observed_RVs if rv.name == "y")
+        assert y_rv.eval().shape == (N,)
+
+    def test_jax_arrays_in_record_get_coerced(self):
+        """JAX arrays in a Record are converted to numpy before PyMC sees them.
+
+        PyMC's PyTensor backend doesn't multiply tensor variables with
+        raw JAX arrays; the coercion in ``_pymc_model`` keeps the
+        user-facing Record API free of NumPy-shaped friction.
+        """
+        from probpipe import Record
+        X = jnp.ones((5, 2), dtype=jnp.float32)  # JAX array
+        y = jnp.zeros(5, dtype=jnp.float32)
+        model = PyMCModel(self._xy_model)
+        # Just confirm this doesn't raise the
+        # "unsupported operand type(s) for *: 'TensorVariable' and
+        #  'jaxlib._jax.ArrayImpl'" error from the un-coerced path.
+        built = model._pymc_model(data=Record(X=X, y=y))
+        assert "y" in {rv.name for rv in built.observed_RVs}
