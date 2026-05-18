@@ -8,8 +8,18 @@ Usage::
 
     from probpipe.diagnostics import DiagnosticsModule
 
-    diag   = DiagnosticsModule()
-    report = diag.summary(posterior)
+    # Zero-config path
+    record = DiagnosticsModule.default().run(posterior)
+    record["mcmc"]["warnings"]
+
+    # Extend with user diagnostics
+    diag = DiagnosticsModule.default().with_diagnostic(
+        sensitivity=my_sensitivity_fn,
+    )
+    record = diag.run(posterior)
+    record["sensitivity"]
+
+    # Individual methods still available
     diag.trace_plot(posterior)["fig"]
     diag.rank_plot(posterior)["fig"]
     diag.kde_plot(posterior)["fig"]
@@ -34,9 +44,10 @@ __all__ = ["DiagnosticsModule"]
 class DiagnosticsModule(Module):
     """Orchestrated MCMC diagnostics module.
 
-    Provides the same results as the standalone functions in
-    ``mcmc.py`` wrapped as ``@workflow_method`` steps for provenance
-    tracking and optional Prefect orchestration.
+    Built-in diagnostics (R-hat, ESS, MCSE, trace/rank/KDE plots) are
+    available as individual ``@workflow_method`` steps.  The
+    :meth:`run` method collects all diagnostics — built-in and
+    user-added — into a single nested dict.
 
     Examples
     --------
@@ -44,24 +55,142 @@ class DiagnosticsModule(Module):
 
         from probpipe.diagnostics import DiagnosticsModule
 
-        diag = DiagnosticsModule()
+        # Zero-config — all built-ins
+        diag   = DiagnosticsModule.default()
+        record = diag.run(posterior)
+        print(record["mcmc"]["warnings"])   # [] = all passed
 
-        # Numerical diagnostics
-        report = diag.summary(posterior)
-        print(report["warnings"])   # [] = all passed
+        # Extend with a custom diagnostic
+        def my_loo(posterior):
+            return {"elpd": -42.3}
 
-        # Visual diagnostics
+        diag2  = diag.with_diagnostic(loo=my_loo)
+        record = diag2.run(posterior)
+        record["loo"]["elpd"]
+
+        # Individual methods
         diag.trace_plot(posterior)["fig"]
         diag.rank_plot(posterior)["fig"]
         diag.kde_plot(posterior)["fig"]
-
-        # KDE distributions for downstream use
-        result = diag.kde_plot(posterior)
-        kde = result["kde_distributions"]["intercept"]
-
-        # Everything at once
-        plots = diag.plot_all(posterior)
     """
+
+    def __init__(
+        self,
+        *,
+        _extra_diagnostics: dict | None = None,
+        **kwargs,
+    ):
+        # Store user-added diagnostics before super().__init__
+        # so they never reach Node's child_nodes / inputs split.
+        self._extra_diagnostics: dict = dict(_extra_diagnostics or {})
+        super().__init__(**kwargs)
+
+    # -- Factory methods -----------------------------------------------
+
+    @classmethod
+    def default(cls) -> "DiagnosticsModule":
+        """Return a DiagnosticsModule with all built-in diagnostics.
+
+        Convenience entry point for the zero-config path::
+
+            record = DiagnosticsModule.default().run(posterior)
+
+        Returns
+        -------
+        DiagnosticsModule
+        """
+        return cls()
+
+    def with_diagnostic(self, **diagnostics) -> "DiagnosticsModule":
+        """Return a new DiagnosticsModule with additional user diagnostics.
+
+        Each keyword argument must be a callable that accepts a posterior
+        ``Distribution`` and returns a ``dict``::
+
+            def my_sensitivity(posterior):
+                return {"khat": 0.43, "threshold": 0.7}
+
+            diag = DiagnosticsModule.default().with_diagnostic(
+                sensitivity=my_sensitivity,
+            )
+            record = diag.run(posterior)
+            record["sensitivity"]["khat"]
+
+        Raises on name collision with existing extra diagnostics — be
+        explicit rather than silently overwriting.
+
+        Parameters
+        ----------
+        **diagnostics : callable
+            Named callables: ``{name: fn}`` where
+            ``fn(posterior: Distribution) -> dict``.
+
+        Returns
+        -------
+        DiagnosticsModule
+            New instance — the original is unchanged (immutable pattern).
+
+        Raises
+        ------
+        ValueError
+            If any name already exists in the current extra diagnostics.
+        """
+        collisions = set(diagnostics) & set(self._extra_diagnostics)
+        if collisions:
+            raise ValueError(
+                f"Diagnostic name(s) already registered: {collisions}. "
+                f"Use a different name or create a fresh DiagnosticsModule."
+            )
+        merged = {**self._extra_diagnostics, **diagnostics}
+        return DiagnosticsModule(_extra_diagnostics=merged)
+
+    # -- Combined run --------------------------------------------------
+
+    @workflow_method
+    def run(self, posterior: Distribution) -> dict:
+        """Run all diagnostics and return a combined nested result.
+
+        Runs the built-in MCMC summary plus any user-added diagnostics
+        registered via :meth:`with_diagnostic`. Failed diagnostics are
+        caught and stored as ``{"error": str}`` so one failure does not
+        abort the others.
+
+        Parameters
+        ----------
+        posterior : Distribution
+            Posterior from ``condition_on`` or ``EmpiricalDistribution``.
+
+        Returns
+        -------
+        dict
+            Nested result keyed by diagnostic name::
+
+                {
+                    "mcmc": {
+                        "rhat":      {"intercept": 1.002, ...},
+                        "ess_bulk":  {"intercept": 950.0, ...},
+                        "ess_tail":  {"intercept": 910.0, ...},
+                        "mcse_mean": {"intercept": 0.003, ...},
+                        "mcse_sd":   {"intercept": 0.002, ...},
+                        "warnings":  [],
+                    },
+                    # user-added examples:
+                    "sensitivity": {"khat": 0.43},
+                    "loo":         {"elpd": -42.3},
+                }
+
+            An empty ``"warnings"`` list means all MCMC diagnostics
+            passed.
+        """
+        result: dict = {"mcmc": mcmc_summary(posterior)}
+
+        for name, fn in self._extra_diagnostics.items():
+            try:
+                result[name] = fn(posterior)
+            except Exception as exc:  # noqa: BLE001
+                result[name] = {"error": str(exc)}
+
+        return result
 
     # -- Numerical diagnostics -----------------------------------------
 
@@ -108,8 +237,6 @@ class DiagnosticsModule(Module):
     ) -> dict:
         """Trace plot — sampled values over MCMC iterations.
 
-        See :func:`plot_trace` for full documentation.
-
         Returns
         -------
         dict
@@ -125,8 +252,6 @@ class DiagnosticsModule(Module):
         title: str | None = None,
     ) -> dict:
         """Rank plot — chain rank distributions relative to pooled samples.
-
-        See :func:`plot_rank` for full documentation.
 
         Returns
         -------
@@ -148,17 +273,10 @@ class DiagnosticsModule(Module):
     ) -> dict:
         """KDE marginal density plot — one panel per scalar parameter.
 
-        Fits a :class:`~probpipe.distributions.KDEDistribution` per
-        parameter (Silverman's rule bandwidth by default) and overlays
-        the density curve on ArviZ's ``plot_posterior`` panels.
-
-        See :func:`plot_kde` for full documentation.
-
         Returns
         -------
         dict
-            ``{"fig": matplotlib.figure.Figure,``
-            ``"kde_distributions": dict[str, KDEDistribution]}``
+            ``{"fig": matplotlib.figure.Figure}``
         """
         return plot_kde(
             posterior,

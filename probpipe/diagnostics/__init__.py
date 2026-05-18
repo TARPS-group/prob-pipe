@@ -10,8 +10,19 @@ MCMC diagnostics::
         plot_trace,
         plot_rank,
         plot_kde,
-        DiagnosticsModule,
+        fit_kde,
     )
+
+Predictive checks::
+
+    from probpipe.diagnostics import run_ppc, run_spc
+
+Orchestrated module::
+
+    from probpipe.diagnostics import DiagnosticsModule
+
+    record = DiagnosticsModule.default().run(posterior)
+    record["mcmc"]["warnings"]
 """
 from __future__ import annotations
 
@@ -23,7 +34,9 @@ from .mcmc import (
     plot_trace,
     plot_rank,
     plot_kde,
+    fit_kde,
 )
+from ._ppc_spc import run_ppc, run_spc
 from .diagnostics_workflow import DiagnosticsModule
 
 __all__ = [
@@ -36,6 +49,10 @@ __all__ = [
     "plot_trace",
     "plot_rank",
     "plot_kde",
+    "fit_kde",
+    # Predictive checks
+    "run_ppc",
+    "run_spc",
     # Orchestrated module
     "DiagnosticsModule",
 ]
