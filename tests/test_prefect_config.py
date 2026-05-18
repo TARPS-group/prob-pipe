@@ -12,6 +12,8 @@ Exercises:
 """
 
 import os
+import sys
+import types
 
 import pytest
 
@@ -115,6 +117,9 @@ class TestTaskRunnerAutoDetection:
         import builtins
         real_import = builtins.__import__
 
+        monkeypatch.delitem(sys.modules, "prefect_ray", raising=False)
+        monkeypatch.delitem(sys.modules, "prefect_dask", raising=False)
+
         def mock_import(name, *args, **kwargs):
             if name in ("prefect_ray", "prefect_dask"):
                 raise ImportError(f"mocked: {name}")
@@ -122,6 +127,36 @@ class TestTaskRunnerAutoDetection:
 
         monkeypatch.setattr(builtins, "__import__", mock_import)
         assert _auto_detect_task_runner() is None
+
+    def test_returns_ray_runner_when_prefect_ray_installed(self, monkeypatch):
+        class FakeRayTaskRunner:
+            pass
+
+        fake_ray = types.ModuleType("prefect_ray")
+        fake_ray.RayTaskRunner = FakeRayTaskRunner
+        monkeypatch.setitem(sys.modules, "prefect_ray", fake_ray)
+        monkeypatch.delitem(sys.modules, "prefect_dask", raising=False)
+
+        assert isinstance(_auto_detect_task_runner(), FakeRayTaskRunner)
+
+    def test_prefers_ray_runner_over_dask_runner(self, monkeypatch):
+        class FakeRayTaskRunner:
+            pass
+
+        class FakeDaskTaskRunner:
+            pass
+
+        fake_ray = types.ModuleType("prefect_ray")
+        fake_ray.RayTaskRunner = FakeRayTaskRunner
+        fake_dask = types.ModuleType("prefect_dask")
+        fake_dask.DaskTaskRunner = FakeDaskTaskRunner
+
+        monkeypatch.setitem(sys.modules, "prefect_ray", fake_ray)
+        monkeypatch.setitem(sys.modules, "prefect_dask", fake_dask)
+
+        runner = _auto_detect_task_runner()
+        assert isinstance(runner, FakeRayTaskRunner)
+        assert not isinstance(runner, FakeDaskTaskRunner)
 
     def test_explicit_runner_overrides_auto(self):
         pc = PrefectConfig()
@@ -133,6 +168,9 @@ class TestTaskRunnerAutoDetection:
         # When no explicit runner and no runner packages, resolve returns None
         import builtins
         real_import = builtins.__import__
+
+        monkeypatch.delitem(sys.modules, "prefect_ray", raising=False)
+        monkeypatch.delitem(sys.modules, "prefect_dask", raising=False)
 
         def mock_import(name, *args, **kwargs):
             if name in ("prefect_ray", "prefect_dask"):
