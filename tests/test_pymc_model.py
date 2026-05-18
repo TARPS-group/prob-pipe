@@ -127,3 +127,57 @@ class TestPyMCModel:
         assert hasattr(result.inference_data, "sample_stats")
         assert result.source is not None
         assert result.source.operation == "pymc_nuts"
+
+
+class TestRecordTemplate:
+    """``PyMCModel.record_template`` exposes the free-RV layout that
+    inference methods thread through to the resulting posterior.
+    """
+
+    def test_mixed_scalar_and_vector_rvs(self):
+        """Each free RV becomes one field with its event shape."""
+        def model_fn(y=None):
+            with pm.Model() as m:
+                pm.Normal("intercept", 0, 1)             # scalar
+                pm.Normal("slope", 0, 1, shape=3)        # shape (3,)
+                pm.Normal("y", 0, 1, observed=y)
+            return m
+
+        tpl = PyMCModel(model_fn).record_template
+        assert tpl.fields == ("intercept", "slope")
+        assert tpl["intercept"] == ()
+        assert tpl["slope"] == (3,)
+
+    def test_observed_rvs_excluded(self):
+        """Observed variables are not part of the parameter template."""
+        def model_fn(y=None):
+            with pm.Model() as m:
+                pm.Normal("mu", 0, 1)
+                pm.Normal("y", 0, 1, observed=y)
+            return m
+
+        tpl = PyMCModel(model_fn).record_template
+        assert tpl.fields == ("mu",)
+        assert "y" not in tpl.fields
+
+    def test_non_concrete_shape_rejected(self):
+        """A free RV with a ``None`` dimension raises ``ValueError``.
+
+        Build the RV via ``pm.Normal`` with a tensor-valued ``mu`` whose
+        first axis is shared across an unknown number of observations —
+        a setup that gives the RV a ``None`` leading axis at the PyTensor
+        type level. The template builder should refuse it cleanly rather
+        than silently emit an under-shaped template.
+        """
+        import pytensor.tensor as pt
+
+        def model_fn(y=None):
+            with pm.Model() as m:
+                # Vector mu whose length is unknown at model-build time.
+                mu = pt.vector("mu_data")
+                pm.Normal("z", mu=mu, sigma=1.0)
+                pm.Normal("y", 0, 1, observed=y)
+            return m
+
+        with pytest.raises(ValueError, match="non-concrete shape"):
+            _ = PyMCModel(model_fn).record_template

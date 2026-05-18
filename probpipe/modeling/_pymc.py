@@ -124,14 +124,32 @@ class PyMCModel(ProbabilisticModel):
         fields with event shape ``()``; shape-:math:`k` RVs (e.g.
         ``pm.Normal('beta', 0, 1, shape=k)``) become fields with event
         shape ``(k,)``.
+
+        Raises
+        ------
+        ValueError
+            If any free RV has a non-concrete (``None``) dimension in
+            its ``type.shape``. The record-template machinery requires
+            concrete shapes — silently dropping a ``None`` dim would
+            produce an under-shaped template and confusing downstream
+            errors.
         """
         observed_set = set(self._observed_names)
         fields: dict[str, tuple[int, ...]] = {}
         for rv in self._unconditioned_model.free_RVs:
             if rv.name in observed_set:
                 continue
-            shape = tuple(int(s) for s in rv.type.shape if s is not None)
-            fields[rv.name] = shape
+            raw_shape = tuple(rv.type.shape)
+            if any(s is None for s in raw_shape):
+                raise ValueError(
+                    f"PyMC RV {rv.name!r} has a non-concrete shape "
+                    f"{raw_shape}; PyMCModel.record_template requires "
+                    f"every free RV to have a fully concrete event "
+                    f"shape. Specify the shape explicitly when "
+                    f"declaring the RV (e.g. "
+                    f"`pm.Normal({rv.name!r}, 0, 1, shape=k)`)."
+                )
+            fields[rv.name] = tuple(int(s) for s in raw_shape)
         return NumericRecordTemplate(**fields)
 
     # -- Named components interface ------------------------------------------
