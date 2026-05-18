@@ -236,7 +236,7 @@ class TestSimpleModelConditioningPaths:
 
 
 # ---------------------------------------------------------------------------
-# Phase 3: Record integration
+# Record integration
 # ---------------------------------------------------------------------------
 
 

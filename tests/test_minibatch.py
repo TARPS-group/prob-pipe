@@ -2,8 +2,7 @@
 
 A ``RandomMeasure[Record]`` whose draws are unbiased stochastic
 surrogates of the full-data unnormalized log-posterior. Consumed by
-stochastic-gradient MCMC kernels (Phase 3) and by tempered SMC
-(Phase 5).
+stochastic-gradient MCMC kernels and by tempered SMC.
 """
 
 from __future__ import annotations
@@ -300,7 +299,7 @@ class TestSampling:
 
 
 class TestMathematicalCorrectness:
-    """Unbiasedness checks (parent plan §3.4)."""
+    """Unbiasedness of the minibatched stochastic-gradient estimator."""
 
     def test_unbiased_log_density(self, measure, model, data_record):
         """Average of random log-densities at fixed theta ≈ full-data log-density.

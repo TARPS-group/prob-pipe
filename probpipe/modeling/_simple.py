@@ -91,7 +91,13 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
 
     @property
     def prior(self) -> Distribution[P]:
-        """The prior distribution over parameters."""
+        """The prior distribution over parameters.
+
+        Guaranteed to satisfy :class:`SupportsLogProb` (enforced at
+        construction); the return annotation is the looser
+        ``Distribution[P]`` because Python lacks intersection-type
+        syntax. Mirrors :attr:`SimpleGenerativeModel.prior`.
+        """
         return self._prior
 
     @property
