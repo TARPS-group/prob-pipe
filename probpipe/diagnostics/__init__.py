@@ -17,6 +17,10 @@ Predictive checks::
 
     from probpipe.diagnostics import run_ppc, run_spc
 
+LOO-PSIS::
+
+    from probpipe.diagnostics import loo, compare_loo
+
 Orchestrated module::
 
     from probpipe.diagnostics import DiagnosticsModule
@@ -37,6 +41,7 @@ from .mcmc import (
     fit_kde,
 )
 from ._ppc_spc import run_ppc, run_spc
+from ._loo import loo, compare_loo
 from .diagnostics_workflow import DiagnosticsModule
 
 __all__ = [
@@ -53,6 +58,9 @@ __all__ = [
     # Predictive checks
     "run_ppc",
     "run_spc",
+    # LOO-PSIS
+    "loo",
+    "compare_loo",
     # Orchestrated module
     "DiagnosticsModule",
 ]
