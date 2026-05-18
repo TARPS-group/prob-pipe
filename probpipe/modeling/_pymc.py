@@ -11,6 +11,7 @@ from typing import Any, Callable
 import jax.numpy as jnp
 
 from ..core.distribution import Distribution
+from ..core.record import NumericRecordTemplate
 from ..custom_types import Array
 from ..inference._approximate_distribution import ApproximateDistribution
 from ._base import ProbabilisticModel
@@ -108,6 +109,30 @@ class PyMCModel(ProbabilisticModel):
                     size *= s
             total += size
         return (total,)
+
+    @property
+    def record_template(self) -> NumericRecordTemplate:
+        """Template that pairs each free PyMC parameter with its shape.
+
+        Inference methods pass this through to :func:`make_posterior` so
+        the resulting :class:`ApproximateDistribution` carries Record
+        structure: ``mean(post)`` returns a ``NumericRecord`` keyed by
+        the PyMC RV names, matching the field layout of any other
+        ProbPipe posterior.
+
+        Scalar PyMC RVs (e.g. ``pm.Normal('intercept', 0, 1)``) become
+        fields with event shape ``()``; shape-:math:`k` RVs (e.g.
+        ``pm.Normal('beta', 0, 1, shape=k)``) become fields with event
+        shape ``(k,)``.
+        """
+        observed_set = set(self._observed_names)
+        fields: dict[str, tuple[int, ...]] = {}
+        for rv in self._unconditioned_model.free_RVs:
+            if rv.name in observed_set:
+                continue
+            shape = tuple(int(s) for s in rv.type.shape if s is not None)
+            fields[rv.name] = shape
+        return NumericRecordTemplate(**fields)
 
     # -- Named components interface ------------------------------------------
 
