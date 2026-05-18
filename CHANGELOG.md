@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **PyMC-backed posteriors now carry RV-keyed Record structure.**
+  ``PyMCModel`` exposes a ``record_template`` property that pairs each
+  free RV with its event shape (scalar RVs → ``()``; shape-`k` RVs →
+  ``(k,)``). The PyMC NUTS, PyMC ADVI, and nutpie inference paths all
+  thread this through to ``make_posterior``, so ``mean(post)`` returns
+  a ``NumericRecord`` keyed by RV name and ``draws()`` returns a
+  ``NumericRecordArray``. Previously, PyMC posteriors had no field
+  structure and ``draws()`` returned a flat ``(n_draws, n_params)``
+  array. Models declared with multiple scalar RVs (e.g. separate
+  ``intercept`` and ``slope`` ``pm.Normal`` calls) now produce a
+  field-per-RV posterior matching the ``ProductDistribution``-prior
+  workflow.
+
+  Free RVs whose ``type.shape`` contains a ``None`` dimension are
+  rejected with ``ValueError`` — silently dropping unknown dims would
+  produce an under-shaped template.
+
+- **`GLMLikelihood` no longer accepts stacked ``(X, y)`` arrays.** Both
+  ``log_likelihood`` and ``per_datum_log_likelihood`` now require either
+  ``data = Record(X=..., y=...)`` (canonical) or, for ``log_likelihood``
+  only, a bare response array when ``X`` was supplied at construction
+  time. Passing a single matrix whose last column was interpreted as
+  the response is intentionally rejected — ProbPipe uses named Records
+  to avoid axis-position ambiguity. Existing call sites that used a
+  ``Record`` are unaffected.
+
+- **`SimpleModel.prior` / `SimpleGenerativeModel.prior` type
+  annotations tightened** from ``Distribution[P]`` /
+  ``SupportsSampling[P]`` to the specific capability protocol
+  (``SupportsLogProb[P]`` / ``SupportsSampling[P]``). Static type
+  checkers now catch wrong-type priors at the call site; the
+  construction-time ``isinstance`` check stays as a backstop. The two
+  model wrappers are now parallel in both the input typing and the
+  ``.prior`` property return type.
+
 ### Added
 
 - **BlackJAX-backed SGMCMC methods** registered with

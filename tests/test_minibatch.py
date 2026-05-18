@@ -227,6 +227,37 @@ class TestSampling:
         actual = inner._unnormalized_log_prob(theta)
         np.testing.assert_allclose(float(actual), float(expected), rtol=1e-5)
 
+    def test_record_and_recordarray_inputs_equivalent(
+        self, model, regression_data,
+    ):
+        """``Record`` and ``NumericRecordArray`` data inputs produce
+        identical log-densities given the same minibatch indices.
+
+        Locks the ``_index_along_leading`` RecordArray-via-Record-subclass
+        path: indexing each leaf along the batch axis must give the same
+        per-minibatch surrogate regardless of which container type the
+        user passes.
+        """
+        from probpipe import NumericRecordArray, NumericRecordTemplate
+        X, y = regression_data
+        n = X.shape[0]
+        record_data = Record(X=X, y=y)
+        recordarray_data = NumericRecordArray(
+            {"X": jnp.asarray(X), "y": jnp.asarray(y)},
+            batch_shape=(n,),
+            template=NumericRecordTemplate(X=(X.shape[1],), y=()),
+        )
+
+        m_rec = MinibatchedDistribution(model, record_data, batch_size=20)
+        m_ra = MinibatchedDistribution(model, recordarray_data, batch_size=20)
+
+        # Same key → same minibatch indices → same log-density at theta.
+        key = jax.random.PRNGKey(13)
+        theta = jnp.array([0.1, -0.1])
+        lp_rec = float(m_rec._sample(key)._unnormalized_log_prob(theta))
+        lp_ra = float(m_ra._sample(key)._unnormalized_log_prob(theta))
+        np.testing.assert_allclose(lp_rec, lp_ra, rtol=1e-5)
+
     def test_with_replacement_flag(self, model, data_record):
         """``with_replacement=True`` allows repeated indices."""
         m_wr = MinibatchedDistribution(
