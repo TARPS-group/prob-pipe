@@ -49,13 +49,17 @@ class TestProtocol:
 
 @pytest.fixture
 def bernoulli_glm():
-    """3-coefficient logistic GLM with a 5x3 design matrix."""
+    """Logistic GLM with intercept + 2 covariates (5x2 covariate matrix).
+
+    ``GLMLikelihood`` adds the intercept internally (``fit_intercept=True``
+    default); ``params`` is ``(intercept, slope_0, slope_1)``.
+    """
     X = jnp.array([
-        [1.0, 0.0, 0.0],
-        [1.0, 1.0, 0.0],
-        [1.0, 0.0, 1.0],
-        [1.0, 1.0, 1.0],
-        [1.0, 0.5, 0.5],
+        [0.0, 0.0],
+        [1.0, 0.0],
+        [0.0, 1.0],
+        [1.0, 1.0],
+        [0.5, 0.5],
     ])
     return GLMLikelihood(tfp_glm.Bernoulli(), x=X), X
 
@@ -100,14 +104,15 @@ class TestGLMLikelihood:
         scalar response, a different family path from Bernoulli's
         sigmoid-of-eta logic.
         """
-        # Build by hand to avoid the Bernoulli-specific design above.
+        # X is one covariate; intercept is added internally by GLMLikelihood
+        # (fit_intercept=True default).
         X = jnp.array([
-            [1.0, 0.5],
-            [1.0, -0.5],
-            [1.0, 1.0],
+            [0.5],
+            [-0.5],
+            [1.0],
         ])
         glm = GLMLikelihood(tfp_glm.Normal(), x=X)
-        params = jnp.array([0.0, 1.0])
+        params = jnp.array([0.0, 1.0])  # (intercept, slope)
         y = jnp.array([0.6, -0.4, 1.1])
 
         full = glm.log_likelihood(params, y)

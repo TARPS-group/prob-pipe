@@ -47,7 +47,8 @@ def logistic_problem():
     ).astype(jnp.float32)
 
     prior = MultivariateNormal(loc=jnp.zeros(P), cov=jnp.eye(P), name="theta")
-    lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
+    # No-intercept logistic regression: prior dims pair 1-to-1 with X columns.
+    lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X, fit_intercept=False)
     model = SimpleModel(prior=prior, likelihood=lik)
     data = Record(X=X, y=y)
     return {

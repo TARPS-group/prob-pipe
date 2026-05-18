@@ -45,7 +45,7 @@ from probpipe.inference._minibatch import (
 
 @pytest.fixture
 def regression_data():
-    """200-observation logistic regression with 2D coefficients."""
+    """200-observation logistic regression with 2 covariates, no intercept."""
     N, P = 200, 2
     X = jax.random.normal(jax.random.PRNGKey(0), (N, P))
     y = ((X @ jnp.array([1.0, -0.5])) > 0).astype(jnp.float32)
@@ -58,7 +58,9 @@ def model(regression_data):
     prior = MultivariateNormal(
         loc=jnp.zeros(2), cov=jnp.eye(2), name="theta",
     )
-    likelihood = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
+    # ``fit_intercept=False``: this is a no-intercept 2-slope logistic
+    # regression — both prior dims are slopes paired with X's columns.
+    likelihood = GLMLikelihood(tfp_glm.Bernoulli(), x=X, fit_intercept=False)
     return SimpleModel(prior=prior, likelihood=likelihood)
 
 

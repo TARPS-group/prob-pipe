@@ -196,11 +196,11 @@ class TestRecordDataUnpacking:
         # Sentinel so the unconditioned model build during
         # PyMCModel.__init__ has a concrete X to multiply against.
         if X is None:
-            X = np.ones((1, 2), dtype=np.float32)
+            X = np.ones((1, 1), dtype=np.float32)
         with pm.Model() as m:
             intercept = pm.Normal("intercept", 0, 1)
             slope = pm.Normal("slope", 0, 1)
-            rate = pm.math.exp(intercept + slope * X[:, 1])
+            rate = pm.math.exp(intercept + slope * X[:, 0])
             pm.Poisson("y", mu=rate, observed=y)
         return m
 
@@ -209,7 +209,7 @@ class TestRecordDataUnpacking:
         from probpipe import Record
         rng = np.random.RandomState(0)
         N = 20
-        X = np.column_stack([np.ones(N), rng.randn(N)]).astype(np.float32)
+        X = np.asarray(rng.randn(N))[:, None].astype(np.float32)
         y = rng.poisson(2.0, size=N).astype(np.float32)
         data = Record(X=jnp.asarray(X), y=jnp.asarray(y))
 
@@ -225,7 +225,7 @@ class TestRecordDataUnpacking:
         """Plain ``dict`` data path unchanged."""
         rng = np.random.RandomState(0)
         N = 15
-        X = np.column_stack([np.ones(N), rng.randn(N)]).astype(np.float32)
+        X = np.asarray(rng.randn(N))[:, None].astype(np.float32)
         y = rng.poisson(2.0, size=N).astype(np.float32)
         model = PyMCModel(self._xy_model)
         built = model._pymc_model(data={"X": X, "y": y})

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`GLMLikelihood` fits an intercept by default** (``fit_intercept=True``).
+  The covariate matrix ``X`` carries only the covariates — no leading
+  column of 1s. ``params`` flattens to ``(intercept, *slopes)`` and the
+  likelihood computes ``eta = intercept + X @ slopes``. Pass
+  ``fit_intercept=False`` for the classical "model matrix" convention
+  where the user prepends the constant column to ``X`` themselves.
+  Avoids the axis-position ambiguity of stacking the intercept slot
+  into ``X``; matches the pattern in sklearn / statsmodels GLM APIs.
+
 - **PyMC-backed posteriors now carry RV-keyed Record structure.**
   ``PyMCModel`` exposes a ``record_template`` property that pairs each
   free RV with its event shape (scalar RVs → ``()``; shape-`k` RVs →
