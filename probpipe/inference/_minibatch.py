@@ -97,10 +97,17 @@ def _data_size(data: Any) -> int:
 
 
 def _index_along_leading(data: Any, indices: Array) -> Any:
-    """Index along the leading axis. Works for Records, arrays, RecordArrays."""
-    if isinstance(data, RecordArray):
-        return data[indices]
+    """Index along the leading axis. Works for Records, arrays, RecordArrays.
+
+    Returns a plain ``Record`` (not a ``RecordArray``) when the source
+    is Record-shaped — the minibatch needs a flat dict of indexed
+    leaves; per-datum vmap dispatches over the leading axis of each.
+    ``RecordArray.__getitem__`` doesn't accept array indices, but since
+    ``RecordArray`` subclasses ``Record``, the Record branch picks it
+    up via field-name access.
+    """
     if isinstance(data, Record):
+        # Covers Record and RecordArray (the latter via subclass).
         return Record({
             f: jnp.asarray(data[f])[indices] for f in data.fields
         })
