@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..core._distribution_base import Distribution
 from ..core.protocols import SupportsSampling
 from ._base import ProbabilisticModel
 from ._likelihood import GenerativeLikelihood
@@ -74,15 +73,15 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsSampl
 
     def __init__(
         self,
-        prior: Distribution[P],
+        prior: SupportsSampling[P],
         likelihood: GenerativeLikelihood[P, D],
         *,
         name: str | None = None,
     ):
-        # Type-annotated as `Distribution[P]` to mirror SimpleModel.
-        # Python (as of 3.13) has no intersection-type syntax to express
-        # "Distribution[P] AND SupportsSampling"; the capability is
-        # enforced by the runtime check below.
+        # Type-annotated as ``SupportsSampling[P]`` so static type
+        # checkers catch a wrong-type prior at the call site. The
+        # isinstance check remains as a backstop for callers who
+        # bypass the type system.
         if not isinstance(prior, SupportsSampling):
             raise TypeError(
                 f"SimpleGenerativeModel requires a prior that supports SupportsSampling, "
@@ -104,14 +103,8 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsSampl
         return self._name_str
 
     @property
-    def prior(self) -> Distribution[P]:
-        """The prior distribution over parameters.
-
-        Guaranteed to satisfy :class:`SupportsSampling` (enforced at
-        construction); the return annotation is the looser
-        ``Distribution[P]`` because Python lacks intersection-type
-        syntax. Mirrors :attr:`SimpleModel.prior`.
-        """
+    def prior(self) -> SupportsSampling[P]:
+        """The prior distribution over parameters."""
         return self._prior
 
     @property
