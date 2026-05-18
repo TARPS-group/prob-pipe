@@ -123,7 +123,14 @@ class GLMLikelihood:
         the response or a covariate?" guessing.
         """
         if isinstance(data, Record) and "X" in data and "y" in data:
-            return jnp.asarray(data["X"]), _coerce_array(data["y"])
+            X_raw = jnp.asarray(data["X"])
+            # Single-covariate convenience: a 1-D X array is the natural
+            # form when there is only one covariate (no need for a
+            # gratuitous trailing axis). The linear-predictor math
+            # downstream wants 2-D, so reshape here once.
+            if X_raw.ndim == 1:
+                X_raw = X_raw[:, None]
+            return X_raw, _coerce_array(data["y"])
         if self._x is not None:
             return self._x, _coerce_array(data)
         raise ValueError(
@@ -181,7 +188,10 @@ class GLMLikelihood:
                 "intentionally not supported; use the named-field "
                 "Record form to avoid axis-position ambiguity."
             )
-        x_i = jnp.asarray(datum["X"])
+        # `atleast_1d` accommodates the single-covariate case where the
+        # per-observation X leaf is naturally scalar — the matmul below
+        # still needs a 1-D vector.
+        x_i = jnp.atleast_1d(jnp.asarray(datum["X"]))
         y_i = jnp.asarray(datum["y"])
         beta = _coerce_array(params)
         if self._fit_intercept:
