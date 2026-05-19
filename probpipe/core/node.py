@@ -1478,25 +1478,24 @@ class WorkflowFunction(Node):
         if kind is WorkflowKind.FLOW:
             return self._execute_many_prefect_flow(call_value_list)
 
-        if self._parallel is not False:
+        if self._parallel is not False and self._parallel is not None:
             return self._execute_many_threaded(call_value_list)
 
         return [self._func(**v) for v in call_value_list]
 
     def _execute_many_threaded(self, call_value_list: list[dict[str, Any]]) -> list:
-        if self._parallel is True:
-            max_workers = None  # ThreadPoolExecutor default
+        max_workers = None  # ThreadPoolExecutor default for parallel=True
 
-        elif isinstance(self._parallel, int) and not isinstance(self._parallel, bool):
+        if isinstance(self._parallel, int) and not isinstance(self._parallel, bool):
             if self._parallel < 1:
                 raise ValueError(
                     f"self._parallel must be True, False, or a positive int; got {self._parallel!r}"
                 )
             max_workers = self._parallel
 
-        else:
+        elif self._parallel is not True:
             raise TypeError(
-                f"self._parallel must be True, False, or a positive int; got {self._parallel!r}"
+                f"parallel must be True, False, or a positive int; got {self._parallel!r}"
             )
 
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
