@@ -221,9 +221,110 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "No docs/examples notebook or probpipe source changes — skipping notebook CI."
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "Changes detected:"
             echo "$CHANGED"
+
+            cat > /tmp/affected_notebooks.py << 'PYEOF'
+          import ast, json, sys
+          from pathlib import Path
+          from collections import defaultdict
+
+          def file_to_module(p):
+              return str(Path(p).with_suffix('')).replace('/', '.')
+
+          def module_to_file(m):
+              path = m.replace('.', '/')
+              for candidate in [path + '.py', path + '/__init__.py']:
+                  if Path(candidate).exists():
+                      return candidate
+              return None
+
+          rdeps = defaultdict(set)
+          for fpath in Path('probpipe').rglob('*.py'):
+              importer = file_to_module(str(fpath))
+              try:
+                  tree = ast.parse(fpath.read_text())
+              except Exception:
+                  continue
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.ImportFrom):
+                      lvl = node.level or 0
+                      if lvl == 0:
+                          if not node.module or not node.module.startswith('probpipe'):
+                              continue
+                          imported = node.module
+                      else:
+                          parts = importer.split('.')
+                          base = parts[:-lvl] if lvl < len(parts) else []
+                          imported = '.'.join(base + node.module.split('.')) if node.module else '.'.join(base)
+                      rdeps[imported].add(importer)
+                  elif isinstance(node, ast.Import):
+                      for alias in node.names:
+                          if alias.name.startswith('probpipe'):
+                              rdeps[alias.name].add(importer)
+
+          changed_nbs = [f for f in sys.argv[1:] if f.startswith('docs/examples/') and f.endswith('.ipynb') and Path(f).exists()]
+          changed_sources = [f for f in sys.argv[1:] if f.startswith('probpipe/')]
+
+          seen = set(file_to_module(f) for f in changed_sources)
+          queue = list(seen)
+          while queue:
+              m = queue.pop(0)
+              for dep in rdeps.get(m, []):
+                  if dep not in seen:
+                      seen.add(dep)
+                      queue.append(dep)
+          affected_mods = seen
+
+          def notebook_affected(nb_path):
+              nb = json.loads(Path(nb_path).read_text())
+              nb_imports = set()
+              for cell in nb.get('cells', []):
+                  if cell.get('cell_type') != 'code':
+                      continue
+                  source = ''.join(cell.get('source', []))
+                  try:
+                      tree = ast.parse(source)
+                  except SyntaxError:
+                      continue
+                  for node in ast.walk(tree):
+                      if isinstance(node, ast.ImportFrom):
+                          if node.level == 0 and node.module and node.module.startswith('probpipe'):
+                              nb_imports.add(node.module)
+                      elif isinstance(node, ast.Import):
+                          for alias in node.names:
+                              if alias.name.startswith('probpipe'):
+                                  nb_imports.add(alias.name)
+              for imp in nb_imports:
+                  for af_mod in affected_mods:
+                      if af_mod == imp or af_mod.startswith(imp + '.'):
+                          return True
+              return False
+
+          to_run = set(changed_nbs)
+          if affected_mods:
+              for nb_path in sorted(Path('docs/examples').glob('*.ipynb')):
+                  nb_str = str(nb_path)
+                  if nb_str not in to_run and notebook_affected(nb_str):
+                      to_run.add(nb_str)
+
+          for nb in sorted(to_run):
+              print(nb)
+          PYEOF
+
+            NOTEBOOKS=$(python3 /tmp/affected_notebooks.py $CHANGED)
+            echo "Notebooks to run:"
+            echo "$NOTEBOOKS"
+
+            if [ -z "$NOTEBOOKS" ]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "No affected notebooks — skipping notebook CI."
+            else
+              NOTEBOOKS_SPACE=$(echo "$NOTEBOOKS" | tr '\n' ' ' | xargs)
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              echo "notebooks=$NOTEBOOKS_SPACE" >> "$GITHUB_OUTPUT"
+              echo "Will execute: $NOTEBOOKS_SPACE"
+            fi
           fi
 
       - name: Set up Python
@@ -240,11 +341,11 @@ jobs:
           pip install --no-deps sbijax
           pip install blackjax diffrax dm-haiku einops grain jrnmm optax seaborn surjectors tqdm
 
-      - name: Execute every docs/examples notebook
+      - name: Execute affected docs/examples notebooks
         if: steps.nb_check.outputs.skip != 'true'
         run: |
           set -euo pipefail
-          for nb in docs/examples/*.ipynb; do
+          for nb in ${{ steps.nb_check.outputs.notebooks }}; do
             echo "--- executing $nb ---"
             python -m nbconvert --to notebook --execute \
               --ExecutePreprocessor.timeout=900 --output /tmp/out.ipynb "$nb"
