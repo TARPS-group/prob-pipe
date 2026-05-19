@@ -1468,22 +1468,50 @@ class WorkflowFunction(Node):
           - parallel=True/int    → concurrent.futures.ThreadPoolExecutor
           - otherwise            → sequential list comprehension
         """
+        if not call_value_list:
+            return []
+
         kind = self.effective_workflow_kind
-        if kind in (WorkflowKind.TASK, WorkflowKind.FLOW):
-            if kind == WorkflowKind.TASK:
-                return self._execute_many_prefect_task(call_value_list)
+        if kind is WorkflowKind.TASK:
+            return self._execute_many_prefect_task(call_value_list)
+
+        if kind is WorkflowKind.FLOW:
             return self._execute_many_prefect_flow(call_value_list)
-        if self._parallel:
+
+        if self._parallel is not False:
             return self._execute_many_threaded(call_value_list)
+
         return [self._func(**v) for v in call_value_list]
 
     def _execute_many_threaded(self, call_value_list: list[dict[str, Any]]) -> list:
-        max_workers = self._parallel if isinstance(self._parallel, int) else None
+        max_workers = None  # ThreadPoolExecutor default for parallel=True
+
+        if isinstance(self._parallel, int) and not isinstance(self._parallel, bool):
+            if self._parallel < 1:
+                raise ValueError(
+                    f"self._parallel must be True, False, or a positive int; got {self._parallel!r}"
+                )
+            max_workers = self._parallel
+
+        elif self._parallel is not True:
+            raise TypeError(
+                f"parallel must be True, False, or a positive int; got {self._parallel!r}"
+            )
+
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            return list(pool.map(lambda v: self._func(**v), call_value_list))
+            return list(pool.map(lambda kwargs: self._func(**kwargs), call_value_list))
 
     def _map_task(self, call_value_list: list[dict[str, Any]], task_name: str | None = None) -> list:
         """Create a Prefect task wrapping self._func, .map() over all calls, and resolve."""
+        if not call_value_list:
+            return []
+
+        if task is None:
+            raise RuntimeError(
+                "Prefect task execution was requested, but Prefect is not installed. "
+                "Install with: pip install probpipe[prefect]"
+            )
+
         func = self._func
 
         @task(name=task_name or self._name)
@@ -1493,7 +1521,7 @@ class WorkflowFunction(Node):
         keys = call_value_list[0].keys()
         kwargs_by_param = {k: [d[k] for d in call_value_list] for k in keys}
         futures = run_func.map(**kwargs_by_param)
-        return [f.result() for f in futures]
+        return [future.result() for future in futures]
 
     def _execute_many_prefect_task(self, call_value_list: list[dict[str, Any]]) -> list:
         """Use Prefect task.map() inside a lightweight flow.
