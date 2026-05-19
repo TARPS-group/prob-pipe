@@ -1470,17 +1470,17 @@ class WorkflowFunction(Node):
         """
         if not call_value_list:
             return []
-        
+
         kind = self.effective_workflow_kind
         if kind is WorkflowKind.TASK:
             return self._execute_many_prefect_task(call_value_list)
-        
+
         if kind is WorkflowKind.FLOW:
             return self._execute_many_prefect_flow(call_value_list)
-        
+
         if self._parallel is not False:
             return self._execute_many_threaded(call_value_list)
-        
+
         return [self._func(**v) for v in call_value_list]
 
     def _execute_many_threaded(self, call_value_list: list[dict[str, Any]]) -> list:
