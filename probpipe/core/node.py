@@ -1478,7 +1478,7 @@ class WorkflowFunction(Node):
         if kind is WorkflowKind.FLOW:
             return self._execute_many_prefect_flow(call_value_list)
 
-        if self._parallel is not False and self._parallel is not None:
+        if self._parallel is not False:
             return self._execute_many_threaded(call_value_list)
 
         return [self._func(**v) for v in call_value_list]
