@@ -24,9 +24,13 @@ theme:
   features:
     - navigation.sections
     - navigation.expand
+    - navigation.indexes
     - navigation.top
     - search.highlight
     - content.code.copy
+
+hooks:
+  - mkdocs_hooks.py
 
 plugins:
   - search
@@ -40,6 +44,11 @@ plugins:
             show_root_full_path: false
             members_order: source
             merge_init_into_class: true
+            # Render every ``:::`` directive's root heading at h3 by default.
+            # This puts symbol headings one level below manual ``##`` section
+            # headings, so the right-rail TOC indents symbols under their
+            # section header. Class members are then h4, hidden by toc_depth.
+            heading_level: 3
   - mkdocs-jupyter:
       ignore_h1_titles: true
       execute: false
@@ -56,6 +65,10 @@ markdown_extensions:
       generic: true
   - toc:
       permalink: true
+      # Right-rail TOC shows h1, h2 (sections) and h3 (mkdocstrings symbol
+      # root headings). Class methods/properties are rendered at h4 by
+      # mkdocstrings and are excluded by this depth limit.
+      toc_depth: 3
 
 extra_javascript:
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
@@ -65,6 +78,8 @@ nav:
   - Tutorials:
     - Getting Started: tutorials/getting_started.ipynb
     - Flexible Inference with condition_on: tutorials/flexible_inference.ipynb
+  - Orchestration:
+    - Ray via Prefect: orchestration/ray.md
   - Reference Notebooks:
     - Overview: reference_notebooks.md
     - Distribution basics: examples/01_distributions.ipynb
@@ -78,16 +93,21 @@ nav:
     - Bagged posteriors: examples/09_bagged_posteriors.ipynb
     - Random functions and Gaussian emulators: examples/10_random_functions_and_emulators.ipynb
   - API Reference:
+    - Overview: api/index.md
     - Operations: api/operations.md
-    - Protocols: api/protocols.md
-    - Distributions: api/distributions.md
-    - Joint Distributions: api/joint.md
-    - Transformations: api/transformed.md
-    - Workflows: api/workflows.md
-    - Inference: api/inference.md
-    - Validation: api/validation.md
-    - Converters: api/converters.md
+    - Distributions:
+      - api/distributions/index.md
+      - Continuous: api/distributions/continuous.md
+      - Discrete: api/distributions/discrete.md
+      - Multivariate: api/distributions/multivariate.md
+      - Composite and joint: api/distributions/composite.md
+      - Empirical and bootstrap: api/distributions/empirical.md
+      - Random functions: api/distributions/random_functions.md
+    - Records and data: api/records.md
+    - Modeling and inference: api/inference.md
+    - Workflows and orchestration: api/workflows.md
+    - Constraints and bijectors: api/constraints.md
+    - Conversion and interop: api/converters.md
     - Provenance: api/provenance.md
-    - Random Functions: api/random_functions.md
-    - Constraints: api/constraints.md
+    - Extending ProbPipe: api/extending.md
     - Internals: api/internals.md

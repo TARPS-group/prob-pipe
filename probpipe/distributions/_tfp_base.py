@@ -18,6 +18,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._array_utils import _slice_leading_axes
 from ..core._distribution_base import Distribution
+from ..core.constraints import Constraint
 from ..core.distribution import (
     NumericRecordDistribution,
     _mc_expectation,
@@ -29,7 +30,6 @@ from ..core.protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-from ..core.record import Record, RecordTemplate
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 
@@ -161,21 +161,6 @@ class TFPDistribution(
                 f"for the factory."
             )
 
-    # -- record_template auto-generation ------------------------------------
-
-    @property
-    def record_template(self):
-        """Auto-build record_template from name + event_shape when named."""
-        tpl = getattr(self, "_record_template", None)
-        if tpl is not None:
-            return tpl
-        name = getattr(self, "_name", None)
-        if name is not None:
-            tpl = RecordTemplate(**{name: self.event_shape})
-            object.__setattr__(self, "_record_template", tpl)
-            return tpl
-        return None
-
     # -- shape delegation ---------------------------------------------------
 
     @property
@@ -183,16 +168,14 @@ class TFPDistribution(
         return tuple(self._tfp_dist.event_shape)
 
     @property
-    def dtype(self) -> jnp.dtype:
-        return self._tfp_dist.dtype
-
-    @property
     def dtypes(self) -> dict[str, jnp.dtype]:
-        """Per-field dtypes (single field for TFPDistribution)."""
-        tpl = self.record_template
-        if tpl is not None:
-            return {name: self.dtype for name in tpl.fields}
-        return {}
+        """Per-field dtypes — the canonical accessor for
+        ``TFPDistribution``. Reads ``self._tfp_dist.dtype`` and
+        spreads it across every field of the auto-built
+        single-field template. ``dtype`` (the convenience) is
+        inherited from the base and derives from this dict.
+        """
+        return self._per_field_dict(self._tfp_dist.dtype)
 
     @property
     def support(self):
@@ -200,12 +183,11 @@ class TFPDistribution(
         raise NotImplementedError(f"{type(self).__name__}.support")
 
     @property
-    def supports(self) -> dict[str, any]:
-        """Per-field support constraints (single field for TFPDistribution)."""
-        tpl = self.record_template
-        if tpl is not None:
-            return {name: self.support for name in tpl.fields}
-        return {}
+    def supports(self) -> dict[str, Constraint]:
+        """Per-field support constraints — spreads the single-field
+        ``support`` (overridden by each concrete TFP-backed
+        subclass) across the auto-built template."""
+        return self._per_field_dict(self.support)
 
     # -- sampling & density -------------------------------------------------
 

@@ -93,6 +93,7 @@ env.bak/
 venv.bak/
 .venv311
 .venv311.*
+.venv-gpu/
 
 
 # VSCode
@@ -139,3 +140,4 @@ __pycache__/
 *.vscode/.DS_Store
 .DS_Store
 .claude/scheduled_tasks.lock
+.agents

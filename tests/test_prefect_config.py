@@ -3,12 +3,17 @@
 Exercises:
 - WorkflowKind enum values and validation
 - PrefectConfig defaults, setters, reset
-- effective_workflow_kind resolution (per-instance vs global vs auto-detect)
+- effective_workflow_kind resolution (per-instance vs global)
 - Graceful fallback when Prefect is not installed
 - Task runner auto-detection and explicit override
 - Legacy string / None conversion
 - Module inherits global config
+- PROBPIPE_WORKFLOW_KIND environment-variable override
 """
+
+import os
+import sys
+import types
 
 import pytest
 
@@ -17,6 +22,7 @@ from probpipe.core.config import (
     PrefectConfig,
     prefect_config,
     _auto_detect_task_runner,
+    _WORKFLOW_KIND_ENV_VAR,
 )
 
 
@@ -59,20 +65,22 @@ class TestWorkflowKindEnum:
 class TestPrefectConfigDefaults:
     """Verify default values and reset behavior."""
 
-    def test_default_workflow_kind(self):
+    def test_default_workflow_kind(self, monkeypatch):
+        monkeypatch.delenv(_WORKFLOW_KIND_ENV_VAR, raising=False)
         pc = PrefectConfig()
-        assert pc.workflow_kind is WorkflowKind.DEFAULT
+        assert pc.workflow_kind is WorkflowKind.OFF
 
     def test_default_task_runner(self):
         pc = PrefectConfig()
         assert pc.task_runner is None
 
-    def test_reset_restores_defaults(self):
+    def test_reset_restores_defaults(self, monkeypatch):
+        monkeypatch.delenv(_WORKFLOW_KIND_ENV_VAR, raising=False)
         pc = PrefectConfig()
         pc.workflow_kind = WorkflowKind.TASK
         pc.task_runner = "something"
         pc.reset()
-        assert pc.workflow_kind is WorkflowKind.DEFAULT
+        assert pc.workflow_kind is WorkflowKind.OFF
         assert pc.task_runner is None
 
 
@@ -109,6 +117,9 @@ class TestTaskRunnerAutoDetection:
         import builtins
         real_import = builtins.__import__
 
+        monkeypatch.delitem(sys.modules, "prefect_ray", raising=False)
+        monkeypatch.delitem(sys.modules, "prefect_dask", raising=False)
+
         def mock_import(name, *args, **kwargs):
             if name in ("prefect_ray", "prefect_dask"):
                 raise ImportError(f"mocked: {name}")
@@ -116,6 +127,36 @@ class TestTaskRunnerAutoDetection:
 
         monkeypatch.setattr(builtins, "__import__", mock_import)
         assert _auto_detect_task_runner() is None
+
+    def test_returns_ray_runner_when_prefect_ray_installed(self, monkeypatch):
+        class FakeRayTaskRunner:
+            pass
+
+        fake_ray = types.ModuleType("prefect_ray")
+        fake_ray.RayTaskRunner = FakeRayTaskRunner
+        monkeypatch.setitem(sys.modules, "prefect_ray", fake_ray)
+        monkeypatch.delitem(sys.modules, "prefect_dask", raising=False)
+
+        assert isinstance(_auto_detect_task_runner(), FakeRayTaskRunner)
+
+    def test_prefers_ray_runner_over_dask_runner(self, monkeypatch):
+        class FakeRayTaskRunner:
+            pass
+
+        class FakeDaskTaskRunner:
+            pass
+
+        fake_ray = types.ModuleType("prefect_ray")
+        fake_ray.RayTaskRunner = FakeRayTaskRunner
+        fake_dask = types.ModuleType("prefect_dask")
+        fake_dask.DaskTaskRunner = FakeDaskTaskRunner
+
+        monkeypatch.setitem(sys.modules, "prefect_ray", fake_ray)
+        monkeypatch.setitem(sys.modules, "prefect_dask", fake_dask)
+
+        runner = _auto_detect_task_runner()
+        assert isinstance(runner, FakeRayTaskRunner)
+        assert not isinstance(runner, FakeDaskTaskRunner)
 
     def test_explicit_runner_overrides_auto(self):
         pc = PrefectConfig()
@@ -127,6 +168,9 @@ class TestTaskRunnerAutoDetection:
         # When no explicit runner and no runner packages, resolve returns None
         import builtins
         real_import = builtins.__import__
+
+        monkeypatch.delitem(sys.modules, "prefect_ray", raising=False)
+        monkeypatch.delitem(sys.modules, "prefect_dask", raising=False)
 
         def mock_import(name, *args, **kwargs):
             if name in ("prefect_ray", "prefect_dask"):
@@ -146,36 +190,25 @@ class TestEffectiveWorkflowKind:
     """Test the resolution logic on WorkflowFunction instances."""
 
     @pytest.fixture(autouse=True)
-    def _reset_config(self):
-        """Reset global config before and after each test."""
+    def _reset_config(self, monkeypatch):
+        """Reset global config before and after each test.
+
+        The env-var override is unset so ``reset()`` lands at the
+        shipped default of ``OFF``; individual tests that need a
+        different starting state assign to ``prefect_config.workflow_kind``
+        explicitly.
+        """
+        monkeypatch.delenv(_WORKFLOW_KIND_ENV_VAR, raising=False)
         prefect_config.reset()
         yield
         prefect_config.reset()
 
-    def test_default_resolves_to_task_when_prefect_installed(self):
-        """DEFAULT + Prefect installed → TASK."""
-        from probpipe.core.node import WorkflowFunction
+    def test_default_resolves_to_off(self):
+        """DEFAULT global → OFF (Prefect is opt-in, not auto-detected).
 
-        def noop(x):
-            return x
-
-        wf = WorkflowFunction(func=noop, vectorize="loop", seed=0)
-        # Prefect is installed in test env (importorskip at module level
-        # is not used here, but the fixture guarantees config is DEFAULT)
-        kind = wf.effective_workflow_kind
-        # If prefect is importable, should be TASK; if not, OFF
-        import probpipe.core.node as node_mod
-        if node_mod.task is not None:
-            assert kind is WorkflowKind.TASK
-        else:
-            assert kind is WorkflowKind.OFF
-
-    def test_default_resolves_to_off_when_prefect_missing(self, monkeypatch):
-        """DEFAULT + Prefect not installed → OFF (graceful)."""
-        import probpipe.core.node as node_mod
-        monkeypatch.setattr(node_mod, "task", None)
-        monkeypatch.setattr(node_mod, "flow", None)
-
+        The shipped default is OFF regardless of Prefect importability,
+        so this case subsumes the prior `prefect missing` variant.
+        """
         from probpipe.core.node import WorkflowFunction
 
         def noop(x):
@@ -331,7 +364,8 @@ class TestModuleInheritsConfig:
     """Module with DEFAULT propagates global config to children."""
 
     @pytest.fixture(autouse=True)
-    def _reset_config(self):
+    def _reset_config(self, monkeypatch):
+        monkeypatch.delenv(_WORKFLOW_KIND_ENV_VAR, raising=False)
         prefect_config.reset()
         yield
         prefect_config.reset()
@@ -369,3 +403,74 @@ class TestModuleInheritsConfig:
 
         mod = MyModule(workflow_kind="task")
         assert mod.step._workflow_kind_raw is WorkflowKind.TASK
+
+
+# ---------------------------------------------------------------------------
+# PROBPIPE_WORKFLOW_KIND environment variable
+# ---------------------------------------------------------------------------
+
+class TestEnvVarOverride:
+    """The ``PROBPIPE_WORKFLOW_KIND`` env var sets the initial workflow_kind."""
+
+    def test_unset_falls_back_to_off(self, monkeypatch):
+        monkeypatch.delenv(_WORKFLOW_KIND_ENV_VAR, raising=False)
+        pc = PrefectConfig()
+        assert pc.workflow_kind is WorkflowKind.OFF
+
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            ("off", WorkflowKind.OFF),
+            ("task", WorkflowKind.TASK),
+            ("flow", WorkflowKind.FLOW),
+            ("default", WorkflowKind.DEFAULT),
+        ],
+    )
+    def test_valid_value_sets_initial_kind(self, monkeypatch, value, expected):
+        monkeypatch.setenv(_WORKFLOW_KIND_ENV_VAR, value)
+        pc = PrefectConfig()
+        assert pc.workflow_kind is expected
+
+    def test_case_insensitive(self, monkeypatch):
+        monkeypatch.setenv(_WORKFLOW_KIND_ENV_VAR, "TASK")
+        pc = PrefectConfig()
+        assert pc.workflow_kind is WorkflowKind.TASK
+
+    def test_invalid_value_raises(self, monkeypatch):
+        monkeypatch.setenv(_WORKFLOW_KIND_ENV_VAR, "banana")
+        with pytest.raises(ValueError, match="banana"):
+            PrefectConfig()
+
+    def test_invalid_value_fails_at_import(self):
+        """A bad env var should fail loudly at ``import probpipe`` time.
+
+        Uses a subprocess so the module-level singleton instantiation
+        runs under the bad env var (the in-process singleton was already
+        constructed with the current env var when this test suite loaded).
+        """
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [sys.executable, "-c", "import probpipe"],
+            env={**os.environ, _WORKFLOW_KIND_ENV_VAR: "banana"},
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0
+        assert "banana" in result.stderr
+        assert "PROBPIPE_WORKFLOW_KIND" in result.stderr
+
+    def test_explicit_assignment_overrides_env(self, monkeypatch):
+        monkeypatch.setenv(_WORKFLOW_KIND_ENV_VAR, "task")
+        pc = PrefectConfig()
+        assert pc.workflow_kind is WorkflowKind.TASK
+        pc.workflow_kind = WorkflowKind.OFF
+        assert pc.workflow_kind is WorkflowKind.OFF
+
+    def test_reset_re_reads_env(self, monkeypatch):
+        monkeypatch.setenv(_WORKFLOW_KIND_ENV_VAR, "task")
+        pc = PrefectConfig()
+        pc.workflow_kind = WorkflowKind.OFF
+        pc.reset()
+        assert pc.workflow_kind is WorkflowKind.TASK
