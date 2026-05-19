@@ -54,8 +54,8 @@ class LinearLikelihood(Likelihood):
         return jnp.sum(-0.5 * (y - (intercept + slope * x)) ** 2)
 
 prior = ProductDistribution(
-    intercept=Normal(loc=0.0, scale=3.0, name="intercept"),
-    slope=Normal(loc=0.0, scale=3.0, name="slope"),
+    Normal(loc=0.0, scale=3.0, name="intercept"),
+    Normal(loc=0.0, scale=3.0, name="slope"),
 )
 model = SimpleModel(prior, LinearLikelihood())
 
