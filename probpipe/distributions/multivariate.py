@@ -9,7 +9,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ._tfp_base import TFPDistribution
 from .._dtype import _as_float_array, _promote_floats
-from ..core._numeric_record_distribution import FlatNumericRecordDistribution
+from ..core.distribution import FlatNumericRecordDistribution
 from ..core.constraints import (
     Constraint,
     real,
