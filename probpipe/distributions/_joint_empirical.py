@@ -11,10 +11,9 @@ Two concrete classes:
 * :class:`NumericJointEmpirical` — all fields numeric. Additionally
   claims ``SupportsMean`` and ``SupportsVariance``.
 
-Empirical distributions do **not** claim ``SupportsLogProb`` — for a
-density on top of empirical samples, use the converter registry
-(``from_distribution(emp, KDEDistribution, ...)``) or fit a parametric
-distribution.
+For a density on top of empirical samples, use the converter
+registry (``from_distribution(emp, KDEDistribution, ...)``) or fit
+a parametric distribution.
 
 Construct via ``JointEmpirical(...)`` — when every field is a numeric
 array, the class dispatches in ``__new__`` to ``NumericJointEmpirical``
@@ -292,8 +291,7 @@ class NumericJointEmpirical(JointEmpirical, SupportsMean, SupportsVariance):
 
     Subclass of :class:`JointEmpirical` that additionally implements
     :class:`~probpipe.core.protocols.SupportsMean` and
-    :class:`~probpipe.core.protocols.SupportsVariance`. Empirical
-    distributions do **not** claim ``SupportsLogProb`` — for a density
+    :class:`~probpipe.core.protocols.SupportsVariance`. For a density
     on top of empirical samples use the converter registry
     (``from_distribution(emp, KDEDistribution, ...)``) or fit a
     parametric distribution.

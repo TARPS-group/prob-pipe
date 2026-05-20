@@ -369,10 +369,12 @@ class WorkflowFunction(Node):
         The function to wrap.
     workflow_kind : WorkflowKind
         Prefect orchestration mode.  ``DEFAULT`` inherits from
-        ``prefect_config`` (auto-uses Prefect tasks when available).
-        ``TASK`` / ``FLOW`` explicitly request Prefect orchestration.
-        ``OFF`` disables orchestration.  Legacy strings (``"task"``,
-        ``"flow"``) and ``None`` are auto-converted.
+        ``prefect_config.workflow_kind`` (shipped default: ``OFF``;
+        set via the ``PROBPIPE_WORKFLOW_KIND`` environment variable
+        or explicit assignment).  ``TASK`` / ``FLOW`` explicitly
+        request Prefect orchestration.  ``OFF`` disables
+        orchestration.  Legacy strings (``"task"``, ``"flow"``) and
+        ``None`` are auto-converted.
     name : str or None
         Display name; defaults to ``func.__name__``.
     bind : dict or None
@@ -478,8 +480,10 @@ class WorkflowFunction(Node):
 
         1. Per-instance override (anything other than ``DEFAULT``).
         2. Global ``prefect_config.workflow_kind``.
-        3. If global is also ``DEFAULT``, auto-detect: ``TASK`` when
-           Prefect is installed, ``OFF`` otherwise.
+        3. If global is also ``DEFAULT``, fall back to ``OFF``. Prefect
+           orchestration is opt-in: set the global or per-instance
+           ``workflow_kind`` to ``TASK`` / ``FLOW``, or export
+           ``PROBPIPE_WORKFLOW_KIND=task`` in the environment.
 
         If Prefect is not installed but ``TASK`` or ``FLOW`` is requested
         (either per-instance or globally), a warning is emitted and the
@@ -503,10 +507,10 @@ class WorkflowFunction(Node):
         if global_kind is not WorkflowKind.DEFAULT:
             kind = global_kind
         else:
-            # 3. DEFAULT at global level = auto-detect
-            kind = WorkflowKind.TASK if task is not None else WorkflowKind.OFF
+            # 3. DEFAULT at global level = OFF (Prefect is opt-in)
+            kind = WorkflowKind.OFF
 
-        # Graceful fallback: global/auto-detected TASK/FLOW but Prefect missing
+        # Graceful fallback: global TASK/FLOW but Prefect missing
         if kind in (WorkflowKind.TASK, WorkflowKind.FLOW) and task is None:
             return WorkflowKind.OFF
 
@@ -688,11 +692,34 @@ class WorkflowFunction(Node):
 
         for name, value in values.items():
             expected = self._hints.get(name)
-            if expected is None:
-                continue
             # DistributionArray is ``Array[Distribution]`` — handled by
             # the sweep path, not the scalar-distribution conversion.
+            # A 0-d DA (``batch_shape == ()``) has zero axes to sweep
+            # over, so the sweep path would skip it and the op would
+            # see a raw ``DistributionArray`` in a scalar-Distribution
+            # slot. Unwrap it here unless the hint explicitly asks for
+            # a DA (or ``Any``), so the cell flows through dispatch as
+            # any scalar Distribution would — the natural extension of
+            # the sweep convention "no batch cells to iterate → one
+            # call with the cell". Size-1 DAs (``batch_shape == (1,)``)
+            # are *not* collapsed here: their sweep is well-defined
+            # (one cell → ``batch_shape=(1,)`` output), and treating
+            # them as scalars would silently change the result shape
+            # of ``mean(da)`` / ``sample(da)`` for any deliberately
+            # one-element batch.
             if isinstance(value, DistributionArray):
+                if value.batch_shape == ():
+                    try:
+                        wants_da = (
+                            isinstance(expected, type)
+                            and issubclass(expected, DistributionArray)
+                        )
+                    except TypeError:
+                        wants_da = False
+                    if not wants_da and expected is not Any:
+                        out[name] = value._flat_component(0)
+                continue
+            if expected is None:
                 continue
 
             try:
@@ -1441,22 +1468,50 @@ class WorkflowFunction(Node):
           - parallel=True/int    → concurrent.futures.ThreadPoolExecutor
           - otherwise            → sequential list comprehension
         """
+        if not call_value_list:
+            return []
+
         kind = self.effective_workflow_kind
-        if kind in (WorkflowKind.TASK, WorkflowKind.FLOW):
-            if kind == WorkflowKind.TASK:
-                return self._execute_many_prefect_task(call_value_list)
+        if kind is WorkflowKind.TASK:
+            return self._execute_many_prefect_task(call_value_list)
+
+        if kind is WorkflowKind.FLOW:
             return self._execute_many_prefect_flow(call_value_list)
-        if self._parallel:
+
+        if self._parallel is not False:
             return self._execute_many_threaded(call_value_list)
+
         return [self._func(**v) for v in call_value_list]
 
     def _execute_many_threaded(self, call_value_list: list[dict[str, Any]]) -> list:
-        max_workers = self._parallel if isinstance(self._parallel, int) else None
+        max_workers = None  # ThreadPoolExecutor default for parallel=True
+
+        if isinstance(self._parallel, int) and not isinstance(self._parallel, bool):
+            if self._parallel < 1:
+                raise ValueError(
+                    f"self._parallel must be True, False, or a positive int; got {self._parallel!r}"
+                )
+            max_workers = self._parallel
+
+        elif self._parallel is not True:
+            raise TypeError(
+                f"parallel must be True, False, or a positive int; got {self._parallel!r}"
+            )
+
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            return list(pool.map(lambda v: self._func(**v), call_value_list))
+            return list(pool.map(lambda kwargs: self._func(**kwargs), call_value_list))
 
     def _map_task(self, call_value_list: list[dict[str, Any]], task_name: str | None = None) -> list:
         """Create a Prefect task wrapping self._func, .map() over all calls, and resolve."""
+        if not call_value_list:
+            return []
+
+        if task is None:
+            raise RuntimeError(
+                "Prefect task execution was requested, but Prefect is not installed. "
+                "Install with: pip install probpipe[prefect]"
+            )
+
         func = self._func
 
         @task(name=task_name or self._name)
@@ -1466,7 +1521,7 @@ class WorkflowFunction(Node):
         keys = call_value_list[0].keys()
         kwargs_by_param = {k: [d[k] for d in call_value_list] for k in keys}
         futures = run_func.map(**kwargs_by_param)
-        return [f.result() for f in futures]
+        return [future.result() for future in futures]
 
     def _execute_many_prefect_task(self, call_value_list: list[dict[str, Any]]) -> list:
         """Use Prefect task.map() inside a lightweight flow.

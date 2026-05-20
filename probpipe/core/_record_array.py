@@ -136,6 +136,12 @@ class RecordArray(Record):
     # ``__setattr__`` / ``__delattr__`` / ``.name`` / ``.source`` /
     # ``.with_source`` / ``.fields`` are inherited from :class:`Record`.
 
+    def __reduce__(self):
+        return (
+            _unpickle_record_array,
+            (dict(self._store), self._batch_shape, self._template, self._name, self._source),
+        )
+
     # -- Properties ---------------------------------------------------------
 
     @property
@@ -403,6 +409,12 @@ class NumericRecordArray(RecordArray):
             out[name] = jnp.asarray(raw)
         return out
 
+    def __reduce__(self):
+        return (
+            _unpickle_numeric_record_array,
+            (dict(self._store), self._batch_shape, self._template, self._name, self._source),
+        )
+
     # -- Flatten / unflatten ------------------------------------------------
 
     def flatten(self) -> jnp.ndarray:
@@ -667,6 +679,29 @@ class _RecordArrayView(RecordArray):
             f"_RecordArrayView(parent={type(self._parent).__name__}, "
             f"field={self._field!r}, batch_shape={self._batch_shape})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Pickle helpers
+# ---------------------------------------------------------------------------
+
+
+def _unpickle_record_array(
+    store: dict, batch_shape: tuple, template, name: str, source
+) -> RecordArray:
+    ra = RecordArray(store, batch_shape=batch_shape, template=template, name=name)
+    if source is not None:
+        object.__setattr__(ra, "_source", source)
+    return ra
+
+
+def _unpickle_numeric_record_array(
+    store: dict, batch_shape: tuple, template, name: str, source
+) -> NumericRecordArray:
+    nra = NumericRecordArray(store, batch_shape=batch_shape, template=template, name=name)
+    if source is not None:
+        object.__setattr__(nra, "_source", source)
+    return nra
 
 
 # ---------------------------------------------------------------------------

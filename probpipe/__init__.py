@@ -142,6 +142,7 @@ from probpipe.core.protocols import (
     SupportsRandomLogProb,
     SupportsRandomUnnormalizedLogProb,
     SupportsConditioning,
+    SupportsArrayBackend,
 )
 from probpipe.converters import (
     converter_registry,
@@ -262,6 +263,7 @@ __all__ = [
     "SupportsRandomLogProb",
     "SupportsRandomUnnormalizedLogProb",
     "SupportsConditioning",
+    "SupportsArrayBackend",
     # Transition / iteration
     "iterate",
     "with_conversion",

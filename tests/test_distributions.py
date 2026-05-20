@@ -69,7 +69,6 @@ class TestMultivariateNormal:
     def test_construction_with_cov(self, loc, cov_matrix):
         g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")
         assert g.event_shape == (3,)
-        assert g.batch_shape == ()
         assert g.dim == 3
         np.testing.assert_allclose(g.loc, loc, atol=1e-6)
 
@@ -612,9 +611,6 @@ class TestDistributionABC:
         """condition_on() is only on JointDistribution, not NumericRecordDistribution ABC."""
         assert not hasattr(gaussian, "condition_on")
 
-    def test_default_batch_shape(self, gaussian):
-        assert gaussian.batch_shape == ()
-
     def test_default_dtype(self, gaussian, loc):
         assert gaussian.dtype == loc.dtype
 
@@ -718,11 +714,11 @@ class TestTFPDistribution:
 
 class TestShapeSemantics:
     def test_sample_shape_convention(self, gaussian, key):
-        """sample(key, sample_shape) → sample_shape + batch_shape + event_shape"""
+        """sample(key, sample_shape) → sample_shape + event_shape"""
         s = sample(gaussian, key=key, sample_shape=(4, 2))
         assert s.shape == (4, 2, 3)
 
-    def test_log_prob_batch_shape(self, gaussian, key):
+    def test_log_prob_sample_shape(self, gaussian, key):
         s = sample(gaussian, key=key, sample_shape=(4, 2))
         lp = log_prob(gaussian, s)
         assert lp.shape == (4, 2)
@@ -747,36 +743,49 @@ class TestShapeSemantics:
 class TestDistributionCoverageGaps:
     """Cover otherwise-uncovered defaults and helpers in core.distribution."""
 
-    def test_batch_shape_default(self):
-        """NumericRecordDistribution.batch_shape defaults to ()."""
+    def test_auto_template_from_name_and_event_shape(self):
+        """``NumericRecordDistribution`` auto-builds a single-field
+        ``RecordTemplate`` from ``name`` + ``event_shape``, so every
+        concrete subclass has a non-None template without per-subclass
+        boilerplate. ``dtypes`` is canonical (subclass must override);
+        ``dtype`` derives from it.
+        """
         class Scalar(NumericRecordDistribution):
             @property
             def event_shape(self):
                 return ()
 
-        assert Scalar(name="s").batch_shape == ()
+            @property
+            def dtypes(self):
+                return {name: jnp.float32 for name in self.record_template.fields}
 
-    def test_dtype_none_without_template(self):
-        """NumericRecordDistribution.dtype is None when no template is set."""
+        s = Scalar(name="s")
+        assert s.record_template is not None
+        assert s.record_template.fields == ("s",)
+        assert s.dtypes == {"s": jnp.float32}
+        # ``dtype`` derives from ``dtypes`` (unique value → that dtype).
+        assert s.dtype == jnp.float32
+
+    def test_dtypes_raises_when_not_overridden(self):
+        """``NumericRecordDistribution.dtypes`` is canonical: subclasses
+        must override. The default raises ``NotImplementedError`` rather
+        than returning a silent default-float for every field (which
+        would lie for integer-valued distributions like ``Bernoulli``).
+        """
         class Scalar(NumericRecordDistribution):
             @property
             def event_shape(self):
                 return ()
 
-        assert Scalar(name="s").dtype is None
+        s = Scalar(name="s")
+        with pytest.raises(NotImplementedError, match="Scalar.dtypes"):
+            _ = s.dtypes
 
     def test_dtype_uniform_with_template(self):
         """NumericRecordDistribution.dtype is the common dtype when all fields match."""
         from probpipe import Normal
         n = Normal(loc=0.0, scale=1.0, name="x")
         assert n.dtype == n._tfp_dist.dtype
-
-    def test_repr_with_batch_shape(self):
-        """TFPDistribution repr includes batch_shape when non-trivial."""
-        from probpipe import Normal
-
-        d = Normal(loc=jnp.array([0.0, 1.0]), scale=jnp.array([1.0, 1.0]), name="x")
-        assert "batch_shape" in repr(d)
 
     def test_array_empirical_dtype(self):
         """RecordEmpiricalDistribution.dtype returns sample dtype."""

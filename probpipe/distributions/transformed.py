@@ -228,16 +228,16 @@ class TransformedDistribution(NumericRecordDistribution):
         )
 
     @property
-    def batch_shape(self) -> tuple[int, ...]:
+    def dtypes(self) -> dict[str, jnp.dtype]:
+        """Per-field dtype — derived from the transformed TFP
+        distribution when available, falling back to the base
+        distribution's dtype. Spread across the auto-built
+        single-field template."""
         if self._tfp_transformed is not None:
-            return tuple(self._tfp_transformed.batch_shape)
-        return self._base.batch_shape
-
-    @property
-    def dtype(self) -> jnp.dtype:
-        if self._tfp_transformed is not None:
-            return self._tfp_transformed.dtype
-        return self._base.dtype
+            out_dtype = self._tfp_transformed.dtype
+        else:
+            out_dtype = self._base.dtype
+        return self._per_field_dict(out_dtype)
 
     # -- support ------------------------------------------------------------
 

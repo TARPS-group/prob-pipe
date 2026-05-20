@@ -231,6 +231,9 @@ class Record:
     def __delattr__(self, name: str) -> None:
         raise AttributeError("Record is immutable")
 
+    def __reduce__(self):
+        return (_unpickle_record, (dict(self._store), self._name, self._source))
+
     # -- Field access -------------------------------------------------------
 
     def __getitem__(self, key: str | tuple[str, ...]) -> _FieldValue:
@@ -692,6 +695,9 @@ class RecordTemplate:
     def __delattr__(self, name: str) -> None:
         raise AttributeError("RecordTemplate is immutable")
 
+    def __reduce__(self):
+        return (_unpickle_record_template, (dict(self._specs),))
+
     # -- Field access -------------------------------------------------------
 
     @property
@@ -935,6 +941,22 @@ def _spec_size(spec: _FieldSpec) -> int:
         )
     from .._utils import prod
     return prod(spec) if spec else 1
+
+
+# ---------------------------------------------------------------------------
+# Pickle helpers
+# ---------------------------------------------------------------------------
+
+
+def _unpickle_record(store: dict, name: str, source) -> Record:
+    r = Record(name=name, **store)
+    if source is not None:
+        object.__setattr__(r, "_source", source)
+    return r
+
+
+def _unpickle_record_template(specs: dict) -> RecordTemplate:
+    return RecordTemplate(specs)
 
 
 # ---------------------------------------------------------------------------

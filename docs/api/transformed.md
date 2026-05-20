@@ -1,3 +1,0 @@
-# Transformed Distributions
-
-::: probpipe.TransformedDistribution

@@ -374,3 +374,38 @@ def _ensure_batch_matrix(x: ArrayLike, num_rows: int | None = None, num_cols: in
         raise ValueError(f"_ensure_batch_matrix: Required {num_cols} rows. Got {arr.shape[2]}.")
 
     return arr.copy() if copy else arr
+
+def _slice_leading_axes(value: Any, multi_index: tuple[int, ...]) -> Any:
+    """Index the leading ``len(multi_index)`` axes of ``value`` at the given
+    multi-d index. Scalars and lower-rank values pass through unchanged.
+
+    Used by ``DistributionArray.from_batched_params`` (literal-array
+    fallback) and by ``_TFPArrayBackend.cell`` to slice batched
+    parameter arrays per cell. The trailing event axes (if any) are
+    preserved in the slice — for ``MultivariateNormal`` with ``loc``
+    of shape ``(batch, d)`` and ``multi_index=(i,)``, returns
+    ``loc[i]`` of shape ``(d,)``.
+
+    Parameters
+    ----------
+    value : Any
+        Either a scalar / 0-D-or-lower-rank JAX-array (broadcast
+        across every cell) or an array whose leading
+        ``len(multi_index)`` axes match the batch shape.
+    multi_index : tuple of int
+        Per-axis position to extract. Empty tuple is a no-op.
+
+    Returns
+    -------
+    Any
+        The value indexed at ``multi_index`` along its leading axes,
+        or the original ``value`` unchanged when it has lower rank
+        than ``len(multi_index)`` (i.e., it broadcasts across the
+        batch).
+    """
+    if not multi_index:
+        return value
+    arr = jnp.asarray(value)
+    if arr.ndim < len(multi_index):
+        return value
+    return arr[multi_index]

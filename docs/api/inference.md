@@ -1,75 +1,74 @@
-# Inference
+# Modeling and inference
 
-## Modeling
+Models, likelihoods, inference methods, iterative transformations, and
+predictive checks. Registering a new inference method is documented under
+[Extending ProbPipe → Custom inference methods](extending.md#custom-inference-methods).
 
-::: probpipe.modeling.Likelihood
+## Models
 
-::: probpipe.modeling.GenerativeLikelihood
+::: probpipe.ProbabilisticModel
 
-::: probpipe.modeling.IncrementalConditioner
+::: probpipe.SimpleModel
 
-## Probabilistic Models
+::: probpipe.SimpleGenerativeModel
 
-::: probpipe.modeling.ProbabilisticModel
+## Likelihoods
 
-::: probpipe.modeling.SimpleModel
+::: probpipe.Likelihood
 
-## Inference Method Registry
+::: probpipe.GenerativeLikelihood
 
-The **inference method registry** is the dispatch system behind
-[`condition_on()`](operations.md#conditioning).  When you call
-`condition_on(model, data)`, the registry auto-selects the highest-priority
-feasible method.  Pass `method="tfp_nuts"` (or any registered name) to
-override.
+::: probpipe.GLMLikelihood
 
-```python
-from probpipe import condition_on
-from probpipe.inference import inference_method_registry
+::: probpipe.IncrementalConditioner
 
-# Auto-select best method
-posterior = condition_on(model, data, num_results=1000)
+## Inference methods
 
-# Override with a specific method
-posterior = condition_on(model, data, method="tfp_rwmh", num_results=1000)
+[`condition_on`](operations.md#conditioning) dispatches through the
+inference-method registry: methods are tried in descending priority order
+and the first whose `check()` returns `feasible=True` runs. Pass
+`method="<name>"` to override the auto-selection;
+`inference_method_registry.set_priorities(...)` reorders the table at
+runtime.
 
-# List available methods (highest priority first)
-inference_method_registry.list_methods()
-
-# Adjust priority so RWMH is tried before NUTS
-inference_method_registry.set_priorities(tfp_rwmh=200, tfp_nuts=50)
-```
-
-### Built-in methods
+**Built-in methods:**
 
 | Name | Priority | Requires | Backend |
 |------|----------|----------|---------|
 | `tfp_nuts` | 100 | `SupportsLogProb` + JAX-traceable | TFP |
 | `tfp_hmc` | 90 | `SupportsLogProb` + JAX-traceable | TFP |
-| `nutpie_nuts` | 80 | StanModel or PyMCModel + nutpie | nutpie |
-| `cmdstan_nuts` | 70 | StanModel + cmdstanpy | CmdStan |
-| `pymc_nuts` | 60 | PyMCModel + pymc | PyMC |
+| `nutpie_nuts` | 80 | `StanModel` or `PyMCModel` + nutpie | nutpie |
+| `cmdstan_nuts` | 70 | `StanModel` + cmdstanpy | CmdStan |
+| `pymc_nuts` | 60 | `PyMCModel` + pymc | PyMC |
 | `tfp_rwmh` | 50 | `SupportsLogProb` | TFP |
-| `pymc_advi` | 35 | PyMCModel + pymc | PyMC |
+| `sbijax_smcabc` | 40 | `SimpleGenerativeModel` + sbijax | sbijax |
+| `pymc_advi` | 35 | `PyMCModel` + pymc | PyMC |
 
-::: probpipe.core._registry.MethodRegistry
+::: probpipe.ApproximateDistribution
+
+::: probpipe.rwmh
+
+::: probpipe.condition_on_nutpie
+
+::: probpipe.sbi_learn_conditional
+
+::: probpipe.sbi_learn_likelihood
+
+::: probpipe.inference_method_registry
     options:
       show_root_heading: true
-      heading_level: 3
 
-::: probpipe.core._registry.Method
-    options:
-      show_root_heading: true
-      heading_level: 3
+## Iterative transformations
 
-::: probpipe.core._registry.MethodInfo
-    options:
-      show_root_heading: true
-      heading_level: 3
+Step functions folded over inputs by `iterate`, with `with_conversion` and
+`with_resampling` as step-function wrappers.
 
-## MCMC
+::: probpipe.iterate
 
-::: probpipe.inference.ApproximateDistribution
+::: probpipe.with_conversion
 
-::: probpipe.inference.rwmh
+::: probpipe.with_resampling
 
-::: probpipe.inference.condition_on_nutpie
+## Predictive checks
+
+::: probpipe.predictive_check
