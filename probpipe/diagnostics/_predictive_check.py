@@ -98,7 +98,7 @@ def predictive_check[P, D](
     # -- Unwrap NumericRecord if the node system resolved the distribution --
     if isinstance(distribution, NumericRecord):
         distribution = RecordEmpiricalDistribution(
-            distribution,  # NumericRecord is a Record subclass — accepted directly
+            distribution.values,
             name=getattr(distribution, "name", "posterior"),
         )
     

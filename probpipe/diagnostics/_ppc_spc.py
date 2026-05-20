@@ -19,6 +19,7 @@ from typing import Callable, Sequence
 import numpy as np
 
 from ..core.node import workflow_function
+from ..core.distribution import Distribution
 from ..custom_types import PRNGKey
 from ..validation._predictive_check import predictive_check
 from ._utils import _resolve_generative_likelihood
@@ -28,7 +29,7 @@ __all__ = ["run_ppc", "run_spc"]
 
 @workflow_function
 def run_ppc(
-    distribution,
+    distribution: Distribution,
     test_fns: Callable | Sequence[Callable],
     observed_data=None,
     *,

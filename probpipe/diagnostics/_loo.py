@@ -22,7 +22,8 @@ from typing import Any
 import numpy as np
 
 from ..core.node import workflow_function
-from ._arviz_bridge import check_arviz_installed
+from ..core.distribution import Distribution
+from ._arviz_bridge import check_arviz_installed, to_arviz_dataset
 
 __all__ = ["loo", "compare_loo"]
 
@@ -122,7 +123,7 @@ def _build_loo_warnings(pareto_k: np.ndarray) -> list[str]:
 
 @workflow_function
 def loo(
-    posterior: Any,
+    posterior: Distribution,
     log_likelihood: Any,
     *,
     var_name: str = "obs",
@@ -211,14 +212,25 @@ def loo(
     import arviz as az
 
     log_lik_ds = _to_log_likelihood_dataset(log_likelihood, var_name=var_name)
-    loo_result = az.loo(log_lik_ds, var_name=var_name, pointwise=True)
+    # az.loo requires an InferenceData object with a log_likelihood group,
+    # not a raw xr.Dataset — wrap it before passing.
+    # az.loo 0.18+ requires both posterior and log_likelihood groups.
+    # Build a minimal posterior from the stored chains so ArviZ is satisfied.
+    posterior_ds = to_arviz_dataset(posterior)
+    posterior_arrays = {v: posterior_ds[v].values for v in posterior_ds.data_vars}
+    idata = az.from_dict(
+        posterior=posterior_arrays,
+        log_likelihood={var_name: log_lik_ds[var_name].values},
+    )
+    loo_result = az.loo(idata, var_name=var_name, pointwise=True)
 
     pareto_k_vals = np.asarray(loo_result.pareto_k)
 
+    elpd_loo = float(loo_result.elpd_loo)
     result: dict = {
-        "elpd_loo": float(loo_result.elpd_loo),
+        "elpd_loo": elpd_loo,
         "p_loo":    float(loo_result.p_loo),
-        "looic":    float(loo_result.looic),
+        "looic":    -2.0 * elpd_loo,           # ArviZ 0.18+ dropped .looic
         "se":       float(loo_result.se),
         "pareto_k": _pareto_k_summary(pareto_k_vals),
         "warnings": _build_loo_warnings(pareto_k_vals),
@@ -237,7 +249,7 @@ def loo(
 
 @workflow_function
 def compare_loo(
-    posteriors: dict[str, Any],
+    posteriors: dict[str, Distribution],
     log_likelihoods: dict[str, Any],
     *,
     var_name: str = "obs",

@@ -48,6 +48,19 @@ def _axes_to_fig(axes):
     return flat[0].get_figure()
 
 
+def _scalar(da) -> float:
+    """Extract a Python float from an ArviZ diagnostic DataArray.
+
+    ArviZ returns per-variable diagnostics as DataArrays. When the
+    posterior variable was stored with a trailing event dimension (e.g.
+    shape ``(chain, draw, 1)`` for a scalar parameter), the diagnostic
+    result has shape ``(1,)`` rather than ``()``. Squeezing first
+    handles both cases uniformly.
+    """
+    import numpy as np
+    return float(np.asarray(da, dtype=float).squeeze().item())
+
+
 # ── compute_rhat ──────────────────────────────────────────────────────────────
 
 def _compute_rhat_impl(posterior: Distribution) -> dict:
@@ -88,7 +101,7 @@ def _compute_rhat_impl(posterior: Distribution) -> dict:
     rhat_ds = az.rhat(dataset)
     return {
         "rhat": {
-            var: float(rhat_ds[var].values)
+            var: _scalar(rhat_ds[var])
             for var in rhat_ds.data_vars
         }
     }
@@ -130,8 +143,8 @@ def _compute_ess_impl(posterior: Distribution) -> dict:
     ess_tail = az.ess(dataset, method="tail")
 
     return {
-        "ess_bulk": {v: float(ess_bulk[v].values) for v in ess_bulk.data_vars},
-        "ess_tail": {v: float(ess_tail[v].values) for v in ess_tail.data_vars},
+        "ess_bulk": {v: _scalar(ess_bulk[v]) for v in ess_bulk.data_vars},
+        "ess_tail": {v: _scalar(ess_tail[v]) for v in ess_tail.data_vars},
     }
 
 
@@ -168,8 +181,8 @@ def _compute_mcse_impl(posterior: Distribution) -> dict:
     mcse_sd   = az.mcse(dataset, method="sd")
 
     return {
-        "mcse_mean": {v: float(mcse_mean[v].values) for v in mcse_mean.data_vars},
-        "mcse_sd":   {v: float(mcse_sd[v].values)   for v in mcse_sd.data_vars},
+        "mcse_mean": {v: _scalar(mcse_mean[v]) for v in mcse_mean.data_vars},
+        "mcse_sd":   {v: _scalar(mcse_sd[v])   for v in mcse_sd.data_vars},
     }
 
 
@@ -220,11 +233,11 @@ def _mcmc_summary_impl(posterior: Distribution) -> dict:
     mcse_mean = az.mcse(dataset, method="mean")
     mcse_sd   = az.mcse(dataset, method="sd")
 
-    rhat   = {v: float(rhat_ds[v].values)   for v in rhat_ds.data_vars}
-    bulk   = {v: float(ess_bulk[v].values)   for v in ess_bulk.data_vars}
-    tail   = {v: float(ess_tail[v].values)   for v in ess_tail.data_vars}
-    m_mean = {v: float(mcse_mean[v].values)  for v in mcse_mean.data_vars}
-    m_sd   = {v: float(mcse_sd[v].values)    for v in mcse_sd.data_vars}
+    rhat   = {v: _scalar(rhat_ds[v])   for v in rhat_ds.data_vars}
+    bulk   = {v: _scalar(ess_bulk[v])   for v in ess_bulk.data_vars}
+    tail   = {v: _scalar(ess_tail[v])   for v in ess_tail.data_vars}
+    m_mean = {v: _scalar(mcse_mean[v])  for v in mcse_mean.data_vars}
+    m_sd   = {v: _scalar(mcse_sd[v])    for v in mcse_sd.data_vars}
 
     return {
         "rhat":      rhat,
