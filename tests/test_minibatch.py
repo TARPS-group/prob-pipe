@@ -25,6 +25,7 @@ from probpipe import (
     random_unnormalized_log_prob,
     sample,
 )
+from probpipe.core._distribution_base import Distribution
 from probpipe.core._random_functions import RandomFunction
 from probpipe.core._random_measures import RandomMeasure
 from probpipe.core.protocols import (
@@ -205,7 +206,6 @@ class TestSampling:
         in the standard WorkflowFunction Record envelope but still produces
         a Distribution-valued result (the random measure draws distributions,
         not arrays)."""
-        from probpipe.core._distribution_base import Distribution
         result = sample(measure, key=jax.random.PRNGKey(0))
         # The WF output coercion lands a Distribution inside a single-field
         # Record; either form should resolve to a Distribution we can probe.
@@ -345,6 +345,45 @@ class TestSampling:
 
         actual = inner._unnormalized_log_prob(theta)
         np.testing.assert_allclose(float(actual), float(full), rtol=1e-5)
+
+
+# -- Bare-array data path -----------------------------------------------------
+
+
+class TestBareArrayData:
+    """Bare ``jnp.ndarray`` data works through the explicit-callable path.
+
+    The canonical container is ``Record`` / ``RecordArray`` (so
+    covariates have named-field provenance), but ``_data_size`` also
+    accepts an array with a leading axis. This locks in the fallback
+    for response-only data with a custom per-datum likelihood.
+    """
+
+    def test_bare_array_data_evaluates(self, regression_data):
+        X, y = regression_data
+        N = y.shape[0]
+        prior = MultivariateNormal(
+            loc=jnp.zeros(2), cov=jnp.eye(2), name="theta",
+        )
+
+        class _ResponseOnlyLikelihood:
+            """Toy likelihood; -0.5 * Σ y_i² ignores params."""
+            def log_likelihood(self, params, data):
+                return -0.5 * jnp.sum(jnp.asarray(data) ** 2)
+
+        def per_datum(params, datum):
+            return -0.5 * jnp.asarray(datum) ** 2
+
+        model = SimpleModel(prior=prior, likelihood=_ResponseOnlyLikelihood())
+        m = MinibatchedDistribution(
+            model, y, batch_size=20,
+            per_datum_log_likelihood=per_datum,
+        )
+        assert m.dataset_size == N
+
+        theta = jnp.zeros(2)
+        lp = m._draw_one(jax.random.PRNGKey(0))._unnormalized_log_prob(theta)
+        assert jnp.isfinite(lp)
 
 
 # -- Mathematical correctness --------------------------------------------------

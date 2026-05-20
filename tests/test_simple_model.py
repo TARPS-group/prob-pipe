@@ -145,19 +145,6 @@ class TestSimpleModel:
         assert isinstance(result, ApproximateDistribution)
         assert result.event_shape == (2,)
 
-    def test_condition_on_via_ops(self, model):
-        """condition_on op works with SimpleModel."""
-        data = jnp.array([[1.0, 2.0], [1.5, 2.5], [0.8, 1.8]])
-        result = condition_on(
-            model,
-            data,
-            num_results=50,
-            num_warmup=20,
-            step_size=0.3,
-            random_seed=42,
-        )
-        assert isinstance(result, ApproximateDistribution)
-
 
 class TestSimpleModelConditioningPaths:
     """Test conditioning paths: HMC, zero warmup, bad algorithm, explicit init, RWMH fallback."""

@@ -7,6 +7,7 @@ import pytest
 
 pm = pytest.importorskip("pymc")
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from unittest.mock import MagicMock, patch
@@ -73,13 +74,11 @@ class TestPyMCModel:
         assert model.event_shape == (2,)
 
     def test_sample_scalar(self, model):
-        import jax
         key = jax.random.PRNGKey(0)
         s = model._sample(key, sample_shape=())
         assert s.shape == (2,)  # 2 scalar params
 
     def test_sample_batched(self, model):
-        import jax
         key = jax.random.PRNGKey(0)
         s = model._sample(key, sample_shape=(5,))
         assert s.shape == (5, 2)
