@@ -47,7 +47,7 @@ from ._rwmh import TFPRWMHMethod
 
 inference_method_registry.register(TFPRWMHMethod())
 
-# BlackJAX SGMCMC (blackjax is a core dependency)
+# BlackJAX SGMCMC
 from ._blackjax_sgmcmc import BlackJAXSGLDMethod, BlackJAXSGHMCMethod
 
 inference_method_registry.register(BlackJAXSGLDMethod())
