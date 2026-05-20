@@ -44,18 +44,25 @@ class Likelihood[P, D](Protocol):
 
 @runtime_checkable
 class ConditionallyIndependentLikelihood[P, D](Likelihood[P, D], Protocol):
-    """Likelihood whose observations factorise across observations.
+    """Likelihood whose observations are conditionally independent given
+    the parameters.
 
-    Formally, a ``ConditionallyIndependentLikelihood`` represents
+    Formally, for observations ``y_1, ..., y_N`` the joint log-density
+    factorises into a sum of per-observation log-densities:
 
     .. math::
 
-        \\log p(D \\mid \\theta) = \\sum_i \\log p(d_i \\mid \\theta).
+        \\log p(y_1, \\ldots, y_N \\mid \\theta)
+            = \\sum_{i=1}^N \\log p(y_i \\mid \\theta).
 
-    "Conditionally independent" rather than "i.i.d.": each datum
-    ``d_i`` may carry covariates (e.g. ``d_i = (x_i, y_i)`` for
-    regression), so per-datum density varies with the input but the
-    factorisation across ``i`` still holds.
+    The "conditionally" refers to the conditioning on the parameters
+    ``θ``: the ``y_i`` are independent *given* ``θ``, not marginally.
+    For regression-style likelihoods each datum carries a covariate
+    ``x_i`` that the per-observation density depends on; the
+    factorisation then reads ``Σ_i log p(y_i | x_i, θ)``, with the
+    covariates treated as fixed inputs rather than random variables.
+    This is the "conditionally independent" case rather than the
+    stricter "i.i.d." (where every ``p(y_i | θ)`` is the same density).
 
     Required by :class:`~probpipe.MinibatchedDistribution` for
     stochastic-gradient inference, and useful independently for

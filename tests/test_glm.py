@@ -75,30 +75,25 @@ class TestGLMLikelihood:
         np.testing.assert_allclose(ll, expected, rtol=1e-5)
 
     def test_poisson_generate_data_moments(self):
-        """Sample mean must approximate exp(intercept) for constant-rate Poisson."""
+        """Sample mean must approximate exp(intercept) for constant-rate Poisson.
+
+        For 2000 i.i.d. Poisson(0.5) draws, SE of the sample mean is
+        ``sqrt(0.5 / 2000) ≈ 0.016``; ``atol=0.05`` is ~3 SE — tight
+        enough to catch a ~10% rate error, loose enough not to flake.
+        """
         n = 2000
         X = np.asarray(np.zeros(n))[:, None].astype(float)
         lik = GLMLikelihood(tfp_glm.Poisson(), X, seed=7)
         params = jnp.array([0.5, 0.0])  # constant rate = exp(0.5)
         expected_rate = np.exp(0.5)
         y = np.asarray(lik.generate_data(params, n))
-        np.testing.assert_allclose(float(y.mean()), expected_rate, atol=0.15)
+        np.testing.assert_allclose(float(y.mean()), expected_rate, atol=0.05)
 
-    def test_generate_data_shape(self, poisson_lik):
+    @pytest.mark.parametrize("n", [10, 20])
+    def test_generate_data_shape(self, poisson_lik, n):
         params = jnp.array([1.0, 0.5])
-        y = poisson_lik.generate_data(params, 20)
-        assert y.shape == (20,)
-
-    def test_generate_data_different_n(self, poisson_lik):
-        params = jnp.array([1.0, 0.5])
-        y = poisson_lik.generate_data(params, 10)
-        assert y.shape == (10,)
-
-    def test_bernoulli_log_likelihood(self, bernoulli_lik):
-        params = jnp.array([0.0, 1.0])
-        data = jnp.ones(30, dtype=float)
-        ll = bernoulli_lik.log_likelihood(params, data)
-        assert jnp.isfinite(ll)
+        y = poisson_lik.generate_data(params, n)
+        assert y.shape == (n,)
 
     def test_bernoulli_generate_data(self, bernoulli_lik):
         params = jnp.array([0.0, 1.0])
@@ -106,13 +101,45 @@ class TestGLMLikelihood:
         assert y.shape == (30,)
 
     def test_1d_covariate(self):
-        """1-D x should be handled (transposed to column vector)."""
+        """1-D x is treated as a single-column design matrix.
+
+        Behavioral check: ``log_likelihood`` and ``per_datum_log_likelihood``
+        both work on a 1-D covariate input. The reshape that would
+        otherwise need a private-attribute assertion (``lik._x.shape ==
+        (15, 1)``) is verified indirectly via these public-surface
+        evaluations.
+        """
         x = np.linspace(-1, 1, 15).astype(float)
         lik = GLMLikelihood(tfp_glm.Poisson(), x)
-        assert lik._x.shape == (15, 1)
-        params = jnp.array([0.0, 0.5])  # (intercept, slope) under fit_intercept=True default
+        params = jnp.array([0.0, 0.5])  # (intercept, slope) under fit_intercept=True
         ll = lik.log_likelihood(params, jnp.ones(15))
         assert jnp.isfinite(ll)
+        # Per-datum path with 1-D covariate.
+        p_lp = lik.per_datum_log_likelihood(
+            params, Record(X=jnp.asarray(x[0]), y=jnp.array(1.0)),
+        )
+        assert jnp.isfinite(p_lp)
+
+    def test_fit_intercept_false_matches_scipy(self):
+        """``fit_intercept=False`` ⇒ eta = X @ params (no intercept term).
+
+        Independent baseline: scipy.stats.poisson.logpmf with rates
+        ``exp(X @ params)``. Locks in the no-intercept branch of
+        ``_linear_predictor`` against a regression in the intercept-skip
+        path.
+        """
+        X = np.asarray(np.linspace(-1, 1, 20))[:, None].astype(float)
+        lik = GLMLikelihood(tfp_glm.Poisson(), X, fit_intercept=False)
+        params = jnp.array([0.7])  # one slope, no intercept
+        data = jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1,
+                          0, 2, 6, 1, 3, 2, 0, 4, 1, 3], dtype=float)
+        ll = float(lik.log_likelihood(params, data))
+
+        params_np = np.asarray(params)
+        eta = (X @ params_np).reshape(-1)  # no intercept
+        rates = np.exp(eta)
+        expected = scipy.stats.poisson.logpmf(np.asarray(data), rates).sum()
+        np.testing.assert_allclose(ll, expected, rtol=1e-5)
 
     def test_negbin(self):
         X = np.asarray(np.linspace(-1, 1, 20))[:, None].astype(float)

@@ -64,18 +64,49 @@ def bernoulli_glm():
     return GLMLikelihood(tfp_glm.Bernoulli(), x=X), X
 
 
+_BERNOULLI_X = jnp.array([
+    [0.0, 0.0],
+    [1.0, 0.0],
+    [0.0, 1.0],
+    [1.0, 1.0],
+    [0.5, 0.5],
+])
+_NORMAL_X = jnp.array([
+    [0.5],
+    [-0.5],
+    [1.0],
+])
+
+_PER_DATUM_CASES = [
+    # (id, family_factory, X, params (intercept, *slopes), y)
+    ("bernoulli", tfp_glm.Bernoulli, _BERNOULLI_X,
+     jnp.array([0.5, -0.5, 0.25]),
+     jnp.array([1.0, 0.0, 1.0, 1.0, 0.0])),
+    ("normal", tfp_glm.Normal, _NORMAL_X,
+     jnp.array([0.0, 1.0]),
+     jnp.array([0.6, -0.4, 1.1])),
+]
+
+
 class TestGLMLikelihood:
     def test_satisfies_protocol(self, bernoulli_glm):
         glm, _ = bernoulli_glm
         assert isinstance(glm, ConditionallyIndependentLikelihood)
         assert isinstance(glm, Likelihood)
 
-    def test_per_datum_sums_to_log_likelihood(self, bernoulli_glm):
-        """Summing per_datum_log_likelihood across rows equals log_likelihood."""
-        glm, X = bernoulli_glm
-        params = jnp.array([0.5, -0.5, 0.25])
-        y = jnp.array([1.0, 0.0, 1.0, 1.0, 0.0])
+    @pytest.mark.parametrize(
+        "family_factory,X,params,y",
+        [(c[1], c[2], c[3], c[4]) for c in _PER_DATUM_CASES],
+        ids=[c[0] for c in _PER_DATUM_CASES],
+    )
+    def test_per_datum_sums_to_log_likelihood(self, family_factory, X, params, y):
+        """Summing per_datum across rows reconstructs log_likelihood.
 
+        Parametrised over the GLM families with distinct internal paths
+        (Bernoulli's sigmoid link vs. Normal's identity link); the
+        factorisation identity should hold for any family.
+        """
+        glm = GLMLikelihood(family_factory(), x=X)
         full = glm.log_likelihood(params, y)
         per_row = jnp.stack([
             glm.per_datum_log_likelihood(
@@ -92,31 +123,6 @@ class TestGLMLikelihood:
         params = jnp.array([0.5, -0.5, 0.25])
         with pytest.raises(TypeError, match="Record"):
             glm.per_datum_log_likelihood(params, jnp.array([0.0, 0.0, 1.0]))
-
-    def test_per_datum_with_normal_family(self):
-        """A continuous-response GLM exercises ``family.log_prob`` on a
-        scalar response, a different family path from Bernoulli's
-        sigmoid-of-eta logic.
-        """
-        # X is one covariate; intercept is added internally by GLMLikelihood
-        # (fit_intercept=True default).
-        X = jnp.array([
-            [0.5],
-            [-0.5],
-            [1.0],
-        ])
-        glm = GLMLikelihood(tfp_glm.Normal(), x=X)
-        params = jnp.array([0.0, 1.0])  # (intercept, slope)
-        y = jnp.array([0.6, -0.4, 1.1])
-
-        full = glm.log_likelihood(params, y)
-        per_row = jnp.stack([
-            glm.per_datum_log_likelihood(
-                params, Record(X=X[i], y=y[i]),
-            )
-            for i in range(X.shape[0])
-        ])
-        np.testing.assert_allclose(float(full), float(jnp.sum(per_row)), rtol=1e-5)
 
 
 # -- Optional sbijax-backed likelihoods ----------------------------------------
