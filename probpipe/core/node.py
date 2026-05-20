@@ -535,32 +535,25 @@ class WorkflowFunction(Node):
             return False
 
     def __call__(self, *args, **call_inputs):
-        # Bind positional args to parameter names using the wrapped function's
-        # signature so callers can use positional arguments naturally.
-        if args:
-            bound = self._sig.bind_partial(*args)
-            for name, value in bound.arguments.items():
-                if name in call_inputs:
-                    raise TypeError(
-                        f"{self._name}() got multiple values for argument '{name}'"
-                    )
-                call_inputs[name] = value
-
-        # If the wrapped function has a **kwargs parameter, sig.bind nests
-        # the extra keyword args under the parameter name.  Unpack them so
-        # they reach the function as top-level keyword arguments.
-        if self._has_var_keyword:
-            for p in self._sig.parameters.values():
-                if p.kind == inspect.Parameter.VAR_KEYWORD and p.name in call_inputs:
-                    extra = call_inputs.pop(p.name)
-                    call_inputs.update(extra)
-
         # Extract reserved call-time overrides (collision already prevented in __init__)
         n_broadcast_samples = call_inputs.pop("n_broadcast_samples", self._n_broadcast_samples)
         do_include_inputs = call_inputs.pop("include_inputs", self._include_inputs)
 
         if "seed" in call_inputs:
             self._key = jax.random.PRNGKey(call_inputs.pop("seed"))
+
+        # Bind user arguments through the wrapped function's real signature.
+        # ``bind_partial`` preserves module/default resolution below while
+        # still rejecting unexpected keywords and duplicate positional/keyword
+        # values with Python-call-compatible errors.
+        bound = self._sig.bind_partial(*args, **call_inputs)
+        call_inputs = {}
+        for name, value in bound.arguments.items():
+            param = self._sig.parameters[name]
+            if param.kind == inspect.Parameter.VAR_KEYWORD:
+                call_inputs.update(value)
+            else:
+                call_inputs[name] = value
 
         values = self._resolve_inputs(call_inputs)
         values = self._convert_distributions(values)

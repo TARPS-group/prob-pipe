@@ -149,6 +149,43 @@ class TestReservedParameterNames:
             WorkflowFunction(func=bad_fn, vectorize="loop")
 
 
+class TestWorkflowFunctionCallResolution:
+    def test_unexpected_keyword_raises(self):
+        def identity(x):
+            return x
+
+        w = WorkflowFunction(func=identity, vectorize="loop")
+
+        with pytest.raises(TypeError, match="unexpected keyword argument 'typo'"):
+            w(x=1.0, typo=2.0)
+
+    def test_var_keyword_name_is_not_unpacked(self):
+        seen = []
+
+        def identity(x, **kwargs):
+            seen.append(kwargs)
+            return x
+
+        w = WorkflowFunction(func=identity, vectorize="loop")
+        out = w(x=1.0, kwargs={"scale": 2.0})
+
+        assert float(out) == 1.0
+        assert seen == [{"kwargs": {"scale": 2.0}}]
+
+    def test_extra_keywords_still_reach_var_keyword(self):
+        seen = []
+
+        def identity(x, **kwargs):
+            seen.append(kwargs)
+            return x
+
+        w = WorkflowFunction(func=identity, vectorize="loop")
+        out = w(x=1.0, scale=2.0)
+
+        assert float(out) == 1.0
+        assert seen == [{"scale": 2.0}]
+
+
 class TestNoBroadcasting:
     """Cases where broadcasting should NOT happen."""
 
