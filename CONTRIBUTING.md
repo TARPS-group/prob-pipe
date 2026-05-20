@@ -73,6 +73,60 @@ pytest --cov=probpipe --cov-report=term-missing
 
 Target: >90% on all modules.
 
+### Code formatting
+
+Keep Python code compact horizontally. The hard upper bound is 100
+chars per line; the soft target is 80–100. **Do not introduce line
+breaks that aren't needed to stay within that range** — multi-name
+imports should be packed per line rather than spread one name per
+line, and short function calls should stay on one line.
+
+```python
+# Avoid — over-vertical:
+from probpipe import (
+    Normal,
+    Beta,
+    Gamma,
+    sample,
+    log_prob,
+)
+
+# Prefer — packed (drop the parens when the whole import fits one line):
+from probpipe import Normal, Beta, Gamma, sample, log_prob
+```
+
+Same idea applies to *where* you break a function call, container
+literal, or import — prefer keeping the first argument on the opener
+line and aligning subsequent lines under it, rather than breaking
+right after the open paren / bracket / brace. Break after `(` only
+when the opener line is already long enough that aligned continuation
+would have too little horizontal room.
+
+```python
+# Avoid — gratuitous break after `(`:
+result = expectation(
+    n, lambda x: jnp.sin(x),
+    key=jax.random.PRNGKey(10),
+)
+
+# Prefer — first arg on opener line, continuation aligned:
+result = expectation(n, lambda x: jnp.sin(x),
+                     key=jax.random.PRNGKey(10))
+
+# OK to break after `(` when the opener is already long:
+result = some.deeply.nested.module.function_with_long_name(
+    arg1, arg2, kwarg=value,
+)
+```
+
+The exception is constructions where each kwarg's value is itself a
+meaningful sub-expression — `MultivariateNormal(loc=..., cov=...)`,
+`xr.DataArray(data, dims=..., coords=...)`, etc. Per-kwarg vertical
+layout helps readability there even when the call would fit on one
+line.
+
+This applies equally to source files and notebook code cells.
+
 ### Documentation
 
 ```bash
