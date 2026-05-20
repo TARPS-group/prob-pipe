@@ -93,7 +93,9 @@ class TestGradEstimatorCorrectness:
     def test_grad_matches_full_data_grad_on_same_minibatch(self, logistic_problem):
         model = logistic_problem["model"]
         data = logistic_problem["data"]
-        measure = MinibatchedDistribution(model, data, batch_size=20)
+        measure = MinibatchedDistribution(
+            model.prior, model.likelihood, data, batch_size=20,
+        )
         grad_estimator = _build_grad_estimator(measure)
         theta = jnp.array([0.13, -0.21])
         key = jax.random.PRNGKey(99)

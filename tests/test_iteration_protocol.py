@@ -127,8 +127,7 @@ def _make_minibatched_distribution():
     y = jnp.array([1.0, 0.0, 1.0, 0.0])
     prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="theta")
     lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
-    model = SimpleModel(prior=prior, likelihood=lik)
-    return MinibatchedDistribution(model, Record(X=X, y=y), batch_size=2)
+    return MinibatchedDistribution(prior, lik, Record(X=X, y=y), batch_size=2)
 
 
 @pytest.mark.parametrize("make_dist", DISTRIBUTIONS)
