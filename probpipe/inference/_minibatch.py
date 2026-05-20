@@ -309,8 +309,8 @@ class MinibatchedDistribution(
         )
         batch = _index_along_leading(self._data, indices)
         return _FixedMinibatchDistribution(
-            log_prior=self._prior._log_prob,
-            per_datum_log_lkl=self._likelihood.per_datum_log_likelihood,
+            prior=self._prior,
+            likelihood=self._likelihood,
             batch=batch,
             rescale_factor=self._rescale_factor,
             name=f"{self.name}/draw",
@@ -364,8 +364,8 @@ class _FixedMinibatchDistribution(
 
     def __init__(
         self,
-        log_prior: Callable[[Any], Array],
-        per_datum_log_lkl: Callable[[Any, Any], Array],
+        prior: SupportsLogProb,
+        likelihood: "ConditionallyIndependentLikelihood",
         batch: Any,
         rescale_factor: float,
         *,
@@ -374,10 +374,20 @@ class _FixedMinibatchDistribution(
         super().__init__(
             name=name or "fixed_minibatch_distribution",
         )
-        self._log_prior = log_prior
-        self._per_datum_log_lkl = per_datum_log_lkl
+        self._prior = prior
+        self._likelihood = likelihood
         self._batch = batch
         self._rescale_factor = rescale_factor
+
+    @property
+    def prior(self) -> SupportsLogProb:
+        """The prior distribution carried from the parent measure."""
+        return self._prior
+
+    @property
+    def likelihood(self) -> "ConditionallyIndependentLikelihood":
+        """The CIL likelihood carried from the parent measure."""
+        return self._likelihood
 
     @property
     def batch(self) -> Any:
@@ -386,15 +396,15 @@ class _FixedMinibatchDistribution(
 
     @property
     def rescale_factor(self) -> float:
-        """Rescaling factor :math:`N / b` (or 1.0 if rescale is disabled)."""
+        """Rescaling factor :math:`N / b`."""
         return self._rescale_factor
 
     def _unnormalized_log_prob(self, theta: Any) -> Array:
         """Stochastic-surrogate unnormalized log-density at ``theta``."""
         per_datum = jax.vmap(
-            self._per_datum_log_lkl, in_axes=(None, 0),
+            self._likelihood.per_datum_log_likelihood, in_axes=(None, 0),
         )(theta, self._batch)
-        return self._log_prior(theta) + self._rescale_factor * jnp.sum(per_datum)
+        return self._prior._log_prob(theta) + self._rescale_factor * jnp.sum(per_datum)
 
     def __repr__(self) -> str:
         return (
