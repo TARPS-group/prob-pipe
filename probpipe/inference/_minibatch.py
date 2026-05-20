@@ -155,13 +155,14 @@ class MinibatchedDistribution(
 
     Parameters
     ----------
-    model : SupportsLogProb
-        Either a :class:`~probpipe.SimpleModel` whose
-        ``likelihood`` satisfies
-        :class:`~probpipe.ConditionallyIndependentLikelihood`, *or*
-        any ``SupportsLogProb`` (in which case
-        ``per_datum_log_likelihood`` must be supplied).
-    data : array-like or RecordArray
+    prior : SupportsLogProb
+        Prior distribution over parameters; provides the log-prior
+        term :math:`\\log p(\\theta)`.
+    likelihood : ConditionallyIndependentLikelihood
+        Likelihood that factorises as
+        :math:`\\log p(\\mathcal{D} \\mid \\theta) = \\sum_i \\log p(d_i \\mid \\theta)`;
+        supplies the per-datum log-density used in the rescaled sum.
+    data : array-like, Record, or RecordArray
         Observed data. Indexed along its leading axis to draw
         minibatches; must have leading-axis length ``>= batch_size``.
     batch_size : int
@@ -169,25 +170,15 @@ class MinibatchedDistribution(
     with_replacement : bool, default False
         Sample minibatch indices with replacement. Default is
         without-replacement (uniform permutation, take first ``b``).
-    rescale : bool, default True
-        Whether to apply the :math:`N/b` rescaling. Set to ``False``
-        when you want the raw minibatch sum (rare; useful only for
-        debugging).
-    per_datum_log_likelihood : callable, optional
-        Explicit per-datum log-likelihood
-        ``(params, datum) -> Array``. Required when ``model`` is not a
-        ``SimpleModel`` whose ``likelihood`` is a
-        ``ConditionallyIndependentLikelihood``. The model still
-        provides the prior via ``model._log_prob`` in that case.
     name : str, optional
         Distribution name.
 
     Raises
     ------
     TypeError
-        If neither path (SimpleModel + ConditionallyIndependent
-        likelihood, or SupportsLogProb + explicit callable) is
-        satisfied.
+        If ``prior`` is not :class:`~probpipe.SupportsLogProb` or
+        ``likelihood`` is not
+        :class:`~probpipe.ConditionallyIndependentLikelihood`.
     ValueError
         If ``batch_size`` is not in ``[1, len(data)]``.
     """
@@ -197,55 +188,29 @@ class MinibatchedDistribution(
 
     def __init__(
         self,
-        model: Any,
-        data: ArrayLike | RecordArray,
+        prior: SupportsLogProb,
+        likelihood: "ConditionallyIndependentLikelihood",
+        data: ArrayLike | Record | RecordArray,
         batch_size: int,
         *,
         with_replacement: bool = False,
-        rescale: bool = True,
-        per_datum_log_likelihood: Callable[[Any, Any], Array] | None = None,
         name: str | None = None,
     ):
-        # Lazy imports: inference can't import modeling at module load.
-        from ..modeling._simple import SimpleModel
+        # Lazy import: inference can't import modeling at module load.
         from ..modeling._likelihood import ConditionallyIndependentLikelihood
 
-        # Resolve the (log_prior, per_datum_log_likelihood) callables.
-        if per_datum_log_likelihood is not None:
-            if not isinstance(model, SupportsLogProb):
-                raise TypeError(
-                    "When per_datum_log_likelihood is supplied, model must "
-                    "be SupportsLogProb (it provides the log-prior)."
-                )
-            # ``SimpleModel._log_prob`` is the *joint* log-density that
-            # expects ``(params, data)``, so route through the prior in
-            # that case. For a bare ``SupportsLogProb`` source,
-            # ``_log_prob`` is the unary log-prior by the protocol's
-            # contract.
-            if isinstance(model, SimpleModel):
-                self._log_prior_fn = model.prior._log_prob
-            else:
-                self._log_prior_fn = model._log_prob
-            self._per_datum_log_lkl_fn = per_datum_log_likelihood
-        elif isinstance(model, SimpleModel):
-            if not isinstance(model.likelihood, ConditionallyIndependentLikelihood):
-                raise TypeError(
-                    f"MinibatchedDistribution requires model.likelihood to "
-                    f"satisfy ConditionallyIndependentLikelihood; got "
-                    f"{type(model.likelihood).__name__}. Implement "
-                    f"per_datum_log_likelihood(params, datum) on the "
-                    f"likelihood class, or pass an explicit "
-                    f"per_datum_log_likelihood=... callable."
-                )
-            self._log_prior_fn = model.prior._log_prob
-            self._per_datum_log_lkl_fn = model.likelihood.per_datum_log_likelihood
-        else:
+        if not isinstance(prior, SupportsLogProb):
             raise TypeError(
-                "MinibatchedDistribution requires either:\n"
-                "  - a SimpleModel whose likelihood is a "
-                "ConditionallyIndependentLikelihood, or\n"
-                "  - a SupportsLogProb model plus an explicit "
-                "per_datum_log_likelihood=... callable."
+                f"MinibatchedDistribution requires prior to satisfy "
+                f"SupportsLogProb; got {type(prior).__name__}."
+            )
+        if not isinstance(likelihood, ConditionallyIndependentLikelihood):
+            raise TypeError(
+                f"MinibatchedDistribution requires likelihood to satisfy "
+                f"ConditionallyIndependentLikelihood; got "
+                f"{type(likelihood).__name__}. Implement "
+                f"per_datum_log_likelihood(params, datum) on the "
+                f"likelihood class."
             )
 
         # Validate data + batch_size.
@@ -255,13 +220,13 @@ class MinibatchedDistribution(
                 f"batch_size must be in [1, len(data)={n}]; got {batch_size}."
             )
 
-        self._model = model
+        self._prior = prior
+        self._likelihood = likelihood
         self._data = data
         self._n = int(n)
         self._batch_size = int(batch_size)
         self._with_replacement = bool(with_replacement)
-        self._rescale = bool(rescale)
-        self._rescale_factor = float(self._n / batch_size) if rescale else 1.0
+        self._rescale_factor = float(self._n / batch_size)
 
         if name is None:
             name = f"MinibatchedDistribution(batch_size={batch_size})"
@@ -292,14 +257,14 @@ class MinibatchedDistribution(
         return self._with_replacement
 
     @property
-    def rescale(self) -> bool:
-        """Whether the ``N / b`` rescaling is applied to the per-datum sum."""
-        return self._rescale
+    def prior(self) -> SupportsLogProb:
+        """The prior distribution over parameters."""
+        return self._prior
 
     @property
-    def model(self) -> Any:
-        """The underlying model."""
-        return self._model
+    def likelihood(self) -> "ConditionallyIndependentLikelihood":
+        """The conditionally-independent likelihood."""
+        return self._likelihood
 
     @property
     def data(self) -> Any:
@@ -344,8 +309,8 @@ class MinibatchedDistribution(
         )
         batch = _index_along_leading(self._data, indices)
         return _FixedMinibatchDistribution(
-            log_prior=self._log_prior_fn,
-            per_datum_log_lkl=self._per_datum_log_lkl_fn,
+            log_prior=self._prior._log_prob,
+            per_datum_log_lkl=self._likelihood.per_datum_log_likelihood,
             batch=batch,
             rescale_factor=self._rescale_factor,
             name=f"{self.name}/draw",
@@ -360,9 +325,9 @@ class MinibatchedDistribution(
 
     def __repr__(self) -> str:
         return (
-            f"MinibatchedDistribution(model={type(self._model).__name__}, "
-            f"dataset_size={self._n}, batch_size={self._batch_size}, "
-            f"rescale={self._rescale})"
+            f"MinibatchedDistribution(prior={type(self._prior).__name__}, "
+            f"likelihood={type(self._likelihood).__name__}, "
+            f"dataset_size={self._n}, batch_size={self._batch_size})"
         )
 
 

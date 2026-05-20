@@ -145,9 +145,12 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         random_seed: int | PRNGKey = kwargs.get("random_seed", 0)
         with_replacement: bool = kwargs.get("with_replacement", False)
 
-        # Build the minibatched random measure that supplies stochastic grads.
+        # Build the minibatched random measure that supplies stochastic
+        # grads. ``dist`` is a SimpleModel (validated by ``check()``);
+        # unpack its prior + CIL likelihood for the random measure.
         measure = MinibatchedDistribution(
-            dist, observed, batch_size=batch_size,
+            dist.prior, dist.likelihood, observed,
+            batch_size=batch_size,
             with_replacement=with_replacement,
         )
 
