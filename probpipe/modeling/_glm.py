@@ -44,11 +44,6 @@ class GLMLikelihood:
       supplied at construction time — the construction-time ``X`` is
       used.
 
-    Stacked ``(X, y)`` arrays (a single matrix whose last column is
-    the response) are **intentionally not accepted**: ProbPipe uses
-    named Records precisely to avoid axis-position ambiguity. Pass a
-    ``Record(X=..., y=...)`` explicitly.
-
     Joint bootstrapping of covariates and response uses the Record
     form::
 
@@ -136,8 +131,7 @@ class GLMLikelihood:
         raise ValueError(
             "GLMLikelihood data must be either a Record(X=..., y=...) "
             "or a response array paired with an X passed at "
-            "construction time. Stacked (X, y) arrays are intentionally "
-            "rejected; use Record(X=..., y=...) instead."
+            "construction time."
         )
 
     def log_likelihood(self, params: ArrayLike | Record, data: ArrayLike | Record) -> float:
@@ -172,9 +166,7 @@ class GLMLikelihood:
             Coefficient vector of shape ``(p,)``.
         datum : Record
             ``Record(X=x_i, y=y_i)`` with ``x_i`` of shape ``(p,)``
-            and ``y_i`` scalar. Stacked ``(x, y)`` arrays are
-            intentionally not supported — use the named-field Record
-            form.
+            and ``y_i`` scalar.
 
         Raises
         ------
@@ -184,9 +176,7 @@ class GLMLikelihood:
         if not (isinstance(datum, Record) and "X" in datum and "y" in datum):
             raise TypeError(
                 "GLMLikelihood.per_datum_log_likelihood requires "
-                "datum=Record(X=x_i, y=y_i). Stacked arrays are "
-                "intentionally not supported; use the named-field "
-                "Record form to avoid axis-position ambiguity."
+                "datum=Record(X=x_i, y=y_i)."
             )
         # `atleast_1d` accommodates the single-covariate case where the
         # per-observation X leaf is naturally scalar — the matmul below
