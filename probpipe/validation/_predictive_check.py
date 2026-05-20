@@ -9,7 +9,8 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from ..core.distribution import RecordEmpiricalDistribution, NumericRecord
+from ..core.distribution import RecordEmpiricalDistribution
+from ..core._numeric_record import NumericRecord
 from ..core.node import workflow_function
 from ..core.protocols import SupportsSampling
 from ..custom_types import PRNGKey
