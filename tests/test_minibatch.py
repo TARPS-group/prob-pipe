@@ -85,13 +85,32 @@ class TestConstruction:
         assert m.dataset_size == 200
         assert m.batch_size == 32
 
-    def test_construction_explicit_callable(self, model, data_record):
-        """The bare ``SupportsLogProb`` + explicit callable path."""
-        m = MinibatchedDistribution(
+    def test_explicit_callable_path_evaluates(self, model, data_record):
+        """The explicit-callable path must actually evaluate the
+        unnormalized log-density — not just construct.
+
+        Catches the regression where ``self._log_prior_fn`` was set to
+        ``SimpleModel._log_prob`` (which expects a ``(params, data)``
+        tuple) and unpacking blew up at evaluation time. The construction
+        check alone passed the broken version silently.
+        """
+        m_explicit = MinibatchedDistribution(
             model, data_record, batch_size=32,
             per_datum_log_likelihood=model.likelihood.per_datum_log_likelihood,
         )
-        assert isinstance(m, MinibatchedDistribution)
+        assert isinstance(m_explicit, MinibatchedDistribution)
+
+        theta = jnp.array([0.1, -0.2])
+        key = jax.random.PRNGKey(0)
+        lp_explicit = m_explicit._draw_one(key)._unnormalized_log_prob(theta)
+        assert jnp.isfinite(lp_explicit)
+
+        # The non-explicit (auto-detected) path uses the same prior and
+        # the same ``per_datum_log_likelihood`` callable; over an identical
+        # minibatch draw the unnormalized log-density must match exactly.
+        m_default = MinibatchedDistribution(model, data_record, batch_size=32)
+        lp_default = m_default._draw_one(key)._unnormalized_log_prob(theta)
+        np.testing.assert_allclose(float(lp_explicit), float(lp_default), rtol=1e-5)
 
     def test_construction_rejects_non_iid_likelihood(self, data_record):
         """A bare ``Likelihood`` (no ``per_datum``) is rejected."""

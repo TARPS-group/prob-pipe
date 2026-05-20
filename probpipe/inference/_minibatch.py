@@ -217,7 +217,15 @@ class MinibatchedDistribution(
                     "When per_datum_log_likelihood is supplied, model must "
                     "be SupportsLogProb (it provides the log-prior)."
                 )
-            self._log_prior_fn = model._log_prob
+            # ``SimpleModel._log_prob`` is the *joint* log-density that
+            # expects ``(params, data)``, so route through the prior in
+            # that case. For a bare ``SupportsLogProb`` source,
+            # ``_log_prob`` is the unary log-prior by the protocol's
+            # contract.
+            if isinstance(model, SimpleModel):
+                self._log_prior_fn = model.prior._log_prob
+            else:
+                self._log_prior_fn = model._log_prob
             self._per_datum_log_lkl_fn = per_datum_log_likelihood
         elif isinstance(model, SimpleModel):
             if not isinstance(model.likelihood, ConditionallyIndependentLikelihood):
