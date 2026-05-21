@@ -248,7 +248,7 @@ class ProductDistribution(
         """
         from ..core._record_array import RecordArray
         if isinstance(value, jnp.ndarray) and self._record_template is not None:
-            value = self.unflatten_value(value)
+            value = self.unflatten_value(value, template=self._record_template)
         if isinstance(value, RecordArray):
             value = {k: v for k, v in value.items()}
         if isinstance(value, Record):

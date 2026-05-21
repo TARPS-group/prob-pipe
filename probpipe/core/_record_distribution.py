@@ -252,8 +252,19 @@ class _RecordDistributionView(Distribution):
         from ._record_array import RecordArray
         if isinstance(structured, (Record, RecordArray)):
             return structured[self._key]
-        # Flat array — unflatten via parent's unflatten_value
-        result = self._parent.unflatten_value(jnp.asarray(structured))
+        # Flat array — unflatten via the parent's static unflatten_value.
+        # Only numeric parents define unflatten_value; non-numeric Record
+        # parents never reach this branch (their samples are Records).
+        unflatten = getattr(type(self._parent), "unflatten_value", None)
+        if unflatten is None:
+            raise TypeError(
+                f"Cannot extract field {self._key!r} from a flat array "
+                f"on {type(self._parent).__name__}: parent does not "
+                f"implement unflatten_value."
+            )
+        result = unflatten(
+            jnp.asarray(structured), template=self._parent.record_template,
+        )
         if isinstance(result, (Record, RecordArray)):
             return result[self._key]
         return result
@@ -433,68 +444,6 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
         """Iterate over (name, view) pairs."""
         for name in self.fields:
             yield name, self[name]
-
-    # -- Flatten / unflatten ------------------------------------------------
-
-    def flatten_value(self, value) -> Array:
-        """Flatten a NumericRecord or NumericRecordArray sample to a flat array.
-
-        The flatten operation is numeric-only, so ``Record`` inputs must
-        be convertible to ``NumericRecord`` (all leaves numeric). Raw
-        arrays are returned unchanged.
-        """
-        from ._numeric_record import NumericRecord
-        from ._record_array import NumericRecordArray
-        if isinstance(value, NumericRecordArray):
-            return value.flatten()
-        if isinstance(value, NumericRecord):
-            return value.flatten()
-        if isinstance(value, Record):
-            return NumericRecord.from_record(value).flatten()
-        return value
-
-    def unflatten_value(self, flat: Array):
-        """Reconstruct a NumericRecord or NumericRecordArray from a flat array."""
-        from ._numeric_record import NumericRecord
-        from ._record_array import NumericRecordArray
-        tpl = self.record_template
-        if tpl is None:
-            raise RuntimeError("Cannot unflatten without record_template")
-        flat = jnp.asarray(flat)
-        if flat.ndim < 2:
-            return NumericRecord.unflatten(flat, template=tpl)
-        return NumericRecordArray.unflatten(flat, template=tpl)
-
-    def as_flat_distribution(self) -> FlattenedDistributionView:
-        """View this distribution as a flat ``FlatNumericRecordDistribution``.
-
-        Returns a :class:`~probpipe.core._numeric_record_distribution.FlattenedDistributionView`
-        with ``event_shape = (event_size,)`` for algorithms expecting
-        flat vectors (MCMC, optimizers, VI methods). Inverse:
-        :meth:`~probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.as_record_distribution`.
-        """
-        from ._numeric_record_distribution import FlattenedDistributionView
-        return FlattenedDistributionView(self)
-
-    @property
-    def event_size(self) -> int:
-        """Total number of scalar elements in one sample.
-
-        Sums the sizes of every numeric leaf described by the template;
-        opaque leaves contribute zero. A ``NumericRecordTemplate`` has
-        ``flat_size`` already cached — reuse it when available.
-        """
-        tpl = self.record_template
-        if tpl is None:
-            return 0
-        from .record import NumericRecordTemplate
-        if isinstance(tpl, NumericRecordTemplate):
-            return tpl.flat_size
-        return sum(
-            prod(shape) if shape else 1
-            for shape in tpl.leaf_shapes.values()
-            if shape is not None
-        )
 
     @property
     def event_shapes(self) -> dict[str, tuple[int, ...]]:

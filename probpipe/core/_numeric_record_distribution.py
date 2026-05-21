@@ -421,43 +421,73 @@ class NumericRecordDistribution(RecordDistribution):
         """
         return list(self.event_shapes.values())
 
-    def flatten_value(self, value) -> Array:
-        """Flatten a sample (Record, NumericRecordArray, or array) to flat trailing axis.
+    @property
+    def event_size(self) -> int:
+        """Total number of scalar elements in one sample.
 
-        Delegates to ``RecordDistribution.flatten_value`` for Record-like
-        inputs.  For raw arrays, flattens event dimensions preserving
-        leading batch/sample dims.
+        For a :class:`NumericRecordTemplate` this is the cached
+        ``flat_size``. For a general ``RecordTemplate``, sums the
+        numeric-leaf shapes; opaque leaves contribute zero.
+        """
+        from .record import NumericRecordTemplate
+        tpl = self.record_template
+        if isinstance(tpl, NumericRecordTemplate):
+            return tpl.flat_size
+        return sum(
+            prod(shape) if shape else 1
+            for shape in tpl.leaf_shapes.values()
+            if shape is not None
+        )
+
+    @staticmethod
+    def flatten_value(value, *, event_shape: tuple[int, ...] = ()) -> Array:
+        """Flatten a sample to a flat trailing axis.
+
+        Accepts ``Record`` / ``NumericRecord`` / ``NumericRecordArray``
+        (which already carry their template) or a raw array. Raw-array
+        inputs need ``event_shape`` to disambiguate batch axes from
+        event axes; without it, the input gets a trailing singleton
+        axis (matching the scalar-event default).
         """
         from .record import Record
+        from ._numeric_record import NumericRecord
         from ._record_array import NumericRecordArray
-        if isinstance(value, (NumericRecordArray, Record)):
-            return super().flatten_value(value)
+        if isinstance(value, (NumericRecordArray, NumericRecord)):
+            return value.flatten()
+        if isinstance(value, Record):
+            return NumericRecord.from_record(value).flatten()
         value = jnp.asarray(value)
-        es = self.event_shape
-        n_event = prod(es)
-        if not es:
+        if not event_shape:
             return value[..., None]
-        n_batch = value.ndim - len(es)
-        batch_dims = value.shape[:n_batch]
-        return value.reshape(*batch_dims, n_event)
+        n_event = prod(event_shape)
+        n_batch = value.ndim - len(event_shape)
+        return value.reshape(*value.shape[:n_batch], n_event)
 
-    def unflatten_value(self, flat: ArrayLike):
+    @staticmethod
+    def unflatten_value(flat, *, template):
         """Unflatten a flat trailing axis back to event dims, Record, or NumericRecordArray.
 
-        When ``record_template`` is set with multiple fields, delegates
-        to ``RecordDistribution.unflatten_value`` (returns NumericRecord
-        or NumericRecordArray).  For single-field leaf distributions,
-        reshapes to ``(*batch, *event_shape)`` for ``_log_prob`` compat.
+        Multi-field templates → ``NumericRecord`` (single sample, i.e.
+        ``flat.ndim == 1``) or ``NumericRecordArray`` (batched). Single-
+        field templates → raw array reshaped to ``(*batch, *event_shape)``
+        for ``_log_prob`` compatibility (preserves the original "single-
+        leaf returns raw array" contract).
         """
-        tpl = self.record_template
-        if tpl is not None and len(tpl.fields) > 1:
-            return super().unflatten_value(flat)
+        from ._numeric_record import NumericRecord
+        from ._record_array import NumericRecordArray
         flat = jnp.asarray(flat)
-        es = self.event_shape
+        if template is not None and len(template.fields) > 1:
+            if flat.ndim < 2:
+                return NumericRecord.unflatten(flat, template=template)
+            return NumericRecordArray.unflatten(flat, template=template)
+        # Single-field path
+        if template is None or not template.fields:
+            return flat[..., 0]
+        field_spec = template[template.fields[0]]
+        es = field_spec if isinstance(field_spec, tuple) else ()
         if not es:
             return flat[..., 0]
-        batch_dims = flat.shape[:-1]
-        return flat.reshape(*batch_dims, *es)
+        return flat.reshape(*flat.shape[:-1], *es)
 
     def as_flat_distribution(self) -> FlatNumericRecordDistribution:
         """View this distribution as a flat distribution.
@@ -756,7 +786,9 @@ def _flattened_distribution_view_class_for_base(base: Distribution) -> type:
 
         def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
             pytree_samples = self._base._sample(key, sample_shape)
-            return self._base.flatten_value(pytree_samples)
+            return self._base.flatten_value(
+                pytree_samples, event_shape=self._base.event_shape,
+            )
 
         extra_methods["_sample"] = _sample
 
@@ -765,7 +797,9 @@ def _flattened_distribution_view_class_for_base(base: Distribution) -> type:
 
         def _log_prob(self, x: ArrayLike) -> Array:
             x = jnp.asarray(x)
-            value = self._base.unflatten_value(x)
+            value = self._base.unflatten_value(
+                x, template=self._base.record_template,
+            )
             return self._base._log_prob(value)
 
         extra_methods["_log_prob"] = _log_prob
@@ -844,7 +878,9 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
 
     def unflatten_sample(self, flat_sample: ArrayLike):
         """Convenience: unflatten a flat sample back to the pytree structure."""
-        return self._base.unflatten_value(jnp.asarray(flat_sample))
+        return self._base.unflatten_value(
+            jnp.asarray(flat_sample), template=self._base.record_template,
+        )
 
     def __repr__(self) -> str:
         return (
@@ -901,7 +937,9 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
 
         def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
             base_sample = self._base._sample(key, sample_shape)
-            flat = self._base.flatten_value(base_sample)
+            flat = self._base.flatten_value(
+                base_sample, event_shape=self._base.event_shape,
+            )
             tpl = self.record_template
             if sample_shape == ():
                 return NumericRecord.unflatten(flat, template=tpl)
@@ -919,7 +957,9 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
                 flat = x.flatten()
             else:
                 flat = jnp.asarray(x)
-            value = self._base.unflatten_value(flat)
+            value = self._base.unflatten_value(
+                flat, template=self._base.record_template,
+            )
             return self._base._log_prob(value)
 
         extra_methods["_log_prob"] = _log_prob
@@ -928,7 +968,9 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
         extra_bases.append(SupportsMean)
 
         def _mean(self):
-            flat = self._base.flatten_value(self._base._mean())
+            flat = self._base.flatten_value(
+                self._base._mean(), event_shape=self._base.event_shape,
+            )
             return NumericRecord.unflatten(flat, template=self.record_template)
 
         extra_methods["_mean"] = _mean
@@ -937,7 +979,9 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
         extra_bases.append(SupportsVariance)
 
         def _variance(self):
-            flat = self._base.flatten_value(self._base._variance())
+            flat = self._base.flatten_value(
+                self._base._variance(), event_shape=self._base.event_shape,
+            )
             return NumericRecord.unflatten(flat, template=self.record_template)
 
         extra_methods["_variance"] = _variance
@@ -974,7 +1018,9 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             n = num_evaluations if num_evaluations is not None else _base.DEFAULT_NUM_EVALUATIONS
             sample_key = key if key is not None else _auto_key()
             base_samples = self._base._sample(sample_key, sample_shape=(n,))
-            flat_samples = self._base.flatten_value(base_samples)
+            flat_samples = self._base.flatten_value(
+                base_samples, event_shape=self._base.event_shape,
+            )
             template = self.record_template
 
             def _f_on_flat(flat_row):
