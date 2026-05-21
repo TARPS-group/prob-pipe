@@ -32,7 +32,7 @@ from .._utils import prod
 from ..custom_types import Array, PRNGKey
 
 if TYPE_CHECKING:
-    from ._numeric_record_distribution import FlattenedView
+    from ._numeric_record_distribution import FlattenedDistributionView
 
 
 __all__ = ["RecordDistribution", "_RecordDistributionView"]
@@ -434,15 +434,16 @@ class RecordDistribution(Distribution[Record]):
             return NumericRecord.unflatten(flat, template=tpl)
         return NumericRecordArray.unflatten(flat, template=tpl)
 
-    def as_flat_distribution(self) -> FlattenedView:
-        """View this distribution as a flat ``NumericRecordDistribution``.
+    def as_flat_distribution(self) -> FlattenedDistributionView:
+        """View this distribution as a flat ``FlatNumericRecordDistribution``.
 
-        Returns a :class:`~probpipe.core._numeric_record_distribution.FlattenedView`
+        Returns a :class:`~probpipe.core._numeric_record_distribution.FlattenedDistributionView`
         with ``event_shape = (event_size,)`` for algorithms expecting
-        flat vectors (MCMC, optimizers, VI methods).
+        flat vectors (MCMC, optimizers, VI methods). Inverse:
+        :meth:`~probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.as_record_distribution`.
         """
-        from ._numeric_record_distribution import FlattenedView
-        return FlattenedView(self)
+        from ._numeric_record_distribution import FlattenedDistributionView
+        return FlattenedDistributionView(self)
 
     @property
     def event_size(self) -> int:

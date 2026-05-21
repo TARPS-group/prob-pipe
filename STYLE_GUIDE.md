@@ -98,7 +98,12 @@ condition_on_nutpie = WorkflowFunction(
 - **Distribution classes:** CamelCase, descriptive — `Normal`, `MultivariateNormal`,
   `EmpiricalDistribution`, `BootstrapReplicateDistribution`.
 - **Base / mixin classes:** `Distribution`, `RecordDistribution`,
-  `NumericRecordDistribution`, `TFPDistribution`, `ProbabilisticModel`.
+  `NumericRecordDistribution`, `FlatNumericRecordDistribution`,
+  `TFPDistribution`, `ProbabilisticModel`.
+- **View classes:** end in `DistributionView` — `FlattenedDistributionView`
+  (a `FlatNumericRecordDistribution` produced by `as_flat_distribution`),
+  `NumericRecordDistributionView` (a Record-keyed view produced by
+  `FlatNumericRecordDistribution.as_record_distribution`).
 - **Private helper classes:** Leading underscore — `_LinearMapGRF`, `_ShiftedGRF`.
 
 ### 1.6 Modules

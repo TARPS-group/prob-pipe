@@ -43,8 +43,10 @@ from ._record_distribution import (
 # -- _numeric_record_distribution ---------------------------------------------------
 from ._numeric_record_distribution import (
     NumericRecordDistribution,
+    FlatNumericRecordDistribution,
     BootstrapDistribution,
-    FlattenedView,
+    FlattenedDistributionView,
+    NumericRecordDistributionView,
     _mc_expectation,
     _vmap_sample,
 )
@@ -96,8 +98,10 @@ __all__ = [
     "_RecordDistributionView",
     # Array hierarchy
     "NumericRecordDistribution",
+    "FlatNumericRecordDistribution",
     "BootstrapDistribution",
-    "FlattenedView",
+    "FlattenedDistributionView",
+    "NumericRecordDistributionView",
     # Empirical
     "EmpiricalDistribution",
     "RecordEmpiricalDistribution",

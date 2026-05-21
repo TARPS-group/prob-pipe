@@ -24,16 +24,28 @@ dynamically from the parent's capabilities, so
 
 ::: probpipe.core._record_distribution._RecordDistributionView
 
-## Flat-view helpers
+## Flat / Record view helpers
 
-`FlattenedView` is a public wrapper that exposes a distribution with
-structured samples as a flat
-[`NumericRecordDistribution`][probpipe.core._numeric_record_distribution.NumericRecordDistribution],
-useful for interop with algorithms that expect flat vectors. It uses the same
-dynamic-protocol pattern as `_RecordDistributionView` — only the protocols the
-base distribution supports are attached to the view.
+`FlattenedDistributionView` and `NumericRecordDistributionView` are the public
+view classes for the flat ↔ Record-keyed bridge. Both follow the same
+dynamic-protocol pattern as `_RecordDistributionView` — only the protocols
+the base distribution supports are attached to the view.
 
-::: probpipe.core._numeric_record_distribution.FlattenedView
+`FlattenedDistributionView` is a [`FlatNumericRecordDistribution`][probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution]:
+it exposes any distribution as flat (single field, `event_shape=(N,)`),
+for interop with algorithms that expect a flat parameter vector.
+Construct via [`as_flat_distribution`][probpipe.core._numeric_record_distribution.NumericRecordDistribution.as_flat_distribution].
+
+`NumericRecordDistributionView` is the inverse: it takes a
+`FlatNumericRecordDistribution` and a `NumericRecordTemplate`, and presents
+the distribution under the template's named-field structure. Construct via
+[`as_record_distribution`][probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.as_record_distribution].
+
+::: probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution
+
+::: probpipe.core._numeric_record_distribution.FlattenedDistributionView
+
+::: probpipe.core._numeric_record_distribution.NumericRecordDistributionView
 
 ## Sampling primitive
 

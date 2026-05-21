@@ -1,4 +1,4 @@
-"""Tests for NumericRecordDistribution, FlattenedView, and shape semantics."""
+"""Tests for NumericRecordDistribution, FlattenedDistributionView, and shape semantics."""
 
 import jax
 import jax.numpy as jnp
@@ -8,9 +8,10 @@ import pytest
 
 from probpipe import (
     Distribution,
+    FlatNumericRecordDistribution,
     NumericRecordDistribution,
     RecordEmpiricalDistribution,
-    FlattenedView,
+    FlattenedDistributionView,
     Normal,
     MultivariateNormal,
     from_distribution,
@@ -181,14 +182,18 @@ class TestArrayDistFlattenUnflatten:
 
 
 # ---------------------------------------------------------------------------
-# as_flat_distribution / FlattenedView
+# as_flat_distribution / FlattenedDistributionView
 # ---------------------------------------------------------------------------
 
-class TestFlattenedView:
+class TestFlattenedDistributionView:
     def test_as_flat_returns_flattened_view(self, vector_mvn):
         flat_dist = vector_mvn.as_flat_distribution()
-        assert isinstance(flat_dist, FlattenedView)
+        assert isinstance(flat_dist, FlattenedDistributionView)
         assert isinstance(flat_dist, NumericRecordDistribution)
+        # The view satisfies the FlatNumericRecordDistribution contract
+        # by construction; consumers (Pathfinder / Laplace / VI) rely
+        # on this membership for receiver-type dispatch.
+        assert isinstance(flat_dist, FlatNumericRecordDistribution)
 
     def test_event_shape(self, vector_mvn):
         flat_dist = vector_mvn.as_flat_distribution()
@@ -228,7 +233,7 @@ class TestFlattenedView:
     def test_repr(self, vector_mvn):
         flat_dist = vector_mvn.as_flat_distribution()
         r = repr(flat_dist)
-        assert "FlattenedView" in r
+        assert "FlattenedDistributionView" in r
         assert "MultivariateNormal" in r
 
     def test_4d_event_shape(self, matrix_mvn):
@@ -439,10 +444,10 @@ class TestIntegerDtypeReporting:
 
 
 # ---------------------------------------------------------------------------
-# FlattenedView on EmpiricalDistribution
+# FlattenedDistributionView on EmpiricalDistribution
 # ---------------------------------------------------------------------------
 
-class TestFlattenedViewEmpirical:
+class TestFlattenedDistributionViewEmpirical:
     def test_empirical_flatten_roundtrip(self, key):
         samples = jax.random.normal(key, shape=(100, 5))
         emp = RecordEmpiricalDistribution(samples, name="x")
