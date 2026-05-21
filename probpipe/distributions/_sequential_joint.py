@@ -99,9 +99,17 @@ class SequentialJointDistribution(
     """
     Joint distribution with autoregressive (sequential) dependence.
 
-    Inherits from :class:`NumericRecordDistribution` (every resolved
-    leaf is a :class:`NumericRecordDistribution`, so the joint's content
-    is numeric).
+    Inherits from :class:`NumericRecordDistribution` for the same
+    structural reason as :class:`ProductDistribution`: every resolved
+    leaf (root distributions and the distributions returned by
+    conditional callables) is a
+    :class:`NumericRecordDistribution`, so the joint exposes the
+    full numeric contract (per-field shape / dtype / support, pytree
+    structure, flat representation). The difference from
+    :class:`ProductDistribution` is in dependency structure
+    (conditional vs independent) — not in numeric-ness of the
+    sample. See :class:`ProductDistribution` for the longer
+    justification.
 
     Components can be :class:`Distribution` instances (roots) or callables
     that receive previously-sampled values and return a ``Distribution``

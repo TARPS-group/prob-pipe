@@ -13,6 +13,7 @@ Provides:
 from __future__ import annotations
 
 from types import MappingProxyType
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -129,10 +130,39 @@ class ProductDistribution(
 ):
     """Joint distribution with **independent** leaf components.
 
-    Inherits from :class:`NumericRecordDistribution` (every leaf is
-    required to be a ``NumericRecordDistribution``, so the joint's
-    content is numeric).  All leaf components are sampled independently.
-    ``_sample()`` returns :class:`NumericRecord`.
+    Inherits from :class:`NumericRecordDistribution`. The choice is
+    structural, not a default — every leaf component is required (at
+    construction, see ``__init__``) to be a
+    :class:`NumericRecordDistribution`, which makes the product
+    itself numeric in every respect that the
+    :class:`NumericRecordDistribution` contract cares about:
+
+    - **Per-field shape, dtype, support.** Each leaf supplies its own
+      :attr:`NumericRecordDistribution.event_shape` / :attr:`dtypes` /
+      :attr:`supports`, and :class:`ProductDistribution` aggregates
+      them into the per-field dicts the joint is expected to expose.
+    - **Pytree structure.** The joint's :attr:`record_template` is
+      built from the leaves' templates; a single draw is a pytree of
+      ``jax.Array`` leaves keyed by component name — exactly the
+      :class:`NumericRecordDistribution` ``_sample`` contract.
+    - **Flat representation.** The numeric-only API
+      (:meth:`flatten_value`, :meth:`unflatten_value`,
+      :attr:`event_size`, :meth:`as_flat_distribution`) is meaningful
+      and well-defined on the joint precisely because every leaf is
+      numeric. Pre-#200 these methods lived on
+      :class:`RecordDistribution` itself; the hierarchy cleanup moved
+      them to :class:`NumericRecordDistribution`, and the joint's
+      base had to follow.
+
+    The sibling decision in this PR — :class:`JointEmpirical` stays
+    on :class:`RecordDistribution`, only :class:`NumericJointEmpirical`
+    adds the :class:`NumericRecordDistribution` mixin — uses the same
+    reasoning in the inverse direction: object-dtype leaves don't
+    satisfy the numeric contract, so the non-numeric base shouldn't
+    inherit the numeric API.
+
+    All leaf components are sampled independently. ``_sample()``
+    returns :class:`NumericRecord`.
 
     **Dynamic protocol support:** ``SupportsLogProb``, ``SupportsMean``,
     and ``SupportsVariance`` are included only when ALL leaf components
@@ -242,14 +272,15 @@ class ProductDistribution(
 
     # -- Log-prob -----------------------------------------------------------
 
-    def _log_prob(self, value) -> Array:
+    def _log_prob(self, value: Any) -> Array:
         """Sum of independent leaf log-probs.
 
-        Accepts Record, dict, or flat array (auto-unflattened via template).
+        Accepts Record, dict, or flat array (auto-unflattened via the
+        template, which is contractually non-``None``).
         """
         from ..core._record_array import RecordArray
-        if isinstance(value, jnp.ndarray) and self._record_template is not None:
-            value = self.unflatten_value(value, template=self._record_template)
+        if isinstance(value, jnp.ndarray):
+            value = self.unflatten_value(value, template=self.record_template)
         if isinstance(value, RecordArray):
             value = {k: v for k, v in value.items()}
         if isinstance(value, Record):

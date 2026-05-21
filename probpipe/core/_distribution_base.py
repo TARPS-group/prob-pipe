@@ -10,7 +10,14 @@ from __future__ import annotations
 
 import copy as _copy
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, _ProtocolMeta
+# ``_ProtocolMeta`` is technically private (leading underscore in
+# ``typing``), but it's the only way to compose a custom metaclass with
+# ``@runtime_checkable`` protocols without a metaclass conflict.  The
+# name has been stable since Python 3.7 and is widely used in the
+# ecosystem (Pydantic, attrs, etc.). If a future Python release renames
+# it, the metaclass would need to switch to whatever new base ``typing``
+# exposes; the conflict-avoidance constraint itself doesn't change.
+from typing import TYPE_CHECKING, Any, _ProtocolMeta  # noqa: PLC2701
 
 if TYPE_CHECKING:
     from xarray import DataTree
@@ -73,7 +80,7 @@ class _DistributionMeta(_ProtocolMeta):
     ``ABCMeta`` subclass.
     """
 
-    def __call__(cls, *args, **kwargs):
+    def __call__(cls, *args: Any, **kwargs: Any) -> Any:
         instance = super().__call__(*args, **kwargs)
         name = getattr(instance, "_name", None)
         if not isinstance(name, str) or not name:
@@ -121,9 +128,22 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         """An xarray ``DataTree`` of auxiliary information (diagnostics,
         sample statistics, algorithm metadata), or ``None``.
 
-        Populated by inference methods.  Follows ArviZ group conventions
+        Populated by inference methods. Follows ArviZ group conventions
         (``posterior``, ``sample_stats``, ``warmup``, etc.) with metadata
         stored as DataTree attributes.
+
+        **Documented exception to distribution immutability.** Unlike
+        every other piece of state on a :class:`Distribution`,
+        ``_auxiliary`` is designed to be mutated in place by validators
+        and diagnostic ops after construction — e.g.,
+        :func:`~probpipe.predictive_check` attaches its replicated-
+        statistic dataset under ``auxiliary["predictive_check"]`` on
+        the distribution it ran on. The alternative (returning a
+        renamed clone for every diagnostic) would break the
+        source/identity tracking downstream code depends on. Treat as
+        append-only: new diagnostic ops should write under their own
+        named group, never overwrite or mutate parameter-like state
+        via this channel.
         """
         return getattr(self, "_auxiliary", None)
 

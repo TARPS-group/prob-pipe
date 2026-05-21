@@ -315,9 +315,11 @@ class TestCanonicalConvenience:
 
         class TwoField(NumericRecordDistribution):
             # Multi-leaf subclasses bypass the single-field auto-template
-            # by overriding ``record_template`` directly. ``event_shape``
-            # is still abstract on the base; a stub satisfies the ABC.
-            event_shape = ()
+            # by overriding ``record_template`` directly. The base
+            # ``event_shape`` raises ``NotImplementedError`` for
+            # multi-leaf templates — there's no single-field shortcut
+            # to provide — so we leave it inherited (callers should
+            # reach for ``event_shapes`` instead).
 
             @property
             def record_template(self):
@@ -383,6 +385,118 @@ class TestCanonicalConvenience:
             ValueError, match=r"TwoField field 'a' \(support=real\)",
         ):
             target._check_support_compatible(multi_leaf_dist)
+
+    def test_check_support_compatible_multi_field_target_field_count_mismatch(
+        self, multi_leaf_dist,
+    ):
+        """Multi-field target with a different field count from the
+        source raises ``ValueError`` rather than silently truncating
+        via ``zip``. The error message names both arities so the
+        caller can see which side is wrong.
+        """
+        from probpipe.core._numeric_record_distribution import (
+            NumericRecordDistribution,
+        )
+        from probpipe.core.record import RecordTemplate
+
+        class ThreeField(NumericRecordDistribution):
+            """Multi-field target with three fields (source has two)."""
+
+            @property
+            def record_template(self):
+                return RecordTemplate(a=(), b=(), c=())
+
+            @property
+            def dtypes(self):
+                return {"a": jnp.float32, "b": jnp.float32, "c": jnp.float32}
+
+            @property
+            def supports(self):
+                from probpipe import positive
+                return {"a": positive, "b": positive, "c": positive}
+
+            def _sample(self, key, sample_shape=()):  # pragma: no cover
+                from probpipe import NumericRecord
+                return NumericRecord(
+                    a=jnp.zeros(sample_shape),
+                    b=jnp.zeros(sample_shape),
+                    c=jnp.zeros(sample_shape),
+                )
+
+        target = ThreeField(name="three_field")
+        with pytest.raises(
+            ValueError,
+            match=r"field-count mismatch",
+        ):
+            target._check_support_compatible(multi_leaf_dist)
+
+    def test_check_support_compatible_multi_field_target_paired_mismatch(self):
+        """Multi-field target with matching field count compares
+        positionally; the first incompatible pair raises with both
+        field names in the message.
+        """
+        from probpipe.core._numeric_record_distribution import (
+            NumericRecordDistribution,
+        )
+        from probpipe.core.record import RecordTemplate
+        from probpipe import NumericRecord, positive, real
+
+        class TwoFieldSource(NumericRecordDistribution):
+            @property
+            def record_template(self):
+                return RecordTemplate(s1=(), s2=())
+
+            @property
+            def dtypes(self):
+                return {"s1": jnp.float32, "s2": jnp.float32}
+
+            @property
+            def supports(self):
+                return {"s1": real, "s2": real}
+
+            def _sample(self, key, sample_shape=()):  # pragma: no cover
+                return NumericRecord(
+                    s1=jnp.zeros(sample_shape), s2=jnp.zeros(sample_shape),
+                )
+
+        class TwoFieldTarget(NumericRecordDistribution):
+            @property
+            def record_template(self):
+                return RecordTemplate(t1=(), t2=())
+
+            @property
+            def dtypes(self):
+                return {"t1": jnp.float32, "t2": jnp.float32}
+
+            @property
+            def supports(self):
+                return {"t1": positive, "t2": positive}
+
+            def _sample(self, key, sample_shape=()):  # pragma: no cover
+                return NumericRecord(
+                    t1=jnp.zeros(sample_shape), t2=jnp.zeros(sample_shape),
+                )
+
+        source = TwoFieldSource(name="source")
+        target = TwoFieldTarget(name="target")
+        with pytest.raises(
+            ValueError,
+            match=r"field 's1' \(support=real\).*field 't1' \(support=positive\)",
+        ):
+            target._check_support_compatible(source)
+
+    def test_check_support_compatible_skips_non_nrd_source(self, scalar_normal):
+        """Sources without per-field ``supports`` (non-NRD endpoints
+        like an opaque ``EmpiricalDistribution`` with object-dtype
+        leaves) are treated as "unknown" — the check returns silently
+        rather than raising ``AttributeError``.
+        """
+        class _NoSupportsSource:
+            """Pretends to be a source but has no ``supports`` attribute."""
+
+            # Plain object — accessing ``.supports`` raises ``AttributeError``.
+
+        scalar_normal._check_support_compatible(_NoSupportsSource())  # no raise
 
     def test_treedef_leaf_for_single_leaf(self, scalar_normal):
         """Single-leaf: ``treedef`` is the leaf treedef (one-leaf pytree)."""

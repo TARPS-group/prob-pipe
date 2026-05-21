@@ -175,16 +175,18 @@ class _RecordDistributionView(Distribution):
     _sampling_cost = "low"
     _preferred_orchestration = None
 
-    def __new__(cls, parent: Distribution, key: str):
+    def __new__(cls, parent: "RecordDistribution", key: str) -> "_RecordDistributionView":
         actual_cls = _view_class_for_parent(parent)
         return object.__new__(actual_cls)
 
-    def __init__(self, parent: Distribution, key: str):
+    def __init__(self, parent: "RecordDistribution", key: str) -> None:
+        # ``parent.record_template`` is contractually non-``None``
+        # (metaclass-enforced on every ``RecordDistribution`` instance).
         template = parent.record_template
-        if template is None or key not in template:
+        if key not in template:
             raise KeyError(
                 f"No field {key!r} in record_template "
-                f"(available: {template.fields if template is not None else ()})"
+                f"(available: {template.fields})"
             )
         # Bypass Distribution.__init__ validation (view name comes from
         # the field key, not a user-supplied argument).
@@ -339,7 +341,7 @@ class _RecordDistributionMeta(_DistributionMeta):
     Both paths must yield a non-``None`` ``RecordTemplate``.
     """
 
-    def __call__(cls, *args, **kwargs):
+    def __call__(cls, *args: Any, **kwargs: Any) -> Any:
         instance = super().__call__(*args, **kwargs)
         try:
             tpl = instance.record_template
@@ -384,28 +386,17 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
         """
         return getattr(self, "_record_template", None)
 
-    # -- renamed --------------------------------------------------------------
-
-    def renamed(self, new_name: str) -> "RecordDistribution":
-        """Return a shallow copy with a different name.
-
-        Extends :meth:`Distribution.renamed` by clearing the cached
-        ``_record_template`` so the auto-build path regenerates with
-        the new name (relevant for single-field
-        ``NumericRecordDistribution`` subclasses whose template is
-        keyed by ``name``).
-        """
-        clone = super().renamed(new_name)
-        object.__setattr__(clone, "_record_template", None)
-        return clone
-
     # -- Named component access ---------------------------------------------
 
     @property
     def fields(self) -> tuple[str, ...]:
-        """Field names from the record_template, or empty tuple."""
-        tpl = self.record_template
-        return tpl.fields if tpl is not None else ()
+        """Field names from the record_template.
+
+        The metaclass guarantees ``record_template`` is non-``None`` on
+        every :class:`RecordDistribution` instance, so this is a direct
+        delegate (no ``None`` fallback).
+        """
+        return self.record_template.fields
 
     def __getitem__(self, key: str) -> _RecordDistributionView:
         return _RecordDistributionView(self, key)
@@ -466,12 +457,11 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
         """Per-field event shapes (top-level fields only).
 
-        Thin delegate to :attr:`RecordTemplate.event_shapes`. For
-        untemplated distributions returns ``{}``; nested sub-templates
-        and opaque leaves collapse to ``()``.
+        Thin delegate to :attr:`RecordTemplate.event_shapes`. Nested
+        sub-templates and opaque leaves collapse to ``()``. The
+        metaclass guarantees ``record_template`` is non-``None``.
         """
-        tpl = self.record_template
-        return tpl.event_shapes if tpl is not None else {}
+        return self.record_template.event_shapes
 
     # -- Single-field array-like shims --------------------------------------
     # On a single-field distribution, ``.shape`` / ``.ndim`` delegate to
@@ -491,10 +481,13 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
 
     @property
     def shape(self) -> tuple[int, ...]:
-        """Shape of one draw (equals the sole field's event_shape)."""
+        """Shape of one draw (equals the sole field's event_shape).
+
+        Raises ``TypeError`` via :meth:`_single_field_name` on
+        multi-field distributions.
+        """
         name = self._single_field_name()
-        tpl = self.record_template
-        return tpl.field_event_shape(name) if tpl is not None else ()
+        return self.record_template.field_event_shape(name)
 
     @property
     def ndim(self) -> int:

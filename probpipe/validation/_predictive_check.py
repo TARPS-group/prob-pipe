@@ -133,15 +133,31 @@ def predictive_check[P, D](
     return result
 
 
-def _record_check_in_auxiliary(distribution, stats_array, result):
+def _record_check_in_auxiliary(
+    distribution: Any,
+    stats_array: Any,
+    result: dict[str, Any],
+) -> None:
     """Append a per-invocation result Dataset under
     ``distribution.auxiliary["predictive_check/check_N"]``.
 
+    Mutates ``distribution._auxiliary`` in place. This is the
+    documented exception to ``Distribution`` immutability (see
+    :attr:`Distribution.auxiliary` and ``CONTRIBUTING.md`` §"Design
+    principles" §1) — diagnostic ops attach results under named
+    groups rather than returning renamed clones, which would break
+    source/identity tracking.
+
     Encoding:
+
     - ``replicated_statistics`` becomes a ``DataArray`` of dims
       ``("replication",)``.
     - ``test_fn_name`` + optional ``observed_statistic`` /
       ``p_value`` become Dataset attrs.
+
+    Frozen/slotted distributions (where ``_auxiliary`` can't be set
+    via ``object.__setattr__``) skip the attachment silently — the
+    caller still gets the ``result`` dict via the public return.
     """
     try:
         import xarray as xr

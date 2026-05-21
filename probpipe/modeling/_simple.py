@@ -79,27 +79,30 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         # This makes fields include both parameter and data names,
         # so condition_on can use component names as the sole signal for
         # splitting data kwargs from inference kwargs.
-        prior_tpl = prior.record_template
+        #
+        # ``prior_tpl`` is contractually non-``None`` (the
+        # ``isinstance(prior, RecordDistribution)`` guard above implies
+        # the metaclass invariant); ``data_tpl`` may be ``None`` for
+        # likelihoods that don't declare a data template.
+        prior_tpl: RecordTemplate = prior.record_template
         data_tpl = getattr(likelihood, 'data_template', None)
         # Convert legacy Record templates to RecordTemplate
         if isinstance(data_tpl, Record) and not isinstance(data_tpl, RecordTemplate):
             data_tpl = RecordTemplate.from_record(data_tpl)
-        if prior_tpl is not None and data_tpl is not None:
+        if data_tpl is not None:
             overlap = set(prior_tpl.fields) & set(data_tpl.fields)
             if overlap:
                 raise ValueError(
                     f"Parameter and data field names overlap: {overlap}"
                 )
-            merged = {}
+            merged: dict[str, Any] = {}
             for f in prior_tpl.fields:
                 merged[f] = prior_tpl[f]
             for f in data_tpl.fields:
                 merged[f] = data_tpl[f]
-            self._record_template = RecordTemplate(merged)
-        elif prior_tpl is not None:
-            self._record_template = prior_tpl
+            self._record_template: RecordTemplate = RecordTemplate(merged)
         else:
-            self._record_template = None
+            self._record_template = prior_tpl
 
     # -- Distribution interface ---------------------------------------------
 
@@ -114,12 +117,15 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         return self._likelihood
 
     @property
-    def record_template(self) -> RecordTemplate | None:
+    def record_template(self) -> RecordTemplate:
         """Merged ``RecordTemplate`` over prior fields + likelihood data fields.
 
-        ``SimpleModel`` is not itself a :class:`RecordDistribution`, but it
-        carries a template so :attr:`fields`, conditioning, and inference
-        kwarg splitting can address parameters and data uniformly.
+        ``SimpleModel`` is not itself a :class:`RecordDistribution`, but
+        it carries a template so :attr:`fields`, conditioning, and
+        inference kwarg splitting can address parameters and data
+        uniformly. The template is always set — the prior's template
+        is guaranteed non-``None`` by the ``RecordDistribution``
+        invariant, and the prior's fields are the floor.
         """
         return self._record_template
 
@@ -127,16 +133,12 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
 
     @property
     def fields(self) -> tuple[str, ...]:
-        tpl = self.record_template
-        if tpl is not None:
-            return tpl.fields
-        return ("parameters", "data")
+        return self.record_template.fields
 
     @property
     def _prior_fields(self) -> tuple[str, ...]:
         """Prior field names in template (insertion) order."""
-        tpl = self._prior.record_template
-        return tpl.fields if tpl is not None else ()
+        return self._prior.record_template.fields
 
     @property
     def _data_fields(self) -> tuple[str, ...]:

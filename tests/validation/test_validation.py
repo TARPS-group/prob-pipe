@@ -225,6 +225,33 @@ class TestPredictiveCheck:
         last = group[children[-1]].dataset
         assert last.attrs["test_fn_name"] == "my_custom_stat"
 
+    def test_frozen_distribution_skips_attachment_silently(
+        self, prior, likelihood,
+    ):
+        """Distributions that disallow post-construction attribute
+        writes (e.g., a custom subclass with ``__slots__`` that
+        excludes ``_auxiliary``) cause the in-place attachment to
+        fail silently. The caller still gets the result dict from
+        the public return so the validation itself isn't lost.
+        """
+        from probpipe.validation._predictive_check import (
+            _record_check_in_auxiliary,
+        )
+
+        class _FrozenDist:
+            """Slotted dummy: ``object.__setattr__`` for ``_auxiliary``
+            raises ``AttributeError``."""
+
+            __slots__ = ()
+
+        frozen = _FrozenDist()
+        stats = jnp.zeros(5)
+        result = {"test_fn_name": "stub", "replicated_statistics": stats}
+        # Returns ``None`` and doesn't raise — exercises the
+        # ``except (AttributeError, TypeError)`` branch.
+        _record_check_in_auxiliary(frozen, stats, result)
+        assert not hasattr(frozen, "_auxiliary")
+
 
 # ---------------------------------------------------------------------------
 # Tests — non-JAX data types

@@ -245,3 +245,59 @@ class TestMetaclassEnforcement:
 
         with pytest.raises(TypeError, match="record_template"):
             _NoTemplate()
+
+
+class TestRenamedTemplateRoundtrip:
+    """``NumericRecordDistribution.renamed`` regenerates an auto-built
+    template under the new name; explicit and multi-field templates
+    are preserved.
+    """
+
+    def test_renamed_rebuilds_single_field_auto_template(self):
+        """Single-field auto-built template: the clone's
+        ``record_template`` has the new field name (matches
+        ``new_name``)."""
+        from probpipe import Normal
+
+        original = Normal(loc=0.0, scale=1.0, name="x")
+        # Trigger the auto-build so ``_record_template`` is cached.
+        assert original.record_template.fields == ("x",)
+
+        clone = original.renamed("y")
+        assert clone.name == "y"
+        # The rebuilt template uses the new name as the field key.
+        assert clone.record_template.fields == ("y",)
+        # The original is untouched (renamed returns a copy).
+        assert original.record_template.fields == ("x",)
+
+    def test_renamed_preserves_multi_field_template(self):
+        """Multi-field joints have explicit templates whose field
+        names are independent of the distribution's name — renaming
+        must not touch the template."""
+        from probpipe import JointGaussian
+        import jax.numpy as jnp
+
+        jg = JointGaussian(
+            mean=jnp.zeros(2), cov=jnp.eye(2), x=1, y=1,
+        )
+        original_fields = jg.record_template.fields
+        clone = jg.renamed("renamed_jg")
+        assert clone.record_template.fields == original_fields
+
+    def test_renamed_preserves_non_numeric_record_template(self):
+        """``JointEmpirical`` (non-NRD ``RecordDistribution``) builds its
+        template from the stored samples, not from the distribution's
+        name — renaming must leave the template intact (otherwise the
+        metaclass invariant would be violated, since the non-numeric
+        base has no auto-rebuild path)."""
+        import numpy as np
+        from probpipe import JointEmpirical
+
+        je = JointEmpirical(
+            labels=np.array(["a", "b", "c"], dtype=object),
+            ids=np.array([0, 1, 2]),
+        )
+        original_fields = je.record_template.fields
+        clone = je.renamed("renamed_je")
+        assert clone.record_template is not None
+        assert clone.record_template.fields == original_fields

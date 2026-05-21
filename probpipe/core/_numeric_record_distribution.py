@@ -263,6 +263,27 @@ class NumericRecordDistribution(RecordDistribution):
         object.__setattr__(self, "_record_template", tpl)
         return tpl
 
+    def renamed(self, new_name: str) -> "NumericRecordDistribution":
+        """Return a renamed copy, regenerating an auto-built template.
+
+        Extends :meth:`Distribution.renamed`. When the cached template
+        is the single-field auto-build (one field keyed by the old
+        name), the clone's ``_record_template`` is cleared so the next
+        access rebuilds it under ``new_name``. Multi-leaf and
+        user-supplied templates are left intact — their field names
+        are part of the distribution's identity, not derived from
+        ``name``.
+        """
+        clone = super().renamed(new_name)
+        tpl = getattr(clone, "_record_template", None)
+        if (
+            tpl is not None
+            and len(tpl.fields) == 1
+            and tpl.fields[0] == self._name
+        ):
+            object.__setattr__(clone, "_record_template", None)
+        return clone
+
     def _per_field_dict(self, value: Any) -> dict[str, Any]:
         """Build a ``{field: value}`` dict keyed by every field of
         :attr:`record_template`, with *value* repeated as the value.
@@ -336,12 +357,17 @@ class NumericRecordDistribution(RecordDistribution):
         approximation. For a single-field target (the common case),
         every source field's support is compared against the lone
         target support. For a multi-field target, supports pair up
-        field-by-field in insertion order.
+        field-by-field in insertion order; field-count mismatches raise
+        ``ValueError`` rather than silently truncating via ``zip``.
+
+        Sources that don't expose per-field supports (non-NRD endpoints
+        like ``EmpiricalDistribution`` with object-dtype data) are
+        treated as "unknown" and the check returns without complaint.
         """
         try:
             target_per_field = self.supports
             source_per_field = source.supports
-        except NotImplementedError:
+        except (NotImplementedError, AttributeError):
             return
 
         multi_leaf_source = len(source_per_field) > 1
@@ -360,19 +386,32 @@ class NumericRecordDistribution(RecordDistribution):
                     f"(support={target_support}). "
                     f"Pass check_support=False to override."
                 )
-        else:
-            for (s_name, s_sup), (t_name, t_sup) in zip(
-                source_per_field.items(), target_per_field.items(),
-            ):
-                if _supports_compatible(s_sup, t_sup):
-                    continue
-                raise ValueError(
-                    f"Cannot convert {type(source).__name__} field "
-                    f"{s_name!r} (support={s_sup}) to "
-                    f"{type(self).__name__} field {t_name!r} "
-                    f"(support={t_sup}). "
-                    f"Pass check_support=False to override."
-                )
+            return
+
+        # Multi-field target — field counts must match to pair
+        # positionally; ``zip`` would silently truncate, hiding bugs
+        # where the converter produced a target with the wrong arity.
+        if len(source_per_field) != len(target_per_field):
+            raise ValueError(
+                f"Cannot convert {type(source).__name__} "
+                f"({len(source_per_field)} fields: "
+                f"{tuple(source_per_field)}) to {type(self).__name__} "
+                f"({len(target_per_field)} fields: "
+                f"{tuple(target_per_field)}): field-count mismatch. "
+                f"Pass check_support=False to override."
+            )
+        for (s_name, s_sup), (t_name, t_sup) in zip(
+            source_per_field.items(), target_per_field.items(),
+        ):
+            if _supports_compatible(s_sup, t_sup):
+                continue
+            raise ValueError(
+                f"Cannot convert {type(source).__name__} field "
+                f"{s_name!r} (support={s_sup}) to "
+                f"{type(self).__name__} field {t_name!r} "
+                f"(support={t_sup}). "
+                f"Pass check_support=False to override."
+            )
 
     # -- event_shape ---------------------------------------------------------
 
@@ -380,13 +419,22 @@ class NumericRecordDistribution(RecordDistribution):
     def event_shape(self) -> tuple[int, ...]:
         """Single-leaf convenience shortcut for the lone field's shape.
 
-        Default: derive from :attr:`event_shapes`. Raises
-        ``TypeError`` (via :meth:`_single_field_name`) on multi-leaf
-        templates. Single-leaf subclasses typically override directly
-        for performance and to provide the source of truth used by
-        :attr:`record_template`'s auto-build path.
+        **Abstract** — every single-leaf subclass must override. The
+        declared ``event_shape`` is the source of truth used by
+        :attr:`record_template`'s auto-build path; deriving it from
+        :attr:`event_shapes` here would loop back through
+        ``record_template``.
+
+        Multi-leaf subclasses don't override (single-field convenience
+        doesn't apply); they set ``_record_template`` explicitly in
+        ``__init__`` so the auto-build never fires, and callers reach
+        for :attr:`event_shapes` (per-field dict) instead.
         """
-        return self.event_shapes[self._single_field_name()]
+        raise NotImplementedError(
+            f"{type(self).__name__}.event_shape — single-leaf "
+            f"subclasses must override; multi-leaf subclasses should "
+            f"use .event_shapes (per-field dict)."
+        )
 
     # -- Single-leaf pytree interface -----------------------------------------
 
@@ -412,8 +460,13 @@ class NumericRecordDistribution(RecordDistribution):
         cached = getattr(self, "_treedef", None)
         if cached is not None:
             return cached
+        # ``record_template`` is contractually non-``None`` on every
+        # ``RecordDistribution`` (metaclass-enforced); single-field
+        # templates produce a leaf treedef matching the raw-array
+        # ``_sample`` contract, multi-field templates produce a
+        # ``NumericRecord`` skeleton.
         tpl = self.record_template
-        if tpl is None or len(tpl.fields) <= 1:
+        if len(tpl.fields) <= 1:
             td = jax.tree.structure(None)
         else:
             from ._numeric_record import NumericRecord
@@ -544,14 +597,17 @@ class NumericRecordDistribution(RecordDistribution):
     # -- repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
-        parts = [type(self).__name__]
+        parts: list[str] = [type(self).__name__]
         if self.name:
             parts.append(f"name={self.name!r}")
         # Multi-field NRDs (joints) can't summarise the event with a
-        # single ``event_shape``; fall back to the per-field dict.
+        # single ``event_shape`` — ``_single_field_name`` raises
+        # ``TypeError`` there, and the base default raises
+        # ``NotImplementedError`` for subclasses that haven't overridden
+        # ``event_shape``. Either way, fall back to the per-field dict.
         try:
             parts.append(f"event_shape={self.event_shape}")
-        except TypeError:
+        except (TypeError, NotImplementedError):
             parts.append(f"event_shapes={self.event_shapes}")
         return f"{parts[0]}({', '.join(parts[1:])})"
 

@@ -222,7 +222,15 @@ full public API surface.
 ### Design principles
 
 1. **Distributions are immutable** — parameters fixed at construction;
-   operations return new distributions.
+   operations return new distributions. The one documented exception
+   is `Distribution._auxiliary` (a `DataTree` of post-construction
+   metadata): validators and diagnostic ops (e.g.,
+   `predictive_check`) attach their results in-place under named
+   groups (`auxiliary["predictive_check"]`, future `auxiliary["loo"]`,
+   ...). This is a deliberate carve-out — the alternative of returning
+   a renamed clone for every diagnostic would break source/identity
+   tracking that downstream code relies on. Treat `_auxiliary` as
+   append-only; never mutate other state post-construction.
 2. **Operations are standalone workflow functions** — `sample()`, `mean()`,
    `log_prob()`, `condition_on()` are `WorkflowFunction` instances in
    `probpipe/core/ops.py`.
