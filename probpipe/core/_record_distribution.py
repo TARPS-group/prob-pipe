@@ -462,29 +462,14 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
 
     @property
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-field event shapes.
+        """Per-field event shapes (top-level fields only).
 
-        For untemplated distributions (no ``record_template``) returns
-        ``{}``; use :attr:`event_shape` for the scalar shape of a
-        single unnamed field. Nested sub-templates collapse to ``()``
-        at the top level.
+        Thin delegate to :attr:`RecordTemplate.event_shapes`. For
+        untemplated distributions returns ``{}``; nested sub-templates
+        and opaque leaves collapse to ``()``.
         """
         tpl = self.record_template
-        if tpl is None:
-            return {}
-        return {name: self._field_event_shape(tpl[name]) for name in tpl.fields}
-
-    @staticmethod
-    def _field_event_shape(spec) -> tuple[int, ...]:
-        """Event shape for one field spec (nested template → ``()``)."""
-        if isinstance(spec, RecordTemplate):
-            return ()
-        if spec is None:
-            return ()
-        if isinstance(spec, tuple):
-            return spec
-        # Record-valued template fallback.
-        return spec.shape if not isinstance(spec, Record) else ()
+        return tpl.event_shapes if tpl is not None else {}
 
     # -- Single-field array-like shims --------------------------------------
     # On a single-field distribution, ``.shape`` / ``.ndim`` delegate to
@@ -507,7 +492,7 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
         """Shape of one draw (equals the sole field's event_shape)."""
         name = self._single_field_name()
         tpl = self.record_template
-        return self._field_event_shape(tpl[name]) if tpl is not None else ()
+        return tpl.field_event_shape(name) if tpl is not None else ()
 
     @property
     def ndim(self) -> int:
