@@ -617,6 +617,29 @@ class TestProductProtocolDuckTyping:
         # leaves collapse to ``()`` at the top level.
         assert joint.event_shapes == {"x": (), "je": ()}
 
+    def test_repr_shows_non_numeric_leaf_class_name(self):
+        """``__repr__`` prints the concrete class name for every
+        ``Distribution`` leaf — including non-numeric
+        ``RecordDistribution`` leaves like ``JointEmpirical``.
+        Previously the repr branched on
+        :class:`NumericRecordDistribution` membership and hid
+        non-numeric leaves behind ``{...}``.
+        """
+        import numpy as np
+        from probpipe import JointEmpirical, Normal
+
+        je = JointEmpirical(
+            labels=np.array(["a", "b", "c"], dtype=object),
+            ids=np.array([0, 1, 2]),
+            name="je",
+        )
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), je=je)
+        r = repr(joint)
+        assert "x=Normal" in r
+        # Non-numeric leaf prints its class name, not ``{...}``.
+        assert "je=JointEmpirical" in r
+        assert "{...}" not in r
+
 
 # ===========================================================================
 # 12. Additional coverage

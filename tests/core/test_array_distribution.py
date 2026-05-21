@@ -498,6 +498,47 @@ class TestCanonicalConvenience:
 
         scalar_normal._check_support_compatible(_NoSupportsSource())  # no raise
 
+    def test_check_support_compatible_skips_when_supports_not_implemented(
+        self, scalar_normal,
+    ):
+        """A source whose ``supports`` property raises
+        ``NotImplementedError`` (the default for any
+        :class:`NumericRecordDistribution` subclass that hasn't
+        overridden it) is treated the same as the
+        ``AttributeError`` branch — the check returns silently.
+        Exercises the ``except NotImplementedError`` clause inside
+        ``_check_support_compatible`` (companion to the
+        ``AttributeError`` branch covered above).
+        """
+        from probpipe.core._numeric_record_distribution import (
+            NumericRecordDistribution,
+        )
+        from probpipe.core.record import RecordTemplate
+
+        class _UnimplSupportsSource(NumericRecordDistribution):
+            """Multi-field NRD that explicitly doesn't declare supports."""
+
+            @property
+            def record_template(self):
+                return RecordTemplate(a=(), b=())
+
+            @property
+            def dtypes(self):
+                return {"a": jnp.float32, "b": jnp.float32}
+
+            # Inherits the base ``supports`` which raises
+            # ``NotImplementedError``.
+
+            def _sample(self, key, sample_shape=()):  # pragma: no cover
+                from probpipe import NumericRecord
+                return NumericRecord(
+                    a=jnp.zeros(sample_shape), b=jnp.zeros(sample_shape),
+                )
+
+        scalar_normal._check_support_compatible(
+            _UnimplSupportsSource(name="unimpl"),
+        )  # no raise
+
     def test_treedef_leaf_for_single_leaf(self, scalar_normal):
         """Single-leaf: ``treedef`` is the leaf treedef (one-leaf pytree)."""
         assert scalar_normal.treedef == jax.tree.structure(None)

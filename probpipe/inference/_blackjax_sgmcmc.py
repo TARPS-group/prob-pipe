@@ -36,8 +36,6 @@ import jax.numpy as jnp
 
 from ..core._registry import MethodInfo
 from ..core._random_measures import RandomMeasure
-from ..core.protocols import SupportsLogProb
-from ..core.record import Record
 from ..custom_types import Array, PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._minibatch import MinibatchedDistribution

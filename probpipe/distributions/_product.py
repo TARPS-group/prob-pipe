@@ -379,9 +379,13 @@ class ProductDistribution(
         return result
 
     def __repr__(self) -> str:
+        # Nested-dict groups print as ``{...}``; concrete ``Distribution``
+        # leaves print their class name regardless of whether they're
+        # numeric (the previous ``isinstance(v, NumericRecordDistribution)``
+        # check hid non-numeric ``RecordDistribution`` leaves like
+        # ``JointEmpirical``).
         comp_str = ", ".join(
-            f"{k}={type(v).__name__}" if isinstance(v, NumericRecordDistribution)
-            else f"{k}={{...}}"
+            f"{k}={{...}}" if isinstance(v, dict) else f"{k}={type(v).__name__}"
             for k, v in self._components.items()
         )
         name_str = f", name='{self._name}'" if self._name else ""

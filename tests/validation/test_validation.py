@@ -233,6 +233,10 @@ class TestPredictiveCheck:
         excludes ``_auxiliary``) cause the in-place attachment to
         fail silently. The caller still gets the result dict from
         the public return so the validation itself isn't lost.
+
+        Exercises the ``except AttributeError`` arm of the
+        ``except (AttributeError, TypeError)`` branch in
+        ``_record_check_in_auxiliary``.
         """
         from probpipe.validation._predictive_check import (
             _record_check_in_auxiliary,
@@ -247,10 +251,44 @@ class TestPredictiveCheck:
         frozen = _FrozenDist()
         stats = jnp.zeros(5)
         result = {"test_fn_name": "stub", "replicated_statistics": stats}
-        # Returns ``None`` and doesn't raise — exercises the
-        # ``except (AttributeError, TypeError)`` branch.
         _record_check_in_auxiliary(frozen, stats, result)
         assert not hasattr(frozen, "_auxiliary")
+
+    def test_typeerror_during_attachment_skips_silently(self):
+        """Companion to the slotted-dummy test above — exercises the
+        ``except TypeError`` arm explicitly. A distribution that
+        carries an ``_auxiliary`` property whose setter raises
+        ``TypeError`` (e.g., an immutable wrapper that explicitly
+        rejects writes with ``TypeError`` rather than the more usual
+        ``AttributeError``) bypasses attachment silently.
+
+        ``object.__setattr__`` honors data-descriptor protocol, so
+        the property setter on the class runs even though the call
+        site uses ``object.__setattr__`` to bypass any custom
+        ``__setattr__``.
+        """
+        from probpipe.validation._predictive_check import (
+            _record_check_in_auxiliary,
+        )
+
+        class _AuxTypeErrorDist:
+            """``_auxiliary`` is a property whose setter raises
+            ``TypeError`` — represents an immutable wrapper rejecting
+            attachment with a typed error rather than ``AttributeError``."""
+
+            @property
+            def _auxiliary(self):
+                return None
+
+            @_auxiliary.setter
+            def _auxiliary(self, value):
+                raise TypeError("immutable: cannot set _auxiliary")
+
+        dist = _AuxTypeErrorDist()
+        stats = jnp.zeros(5)
+        result = {"test_fn_name": "stub", "replicated_statistics": stats}
+        # No raise — the ``except TypeError`` clause swallows it.
+        _record_check_in_auxiliary(dist, stats, result)
 
 
 # ---------------------------------------------------------------------------

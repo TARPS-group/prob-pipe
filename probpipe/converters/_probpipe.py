@@ -631,19 +631,20 @@ class ProbPipeConverter(Converter):
         with _allow_batched_tfp_init():
             result = fn(source, key, **kwargs)
 
-        # Post-construction support check. Both sides expose per-field
-        # ``supports`` only as instance state, so the check runs after
-        # the target is built. Skipped silently when either side lacks
-        # the instance method (non-``NumericRecordDistribution``
-        # endpoints) or its supports aren't implemented.
+        # Post-construction support check. Per-field ``supports`` is
+        # instance state, so the check has to run after the target is
+        # built. Targets that aren't ``NumericRecordDistribution``
+        # don't carry the method (skipped via the ``getattr`` fallback);
+        # sources that don't expose per-field ``supports`` raise
+        # ``AttributeError`` inside the check (caught here and treated
+        # as "unknown", same as the ``NotImplementedError`` branch
+        # inside ``_check_support_compatible``).
         if check_support:
             check = getattr(result, "_check_support_compatible", None)
             if check is not None:
                 try:
                     check(source)
                 except AttributeError:
-                    # Source doesn't expose per-field ``supports`` —
-                    # treat as "unknown", same as ``NotImplementedError``.
                     pass
 
         # Mark approximate if source is approximate or conversion used sampling

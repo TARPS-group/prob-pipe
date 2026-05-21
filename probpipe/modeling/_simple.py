@@ -86,8 +86,11 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         # likelihoods that don't declare a data template.
         prior_tpl: RecordTemplate = prior.record_template
         data_tpl = getattr(likelihood, 'data_template', None)
-        # Convert legacy Record templates to RecordTemplate
-        if isinstance(data_tpl, Record) and not isinstance(data_tpl, RecordTemplate):
+        # Convert legacy ``Record``-typed data templates to
+        # ``RecordTemplate``. ``Record`` and ``RecordTemplate`` are
+        # unrelated types, so the ``Record`` check is sufficient on
+        # its own.
+        if isinstance(data_tpl, Record):
             data_tpl = RecordTemplate.from_record(data_tpl)
         if data_tpl is not None:
             overlap = set(prior_tpl.fields) & set(data_tpl.fields)

@@ -62,6 +62,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `dtypes`, `supports`). For mixed or non-numeric leaves those
     methods are simply absent on the instance. Leaf type constraint
     relaxed from `NumericRecordDistribution` to `Distribution`.
+    **Caller-visible consequence:**
+    `isinstance(joint, NumericRecordDistribution)` is no longer
+    guaranteed for `ProductDistribution` / `SequentialJointDistribution`
+    instances — it returns `True` only when every resolved leaf is
+    itself an NRD (the common case). Downstream code that branched on
+    `isinstance(..., NumericRecordDistribution)` for these joints
+    should verify the new dispatch matches its expectations, or
+    switch to checking for the specific capability (e.g.,
+    `hasattr(joint, "event_size")`).
   - **`NumericJointEmpirical` adds `NumericRecordDistribution` as a
     mixin** (previously implicit via `JointEmpirical` only). The
     sibling `JointEmpirical` stays on `RecordDistribution` and now

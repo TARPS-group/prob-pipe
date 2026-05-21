@@ -842,7 +842,25 @@ class WorkflowFunction(Node):
                         dummy_kw[name] = v[0]
                     else:
                         dist = v
-                        es = dist.event_shape
+                        # ``event_shape`` raises on multi-field NRDs
+                        # (``NotImplementedError`` on the base or
+                        # ``TypeError`` via ``_single_field_name``) —
+                        # those distributions don't have a single
+                        # array-shaped placeholder, so the probe can't
+                        # produce a dummy. Falling out to the outer
+                        # ``except Exception`` triggers loop
+                        # vectorization, which is the right default for
+                        # multi-field record-valued inputs.
+                        try:
+                            es = dist.event_shape
+                        except (TypeError, NotImplementedError) as exc:
+                            raise NotImplementedError(
+                                f"Cannot probe JAX traceability for "
+                                f"{type(dist).__name__} broadcast arg "
+                                f"{name!r}: no single ``event_shape`` "
+                                f"(multi-field or abstract). "
+                                f"Falling back to loop vectorization."
+                            ) from exc
                         # Match the distribution's own dtype so the probe
                         # mirrors what the inner function actually sees.
                         dt = getattr(dist, "dtype", None) or jnp.zeros((), dtype=float).dtype
