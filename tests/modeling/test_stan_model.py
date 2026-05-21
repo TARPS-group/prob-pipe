@@ -38,7 +38,7 @@ def _make_stan_model(num_params=3, param_names=("alpha", "beta", "sigma"), name=
     model = object.__new__(StanModel)
     model._stan_file = "test.stan"
     model._stan_data = None
-    model._name_str = name
+    model._name = name if name else "StanModel"
     model._bs_model = mock_bs
     model._num_params = num_params
     return model
@@ -177,9 +177,13 @@ class TestUnconstrainedStanView:
         assert view.name == "mymodel_unconstrained"
 
     def test_name_without_base(self):
+        # StanModel without an explicit name now falls back to the
+        # class name ("StanModel") to satisfy the Distribution
+        # metaclass's non-empty-name requirement; the view name
+        # composes accordingly.
         model = _make_stan_model(name=None)
         view = model.as_unconstrained_distribution()
-        assert view.name == "unconstrained"
+        assert view.name == "StanModel_unconstrained"
 
     def test_event_shape(self, view):
         assert view.event_shape == (3,)
@@ -295,7 +299,7 @@ def tmp_stan_model(tmp_path_factory):
     model = object.__new__(StanModel)
     model._stan_file = str(stan_file)
     model._stan_data = None
-    model._name_str = "normal_mean"
+    model._name = "normal_mean"
     model._bs_model = bs_model
     model._num_params = 1
     return model

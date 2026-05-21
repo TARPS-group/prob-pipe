@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import copy as _copy
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, _ProtocolMeta
 
 if TYPE_CHECKING:
     from xarray import DataTree
@@ -54,7 +54,38 @@ def set_return_approx_dist(value: bool) -> None:
 # Distribution[T] — generic base class
 # ---------------------------------------------------------------------------
 
-class Distribution[T](ABC):
+
+class _DistributionMeta(_ProtocolMeta):
+    """Metaclass enforcing that every Distribution instance has a
+    non-empty ``name`` set by the time construction returns.
+
+    The check runs after ``__init__`` so it catches both subclasses
+    that call ``super().__init__(name=...)`` and subclasses that
+    bypass it and set ``self._name`` directly. The only failure case
+    is a subclass that finishes ``__init__`` without setting
+    ``_name`` to a non-empty string — then construction raises
+    ``TypeError``.
+
+    Extends ``typing._ProtocolMeta`` (rather than the more obvious
+    ``ABCMeta``) so subclasses can still mix in ``@runtime_checkable``
+    protocols (``SupportsSampling``, ``SupportsLogProb``, …) without
+    a metaclass conflict. ``_ProtocolMeta`` is itself an
+    ``ABCMeta`` subclass.
+    """
+
+    def __call__(cls, *args, **kwargs):
+        instance = super().__call__(*args, **kwargs)
+        name = getattr(instance, "_name", None)
+        if not isinstance(name, str) or not name:
+            raise TypeError(
+                f"{cls.__name__}.__init__ must set a non-empty name "
+                f"(via super().__init__(name=...) or by assigning "
+                f"self._name to a non-empty string) before returning."
+            )
+        return instance
+
+
+class Distribution[T](ABC, metaclass=_DistributionMeta):
     """
     Abstract base for all ProbPipe distributions, parameterized by
     value type ``T``.

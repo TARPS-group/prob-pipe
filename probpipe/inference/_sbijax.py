@@ -206,10 +206,8 @@ class DirectSamplerSBIModel(Distribution, SupportsConditioning):
         self._algorithm = algorithm
         self._n_samples = n_samples
         self._random_seed = random_seed
-
-    @property
-    def name(self) -> str:
-        return f"DirectSamplerSBIModel({self._algorithm})"
+        # ``Distribution`` metaclass requires a non-empty name.
+        self._name = f"DirectSamplerSBIModel({algorithm})"
 
     def _condition_on(
         self, observed: Any, /, **kwargs: Any

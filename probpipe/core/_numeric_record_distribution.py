@@ -35,7 +35,6 @@ with a numeric-valued event structure".
 
 from __future__ import annotations
 
-from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
@@ -228,17 +227,35 @@ class NumericRecordDistribution(RecordDistribution):
         Cached via :meth:`object.__setattr__` on first read.
         Multi-field subclasses (joint distributions) override this
         property to skip the auto-build.
+
+        Raises ``TypeError`` if the auto-build path can't run —
+        either ``_name`` is unset, or ``event_shape`` is not
+        derivable. Both error messages name the subclass and point at
+        the two construction paths (set ``_record_template``
+        explicitly, or declare ``event_shape`` so the auto-build can
+        proceed).
         """
         from .record import RecordTemplate
         tpl = getattr(self, "_record_template", None)
         if tpl is not None:
             return tpl
         name = getattr(self, "_name", None)
-        if name is not None:
-            tpl = RecordTemplate(**{name: self.event_shape})
-            object.__setattr__(self, "_record_template", tpl)
-            return tpl
-        return None
+        if name is None:
+            raise TypeError(
+                f"{type(self).__name__} has no record_template and "
+                f"no name; set _record_template explicitly (multi-leaf "
+                f"joints) or pass name= at construction (single-leaf)."
+            )
+        try:
+            es = self.event_shape
+        except NotImplementedError:
+            raise TypeError(
+                f"{type(self).__name__} must declare event_shape or "
+                f"set _record_template explicitly."
+            ) from None
+        tpl = RecordTemplate(**{name: es})
+        object.__setattr__(self, "_record_template", tpl)
+        return tpl
 
     def _per_field_dict(self, value):
         """Build a ``{field: value}`` dict keyed by every field of
@@ -341,12 +358,19 @@ class NumericRecordDistribution(RecordDistribution):
         """
         raise NotImplementedError
 
-    # -- event_shape (abstract) ---------------------------------------------
+    # -- event_shape ---------------------------------------------------------
 
     @property
-    @abstractmethod
     def event_shape(self) -> tuple[int, ...]:
-        ...
+        """Single-leaf convenience shortcut for the lone field's shape.
+
+        Default: derive from :attr:`event_shapes`. Raises
+        ``TypeError`` (via :meth:`_single_field_name`) on multi-leaf
+        templates. Single-leaf subclasses typically override directly
+        for performance and to provide the source of truth used by
+        :attr:`record_template`'s auto-build path.
+        """
+        return self.event_shapes[self._single_field_name()]
 
     # -- Single-leaf pytree interface -----------------------------------------
 
@@ -787,6 +811,9 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
 
     def __init__(self, base: Distribution):
         self._base = base
+        # Carry the base's name through; ``base.name`` is guaranteed
+        # non-empty by the Distribution metaclass.
+        self._name = base.name
 
     @property
     def event_shape(self) -> tuple[int, ...]:
@@ -1011,14 +1038,12 @@ class NumericRecordDistributionView(NumericRecordDistribution):
         *,
         name: str | None = None,
     ):
-        # Match ``FlattenedDistributionView``'s convention of skipping
-        # ``Distribution.__init__``: the base may itself be a view with
-        # no ``_name`` set, so going through ``super().__init__(name=...)``
-        # would raise. Set the attribute directly and accept ``None`` —
-        # ``self.name`` will raise on access in that case, consistent
-        # with ``FlattenedDistributionView``.
+        # Skip ``Distribution.__init__`` to avoid double-validation;
+        # the metaclass post-init check still enforces a non-empty
+        # ``_name``. ``base.name`` is guaranteed non-empty by the
+        # Distribution metaclass, so the fallback is always valid.
         self._base = base
-        self._name = name if name is not None else getattr(base, "_name", None)
+        self._name = name if name is not None else base.name
         # Pre-set the user-supplied template so the auto-build path in
         # ``NumericRecordDistribution.record_template`` is skipped.
         object.__setattr__(self, "_record_template", template)

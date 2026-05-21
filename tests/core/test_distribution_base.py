@@ -183,3 +183,65 @@ class TestNoBatchShape:
             Normal, loc=jnp.zeros(5), scale=1.0, name="x",
         )
         assert da.batch_shape == (5,)
+
+
+class TestMetaclassEnforcement:
+    """The ``_DistributionMeta`` metaclass enforces a non-empty ``name``
+    on every Distribution subclass instance, even when the subclass
+    bypasses ``super().__init__``.
+    """
+
+    def test_subclass_without_name_raises_at_construction(self):
+        """A subclass whose ``__init__`` doesn't set ``_name`` cannot be
+        constructed — the metaclass post-init check fires before the
+        instance escapes."""
+        from probpipe.core.distribution import Distribution
+
+        class _NoNameDist(Distribution):
+            def __init__(self):
+                # Deliberately omit calling super().__init__ and
+                # setting self._name.
+                pass
+
+        with pytest.raises(TypeError, match="non-empty name"):
+            _NoNameDist()
+
+    def test_subclass_with_empty_string_name_raises(self):
+        """An empty-string ``_name`` is also rejected — the check
+        insists on a truthy string."""
+        from probpipe.core.distribution import Distribution
+
+        class _EmptyNameDist(Distribution):
+            def __init__(self):
+                self._name = ""
+
+        with pytest.raises(TypeError, match="non-empty name"):
+            _EmptyNameDist()
+
+    def test_subclass_setting_name_directly_succeeds(self):
+        """Bypassing ``super().__init__`` is fine as long as
+        ``self._name`` ends up set to a non-empty string."""
+        from probpipe.core.distribution import Distribution
+
+        class _DirectNameDist(Distribution):
+            def __init__(self):
+                # Skip super().__init__ deliberately.
+                self._name = "direct"
+
+        dist = _DirectNameDist()
+        assert dist.name == "direct"
+
+    def test_record_distribution_without_template_raises(self):
+        """The ``_RecordDistributionMeta`` adds a record-template check
+        on top of the name check. A RecordDistribution subclass whose
+        ``__init__`` neither sets ``_record_template`` nor leaves
+        ``name + event_shape`` derivable can't be constructed."""
+        from probpipe.core.distribution import RecordDistribution
+
+        class _NoTemplate(RecordDistribution):
+            def __init__(self):
+                self._name = "no_template"
+                # No _record_template; no event_shape declared.
+
+        with pytest.raises(TypeError, match="record_template"):
+            _NoTemplate()

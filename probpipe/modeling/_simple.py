@@ -61,7 +61,9 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
             )
         self._prior = prior
         self._likelihood = likelihood
-        self._name_str = name
+        # ``Distribution`` metaclass requires a non-empty name; default
+        # to the class name when the caller doesn't supply one.
+        self._name = name if name else "SimpleModel"
 
         # Build merged record_template: prior params + likelihood data fields.
         # This makes fields include both parameter and data names,
@@ -88,10 +90,6 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
             self._record_template = prior_tpl
 
     # -- Distribution interface ---------------------------------------------
-
-    @property
-    def name(self) -> str | None:
-        return self._name_str
 
     @property
     def prior(self) -> SupportsLogProb[P]:

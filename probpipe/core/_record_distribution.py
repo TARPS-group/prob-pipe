@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 
-from ._distribution_base import Distribution
+from ._distribution_base import Distribution, _DistributionMeta
 from .protocols import (
     SupportsCovariance,
     SupportsLogProb,
@@ -314,7 +314,38 @@ def _build_record_template(components: dict) -> RecordTemplate:
 # ---------------------------------------------------------------------------
 
 
-class RecordDistribution(Distribution[Record]):
+class _RecordDistributionMeta(_DistributionMeta):
+    """Metaclass adding the ``record_template`` set-or-derivable check
+    on top of the base ``name`` check.
+
+    After ``__init__`` returns, accesses ``instance.record_template``
+    once. Either path is fine: ``_record_template`` was set directly
+    (multi-leaf joints), or the auto-build path on
+    :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`
+    derives a single-field template from ``name`` + ``event_shape``.
+    Both paths must yield a non-``None`` ``RecordTemplate``.
+    """
+
+    def __call__(cls, *args, **kwargs):
+        instance = super().__call__(*args, **kwargs)
+        try:
+            tpl = instance.record_template
+        except (TypeError, NotImplementedError) as exc:
+            raise TypeError(
+                f"{cls.__name__}.__init__ left record_template "
+                f"unresolved: {exc}"
+            ) from exc
+        if tpl is None:
+            raise TypeError(
+                f"{cls.__name__}.__init__ must leave record_template "
+                f"set — either assign self._record_template = ..., "
+                f"or declare event_shape so the auto-build path can "
+                f"derive a single-field template."
+            )
+        return instance
+
+
+class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta):
     """Generic Record-based distribution.
 
     Provides named component access (``fields``, ``__getitem__``,
