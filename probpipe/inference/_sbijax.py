@@ -562,7 +562,12 @@ class SbiSMCABCMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        return 40
+        # Tier 1-10 (no asymptotic-to-exact guarantee in practice;
+        # quality bounded by summary statistics and tolerance choices).
+        # The only auto-dispatchable inference method for a pure
+        # SimpleGenerativeModel today, so the low priority is the
+        # categorisation, not a fallback signal.
+        return 5
 
     def check(
         self, dist: Any, observed: Any, **kwargs: Any

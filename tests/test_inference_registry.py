@@ -1,5 +1,7 @@
 """Tests for the inference method registry."""
 
+import warnings
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -186,12 +188,155 @@ class TestInferenceMethodRegistry:
 
     def test_set_priorities_changes_selection(self, simple_model, data):
         """set_priorities should change which method is auto-selected."""
+        original = inference_method_registry.get_method("tfp_rwmh").priority
         inference_method_registry.set_priorities(tfp_rwmh=200)
         try:
             info = inference_method_registry.check(simple_model, data)
             assert info.method_name == "tfp_rwmh"
         finally:
-            inference_method_registry.set_priorities(tfp_rwmh=50)
+            inference_method_registry.set_priorities(tfp_rwmh=original)
+
+
+# ---------------------------------------------------------------------------
+# Opt-in-only sentinel (priority == 0)
+# ---------------------------------------------------------------------------
+
+class TestOptInOnlyPriority:
+    """Priority 0 = opt-in only: skipped during auto-dispatch."""
+
+    def test_priority_zero_skipped_in_auto_walk(self):
+        reg = MethodRegistry()
+        reg.register(FakeMethod("opt_in", p=0, result=10))
+        # Auto-dispatch finds no method because the only one is opt-in.
+        with pytest.raises(TypeError, match="No method registered"):
+            reg.execute("anything")
+
+    def test_priority_zero_reachable_by_name(self):
+        reg = MethodRegistry()
+        reg.register(FakeMethod("opt_in", p=0, result=10))
+        # Explicit method= still works.
+        assert reg.execute("anything", method="opt_in") == 10
+
+    def test_default_priority_is_opt_in(self):
+        """A Method subclass that doesn't override priority defaults to opt-in."""
+        class Bare(Method):
+            @property
+            def name(self):
+                return "bare"
+            def supported_types(self):
+                return (object,)
+            def check(self, *a, **kw):
+                return MethodInfo(feasible=True, method_name="bare")
+            def execute(self, *a, **kw):
+                return "ran"
+        reg = MethodRegistry()
+        reg.register(Bare())
+        # Auto-dispatch skips it.
+        with pytest.raises(TypeError):
+            reg.execute("anything")
+        # Explicit invocation finds it.
+        assert reg.execute("anything", method="bare") == "ran"
+
+    def test_priority_zero_alongside_positive(self):
+        """A priority-0 method does not block a positive-priority method."""
+        reg = MethodRegistry()
+        reg.register(FakeMethod("opt_in", p=0, result="skipped"))
+        reg.register(FakeMethod("auto", p=10, result="ran"))
+        assert reg.execute("anything") == "ran"
+
+    def test_promote_from_opt_in_via_set_priorities(self):
+        """set_priorities can promote a priority-0 method into auto-dispatch."""
+        reg = MethodRegistry()
+        reg.register(FakeMethod("opt_in", p=0, result="ran"))
+        # Suppress the crossing warning for this targeted check.
+        with pytest.warns(UserWarning, match="out of opt-in-only"):
+            reg.set_priorities(opt_in=10)
+        assert reg.execute("anything") == "ran"
+
+
+# ---------------------------------------------------------------------------
+# set_priorities zero-crossing warning
+# ---------------------------------------------------------------------------
+
+class TestSetPrioritiesZeroCrossingWarning:
+
+    def test_warn_when_demoting_to_opt_in(self):
+        reg = MethodRegistry()
+        reg.register(FakeMethod("a", p=50))
+        with pytest.warns(UserWarning, match="into opt-in-only"):
+            reg.set_priorities(a=0)
+
+    def test_warn_when_promoting_from_opt_in(self):
+        reg = MethodRegistry()
+        reg.register(FakeMethod("a", p=0))
+        with pytest.warns(UserWarning, match="out of opt-in-only"):
+            reg.set_priorities(a=42)
+
+    def test_no_warn_when_staying_positive(self):
+        reg = MethodRegistry()
+        reg.register(FakeMethod("a", p=50))
+        # Crossings of the 50 break are documentary; they should not warn.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            reg.set_priorities(a=10)   # exact -> inexact
+            reg.set_priorities(a=80)   # inexact -> exact
+
+    def test_no_warn_when_staying_zero(self):
+        reg = MethodRegistry()
+        reg.register(FakeMethod("a", p=0))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            reg.set_priorities(a=0)
+
+
+# ---------------------------------------------------------------------------
+# Built-in priority anchors (issue #189)
+# ---------------------------------------------------------------------------
+
+class TestBuiltInPriorityAnchors:
+    """The eight + two re-anchored priorities from issue #189."""
+
+    EXPECTED_PRIORITIES = {
+        "nutpie_nuts": 85,
+        "cmdstan_nuts": 82,
+        "pymc_nuts": 81,
+        "tfp_nuts": 75,
+        "tfp_hmc": 65,
+        "tfp_rwmh": 55,
+        "blackjax_sgld": 45,
+        "blackjax_sghmc": 42,
+        "pymc_advi": 25,
+        "sbijax_smcabc": 5,
+    }
+
+    def test_priorities_match_anchors(self):
+        # Asserts on the *registered* (class-level) priority via
+        # ``Method.priority`` so the test stays valid even if another
+        # test runs ``set_priorities(...)`` and forgets to clean up:
+        # the override sits on the registry, not on the class. To assert
+        # on the *effective* dispatch ordering instead, use
+        # ``MethodRegistry._effective_priority(method)``.
+        for name, expected in self.EXPECTED_PRIORITIES.items():
+            if name not in inference_method_registry.list_methods():
+                continue   # optional backend not installed
+            actual = inference_method_registry.get_method(name).priority
+            assert actual == expected, (
+                f"{name} priority is {actual}, expected {expected}"
+            )
+
+    def test_exact_above_inexact(self):
+        """Every exact-tier (>50) priority outranks every inexact-tier (<=50)."""
+        registered = set(inference_method_registry.list_methods())
+        exact_priorities = [
+            p for n, p in self.EXPECTED_PRIORITIES.items()
+            if n in registered and p > 50
+        ]
+        inexact_priorities = [
+            p for n, p in self.EXPECTED_PRIORITIES.items()
+            if n in registered and 0 < p <= 50
+        ]
+        if exact_priorities and inexact_priorities:
+            assert min(exact_priorities) > max(inexact_priorities)
 
 
 # ---------------------------------------------------------------------------

@@ -17,9 +17,13 @@ kernel via the ``grad_estimator(position, measure_key)`` closure
 convention — the per-step ``measure_key`` is passed through BlackJAX's
 opaque ``minibatch`` slot.
 
-Methods are registered at low priority (30 / 25) so they only fire when
-explicitly requested via ``condition_on(model, observed,
-method="blackjax_sgld", batch_size=…, …)``.
+Priorities (45 / 42) sit in the refinement-based MC tier (1–50, above
+parametric and below all exact methods); the per-method ``check()``
+further requires ``batch_size=`` to be passed, so SGMCMC only applies
+when the user has opted into minibatching via
+``condition_on(model, observed, method="blackjax_sgld", batch_size=…)``
+or by selecting it explicitly. See the inference-method registry
+docs for the full priority convention.
 """
 
 from __future__ import annotations
@@ -232,13 +236,15 @@ def _run_sgmcmc_loop(
 class BlackJAXSGLDMethod(_BlackJAXSGMCMCMethod):
     """BlackJAX Stochastic Gradient Langevin Dynamics.
 
-    Kernel: :func:`blackjax.sgld`. Priority 30 — opt-in via
-    ``method="blackjax_sgld"``; does not auto-win over full-batch
-    gradient methods.
+    Kernel: :func:`blackjax.sgld`. Tier 41-50 (refinement-based:
+    asymptotically exact as the step-size schedule decays). Priority
+    45 — sits below every exact method, so does not auto-win over
+    full-batch gradient methods; ``check()`` further requires the
+    user to pass ``batch_size=`` for SGLD to be applicable at all.
     """
 
     _method_name = "blackjax_sgld"
-    _method_priority = 30
+    _method_priority = 45
 
     def _build_algorithm(self, grad_estimator, **kwargs: Any):
         return blackjax.sgld(grad_estimator)
@@ -249,12 +255,14 @@ class BlackJAXSGHMCMethod(_BlackJAXSGMCMCMethod):
 
     Kernel: :func:`blackjax.sghmc`. Accepts the additional kwargs
     ``num_integration_steps`` (default 10), ``alpha`` (default 0.01),
-    ``beta`` (default 0.0). Priority 25 — opt-in via
-    ``method="blackjax_sghmc"``.
+    ``beta`` (default 0.0). Tier 41-50 (refinement-based:
+    asymptotically exact as the step-size schedule decays). Priority
+    42 — slightly below SGLD because the additional integration-step
+    tuning makes it more brittle in typical use.
     """
 
     _method_name = "blackjax_sghmc"
-    _method_priority = 25
+    _method_priority = 42
 
     def _build_algorithm(self, grad_estimator, **kwargs: Any):
         num_integration_steps: int = kwargs.get("num_integration_steps", 10)

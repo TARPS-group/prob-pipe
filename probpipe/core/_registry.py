@@ -2,15 +2,38 @@
 
 Provides a reusable base for registries that dispatch operations
 to pluggable methods based on priority and feasibility.
+
+Priority semantics (see issue #189):
+
+- ``priority > 50`` — *exact* methods. Auto-dispatched in descending
+  priority order.
+- ``0 < priority <= 50`` — *inexact* methods. Auto-dispatched in
+  descending priority order; the ``50`` break is documentary, not
+  behavioural, so the registry walks every positive priority uniformly.
+- ``priority == 0`` — *opt-in only.* Skipped during auto-dispatch;
+  selectable by name via ``method="..."``. This is the default value
+  inherited from :class:`Method`, so a newly-registered method gets
+  the safe behaviour (opt-in) until a contributor classifies it
+  explicitly.
+
+See ``docs/api/extending.md`` for the tier criteria a contributor
+should use when choosing a priority for a new method.
 """
 
 from __future__ import annotations
 
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-__all__ = ["Method", "MethodInfo", "MethodRegistry"]
+__all__ = ["Method", "MethodInfo", "MethodRegistry", "OPT_IN_ONLY_PRIORITY"]
+
+# Priority value for methods that should not auto-dispatch. The registry
+# excludes any method whose effective priority equals this sentinel from
+# the auto-selection walk; such a method is reachable only by name via
+# ``method=...``.
+OPT_IN_ONLY_PRIORITY: int = 0
 
 
 @dataclass(frozen=True)
@@ -57,8 +80,16 @@ class Method(ABC):
 
     @property
     def priority(self) -> int:
-        """Higher priority methods are tried first.  Default 0."""
-        return 0
+        """Auto-dispatch ordering.
+
+        Higher priority methods are tried first during auto-selection.
+        The default of ``0`` is the opt-in-only sentinel — a method
+        that doesn't override this property is reachable only by name
+        via ``method="..."``. See the module docstring for the
+        ``> 50`` / ``<= 50`` / ``== 0`` convention contributors should
+        follow when choosing a number.
+        """
+        return OPT_IN_ONLY_PRIORITY
 
 
 class MethodRegistry[M: Method]:
@@ -67,6 +98,10 @@ class MethodRegistry[M: Method]:
     Methods are tried in descending priority order.  The first method
     whose ``check()`` returns ``feasible=True`` wins.  Users can also
     select a specific method by name.
+
+    Methods whose effective priority equals :data:`OPT_IN_ONLY_PRIORITY`
+    (``0``) are excluded from the auto-dispatch walk and are reachable
+    only by name via ``method="..."``.
     """
 
     def __init__(self) -> None:
@@ -102,6 +137,11 @@ class MethodRegistry[M: Method]:
         """Override the priority of one or more methods.
 
         Higher priority methods are tried first during auto-selection.
+        Overrides are unrestricted: the new value can be any integer,
+        including the opt-in-only sentinel ``0``. When an override
+        moves a method *into* or *out of* ``0``, the registry emits a
+        :class:`UserWarning` because that crossing changes whether the
+        method participates in auto-dispatch at all.
 
         Parameters
         ----------
@@ -119,6 +159,23 @@ class MethodRegistry[M: Method]:
                 available = ", ".join(sorted(self._name_index)) or "(none)"
                 raise KeyError(
                     f"No method named {name!r}. Available: {available}"
+                )
+        for name, new_priority in name_to_priority.items():
+            old_priority = self._effective_priority(self._name_index[name])
+            if (old_priority == OPT_IN_ONLY_PRIORITY) != (
+                new_priority == OPT_IN_ONLY_PRIORITY
+            ):
+                direction = (
+                    "out of opt-in-only"
+                    if old_priority == OPT_IN_ONLY_PRIORITY
+                    else "into opt-in-only"
+                )
+                warnings.warn(
+                    f"Priority override for {name!r} moves it {direction} "
+                    f"({old_priority} -> {new_priority}); auto-dispatch "
+                    f"participation changes accordingly.",
+                    UserWarning,
+                    stacklevel=2,
                 )
         self._priority_overrides.update(name_to_priority)
         self._sort_methods()
@@ -189,7 +246,14 @@ class MethodRegistry[M: Method]:
     # -- internals ----------------------------------------------------------
 
     def _find_methods(self, key_type: type) -> list[M]:
-        """Return methods whose ``supported_types`` match *key_type* (cached).
+        """Return auto-dispatchable methods matching *key_type* (cached).
+
+        Filters by:
+
+        - ``supported_types`` containing *key_type* (fast pre-filter).
+        - effective priority not equal to ``OPT_IN_ONLY_PRIORITY`` —
+          opt-in-only methods are excluded from the auto-dispatch
+          walk and are only reachable by explicit ``method="..."``.
 
         Uses ``issubclass`` rather than ``isinstance`` because we are
         comparing *types*, not instances.  ``supported_types()`` must
@@ -199,6 +263,7 @@ class MethodRegistry[M: Method]:
         if key_type not in self._type_cache:
             self._type_cache[key_type] = [
                 m for m in self._methods
-                if any(issubclass(key_type, st) for st in m.supported_types())
+                if self._effective_priority(m) != OPT_IN_ONLY_PRIORITY
+                and any(issubclass(key_type, st) for st in m.supported_types())
             ]
         return self._type_cache[key_type]
