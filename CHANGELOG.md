@@ -7,7 +7,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`GLMLikelihood` fits an intercept by default** (``fit_intercept=True``).
+  The covariate matrix ``X`` carries only the covariates — no leading
+  column of 1s. ``params`` flattens to ``(intercept, *slopes)`` and the
+  likelihood computes ``eta = intercept + X @ slopes``. Pass
+  ``fit_intercept=False`` for the classical "model matrix" convention
+  where the user prepends the constant column to ``X`` themselves.
+  Avoids the axis-position ambiguity of stacking the intercept slot
+  into ``X``; matches the pattern in sklearn / statsmodels GLM APIs.
+
+- **PyMC-backed posteriors now carry RV-keyed Record structure.**
+  ``PyMCModel`` exposes a ``record_template`` property that pairs each
+  free RV with its event shape (scalar RVs → ``()``; shape-`k` RVs →
+  ``(k,)``). The PyMC NUTS, PyMC ADVI, and nutpie inference paths all
+  thread this through to ``make_posterior``, so ``mean(post)`` returns
+  a ``NumericRecord`` keyed by RV name and ``draws()`` returns a
+  ``NumericRecordArray``. Previously, PyMC posteriors had no field
+  structure and ``draws()`` returned a flat ``(n_draws, n_params)``
+  array. Models declared with multiple scalar RVs (e.g. separate
+  ``intercept`` and ``slope`` ``pm.Normal`` calls) now produce a
+  field-per-RV posterior matching the ``ProductDistribution``-prior
+  workflow.
+
+  Free RVs whose ``type.shape`` contains a ``None`` dimension are
+  rejected with ``ValueError`` — silently dropping unknown dims would
+  produce an under-shaped template.
+
+- **`GLMLikelihood` no longer accepts stacked ``(X, y)`` arrays.** Both
+  ``log_likelihood`` and ``per_datum_log_likelihood`` now require either
+  ``data = Record(X=..., y=...)`` (canonical) or, for ``log_likelihood``
+  only, a bare response array when ``X`` was supplied at construction
+  time. Passing a single matrix whose last column was interpreted as
+  the response is intentionally rejected — ProbPipe uses named Records
+  to avoid axis-position ambiguity. Existing call sites that used a
+  ``Record`` are unaffected.
+
+- **`SimpleModel.prior` / `SimpleGenerativeModel.prior` type
+  annotations tightened** from ``Distribution[P]`` /
+  ``SupportsSampling[P]`` to the specific capability protocol
+  (``SupportsLogProb[P]`` / ``SupportsSampling[P]``). Static type
+  checkers now catch wrong-type priors at the call site; the
+  construction-time ``isinstance`` check stays as a backstop. The two
+  model wrappers are now parallel in both the input typing and the
+  ``.prior`` property return type.
+
 ### Added
+
+- **BlackJAX-backed SGMCMC methods** registered with
+  ``inference_method_registry``:
+  - ``blackjax_sgld`` — Stochastic Gradient Langevin Dynamics. Priority 30.
+  - ``blackjax_sghmc`` — Stochastic Gradient Hamiltonian Monte Carlo. Priority 25.
+
+  Both consume a `SimpleModel` whose `likelihood` satisfies
+  `ConditionallyIndependentLikelihood`, plus a required `batch_size=`
+  kwarg. Internally they wrap the model+data in a
+  `MinibatchedDistribution` and feed BlackJAX's gradient estimator
+  via the per-step random-measure draw — the kernel stays oblivious
+  to the minibatching convention.
+
+  ```python
+  posterior = condition_on(
+      model, data,
+      method="blackjax_sgld",
+      batch_size=64, num_steps=2000, num_warmup=500, step_size=1e-3,
+  )
+  ```
+
+  Priorities sit below the full-batch gradient methods
+  (`tfp_nuts=100`, `tfp_hmc=90`, …, `tfp_rwmh=50`), so SGMCMC is
+  opt-in via `method=...` — it does not auto-win on a routine
+  `condition_on(model, observed)` call.
+
+- **`MinibatchedDistribution`** (`probpipe.MinibatchedDistribution`)
+  — a `RandomMeasure[Record]` over fixed-minibatch stochastic
+  surrogates of the full-data unnormalized log-posterior. A draw is a
+  `Distribution[Record]` with unnormalized log-density
+  `log p(theta) + (N/b) * sum_{d in B} log p(d|theta)`, an unbiased
+  stochastic surrogate (in expectation over the minibatch `B`) of the
+  full-data target; the `N/b` rescaling makes the gradient an unbiased
+  estimator.
+
+  The constructor takes a prior and a conditionally-independent
+  likelihood directly, mirroring `SimpleModel(prior, likelihood)` on
+  the first two args. Consume the measure via
+  `SupportsRandomUnnormalizedLogProb` to get the per-minibatch
+  log-density callable that SGMCMC kernels feed `jax.grad`:
+
+  ```python
+  from probpipe import MinibatchedDistribution, Record, random_unnormalized_log_prob
+
+  m = MinibatchedDistribution(prior, likelihood, Record(X=X, y=y), batch_size=64)
+
+  rf = random_unnormalized_log_prob(m)
+  target = rf._sample(k)                     # callable: theta -> log~D_B(theta)
+  grad = jax.grad(target)(theta)             # unbiased gradient estimate
+  ```
+
+  This is the path stochastic-gradient MCMC kernels use under the
+  hood; the BlackJAX SGLD / SGHMC dispatch builds a `MinibatchedDistribution`
+  internally and threads `target` into the BlackJAX gradient
+  estimator. Tempered SMC (future work) is expected to consume the
+  same surface.
+
+- **`ConditionallyIndependentLikelihood`** (`probpipe.ConditionallyIndependentLikelihood`)
+  — a `Likelihood` subclass / Protocol whose observations factorise as
+  `log p(D | theta) = sum_i log p(d_i | theta)`. Adds a
+  `per_datum_log_likelihood(params, datum)` method on top of the base
+  `Likelihood`'s `log_likelihood(params, data)`. Required by
+  stochastic-gradient inference (the upcoming `MinibatchedDistribution`)
+  and independently useful for held-out predictive log-likelihoods,
+  leave-one-out cross-validation, and PSIS-LOO. The existing concrete
+  likelihoods (`GLMLikelihood`, `_NLELikelihood`, `_NRELikelihood`) all
+  satisfy the Protocol — `GLMLikelihood` via a direct family
+  `log_prob` evaluation that skips the per-batch tile, the two
+  sbijax-backed classes via a length-1-batch fallback.
+
+  A standalone helper `_default_per_datum_log_likelihood(likelihood,
+  params, datum)` provides the length-1-batch implementation for
+  subclasses that want a default rather than an efficient override.
+
+- **`SimpleModel.prior` / `SimpleModel.likelihood`** and
+  **`SimpleGenerativeModel.prior` / `SimpleGenerativeModel.likelihood`**
+  — public read-only properties that expose the underlying components
+  without poking at private state. The two model wrappers stay
+  symmetric: `SimpleModel.likelihood` is typed `Likelihood`,
+  `SimpleGenerativeModel.likelihood` is typed `GenerativeLikelihood`.
 
 - **`FlatNumericRecordDistribution`** (`probpipe.FlatNumericRecordDistribution`)
   — a `NumericRecordDistribution` subclass that enforces the flat

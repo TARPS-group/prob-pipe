@@ -7,6 +7,7 @@ import pytest
 
 pm = pytest.importorskip("pymc")
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from unittest.mock import MagicMock, patch
@@ -73,13 +74,11 @@ class TestPyMCModel:
         assert model.event_shape == (2,)
 
     def test_sample_scalar(self, model):
-        import jax
         key = jax.random.PRNGKey(0)
         s = model._sample(key, sample_shape=())
         assert s.shape == (2,)  # 2 scalar params
 
     def test_sample_batched(self, model):
-        import jax
         key = jax.random.PRNGKey(0)
         s = model._sample(key, sample_shape=(5,))
         assert s.shape == (5, 2)
@@ -127,3 +126,124 @@ class TestPyMCModel:
         assert hasattr(result.inference_data, "sample_stats")
         assert result.source is not None
         assert result.source.operation == "pymc_nuts"
+
+
+class TestRecordTemplate:
+    """``PyMCModel.record_template`` exposes the free-RV layout that
+    inference methods thread through to the resulting posterior.
+    """
+
+    def test_mixed_scalar_and_vector_rvs(self):
+        """Each free RV becomes one field with its event shape."""
+        def model_fn(y=None):
+            with pm.Model() as m:
+                pm.Normal("intercept", 0, 1)             # scalar
+                pm.Normal("slope", 0, 1, shape=3)        # shape (3,)
+                pm.Normal("y", 0, 1, observed=y)
+            return m
+
+        tpl = PyMCModel(model_fn).record_template
+        assert tpl.fields == ("intercept", "slope")
+        assert tpl["intercept"] == ()
+        assert tpl["slope"] == (3,)
+
+    def test_observed_rvs_excluded(self):
+        """Observed variables are not part of the parameter template."""
+        def model_fn(y=None):
+            with pm.Model() as m:
+                pm.Normal("mu", 0, 1)
+                pm.Normal("y", 0, 1, observed=y)
+            return m
+
+        tpl = PyMCModel(model_fn).record_template
+        assert tpl.fields == ("mu",)
+        assert "y" not in tpl.fields
+
+    def test_non_concrete_shape_rejected(self):
+        """A free RV with a ``None`` dimension raises ``ValueError``.
+
+        Build the RV via ``pm.Normal`` with a tensor-valued ``mu`` whose
+        first axis is shared across an unknown number of observations —
+        a setup that gives the RV a ``None`` leading axis at the PyTensor
+        type level. The template builder should refuse it cleanly rather
+        than silently emit an under-shaped template.
+        """
+        import pytensor.tensor as pt
+
+        def model_fn(y=None):
+            with pm.Model() as m:
+                # Vector mu whose length is unknown at model-build time.
+                mu = pt.vector("mu_data")
+                pm.Normal("z", mu=mu, sigma=1.0)
+                pm.Normal("y", 0, 1, observed=y)
+            return m
+
+        with pytest.raises(ValueError, match="non-concrete shape"):
+            _ = PyMCModel(model_fn).record_template
+
+
+class TestRecordDataUnpacking:
+    """``_pymc_model`` unpacks Record-shaped observed data by field name.
+
+    The canonical multi-observed-variable path: ``condition_on(model,
+    record_data)`` should pass each declared observed name as its own
+    kwarg to the model function so provenance captures every named input.
+    """
+
+    @staticmethod
+    def _xy_model(X=None, y=None):
+        # Sentinel so the unconditioned model build during
+        # PyMCModel.__init__ has a concrete X to multiply against.
+        if X is None:
+            X = np.ones((1, 1), dtype=np.float32)
+        with pm.Model() as m:
+            intercept = pm.Normal("intercept", 0, 1)
+            slope = pm.Normal("slope", 0, 1)
+            rate = pm.math.exp(intercept + slope * X[:, 0])
+            pm.Poisson("y", mu=rate, observed=y)
+        return m
+
+    def test_record_input_unpacked_by_field_name(self):
+        """A ``Record(X=..., y=...)`` populates both observed slots."""
+        from probpipe import Record
+        rng = np.random.RandomState(0)
+        N = 20
+        X = np.asarray(rng.randn(N))[:, None].astype(np.float32)
+        y = rng.poisson(2.0, size=N).astype(np.float32)
+        data = Record(X=jnp.asarray(X), y=jnp.asarray(y))
+
+        model = PyMCModel(self._xy_model)
+        # _pymc_model unpacks and coerces. Result is a PyMC model built
+        # against the *real* X and y (not the unconditioned-build sentinel).
+        built = model._pymc_model(data=data)
+        # The 'y' observed RV should have N observations.
+        y_rv = next(rv for rv in built.observed_RVs if rv.name == "y")
+        assert y_rv.eval().shape == (N,)
+
+    def test_dict_input_still_works(self):
+        """Plain ``dict`` data path unchanged."""
+        rng = np.random.RandomState(0)
+        N = 15
+        X = np.asarray(rng.randn(N))[:, None].astype(np.float32)
+        y = rng.poisson(2.0, size=N).astype(np.float32)
+        model = PyMCModel(self._xy_model)
+        built = model._pymc_model(data={"X": X, "y": y})
+        y_rv = next(rv for rv in built.observed_RVs if rv.name == "y")
+        assert y_rv.eval().shape == (N,)
+
+    def test_jax_arrays_in_record_get_coerced(self):
+        """JAX arrays in a Record are converted to numpy before PyMC sees them.
+
+        PyMC's PyTensor backend doesn't multiply tensor variables with
+        raw JAX arrays; the coercion in ``_pymc_model`` keeps the
+        user-facing Record API free of NumPy-shaped friction.
+        """
+        from probpipe import Record
+        X = jnp.ones((5, 2), dtype=jnp.float32)  # JAX array
+        y = jnp.zeros(5, dtype=jnp.float32)
+        model = PyMCModel(self._xy_model)
+        # Just confirm this doesn't raise the
+        # "unsupported operand type(s) for *: 'TensorVariable' and
+        #  'jaxlib._jax.ArrayImpl'" error from the un-coerced path.
+        built = model._pymc_model(data=Record(X=X, y=y))
+        assert "y" in {rv.name for rv in built.observed_RVs}

@@ -74,7 +74,7 @@ class PyMCNutsMethod(InferenceMethod):
 
         return make_posterior(
             chains, parents=(dist,), algorithm="pymc_nuts",
-            auxiliary=trace,
+            auxiliary=trace, record_template=dist.record_template,
             num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         )
 
@@ -127,6 +127,6 @@ class PyMCADVIMethod(InferenceMethod):
 
         return make_posterior(
             chains, parents=(dist,), algorithm=algorithm,
-            auxiliary=trace,
+            auxiliary=trace, record_template=dist.record_template,
             num_iterations=num_iterations,
         )

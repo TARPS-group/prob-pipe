@@ -16,6 +16,8 @@ predictive checks. Registering a new inference method is documented under
 
 ::: probpipe.Likelihood
 
+::: probpipe.ConditionallyIndependentLikelihood
+
 ::: probpipe.GenerativeLikelihood
 
 ::: probpipe.GLMLikelihood
@@ -43,6 +45,8 @@ runtime.
 | `tfp_rwmh` | 50 | `SupportsLogProb` | TFP |
 | `sbijax_smcabc` | 40 | `SimpleGenerativeModel` + sbijax | sbijax |
 | `pymc_advi` | 35 | `PyMCModel` + pymc | PyMC |
+| `blackjax_sgld` | 30 | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX |
+| `blackjax_sghmc` | 25 | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX |
 
 ::: probpipe.ApproximateDistribution
 
@@ -53,6 +57,8 @@ runtime.
 ::: probpipe.sbi_learn_conditional
 
 ::: probpipe.sbi_learn_likelihood
+
+::: probpipe.MinibatchedDistribution
 
 ::: probpipe.inference_method_registry
     options:

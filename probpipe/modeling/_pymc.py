@@ -11,6 +11,7 @@ from typing import Any, Callable
 import jax.numpy as jnp
 
 from ..core.distribution import Distribution
+from ..core.record import NumericRecordTemplate
 from ..custom_types import Array
 from ..inference._approximate_distribution import ApproximateDistribution
 from ._base import ProbabilisticModel
@@ -18,6 +19,19 @@ from ._base import ProbabilisticModel
 logger = logging.getLogger(__name__)
 
 __all__ = ["PyMCModel"]
+
+
+def _to_numpy(value: Any) -> Any:
+    """Coerce JAX / Record-leaf arrays to numpy for PyMC compatibility.
+
+    PyMC's PyTensor backend doesn't multiply tensor variables against
+    raw JAX arrays; numpy arrays work transparently. Pass-through for
+    values that don't expose ``__array__`` (e.g. plain Python ints).
+    """
+    import numpy as _np
+    if hasattr(value, "__array__"):
+        return _np.asarray(value)
+    return value
 
 
 class PyMCModel(ProbabilisticModel):
@@ -109,6 +123,48 @@ class PyMCModel(ProbabilisticModel):
             total += size
         return (total,)
 
+    @property
+    def record_template(self) -> NumericRecordTemplate:
+        """Template that pairs each free PyMC parameter with its shape.
+
+        Inference methods pass this through to :func:`make_posterior` so
+        the resulting :class:`ApproximateDistribution` carries Record
+        structure: ``mean(post)`` returns a ``NumericRecord`` keyed by
+        the PyMC RV names, matching the field layout of any other
+        ProbPipe posterior.
+
+        Scalar PyMC RVs (e.g. ``pm.Normal('intercept', 0, 1)``) become
+        fields with event shape ``()``; shape-:math:`k` RVs (e.g.
+        ``pm.Normal('beta', 0, 1, shape=k)``) become fields with event
+        shape ``(k,)``.
+
+        Raises
+        ------
+        ValueError
+            If any free RV has a non-concrete (``None``) dimension in
+            its ``type.shape``. The record-template machinery requires
+            concrete shapes — silently dropping a ``None`` dim would
+            produce an under-shaped template and confusing downstream
+            errors.
+        """
+        observed_set = set(self._observed_names)
+        fields: dict[str, tuple[int, ...]] = {}
+        for rv in self._unconditioned_model.free_RVs:
+            if rv.name in observed_set:
+                continue
+            raw_shape = tuple(rv.type.shape)
+            if any(s is None for s in raw_shape):
+                raise ValueError(
+                    f"PyMC RV {rv.name!r} has a non-concrete shape "
+                    f"{raw_shape}; PyMCModel.record_template requires "
+                    f"every free RV to have a fully concrete event "
+                    f"shape. Specify the shape explicitly when "
+                    f"declaring the RV (e.g. "
+                    f"`pm.Normal({rv.name!r}, 0, 1, shape=k)`)."
+                )
+            fields[rv.name] = tuple(int(s) for s in raw_shape)
+        return NumericRecordTemplate(**fields)
+
     # -- Named components interface ------------------------------------------
 
     @property
@@ -154,13 +210,38 @@ class PyMCModel(ProbabilisticModel):
     # -- PyMC model access (for nutpie integration) -------------------------
 
     def _pymc_model(self, data: Any = None) -> Any:
-        """Build a PyMC model, optionally with data."""
-        if data is not None:
-            if isinstance(data, dict):
-                return self._model_fn(**data)
-            # If data is an array, pass as first observed variable
-            return self._model_fn(**{self._observed_names[0]: data})
-        return self._model_fn()
+        """Build a PyMC model, optionally with data.
+
+        Three accepted input forms for ``data``:
+
+        * ``None`` — build the unconditioned model (used at
+          construction time to discover free RVs).
+        * ``dict`` or ``Record`` (incl. ``RecordArray``) — unpack the
+          fields named by ``_observed_names`` and pass them as keyword
+          arguments to the model function. This is the canonical
+          multi-observed-variable path: provenance tracks every named
+          input rather than reading covariates from a closure.
+        * Bare array — pass as the first observed variable. Only
+          unambiguous when the model has exactly one observed name.
+
+        Array-typed values are coerced to numpy before being passed to
+        the user's model function — PyMC's tensor backend doesn't
+        multiply with raw JAX arrays.
+        """
+        import numpy as _np
+        if data is None:
+            return self._model_fn()
+        if isinstance(data, dict):
+            return self._model_fn(**{k: _to_numpy(v) for k, v in data.items()})
+        # Local import to avoid a modeling→core cycle at module load.
+        from ..core.record import Record
+        if isinstance(data, Record):
+            return self._model_fn(**{
+                name: _to_numpy(data[name])
+                for name in self._observed_names
+                if name in data.fields
+            })
+        return self._model_fn(**{self._observed_names[0]: _to_numpy(data)})
 
     def __repr__(self) -> str:
         params = ", ".join(self._param_names)

@@ -14,6 +14,7 @@ from ._registry import (
 from ..core._registry import Method, MethodInfo, MethodRegistry
 from ._rwmh import rwmh
 from ._nutpie import condition_on_nutpie
+from ._minibatch import MinibatchedDistribution
 
 __all__ = [
     "ApproximateDistribution",
@@ -24,6 +25,7 @@ __all__ = [
     "inference_method_registry",
     "rwmh",
     "condition_on_nutpie",
+    "MinibatchedDistribution",
     "sbi_learn_conditional",
     "sbi_learn_likelihood",
     "DirectSamplerSBIModel",
@@ -44,6 +46,12 @@ inference_method_registry.register(TFPHmcMethod())
 from ._rwmh import TFPRWMHMethod
 
 inference_method_registry.register(TFPRWMHMethod())
+
+# BlackJAX SGMCMC
+from ._blackjax_sgmcmc import BlackJAXSGLDMethod, BlackJAXSGHMCMethod
+
+inference_method_registry.register(BlackJAXSGLDMethod())
+inference_method_registry.register(BlackJAXSGHMCMethod())
 
 # Optional backends — registered only if their dependencies are importable
 

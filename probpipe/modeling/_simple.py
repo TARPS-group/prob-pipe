@@ -45,11 +45,15 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
 
     def __init__(
         self,
-        prior: Distribution[P],
+        prior: SupportsLogProb[P],
         likelihood: Likelihood[P, D],
         *,
         name: str | None = None,
     ):
+        # Type-annotated as ``SupportsLogProb[P]`` so static type
+        # checkers catch a wrong-type prior at the call site. The
+        # isinstance check remains as a backstop for callers who
+        # bypass the type system.
         if not isinstance(prior, SupportsLogProb):
             raise TypeError(
                 f"SimpleModel requires a prior that supports SupportsLogProb, "
@@ -88,6 +92,16 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
     @property
     def name(self) -> str | None:
         return self._name_str
+
+    @property
+    def prior(self) -> SupportsLogProb[P]:
+        """The prior distribution over parameters."""
+        return self._prior
+
+    @property
+    def likelihood(self) -> Likelihood[P, D]:
+        """The likelihood function ``log p(D | params)``."""
+        return self._likelihood
 
     # -- Named components interface ------------------------------------------
 

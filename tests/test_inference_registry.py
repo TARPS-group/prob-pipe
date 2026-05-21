@@ -52,7 +52,7 @@ class FakeMethod(Method):
 def simple_model():
     """A simple Poisson regression model."""
     import tensorflow_probability.substrates.jax.glm as tfp_glm
-    X = np.column_stack([np.ones(20), np.linspace(-1, 1, 20)]).astype(np.float32)
+    X = np.asarray(np.linspace(-1, 1, 20))[:, None].astype(np.float32)
     prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), name="beta")
     return SimpleModel(prior, GLMLikelihood(tfp_glm.Poisson(), X))
 

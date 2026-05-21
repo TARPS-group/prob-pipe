@@ -304,7 +304,7 @@ class TestPredictiveCheckBatched:
     @pytest.fixture
     def glm_setup(self):
         x = jnp.linspace(-1, 1, 20)
-        X = jnp.column_stack([jnp.ones_like(x), x])
+        X = jnp.asarray(x)[:, None]
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="beta")
         lik = GLMLikelihood(tfp_glm.Poisson(), X)
         return prior, lik
