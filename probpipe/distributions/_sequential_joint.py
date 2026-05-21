@@ -19,7 +19,7 @@ from ..core.distribution import (
     NumericRecordDistribution,
     _mc_expectation,
 )
-from ..core._record_distribution import RecordDistribution, _build_record_template
+from ..core._record_distribution import _build_record_template
 from ..core.record import Record
 from ..core.provenance import Provenance
 from ..core.protocols import (
@@ -93,9 +93,15 @@ def _sequential_class_for_components(components: dict) -> type:
     return cls
 
 
-class SequentialJointDistribution(RecordDistribution, SupportsSampling, SupportsConditioning):
+class SequentialJointDistribution(
+    NumericRecordDistribution, SupportsSampling, SupportsConditioning,
+):
     """
     Joint distribution with autoregressive (sequential) dependence.
+
+    Inherits from :class:`NumericRecordDistribution` (every resolved
+    leaf is a :class:`NumericRecordDistribution`, so the joint's content
+    is numeric).
 
     Components can be :class:`Distribution` instances (roots) or callables
     that receive previously-sampled values and return a ``Distribution``
@@ -241,7 +247,7 @@ class SequentialJointDistribution(RecordDistribution, SupportsSampling, Supports
         """Per-component event shapes from component distributions."""
         return {k: v.event_shape for k, v in self._components.items()}
 
-    # flatten_value / unflatten_value inherited from RecordDistribution
+    # flatten_value / unflatten_value inherited from NumericRecordDistribution
 
     @property
     def components(self):

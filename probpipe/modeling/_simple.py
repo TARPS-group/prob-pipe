@@ -98,6 +98,8 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
             self._record_template = RecordTemplate(merged)
         elif prior_tpl is not None:
             self._record_template = prior_tpl
+        else:
+            self._record_template = None
 
     # -- Distribution interface ---------------------------------------------
 
@@ -110,6 +112,16 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
     def likelihood(self) -> Likelihood[P, D]:
         """The likelihood function ``log p(D | params)``."""
         return self._likelihood
+
+    @property
+    def record_template(self) -> RecordTemplate | None:
+        """Merged ``RecordTemplate`` over prior fields + likelihood data fields.
+
+        ``SimpleModel`` is not itself a :class:`RecordDistribution`, but it
+        carries a template so :attr:`fields`, conditioning, and inference
+        kwarg splitting can address parameters and data uniformly.
+        """
+        return self._record_template
 
     # -- Named components interface ------------------------------------------
 

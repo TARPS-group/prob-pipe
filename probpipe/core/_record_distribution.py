@@ -525,18 +525,12 @@ def _register_dynamic_subclass(cls: type) -> type:
     """Register a dynamically-created RecordDistribution subclass as a JAX
     pytree node, reusing the flatten/unflatten from the existing
     ``ProductDistribution`` registration in ``distributions/joint.py``.
-    """
-    # Avoid double-registration (the base ProductDistribution is
-    # already registered in distributions/joint.py).
-    try:
-        jax.tree_util.tree_flatten(cls)  # probe
-    except Exception:
-        pass
 
-    # Dynamic subclasses of ProductDistribution share the same
-    # flatten/unflatten logic.  Delegate to _components + _name, and
-    # capture the top-level key order explicitly so insertion order
-    # survives the round-trip (JAX's dict treedef is sorted).
+    Dynamic subclasses of ``ProductDistribution`` share the same
+    flatten/unflatten logic. Delegate to ``_components`` + ``_name``,
+    capturing the top-level key order explicitly so insertion order
+    survives the round-trip (JAX's dict treedef is sorted).
+    """
     def _flatten(dist):
         leaves = jax.tree.leaves(dist._components)
         treedef = jax.tree.structure(dist._components)

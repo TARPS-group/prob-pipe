@@ -319,44 +319,54 @@ class NumericRecordDistribution(RecordDistribution):
         """
         return self.supports[self._single_field_name()]
 
-    @classmethod
-    def _check_support_compatible(cls, other: NumericRecordDistribution) -> None:
-        """Raise ``ValueError`` if *other*'s per-field supports are
-        incompatible with *cls*'s default target support.
+    def _check_support_compatible(
+        self, source: "NumericRecordDistribution",
+    ) -> None:
+        """Raise ``ValueError`` if *source*'s per-field supports are
+        incompatible with *self*'s (the target's) per-field supports.
 
-        Reads ``other.supports`` (canonical, per-leaf) so multi-leaf
-        sources are checked field-by-field against the single target
-        support. Single-leaf sources keep the original error
-        message; multi-leaf sources include the field name.
+        Called post-construction by the converter, so both sides expose
+        instance-level ``supports`` — no class-level default-support
+        approximation. For a single-field target (the common case),
+        every source field's support is compared against the lone
+        target support. For a multi-field target, supports pair up
+        field-by-field in insertion order.
         """
         try:
-            target_support = cls._default_support()
+            target_per_field = self.supports
+            source_per_field = source.supports
         except NotImplementedError:
             return
-        try:
-            per_field = other.supports
-        except NotImplementedError:
-            return
-        multi_leaf = len(per_field) > 1
-        for field_name, source_support in per_field.items():
-            if _supports_compatible(source_support, target_support):
-                continue
-            field_part = f" field {field_name!r}" if multi_leaf else ""
-            raise ValueError(
-                f"Cannot convert {type(other).__name__}{field_part} "
-                f"(support={source_support}) to {cls.__name__} "
-                f"(support={target_support}). "
-                f"Pass check_support=False to override."
-            )
 
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        """Return the default support for this distribution class.
+        multi_leaf_source = len(source_per_field) > 1
 
-        Override in subclasses.  Used by ``_check_support_compatible``
-        when no instance is available yet.
-        """
-        raise NotImplementedError
+        if len(target_per_field) == 1:
+            target_support = next(iter(target_per_field.values()))
+            for field_name, source_support in source_per_field.items():
+                if _supports_compatible(source_support, target_support):
+                    continue
+                field_part = (
+                    f" field {field_name!r}" if multi_leaf_source else ""
+                )
+                raise ValueError(
+                    f"Cannot convert {type(source).__name__}{field_part} "
+                    f"(support={source_support}) to {type(self).__name__} "
+                    f"(support={target_support}). "
+                    f"Pass check_support=False to override."
+                )
+        else:
+            for (s_name, s_sup), (t_name, t_sup) in zip(
+                source_per_field.items(), target_per_field.items(),
+            ):
+                if _supports_compatible(s_sup, t_sup):
+                    continue
+                raise ValueError(
+                    f"Cannot convert {type(source).__name__} field "
+                    f"{s_name!r} (support={s_sup}) to "
+                    f"{type(self).__name__} field {t_name!r} "
+                    f"(support={t_sup}). "
+                    f"Pass check_support=False to override."
+                )
 
     # -- event_shape ---------------------------------------------------------
 
@@ -531,7 +541,12 @@ class NumericRecordDistribution(RecordDistribution):
         parts = [type(self).__name__]
         if self.name:
             parts.append(f"name={self.name!r}")
-        parts.append(f"event_shape={self.event_shape}")
+        # Multi-field NRDs (joints) can't summarise the event with a
+        # single ``event_shape``; fall back to the per-field dict.
+        try:
+            parts.append(f"event_shape={self.event_shape}")
+        except TypeError:
+            parts.append(f"event_shapes={self.event_shapes}")
         return f"{parts[0]}({', '.join(parts[1:])})"
 
 

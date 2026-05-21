@@ -75,8 +75,7 @@ class TestProductDistribution:
 
     def test_isinstance_record_distribution(self, joint_xy):
         assert isinstance(joint_xy, RecordDistribution)
-        assert not isinstance(joint_xy, NumericRecordDistribution)
-        assert not isinstance(joint_xy, NumericRecordDistribution)
+        assert isinstance(joint_xy, NumericRecordDistribution)
 
     def test_event_shapes(self, joint_xy):
         assert joint_xy.event_shapes == {"x": (), "y": ()}
@@ -204,7 +203,9 @@ class TestFlattenUnflatten:
         assert isinstance(s, (Record, RecordArray))
         flat = joint_xy.flatten_value(s)
         assert flat.shape == (2,)
-        recovered = joint_xy.unflatten_value(flat)
+        recovered = joint_xy.unflatten_value(
+            flat, template=joint_xy.record_template,
+        )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
         np.testing.assert_allclose(recovered["y"], s["y"], atol=1e-6)
@@ -215,7 +216,9 @@ class TestFlattenUnflatten:
         assert isinstance(s, (Record, RecordArray))
         flat = joint_xz.flatten_value(s)
         assert flat.shape == (4,)
-        recovered = joint_xz.unflatten_value(flat)
+        recovered = joint_xz.unflatten_value(
+            flat, template=joint_xz.record_template,
+        )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
         np.testing.assert_allclose(recovered["z"], s["z"], atol=1e-6)
@@ -226,7 +229,9 @@ class TestFlattenUnflatten:
         assert isinstance(s, (Record, RecordArray))
         flat = joint_xy.flatten_value(s)
         assert flat.shape == (2,)
-        recovered = joint_xy.unflatten_value(flat)
+        recovered = joint_xy.unflatten_value(
+            flat, template=joint_xy.record_template,
+        )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
         np.testing.assert_allclose(recovered["y"], s["y"], atol=1e-6)
@@ -801,8 +806,7 @@ class TestNestedProductDistribution:
     def test_isinstance(self, nested_joint):
         assert isinstance(nested_joint, ProductDistribution)
         assert isinstance(nested_joint, RecordDistribution)
-        assert not isinstance(nested_joint, NumericRecordDistribution)
-        assert not isinstance(nested_joint, NumericRecordDistribution)
+        assert isinstance(nested_joint, NumericRecordDistribution)
 
     def test_event_shapes_nested(self, nested_joint):
         es = nested_joint.event_shapes
@@ -898,7 +902,9 @@ class TestNestedProductDistribution:
         assert isinstance(s, (Record, RecordArray))
         flat = nested_joint.flatten_value(s)
         assert flat.shape == (3,)
-        recovered = nested_joint.unflatten_value(flat)
+        recovered = nested_joint.unflatten_value(
+            flat, template=nested_joint.record_template,
+        )
         assert isinstance(recovered, Record)
         # Check all leaves match
         for orig, rec in zip(jax.tree.leaves(s), jax.tree.leaves(recovered)):
@@ -1156,7 +1162,9 @@ class TestNestedWithMVN:
         flat = nested_mvn.flatten_value(s_single)
         assert flat.shape == (4,)
 
-        recovered = nested_mvn.unflatten_value(flat)
+        recovered = nested_mvn.unflatten_value(
+            flat, template=nested_mvn.record_template,
+        )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(
             recovered["group"]["position"], s_single["group"]["position"], atol=1e-6

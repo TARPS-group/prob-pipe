@@ -21,7 +21,6 @@ import jax.numpy as jnp
 
 from ..custom_types import PRNGKey
 from .._utils import _auto_key
-from ..core.constraints import _supports_compatible
 from ..core.distribution import (
     Distribution,
     EmpiricalDistribution,
@@ -597,23 +596,16 @@ class ProbPipeConverter(Converter):
                 description=f"Copy {type(source).__name__} parameters",
             )
 
-        # Check support compatibility — report in description but don't block
-        support_note = ""
-        try:
-            target_support = target_type._default_support()
-            source_support = source.support
-            if not _supports_compatible(source_support, target_support):
-                support_note = f" (support mismatch: {source_support} -> {target_support}; use check_support=False to override)"
-        except (NotImplementedError, AttributeError):
-            pass
-
+        # Support compatibility is verified post-construction in
+        # ``convert()`` (the target instance exposes per-field
+        # ``supports``; there is no class-level pre-construction hint).
         return ConversionInfo(
             feasible=True,
             method=ConversionMethod.MOMENT_MATCH,
             estimated_time=0.1,
             source_type=type(source),
             target_type=target_type,
-            description=f"Moment-match {type(source).__name__} -> {target_name}{support_note}",
+            description=f"Moment-match {type(source).__name__} -> {target_name}",
         )
 
     def convert(self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any) -> Distribution:
@@ -625,18 +617,6 @@ class ProbPipeConverter(Converter):
             raise TypeError(f"ProbPipeConverter: no conversion for target {target_name}")
 
         check_support = kwargs.pop("check_support", True)
-        if check_support:
-            try:
-                target_support = target_type._default_support()
-                source_support = source.support
-                if not _supports_compatible(source_support, target_support):
-                    raise ValueError(
-                        f"Cannot convert {type(source).__name__} (support={source_support}) "
-                        f"to {target_name} (support={target_support}). "
-                        f"Pass check_support=False to override."
-                    )
-            except (NotImplementedError, AttributeError):
-                pass
 
         # Some converters (e.g., ``_convert_to_normal``) fabricate
         # TFP-backed scalars from a source's ``_mean`` / ``_variance``.
@@ -650,6 +630,21 @@ class ProbPipeConverter(Converter):
         # batched moments) is tracked as a follow-up.
         with _allow_batched_tfp_init():
             result = fn(source, key, **kwargs)
+
+        # Post-construction support check. Both sides expose per-field
+        # ``supports`` only as instance state, so the check runs after
+        # the target is built. Skipped silently when either side lacks
+        # the instance method (non-``NumericRecordDistribution``
+        # endpoints) or its supports aren't implemented.
+        if check_support:
+            check = getattr(result, "_check_support_compatible", None)
+            if check is not None:
+                try:
+                    check(source)
+                except AttributeError:
+                    # Source doesn't expose per-field ``supports`` —
+                    # treat as "unknown", same as ``NotImplementedError``.
+                    pass
 
         # Mark approximate if source is approximate or conversion used sampling
         if source.is_approximate or not isinstance(source, target_type):

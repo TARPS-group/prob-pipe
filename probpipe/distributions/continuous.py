@@ -87,10 +87,6 @@ class Normal(TFPDistribution):
     def support(self) -> Constraint:
         return real
 
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return real
-
 
 
 # ---------------------------------------------------------------------------
@@ -134,10 +130,6 @@ class Beta(TFPDistribution):
     def support(self) -> Constraint:
         return unit_interval
 
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return unit_interval
-
 
 
 # ---------------------------------------------------------------------------
@@ -179,10 +171,6 @@ class Gamma(TFPDistribution):
 
     @property
     def support(self) -> Constraint:
-        return positive
-
-    @classmethod
-    def _default_support(cls) -> Constraint:
         return positive
 
 
@@ -230,10 +218,6 @@ class InverseGamma(TFPDistribution):
     def support(self) -> Constraint:
         return positive
 
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return positive
-
 
 
 # ---------------------------------------------------------------------------
@@ -268,10 +252,6 @@ class Exponential(TFPDistribution):
 
     @property
     def support(self) -> Constraint:
-        return positive
-
-    @classmethod
-    def _default_support(cls) -> Constraint:
         return positive
 
 
@@ -315,10 +295,6 @@ class LogNormal(TFPDistribution):
 
     @property
     def support(self) -> Constraint:
-        return positive
-
-    @classmethod
-    def _default_support(cls) -> Constraint:
         return positive
 
 
@@ -371,10 +347,6 @@ class StudentT(TFPDistribution):
     def support(self) -> Constraint:
         return real
 
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return real
-
 
 
 # ---------------------------------------------------------------------------
@@ -418,10 +390,6 @@ class Uniform(TFPDistribution):
     def support(self) -> Constraint:
         return interval(self._low, self._high)
 
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return real
-
 
 
 # ---------------------------------------------------------------------------
@@ -463,10 +431,6 @@ class Cauchy(TFPDistribution):
 
     @property
     def support(self) -> Constraint:
-        return real
-
-    @classmethod
-    def _default_support(cls) -> Constraint:
         return real
 
 
@@ -512,10 +476,6 @@ class Laplace(TFPDistribution):
     def support(self) -> Constraint:
         return real
 
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return real
-
 
 
 # ---------------------------------------------------------------------------
@@ -550,10 +510,6 @@ class HalfNormal(TFPDistribution):
 
     @property
     def support(self) -> Constraint:
-        return non_negative
-
-    @classmethod
-    def _default_support(cls) -> Constraint:
         return non_negative
 
 
@@ -599,10 +555,6 @@ class HalfCauchy(TFPDistribution):
     def support(self) -> Constraint:
         return greater_than(self._loc)
 
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return non_negative
-
 
 
 # ---------------------------------------------------------------------------
@@ -647,10 +599,6 @@ class Pareto(TFPDistribution):
     @property
     def support(self) -> Constraint:
         return greater_than(self._scale)
-
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return positive
 
 
 
@@ -712,8 +660,4 @@ class TruncatedNormal(TFPDistribution):
     @property
     def support(self) -> Constraint:
         return interval(self._low, self._high)
-
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return real
 

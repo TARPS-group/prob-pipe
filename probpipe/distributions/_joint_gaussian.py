@@ -174,7 +174,11 @@ class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb
             value = Record(value)
         from .multivariate import MultivariateNormal as MVN
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")
-        flat = self.flatten_value(value, event_shape=self.event_shape)
+        # ``Record``/``RecordArray`` carry their own structure, so the
+        # static ``flatten_value`` ignores ``event_shape`` for these
+        # inputs — don't ask ``self.event_shape`` (it raises on a
+        # multi-field joint).
+        flat = self.flatten_value(value)
         return full_mvn._log_prob(flat)
 
     def _mean(self) -> Record:

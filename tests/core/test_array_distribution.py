@@ -156,28 +156,36 @@ class TestArrayDistributionPyTreeInterface:
 class TestArrayDistFlattenUnflatten:
     def test_flatten_vector_sample(self, vector_mvn, key):
         s = sample(vector_mvn, key=key)
-        flat = vector_mvn.flatten_value(s)
+        flat = vector_mvn.flatten_value(s, event_shape=vector_mvn.event_shape)
         assert flat.shape == (3,)
         np.testing.assert_allclose(flat, s, atol=1e-6)
 
     def test_unflatten_vector_sample(self, vector_mvn, key):
         s = sample(vector_mvn, key=key)
-        flat = vector_mvn.flatten_value(s)
-        restored = vector_mvn.unflatten_value(flat)
+        flat = vector_mvn.flatten_value(s, event_shape=vector_mvn.event_shape)
+        restored = vector_mvn.unflatten_value(
+            flat, template=vector_mvn.record_template,
+        )
         np.testing.assert_allclose(restored, s, atol=1e-6)
 
     def test_flatten_unflatten_roundtrip_batched(self, vector_mvn, key):
         samples = jnp.asarray(sample(vector_mvn, key=key, sample_shape=(5,)))
-        flat = vector_mvn.flatten_value(samples)
+        flat = vector_mvn.flatten_value(
+            samples, event_shape=vector_mvn.event_shape,
+        )
         assert flat.shape == (5, 3)
-        restored = vector_mvn.unflatten_value(flat)
+        restored = vector_mvn.unflatten_value(
+            flat, template=vector_mvn.record_template,
+        )
         np.testing.assert_allclose(restored, samples, atol=1e-6)
 
     def test_flatten_unflatten_4d(self, matrix_mvn, key):
         s = sample(matrix_mvn, key=key)
-        flat = matrix_mvn.flatten_value(s)
+        flat = matrix_mvn.flatten_value(s, event_shape=matrix_mvn.event_shape)
         assert flat.shape == (4,)
-        restored = matrix_mvn.unflatten_value(flat)
+        restored = matrix_mvn.unflatten_value(
+            flat, template=matrix_mvn.record_template,
+        )
         np.testing.assert_allclose(restored, s, atol=1e-6)
 
 
@@ -212,7 +220,9 @@ class TestFlattenedDistributionView:
     def test_log_prob_matches(self, vector_mvn, key):
         flat_dist = vector_mvn.as_flat_distribution()
         s = sample(vector_mvn, key=key)
-        flat_sample = vector_mvn.flatten_value(s)
+        flat_sample = vector_mvn.flatten_value(
+            s, event_shape=vector_mvn.event_shape,
+        )
 
         lp_original = log_prob(vector_mvn, s)
         lp_flat = log_prob(flat_dist, flat_sample)
@@ -227,7 +237,11 @@ class TestFlattenedDistributionView:
         flat_sample = sample(flat_dist, key=key)
         restored = flat_dist.unflatten_sample(flat_sample)
         np.testing.assert_allclose(
-            restored, vector_mvn.unflatten_value(flat_sample), atol=1e-6
+            restored,
+            vector_mvn.unflatten_value(
+                flat_sample, template=vector_mvn.record_template,
+            ),
+            atol=1e-6,
         )
 
     def test_repr(self, vector_mvn):
@@ -243,7 +257,9 @@ class TestFlattenedDistributionView:
     def test_log_prob_roundtrip_4d(self, matrix_mvn, key):
         flat_dist = matrix_mvn.as_flat_distribution()
         s = sample(matrix_mvn, key=key)
-        flat_sample = matrix_mvn.flatten_value(s)
+        flat_sample = matrix_mvn.flatten_value(
+            s, event_shape=matrix_mvn.event_shape,
+        )
 
         lp_original = log_prob(matrix_mvn, s)
         lp_flat = log_prob(flat_dist, flat_sample)
@@ -357,15 +373,16 @@ class TestCanonicalConvenience:
         name appears in the error message — single-leaf sources get
         the original message without a field prefix.
 
-        Target: ``Gamma._default_support() == positive``; source
-        fields are ``real`` → incompatible, so the first field that
-        fails the check raises with its name.
+        Target: ``Gamma`` (``positive`` support); source fields are
+        ``real`` → incompatible, so the first field that fails the
+        check raises with its name.
         """
         from probpipe import Gamma
+        target = Gamma(concentration=1.0, rate=1.0, name="gamma_target")
         with pytest.raises(
             ValueError, match=r"TwoField field 'a' \(support=real\)",
         ):
-            Gamma._check_support_compatible(multi_leaf_dist)
+            target._check_support_compatible(multi_leaf_dist)
 
     def test_treedef_leaf_for_single_leaf(self, scalar_normal):
         """Single-leaf: ``treedef`` is the leaf treedef (one-leaf pytree)."""

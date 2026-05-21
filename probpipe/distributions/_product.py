@@ -2,7 +2,7 @@
 
 Provides:
   - ``ProductDistribution``  -- Independent-component joint distribution
-    (inherits from :class:`RecordDistribution`).
+    (inherits from :class:`NumericRecordDistribution`).
   - ``TFPProductDistribution`` -- Subclass that exposes a combined TFP
     distribution (``_tfp_dist``) when all leaf components are TFP-backed.
   - Dynamic protocol factory for automatic protocol support.
@@ -25,7 +25,6 @@ from ..core._numeric_record_distribution import (
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core._record_distribution import (
-    RecordDistribution,
     _register_dynamic_subclass,
     _build_record_template,
 )
@@ -125,13 +124,15 @@ def _merge_positional_and_keyword(
 
 
 class ProductDistribution(
-    RecordDistribution,
+    NumericRecordDistribution,
     SupportsSampling, SupportsConditioning,
 ):
     """Joint distribution with **independent** leaf components.
 
-    Inherits from :class:`RecordDistribution`.  All leaf components are
-    sampled independently.  ``_sample()`` returns :class:`Record`.
+    Inherits from :class:`NumericRecordDistribution` (every leaf is
+    required to be a ``NumericRecordDistribution``, so the joint's
+    content is numeric).  All leaf components are sampled independently.
+    ``_sample()`` returns :class:`NumericRecord`.
 
     **Dynamic protocol support:** ``SupportsLogProb``, ``SupportsMean``,
     and ``SupportsVariance`` are included only when ALL leaf components
