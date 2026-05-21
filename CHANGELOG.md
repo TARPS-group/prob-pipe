@@ -91,20 +91,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The constructor takes a prior and a conditionally-independent
   likelihood directly, mirroring `SimpleModel(prior, likelihood)` on
-  the first two args:
+  the first two args. Consume the measure via
+  `SupportsRandomUnnormalizedLogProb` to get the per-minibatch
+  log-density callable that SGMCMC kernels feed `jax.grad`:
 
   ```python
-  from probpipe import MinibatchedDistribution, Record
+  from probpipe import MinibatchedDistribution, Record, random_unnormalized_log_prob
 
   m = MinibatchedDistribution(prior, likelihood, Record(X=X, y=y), batch_size=64)
-  ```
 
-  `MinibatchedDistribution` does *not* satisfy `SupportsSampling` —
-  the "samples" of a random measure are themselves distributions, not
-  values, so the sample-of-a-value contract doesn't fit. Consume the
-  measure via `SupportsRandomUnnormalizedLogProb`:
-
-  ```python
   rf = random_unnormalized_log_prob(m)
   target = rf._sample(k)                     # callable: theta -> log~D_B(theta)
   grad = jax.grad(target)(theta)             # unbiased gradient estimate
