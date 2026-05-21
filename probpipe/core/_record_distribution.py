@@ -308,17 +308,29 @@ def _build_record_template(
 ) -> RecordTemplate:
     """Build a RecordTemplate from a component pytree.
 
-    Each ``NumericRecordDistribution`` leaf contributes its ``event_shape``.
-    Nested dicts become nested ``RecordTemplate``.
+    Each leaf contributes a spec for the parent template:
+
+    - Nested ``dict`` → recursively built nested ``RecordTemplate``.
+    - :class:`NumericRecordDistribution` → the leaf's ``event_shape``
+      (numeric shape tuple).
+    - Any other :class:`RecordDistribution` → the leaf's
+      ``record_template`` (embedded as a nested structural template).
+    - Any other :class:`Distribution` → ``None`` (opaque leaf — the
+      template records the field name but not a shape).
     """
+    from ._distribution_base import Distribution
     from ._numeric_record_distribution import NumericRecordDistribution
 
-    specs: dict[str, tuple[int, ...] | RecordTemplate] = {}
+    specs: dict[str, Any] = {}
     for name, comp in components.items():
         if isinstance(comp, dict):
             specs[name] = _build_record_template(comp)
         elif isinstance(comp, NumericRecordDistribution):
             specs[name] = comp.event_shape
+        elif isinstance(comp, RecordDistribution):
+            specs[name] = comp.record_template
+        elif isinstance(comp, Distribution):
+            specs[name] = None
         else:
             raise TypeError(f"Unexpected component type: {type(comp).__name__}")
     return RecordTemplate(specs)

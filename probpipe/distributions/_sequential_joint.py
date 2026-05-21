@@ -16,10 +16,13 @@ import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..core.distribution import (
+    Distribution,
     NumericRecordDistribution,
     _mc_expectation,
 )
-from ..core._record_distribution import _build_record_template
+from ..core._record_distribution import (
+    RecordDistribution, _build_record_template,
+)
 from ..core.record import Record
 from ..core.provenance import Provenance
 from ..core.protocols import (
@@ -62,54 +65,69 @@ def _resolve_callable_component(
 # Dynamic protocol factory for SequentialJointDistribution
 # ---------------------------------------------------------------------------
 
-_SEQUENTIAL_CLASS_CACHE: dict[frozenset[str], type] = {}
+_SEQUENTIAL_CLASS_CACHE: dict[tuple[frozenset[str], bool], type] = {}
 
 
 def _sequential_class_for_components(components: dict) -> type:
-    """Return a SequentialJointDistribution subclass whose protocol bases
-    match what the resolved components support.
+    """Return a SequentialJointDistribution subclass whose bases match
+    what the resolved components support.
 
-    ``SupportsSampling`` and ``SupportsConditioning`` are always included
-    (forward sampling + conditioning always work regardless of component
-    capabilities).  ``SupportsLogProb`` / ``SupportsMean`` / ``SupportsVariance``
-    are included only when every leaf component satisfies the corresponding
-    protocol.
+    Always includes ``SupportsSampling`` and ``SupportsConditioning``
+    (forward sampling + conditioning work regardless of component
+    capabilities). Adds :class:`NumericRecordDistribution` when every
+    resolved leaf is itself a :class:`NumericRecordDistribution`,
+    exposing the numeric API (``event_size``, ``flatten_value`` /
+    ``unflatten_value``, ``as_flat_distribution``). Adds
+    ``SupportsLogProb`` / ``SupportsMean`` / ``SupportsVariance`` only
+    when every leaf satisfies the corresponding protocol.
     """
+    leaves = list(components.values())
     extra_bases = protocols_supported_by_all(
-        list(components.values()),
-        (SupportsLogProb, SupportsMean, SupportsVariance),
+        leaves, (SupportsLogProb, SupportsMean, SupportsVariance),
     )
+    all_numeric = all(isinstance(l, NumericRecordDistribution) for l in leaves)
 
-    key = frozenset(extra_bases)
+    key = (frozenset(extra_bases), all_numeric)
     if key in _SEQUENTIAL_CLASS_CACHE:
         return _SEQUENTIAL_CLASS_CACHE[key]
 
-    if not extra_bases:
+    # Order matters: numeric mixin in front of protocol mixins so the
+    # MRO matches standalone NRDs (numeric API → protocols → object).
+    numeric_mixin: tuple[type, ...] = (
+        (NumericRecordDistribution,) if all_numeric else ()
+    )
+    bases = (SequentialJointDistribution, *numeric_mixin, *extra_bases)
+
+    if bases == (SequentialJointDistribution,):
         _SEQUENTIAL_CLASS_CACHE[key] = SequentialJointDistribution
         return SequentialJointDistribution
 
-    cls = type("SequentialJointDistribution", (SequentialJointDistribution, *extra_bases), {})
+    cls = type("SequentialJointDistribution", bases, {})
     _SEQUENTIAL_CLASS_CACHE[key] = cls
     return cls
 
 
 class SequentialJointDistribution(
-    NumericRecordDistribution, SupportsSampling, SupportsConditioning,
+    RecordDistribution, SupportsSampling, SupportsConditioning,
 ):
     """
     Joint distribution with autoregressive (sequential) dependence.
 
-    Inherits from :class:`NumericRecordDistribution` for the same
-    structural reason as :class:`ProductDistribution`: every resolved
-    leaf (root distributions and the distributions returned by
-    conditional callables) is a
-    :class:`NumericRecordDistribution`, so the joint exposes the
-    full numeric contract (per-field shape / dtype / support, pytree
-    structure, flat representation). The difference from
-    :class:`ProductDistribution` is in dependency structure
-    (conditional vs independent) — not in numeric-ness of the
-    sample. See :class:`ProductDistribution` for the longer
-    justification.
+    Inherits from :class:`RecordDistribution` (the general
+    named-fields base); components can be any :class:`Distribution`,
+    or callables that return one. Sampling produces a
+    :class:`Record` keyed by component name; conditioning, named-
+    component access, and protocol dispatch work uniformly across
+    numeric and non-numeric leaves.
+
+    **When every resolved leaf is a
+    :class:`NumericRecordDistribution`**, the dynamic class factory
+    additionally mixes in :class:`NumericRecordDistribution`, exposing
+    the numeric API (``event_size``, ``flatten_value`` /
+    ``unflatten_value``, ``as_flat_distribution``). For mixed or
+    non-numeric leaves the joint stays on the generic
+    :class:`RecordDistribution` surface. See
+    :func:`_sequential_class_for_components` for the dispatch.
 
     Components can be :class:`Distribution` instances (roots) or callables
     that receive previously-sampled values and return a ``Distribution``
@@ -146,12 +164,14 @@ class SequentialJointDistribution(
         self,
         *,
         name: str | None = None,
-        **components: NumericRecordDistribution | callable,
+        **components: Distribution | Callable[..., Distribution],
     ):
         if not components:
             raise ValueError("SequentialJointDistribution requires at least one component.")
 
-        self._raw_components: dict[str, NumericRecordDistribution | callable] = dict(components)
+        self._raw_components: dict[str, Distribution | Callable[..., Distribution]] = (
+            dict(components)
+        )
         if name is None:
             name = "sequential(" + ",".join(components.keys()) + ")"
         super().__init__(name=name)
@@ -161,10 +181,15 @@ class SequentialJointDistribution(
         # Map callable component names to their dependency parameter names
         self._callable_parents: dict[str, tuple[str, ...]] = {}
 
-        # Validate ordering: callable args must reference earlier names
+        # Validate ordering: callable args must reference earlier names.
+        # ``isinstance(comp, Distribution)`` keeps Distribution
+        # instances on the root path even when they happen to be
+        # callable (the metaclass machinery, ``Distribution.__call__``
+        # doesn't exist as a sampling shortcut, but defensive against
+        # future additions or subclasses that override ``__call__``).
         seen: list[str] = []
         for cname, comp in self._raw_components.items():
-            if callable(comp) and not isinstance(comp, NumericRecordDistribution):
+            if callable(comp) and not isinstance(comp, Distribution):
                 params = list(inspect.signature(comp).parameters.keys())
                 for p in params:
                     if p not in seen:
@@ -180,11 +205,11 @@ class SequentialJointDistribution(
         # and compute event shapes / slices
         proto_key = jax.random.PRNGKey(0)
         proto_structured = self._sample_sequential(proto_key, ())
-        self._proto_components: dict[str, NumericRecordDistribution] = {}
+        self._proto_components: dict[str, Distribution] = {}
 
-        resolved: dict[str, NumericRecordDistribution] = {}
+        resolved: dict[str, Distribution] = {}
         for cname, comp in self._raw_components.items():
-            if isinstance(comp, NumericRecordDistribution):
+            if isinstance(comp, Distribution):
                 resolved[cname] = comp
             else:
                 # Resolve the callable with zero-valued parents to get shape info
@@ -245,17 +270,13 @@ class SequentialJointDistribution(
         if self._sampleable_error is not None:
             raise NotImplementedError(self._sampleable_error)
 
-    @property
-    def fields(self) -> tuple[str, ...]:
-        """Component names in topological (insertion) order."""
-        return tuple(self._components.keys())
-
-    @property
-    def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-component event shapes from component distributions."""
-        return {k: v.event_shape for k, v in self._components.items()}
-
-    # flatten_value / unflatten_value inherited from NumericRecordDistribution
+    # ``fields`` / ``event_shapes`` are inherited from
+    # :class:`RecordDistribution` (one entry per top-level field,
+    # delegated to ``record_template``); ``flatten_value`` /
+    # ``unflatten_value`` are inherited from
+    # :class:`NumericRecordDistribution` when every leaf is numeric
+    # (the dynamic class factory adds the mixin) — otherwise they
+    # don't apply.
 
     @property
     def components(self):
@@ -442,7 +463,16 @@ class SequentialJointDistribution(
                 "at least one must remain unconditioned."
             )
 
-        result = SequentialJointDistribution.__new__(SequentialJointDistribution)
+        # Build the result via the dynamic factory so the conditioned
+        # joint's bases match the remaining (unconditioned) leaves —
+        # if every unconditioned leaf is numeric, the result is an
+        # NRD; otherwise it's a plain ``SequentialJointDistribution``.
+        unconditioned_pre = {
+            k: v for k, v in self._proto_components.items()
+            if k not in all_conditioned
+        }
+        result_cls = _sequential_class_for_components(unconditioned_pre)
+        result = result_cls.__new__(result_cls)
         result._raw_components = dict(self._raw_components)  # originals unchanged
         result._name = self._name
         result._proto_components = dict(self._proto_components)
@@ -457,12 +487,8 @@ class SequentialJointDistribution(
         )
 
         # Expose only unconditioned components
-        unconditioned = {
-            k: v for k, v in self._proto_components.items()
-            if k not in result._conditioned_names
-        }
-        result._components = unconditioned
-        result._record_template = _build_record_template(unconditioned)
+        result._components = unconditioned_pre
+        result._record_template = _build_record_template(unconditioned_pre)
 
         result.with_source(Provenance(
             "condition_on", parents=(self,),

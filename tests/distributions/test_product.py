@@ -74,6 +74,10 @@ class TestProductDistribution:
         assert isinstance(joint, ProductDistribution)
 
     def test_isinstance_record_distribution(self, joint_xy):
+        # ``joint_xy`` has all-numeric leaves → the dynamic class
+        # factory mixes in ``NumericRecordDistribution`` too, so the
+        # joint satisfies both. For mixed/non-numeric leaves, only the
+        # RD assertion would hold.
         assert isinstance(joint_xy, RecordDistribution)
         assert isinstance(joint_xy, NumericRecordDistribution)
 
@@ -568,6 +572,50 @@ class TestProductProtocolDuckTyping:
         reconstructed = jax.tree.unflatten(aux, children)
         assert isinstance(reconstructed, ProductDistribution)
         assert reconstructed.fields == ("x", "y")
+
+    def test_all_numeric_leaves_gain_nrd_mixin(self):
+        """All-numeric leaves → the dynamic factory adds
+        :class:`NumericRecordDistribution` to the bases, so the joint
+        exposes the numeric API.
+        """
+        joint = ProductDistribution(
+            x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"),
+        )
+        assert isinstance(joint, NumericRecordDistribution)
+        # Numeric API is available.
+        assert joint.event_size == 2
+        assert hasattr(joint, "flatten_value")
+        assert hasattr(joint, "as_flat_distribution")
+
+    def test_non_numeric_leaf_drops_nrd_mixin(self):
+        """A non-numeric ``RecordDistribution`` leaf disqualifies the
+        joint from the numeric mixin. The joint remains a
+        :class:`RecordDistribution` (sampling, conditioning,
+        named-component access all work) but the numeric API is
+        absent — the product is still well-defined, just not
+        flat-representable.
+        """
+        import numpy as np
+        from probpipe import JointEmpirical, Normal
+
+        # Object-dtype JointEmpirical stays on the non-numeric base.
+        je = JointEmpirical(
+            labels=np.array(["a", "b", "c"], dtype=object),
+            ids=np.array([0, 1, 2]),
+            name="je",
+        )
+        # Combine with a numeric Normal: mixed leaves.
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), je=je)
+        assert isinstance(joint, ProductDistribution)
+        assert isinstance(joint, RecordDistribution)
+        # No numeric mixin → numeric API methods are absent.
+        assert not isinstance(joint, NumericRecordDistribution)
+        assert not hasattr(joint, "event_size")
+        # General API still works: fields, event_shapes.
+        assert set(joint.fields) == {"x", "je"}
+        # ``event_shapes`` delegates to the template; non-numeric
+        # leaves collapse to ``()`` at the top level.
+        assert joint.event_shapes == {"x": (), "je": ()}
 
 
 # ===========================================================================

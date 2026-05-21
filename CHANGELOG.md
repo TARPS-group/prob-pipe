@@ -49,15 +49,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `_record_template` explicitly and never trigger the auto-build.
     Previously the default tried to derive from `event_shapes`,
     which looped back through `record_template`.
-  - **`ProductDistribution`, `NumericJointEmpirical`, and
-    `SequentialJointDistribution` are now
-    `NumericRecordDistribution` subclasses** (previously
-    `RecordDistribution` only). Their leaves are required to be
-    `NumericRecordDistribution`, so the joint satisfies the full
-    numeric contract (per-field shape / dtype / support, pytree
-    structure, flat representation). `isinstance(joint,
-    NumericRecordDistribution)` now returns `True`; downstream code
-    that branched on `isinstance(...)` should be reviewed.
+  - **`ProductDistribution` and `SequentialJointDistribution`
+    conditionally mix in `NumericRecordDistribution`** based on
+    their resolved leaves. Both stay rooted at the general
+    `RecordDistribution` (their content is well-defined for
+    non-numeric leaves too — sampling produces a `Record` keyed by
+    component name, conditioning and named-component access always
+    work). When *every* leaf is itself a `NumericRecordDistribution`,
+    the dynamic class factory adds `NumericRecordDistribution` to the
+    bases, so the joint also exposes the numeric API (`event_size`,
+    `flatten_value` / `unflatten_value`, `as_flat_distribution`,
+    `dtypes`, `supports`). For mixed or non-numeric leaves those
+    methods are simply absent on the instance. Leaf type constraint
+    relaxed from `NumericRecordDistribution` to `Distribution`.
+  - **`NumericJointEmpirical` adds `NumericRecordDistribution` as a
+    mixin** (previously implicit via `JointEmpirical` only). The
+    sibling `JointEmpirical` stays on `RecordDistribution` and now
+    builds a structural template from the stored samples (object-
+    dtype leaves use `None` specs) to satisfy the metaclass
+    invariant.
 
 ### Added
 
