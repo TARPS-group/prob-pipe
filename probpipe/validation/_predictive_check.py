@@ -121,11 +121,59 @@ def predictive_check[P, D](
         result["observed_statistic"] = obs_stat
         result["p_value"] = p_value
 
-    # Attach to the distribution for easy access
-    if hasattr(distribution, "validation_results"):
-        distribution.validation_results.append(result)
+    # Attach to the distribution's ``auxiliary`` DataTree under a
+    # ``predictive_check`` group; each invocation appends a numbered
+    # child Dataset (``check_0``, ``check_1``, …). This keeps the
+    # validation history alongside the distribution without crowding
+    # the public API surface with a separate ``validation_results``
+    # property — and future validation functions (LOO, WAIC, …)
+    # land under their own named groups in the same DataTree.
+    _record_check_in_auxiliary(distribution, stats_array, result)
 
     return result
+
+
+def _record_check_in_auxiliary(distribution, stats_array, result):
+    """Append a per-invocation result Dataset under
+    ``distribution.auxiliary["predictive_check/check_N"]``.
+
+    Encoding:
+    - ``replicated_statistics`` becomes a ``DataArray`` of dims
+      ``("replication",)``.
+    - ``test_fn_name`` + optional ``observed_statistic`` /
+      ``p_value`` become Dataset attrs.
+    """
+    try:
+        import xarray as xr
+        from xarray import DataTree
+    except ImportError:
+        # xarray isn't available — skip the attachment silently. The
+        # caller still gets the ``result`` dict via the return value.
+        return
+
+    attrs = {"test_fn_name": result["test_fn_name"]}
+    if "observed_statistic" in result:
+        attrs["observed_statistic"] = result["observed_statistic"]
+        attrs["p_value"] = result["p_value"]
+    ds = xr.Dataset(
+        {"replicated_statistics": (("replication",), np.asarray(stats_array))},
+        attrs=attrs,
+    )
+
+    aux = getattr(distribution, "_auxiliary", None)
+    if aux is None:
+        aux = DataTree()
+        try:
+            object.__setattr__(distribution, "_auxiliary", aux)
+        except (AttributeError, TypeError):
+            # Frozen/immutable distribution — give up silently.
+            return
+    group = aux.get("predictive_check")
+    if group is None:
+        aux["predictive_check"] = DataTree()
+        group = aux["predictive_check"]
+    n_existing = len(list(group.children))
+    aux[f"predictive_check/check_{n_existing}"] = DataTree(dataset=ds)
 
 
 def _supports_key_arg(generative_likelihood: Any) -> bool:

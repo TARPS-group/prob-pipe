@@ -277,9 +277,14 @@ def _get_prior(dist: Distribution) -> Distribution:
 
 
 def _extract_record_template(dist: Distribution) -> RecordTemplate | None:
-    """Return the RecordTemplate from *dist*'s prior, or ``None``."""
+    """Return the RecordTemplate from *dist*'s prior, or ``None``.
+
+    Uses ``getattr`` so a non-Record prior (no ``record_template``
+    property after the base-class cleanup) yields ``None`` rather
+    than ``AttributeError``.
+    """
     prior = _get_prior(dist)
-    return prior.record_template
+    return getattr(prior, "record_template", None)
 
 
 # ---------------------------------------------------------------------------

@@ -52,12 +52,22 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
     ):
         # Type-annotated as ``SupportsLogProb[P]`` so static type
         # checkers catch a wrong-type prior at the call site. The
-        # isinstance check remains as a backstop for callers who
-        # bypass the type system.
+        # runtime checks remain as a backstop for callers who bypass
+        # the type system: the prior must be both ``SupportsLogProb``
+        # (so the joint log-density is computable) and a
+        # ``RecordDistribution`` (so its ``record_template`` is a
+        # required, non-``None`` ``RecordTemplate``).
+        from ..core.distribution import RecordDistribution
         if not isinstance(prior, SupportsLogProb):
             raise TypeError(
                 f"SimpleModel requires a prior that supports SupportsLogProb, "
                 f"got {type(prior).__name__}"
+            )
+        if not isinstance(prior, RecordDistribution):
+            raise TypeError(
+                f"SimpleModel requires a prior that is a "
+                f"RecordDistribution (has named fields via "
+                f"record_template); got {type(prior).__name__}."
             )
         self._prior = prior
         self._likelihood = likelihood

@@ -114,34 +114,6 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         """Whether this distribution is an approximation (e.g., from sampling or MCMC)."""
         return getattr(self, "_approximate", False)
 
-    # -- validation results ---------------------------------------------------
-
-    @property
-    def validation_results(self) -> list[dict]:
-        """Results from :func:`~probpipe.validation.predictive_check` runs.
-
-        Each entry is a dict with at least ``"replicated_statistics"``
-        and ``"test_fn_name"``.  Posterior checks also include
-        ``"observed_statistic"`` and ``"p_value"``.
-        """
-        if not hasattr(self, "_validation_results"):
-            self._validation_results: list[dict] = []
-        return self._validation_results
-
-    # -- values template (deprecated on base; now lives on RecordDistribution)
-    # Kept here temporarily for backward compatibility during migration.
-
-    @property
-    def record_template(self) -> RecordTemplate | None:
-        """Structural template for this distribution's samples, or ``None``.
-
-        .. deprecated::
-            This property is migrating to
-            :class:`~probpipe.core._record_distribution.RecordDistribution`.
-            Non-Record distributions should not rely on this.
-        """
-        return getattr(self, "_record_template", None)
-
     # -- auxiliary information ----------------------------------------------
 
     @property
@@ -180,13 +152,14 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
 
         The copy shares all internal state but has a new ``name``.
         Provenance is tracked: the copy's ``source`` records the rename
-        operation and points to the original as parent.  Any cached
-        ``record_template`` is cleared so it regenerates with the new
-        name (relevant for ``TFPDistribution``).
+        operation and points to the original as parent.
+
+        ``RecordDistribution`` overrides this to also reset its cached
+        ``_record_template`` so the auto-build path regenerates with
+        the new name.
         """
         clone = _copy.copy(self)
         object.__setattr__(clone, "_name", new_name)
-        object.__setattr__(clone, "_record_template", None)
         # Bypass write-once guard so rename provenance can be attached
         object.__setattr__(clone, "_source", None)
         clone.with_source(

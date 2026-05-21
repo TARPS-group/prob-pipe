@@ -382,6 +382,21 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
         """
         return getattr(self, "_record_template", None)
 
+    # -- renamed --------------------------------------------------------------
+
+    def renamed(self, new_name: str) -> "RecordDistribution":
+        """Return a shallow copy with a different name.
+
+        Extends :meth:`Distribution.renamed` by clearing the cached
+        ``_record_template`` so the auto-build path regenerates with
+        the new name (relevant for single-field
+        ``NumericRecordDistribution`` subclasses whose template is
+        keyed by ``name``).
+        """
+        clone = super().renamed(new_name)
+        object.__setattr__(clone, "_record_template", None)
+        return clone
+
     # -- Named component access ---------------------------------------------
 
     @property

@@ -179,7 +179,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
         # Stack into a chain shaped (num_steps, *event_shape) and wrap.
         chain = jnp.stack(positions, axis=0)
-        record_template = prior.record_template
+        record_template = getattr(prior, "record_template", None)
         return make_posterior(
             [chain], parents=(prior,), algorithm=self._method_name,
             auxiliary=None, record_template=record_template,
