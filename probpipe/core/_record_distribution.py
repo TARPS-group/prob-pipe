@@ -14,7 +14,7 @@ whose ``record_template`` is set.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -247,7 +247,7 @@ class _RecordDistributionView(Distribution):
 
     # -- Internals ----------------------------------------------------------
 
-    def _extract(self, structured) -> Array:
+    def _extract(self, structured: Any) -> Array:
         """Extract this field from a parent sample (Record, NumericRecordArray, or flat array)."""
         from ._record_array import RecordArray
         if isinstance(structured, (Record, RecordArray)):
@@ -301,7 +301,9 @@ class _RecordDistributionView(Distribution):
 # ---------------------------------------------------------------------------
 
 
-def _build_record_template(components: dict) -> RecordTemplate:
+def _build_record_template(
+    components: dict[str, Any],
+) -> RecordTemplate:
     """Build a RecordTemplate from a component pytree.
 
     Each ``NumericRecordDistribution`` leaf contributes its ``event_shape``.
@@ -516,12 +518,14 @@ def _register_dynamic_subclass(cls: type) -> type:
     capturing the top-level key order explicitly so insertion order
     survives the round-trip (JAX's dict treedef is sorted).
     """
-    def _flatten(dist):
+    def _flatten(dist: Any) -> tuple[list[Any], tuple[Any, str, tuple[str, ...]]]:
         leaves = jax.tree.leaves(dist._components)
         treedef = jax.tree.structure(dist._components)
         return leaves, (treedef, dist._name, tuple(dist._components.keys()))
 
-    def _unflatten(aux, children):
+    def _unflatten(
+        aux: tuple[Any, str, tuple[str, ...]], children: list[Any],
+    ) -> Any:
         treedef, name, key_order = aux
         components = jax.tree.unflatten(treedef, children)
         ordered = {k: components[k] for k in key_order}

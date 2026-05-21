@@ -333,7 +333,7 @@ class TestCanonicalConvenience:
                 return {"a": real, "b": real}
 
             def _sample(self, key, sample_shape=()):
-                # Story A: multi-leaf templates return a ``NumericRecord``
+                # Multi-leaf templates return a ``NumericRecord``
                 # (or ``NumericRecordArray`` for a non-empty sample shape).
                 # This stub returns zero placeholders sized from the
                 # template's per-field event shapes.
@@ -391,7 +391,7 @@ class TestCanonicalConvenience:
     def test_treedef_record_for_multi_leaf(self, multi_leaf_dist):
         """Multi-leaf: ``treedef`` matches a ``NumericRecord`` skeleton
         with the same field names — locks the relationship between
-        ``record_template`` and the sample pytree (Story A)."""
+        ``record_template`` and the sample pytree."""
         from probpipe import NumericRecord
         expected = jax.tree.structure(
             NumericRecord(a=jnp.zeros(()), b=jnp.zeros((2,)))
@@ -412,10 +412,10 @@ class TestCanonicalConvenience:
         assert multi_leaf_dist.flat_event_shapes == [(), (2,)]
 
     def test_sample_returns_record_multi_leaf(self, multi_leaf_dist):
-        """Story A end-to-end: a multi-leaf ``_sample`` returns a
-        ``NumericRecord`` (matching the ``treedef`` derivation).
-        Locks the class-docstring contract: single-leaf →
-        ``jax.Array``, multi-leaf → ``NumericRecord``.
+        """A multi-leaf ``_sample`` returns a ``NumericRecord`` end-to-end
+        (matching the ``treedef`` derivation). Locks the class-docstring
+        contract: single-leaf → ``jax.Array``, multi-leaf →
+        ``NumericRecord``.
         """
         from probpipe import NumericRecord
         out = multi_leaf_dist._sample(jax.random.PRNGKey(0), ())

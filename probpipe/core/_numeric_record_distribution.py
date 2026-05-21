@@ -24,13 +24,17 @@ Provides:
     source to a Record-keyed view under a user-supplied template.
   - Private helpers ``_vmap_sample`` / ``_mc_expectation``.
 
-Not to be confused with :mod:`_distribution_array`, which houses
-:class:`DistributionArray` — a *collection of n independent scalar
-distributions* along a batch axis. ``DistributionArray`` is a
-``Distribution`` subclass, not a ``NumericRecordDistribution``
-subclass: it represents "many random variables indexed by position",
-while ``NumericRecordDistribution`` represents "one random variable
-with a numeric-valued event structure".
+Distinct from :class:`~probpipe.DistributionArray` (housed in
+:mod:`_distribution_array`), which represents *n independent
+distributions stacked along a batch axis* — many random variables
+indexed by position, e.g. ``Normal(loc=jnp.zeros(5), scale=1.0)``
+stored as a length-5 array of independent ``Normal`` instances. A
+``NumericRecordDistribution`` represents *one* random variable
+whose draw can itself have a numeric-valued event structure (a
+scalar, a vector, or a multi-field record), and ``DistributionArray``
+holds many such variables. The two compose: a ``DistributionArray``
+of ``NumericRecordDistribution`` instances is the canonical way to
+express a vectorized batch of structured random variables.
 """
 
 from __future__ import annotations
@@ -72,7 +76,7 @@ from ._record_distribution import RecordDistribution
 # ---------------------------------------------------------------------------
 
 def _vmap_sample(
-    dist,
+    dist: "NumericRecordDistribution",
     key: PRNGKey,
     sample_shape: tuple[int, ...] = (),
 ) -> Any:
@@ -85,7 +89,7 @@ def _vmap_sample(
 
     Parameters
     ----------
-    dist
+    dist : NumericRecordDistribution
         Distribution whose ``_sample(key, ())`` draws one unbatched
         sample (array or pytree of arrays).
     key : PRNGKey
@@ -108,8 +112,8 @@ def _vmap_sample(
 
 
 def _mc_expectation(
-    dist,
-    f: Callable,
+    dist: "NumericRecordDistribution",
+    f: Callable[[Any], Any],
     *,
     key: PRNGKey | None = None,
     num_evaluations: int | None = None,
@@ -152,69 +156,71 @@ def _mc_expectation(
 class NumericRecordDistribution(RecordDistribution):
     """Distribution over numeric arrays with Record support.
 
-    Extends :class:`RecordDistribution` with numeric-specific metadata.
-    The class is the most general numeric random variable in ProbPipe:
-    samples are a pytree of ``jax.Array`` leaves named via
-    :class:`RecordTemplate`. Single-leaf distributions (``Normal``,
-    ``Beta``, ``MultivariateNormal``, …) are the trivial case; the
-    same machinery covers future multi-leaf joint distributions.
+    Extends :class:`RecordDistribution` with numeric-specific metadata
+    (per-field shape, dtype, and support). The class is the most
+    general numeric random variable in ProbPipe: one draw is a pytree
+    of ``jax.Array`` leaves named via a :class:`RecordTemplate`.
+    Single-leaf distributions (``Normal``, ``Beta``,
+    ``MultivariateNormal``, ...) are the trivial case; joint
+    distributions (``ProductDistribution``, ``SequentialJointDistribution``,
+    ``JointGaussian``, ...) reuse the same machinery with a multi-leaf
+    template.
 
-    A ``Distribution`` represents one random variable. Collections of
+    A ``Distribution`` represents one random variable; collections of
     independent distributions live in
     :class:`~probpipe.DistributionArray`.
 
-    Canonical / convenience accessor pairs
-    --------------------------------------
+    Canonical and convenience accessors
+    -----------------------------------
 
-    Per-field accessors (canonical) are the source of truth; scalar
-    accessors (convenience) are derived shortcuts that raise on
-    multi-leaf templates. Subclasses override the canonical side;
-    convenience accessors are inherited and derived automatically.
+    Per-field accessors are the canonical source of truth; scalar
+    accessors are convenience shortcuts that raise on multi-leaf
+    templates. Subclasses override the canonical side; the convenience
+    accessors derive automatically.
 
-    +------------+---------------------------------+--------------------------------------+
-    | Concept    | Canonical (per-leaf)            | Convenience (single-leaf)            |
-    +============+=================================+======================================+
-    | Structure  | ``record_template``             | —                                    |
-    +------------+---------------------------------+--------------------------------------+
-    | Pytree     | ``treedef`` (from template)     | —                                    |
-    +------------+---------------------------------+--------------------------------------+
-    | Shapes     | ``event_shapes : dict``         | ``event_shape : tuple``              |
-    |            |                                 | (raises on multi-leaf)               |
-    +------------+---------------------------------+--------------------------------------+
-    | Dtypes     | ``dtypes : dict`` (raises if    | ``dtype : dtype | None`` (unique or  |
-    |            | not declared)                   | ``None``)                            |
-    +------------+---------------------------------+--------------------------------------+
-    | Supports   | ``supports : dict`` (raises if  | ``support : Constraint`` (raises on  |
-    |            | not declared)                   | multi-leaf)                          |
-    +------------+---------------------------------+--------------------------------------+
-    | Flat dim   | ``event_size : int``            | —                                    |
-    +------------+---------------------------------+--------------------------------------+
+    | Concept   | Canonical (per-field)            | Convenience (single-leaf)                       |
+    |-----------|----------------------------------|-------------------------------------------------|
+    | Structure | `record_template`                | —                                               |
+    | Pytree    | `treedef` (from template)        | —                                               |
+    | Shapes    | `event_shapes : dict`            | `event_shape : tuple` (raises on multi-leaf)    |
+    | Dtypes    | `dtypes : dict`                  | `dtype : dtype \\| None` (unique or `None`)     |
+    | Supports  | `supports : dict`                | `support : Constraint` (raises on multi-leaf)   |
+    | Flat dim  | `event_size : int`               | —                                               |
 
     Single-field auto-template
     --------------------------
 
-    Any concrete subclass that declares an ``event_shape`` and is
-    constructed with a ``name=`` gets an auto-built single-field
-    :class:`RecordTemplate` (``RecordTemplate(**{name: event_shape})``)
-    on first read of :attr:`record_template`. Subclasses that need a
-    multi-field template (joint distributions) override
+    A concrete subclass that declares ``event_shape`` and is constructed
+    with a ``name=`` gets an auto-built single-field
+    ``RecordTemplate(**{name: event_shape})`` on first read of
+    :attr:`record_template`. Multi-field subclasses (joints) override
     ``record_template`` directly to skip the auto-build.
 
-    ``_sample`` contract (Story A)
-    ------------------------------
+    ``_sample`` contract
+    --------------------
 
-    - Single-leaf templates → ``_sample(key, sample_shape)`` returns
+    Subclasses implement ``_sample(key, sample_shape) -> draw``; the
+    public :func:`~probpipe.sample` op (in
+    :mod:`probpipe.core.ops`) handles key auto-generation,
+    protocol dispatch, and source/provenance tracking before delegating
+    to ``dist._sample(...)``. Subclass code should never call the public
+    ``sample`` op on ``self`` — call ``self._sample(key, sample_shape)``
+    directly to avoid the ops layer.
+
+    The shape of one draw is fully determined by ``record_template``:
+
+    - **Single-leaf** template → ``_sample(key, sample_shape)`` returns
       a raw ``jax.Array`` of shape ``sample_shape + event_shape``.
-    - Multi-leaf templates → ``_sample(key, sample_shape)`` returns a
+    - **Multi-leaf** template → ``_sample(key, sample_shape)`` returns a
       :class:`~probpipe.NumericRecord` (or
-      :class:`~probpipe.NumericRecordArray` for non-empty
+      :class:`~probpipe.NumericRecordArray` for a non-empty
       ``sample_shape``) keyed by ``record_template.fields``.
 
-    The :attr:`treedef` property locks this relationship by deriving
-    from ``record_template``.
+    The :attr:`treedef` property locks this invariant by deriving from
+    ``record_template``.
 
-    Standard distributions (Normal, Gamma, Poisson, etc.) inherit from
-    this class via :class:`TFPDistribution`.
+    Standard distributions (``Normal``, ``Gamma``, ``Poisson``, ...)
+    inherit from this class via :class:`TFPDistribution`.
     """
 
     # -- record_template auto-generation ------------------------------------
@@ -257,7 +263,7 @@ class NumericRecordDistribution(RecordDistribution):
         object.__setattr__(self, "_record_template", tpl)
         return tpl
 
-    def _per_field_dict(self, value):
+    def _per_field_dict(self, value: Any) -> dict[str, Any]:
         """Build a ``{field: value}`` dict keyed by every field of
         :attr:`record_template`, with *value* repeated as the value.
 
