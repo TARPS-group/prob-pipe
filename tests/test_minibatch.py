@@ -16,20 +16,15 @@ import pytest
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import (
-    DistributionArray,
     GLMLikelihood,
     MultivariateNormal,
     Record,
-    log_prob,
     random_unnormalized_log_prob,
-    sample,
 )
-from probpipe.core._distribution_base import Distribution
 from probpipe.core._random_functions import RandomFunction
 from probpipe.core._random_measures import RandomMeasure
 from probpipe.core.protocols import (
     SupportsRandomUnnormalizedLogProb,
-    SupportsSampling,
     SupportsUnnormalizedLogProb,
 )
 from probpipe.inference._minibatch import (
@@ -153,8 +148,13 @@ class TestProtocols:
     def test_isinstance_random_measure(self, measure):
         assert isinstance(measure, RandomMeasure)
 
-    def test_isinstance_supports_sampling(self, measure):
-        assert isinstance(measure, SupportsSampling)
+    def test_not_supports_sampling(self, measure):
+        """MinibatchedDistribution doesn't generically support sampling
+        — its "samples" are themselves distributions, not values.
+        Use ``_random_unnormalized_log_prob`` to get the stochastic
+        log-density callable that SGMCMC kernels consume."""
+        from probpipe.core.protocols import SupportsSampling
+        assert not isinstance(measure, SupportsSampling)
 
     def test_isinstance_supports_random_unnormalized_log_prob(self, measure):
         assert isinstance(measure, SupportsRandomUnnormalizedLogProb)
@@ -164,40 +164,23 @@ class TestProtocols:
         assert not isinstance(measure, Iterable)
 
 
-# -- Sampling ------------------------------------------------------------------
+# -- Inner draw ----------------------------------------------------------------
 
 
-class TestSampling:
-    def test_sample_returns_inner_distribution(self, measure):
-        inner = measure._sample(jax.random.PRNGKey(0))
+class TestInnerDraw:
+    """``_draw_one`` returns one fixed-minibatch realisation; the inner
+    draw's `_unnormalized_log_prob` is the stochastic surrogate at θ.
+    """
+
+    def test_draw_one_returns_fixed_minibatch_distribution(self, measure):
+        inner = measure._draw_one(jax.random.PRNGKey(0))
         assert isinstance(inner, _FixedMinibatchDistribution)
         assert isinstance(inner, SupportsUnnormalizedLogProb)
-
-    def test_op_layer_sample_returns_distribution(self, measure):
-        """The op-layer ``sample(measure, key=...)`` wraps the inner draw
-        in the standard WorkflowFunction Record envelope but still produces
-        a Distribution-valued result (the random measure draws distributions,
-        not arrays)."""
-        result = sample(measure, key=jax.random.PRNGKey(0))
-        # The WF output coercion lands a Distribution inside a single-field
-        # Record; either form should resolve to a Distribution we can probe.
-        underlying = result if isinstance(result, Distribution) else result[result.fields[0]]
-        assert isinstance(underlying, Distribution)
-
-    def test_sample_batched_returns_distribution_array(self, measure):
-        draws = measure._sample(jax.random.PRNGKey(0), sample_shape=(5,))
-        assert isinstance(draws, DistributionArray)
-        assert draws.batch_shape == (5,)
-        # Each component is a fixed-minibatch realisation (catches a
-        # wrong-typed DistArray returned by a regression).
-        components = list(draws.components)
-        assert len(components) == 5
-        assert all(isinstance(c, _FixedMinibatchDistribution) for c in components)
 
     def test_batch_size_one(self, prior, likelihood, data_record):
         """Exercise the vmap-over-1-element-axis edge case."""
         m = MinibatchedDistribution(prior, likelihood, data_record, batch_size=1)
-        inner = m._sample(jax.random.PRNGKey(0))
+        inner = m._draw_one(jax.random.PRNGKey(0))
         assert inner.batch["X"].shape == (1, 2)
         assert inner.batch["y"].shape == (1,)
         # log_prob still works (vmap over a length-1 axis).
@@ -207,7 +190,7 @@ class TestSampling:
 
     def test_inner_log_prob_factorises(self, measure, prior, likelihood):
         """For a fixed minibatch, log~D_B(theta) = log_prior(theta) + (N/b)*sum_batch."""
-        inner = measure._sample(jax.random.PRNGKey(7))
+        inner = measure._draw_one(jax.random.PRNGKey(7))
         theta = jnp.array([0.1, -0.2])
 
         # Hand-compute the expected value from the captured batch.
@@ -248,8 +231,8 @@ class TestSampling:
         # Same key → same minibatch indices → same log-density at theta.
         key = jax.random.PRNGKey(13)
         theta = jnp.array([0.1, -0.1])
-        lp_rec = float(m_rec._sample(key)._unnormalized_log_prob(theta))
-        lp_ra = float(m_ra._sample(key)._unnormalized_log_prob(theta))
+        lp_rec = float(m_rec._draw_one(key)._unnormalized_log_prob(theta))
+        lp_ra = float(m_ra._draw_one(key)._unnormalized_log_prob(theta))
         np.testing.assert_allclose(lp_rec, lp_ra, rtol=1e-5)
 
     def test_with_replacement_flag(self, prior, likelihood, data_record):
@@ -262,7 +245,7 @@ class TestSampling:
         # we should see at least one repeat (probability ~ 1 for many draws).
         repeats_seen = 0
         for k in jax.random.split(jax.random.PRNGKey(0), 50):
-            inner = m_wr._sample(k)
+            inner = m_wr._draw_one(k)
             batch_X = inner.batch["X"]
             unique = jnp.unique(batch_X, axis=0)
             if unique.shape[0] < batch_X.shape[0]:
@@ -285,7 +268,7 @@ class TestSampling:
         m_full = MinibatchedDistribution(
             prior, likelihood, data_record, batch_size=N, with_replacement=False,
         )
-        inner = m_full._sample(jax.random.PRNGKey(11))
+        inner = m_full._draw_one(jax.random.PRNGKey(11))
         assert inner.rescale_factor == 1.0
 
         theta = jnp.array([0.2, -0.3])

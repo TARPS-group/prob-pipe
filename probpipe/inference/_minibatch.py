@@ -38,7 +38,6 @@ from typing import Any, TYPE_CHECKING
 import jax
 import jax.numpy as jnp
 
-from ..core._distribution_array import DistributionArray
 from ..core._distribution_base import Distribution
 from ..core._random_functions import RandomFunction
 from ..core._random_measures import RandomMeasure
@@ -131,7 +130,6 @@ def _draw_indices(
 
 class MinibatchedDistribution(
     RandomMeasure[Record],
-    SupportsSampling,
     SupportsRandomUnnormalizedLogProb,
 ):
     """Random measure realised by uniform minibatching.
@@ -271,35 +269,7 @@ class MinibatchedDistribution(
         """The full dataset (not the minibatched view)."""
         return self._data
 
-    # -- SupportsSampling ----------------------------------------------------
-
-    def _sample(
-        self, key: PRNGKey, sample_shape: tuple[int, ...] = (),
-    ) -> Any:
-        """Draw one (or several) fixed-minibatch realisations.
-
-        For ``sample_shape == ()`` returns a single
-        :class:`_FixedMinibatchDistribution` — the primary path,
-        fully JIT-traceable through downstream
-        ``_unnormalized_log_prob``.
-
-        For non-empty ``sample_shape``, returns a
-        :class:`~probpipe.DistributionArray` of independent
-        realisations, each on its own minibatch. **The batched path
-        builds a Python list of Distribution instances and is not
-        JIT-traceable.** SGMCMC kernels that want many minibatch
-        draws should ``vmap`` or scan over per-step
-        ``M._random_unnormalized_log_prob()._sample(key)`` instead —
-        that path *is* JIT-traceable.
-        """
-        if sample_shape == ():
-            return self._draw_one(key)
-        # Multi-draw: enumerate the Cartesian product and stack.
-        from .._utils import prod
-        total = prod(sample_shape)
-        keys = jax.random.split(key, total)
-        components = [self._draw_one(k) for k in keys]
-        return DistributionArray(components, batch_shape=sample_shape)
+    # -- Internal draw -------------------------------------------------------
 
     def _draw_one(self, key: PRNGKey) -> _FixedMinibatchDistribution:
         """Draw one minibatch and return the corresponding fixed-minibatch target."""
