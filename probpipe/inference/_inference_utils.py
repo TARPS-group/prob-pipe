@@ -23,7 +23,8 @@ utilities shared across the backend modules (``_tfp_mcmc.py``,
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from xarray import DataTree
