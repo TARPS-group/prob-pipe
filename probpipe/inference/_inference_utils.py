@@ -185,18 +185,12 @@ def build_target_log_prob(
     its own input types).
     """
     if is_simple_model(dist):
-        data = observed
-        # Records now store values verbatim (no lazy conversion), so we
-        # no longer have to pre-resolve to avoid tracer leaks. Left as a
-        # no-op Record rebuild for backwards-compatible safety under JIT
-        # if callers pass in non-JAX array leaves (e.g. numpy).
-        if isinstance(data, Record):
-            data = Record({f: jnp.asarray(data[f]) for f in data.fields})
-
         def target_log_prob_fn(params):
             lp = dist._prior._log_prob(params)
-            if data is not None:
-                lp = lp + dist._likelihood.log_likelihood(params=params, data=data)
+            if observed is not None:
+                lp = lp + dist._likelihood.log_likelihood(
+                    params=params, data=observed,
+                )
             return lp
 
         return target_log_prob_fn
