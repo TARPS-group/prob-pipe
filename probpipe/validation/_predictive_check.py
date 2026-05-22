@@ -26,8 +26,8 @@ def predictive_check[P, D](
     test_fn: Callable[[D], float],
     observed_data: D | None = None,
     *,
-    n_samples: int | None = None,
-    n_replications: int = 500,
+    num_observations: int | None = None,
+    num_replications: int = 500,
     key: PRNGKey | None = None,
 ) -> dict:
     """Predictive check — works as both prior and posterior check.
@@ -53,18 +53,18 @@ def predictive_check[P, D](
     distribution : Distribution[P]
         Prior or posterior to sample parameters from.
     generative_likelihood : GenerativeLikelihood[P, D]
-        Must have ``generate_data(params: P, n_samples: int, *, key: PRNGKey | None = None) -> D``.
-        If ``generate_data`` also accepts a ``key`` keyword, the
-        vectorized fast path is used.
+        Must have ``generate_data(params: P, num_observations: int, *,
+        key: PRNGKey | None = None) -> D``. If ``generate_data`` also
+        accepts a ``key`` keyword, the vectorized fast path is used.
     test_fn : Callable[[D], float]
         Test statistic mapping data to a scalar.
     observed_data : D or None, optional
         If provided, compute the observed test statistic and p-value.
-    n_samples : int, optional
+    num_observations : int, optional
         Number of observations per replicated dataset.  Required if
         *observed_data* is not provided; otherwise defaults to
         ``len(observed_data)``.
-    n_replications : int
+    num_replications : int
         Number of replicated datasets to generate.
     key : PRNGKey, optional
         JAX PRNG key.  Auto-generated if ``None``.
@@ -83,12 +83,12 @@ def predictive_check[P, D](
         - ``"p_value"`` — fraction of replicates where the test
           statistic is at least as extreme as the observed value.
     """
-    if n_samples is None:
+    if num_observations is None:
         if observed_data is None:
             raise ValueError(
-                "n_samples is required when observed_data is not provided"
+                "num_observations is required when observed_data is not provided"
             )
-        n_samples = len(observed_data)
+        num_observations = len(observed_data)
 
     if key is None:
         key = _auto_key()
@@ -97,12 +97,12 @@ def predictive_check[P, D](
     if _supports_key_arg(generative_likelihood):
         stats_array = _predictive_check_batched(
             distribution, generative_likelihood, test_fn,
-            n_samples, n_replications, key,
+            num_observations, num_replications, key,
         )
     else:
         stats_array = _predictive_check_loop(
             distribution, generative_likelihood, test_fn,
-            n_samples, n_replications, key,
+            num_observations, num_replications, key,
         )
 
     replicated_dist = RecordEmpiricalDistribution(
@@ -207,19 +207,19 @@ def _predictive_check_batched(
     distribution: SupportsSampling,
     generative_likelihood: Any,
     test_fn: Callable,
-    n_samples: int,
-    n_replications: int,
+    num_observations: int,
+    num_replications: int,
     key: PRNGKey,
 ) -> np.ndarray:
     """Vectorized predictive check using batched data generation."""
     key_params, key_data = jax.random.split(key)
 
-    # Draw all parameter samples at once: (n_replications, *event_shape)
-    params_batch = distribution._sample(key_params, (n_replications,))
+    # Draw all parameter samples at once: (num_replications, *event_shape)
+    params_batch = distribution._sample(key_params, (num_replications,))
 
     # Generate all replicated datasets in one call
     y_rep_batch = generative_likelihood.generate_data(
-        params_batch, n_samples, key=key_data,
+        params_batch, num_observations, key=key_data,
     )
 
     # Apply test_fn to each replicate — try vmap, fall back to loop
@@ -229,7 +229,7 @@ def _predictive_check_batched(
     except Exception:
         # test_fn may not be JAX-traceable (e.g., uses Python control flow)
         return np.array(
-            [float(test_fn(y_rep_batch[i])) for i in range(n_replications)],
+            [float(test_fn(y_rep_batch[i])) for i in range(num_replications)],
             dtype=np.float64,
         )
 
@@ -238,15 +238,15 @@ def _predictive_check_loop(
     distribution: SupportsSampling,
     generative_likelihood: Any,
     test_fn: Callable,
-    n_samples: int,
-    n_replications: int,
+    num_observations: int,
+    num_replications: int,
     key: PRNGKey,
 ) -> np.ndarray:
     """Fallback: sequential predictive check in a Python loop."""
     stats = []
-    for i in range(n_replications):
+    for i in range(num_replications):
         key, subkey = jax.random.split(key)
         params_i = distribution._sample(subkey, ())
-        y_rep = generative_likelihood.generate_data(params_i, n_samples)
+        y_rep = generative_likelihood.generate_data(params_i, num_observations)
         stats.append(float(test_fn(y_rep)))
     return np.array(stats, dtype=np.float64)

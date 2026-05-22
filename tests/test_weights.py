@@ -527,21 +527,21 @@ class TestSampleShape:
         from probpipe import RecordEmpiricalDistribution
         samples = jnp.ones((100, 3))
         dist = RecordEmpiricalDistribution(samples, name="x")
-        assert dist.n == 100
+        assert dist.num_atoms == 100
         assert dist.event_shape == (3,)
 
     def test_explicit_1d_sample_shape(self):
         from probpipe import RecordEmpiricalDistribution
         samples = jnp.ones((100, 3))
         dist = RecordEmpiricalDistribution(samples, sample_shape=(100,), name="x")
-        assert dist.n == 100
+        assert dist.num_atoms == 100
         assert dist.event_shape == (3,)
 
     def test_2d_sample_shape(self):
         from probpipe import RecordEmpiricalDistribution
         samples = jnp.ones((10, 5, 3))
         dist = RecordEmpiricalDistribution(samples, sample_shape=(10, 5), name="x")
-        assert dist.n == 50
+        assert dist.num_atoms == 50
         assert dist.event_shape == (3,)
 
     def test_sample_shape_mismatch_raises(self):

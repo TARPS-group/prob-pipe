@@ -879,7 +879,7 @@ class TestEnumerateWithDistributionViews:
         )
         result = wf(a=view_x, b=view_y, c=ed)
         assert hasattr(result, "samples")
-        assert result.n == 50
+        assert result.num_atoms == 50
 
 
 # ===========================================================================
@@ -1225,7 +1225,7 @@ class TestNestedProductDistribution:
         )
         result = wf(a=view_force, b=view_obs)
         assert hasattr(result, "samples")
-        assert result.n == 30
+        assert result.num_atoms == 30
 
 
 # ===========================================================================

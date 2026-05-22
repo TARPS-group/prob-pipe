@@ -651,8 +651,10 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
         self._evaluations = _as_float_array(evaluations)
         if self._evaluations.ndim == 0:
             raise ValueError("evaluations must have at least 1 dimension.")
-        self._n = self._evaluations.shape[0]
-        self._w = Weights(n=self._n, weights=weights, log_weights=log_weights)
+        self._num_atoms = self._evaluations.shape[0]
+        self._w = Weights(
+            n=self._num_atoms, weights=weights, log_weights=log_weights,
+        )
         if name is None:
             name = "bootstrap_dist"
         super().__init__(name=name)
@@ -662,9 +664,9 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
     _preferred_orchestration: str | None = None
 
     @property
-    def n(self) -> int:
-        """Number of function evaluations."""
-        return self._n
+    def num_atoms(self) -> int:
+        """Number of stored atoms (function evaluations) backing this distribution."""
+        return self._num_atoms
 
     @property
     def evaluations(self) -> Array:
@@ -696,7 +698,7 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
     ) -> Array:
         """Draw bootstrap resamples of the mean."""
         def _one_resample(k):
-            idx = self._w.choice(k, shape=(self._n,))
+            idx = self._w.choice(k, shape=(self._num_atoms,))
             return jnp.mean(self._evaluations[idx], axis=0)
 
         if sample_shape == ():
@@ -726,7 +728,10 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
         return self._per_field_dict(real)
 
     def __repr__(self) -> str:
-        return f"BootstrapDistribution(n={self._n}, event_shape={self.event_shape})"
+        return (
+            f"BootstrapDistribution(num_atoms={self._num_atoms}, "
+            f"event_shape={self.event_shape})"
+        )
 
 # ---------------------------------------------------------------------------
 # FlatNumericRecordDistribution — the flat-shaped subset of NRD

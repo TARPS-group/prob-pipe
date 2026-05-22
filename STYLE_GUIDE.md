@@ -135,26 +135,34 @@ Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
 and `include_inputs` internally. Use `random_seed` instead when defining
 functions that accept a PRNG seed.
 
-### 1.9 The `.n` property convention
+### 1.9 The `num_atoms` / `num_observations` property convention
 
-Finite-sample distribution classes expose an `.n` property (read-only
-`int`) giving the number of stored samples, components, or observations.
-The meaning depends on the class but always answers "how many items does
-this distribution hold?"
+Finite-sample distribution classes expose a read-only `int` property
+naming the size of the finite collection they hold. The name reflects
+*what is being counted*:
 
-| Class | `.n` meaning |
-|-------|-------------|
-| `EmpiricalDistribution` | Number of samples |
-| `JointEmpirical` | Number of joint samples |
-| `BootstrapDistribution` | Number of function evaluations |
-| `BootstrapReplicateDistribution` | Number of observations per bootstrap dataset |
-| `BroadcastDistribution` | Number of input–output pairs |
-| `_RecordMarginal` | Number of output samples |
-| `_MixtureMarginal` | Number of mixture components |
-| `_ListMarginal` | Number of output items |
+- **`num_atoms`** — items in an empirical *measure* (atoms / point
+  masses in `\sum_i w_i \delta_{x_i}`). Use for any class whose
+  ``_sample`` returns *one of N stored realisations*.
+- **`num_observations`** — observations in a single bootstrap
+  *dataset*. Use for any class whose ``_sample`` returns a *whole
+  resampled dataset* whose size is the named count.
 
-When adding a new class that wraps a finite collection of samples or
-components, define `.n` as a `@property` returning `int`.
+| Class | Property | Meaning |
+|-------|----------|---------|
+| `EmpiricalDistribution` | `num_atoms` | Stored samples |
+| `RecordEmpiricalDistribution` | `num_atoms` | Stored samples |
+| `JointEmpirical`, `NumericJointEmpirical` | `num_atoms` | Stored joint samples |
+| `BootstrapDistribution` | `num_atoms` | Stored function evaluations |
+| `KDEDistribution` | `num_atoms` | Kernel centres |
+| `BroadcastDistribution`, `_RecordMarginal`, `_MixtureMarginal`, `_ListMarginal` | `num_atoms` | Output samples / components |
+| `ApproximateDistribution` | `num_atoms` (inherited) + `num_draws` (per chain) | total chain × draw / per-chain |
+| `BootstrapReplicateDistribution`, `RecordBootstrapReplicateDistribution` | `num_observations` (+ `num_source_observations`) | Observations per bootstrap dataset, plus optional source-data count |
+
+When adding a new class that wraps a finite collection, define the
+property as a `@property` returning `int`. Pick the name based on
+what each `_sample` call produces — a single atom (use `num_atoms`)
+or a dataset of observations (use `num_observations`).
 
 ### 1.10 Record field iteration and path access
 
@@ -188,8 +196,9 @@ collection. Every concrete `Distribution` subclass —
 `Normal`, `EmpiricalDistribution`, `BootstrapReplicateDistribution`,
 joint distributions, marginals — is **non-iterable**. For the
 finite-sample subclasses listed in §1.9, stored samples are
-accessed via `.samples` / `.draws()` and `.n` reports the count.
-Parametric distributions do not have `.n`.
+accessed via `.samples` / `.draws()` and the size property
+(`num_atoms` or `num_observations` per §1.9) reports the count.
+Parametric distributions do not have either property.
 
 Iteration is reserved for the `Record` family — `Record`,
 `NumericRecord`, `RecordArray`, `NumericRecordArray` — which iterate

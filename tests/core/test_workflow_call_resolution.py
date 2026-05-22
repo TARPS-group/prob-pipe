@@ -151,7 +151,7 @@ class TestReservedOverrides:
         result = wf(normal_dist, n_broadcast_samples=6, include_inputs=True, seed=42)
 
         assert isinstance(result, BroadcastDistribution)
-        assert result.n == 6
+        assert result.num_atoms == 6
 
     def test_seed_override_restarts_sampling_state_for_a_call(
         self,

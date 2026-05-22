@@ -280,8 +280,8 @@ class EmpiricalDistribution[T](
     # -- properties ---------------------------------------------------------
 
     @property
-    def n(self) -> int:
-        """Number of samples."""
+    def num_atoms(self) -> int:
+        """Number of stored atoms (point masses) in this empirical measure."""
         return len(self._samples)
 
     @property
@@ -296,7 +296,7 @@ class EmpiricalDistribution[T](
 
     @property
     def weights(self) -> Array:
-        """Normalised weights, shape ``(n,)``."""
+        """Normalised weights, shape ``(num_atoms,)``."""
         return self._w.normalized
 
     @property
@@ -450,7 +450,7 @@ class RecordEmpiricalDistribution(
             )
         n = _validate_record_samples(samples)
         self._record_data = samples
-        self._n_samples = n
+        self._num_atoms = n
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         if name is None:
             name = "empirical(" + ",".join(samples.fields) + ")"
@@ -463,8 +463,9 @@ class RecordEmpiricalDistribution(
     # -- properties ---------------------------------------------------------
 
     @property
-    def n(self) -> int:
-        return self._n_samples
+    def num_atoms(self) -> int:
+        """Number of stored atoms (point masses) in this empirical measure."""
+        return self._num_atoms
 
     @property
     def samples(self) -> NumericRecord:
@@ -517,7 +518,7 @@ class RecordEmpiricalDistribution(
         cached = getattr(self, "_flat_samples_cache", None)
         if cached is None:
             parts = [
-                jnp.asarray(self._record_data[f]).reshape(self._n_samples, -1)
+                jnp.asarray(self._record_data[f]).reshape(self._num_atoms, -1)
                 for f in self._record_data.fields
             ]
             cached = jnp.concatenate(parts, axis=-1)
@@ -669,11 +670,11 @@ class RecordEmpiricalDistribution(
             r = _index_record(self._record_data, i)
             return r[only_field] if single_field else r
 
-        if num_evaluations is not None and num_evaluations < self._n_samples:
+        if num_evaluations is not None and num_evaluations < self._num_atoms:
             if key is None:
                 key = _auto_key()
             idx = jax.random.choice(
-                key, self._n_samples,
+                key, self._num_atoms,
                 shape=(num_evaluations,), replace=False,
             )
             f_vals = jnp.stack([f(_row(int(i))) for i in idx])
@@ -683,12 +684,12 @@ class RecordEmpiricalDistribution(
                 return BootstrapDistribution(f_vals, weights=sub_w)
             return sub_w.mean(f_vals)
         # Exact: evaluate f on every row.
-        f_vals = jnp.stack([f(_row(i)) for i in range(self._n_samples)])
+        f_vals = jnp.stack([f(_row(i)) for i in range(self._num_atoms)])
         return self._w.mean(f_vals)
 
     def __repr__(self) -> str:
         return (
-            f"RecordEmpiricalDistribution(n={self._n_samples}, "
+            f"RecordEmpiricalDistribution(num_atoms={self._num_atoms}, "
             f"fields=({', '.join(self._record_data.fields)}))"
         )
 
@@ -758,30 +759,34 @@ class BootstrapReplicateDistribution[T](
         self,
         source: Any,
         *,
-        n: int | None = None,
+        num_observations: int | None = None,
         name: str | None = None,
     ):
-        # SupportsSampling source: each replicate is n i.i.d. draws from
-        # source._sample. n is mandatory (no canonical observation count
-        # for a generic sampleable source).
+        # SupportsSampling source: each replicate is num_observations
+        # i.i.d. draws from source._sample. num_observations is mandatory
+        # (no canonical observation count for a generic sampleable
+        # source).
         if (
             isinstance(source, SupportsSampling)
             and not isinstance(source, EmpiricalDistribution)
             and not _is_numeric_array(source)
         ):
-            if n is None or n < 1:
+            if num_observations is None or num_observations < 1:
                 raise ValueError(
                     f"BootstrapReplicateDistribution: when source is a "
                     f"SupportsSampling distribution (got "
-                    f"{type(source).__name__}), n must be a positive int "
-                    f"giving the number of observations per replicate."
+                    f"{type(source).__name__}), num_observations must be a "
+                    f"positive int giving the observations per replicate."
                 )
             self._source_kind = "sampleable"
             self._source = source
             self._data = None
             self._w = None
-            default_n = n
-            self._init_bootstrap_state(default_n, n=n, name=name)
+            default_num_observations = num_observations
+            self._init_bootstrap_state(
+                default_num_observations,
+                num_observations=num_observations, name=name,
+            )
             return
 
         self._source_kind = "data"
@@ -789,7 +794,7 @@ class BootstrapReplicateDistribution[T](
         if isinstance(source, EmpiricalDistribution):
             self._data = source.samples
             self._w = source._w
-            default_n = source.n
+            default_num_observations = source.num_atoms
         elif isinstance(source, (jnp.ndarray, np.ndarray)):
             self._data = source
             if self._data.ndim == 0:
@@ -799,52 +804,62 @@ class BootstrapReplicateDistribution[T](
             if len(self._data) == 0:
                 raise ValueError("source must be a non-empty sequence.")
             self._w = Weights.uniform(len(self._data))
-            default_n = len(self._data)
+            default_num_observations = len(self._data)
         else:
             self._data = np.asarray(source, dtype=object)
             if len(self._data) == 0:
                 raise ValueError("source must be a non-empty sequence.")
             self._w = Weights.uniform(len(self._data))
-            default_n = len(self._data)
-        self._init_bootstrap_state(default_n, n=n, name=name)
+            default_num_observations = len(self._data)
+        self._init_bootstrap_state(
+            default_num_observations,
+            num_observations=num_observations, name=name,
+        )
 
     def _init_bootstrap_state(
         self,
-        default_n: int,
+        default_num_observations: int,
         *,
-        n: int | None,
+        num_observations: int | None,
         name: str | None,
-        source_n: int | None = None,
+        num_source_observations: int | None = None,
     ) -> None:
-        if n is None:
-            self._n = default_n
+        if num_observations is None:
+            self._num_observations = default_num_observations
         else:
-            if n < 1:
-                raise ValueError(f"n must be positive, got {n}")
-            self._n = n
+            if num_observations < 1:
+                raise ValueError(
+                    f"num_observations must be positive, got {num_observations}"
+                )
+            self._num_observations = num_observations
         if name is None:
             name = "bootstrap"
         super().__init__(name=name)
         if self._source_kind == "sampleable":
-            self._source_n = None
+            self._num_source_observations = None
         else:
-            # ``source_n`` is the actual source observation count.
-            # Fall back to ``default_n`` when the caller didn't pass it
-            # (matches the old behaviour where source_n == default_n).
-            self._source_n = source_n if source_n is not None else default_n
+            # ``num_source_observations`` is the actual source observation
+            # count. Fall back to ``default_num_observations`` when the
+            # caller didn't pass it (matches the old behaviour where
+            # source observation count == default).
+            self._num_source_observations = (
+                num_source_observations
+                if num_source_observations is not None
+                else default_num_observations
+            )
         self._approximate = True
 
     # -- properties ---------------------------------------------------------
 
     @property
-    def n(self) -> int:
+    def num_observations(self) -> int:
         """Observations per bootstrap dataset."""
-        return self._n
+        return self._num_observations
 
     @property
-    def source_n(self) -> int | None:
+    def num_source_observations(self) -> int | None:
         """Number of source observations, or ``None`` for a sampleable source."""
-        return self._source_n
+        return self._num_source_observations
 
     @property
     def data(self) -> Any:
@@ -873,8 +888,8 @@ class BootstrapReplicateDistribution[T](
 
     def _one_bootstrap(self, key: PRNGKey) -> Any:
         if self._source_kind == "sampleable":
-            return self._source._sample(key, sample_shape=(self._n,))
-        idx = self._w.choice(key, shape=(self._n,))
+            return self._source._sample(key, sample_shape=(self._num_observations,))
+        idx = self._w.choice(key, shape=(self._num_observations,))
         return self._data[idx]
 
     def _sample(
@@ -943,12 +958,14 @@ class BootstrapReplicateDistribution[T](
     def __repr__(self) -> str:
         if self._source_kind == "sampleable":
             return (
-                f"BootstrapReplicateDistribution(n={self._n}, "
+                f"BootstrapReplicateDistribution("
+                f"num_observations={self._num_observations}, "
                 f"source={type(self._source).__name__})"
             )
         return (
-            f"BootstrapReplicateDistribution(n={self._n}, "
-            f"source_n={self._source_n})"
+            f"BootstrapReplicateDistribution("
+            f"num_observations={self._num_observations}, "
+            f"num_source_observations={self._num_source_observations})"
         )
 
 
@@ -980,7 +997,7 @@ class RecordBootstrapReplicateDistribution(
         single-field ``Record`` keyed by *name*. A generic
         ``EmpiricalDistribution`` (object-array storage) is **not**
         accepted — see ``Raises``.
-    n : int or None
+    num_observations : int or None
         Observations per bootstrap dataset. Defaults to the source's
         observation count.
     name : str or None
@@ -1005,17 +1022,17 @@ class RecordBootstrapReplicateDistribution(
         self,
         source: Any,
         *,
-        n: int | None = None,
+        num_observations: int | None = None,
         name: str | None = None,
     ):
         if isinstance(source, RecordEmpiricalDistribution):
             self._record_data = source._record_data
             self._w = source._w
-            default_n = source.n
+            default_num_observations = source.num_atoms
         elif isinstance(source, Record):
             n_rows = _validate_record_samples(source)
             self._record_data = source
-            default_n = n_rows
+            default_num_observations = n_rows
             self._w = Weights.uniform(n_rows)
         elif isinstance(source, EmpiricalDistribution):
             # The factory path routes numeric-array-backed empiricals to
@@ -1044,7 +1061,7 @@ class RecordBootstrapReplicateDistribution(
             )
             self._record_data = wrapped
             n_rows = _validate_record_samples(wrapped)
-            default_n = n_rows
+            default_num_observations = n_rows
             self._w = Weights.uniform(n_rows)
             name = field_name
         else:
@@ -1059,12 +1076,14 @@ class RecordBootstrapReplicateDistribution(
         self._source = None
         self._data = self._record_data
         self._init_bootstrap_state(
-            default_n, n=n, name=name, source_n=default_n,
+            default_num_observations,
+            num_observations=num_observations, name=name,
+            num_source_observations=default_num_observations,
         )
         # Replicate produces (n, *event_shape) per field; advertise that
         # via the record_template.
         self._record_template = _record_template_from_data(
-            self._record_data, leading_shape=(self._n,),
+            self._record_data, leading_shape=(self._num_observations,),
         )
 
     # -- shape ---------------------------------------------------------------
@@ -1073,7 +1092,7 @@ class RecordBootstrapReplicateDistribution(
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
         """Per-field replicate event shapes ``(n, *obs_event_shape)``."""
         return {
-            f: (self._n, *jnp.asarray(self._record_data[f]).shape[1:])
+            f: (self._num_observations, *jnp.asarray(self._record_data[f]).shape[1:])
             for f in self._record_data.fields
         }
 
@@ -1113,7 +1132,7 @@ class RecordBootstrapReplicateDistribution(
         """
         if len(self._record_data.fields) == 1:
             f = self._record_data.fields[0]
-            return (self._n, *jnp.asarray(self._record_data[f]).shape[1:])
+            return (self._num_observations, *jnp.asarray(self._record_data[f]).shape[1:])
         raise AttributeError(
             f"{type(self).__name__} has multiple fields "
             f"({self._record_data.fields}); ``event_shape`` is only "
@@ -1167,7 +1186,7 @@ class RecordBootstrapReplicateDistribution(
         Sum across fields of ``n * max(1, prod(obs_event_shape))``.
         """
         return sum(
-            self._n * max(1, prod(shape))
+            self._num_observations * max(1, prod(shape))
             for shape in self.obs_shapes.values()
         )
 
@@ -1182,7 +1201,7 @@ class RecordBootstrapReplicateDistribution(
     # -- sampling -----------------------------------------------------------
 
     def _one_bootstrap(self, key: PRNGKey) -> NumericRecord:
-        idx = self._w.choice(key, shape=(self._n,))
+        idx = self._w.choice(key, shape=(self._num_observations,))
         return _index_record(self._record_data, idx)
 
     def _sample(
@@ -1215,7 +1234,8 @@ class RecordBootstrapReplicateDistribution(
 
     def __repr__(self) -> str:
         return (
-            f"RecordBootstrapReplicateDistribution(n={self._n}, "
-            f"source_n={self._source_n}, "
+            f"RecordBootstrapReplicateDistribution("
+            f"num_observations={self._num_observations}, "
+            f"num_source_observations={self._num_source_observations}, "
             f"fields=({', '.join(self._record_data.fields)}))"
         )

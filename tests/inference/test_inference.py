@@ -67,7 +67,7 @@ class TestApproximateDistribution:
         assert two_chain_dist.event_shape == (2,)
 
     def test_total_samples(self, two_chain_dist):
-        assert two_chain_dist.n == 100  # 50 * 2 chains
+        assert two_chain_dist.num_atoms == 100  # 50 * 2 chains
 
     def test_algorithm_from_provenance(self, two_chain_dist):
         assert two_chain_dist.algorithm == "test"
@@ -376,7 +376,7 @@ class TestRWMH:
         )
         assert result.num_chains == 3
         assert result.num_draws == 50
-        assert result.n == 150  # 50 * 3
+        assert result.num_atoms == 150  # 50 * 3
 
     def test_warmup_stored(self):
         """RWMH stores warmup samples."""
@@ -981,7 +981,7 @@ class TestEndToEndValuesPipeline:
             return params[0] + params[1] * x
 
         result = predict(**posterior.select("params"), x=0.5)
-        assert result.n == 100
+        assert result.num_atoms == 100
         # predict([~0.91, ~1.82], 0.5) ≈ 0.91 + 1.82*0.5 ≈ 1.82
         analytical = 10 / 11 + 0.5 * 20 / 11
         np.testing.assert_allclose(float(mean(result)), analytical, atol=0.2)
@@ -1044,7 +1044,7 @@ class TestEndToEndValuesPipeline:
             **posterior.select("params"),
             noise=Normal(0, 0.01, name="noise"),
         )
-        assert result.n == 50
+        assert result.num_atoms == 50
         # Mean should be close to predict without noise
         analytical = 10 / 11 + 0.5 * 20 / 11
         np.testing.assert_allclose(float(mean(result)), analytical, atol=0.3)

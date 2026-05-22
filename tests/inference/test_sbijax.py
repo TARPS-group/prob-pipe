@@ -42,10 +42,10 @@ from probpipe.inference._sbijax import (
 class GaussianSimulator2D:
     """2D Gaussian simulator: y = theta + 0.1 * noise."""
 
-    def generate_data(self, params, n_samples, *, key=None):
+    def generate_data(self, params, num_observations, *, key=None):
         if key is None:
             key = jax.random.PRNGKey(0)
-        noise = jax.random.normal(key, shape=(n_samples, 2))
+        noise = jax.random.normal(key, shape=(num_observations, 2))
         return params + 0.1 * noise
 
 
@@ -68,11 +68,11 @@ class Gaussian2To5Simulator:
         ]
     )
 
-    def generate_data(self, params, n_samples, *, key=None):
+    def generate_data(self, params, num_observations, *, key=None):
         if key is None:
             key = jax.random.PRNGKey(0)
         mean = self._A @ jnp.asarray(params)  # shape (5,)
-        noise = jax.random.normal(key, shape=(n_samples, 5))
+        noise = jax.random.normal(key, shape=(num_observations, 5))
         return mean + 0.1 * noise
 
 
@@ -307,11 +307,11 @@ class TestTrainSBI:
         scalar_prior = Normal(loc=0.0, scale=1.0, name="theta")
 
         class Scalar1DSimulator:
-            def generate_data(self, params, n_samples, *, key=None):
+            def generate_data(self, params, num_observations, *, key=None):
                 if key is None:
                     key = jax.random.PRNGKey(0)
                 noise = jax.random.normal(
-                    key, shape=(n_samples,) + jnp.atleast_1d(params).shape,
+                    key, shape=(num_observations,) + jnp.atleast_1d(params).shape,
                 )
                 return jnp.atleast_1d(params) + 0.1 * noise
 

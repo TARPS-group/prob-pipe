@@ -31,8 +31,8 @@ class PoissonLikelihood:
         rate = jnp.exp(log_rate)
         return jnp.sum(data * log_rate - rate)
 
-    def generate_data(self, params, n_samples):
-        log_rate = params[0] + params[1] * self._x[:n_samples]
+    def generate_data(self, params, num_observations):
+        log_rate = params[0] + params[1] * self._x[:num_observations]
         rate = jnp.exp(log_rate)
         return jax.random.poisson(jax.random.PRNGKey(0), rate)
 
@@ -51,9 +51,9 @@ class NumpyGaussianLikelihood:
         mu = float(params)
         return -0.5 * np.sum((np.asarray(data) - mu) ** 2)
 
-    def generate_data(self, params, n_samples):
+    def generate_data(self, params, num_observations):
         mu = float(params)
-        return self._rng.normal(loc=mu, scale=1.0, size=n_samples)
+        return self._rng.normal(loc=mu, scale=1.0, size=num_observations)
 
 
 # ---------------------------------------------------------------------------
@@ -71,12 +71,12 @@ class CategoricalLikelihood:
     def log_likelihood(self, params, data):
         return 0.0  # dummy
 
-    def generate_data(self, params, n_samples):
+    def generate_data(self, params, num_observations):
         # params is an array of 3 probabilities
         p = np.asarray(params[:3], dtype=np.float64)
         p = np.abs(p)
         p = p / p.sum()
-        return list(self._rng.choice(self._categories, size=n_samples, p=p))
+        return list(self._rng.choice(self._categories, size=num_observations, p=p))
 
 
 # ---------------------------------------------------------------------------
@@ -110,10 +110,10 @@ class TestPredictiveCheck:
     def test_prior_check_returns_replicated_statistics(self, prior, likelihood):
         result = predictive_check(
             prior, likelihood, test_fn=lambda d: float(jnp.mean(d)),
-            n_samples=20, n_replications=50, key=jax.random.PRNGKey(0),
+            num_observations=20, num_replications=50, key=jax.random.PRNGKey(0),
         )
         assert "replicated_statistics" in result
-        assert result["replicated_statistics"].n == 50
+        assert result["replicated_statistics"].num_atoms == 50
         assert "observed_statistic" not in result
         assert "p_value" not in result
 
@@ -124,34 +124,34 @@ class TestPredictiveCheck:
             prior, likelihood,
             test_fn=lambda d: float(jnp.mean(d)),
             observed_data=observed_data,
-            n_replications=100,
+            num_replications=100,
             key=jax.random.PRNGKey(1),
         )
         assert "replicated_statistics" in result
         assert "observed_statistic" in result
         assert "p_value" in result
         assert 0.0 <= result["p_value"] <= 1.0
-        assert result["replicated_statistics"].n == 100
+        assert result["replicated_statistics"].num_atoms == 100
 
-    def test_n_samples_inferred_from_observed(
+    def test_num_observations_inferred_from_observed(
         self, prior, likelihood, observed_data
     ):
-        """When observed_data is provided, n_samples defaults to len(observed_data)."""
+        """When observed_data is provided, num_observations defaults to len(observed_data)."""
         result = predictive_check(
             prior, likelihood,
             test_fn=lambda d: float(jnp.var(d)),
             observed_data=observed_data,
-            n_replications=20,
+            num_replications=20,
             key=jax.random.PRNGKey(2),
         )
-        assert result["replicated_statistics"].n == 20
+        assert result["replicated_statistics"].num_atoms == 20
 
-    def test_n_samples_required_without_observed(self, prior, likelihood):
-        with pytest.raises(ValueError, match="n_samples is required"):
+    def test_num_observations_required_without_observed(self, prior, likelihood):
+        with pytest.raises(ValueError, match="num_observations is required"):
             predictive_check(
                 prior, likelihood,
                 test_fn=lambda d: float(jnp.mean(d)),
-                n_replications=10,
+                num_replications=10,
             )
 
     def test_is_workflow_function(self):
@@ -173,7 +173,7 @@ class TestPredictiveCheck:
         predictive_check(
             prior, likelihood,
             test_fn=lambda d: float(jnp.mean(d)),
-            n_samples=20, n_replications=10,
+            num_observations=20, num_replications=10,
             key=jax.random.PRNGKey(10),
         )
         group = prior.auxiliary["predictive_check"]
@@ -195,14 +195,14 @@ class TestPredictiveCheck:
             prior, likelihood,
             test_fn=lambda d: float(jnp.mean(d)),
             observed_data=observed_data,
-            n_replications=10,
+            num_replications=10,
             key=jax.random.PRNGKey(20),
         )
         predictive_check(
             prior, likelihood,
             test_fn=lambda d: float(jnp.var(d)),
             observed_data=observed_data,
-            n_replications=10,
+            num_replications=10,
             key=jax.random.PRNGKey(21),
         )
         group = prior.auxiliary["predictive_check"]
@@ -217,7 +217,7 @@ class TestPredictiveCheck:
         predictive_check(
             prior, likelihood,
             test_fn=my_custom_stat,
-            n_samples=20, n_replications=10,
+            num_observations=20, num_replications=10,
             key=jax.random.PRNGKey(30),
         )
         group = prior.auxiliary["predictive_check"]
@@ -308,13 +308,13 @@ class TestPredictiveCheckNonJax:
             prior, lik,
             test_fn=lambda d: float(np.mean(d)),
             observed_data=observed,
-            n_replications=100,
+            num_replications=100,
             key=jax.random.PRNGKey(0),
         )
         assert "replicated_statistics" in result
         assert "p_value" in result
         assert 0.0 <= result["p_value"] <= 1.0
-        assert result["replicated_statistics"].n == 100
+        assert result["replicated_statistics"].num_atoms == 100
 
     def test_numpy_prior_check(self):
         """Prior check with numpy-based likelihood."""
@@ -324,11 +324,11 @@ class TestPredictiveCheckNonJax:
         result = predictive_check(
             prior, lik,
             test_fn=lambda d: float(np.std(d)),
-            n_samples=50,
-            n_replications=30,
+            num_observations=50,
+            num_replications=30,
             key=jax.random.PRNGKey(1),
         )
-        assert result["replicated_statistics"].n == 30
+        assert result["replicated_statistics"].num_atoms == 30
         assert "p_value" not in result
 
     def test_categorical_string_data(self):
@@ -349,12 +349,12 @@ class TestPredictiveCheckNonJax:
             prior, lik,
             test_fn=cat_fraction,
             observed_data=observed,
-            n_replications=50,
+            num_replications=50,
             key=jax.random.PRNGKey(2),
         )
         assert "p_value" in result
         assert 0.0 <= result["p_value"] <= 1.0
-        assert result["replicated_statistics"].n == 50
+        assert result["replicated_statistics"].num_atoms == 50
 
     def test_empirical_distribution_as_source(self):
         """Use an EmpiricalDistribution (non-parametric) as the source."""
@@ -365,11 +365,11 @@ class TestPredictiveCheckNonJax:
         result = predictive_check(
             dist, lik,
             test_fn=lambda d: float(np.mean(d)),
-            n_samples=10,
-            n_replications=20,
+            num_observations=10,
+            num_replications=20,
             key=jax.random.PRNGKey(3),
         )
-        assert result["replicated_statistics"].n == 20
+        assert result["replicated_statistics"].num_atoms == 20
 
 
 # ---------------------------------------------------------------------------
@@ -401,11 +401,11 @@ class TestPredictiveCheckBatched:
         result = predictive_check(
             prior, lik,
             test_fn=lambda d: jnp.mean(d),
-            n_samples=20,
-            n_replications=50,
+            num_observations=20,
+            num_replications=50,
             key=jax.random.PRNGKey(42),
         )
-        assert result["replicated_statistics"].n == 50
+        assert result["replicated_statistics"].num_atoms == 50
 
     def test_batched_posterior_check(self, glm_setup):
         """Batched path works with observed data and returns a p-value."""
@@ -415,7 +415,7 @@ class TestPredictiveCheckBatched:
             prior, lik,
             test_fn=lambda d: jnp.mean(d),
             observed_data=observed,
-            n_replications=100,
+            num_replications=100,
             key=jax.random.PRNGKey(7),
         )
         assert "p_value" in result
@@ -435,19 +435,19 @@ class TestPredictiveCheckBatched:
         result = predictive_check(
             prior, lik,
             test_fn=non_vmapable,
-            n_samples=20,
-            n_replications=30,
+            num_observations=20,
+            num_replications=30,
             key=jax.random.PRNGKey(99),
         )
-        assert result["replicated_statistics"].n == 30
+        assert result["replicated_statistics"].num_atoms == 30
 
     def test_loop_path_for_plain_likelihood(self, prior, likelihood):
         """PoissonLikelihood (no key arg) uses the loop path."""
         result = predictive_check(
             prior, likelihood,
             test_fn=lambda d: float(jnp.mean(d)),
-            n_samples=20,
-            n_replications=30,
+            num_observations=20,
+            num_replications=30,
             key=jax.random.PRNGKey(5),
         )
-        assert result["replicated_statistics"].n == 30
+        assert result["replicated_statistics"].num_atoms == 30

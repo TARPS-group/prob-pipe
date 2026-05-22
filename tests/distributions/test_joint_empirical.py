@@ -48,7 +48,7 @@ class TestConstruction:
             x=jnp.array([1.0, 2.0, 3.0]),
             y=jnp.array([4.0, 5.0, 6.0]),
         )
-        assert je.n == 3
+        assert je.num_atoms == 3
 
     def test_event_shapes(self):
         je = JointEmpirical(
@@ -331,7 +331,7 @@ class TestConditionOn:
         )
         cond = condition_on(je, x=jnp.array(1.0))
         assert not cond.is_uniform
-        assert cond.n == 3
+        assert cond.num_atoms == 3
 
     def test_condition_on_uniform_stays_uniform(self):
         """Conditioning on uniform JointEmpirical stays uniform."""

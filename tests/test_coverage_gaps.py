@@ -60,7 +60,7 @@ class TestBootstrapDistributionCoverage:
         bd = BootstrapDistribution(jnp.array([1.0, 2.0, 3.0]))
         r = repr(bd)
         assert "BootstrapDistribution" in r
-        assert "n=3" in r
+        assert "num_atoms=3" in r
         assert "event_shape=()" in r
 
     def test_support_is_real(self):
@@ -132,10 +132,10 @@ class TestBootstrapDistributionCoverage:
         evals = jnp.ones((10, 3))
         bd = BootstrapDistribution(evals)
         assert bd.event_shape == (3,)
-        assert bd.n == 10
+        assert bd.num_atoms == 10
         r = repr(bd)
         assert "BootstrapDistribution" in r
-        assert "n=10" in r
+        assert "num_atoms=10" in r
         assert "event_shape=(3,)" in r
 
 

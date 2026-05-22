@@ -56,10 +56,10 @@ class SimpleGenerativeLikelihood:
         residuals = data - params[None, :]
         return -0.5 * jnp.sum(residuals ** 2)
 
-    def generate_data(self, params, n_samples, *, key=None):
+    def generate_data(self, params, num_observations, *, key=None):
         if key is None:
             key = jax.random.PRNGKey(0)
-        noise = jax.random.normal(key, shape=(n_samples, len(params)))
+        noise = jax.random.normal(key, shape=(num_observations, len(params)))
         return params[None, :] + noise
 
 
@@ -92,7 +92,7 @@ class TestGenerativeLikelihood:
     def test_concrete_generative(self):
         gen = SimpleGenerativeLikelihood()
         params = jnp.array([1.0, 2.0])
-        data = gen.generate_data(params=params, n_samples=10)
+        data = gen.generate_data(params=params, num_observations=10)
         assert data.shape == (10, 2)
 
 

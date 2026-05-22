@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **Sample-count / observation-count terminology unified
+  across the codebase.** Several adjacent concepts had drifted into
+  different naming styles (`.n`, `num_draws`, `n_samples`, `n_iter`,
+  `n_simulations`, `n_replications`, `num_steps`). Audited and
+  consolidated under three canonical names per concept:
+
+  *Finite-sample distribution size.* `.n` is gone. Use
+  **`num_atoms`** for any empirical-measure size (one atom = one
+  stored realisation): `EmpiricalDistribution.num_atoms`,
+  `RecordEmpiricalDistribution.num_atoms`,
+  `JointEmpirical.num_atoms`, `BootstrapDistribution.num_atoms`,
+  `KDEDistribution.num_atoms`, `BroadcastDistribution` family +
+  marginals — all expose `num_atoms`. `ApproximateDistribution`
+  inherits `num_atoms` (total chain×draw count) and additionally
+  exposes `num_draws` (draws *per chain*).
+
+  *Bootstrap dataset size.* Use **`num_observations`** for
+  observations per bootstrap dataset:
+  `BootstrapReplicateDistribution.num_observations`,
+  `RecordBootstrapReplicateDistribution.num_observations`. The
+  constructor kwarg changes from ``n=`` to ``num_observations=``;
+  the related ``source_n`` property becomes
+  ``num_source_observations``.
+
+  *Generative-likelihood observation count.*
+  ``generate_data(params, n_samples, ...)`` is now
+  ``generate_data(params, num_observations, ...)`` across the
+  `GenerativeLikelihood` protocol, `GLMLikelihood`,
+  `SimpleGenerativeModel`, and `predictive_check` (the latter's
+  `n_replications` kwarg also becomes `num_replications`).
+
 - **Inference-method count kwargs unified under `num_*`.** Several
   inference methods exposed `n_*`-style kwargs out of sync with the
   rest of the registry (which uniformly used `num_results` /

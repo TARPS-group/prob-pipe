@@ -42,7 +42,7 @@ class TestBootstrapDistribution:
     def test_construction(self):
         evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
         bd = BootstrapDistribution(evals)
-        assert bd.n == 5
+        assert bd.num_atoms == 5
         assert bd.event_shape == ()
         assert bd.is_approximate
 
