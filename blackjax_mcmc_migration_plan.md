@@ -331,8 +331,16 @@ The Pathfinder PR is independent of any benchmark-gate decision on the MCMC migr
   pairs naturally with the shared-base-class refactor above.
 - **SMC (parent Phase 5)** and **Laplace (parent Phase 6a / 6b)** —
   separate plans, separate PRs.
-- **Gradient-free RWMH migration.** `blackjax.rmh` exists but isn't
-  on the wishlist; `tfp_rwmh` stays in place.
+- **Gradient-free MCMC family migration (RWMH + elliptical slice).**
+  The current `tfp_rwmh` (a hand-rolled Python loop, not actually
+  TFP-backed) is a natural candidate to retire in favour of
+  `blackjax.normal_random_walk`, and `blackjax.elliptical_slice`
+  would be a high-value addition for Gaussian-prior models. Split
+  out into its own plan
+  (`~/.claude/plans/bie-rwmh-blackjax-migration.md`) — the design
+  (eager-fallback routing for non-traceable log-probs, DIY adaptive
+  warmup) is large enough to deserve a dedicated PR. `tfp_rwmh`
+  stays in place at priority 55 until that PR lands.
 
 ## 9. Risk and rollback
 
