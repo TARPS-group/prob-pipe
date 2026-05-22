@@ -666,6 +666,42 @@ class TestSingleComponent:
         expected = jnp.array([float(log_prob(n, s["a"][0])), float(log_prob(n, s["a"][1]))])
         np.testing.assert_allclose(lps, expected, atol=1e-5)
 
+    def test_single_component_log_prob_flat_array(self):
+        """RWMH / NUTS / Pathfinder pass a flat array (or scalar) as
+        the value when evaluating ``target_log_prob`` against a
+        :class:`ProductDistribution`. The single-field auto-template
+        case used to crash: the static ``unflatten_value`` returns a
+        raw array for single-field templates, and ``_log_prob``'s
+        tree-map against ``self._components`` (a dict) saw a scalar
+        instead of the expected dict-like structure.
+
+        This regression test pins all three shapes the inference
+        kernels can pass: ``(event_size,)`` (the canonical RWMH
+        path), scalar ``()`` (an over-unflattened intermediate), and
+        batched ``(B, event_size)``.
+        """
+        n = Normal(loc=0.0, scale=1.0, name="mu")
+        joint = ProductDistribution(mu=n)
+
+        # Direct log_prob of the underlying Normal at the same point
+        # is the independent reference value.
+        lp_ref = float(log_prob(n, jnp.array(0.5)))
+
+        # 1-D vector (canonical RWMH / NUTS shape: flat parameter vector).
+        np.testing.assert_allclose(
+            float(joint._log_prob(jnp.array([0.5]))), lp_ref, atol=1e-6,
+        )
+        # Scalar (defensive — some kernels pass a 0-d array).
+        np.testing.assert_allclose(
+            float(joint._log_prob(jnp.array(0.5))), lp_ref, atol=1e-6,
+        )
+        # Batched: (B, event_size). Each row's log-prob matches the
+        # reference at the corresponding scalar.
+        vals = jnp.array([[0.5], [-0.3], [1.2]])
+        lps = joint._log_prob(vals)
+        expected = jnp.array([float(log_prob(n, vals[i, 0])) for i in range(3)])
+        np.testing.assert_allclose(lps, expected, atol=1e-6)
+
 
 class TestLogProbBatchValues:
     """Verify log_prob batch values are numerically correct."""

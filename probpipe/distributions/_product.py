@@ -317,7 +317,22 @@ class ProductDistribution(
                     "to be a NumericRecordDistribution; this joint has "
                     "non-numeric leaves. Pass a Record / dict instead."
                 )
-            value = self.unflatten_value(value, template=self.record_template)
+            # Ensure the input has a trailing event axis ``(*batch,
+            # event_size)`` so the static ``unflatten_value`` can
+            # reshape it. Single-component RWMH / NUTS callers pass a
+            # scalar or 1-D vector (``flat.shape == (event_size,)``);
+            # ``unflatten_value`` needs that as the trailing axis.
+            flat = jnp.asarray(value)
+            if flat.ndim == 0:
+                flat = flat[None]
+            value = self.unflatten_value(flat, template=self.record_template)
+            # Single-field templates return a raw array (preserving the
+            # "single-leaf returns raw" contract on the static method);
+            # the tree-map below expects a per-field structure, so
+            # re-key it under the lone field name.
+            if isinstance(value, jnp.ndarray):
+                (field_name,) = self.record_template.fields
+                value = {field_name: value}
         if isinstance(value, RecordArray):
             value = {k: v for k, v in value.items()}
         if isinstance(value, Record):
