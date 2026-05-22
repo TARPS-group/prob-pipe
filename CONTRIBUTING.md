@@ -366,7 +366,8 @@ Built-in methods:
 | 42 | `blackjax_sghmc` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
 | 25 | `pymc_advi` | PyMC | `PyMCModel` |
 | 5 | `sbijax_smcabc` | sbijax | `SimpleGenerativeModel` |
-| 0 | `tfp_nuts`, `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
+| 0 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
+| 0 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 
 ### Converter priority system
 

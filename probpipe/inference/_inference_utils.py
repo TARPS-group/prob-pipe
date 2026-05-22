@@ -234,7 +234,7 @@ def build_target_log_prob_flat(
     """
     prior = get_prior(dist)
     target_record = build_target_log_prob(dist, observed)
-    init_state = get_init_state(prior, init, observed)
+    flat_init = get_init_state(prior, init, observed)
 
     flat_view = getattr(prior, "as_flat_distribution", None)
     record_template = getattr(prior, "record_template", None)
@@ -244,11 +244,11 @@ def build_target_log_prob_flat(
         def target_flat(theta_flat: Array) -> Array:
             return target_record(flat_prior.unflatten_sample(theta_flat))
 
-        return target_flat, init_state, record_template
+        return target_flat, flat_init, record_template
 
     # Bare array-shaped target: ``target_record`` already accepts a
     # flat array and no template is available to lift the chain.
-    return target_record, init_state, None
+    return target_record, flat_init, None
 
 
 # ---------------------------------------------------------------------------
