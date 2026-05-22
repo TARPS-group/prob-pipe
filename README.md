@@ -114,7 +114,7 @@ cd prob-pipe
 pip install .
 ```
 
-Core dependencies: JAX and TensorFlow Probability. ProbPipe uses [tfp-nightly](https://pypi.org/project/tfp-nightly/), which is the [recommended approach](https://github.com/tensorflow/probability/issues/1994#issuecomment-3129033043) for TFP on JAX since stable TFP releases are tied to TensorFlow and often lag behind JAX.
+Core dependencies: JAX, [BlackJAX](https://blackjax-devs.github.io/blackjax/), and TensorFlow Probability. JAX provides arrays and autodiff; BlackJAX is the default backend for gradient MCMC (`condition_on(model, data)` auto-dispatches to `blackjax_nuts`); TFP supplies the distribution implementations the wrappers in `probpipe.Normal`, `probpipe.Gamma`, etc. delegate to. ProbPipe uses [tfp-nightly](https://pypi.org/project/tfp-nightly/), which is the [recommended approach](https://github.com/tensorflow/probability/issues/1994#issuecomment-3129033043) for TFP on JAX since stable TFP releases are tied to TensorFlow and often lag behind JAX.
 
 Optional extras:
 
