@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import Any, get_type_hints
-from collections.abc import Callable, Mapping
 import inspect
 import logging
+import warnings
+from abc import ABC, abstractmethod
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from itertools import product as cartesian_product
 from types import MappingProxyType
-import warnings
+from typing import Any, get_type_hints
 
 import jax
 import jax.numpy as jnp
 
 try:
-    from prefect import task, flow
+    from prefect import flow, task
 except ImportError:
     task = flow = None
 
@@ -26,19 +26,19 @@ except ImportError:
     Digraph = None
 
 from .._utils import prod
-from ..custom_types import PRNGKey, Array
-from .distribution import (
-    NumericRecordDistribution,
-    BroadcastDistribution,
-    Distribution,
-    EmpiricalDistribution,
-)
+from ..converters import converter_registry
+from ..custom_types import Array, PRNGKey
+from . import _workflow_result
 from ._broadcast_distributions import _make_stack
 from ._distribution_array import DistributionArray, _make_distribution_array
 from ._record_array import RecordArray, _RecordArrayView
 from ._record_distribution import _RecordDistributionView
-from .provenance import Provenance
-from . import _workflow_result as _workflow_result
+from .distribution import (
+    BroadcastDistribution,
+    Distribution,
+    EmpiricalDistribution,
+    NumericRecordDistribution,
+)
 from .protocols import (
     SupportsConditioning,
     SupportsCovariance,
@@ -51,6 +51,7 @@ from .protocols import (
     SupportsUnnormalizedLogProb,
     SupportsVariance,
 )
+from .provenance import Provenance
 
 # Protocol types that indicate a parameter expects a distribution object.
 # Used by _find_broadcast_args to avoid broadcasting over such parameters.
@@ -66,7 +67,6 @@ _DISTRIBUTION_PROTOCOLS: tuple[type, ...] = (
     SupportsRandomUnnormalizedLogProb,
     SupportsConditioning,
 )
-from ..converters import converter_registry
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,7 @@ logger = logging.getLogger(__name__)
 
 # Compatibility aliases for tests or downstream code that imported these
 # private helpers from ``probpipe.core.node`` before the extraction.
+# Will be removed in a follow-up issue after downstream updates.
 BroadcastMode = _workflow_result.BroadcastMode
 BROADCAST_WRAP = _workflow_result.BROADCAST_WRAP
 BROADCAST_STACK = _workflow_result.BROADCAST_STACK
@@ -230,8 +231,8 @@ def _index_sample(s: Any, i: int) -> Any:
     """
     # Local imports to avoid module-load circularity with
     # ``record`` / ``_numeric_record``.
-    from .record import Record
     from ._numeric_record import NumericRecord
+    from .record import Record
 
     if isinstance(s, Record):
         if len(s.fields) == 1:
