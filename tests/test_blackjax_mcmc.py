@@ -126,7 +126,6 @@ class TestBlackJAXNuts:
         # ~3 sigma plus a small slack for residual warmup bias.
         np.testing.assert_allclose(post_var, analytic_var, rtol=0.10)
 
-
     def test_zero_warmup_uses_user_step_size(self, small_model):
         """Exercises the ``_adapt`` fallback (``num_warmup == 0``).
 

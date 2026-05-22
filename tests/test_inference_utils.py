@@ -79,8 +79,6 @@ class TestBuildTargetLogProbFlat:
         for hand-rolled distributions that don't carry a Record-shaped
         prior.
         """
-        import numpy as np
-
         class _FlatGaussian:
             event_shape = (2,)
 

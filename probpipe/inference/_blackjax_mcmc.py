@@ -27,7 +27,8 @@ permanent.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Literal
+from collections.abc import Callable
+from typing import Any, Literal
 
 import blackjax
 import jax
@@ -55,12 +56,12 @@ __all__ = ["BlackJAXNutsMethod", "BlackJAXHmcMethod"]
 # file stays branch-free.
 Algorithm = Literal["nuts", "hmc"]
 
-_KERNEL_FACTORY: dict[str, Callable[..., Any]] = {
+_KERNEL_FACTORY: dict[Algorithm, Callable[..., Any]] = {
     "nuts": blackjax.nuts,
     "hmc": blackjax.hmc,
 }
 
-_EXTRA_KWARGS: dict[str, Callable[[int], dict[str, Any]]] = {
+_EXTRA_KWARGS: dict[Algorithm, Callable[[int], dict[str, Any]]] = {
     "nuts": lambda _num_integration_steps: {},
     "hmc": lambda num_integration_steps: {
         "num_integration_steps": num_integration_steps,
@@ -105,10 +106,10 @@ def _run_blackjax_chains(
     def _adapt(warmup_key: Array) -> tuple[Any, dict[str, Any]]:
         """Either run window-adaptation or fall back to user-provided params.
 
-        The ``num_warmup == 0`` branch builds the kernel directly from
-        ``step_size`` plus an identity mass matrix (BlackJAX NUTS / HMC
-        both require ``inverse_mass_matrix`` as a constructor argument
-        — window-adaptation normally supplies it).
+        The non-positive-``num_warmup`` branch builds the kernel
+        directly from ``step_size`` plus an identity mass matrix
+        (BlackJAX NUTS / HMC both require ``inverse_mass_matrix`` as a
+        constructor argument — window-adaptation normally supplies it).
         """
         if num_warmup <= 0:
             params = {
