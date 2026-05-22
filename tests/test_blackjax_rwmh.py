@@ -129,6 +129,64 @@ class TestAdaptiveWarmup:
         assert result.num_draws == 200
 
 
+class TestWindowSizing:
+    """``_window_sizes`` clamps short warmups to a single phase."""
+
+    def test_zero_warmup_returns_empty(self):
+        from probpipe.inference._blackjax_rwmh import _window_sizes
+        assert _window_sizes(0, n_windows=4) == []
+
+    def test_short_warmup_collapses_to_single_window(self):
+        """Under 50 warmup steps → single window (Stan's threshold).
+
+        Avoids degenerate cov fits from too-few-sample windows.
+        """
+        from probpipe.inference._blackjax_rwmh import _window_sizes
+        assert _window_sizes(20, n_windows=4) == [20]
+        assert _window_sizes(40, n_windows=4) == [40]
+
+    def test_moderate_warmup_uses_two_windows(self):
+        from probpipe.inference._blackjax_rwmh import _window_sizes
+        # 80 steps / 25 = 3 max windows, clamped from 4 requested.
+        sizes = _window_sizes(80, n_windows=4)
+        assert len(sizes) == 3
+        assert sum(sizes) == 80
+        # Geometric — sizes should be non-decreasing.
+        assert sizes == sorted(sizes)
+
+    def test_long_warmup_uses_all_windows(self):
+        from probpipe.inference._blackjax_rwmh import _window_sizes
+        sizes = _window_sizes(1000, n_windows=4)
+        assert len(sizes) == 4
+        assert sum(sizes) == 1000
+        # Last window is the largest under geometric (ratio=2) growth.
+        assert sizes[-1] > sizes[0]
+
+
+class TestWindowedAdvantage:
+    """Windowed warmup recovers an anisotropic target's cov better than n=1."""
+
+    def test_recovers_anisotropic_cov(self):
+        # 5-D with a 30x stretch in the last dim — single-window with
+        # a moderate warmup budget undershoots the cov estimate; the
+        # windowed schedule converges faster.
+        true_stds = jnp.array([1.0, 1.0, 1.0, 1.0, 30.0])
+        dist = MultivariateNormal(
+            loc=jnp.zeros(5), cov=jnp.diag(true_stds ** 2), name="z",
+        )
+        result = rwmh(
+            dist=dist, num_results=4000, num_warmup=3000,
+            num_chains=1, random_seed=11,
+        )
+        draws = np.concatenate(
+            [np.asarray(c) for c in result.chains], axis=0,
+        )
+        np.testing.assert_allclose(
+            draws.std(0, ddof=1), np.asarray(true_stds),
+            rtol=0.15,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Eager fallback (non-traceable log-density)
 # ---------------------------------------------------------------------------

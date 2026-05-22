@@ -18,10 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     log-density is JAX-traceable, and an eager Python-loop fallback
     when it isn't (BridgeStan / scipy / external-simulator
     likelihoods — the case the hand-rolled loop existed to support).
-    The default warmup is a single-phase Welford covariance fit with
-    Roberts-Gelman-Gilks scaling (`chol(Sigma_hat) * 2.38 / sqrt(d)`);
-    `adapt=False` falls back to the legacy `step_size * I` for
-    parity with the prior behavior.
+    The default warmup is a Stan-style window adaptation: ``n_windows``
+    (default 4) geometrically-growing windows, each sampling with the
+    current proposal Cholesky and accumulating Welford statistics on
+    positions, refreshing the proposal at window boundaries. Production
+    sigma is ``chol(Sigma_hat) * 2.38 / sqrt(d)`` per Roberts-Gelman-
+    Gilks. Short warmups (``< 50`` steps) collapse to a single phase
+    automatically. ``adapt=False`` falls back to the legacy
+    ``step_size * I`` for parity with the prior behavior.
   - **`blackjax_elliptical_slice`** (priority 75, tier 71-80
     self-tuning) is new — restricted to `SimpleModel` targets with a
     Gaussian prior and a JAX-traceable likelihood. Recognises

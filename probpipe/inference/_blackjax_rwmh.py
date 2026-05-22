@@ -90,38 +90,109 @@ def _production_sigma(cov: Array, d: int) -> Array:
     return chol * _rgg_scale(d)
 
 
+# ---------------------------------------------------------------------------
+# Window scheduling
+# ---------------------------------------------------------------------------
+
+
+_MIN_STEPS_PER_WINDOW = 25  # minimum steps for Welford to settle
+
+
+def _window_sizes(num_warmup: int, n_windows: int, ratio: float = 2.0) -> list[int]:
+    """Geometric window sizes summing to ``num_warmup``.
+
+    Stan-style window adaptation uses growing windows so the first
+    (badly-mixed) window contributes little to the cov estimate while
+    later (well-mixed) windows dominate. We mirror that: window
+    ``i`` has weight ``ratio ** i``, normalised to sum to one and
+    rounded to integer step counts.
+
+    ``n_windows`` is automatically clamped so each window holds at
+    least :data:`_MIN_STEPS_PER_WINDOW` (= 25) steps — Stan's default
+    minimum. Short warmups (``num_warmup < 50``) collapse to a single
+    phase: a fixed RGG-scaled identity proposal throughout with a
+    one-shot Welford fit at the end.
+    """
+    if num_warmup <= 0:
+        return []
+    max_windows = max(1, num_warmup // _MIN_STEPS_PER_WINDOW)
+    n = min(int(n_windows), max_windows)
+    if n <= 1:
+        return [num_warmup]
+    weights = np.asarray([ratio ** i for i in range(n)], dtype=float)
+    weights = weights / weights.sum()
+    sizes = np.maximum(1, np.round(weights * num_warmup).astype(int))
+    sizes[-1] += num_warmup - int(sizes.sum())
+    return [int(s) for s in sizes]
+
+
+# ---------------------------------------------------------------------------
+# Adaptive warmup — fast (lax.scan) and eager (Python loop) variants
+# ---------------------------------------------------------------------------
+
+
 def _adaptive_warmup_fast(
     target_log_prob_fn: Callable[[Array], Array],
     init_state: Array,
     key: Array,
     num_warmup: int,
+    *,
+    n_windows: int,
 ) -> tuple[Any, Array, Array]:
-    """Fast-path warmup via ``lax.scan``.
+    """Window-style adaptive warmup via ``lax.scan`` inside each window.
 
-    Runs ``num_warmup`` steps with the initial RGG proposal while
-    accumulating Welford statistics on the visited positions. Returns
-    ``(final_state, empirical_cov, warmup_positions)``.
+    Splits ``num_warmup`` into ``n_windows`` geometrically-growing
+    windows. Each window samples with the current proposal Cholesky
+    (initially ``2.38 / sqrt(d) * I``) while accumulating Welford
+    statistics on positions; at the window boundary, the Cholesky is
+    refreshed from the cumulative Welford state. The last window's
+    estimate is returned as the production proposal cov.
+
+    Welford state is *cumulative* across windows — the geometric
+    schedule already downweights the early biased samples without
+    needing to discard them.
     """
     d = init_state.shape[0]
     welf_init, welf_update, welf_final = welford_algorithm(is_diagonal_matrix=False)
-    warmup_sampler = blackjax.normal_random_walk(
-        target_log_prob_fn, sigma=_initial_sigma(d),
-    )
-    rw_state0 = warmup_sampler.init(init_state)
-    welf_state0 = welf_init(d)
+    sizes = _window_sizes(num_warmup, n_windows)
 
-    def step(carry, step_key):
-        rw_state, welf_state = carry
-        rw_state, _info = warmup_sampler.step(step_key, rw_state)
-        welf_state = welf_update(welf_state, rw_state.position)
-        return (rw_state, welf_state), rw_state.position
+    sigma = _initial_sigma(d)
+    rw_state = blackjax.normal_random_walk(target_log_prob_fn, sigma=sigma).init(init_state)
+    welf_state = welf_init(d)
+    window_positions: list[Array] = []
 
-    keys = jax.random.split(key, num_warmup)
-    (rw_state, welf_state), warmup_positions = jax.lax.scan(
-        step, (rw_state0, welf_state0), keys,
-    )
-    cov, _count, _mean = welf_final(welf_state)
-    return rw_state, cov, warmup_positions
+    k = key
+    for w_size in sizes:
+        sampler = blackjax.normal_random_walk(target_log_prob_fn, sigma=sigma)
+        # Re-init wraps the existing position into a state matched to
+        # the new sampler's logdensity_fn closure (it would be the same
+        # in our case, but staying consistent with BlackJAX's init/step
+        # contract avoids edge cases if the kernel ever caches lp).
+        rw_state = sampler.init(rw_state.position)
+
+        def step(carry, step_key, _sampler=sampler):
+            rw, welf = carry
+            rw, _info = _sampler.step(step_key, rw)
+            welf = welf_update(welf, rw.position)
+            return (rw, welf), rw.position
+
+        k, sub = jax.random.split(k)
+        keys = jax.random.split(sub, w_size)
+        (rw_state, welf_state), positions = jax.lax.scan(
+            step, (rw_state, welf_state), keys,
+        )
+        window_positions.append(positions)
+
+        cov, _, _ = welf_final(welf_state)
+        sigma = _production_sigma(cov, d)
+
+    if sizes:
+        warmup_positions = jnp.concatenate(window_positions, axis=0)
+        final_cov, _, _ = welf_final(welf_state)
+    else:
+        warmup_positions = jnp.empty((0, d), dtype=init_state.dtype)
+        final_cov = jnp.eye(d)
+    return rw_state, final_cov, warmup_positions
 
 
 def _adaptive_warmup_eager(
@@ -129,35 +200,42 @@ def _adaptive_warmup_eager(
     init_state: Array,
     key: Array,
     num_warmup: int,
+    *,
+    n_windows: int,
 ) -> tuple[Any, Array, Array]:
-    """Eager-path warmup: same logic, Python ``for`` loop.
+    """Eager-path windowed warmup: same logic, Python ``for`` inside windows.
 
-    BlackJAX primitives (``sampler.step``, ``welford_update``) all work
-    on concrete JAX arrays without tracing, so this path supports
-    non-JAX-traceable log-densities.
+    BlackJAX primitives all work on concrete JAX arrays without
+    tracing, so this path supports non-JAX-traceable log-densities.
     """
     d = init_state.shape[0]
     welf_init, welf_update, welf_final = welford_algorithm(is_diagonal_matrix=False)
-    warmup_sampler = blackjax.normal_random_walk(
-        target_log_prob_fn, sigma=_initial_sigma(d),
-    )
-    rw_state = warmup_sampler.init(init_state)
-    welf_state = welf_init(d)
+    sizes = _window_sizes(num_warmup, n_windows)
 
+    sigma = _initial_sigma(d)
+    rw_state = blackjax.normal_random_walk(target_log_prob_fn, sigma=sigma).init(init_state)
+    welf_state = welf_init(d)
     positions: list[Array] = []
+
     k = key
-    for _ in range(num_warmup):
-        k, sub = jax.random.split(k)
-        rw_state, _info = warmup_sampler.step(sub, rw_state)
-        welf_state = welf_update(welf_state, rw_state.position)
-        positions.append(rw_state.position)
+    for w_size in sizes:
+        sampler = blackjax.normal_random_walk(target_log_prob_fn, sigma=sigma)
+        rw_state = sampler.init(rw_state.position)
+        for _ in range(w_size):
+            k, sub = jax.random.split(k)
+            rw_state, _info = sampler.step(sub, rw_state)
+            welf_state = welf_update(welf_state, rw_state.position)
+            positions.append(rw_state.position)
+        cov, _, _ = welf_final(welf_state)
+        sigma = _production_sigma(cov, d)
+
     if positions:
         warmup_positions = jnp.stack(positions)
-        cov, _count, _mean = welf_final(welf_state)
+        final_cov, _, _ = welf_final(welf_state)
     else:
         warmup_positions = jnp.empty((0, d), dtype=init_state.dtype)
-        cov = jnp.eye(d)
-    return rw_state, cov, warmup_positions
+        final_cov = jnp.eye(d)
+    return rw_state, final_cov, warmup_positions
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +305,7 @@ def _run_one_chain(
     adapt: bool,
     step_size: float,
     proposal_sigma_override: Array | None,
+    n_windows: int,
     traceable: bool,
 ) -> tuple[Array, Array | None, dict[str, Array]]:
     """Drive one RWMH chain — warmup + production — under the chosen path.
@@ -242,7 +321,8 @@ def _run_one_chain(
         if num_warmup > 0:
             _, _, warmup_positions = (
                 _adaptive_warmup_fast if traceable else _adaptive_warmup_eager
-            )(target_log_prob_fn, init_state, warmup_key, num_warmup)
+            )(target_log_prob_fn, init_state, warmup_key, num_warmup,
+              n_windows=n_windows)
             init_position = warmup_positions[-1]
         else:
             init_position = init_state
@@ -250,6 +330,7 @@ def _run_one_chain(
         warmup_fn = _adaptive_warmup_fast if traceable else _adaptive_warmup_eager
         rw_state, cov, warmup_positions = warmup_fn(
             target_log_prob_fn, init_state, warmup_key, num_warmup,
+            n_windows=n_windows,
         )
         sigma = _production_sigma(cov, d)
         init_position = rw_state.position
@@ -284,6 +365,7 @@ def _run_blackjax_rwmh(
     adapt: bool,
     step_size: float,
     proposal_sigma_override: Array | None,
+    n_windows: int,
     random_seed: int,
 ) -> tuple[list[Array], list[Array] | None, dict[str, np.ndarray], float]:
     """Run ``num_chains`` BlackJAX RWMH chains. Returns chains + diagnostics.
@@ -303,6 +385,7 @@ def _run_blackjax_rwmh(
                 num_results=num_results, num_warmup=num_warmup,
                 adapt=adapt, step_size=step_size,
                 proposal_sigma_override=proposal_sigma_override,
+                n_windows=n_windows,
                 traceable=True,
             )
         chains_arr, warmups_arr, stats_arr = jax.vmap(run_one)(chain_keys)
@@ -326,6 +409,7 @@ def _run_blackjax_rwmh(
                 num_results=num_results, num_warmup=num_warmup,
                 adapt=adapt, step_size=step_size,
                 proposal_sigma_override=proposal_sigma_override,
+                n_windows=n_windows,
                 traceable=False,
             )
             chains_l.append(ch)
@@ -360,6 +444,7 @@ def rwmh(
     num_chains: int = 1,
     step_size: float = 0.1,
     adapt: bool = True,
+    n_windows: int = 4,
     proposal_cov: ArrayLike | None = None,
     init: ArrayLike | None = None,
     random_seed: int = 0,
@@ -392,11 +477,21 @@ def rwmh(
         ``proposal_cov=None``. Default ``0.1`` matches the legacy
         ``_rwmh.py`` behavior.
     adapt
-        When ``True`` (default), runs a single-phase warmup with the
-        Roberts-Gelman-Gilks proposal ``2.38 / sqrt(d) * I`` while
-        accumulating Welford statistics, then samples production with
-        ``proposal = chol(Sigma_hat) * 2.38 / sqrt(d)``. When ``False``,
-        skips adaptation and uses ``sigma = step_size * I`` throughout.
+        When ``True`` (default), runs a window-style adaptive warmup —
+        ``n_windows`` geometrically-growing windows that each sample
+        with the current proposal Cholesky and accumulate Welford
+        statistics on positions, refreshing the proposal at window
+        boundaries. Production samples with
+        ``proposal = chol(Sigma_hat) * 2.38 / sqrt(d)`` (the
+        Roberts-Gelman-Gilks scaling). When ``False``, skips
+        adaptation and uses ``sigma = step_size * I`` throughout.
+    n_windows
+        Number of geometric warmup windows when ``adapt=True``. The
+        Stan-style window-adaptation pattern downweights the early
+        biased samples by giving later windows more steps. Default
+        ``4``; ``n_windows=1`` collapses to a single-phase warmup with
+        a fixed RGG-scaled identity proposal throughout. Ignored when
+        ``adapt=False``.
     proposal_cov
         Explicit ``(d, d)`` proposal Cholesky factor. Overrides both
         the adaptive fit and ``step_size``. Useful when the user has
@@ -442,6 +537,7 @@ def rwmh(
         adapt=adapt,
         step_size=step_size,
         proposal_sigma_override=proposal_sigma_override,
+        n_windows=n_windows,
         random_seed=random_seed,
     )
 
@@ -452,6 +548,7 @@ def rwmh(
         auxiliary=auxiliary, record_template=record_template,
         num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         step_size=step_size, accept_rate=accept_rate, adapt=adapt,
+        n_windows=n_windows,
     )
 
 
@@ -516,6 +613,7 @@ class BlackJAXRWMHMethod(InferenceMethod):
             num_chains=kwargs.get("num_chains", 1),
             step_size=kwargs.get("step_size", 0.1),
             adapt=kwargs.get("adapt", True),
+            n_windows=kwargs.get("n_windows", 4),
             proposal_cov=kwargs.get("proposal_cov"),
             init=init,
             random_seed=random_seed,
