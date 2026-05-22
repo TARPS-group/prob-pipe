@@ -188,7 +188,7 @@ def TFPNutsMethod() -> _TFPGradientMethod:
     """TFP No-U-Turn Sampler (gradient-based MCMC).
 
     Demoted to ``priority=0`` (opt-in only) by the BlackJAX MCMC
-    migration: ``blackjax_nuts`` (priority 75) is now the auto-dispatch
+    migration: ``blackjax_nuts`` (priority 85) is now the auto-dispatch
     default for any ``SupportsLogProb`` + JAX-traceable target. This
     method stays registered so callers can pin
     ``method="tfp_nuts"`` for bit-pattern regression or to compare
@@ -201,7 +201,9 @@ def TFPHmcMethod() -> _TFPGradientMethod:
     """TFP Hamiltonian Monte Carlo.
 
     Demoted to ``priority=0`` (opt-in only) by the BlackJAX MCMC
-    migration alongside ``tfp_nuts``. ``blackjax_hmc`` (priority 65) is
-    the auto-dispatch successor.
+    migration alongside ``tfp_nuts``. ``blackjax_hmc`` is also at
+    ``priority=0`` (structurally unreachable in auto-dispatch — same
+    ``check()`` as ``blackjax_nuts``); both backends' HMC kernels are
+    opt-in via ``method="tfp_hmc"`` / ``method="blackjax_hmc"``.
     """
     return _TFPGradientMethod("hmc", "tfp_hmc", 0)

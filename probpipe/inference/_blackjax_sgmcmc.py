@@ -256,14 +256,20 @@ class BlackJAXSGHMCMethod(_BlackJAXSGMCMCMethod):
 
     Kernel: :func:`blackjax.sghmc`. Accepts the additional kwargs
     ``num_integration_steps`` (default 10), ``alpha`` (default 0.01),
-    ``beta`` (default 0.0). Tier 41-50 (refinement-based:
-    asymptotically exact as the step-size schedule decays). Priority
-    42 — slightly below SGLD because the additional integration-step
-    tuning makes it more brittle in typical use.
+    ``beta`` (default 0.0). Tier 41-50 by algorithm category
+    (refinement-based: asymptotically exact as the step-size schedule
+    decays), but registered at the opt-in-only sentinel ``priority=0``.
+    Reasoning: SGHMC's ``check()`` is identical to ``blackjax_sgld``
+    (same ``SimpleModel`` + ``ConditionallyIndependentLikelihood`` +
+    ``batch_size=`` gate); with SGLD at 45, SGHMC is structurally
+    unreachable in auto-dispatch. SGLD is also the better default —
+    fewer dials (single ``step_size``) vs SGHMC's
+    ``num_integration_steps`` / ``alpha`` / ``beta``. Callers who
+    specifically want SGHMC pin ``method="blackjax_sghmc"``.
     """
 
     _method_name = "blackjax_sghmc"
-    _method_priority = 42
+    _method_priority = 0
 
     def _build_algorithm(self, grad_estimator, **kwargs: Any):
         num_integration_steps: int = kwargs.get("num_integration_steps", 10)

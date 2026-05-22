@@ -67,8 +67,11 @@ class TestBlackJAXRegistration:
     def test_priority_anchors(self):
         nuts = inference_method_registry.get_method("blackjax_nuts")
         hmc = inference_method_registry.get_method("blackjax_hmc")
-        assert nuts.priority == 75
-        assert hmc.priority == 65
+        # NUTS wins auto-dispatch for JAX-traceable SupportsLogProb;
+        # HMC is opt-in-only (same check() as NUTS would make it
+        # structurally unreachable in auto-dispatch).
+        assert nuts.priority == 85
+        assert hmc.priority == 0
 
 
 class TestBlackJAXNuts:

@@ -49,6 +49,20 @@ a deprecation window. The architectural follow-ups that the parent plan
 tied to the deletion (e.g. consolidating sample-stats packing) are
 re-scoped under § 8 below.
 
+The PR also bundles a broader **inference-method priority audit**
+triggered by the question "which methods should be on the
+auto-dispatch path?" The audit's principle: any method whose `check()`
+is identical to a higher-priority sibling is structurally unreachable
+in auto-dispatch — it should be at `priority=0` (opt-in only). That
+catches `blackjax_hmc` (same `check()` as `blackjax_nuts`) and
+`blackjax_sghmc` (same `check()` as `blackjax_sgld`); `pymc_advi` is
+also demoted on a different principle (VI is an explicit-tradeoff
+choice). The four NUTS backends are re-anchored within tier 81–90 so
+`blackjax_nuts` (the auto-dispatch winner for the canonical model
+class) sits at 85, `nutpie_nuts` at 88 (top of tier), and
+`cmdstan_nuts` / `pymc_nuts` both at 82 (disjoint model classes).
+See § 4.3 for the full final-state table.
+
 ## 3. Design choices that have changed since the parent plan
 
 ### 3.1 Priority numbers
@@ -59,11 +73,16 @@ This plan replaces the staged-with-benchmarks ramp with a one-step swap:
 
 | Method | Before | After | Tier (per #189 / `extending.md`) |
 |---|---|---|---|
-| `blackjax_nuts` | — | **75** | 71–80 (broadly applicable self-tuning gradient MCMC) |
-| `blackjax_hmc` | — | **65** | 61–70 (well-understood, hand-tuned step size) |
-| `tfp_nuts` | 75 | **0** | opt-in only — reachable via `method="tfp_nuts"` |
+| `nutpie_nuts` | 85 | **88** | 81–90 (Rust-backed; fastest registered NUTS backend) |
+| `blackjax_nuts` | — | **85** | 81–90 (optimised JAX-native; auto-dispatch winner for the canonical ProbPipe model class) |
+| `cmdstan_nuts` | 82 | **82** | 81–90 (compiled Stan gradients) |
+| `pymc_nuts` | 81 | **82** | 81–90 (PyTensor-backed; ties with cmdstan on disjoint model class) |
+| `blackjax_hmc` | — | **0** | opt-in only — same `check()` as `blackjax_nuts`, structurally unreachable in auto-dispatch |
+| `blackjax_sghmc` | 42 | **0** | opt-in only — same `check()` as `blackjax_sgld`; SGLD is the simpler default |
+| `pymc_advi` | 25 | **0** | opt-in only — VI is an explicit-tradeoff choice |
+| `tfp_nuts` | 75 | **0** | opt-in only — reachable via `method="tfp_nuts"` for bit-pattern regression |
 | `tfp_hmc` | 65 | **0** | opt-in only — reachable via `method="tfp_hmc"` |
-| `tfp_rwmh` | 55 | **55** | unchanged (gradient-free; no BlackJAX replacement in this PR) |
+| `tfp_rwmh` | 55 | **55** | unchanged (gradient-free; migration deferred to a follow-up PR) |
 
 `MethodRegistry.set_priorities` warns on crossings to / from `0`. The CHANGELOG entry covers the warning text and the migration recipe.
 
@@ -240,19 +259,21 @@ Two methods at `priority=75` — the registry's stable sort keeps `blackjax_nuts
 
 The `Method.priority` change goes through the existing `_TFPGradientMethod(method_priority=...)` constructor argument; one-line change per factory.
 
-After this commit:
+After this commit and the priority audit bundled into the same PR:
 
 ```
-nutpie_nuts            priority=85
+nutpie_nuts            priority=88     # bumped from 85; Rust-backed, fastest backend
+blackjax_nuts          priority=85     # NEW default for any SupportsLogProb + JAX-traceable
 cmdstan_nuts           priority=82
-pymc_nuts              priority=81
-blackjax_nuts          priority=75     # NEW default for any SupportsLogProb + JAX-traceable
+pymc_nuts              priority=82     # bumped from 81; ties cmdstan on disjoint model class
+tfp_rwmh               priority=55     # unchanged (gradient-free; BlackJAX migration deferred)
+blackjax_sgld          priority=45
+sbijax_smcabc          priority=5
+blackjax_hmc           priority=0      # opt-in only (same check() as NUTS)
+blackjax_sghmc         priority=0      # opt-in only (same check() as SGLD)
+pymc_advi              priority=0      # opt-in only (VI is an explicit tradeoff)
+tfp_nuts               priority=0      # opt-in only (bit-pattern regression)
 tfp_hmc                priority=0      # opt-in only
-tfp_nuts               priority=0      # opt-in only
-blackjax_hmc           priority=65
-pymc_advi              priority=25
-...
-tfp_rwmh               priority=55     # unchanged (gradient-free)
 ```
 
 Updates:

@@ -143,7 +143,7 @@ class TestInferenceMethodRegistry:
         methods = inference_method_registry.list_methods()
         # All three remain registered.
         assert {"tfp_nuts", "tfp_hmc", "tfp_rwmh"}.issubset(methods)
-        # blackjax_nuts (75) outranks tfp_rwmh (55) outranks the opt-in TFP pair.
+        # blackjax_nuts (85) outranks tfp_rwmh (55) outranks the opt-in TFP pair.
         assert methods.index("blackjax_nuts") < methods.index("tfp_rwmh")
 
     def test_auto_select_nuts(self, simple_model, data):
@@ -304,24 +304,27 @@ class TestSetPrioritiesZeroCrossingWarning:
 class TestBuiltInPriorityAnchors:
     """Priority anchors per issue #189, with the BlackJAX MCMC migration.
 
-    ``tfp_nuts`` / ``tfp_hmc`` are at the opt-in-only sentinel ``0`` —
-    they remain registered for callers that pin ``method="tfp_nuts"``
-    but no longer participate in auto-dispatch. ``blackjax_nuts`` /
-    ``blackjax_hmc`` take their old priority slots.
+    Methods whose ``check()`` is identical to a higher-priority sibling
+    are at the opt-in-only sentinel ``priority=0`` — they can never win
+    auto-dispatch and are reachable only via ``method=`` (``blackjax_hmc``
+    vs ``blackjax_nuts``; ``blackjax_sghmc`` vs ``blackjax_sgld``).
+    ``pymc_advi`` is also opt-in: VI is a deliberate bias-for-speed
+    tradeoff the user should choose explicitly. ``tfp_nuts`` /
+    ``tfp_hmc`` are opt-in for bit-pattern regression.
     """
 
     EXPECTED_PRIORITIES = {
-        "nutpie_nuts": 85,
+        "nutpie_nuts": 88,
+        "blackjax_nuts": 85,
         "cmdstan_nuts": 82,
-        "pymc_nuts": 81,
-        "blackjax_nuts": 75,
-        "blackjax_hmc": 65,
+        "pymc_nuts": 82,
         "tfp_rwmh": 55,
         "blackjax_sgld": 45,
-        "blackjax_sghmc": 42,
-        "pymc_advi": 25,
         "sbijax_smcabc": 5,
         # Opt-in only — registered but excluded from auto-dispatch.
+        "blackjax_hmc": 0,
+        "blackjax_sghmc": 0,
+        "pymc_advi": 0,
         "tfp_nuts": 0,
         "tfp_hmc": 0,
     }

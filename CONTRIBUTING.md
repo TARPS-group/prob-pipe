@@ -356,16 +356,16 @@ Built-in methods:
 
 | Priority | Name | Backend | Applies to |
 |----------|------|---------|------------|
-| 85 | `nutpie_nuts` | nutpie | `StanModel`, `PyMCModel` |
+| 88 | `nutpie_nuts` | nutpie | `StanModel`, `PyMCModel` |
+| 85 | `blackjax_nuts` | BlackJAX | Any `SupportsLogProb` (JAX-traceable) |
 | 82 | `cmdstan_nuts` | CmdStanPy | `StanModel` |
-| 81 | `pymc_nuts` | PyMC | `PyMCModel` |
-| 75 | `blackjax_nuts` | BlackJAX | Any `SupportsLogProb` (JAX-traceable) |
-| 65 | `blackjax_hmc` | BlackJAX | Any `SupportsLogProb` (JAX-traceable) |
-| 55 | `tfp_rwmh` | TFP | Any `SupportsLogProb` |
+| 82 | `pymc_nuts` | PyMC | `PyMCModel` |
+| 55 | `tfp_rwmh` | hand-rolled Python | Any `SupportsLogProb` |
 | 45 | `blackjax_sgld` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
-| 42 | `blackjax_sghmc` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
-| 25 | `pymc_advi` | PyMC | `PyMCModel` |
 | 5 | `sbijax_smcabc` | sbijax | `SimpleGenerativeModel` |
+| 0 | `blackjax_hmc` | BlackJAX | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
+| 0 | `blackjax_sghmc` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=`; opt-in only via `method=` |
+| 0 | `pymc_advi` | PyMC | `PyMCModel`; opt-in only via `method=` |
 | 0 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 | 0 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 

@@ -9,17 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
-- **`condition_on` MCMC default switched from TFP to BlackJAX NUTS.**
-  The new `blackjax_nuts` method (priority 75) wins auto-dispatch for
-  any `SupportsLogProb` + JAX-traceable target; `blackjax_hmc`
-  (priority 65) joins as the gradient-MCMC fallback without NUTS-style
-  adaptation. The previous defaults `tfp_nuts` and `tfp_hmc` are
-  demoted to the opt-in-only sentinel (`priority=0`): they stay
-  registered and reachable via `method="tfp_nuts"` /
-  `method="tfp_hmc"` for bit-pattern regression checks or side-by-
-  side comparisons, but no longer participate in auto-dispatch.
-  `tfp_rwmh` (gradient-free RWMH) is unchanged — no BlackJAX
-  replacement in this drop.
+- **`condition_on` MCMC default switched from TFP to BlackJAX NUTS,
+  plus inference-method priority re-anchoring.** Several entangled
+  changes consolidated into a single migration:
+
+  *Auto-dispatch winner switches to BlackJAX NUTS.* `blackjax_nuts`
+  (priority 85, tier 81–90) wins auto-dispatch for any
+  `SupportsLogProb` + JAX-traceable target — the canonical ProbPipe
+  model class. `tfp_nuts` / `tfp_hmc` are demoted to the opt-in-only
+  sentinel (`priority=0`); they stay registered and reachable via
+  `method="tfp_nuts"` / `method="tfp_hmc"` for bit-pattern regression
+  checks or side-by-side comparisons.
+
+  *Structurally-unreachable methods demoted to `priority=0`.* Methods
+  whose `check()` is identical to a higher-priority sibling can never
+  win auto-dispatch — they're opt-in in effect. Made that explicit:
+  `blackjax_hmc` (same `check()` as `blackjax_nuts`) and
+  `blackjax_sghmc` (same `check()` as `blackjax_sgld`, which is also
+  the simpler default — fewer tuning dials) are now opt-in only.
+
+  *VI demoted to opt-in.* `pymc_advi` (was priority 25) is now
+  `priority=0`. VI is a deliberate bias-for-speed tradeoff that users
+  should pick explicitly via `method="pymc_advi"`; silently dispatching
+  into it when (e.g.) `pymc_nuts` happens to fail would surface VI in
+  MCMC's place.
+
+  *NUTS-tier numbers retuned.* `nutpie_nuts` 85 → 88 (top of the
+  optimised-backend tier — Rust gradients are the fastest of every
+  registered NUTS backend); `pymc_nuts` 81 → 82 (ties with
+  `cmdstan_nuts` at 82; the two apply to disjoint model classes so
+  the tie is documentary).
+
+  `tfp_rwmh` (gradient-free RWMH) is unchanged at priority 55 — the
+  gradient-free-MCMC migration to BlackJAX is queued separately
+  (`~/.claude/plans/bie-rwmh-blackjax-migration.md`).
 
   Migration: an existing `condition_on(model, data)` call that
   previously ran TFP NUTS now runs BlackJAX NUTS. The numerical
@@ -27,7 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   differs. Pin `method="tfp_nuts"` for bit-pattern regression. The
   closed-form correctness gate (mean within ~3 σ_MC, variance within
   10% on a known 2-D Gaussian target) is tested under
-  `tests/test_blackjax_mcmc.py`.
+  `tests/test_blackjax_mcmc.py`. Existing `condition_on(...,
+  method="pymc_advi")` / `method="blackjax_hmc"` /
+  `method="blackjax_sghmc"` calls continue to work — only the
+  auto-dispatch path changes.
 
 - **Distribution & Record hierarchy cleanup (#200).** Implements the
   integrated cleanup plan as six self-contained commits. The public-

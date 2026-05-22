@@ -68,25 +68,25 @@ class TestRegistry:
         assert "blackjax_sghmc" in inference_method_registry.list_methods()
 
     def test_priorities_below_full_batch(self):
-        """SGMCMC methods sit below full-batch gradient methods so they
-        only fire when explicitly requested.
+        """SGLD sits below full-batch NUTS so it only fires when
+        explicitly requested; SGHMC is opt-in only.
 
-        The BlackJAX migration replaced the auto-dispatching TFP NUTS /
-        HMC with the BlackJAX equivalents; ``tfp_nuts`` / ``tfp_hmc``
-        are now at the opt-in-only sentinel ``0``. SGMCMC must stay
-        below the active gradient methods (``blackjax_nuts``,
-        ``blackjax_hmc``) so a routine ``condition_on(...)`` doesn't
-        accidentally pick a stochastic-gradient sampler.
+        SGLD is the auto-dispatchable SGMCMC method at priority 45 —
+        below ``blackjax_nuts`` (85) so a routine ``condition_on(...)``
+        doesn't accidentally pick a stochastic-gradient sampler. SGHMC
+        has the same ``check()`` as SGLD and is therefore structurally
+        unreachable in auto-dispatch; it's at the opt-in sentinel
+        ``priority=0`` and reachable only via
+        ``method="blackjax_sghmc"``.
         """
         get = lambda n: inference_method_registry.get_method(n).priority
-        # SGLD/SGHMC below BlackJAX NUTS / HMC; SGHMC below SGLD.
+        # SGLD below the auto-dispatch winner (BlackJAX NUTS) but
+        # positive so a `method="blackjax_sgld"` request still reaches
+        # it through the priority walk.
         assert get("blackjax_sgld") < get("blackjax_nuts")
-        assert get("blackjax_sgld") < get("blackjax_hmc")
-        assert get("blackjax_sghmc") < get("blackjax_nuts")
-        assert get("blackjax_sghmc") < get("blackjax_sgld")
-        # And both above zero (so an opt-in `method=...` reaches them).
         assert get("blackjax_sgld") > 0
-        assert get("blackjax_sghmc") > 0
+        # SGHMC at the opt-in sentinel.
+        assert get("blackjax_sghmc") == 0
 
 
 # -- Gradient-estimator correctness -------------------------------------------

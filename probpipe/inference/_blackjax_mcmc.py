@@ -245,15 +245,25 @@ class _BlackJAXMCMCMethod(InferenceMethod):
 def BlackJAXNutsMethod() -> _BlackJAXMCMCMethod:
     """BlackJAX No-U-Turn Sampler.
 
-    Tier 71-80 (self-tuning, broadly applicable gradient MCMC). Priority 75.
+    Tier 81-90 (optimised JAX-native backend; the primary auto-dispatch
+    winner for any JAX-traceable ``SupportsLogProb`` target — the
+    canonical ProbPipe model class). Priority 85. Sits below
+    ``nutpie_nuts`` (88; Rust gradients win the constant-factor race for
+    Stan / PyMC models) and at the same tier as ``cmdstan_nuts`` /
+    ``pymc_nuts`` (82), which apply to disjoint model classes.
     """
-    return _BlackJAXMCMCMethod("nuts", "blackjax_nuts", 75)
+    return _BlackJAXMCMCMethod("nuts", "blackjax_nuts", 85)
 
 
 def BlackJAXHmcMethod() -> _BlackJAXMCMCMethod:
     """BlackJAX Hamiltonian Monte Carlo.
 
-    Tier 61-70 (well-understood, requires hand-tuned step size /
-    integration steps). Priority 65.
+    Tier 61-70 by algorithm category (well-understood, hand-tuned step
+    size + integration steps), but registered at the opt-in-only
+    sentinel ``priority=0``. Reasoning: HMC's ``check()`` is identical
+    to ``blackjax_nuts`` (same ``SupportsUnnormalizedLogProb`` +
+    JAX-traceability gate), so with NUTS at 85, HMC is structurally
+    unreachable in auto-dispatch. Keeping it at 0 makes that explicit;
+    callers who specifically want HMC pin ``method="blackjax_hmc"``.
     """
-    return _BlackJAXMCMCMethod("hmc", "blackjax_hmc", 65)
+    return _BlackJAXMCMCMethod("hmc", "blackjax_hmc", 0)
