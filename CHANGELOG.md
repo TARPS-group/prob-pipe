@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **Inference-method count kwargs unified under `num_*`.** Several
+  inference methods exposed `n_*`-style kwargs out of sync with the
+  rest of the registry (which uniformly used `num_results` /
+  `num_warmup` / `num_chains`). Renamed:
+  - `blackjax_sgld` / `blackjax_sghmc`: `num_steps=` → `num_results=`
+    (SGMCMC produces one chain draw per step; the kwarg matches
+    every other MCMC backend now).
+  - `sbi_learn_conditional` / `sbi_learn_likelihood`: `n_iter=` →
+    `num_iterations=`, `n_simulations=` → `num_simulations=`.
+  - `sbi_learn_conditional` posterior-sampling default
+    `n_samples=` → `num_results=`; `DirectSamplerSBIModel.__init__`
+    and `condition_on(direct_sampler_model, ...,
+    n_samples=...)` likewise.
+
+  Internal `sbijax.simulate_data(..., n_simulations=...)` /
+  `sbijax.fit(..., n_iter=...)` / `sbijax.sample_posterior(...,
+  n_samples=...)` calls keep their native sbijax kwarg names —
+  only the probpipe-facing surface changes.
+
+  Bug fix bundled with the rename: `tests/test_sbijax.py` was
+  calling `condition_on(nle_model, obs, method="tfp_nuts",
+  n_samples=500, n_warmup=500, n_chains=2, ...)` — the MCMC backend
+  silently ignored those kwargs (it expects `num_results=` /
+  `num_warmup=` / `num_chains=`) and the test passed by accident.
+  Fixed.
+
 - **`condition_on` MCMC default switched from TFP to BlackJAX NUTS,
   plus inference-method priority re-anchoring.** Several entangled
   changes consolidated into a single migration:
@@ -235,7 +261,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   posterior = condition_on(
       model, data,
       method="blackjax_sgld",
-      batch_size=64, num_steps=2000, num_warmup=500, step_size=1e-3,
+      batch_size=64, num_results=2000, num_warmup=500, step_size=1e-3,
   )
   ```
 

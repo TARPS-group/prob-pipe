@@ -141,7 +141,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         """Run the SGMCMC kernel; return an :class:`ApproximateDistribution`."""
         batch_size: int = kwargs["batch_size"]
-        num_steps: int = kwargs.get("num_steps", 1000)
+        num_results: int = kwargs.get("num_results", 1000)
         num_warmup: int = kwargs.get("num_warmup", 0)
         step_size: float = kwargs.get("step_size", 1e-3)
         random_seed: int | PRNGKey = kwargs.get("random_seed", 0)
@@ -174,10 +174,10 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
             else random_seed
         )
         positions = _run_sgmcmc_loop(
-            algorithm, state, key, step_size, num_warmup, num_steps,
+            algorithm, state, key, step_size, num_warmup, num_results,
         )
 
-        # Stack into a chain shaped (num_steps, *event_shape) and wrap.
+        # Stack into a chain shaped (num_results, *event_shape) and wrap.
         # ``check()`` rejects any non-SimpleModel target, and SimpleModel
         # requires a RecordDistribution prior (PR #200), so the
         # ``record_template`` attribute is guaranteed here.
@@ -186,7 +186,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         return make_posterior(
             [chain], parents=(prior,), algorithm=self._method_name,
             auxiliary=None, record_template=record_template,
-            num_results=num_steps, num_warmup=num_warmup, num_chains=1,
+            num_results=num_results, num_warmup=num_warmup, num_chains=1,
         )
 
     # -- subclass hook -------------------------------------------------------
@@ -212,16 +212,16 @@ def _run_sgmcmc_loop(
     key: PRNGKey,
     step_size: float,
     num_warmup: int,
-    num_steps: int,
+    num_results: int,
 ) -> list[Any]:
-    """Run the SGMCMC kernel for ``num_warmup + num_steps`` steps; discard warmup."""
+    """Run the SGMCMC kernel for ``num_warmup + num_results`` steps; discard warmup."""
     step = jax.jit(algorithm.step)
 
     def one_step(state, k):
         k_kernel, k_measure = jax.random.split(k)
         return step(k_kernel, state, k_measure, step_size)
 
-    total = num_warmup + num_steps
+    total = num_warmup + num_results
     keys = jax.random.split(key, total)
     positions: list[Any] = []
     for i in range(total):

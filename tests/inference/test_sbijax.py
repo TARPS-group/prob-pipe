@@ -109,10 +109,10 @@ def _trained_npe_smoke():
     return sbi_learn_conditional._func(
         prior, simulator,
         method="npe",
-        n_simulations=200,
-        n_iter=5,
+        num_simulations=200,
+        num_iterations=5,
         batch_size=32,
-        n_samples=100,
+        num_results=100,
         random_seed=42,
     )
 
@@ -125,8 +125,8 @@ def _trained_nle_correct():
     return sbi_learn_likelihood._func(
         prior, simulator,
         method="nle",
-        n_simulations=2000,
-        n_iter=300,
+        num_simulations=2000,
+        num_iterations=300,
         batch_size=128,
         random_seed=0,
     )
@@ -140,10 +140,10 @@ def _trained_npe_correct():
     return sbi_learn_conditional._func(
         prior, simulator,
         method="npe",
-        n_simulations=2000,
-        n_iter=300,
+        num_simulations=2000,
+        num_iterations=300,
         batch_size=128,
-        n_samples=2000,
+        num_results=2000,
         random_seed=0,
     )
 
@@ -168,10 +168,10 @@ class TestTrainSBI:
         assert "DirectSamplerSBIModel" in r
         assert "sbijax_npe" in r
 
-    def test_condition_on_n_samples_override(self, _trained_npe_smoke, observed_2d):
-        """Smoke-level dispatch: output type, algorithm tag, and n_samples override."""
+    def test_condition_on_num_results_override(self, _trained_npe_smoke, observed_2d):
+        """Smoke-level dispatch: output type, algorithm tag, and num_results override."""
         posterior = condition_on._func(
-            _trained_npe_smoke, observed_2d, n_samples=321,
+            _trained_npe_smoke, observed_2d, num_results=321,
         )
         assert isinstance(posterior, ApproximateDistribution)
         assert posterior.algorithm == "sbijax_npe"
@@ -245,7 +245,7 @@ class TestTrainSBI:
         obs = jnp.array([1.0, -0.5])
         posterior = condition_on._func(
             _trained_nle_correct, obs, method="tfp_nuts",
-            n_samples=500, n_warmup=500, n_chains=2, random_seed=0,
+            num_results=500, num_warmup=500, num_chains=2, random_seed=0,
         )
         assert isinstance(posterior, ApproximateDistribution)
         post_mean = np.asarray(mean(posterior))
@@ -264,8 +264,8 @@ class TestTrainSBI:
         likelihood = sbi_learn_likelihood._func(
             prior_2d, simulator_2d,
             method="nle",
-            n_simulations=200,
-            n_iter=5,
+            num_simulations=200,
+            num_iterations=5,
             batch_size=32,
             return_likelihood_only=True,
         )
@@ -318,10 +318,10 @@ class TestTrainSBI:
         trained = sbi_learn_conditional._func(
             scalar_prior, Scalar1DSimulator(),
             method="npe",
-            n_simulations=2000,
-            n_iter=300,
+            num_simulations=2000,
+            num_iterations=300,
             batch_size=128,
-            n_samples=1000,
+            num_results=1000,
             random_seed=1,
         )
         obs = jnp.array([1.3])
@@ -351,8 +351,8 @@ class TestTrainSBI:
             prior_2d, simulator_2to5,
             method="npe",
             network_factory=factory,
-            n_simulations=100,
-            n_iter=2,
+            num_simulations=100,
+            num_iterations=2,
             batch_size=32,
         )
         assert captured["ndim"] == 2  # theta dim, not data dim (5)
@@ -379,8 +379,8 @@ class TestTrainSBI:
             prior_2d, simulator_2to5,
             method="nle",
             network_factory=factory,
-            n_simulations=100,
-            n_iter=2,
+            num_simulations=100,
+            num_iterations=2,
             batch_size=32,
         )
         assert captured["ndim"] == 5  # data dim, not theta dim (2)
@@ -399,8 +399,8 @@ class TestTrainSBI:
         trained = sbi_learn_likelihood._func(
             prior_2d, simulator_2to5,
             method="nle",
-            n_simulations=200,
-            n_iter=5,
+            num_simulations=200,
+            num_iterations=5,
             batch_size=32,
         )
         assert isinstance(trained, SimpleModel)
@@ -427,8 +427,8 @@ class TestTrainSBI:
                 prior_2d, simulator_2to5,
                 method="nle",
                 network_factory=buggy_factory,
-                n_simulations=200,
-                n_iter=5,
+                num_simulations=200,
+                num_iterations=5,
                 batch_size=32,
             )
 
@@ -456,8 +456,8 @@ class TestTrainSBI:
             prior_2d, simulator_2d,
             method="nre",
             network_factory=factory,
-            n_simulations=100,
-            n_iter=2,
+            num_simulations=100,
+            num_iterations=2,
             batch_size=32,
         )
         assert captured["called"]
@@ -475,8 +475,8 @@ class TestTrainSBI:
         trained = sbi_learn_likelihood._func(
             prior_2d, simulator_2d,
             method="nre",
-            n_simulations=200,
-            n_iter=5,
+            num_simulations=200,
+            num_iterations=5,
             batch_size=32,
         )
         assert isinstance(trained, SimpleModel)
@@ -496,11 +496,11 @@ class TestTrainSBI:
 
         with pytest.raises(TypeError, match="TFP-backed"):
             sbi_learn_conditional._func(
-                NonTFPPrior(), simulator_2d, n_simulations=10, n_iter=1
+                NonTFPPrior(), simulator_2d, num_simulations=10, num_iterations=1
             )
         with pytest.raises(TypeError, match="TFP-backed"):
             sbi_learn_likelihood._func(
-                NonTFPPrior(), simulator_2d, n_simulations=10, n_iter=1
+                NonTFPPrior(), simulator_2d, num_simulations=10, num_iterations=1
             )
 
 
