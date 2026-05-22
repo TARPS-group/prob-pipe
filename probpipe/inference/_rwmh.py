@@ -83,7 +83,12 @@ def rwmh(
         def target_log_prob(params):
             return dist._unnormalized_log_prob(params)
 
-    init_state = get_init_state(dist, init, data)
+    # Use the prior's mean as the init heuristic rather than ``dist``'s.
+    # ``SimpleModel`` does not implement ``SupportsMean``, so passing the
+    # full target through ``get_init_state`` would skip the
+    # ``_mean()`` path; extracting the prior first gives the right
+    # parameter-space init for canonical ProbPipe models.
+    init_state = get_init_state(get_prior(dist), init, data)
 
     d = init_state.shape[0]
     key = jax.random.PRNGKey(random_seed)

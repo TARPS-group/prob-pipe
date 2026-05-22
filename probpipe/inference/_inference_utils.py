@@ -76,14 +76,26 @@ def is_jax_traceable(fn: Callable, init_state: jnp.ndarray) -> bool:
 def get_init_state(
     dist: Distribution, init: ArrayLike | None, observed: ArrayLike | None,
 ) -> jnp.ndarray:
-    """Determine an initial chain state from the distribution or data.
+    """Determine an initial chain state.
 
     Resolution order: explicit ``init`` > distribution mean (via the
-    ``SupportsMean`` protocol) > mean of ``observed`` > zeros of
-    ``dist.event_shape``. Inherits dtype from the target distribution
-    when available so ``log_prob`` / ``sample`` stay self-consistent
-    under JAX x64.
+    ``SupportsMean`` protocol) > zeros of ``dist.event_shape``.
+    Inherits dtype from the target distribution when available so
+    ``log_prob`` / ``sample`` stay self-consistent under JAX x64.
+
+    ``observed`` is accepted for signature uniformity with the other
+    backend-agnostic helpers but is intentionally not used as an init
+    source: ``mean(observed)`` lives in the *data* space, while the
+    chain state lives in the *parameter* space. The two coincide only
+    for pure location models (e.g. ``y_i ~ N(theta, sigma**2)`` with
+    parameter ``theta``); for anything else — regression coefficients,
+    scale parameters, latent variables, non-Gaussian likelihoods — the
+    heuristic puts the init on the wrong manifold and the chain has to
+    burn warmup correcting it. Callers that genuinely need an init in
+    the data space should pass ``init=`` explicitly.
     """
+    del observed  # accepted for signature uniformity; see docstring
+
     target_dtype = getattr(dist, "dtype", None)
     if not isinstance(target_dtype, jnp.dtype):
         from .._dtype import _default_float_dtype
@@ -104,15 +116,13 @@ def get_init_state(
         except Exception:
             pass
 
-    if observed is not None:
-        return jnp.atleast_1d(jnp.mean(jnp.asarray(observed), axis=0))
-
     if hasattr(dist, "event_shape"):
         return jnp.zeros(dist.event_shape, dtype=target_dtype)
 
     raise ValueError(
-        "Cannot determine initial state: provide init=, "
-        "a distribution with SupportsMean, or observed data."
+        "Cannot determine initial state: pass init= explicitly, or "
+        "provide a distribution that implements SupportsMean or "
+        "exposes event_shape."
     )
 
 
