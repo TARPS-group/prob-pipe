@@ -12,12 +12,21 @@ Priority semantics (see issue #189):
   behavioural, so the registry walks every positive priority uniformly.
 - ``priority == 0`` — *opt-in only.* Skipped during auto-dispatch;
   selectable by name via ``method="..."``. This is the default value
-  inherited from :class:`Method`, so a newly-registered method gets
-  the safe behaviour (opt-in) until a contributor classifies it
-  explicitly.
+  inherited from :class:`BaseDispatchMethod`, so a newly-registered
+  method gets the safe behaviour (opt-in) until a contributor
+  classifies it explicitly.
 
 See ``docs/api/extending.md`` for the tier criteria a contributor
 should use when choosing a priority for a new method.
+
+**Arity-typed subclasses.** :class:`UnaryDispatchRegistry` and
+:class:`BinaryDispatchRegistry` differ only in ``supported_types()``
+signature, cache-key construction, and the pre-filter predicate.  Arity
+is a type-level property: ``BinaryDispatchRegistry[KLMethod].execute(p)``
+is a static type error rather than a runtime one.
+
+``Method`` and ``MethodRegistry`` are aliases for the unary subclasses
+and preserve the existing public API without change.
 """
 
 from __future__ import annotations
@@ -27,7 +36,18 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-__all__ = ["Method", "MethodInfo", "MethodRegistry", "OPT_IN_ONLY_PRIORITY"]
+__all__ = [
+    "BaseDispatchMethod",
+    "UnaryDispatchMethod",
+    "BinaryDispatchMethod",
+    "BaseDispatchRegistry",
+    "UnaryDispatchRegistry",
+    "BinaryDispatchRegistry",
+    "Method",
+    "MethodInfo",
+    "MethodRegistry",
+    "OPT_IN_ONLY_PRIORITY",
+]
 
 # Priority value for methods that should not auto-dispatch. The registry
 # excludes any method whose effective priority equals this sentinel from
@@ -49,23 +69,24 @@ class MethodInfo:
     description: str = ""
 
 
-class Method(ABC):
-    """Abstract base for a pluggable method in a registry.
+# ---------------------------------------------------------------------------
+# Abstract method bases
+# ---------------------------------------------------------------------------
 
-    Subclasses declare a unique ``name``, which ``supported_types``
-    they handle (for fast filtering), a ``priority`` (higher =
-    tried first), and implement ``check``/``execute``.
+
+class BaseDispatchMethod(ABC):
+    """Abstract base for all pluggable dispatch methods.
+
+    Subclasses declare a unique ``name``, a ``priority``, and implement
+    ``check``/``execute``.  The ``supported_types`` method is **not**
+    defined here — its return shape is arity-dependent and is declared
+    by :class:`UnaryDispatchMethod` and :class:`BinaryDispatchMethod`.
     """
 
     @property
     @abstractmethod
     def name(self) -> str:
         """Unique identifier for this method (e.g., ``'tfp_nuts'``)."""
-        ...
-
-    @abstractmethod
-    def supported_types(self) -> tuple[type, ...]:
-        """Types this method can operate on (fast pre-filter)."""
         ...
 
     @abstractmethod
@@ -92,23 +113,73 @@ class Method(ABC):
         return OPT_IN_ONLY_PRIORITY
 
 
-class MethodRegistry[M: Method]:
-    """Generic priority-based method registry.
+class UnaryDispatchMethod(BaseDispatchMethod):
+    """Abstract base for single-argument dispatch methods.
 
-    Methods are tried in descending priority order.  The first method
-    whose ``check()`` returns ``feasible=True`` wins.  Users can also
-    select a specific method by name.
+    Adds :meth:`supported_types`, which returns the nominal types this
+    method handles.  Used by :class:`UnaryDispatchRegistry` as a fast
+    ``issubclass`` pre-filter before ``check()`` is called.
+    """
+
+    @abstractmethod
+    def supported_types(self) -> tuple[type, ...]:
+        """Types this method can operate on (fast pre-filter).
+
+        Must return concrete classes, not protocols with non-method
+        members — ``issubclass`` does not work reliably with such
+        protocols.  Protocol-based feasibility checks belong in
+        ``check()``.
+        """
+        ...
+
+
+class BinaryDispatchMethod(BaseDispatchMethod):
+    """Abstract base for two-argument dispatch methods.
+
+    Adds :meth:`supported_types`, which returns a pair of type-tuples
+    ``((left_types, ...), (right_types, ...))`` used by
+    :class:`BinaryDispatchRegistry` as a fast ``issubclass`` pre-filter.
+    """
+
+    @abstractmethod
+    def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]:
+        """Left and right type-tuples for the pre-filter.
+
+        Returns a 2-tuple of type-tuples: the first covers the left
+        argument, the second the right.  Example::
+
+            def supported_types(self):
+                return ((Normal,), (Normal,))
+
+        Must contain concrete classes, not protocols — see the note on
+        :meth:`UnaryDispatchMethod.supported_types`.
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Registry base and arity-typed subclasses
+# ---------------------------------------------------------------------------
+
+
+class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
+    """Priority-based dispatch registry (arity-independent base).
+
+    Holds all arity-independent logic: registration, priority
+    management, opt-in filtering, and the ``check``/``execute`` loop.
+    Arity-specific subclasses override :meth:`_cache_key`,
+    :meth:`_find_methods`, and :meth:`_format_key`.
 
     Methods whose effective priority equals :data:`OPT_IN_ONLY_PRIORITY`
-    (``0``) are excluded from the auto-dispatch walk and are reachable
-    only by name via ``method="..."``.
+    (``0``) are excluded from auto-dispatch and are reachable only by
+    name via ``method="..."``.
     """
 
     def __init__(self) -> None:
         self._methods: list[M] = []
         self._name_index: dict[str, M] = {}
         self._priority_overrides: dict[str, int] = {}
-        self._type_cache: dict[type, list[M]] = {}
+        self._type_cache: dict[Any, list[M]] = {}
 
     # -- registration -------------------------------------------------------
 
@@ -196,6 +267,17 @@ class MethodRegistry[M: Method]:
         """Return method names in priority order (highest first)."""
         return [m.name for m in self._methods]
 
+    def _is_auto_dispatchable(self, m: M) -> bool:
+        """True if *m* participates in auto-dispatch.
+
+        A method whose effective priority equals
+        :data:`OPT_IN_ONLY_PRIORITY` is excluded from the auto-dispatch
+        walk.  It remains reachable by explicit ``method="..."``
+        regardless.  Subclasses must call this inside
+        :meth:`_find_methods` to keep filtering consistent.
+        """
+        return self._effective_priority(m) != OPT_IN_ONLY_PRIORITY
+
     def check(
         self, *args: Any, method: str | None = None, **kwargs: Any
     ) -> MethodInfo:
@@ -204,15 +286,18 @@ class MethodRegistry[M: Method]:
             m = self.get_method(method)
             return m.check(*args, **kwargs)
 
-        key_type = type(args[0]) if args else object
-        for m in self._find_methods(key_type):
+        if not args:
+            return MethodInfo(feasible=False, description="No arguments provided")
+
+        key = self._cache_key(args)
+        for m in self._find_methods(key):
             info = m.check(*args, **kwargs)
             if info.feasible:
                 return info
 
         return MethodInfo(
             feasible=False,
-            description=f"No applicable method for {key_type.__name__}",
+            description=f"No applicable method for {self._format_key(key)}",
         )
 
     def execute(
@@ -232,38 +317,119 @@ class MethodRegistry[M: Method]:
                 )
             return m.execute(*args, **kwargs)
 
-        key_type = type(args[0]) if args else object
-        for m in self._find_methods(key_type):
+        if not args:
+            raise TypeError("No arguments provided for dispatch")
+
+        key = self._cache_key(args)
+        for m in self._find_methods(key):
             info = m.check(*args, **kwargs)
             if info.feasible:
                 return m.execute(*args, **kwargs)
 
         raise TypeError(
-            f"No method registered for {key_type.__name__}. "
+            f"No method registered for {self._format_key(key)}. "
             f"Available: {self.list_methods()}"
         )
 
-    # -- internals ----------------------------------------------------------
+    # -- internals (arity-specific overrides) --------------------------------
 
-    def _find_methods(self, key_type: type) -> list[M]:
-        """Return auto-dispatchable methods matching *key_type* (cached).
+    @abstractmethod
+    def _cache_key(self, args: tuple) -> Any:
+        """Compute the dispatch cache key from positional arguments."""
+        ...
 
-        Filters by:
+    @abstractmethod
+    def _find_methods(self, key: Any) -> list[M]:
+        """Return auto-dispatchable methods matching *key* (cached).
 
-        - ``supported_types`` containing *key_type* (fast pre-filter).
-        - effective priority not equal to ``OPT_IN_ONLY_PRIORITY`` —
-          opt-in-only methods are excluded from the auto-dispatch
-          walk and are only reachable by explicit ``method="..."``.
+        Implementations must:
+
+        1. Consult ``self._type_cache`` to avoid recomputation.
+        2. Call ``self._is_auto_dispatchable(m)`` to exclude opt-in-only
+           methods (Approach A: single point of truth for the filter).
+        3. Apply an ``issubclass`` pre-filter via ``supported_types()``.
+        """
+        ...
+
+    @abstractmethod
+    def _format_key(self, key: Any) -> str:
+        """Format *key* as a human-readable string for error messages."""
+        ...
+
+
+class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]):
+    """Priority-based registry for single-argument dispatch.
+
+    Dispatches on the type of the first positional argument.
+    ``MethodRegistry`` is an alias for this class.
+    """
+
+    def _cache_key(self, args: tuple) -> type:
+        return type(args[0])
+
+    def _find_methods(self, key: type) -> list[M]:
+        """Return auto-dispatchable methods matching *key* (cached).
+
+        Applies an ``issubclass`` pre-filter on ``supported_types()``
+        and excludes opt-in-only methods via
+        :meth:`~BaseDispatchRegistry._is_auto_dispatchable`.
 
         Uses ``issubclass`` rather than ``isinstance`` because we are
         comparing *types*, not instances.  ``supported_types()`` must
         return concrete classes (not protocols with non-method members),
         since ``issubclass`` does not work reliably with such protocols.
         """
-        if key_type not in self._type_cache:
-            self._type_cache[key_type] = [
+        if key not in self._type_cache:
+            self._type_cache[key] = [
                 m for m in self._methods
-                if self._effective_priority(m) != OPT_IN_ONLY_PRIORITY
-                and any(issubclass(key_type, st) for st in m.supported_types())
+                if self._is_auto_dispatchable(m)
+                and any(issubclass(key, st) for st in m.supported_types())
             ]
-        return self._type_cache[key_type]
+        return self._type_cache[key]
+
+    def _format_key(self, key: type) -> str:
+        return key.__name__
+
+
+class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]):
+    """Priority-based registry for two-argument dispatch.
+
+    Dispatches on the joint type of the first two positional arguments.
+    Each registered method's ``supported_types()`` must return a 2-tuple
+    of type-tuples: ``((left_types, ...), (right_types, ...))``.
+    """
+
+    def _cache_key(self, args: tuple) -> tuple[type, type]:
+        return (type(args[0]), type(args[1]))
+
+    def _find_methods(self, key: tuple[type, type]) -> list[M]:
+        """Return auto-dispatchable methods matching the type pair *key* (cached).
+
+        Both left and right type slots must pass an ``issubclass`` check
+        against ``supported_types()[0]`` and ``supported_types()[1]``
+        respectively.  Opt-in-only methods are excluded via
+        :meth:`~BaseDispatchRegistry._is_auto_dispatchable`.
+        """
+        if key not in self._type_cache:
+            tl, tr = key
+            self._type_cache[key] = [
+                m for m in self._methods
+                if self._is_auto_dispatchable(m)
+                and any(issubclass(tl, lt) for lt in m.supported_types()[0])
+                and any(issubclass(tr, rt) for rt in m.supported_types()[1])
+            ]
+        return self._type_cache[key]
+
+    def _format_key(self, key: tuple[type, type]) -> str:
+        return f"({key[0].__name__}, {key[1].__name__})"
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible aliases — preserve the existing public API
+# ---------------------------------------------------------------------------
+
+#: Alias for :class:`UnaryDispatchMethod`.
+Method = UnaryDispatchMethod
+
+#: Alias for :class:`UnaryDispatchRegistry`.
+MethodRegistry = UnaryDispatchRegistry
