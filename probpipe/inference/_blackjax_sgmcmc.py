@@ -162,7 +162,9 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
         # Initial position from prior or user-supplied init.
         prior = dist.prior
-        init = get_init_state(prior, kwargs.get("init"), observed)
+        init = get_init_state(
+            prior, kwargs.get("init"), observed, random_seed=random_seed,
+        )
         state = algorithm.init(init)
 
         # Iterate. The kernel itself jitf within run_loop's step closure.

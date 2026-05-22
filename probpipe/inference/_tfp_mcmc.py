@@ -148,7 +148,10 @@ class _TFPGradientMethod(InferenceMethod):
                               description="Requires SupportsUnnormalizedLogProb")
         try:
             target = build_target_log_prob(dist, observed)
-            init = get_init_state(get_prior(dist), kwargs.get("init"), observed)
+            init = get_init_state(
+                get_prior(dist), kwargs.get("init"), observed,
+                random_seed=kwargs.get("random_seed", 0),
+            )
             if not is_jax_traceable(target, init):
                 return MethodInfo(feasible=False, method_name=self.name,
                                   description="Log-prob is not JAX-traceable")
@@ -158,9 +161,12 @@ class _TFPGradientMethod(InferenceMethod):
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
+        random_seed = kwargs.get("random_seed", 0)
         target = build_target_log_prob(dist, observed)
         prior = get_prior(dist)
-        init = get_init_state(prior, kwargs.get("init"), observed)
+        init = get_init_state(
+            prior, kwargs.get("init"), observed, random_seed=random_seed,
+        )
         record_template = extract_record_template(dist)
 
         num_results = kwargs.get("num_results", 1000)
@@ -174,7 +180,7 @@ class _TFPGradientMethod(InferenceMethod):
             num_warmup=num_warmup,
             num_chains=num_chains,
             step_size=kwargs.get("step_size", 0.1),
-            random_seed=kwargs.get("random_seed", 0),
+            random_seed=random_seed,
         )
         auxiliary = build_mcmc_datatree(chains, sample_stats)
         return make_posterior(

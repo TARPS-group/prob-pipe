@@ -213,15 +213,15 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
+        random_seed: int = kwargs.get("random_seed", 0)
         target_flat, flat_init, record_template = build_target_log_prob_flat(
-            dist, observed, init=kwargs.get("init"),
+            dist, observed, init=kwargs.get("init"), random_seed=random_seed,
         )
         num_results: int = kwargs.get("num_results", 1000)
         num_warmup: int = kwargs.get("num_warmup", 500)
         num_chains: int = kwargs.get("num_chains", 1)
         step_size: float = kwargs.get("step_size", 0.1)
         num_integration_steps: int = kwargs.get("num_integration_steps", 10)
-        random_seed: int = kwargs.get("random_seed", 0)
 
         chains, sample_stats = _run_blackjax_chains(
             target_flat, flat_init,

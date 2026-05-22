@@ -76,19 +76,18 @@ def rwmh(
         )
 
     if log_prob_fn is not None and data is not None:
-        data_jnp = jnp.asarray(data)
         def target_log_prob(params):
-            return dist._unnormalized_log_prob(params) + log_prob_fn(params, data_jnp)
+            return dist._unnormalized_log_prob(params) + log_prob_fn(params, data)
     else:
         def target_log_prob(params):
             return dist._unnormalized_log_prob(params)
 
-    # Use the prior's mean as the init heuristic rather than ``dist``'s.
-    # ``SimpleModel`` does not implement ``SupportsMean``, so passing the
-    # full target through ``get_init_state`` would skip the
-    # ``_mean()`` path; extracting the prior first gives the right
-    # parameter-space init for canonical ProbPipe models.
-    init_state = get_init_state(get_prior(dist), init, data)
+    # Extract the prior so ``get_init_state`` reaches the
+    # ``SupportsSampling`` path on ``SimpleModel`` targets (the model
+    # itself doesn't implement the protocol; its prior does).
+    init_state = get_init_state(
+        get_prior(dist), init, data, random_seed=random_seed,
+    )
 
     d = init_state.shape[0]
     key = jax.random.PRNGKey(random_seed)
@@ -182,9 +181,12 @@ class TFPRWMHMethod(InferenceMethod):
             lik = dist._likelihood
             log_prob_fn = lambda params, d: lik.log_likelihood(params=params, data=d)
 
+        random_seed = kwargs.get("random_seed", 0)
         init = kwargs.get("init")
         if init is None:
-            init = get_init_state(prior, None, observed)
+            init = get_init_state(
+                prior, None, observed, random_seed=random_seed,
+            )
 
         return rwmh._func(
             prior, observed,
@@ -194,5 +196,5 @@ class TFPRWMHMethod(InferenceMethod):
             num_chains=kwargs.get("num_chains", 1),
             step_size=kwargs.get("step_size", 0.1),
             init=init,
-            random_seed=kwargs.get("random_seed", 0),
+            random_seed=random_seed,
         )
