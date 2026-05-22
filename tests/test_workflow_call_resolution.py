@@ -145,10 +145,10 @@ class TestReservedOverrides:
             func=identity_func,
             n_broadcast_samples=20,
             vectorize="loop",
-            seed=114514,
+            seed=42,
         )
 
-        result = wf(normal_dist, n_broadcast_samples=6, include_inputs=True, seed=114514)
+        result = wf(normal_dist, n_broadcast_samples=6, include_inputs=True, seed=42)
 
         assert isinstance(result, BroadcastDistribution)
         assert result.n == 6
@@ -162,10 +162,10 @@ class TestReservedOverrides:
             func=identity_func,
             n_broadcast_samples=8,
             vectorize="loop",
-            seed=114514,
+            seed=42,
         )
 
-        first = wf(normal_dist, seed=114514)
-        second = wf(normal_dist, seed=114514)
+        first = wf(normal_dist, seed=42)
+        second = wf(normal_dist, seed=42)
 
         assert jnp.allclose(first.samples, second.samples)
