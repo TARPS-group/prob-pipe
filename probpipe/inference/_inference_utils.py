@@ -1,0 +1,241 @@
+"""Backend-agnostic inference utilities.
+
+Functions for building target log-density callables and initial chain
+states from a :class:`~probpipe.core.distribution.Distribution` plus
+observed data. Lifted out of ``_tfp_mcmc.py`` so both the TFP and
+BlackJAX MCMC paths consume the same source of truth, and so future
+backends (VI, SMC, Laplace) get the same machinery.
+
+The Record-shaped path (:func:`build_target_log_prob`) is the original
+TFP-flavoured interface. The flat-vector path
+(:func:`build_target_log_prob_flat`) is the BlackJAX entry point — it
+wraps the Record-shaped target through the prior's
+:meth:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution.as_flat_distribution`
+view so kernels that operate on flat parameter vectors can plug in
+without per-backend flatten / unflatten plumbing.
+
+Scope: private to ``probpipe.inference``. Symbols are package-private
+utilities shared across the backend modules (``_tfp_mcmc.py``,
+``_rwmh.py``, ``_blackjax_sgmcmc.py``, and the forthcoming
+``_blackjax_mcmc.py``); they are not re-exported through
+``probpipe.inference.__init__`` or the top-level package.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Callable
+
+import jax
+import jax.numpy as jnp
+
+from ..core.distribution import Distribution
+from ..core.protocols import SupportsMean
+from ..core.record import Record, RecordTemplate
+from ..custom_types import Array, ArrayLike
+
+
+__all__ = [
+    "build_target_log_prob",
+    "build_target_log_prob_flat",
+    "get_init_state",
+    "get_prior",
+    "extract_record_template",
+    "is_jax_traceable",
+    "is_simple_model",
+]
+
+
+# ---------------------------------------------------------------------------
+# JAX-traceability probe
+# ---------------------------------------------------------------------------
+
+def is_jax_traceable(fn: Callable, init_state: jnp.ndarray) -> bool:
+    """Probe whether *fn* can be traced by JAX at *init_state*.
+
+    Used by gradient-based MCMC `check()` methods to filter out targets
+    that would fail at execute() time. The cost is ~one JAX trace,
+    cached by JAX on subsequent calls.
+    """
+    try:
+        jax.make_jaxpr(fn)(init_state)
+        return True
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Initial-state heuristics
+# ---------------------------------------------------------------------------
+
+def get_init_state(
+    dist: Distribution, init: ArrayLike | None, observed: ArrayLike | None,
+) -> jnp.ndarray:
+    """Determine an initial chain state from the distribution or data.
+
+    Resolution order: explicit ``init`` > distribution mean (via the
+    ``SupportsMean`` protocol) > mean of ``observed`` > zeros of
+    ``dist.event_shape``. Inherits dtype from the target distribution
+    when available so ``log_prob`` / ``sample`` stay self-consistent
+    under JAX x64.
+    """
+    target_dtype = getattr(dist, "dtype", None)
+    if not isinstance(target_dtype, jnp.dtype):
+        from .._dtype import _default_float_dtype
+        target_dtype = _default_float_dtype()
+
+    if init is not None:
+        return jnp.atleast_1d(jnp.asarray(init, dtype=target_dtype))
+
+    if isinstance(dist, SupportsMean):
+        try:
+            m = dist._mean()
+            if isinstance(m, Record):
+                from ..core._numeric_record import NumericRecord
+                if not isinstance(m, NumericRecord):
+                    m = NumericRecord.from_record(m)
+                m = m.flatten()
+            return jnp.atleast_1d(jnp.asarray(m, dtype=target_dtype))
+        except Exception:
+            pass
+
+    if observed is not None:
+        return jnp.atleast_1d(jnp.mean(jnp.asarray(observed), axis=0))
+
+    if hasattr(dist, "event_shape"):
+        return jnp.zeros(dist.event_shape, dtype=target_dtype)
+
+    raise ValueError(
+        "Cannot determine initial state: provide init=, "
+        "a distribution with SupportsMean, or observed data."
+    )
+
+
+# ---------------------------------------------------------------------------
+# SimpleModel detection and prior extraction
+# ---------------------------------------------------------------------------
+
+def is_simple_model(dist: Distribution) -> bool:
+    """Check whether *dist* is a SimpleModel (lazy import for circularity)."""
+    from ..modeling._simple import SimpleModel
+    return isinstance(dist, SimpleModel)
+
+
+def get_prior(dist: Distribution) -> Distribution:
+    """Return the prior of a model, or *dist* itself for non-model targets."""
+    return dist._prior if is_simple_model(dist) else dist
+
+
+def extract_record_template(dist: Distribution) -> RecordTemplate | None:
+    """Return *dist*'s prior's ``record_template``, or ``None``.
+
+    Uses ``getattr`` so a non-``RecordDistribution`` prior (which has
+    no ``record_template`` after the PR #200 hierarchy cleanup) yields
+    ``None`` rather than ``AttributeError``. SimpleModel-rooted callers
+    can rely on the prior being a ``RecordDistribution`` and read
+    ``prior.record_template`` directly; this helper exists for the
+    bare ``SupportsLogProb`` paths.
+    """
+    prior = get_prior(dist)
+    return getattr(prior, "record_template", None)
+
+
+# ---------------------------------------------------------------------------
+# Target log-density construction
+# ---------------------------------------------------------------------------
+
+def build_target_log_prob(
+    dist: Distribution, observed: ArrayLike | Record | None,
+) -> Callable[[Any], Array]:
+    """Build a ``target_log_prob_fn(params)`` from *dist* and *observed*.
+
+    Three cases:
+
+    1. **SimpleModel** (has prior + likelihood):
+       ``prior._log_prob(params) + likelihood.log_likelihood(params, data)``.
+    2. **Bare ``SupportsUnnormalizedLogProb`` with data**:
+       ``dist._unnormalized_log_prob(params)`` (data is assumed already
+       folded in, e.g., via closure).
+    3. **Joint over (params, data)**:
+       ``dist._unnormalized_log_prob((params, data))``.
+
+    The unnormalized accessor is used for cases 2 and 3 because MCMC
+    samplers do not require a normalized density. Distributions that
+    only implement ``_log_prob`` are unaffected: the
+    ``SupportsUnnormalizedLogProb`` protocol provides a default
+    ``_unnormalized_log_prob`` that delegates to ``_log_prob``.
+
+    Observed data is passed through to the likelihood as-is (may be a
+    raw array, a ``Record`` object, or a dict — the likelihood handles
+    its own input types).
+    """
+    if is_simple_model(dist):
+        data = observed
+        # Records now store values verbatim (no lazy conversion), so we
+        # no longer have to pre-resolve to avoid tracer leaks. Left as a
+        # no-op Record rebuild for backwards-compatible safety under JIT
+        # if callers pass in non-JAX array leaves (e.g. numpy).
+        if isinstance(data, Record):
+            data = Record({f: jnp.asarray(data[f]) for f in data.fields})
+
+        def target_log_prob_fn(params):
+            lp = dist._prior._log_prob(params)
+            if data is not None:
+                lp = lp + dist._likelihood.log_likelihood(params=params, data=data)
+            return lp
+
+        return target_log_prob_fn
+
+    if observed is not None:
+        return lambda params: dist._unnormalized_log_prob((params, observed))
+
+    return dist._unnormalized_log_prob
+
+
+def build_target_log_prob_flat(
+    dist: Distribution, observed: ArrayLike | Record | None,
+    *,
+    init: ArrayLike | None = None,
+) -> tuple[Callable[[Array], Array], Array, RecordTemplate]:
+    """Build a flat-vector target + initial state + record template.
+
+    Returns ``(target_flat_fn, flat_init, record_template)``:
+
+    - ``target_flat_fn(theta_flat) -> log_prob``: composes
+      :func:`build_target_log_prob` with the prior's
+      :meth:`~probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.unflatten_sample`,
+      so kernels that operate on flat parameter vectors don't need to
+      know about the structured target.
+    - ``flat_init``: the flat-vector initial chain state from
+      :func:`get_init_state`.
+    - ``record_template``: the prior's ``record_template``, suitable
+      for passing to
+      :func:`~probpipe.inference._approximate_distribution.make_posterior`
+      so the resulting
+      :class:`~probpipe.inference._approximate_distribution.ApproximateDistribution`
+      lifts samples back through the same template.
+
+    Requires the prior to expose ``as_flat_distribution`` (i.e., to be
+    a :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`).
+    Raises ``TypeError`` otherwise — a bare opaque-typed
+    ``SupportsLogProb`` target has no canonical flat representation.
+
+    Intended for use by BlackJAX-flavoured MCMC / VI backends.
+    """
+    prior = get_prior(dist)
+    flat_view = getattr(prior, "as_flat_distribution", None)
+    record_template = getattr(prior, "record_template", None)
+    if flat_view is None or record_template is None:
+        raise TypeError(
+            f"build_target_log_prob_flat requires a NumericRecordDistribution "
+            f"prior (with as_flat_distribution and record_template); got "
+            f"{type(prior).__name__}."
+        )
+
+    target_record = build_target_log_prob(dist, observed)
+    init_record = get_init_state(prior, init, observed)
+    flat_prior = flat_view()
+
+    def target_flat(theta_flat: Array) -> Array:
+        return target_record(flat_prior.unflatten_sample(theta_flat))
+
+    return target_flat, init_record, record_template

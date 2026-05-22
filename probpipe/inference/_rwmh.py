@@ -12,10 +12,16 @@ from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
 from ..core.node import workflow_function
 from ..core.protocols import SupportsUnnormalizedLogProb
-from ..custom_types import Array, ArrayLike, PRNGKey
+from ..custom_types import ArrayLike
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
-from ._tfp_mcmc import _build_mcmc_datatree, _extract_record_template, _get_init_state, _get_prior, _is_simple_model
+from ._inference_utils import (
+    extract_record_template,
+    get_init_state,
+    get_prior,
+    is_simple_model,
+)
+from ._tfp_mcmc import _build_mcmc_datatree
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +83,7 @@ def rwmh(
         def target_log_prob(params):
             return dist._unnormalized_log_prob(params)
 
-    init_state = _get_init_state(dist, init, data)
+    init_state = get_init_state(dist, init, data)
 
     d = init_state.shape[0]
     key = jax.random.PRNGKey(random_seed)
@@ -124,7 +130,7 @@ def rwmh(
 
     auxiliary = _build_mcmc_datatree(chains, warmup_chains=warmup)
 
-    record_template = _extract_record_template(dist)
+    record_template = extract_record_template(dist)
     return make_posterior(
         chains, parents=(dist,), algorithm="rwmh",
         auxiliary=auxiliary, record_template=record_template,
@@ -155,7 +161,7 @@ class TFPRWMHMethod(InferenceMethod):
         return 55
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
-        prior = _get_prior(dist)
+        prior = get_prior(dist)
         if not isinstance(prior, SupportsUnnormalizedLogProb):
             return MethodInfo(feasible=False, method_name=self.name,
                               description="Requires SupportsUnnormalizedLogProb")
@@ -165,15 +171,15 @@ class TFPRWMHMethod(InferenceMethod):
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
-        prior = _get_prior(dist)
+        prior = get_prior(dist)
         log_prob_fn = None
-        if _is_simple_model(dist):
+        if is_simple_model(dist):
             lik = dist._likelihood
             log_prob_fn = lambda params, d: lik.log_likelihood(params=params, data=d)
 
         init = kwargs.get("init")
         if init is None:
-            init = _get_init_state(prior, None, observed)
+            init = get_init_state(prior, None, observed)
 
         return rwmh._func(
             prior, observed,

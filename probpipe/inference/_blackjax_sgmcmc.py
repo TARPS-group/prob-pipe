@@ -36,11 +36,11 @@ import jax.numpy as jnp
 
 from ..core._registry import MethodInfo
 from ..core._random_measures import RandomMeasure
-from ..custom_types import Array, PRNGKey
+from ..custom_types import PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._minibatch import MinibatchedDistribution
 from ._registry import InferenceMethod
-from ._tfp_mcmc import _get_init_state, _is_simple_model
+from ._inference_utils import get_init_state, is_simple_model
 
 __all__ = ["BlackJAXSGLDMethod", "BlackJAXSGHMCMethod"]
 
@@ -109,7 +109,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         """Require SimpleModel + ConditionallyIndependentLikelihood + batch_size."""
         from ..modeling._likelihood import ConditionallyIndependentLikelihood
 
-        if not _is_simple_model(dist):
+        if not is_simple_model(dist):
             return MethodInfo(
                 feasible=False, method_name=self.name,
                 description=(
@@ -162,7 +162,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
         # Initial position from prior or user-supplied init.
         prior = dist.prior
-        init = _get_init_state(prior, kwargs.get("init"), observed)
+        init = get_init_state(prior, kwargs.get("init"), observed)
         state = algorithm.init(init)
 
         # Iterate. The kernel itself jitf within run_loop's step closure.
@@ -176,8 +176,11 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         )
 
         # Stack into a chain shaped (num_steps, *event_shape) and wrap.
+        # ``check()`` rejects any non-SimpleModel target, and SimpleModel
+        # requires a RecordDistribution prior (PR #200), so the
+        # ``record_template`` attribute is guaranteed here.
         chain = jnp.stack(positions, axis=0)
-        record_template = getattr(prior, "record_template", None)
+        record_template = prior.record_template
         return make_posterior(
             [chain], parents=(prior,), algorithm=self._method_name,
             auxiliary=None, record_template=record_template,
