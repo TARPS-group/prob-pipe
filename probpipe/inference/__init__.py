@@ -1,8 +1,9 @@
 """Inference algorithms for ProbPipe.
 
-Provides MCMC sampling (gradient-free RWMH and nutpie-backed NUTS),
-chain-structured empirical distributions, and the inference method
-registry for ``condition_on`` dispatch.
+Provides MCMC sampling (gradient-based NUTS/HMC + gradient-free RWMH and
+elliptical slice sampling — all BlackJAX-backed), chain-structured
+empirical distributions, and the inference method registry for
+``condition_on`` dispatch.
 """
 
 from __future__ import annotations
@@ -12,7 +13,8 @@ from ._registry import (
     inference_method_registry,
 )
 from ..core._registry import Method, MethodInfo, MethodRegistry
-from ._rwmh import rwmh
+from ._blackjax_rwmh import rwmh
+from ._blackjax_ess import elliptical_slice
 from ._nutpie import condition_on_nutpie
 from ._minibatch import MinibatchedDistribution
 
@@ -24,6 +26,7 @@ __all__ = [
     "InferenceMethod",
     "inference_method_registry",
     "rwmh",
+    "elliptical_slice",
     "condition_on_nutpie",
     "MinibatchedDistribution",
     "sbi_learn_conditional",
@@ -36,22 +39,32 @@ __all__ = [
 # Register built-in inference methods
 # ---------------------------------------------------------------------------
 
-# TFP-backed methods (always available since TFP is a core dependency)
+# TFP-backed methods (always available since TFP is a core dependency).
+# These are opt-in-only (priority 0) after the BlackJAX migration —
+# auto-dispatch picks the BlackJAX-backed equivalents below.
 from ._tfp_mcmc import TFPNutsMethod, TFPHmcMethod
 
 inference_method_registry.register(TFPNutsMethod())
 inference_method_registry.register(TFPHmcMethod())
 
-# RWMH (always available)
-from ._rwmh import TFPRWMHMethod
-
-inference_method_registry.register(TFPRWMHMethod())
-
-# BlackJAX MCMC (gradient-based)
+# BlackJAX MCMC (gradient-based) — the auto-dispatch default for any
+# JAX-traceable SupportsLogProb target.
 from ._blackjax_mcmc import BlackJAXNutsMethod, BlackJAXHmcMethod
 
 inference_method_registry.register(BlackJAXNutsMethod())
 inference_method_registry.register(BlackJAXHmcMethod())
+
+# BlackJAX gradient-free MCMC: RWMH (catch-all) and ESS (Gaussian-prior).
+# ``TFPRWMHMethod`` is a deprecated alias kept for one minor release —
+# the legacy ``tfp_rwmh`` name pre-dates the BlackJAX migration and was
+# never actually TFP-backed (the original implementation was a
+# hand-rolled Python loop).
+from ._blackjax_rwmh import BlackJAXRWMHMethod, TFPRWMHMethod
+from ._blackjax_ess import BlackJAXESSMethod
+
+inference_method_registry.register(BlackJAXRWMHMethod())
+inference_method_registry.register(BlackJAXESSMethod())
+inference_method_registry.register(TFPRWMHMethod())
 
 # BlackJAX SGMCMC
 from ._blackjax_sgmcmc import BlackJAXSGLDMethod, BlackJAXSGHMCMethod

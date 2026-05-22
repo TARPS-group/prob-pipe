@@ -318,7 +318,8 @@ class TestBuiltInPriorityAnchors:
         "blackjax_nuts": 85,
         "cmdstan_nuts": 82,
         "pymc_nuts": 82,
-        "tfp_rwmh": 55,
+        "blackjax_elliptical_slice": 75,
+        "blackjax_rwmh": 55,
         "blackjax_sgld": 45,
         "sbijax_smcabc": 5,
         # Opt-in only — registered but excluded from auto-dispatch.
@@ -327,6 +328,10 @@ class TestBuiltInPriorityAnchors:
         "pymc_advi": 0,
         "tfp_nuts": 0,
         "tfp_hmc": 0,
+        # ``tfp_rwmh`` is a deprecated alias for ``blackjax_rwmh``;
+        # registered at the opt-in sentinel so existing pinned callers
+        # keep working through the deprecation window.
+        "tfp_rwmh": 0,
     }
 
     def test_priorities_match_anchors(self):
