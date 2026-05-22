@@ -47,13 +47,15 @@ when choosing a number for a new method are documented under
 | `nutpie_nuts` | 85 | `StanModel` or `PyMCModel` + nutpie | nutpie |
 | `cmdstan_nuts` | 82 | `StanModel` + cmdstanpy | CmdStan |
 | `pymc_nuts` | 81 | `PyMCModel` + pymc | PyMC |
-| `tfp_nuts` | 75 | `SupportsLogProb` + JAX-traceable | TFP |
-| `tfp_hmc` | 65 | `SupportsLogProb` + JAX-traceable | TFP |
+| `blackjax_nuts` | 75 | `SupportsLogProb` + JAX-traceable | BlackJAX |
+| `blackjax_hmc` | 65 | `SupportsLogProb` + JAX-traceable | BlackJAX |
 | `tfp_rwmh` | 55 | `SupportsLogProb` | TFP |
 | `blackjax_sgld` | 45 | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX |
 | `blackjax_sghmc` | 42 | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX |
 | `pymc_advi` | 25 | `PyMCModel` + pymc | PyMC |
 | `sbijax_smcabc` | 5 | `SimpleGenerativeModel` + sbijax | sbijax |
+| `tfp_nuts` | 0 | `SupportsLogProb` + JAX-traceable | TFP (opt-in only) |
+| `tfp_hmc` | 0 | `SupportsLogProb` + JAX-traceable | TFP (opt-in only) |
 
 ::: probpipe.ApproximateDistribution
 

@@ -27,9 +27,11 @@ Open from the parent §9 table:
 | 2a — register BlackJAX `nuts` / `hmc` at lower priority | this plan |
 | 2b — flip MCMC default to BlackJAX | this plan |
 | 4 — VI + Pathfinder + `PathfinderDistribution` | follow-up PR (§ 7) |
-| 2c — delete `_tfp_mcmc.py` | deferred (§ 8) |
 | 5 — BlackJAX SMC | deferred |
 | 6a / 6b — native Laplace | deferred |
+
+Parent §9 also lists Phase 2c (delete `_tfp_mcmc.py`). That step is
+**not happening** under this plan — see § 2 below.
 
 ## 2. Scope
 
@@ -38,7 +40,14 @@ A **single PR** consolidating what the parent plan staged as Phase 2a + Phase 2b
 - ProbPipe is in alpha. There is no long-tail of pinned external users to support; a one-PR cutover is fine.
 - Issue #189 introduced the `priority == 0` opt-in-only sentinel. Demoting `tfp_nuts` and `tfp_hmc` to `0` keeps them reachable via `method="tfp_nuts"` for bit-pattern regression checks, without the multi-release deprecation dance the parent plan described.
 
-What this PR does **not** do: delete `_tfp_mcmc.py`. That follows as a small separate PR once the BlackJAX default has been exercised in real use (see § 8).
+What this PR does **not** do — and what the parent §9 Phase 2c step
+becomes obsolete for — is delete `_tfp_mcmc.py`. The opt-in `tfp_nuts`
+and `tfp_hmc` methods stay registered at priority 0, so the file
+remains the backing implementation for callers that pin `method="tfp_nuts"`
+explicitly. The two-backend coexistence is the steady-state target, not
+a deprecation window. The architectural follow-ups that the parent plan
+tied to the deletion (e.g. consolidating sample-stats packing) are
+re-scoped under § 8 below.
 
 ## 3. Design choices that have changed since the parent plan
 
@@ -73,7 +82,7 @@ This PR's first commit is therefore *strictly sequenced after* #200 lands.
 
 BlackJAX's `info` is a `NamedTuple` (`acceptance_probability`, `step_size`, `num_integration_steps`, `is_divergent` for NUTS). The ArviZ converter currently consumes a TFP-shaped dict with specific keys. To keep the ArviZ path working without a converter rewrite, the BlackJAX path packs `info` into the **same dict shape** TFP produces.
 
-When `_tfp_mcmc.py` is finally deleted (§ 8), a backend-neutral `SampleStats` dataclass can replace both paths' ad-hoc dict construction. Not in this PR.
+A backend-neutral `SampleStats` dataclass (replacing both paths' ad-hoc dict construction) remains a sensible follow-up, but it's no longer tied to deleting `_tfp_mcmc.py` — both backends are permanent. Tracked under § 8.
 
 ### 3.4 `MinibatchedDistribution.record_template` access
 
@@ -304,10 +313,26 @@ The Pathfinder PR is independent of any benchmark-gate decision on the MCMC migr
 
 ## 8. Out of scope / deferred
 
-- **Delete `_tfp_mcmc.py` (parent Phase 2c).** Deferred to a small follow-up PR after the BlackJAX default has been used in real-world tests + notebooks for at least one cycle. Pre-condition: no auto-dispatch test or user notebook references `tfp_nuts` / `tfp_hmc` by name. The deletion drops the `tensorflow_probability` MCMC import surface but keeps TFP for distribution-backend use.
-- **`SampleStats` dataclass to replace the dict shape** (parent §6.2). Pairs with the `_tfp_mcmc.py` deletion above — once there's only one backend producing the dict, the wrapper is unnecessary.
-- **SMC (parent Phase 5)** and **Laplace (parent Phase 6a / 6b)** — separate plans, separate PRs.
-- **Gradient-free RWMH migration.** `blackjax.rmh` exists but isn't on the wishlist; `tfp_rwmh` stays in place.
+- **`_tfp_mcmc.py` stays.** The opt-in `tfp_nuts` / `tfp_hmc` methods
+  remain registered at priority 0 and `_tfp_mcmc.py` is their backing
+  implementation. The parent §9 Phase 2c step (delete `_tfp_mcmc.py`)
+  is obsolete under this plan: there's no migration window because the
+  two backends coexist indefinitely.
+- **Shared `_GradientMCMCMethod` base class for TFP + BlackJAX.** The
+  two method classes now mirror each other's structure (`__init__`,
+  `name`, `priority`, `supported_types`, `check`, `execute`) and will
+  continue to. The original deferral rationale ("wait for the TFP path
+  to go away") no longer applies. A small follow-up PR extracting the
+  shared scaffolding is now justified on its own terms — *but only if*
+  the per-backend warmup / kernel-construction details stay close
+  enough to share. Defer until both paths have settled.
+- **Backend-neutral `SampleStats` dataclass** replacing the ad-hoc
+  TFP-shaped dict (parent §6.2). Same status: useful on its own,
+  pairs naturally with the shared-base-class refactor above.
+- **SMC (parent Phase 5)** and **Laplace (parent Phase 6a / 6b)** —
+  separate plans, separate PRs.
+- **Gradient-free RWMH migration.** `blackjax.rmh` exists but isn't
+  on the wishlist; `tfp_rwmh` stays in place.
 
 ## 9. Risk and rollback
 

@@ -69,12 +69,20 @@ class TestRegistry:
 
     def test_priorities_below_full_batch(self):
         """SGMCMC methods sit below full-batch gradient methods so they
-        only fire when explicitly requested."""
+        only fire when explicitly requested.
+
+        The BlackJAX migration replaced the auto-dispatching TFP NUTS /
+        HMC with the BlackJAX equivalents; ``tfp_nuts`` / ``tfp_hmc``
+        are now at the opt-in-only sentinel ``0``. SGMCMC must stay
+        below the active gradient methods (``blackjax_nuts``,
+        ``blackjax_hmc``) so a routine ``condition_on(...)`` doesn't
+        accidentally pick a stochastic-gradient sampler.
+        """
         get = lambda n: inference_method_registry.get_method(n).priority
-        # SGLD/SGHMC below NUTS and HMC; SGHMC below SGLD.
-        assert get("blackjax_sgld") < get("tfp_nuts")
-        assert get("blackjax_sgld") < get("tfp_hmc")
-        assert get("blackjax_sghmc") < get("tfp_nuts")
+        # SGLD/SGHMC below BlackJAX NUTS / HMC; SGHMC below SGLD.
+        assert get("blackjax_sgld") < get("blackjax_nuts")
+        assert get("blackjax_sgld") < get("blackjax_hmc")
+        assert get("blackjax_sghmc") < get("blackjax_nuts")
         assert get("blackjax_sghmc") < get("blackjax_sgld")
         # And both above zero (so an opt-in `method=...` reaches them).
         assert get("blackjax_sgld") > 0

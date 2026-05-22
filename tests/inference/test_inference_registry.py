@@ -132,17 +132,25 @@ class TestInferenceMethodRegistry:
         assert "tfp_rwmh" in methods
 
     def test_priority_order(self):
+        """RWMH stays above the opt-in-only TFP gradient methods.
+
+        After the BlackJAX migration, ``tfp_nuts`` and ``tfp_hmc`` are at
+        priority 0 (opt-in only) and so don't participate in the order
+        ``list_methods()`` exposes for auto-dispatch. ``tfp_rwmh``
+        remains at priority 55 — gradient-free with no BlackJAX
+        replacement in this PR.
+        """
         methods = inference_method_registry.list_methods()
-        nuts_idx = methods.index("tfp_nuts")
-        hmc_idx = methods.index("tfp_hmc")
-        rwmh_idx = methods.index("tfp_rwmh")
-        assert nuts_idx < hmc_idx < rwmh_idx
+        # All three remain registered.
+        assert {"tfp_nuts", "tfp_hmc", "tfp_rwmh"}.issubset(methods)
+        # blackjax_nuts (75) outranks tfp_rwmh (55) outranks the opt-in TFP pair.
+        assert methods.index("blackjax_nuts") < methods.index("tfp_rwmh")
 
     def test_auto_select_nuts(self, simple_model, data):
-        """NUTS should be auto-selected for a JAX-traceable model."""
+        """BlackJAX NUTS is the auto-dispatch winner for any JAX-traceable model."""
         info = inference_method_registry.check(simple_model, data)
         assert info.feasible
-        assert info.method_name == "tfp_nuts"
+        assert info.method_name == "blackjax_nuts"
 
     def test_method_override(self, simple_model, data):
         """method= should override auto-selection."""
@@ -294,19 +302,28 @@ class TestSetPrioritiesZeroCrossingWarning:
 # ---------------------------------------------------------------------------
 
 class TestBuiltInPriorityAnchors:
-    """The eight + two re-anchored priorities from issue #189."""
+    """Priority anchors per issue #189, with the BlackJAX MCMC migration.
+
+    ``tfp_nuts`` / ``tfp_hmc`` are at the opt-in-only sentinel ``0`` —
+    they remain registered for callers that pin ``method="tfp_nuts"``
+    but no longer participate in auto-dispatch. ``blackjax_nuts`` /
+    ``blackjax_hmc`` take their old priority slots.
+    """
 
     EXPECTED_PRIORITIES = {
         "nutpie_nuts": 85,
         "cmdstan_nuts": 82,
         "pymc_nuts": 81,
-        "tfp_nuts": 75,
-        "tfp_hmc": 65,
+        "blackjax_nuts": 75,
+        "blackjax_hmc": 65,
         "tfp_rwmh": 55,
         "blackjax_sgld": 45,
         "blackjax_sghmc": 42,
         "pymc_advi": 25,
         "sbijax_smcabc": 5,
+        # Opt-in only — registered but excluded from auto-dispatch.
+        "tfp_nuts": 0,
+        "tfp_hmc": 0,
     }
 
     def test_priorities_match_anchors(self):
@@ -417,11 +434,11 @@ class TestUnnormalizedLogProbInference:
         assert not isinstance(dist, SupportsLogProb)
 
     def test_auto_dispatch_to_nuts(self):
-        """Auto-dispatch picks tfp_nuts for unnormalized-only target."""
+        """Auto-dispatch picks blackjax_nuts for unnormalized-only target."""
         dist = _make_unnormalized_distribution()
         info = inference_method_registry.check(dist, None)
         assert info.feasible
-        assert info.method_name == "tfp_nuts"
+        assert info.method_name == "blackjax_nuts"
 
     def test_condition_on_unnormalized_runs_nuts(self):
         from probpipe import ApproximateDistribution

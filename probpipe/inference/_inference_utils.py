@@ -200,50 +200,55 @@ def build_target_log_prob_flat(
     dist: Distribution, observed: ArrayLike | Record | None,
     *,
     init: ArrayLike | None = None,
-) -> tuple[Callable[[Array], Array], Array, RecordTemplate]:
-    """Build a flat-vector target + initial state + record template.
+) -> tuple[Callable[[Array], Array], Array, RecordTemplate | None]:
+    """Build a flat-vector target + initial state + (optional) record template.
 
     Returns ``(target_flat_fn, flat_init, record_template)``:
 
-    - ``target_flat_fn(theta_flat) -> log_prob``: composes
-      :func:`build_target_log_prob` with the prior's
-      :meth:`~probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.unflatten_sample`,
-      so kernels that operate on flat parameter vectors don't need to
-      know about the structured target.
+    - ``target_flat_fn(theta_flat) -> log_prob``: a callable that
+      consumes a flat parameter vector.
     - ``flat_init``: the flat-vector initial chain state from
       :func:`get_init_state`.
-    - ``record_template``: the prior's ``record_template``, suitable
-      for passing to
+    - ``record_template``: the prior's ``record_template`` when the
+      target's parameter space is Record-shaped; ``None`` for bare
+      array-shaped targets. Passes through to
       :func:`~probpipe.inference._approximate_distribution.make_posterior`
-      so the resulting
-      :class:`~probpipe.inference._approximate_distribution.ApproximateDistribution`
-      lifts samples back through the same template.
+      so the posterior preserves the structured parameterisation
+      when available.
 
-    Requires the prior to expose ``as_flat_distribution`` (i.e., to be
-    a :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`).
-    Raises ``TypeError`` otherwise — a bare opaque-typed
-    ``SupportsLogProb`` target has no canonical flat representation.
+    Two cases:
+
+    1. **Record-shaped prior** (a :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`,
+       which a ``SimpleModel`` prior is required to be under the PR
+       #200 hierarchy cleanup). ``target_flat_fn`` composes
+       :func:`build_target_log_prob` with the prior's
+       :meth:`~probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.unflatten_sample`,
+       and the record template is returned for downstream lift-back.
+    2. **Bare ``SupportsLogProb`` target** with no Record-shaped prior
+       (e.g., a hand-rolled ``Distribution`` subclass implementing
+       ``_unnormalized_log_prob`` over a flat ``Array``). The target
+       already takes a flat input; no flattening is needed.
+       ``record_template`` is returned as ``None``.
 
     Intended for use by BlackJAX-flavoured MCMC / VI backends.
     """
     prior = get_prior(dist)
+    target_record = build_target_log_prob(dist, observed)
+    init_state = get_init_state(prior, init, observed)
+
     flat_view = getattr(prior, "as_flat_distribution", None)
     record_template = getattr(prior, "record_template", None)
-    if flat_view is None or record_template is None:
-        raise TypeError(
-            f"build_target_log_prob_flat requires a NumericRecordDistribution "
-            f"prior (with as_flat_distribution and record_template); got "
-            f"{type(prior).__name__}."
-        )
+    if flat_view is not None and record_template is not None:
+        flat_prior = flat_view()
 
-    target_record = build_target_log_prob(dist, observed)
-    init_record = get_init_state(prior, init, observed)
-    flat_prior = flat_view()
+        def target_flat(theta_flat: Array) -> Array:
+            return target_record(flat_prior.unflatten_sample(theta_flat))
 
-    def target_flat(theta_flat: Array) -> Array:
-        return target_record(flat_prior.unflatten_sample(theta_flat))
+        return target_flat, init_state, record_template
 
-    return target_flat, init_record, record_template
+    # Bare array-shaped target: ``target_record`` already accepts a
+    # flat array and no template is available to lift the chain.
+    return target_record, init_state, None
 
 
 # ---------------------------------------------------------------------------

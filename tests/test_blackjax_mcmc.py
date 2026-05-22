@@ -127,6 +127,24 @@ class TestBlackJAXNuts:
         np.testing.assert_allclose(post_var, analytic_var, rtol=0.10)
 
 
+    def test_zero_warmup_uses_user_step_size(self, small_model):
+        """Exercises the ``_adapt`` fallback (``num_warmup == 0``).
+
+        When the user explicitly sets ``num_warmup=0``, the runner
+        builds the kernel directly from the supplied ``step_size``
+        instead of running ``window_adaptation``. Smoke-only — the
+        unwarmed chain isn't expected to match the prior closely,
+        we just confirm the code path runs end-to-end.
+        """
+        posterior = condition_on(
+            small_model, jnp.zeros((4,)), method="blackjax_nuts",
+            num_results=50, num_warmup=0, step_size=0.05, random_seed=0,
+        )
+        m = mean(posterior)
+        assert jnp.isfinite(m["a"]).all()
+        assert jnp.isfinite(m["b"]).all()
+
+
 class TestBlackJAXHmc:
     """End-to-end smoke for ``blackjax_hmc``."""
 

@@ -31,6 +31,7 @@ from typing import Any, Callable, Literal
 
 import blackjax
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from ..core._registry import MethodInfo
@@ -102,9 +103,19 @@ def _run_blackjax_chains(
     chain_keys = jax.random.split(key, num_chains)
 
     def _adapt(warmup_key: Array) -> tuple[Any, dict[str, Any]]:
-        """Either run window-adaptation or fall back to user-provided params."""
+        """Either run window-adaptation or fall back to user-provided params.
+
+        The ``num_warmup == 0`` branch builds the kernel directly from
+        ``step_size`` plus an identity mass matrix (BlackJAX NUTS / HMC
+        both require ``inverse_mass_matrix`` as a constructor argument
+        — window-adaptation normally supplies it).
+        """
         if num_warmup <= 0:
-            params = {"step_size": step_size, **extra_kwargs}
+            params = {
+                "step_size": step_size,
+                "inverse_mass_matrix": jnp.ones_like(init_state),
+                **extra_kwargs,
+            }
             state = kernel_factory(target_log_prob_fn, **params).init(init_state)
             return state, params
         warmup = blackjax.window_adaptation(
@@ -162,7 +173,7 @@ def _extract_blackjax_sample_stats(infos: Any) -> dict[str, np.ndarray]:
 class _BlackJAXMCMCMethod(InferenceMethod):
     """Base for BlackJAX gradient MCMC methods (NUTS, HMC)."""
 
-    def __init__(self, algorithm: str, method_name: str, method_priority: int):
+    def __init__(self, algorithm: Algorithm, method_name: str, method_priority: int):
         self._algorithm = algorithm
         self._method_name = method_name
         self._method_priority = method_priority

@@ -69,21 +69,32 @@ class TestBuildTargetLogProbFlat:
         # Insertion order from the ProductDistribution constructor.
         assert template.fields == ("a", "b")
 
-    def test_rejects_non_flat_capable_prior(self):
-        """A prior without ``as_flat_distribution`` raises ``TypeError``.
+    def test_bare_distribution_falls_through_unwrapped(self):
+        """A target with no Record-shaped prior round-trips its log-prob unchanged.
 
-        Constructs a bare object posing as a distribution: it lacks
-        ``record_template`` and ``as_flat_distribution``, exercising the
-        guard in :func:`build_target_log_prob_flat` without needing a
-        full-blown distribution subclass.
+        For a bare ``SupportsLogProb`` whose ``_unnormalized_log_prob``
+        already takes a flat array, ``build_target_log_prob_flat``
+        passes the callable through verbatim and returns
+        ``record_template=None``. This is the path BlackJAX MCMC uses
+        for hand-rolled distributions that don't carry a Record-shaped
+        prior.
         """
+        import numpy as np
 
-        class _OpaqueDistribution:
+        class _FlatGaussian:
+            event_shape = (2,)
+
             def _unnormalized_log_prob(self, x):
-                return jnp.asarray(0.0)
+                return -0.5 * jnp.sum(jnp.asarray(x) ** 2)
 
-        with pytest.raises(TypeError, match="NumericRecordDistribution"):
-            build_target_log_prob_flat(_OpaqueDistribution(), observed=None)
+        target_flat, flat_init, template = build_target_log_prob_flat(
+            _FlatGaussian(), observed=None,
+        )
+        assert template is None
+        assert flat_init.shape == (2,)
+        np.testing.assert_allclose(
+            float(target_flat(jnp.asarray([1.0, -1.0]))), -1.0,
+        )
 
 
 class TestGetPrior:

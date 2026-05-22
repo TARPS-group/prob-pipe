@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`condition_on` MCMC default switched from TFP to BlackJAX NUTS.**
+  The new `blackjax_nuts` method (priority 75) wins auto-dispatch for
+  any `SupportsLogProb` + JAX-traceable target; `blackjax_hmc`
+  (priority 65) joins as the gradient-MCMC fallback without NUTS-style
+  adaptation. The previous defaults `tfp_nuts` and `tfp_hmc` are
+  demoted to the opt-in-only sentinel (`priority=0`): they stay
+  registered and reachable via `method="tfp_nuts"` /
+  `method="tfp_hmc"` for bit-pattern regression checks or side-by-
+  side comparisons, but no longer participate in auto-dispatch.
+  `tfp_rwmh` (gradient-free RWMH) is unchanged — no BlackJAX
+  replacement in this drop.
+
+  Migration: an existing `condition_on(model, data)` call that
+  previously ran TFP NUTS now runs BlackJAX NUTS. The numerical
+  posterior is asymptotically identical but the per-seed bit pattern
+  differs. Pin `method="tfp_nuts"` for bit-pattern regression. The
+  closed-form correctness gate (mean within ~3 σ_MC, variance within
+  10% on a known 2-D Gaussian target) is tested under
+  `tests/test_blackjax_mcmc.py`.
+
 - **Distribution & Record hierarchy cleanup (#200).** Implements the
   integrated cleanup plan as six self-contained commits. The public-
   facing changes are:

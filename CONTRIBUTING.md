@@ -359,13 +359,14 @@ Built-in methods:
 | 85 | `nutpie_nuts` | nutpie | `StanModel`, `PyMCModel` |
 | 82 | `cmdstan_nuts` | CmdStanPy | `StanModel` |
 | 81 | `pymc_nuts` | PyMC | `PyMCModel` |
-| 75 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable) |
-| 65 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable) |
+| 75 | `blackjax_nuts` | BlackJAX | Any `SupportsLogProb` (JAX-traceable) |
+| 65 | `blackjax_hmc` | BlackJAX | Any `SupportsLogProb` (JAX-traceable) |
 | 55 | `tfp_rwmh` | TFP | Any `SupportsLogProb` |
 | 45 | `blackjax_sgld` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
 | 42 | `blackjax_sghmc` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
 | 25 | `pymc_advi` | PyMC | `PyMCModel` |
 | 5 | `sbijax_smcabc` | sbijax | `SimpleGenerativeModel` |
+| 0 | `tfp_nuts`, `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 
 ### Converter priority system
 
