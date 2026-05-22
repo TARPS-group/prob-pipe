@@ -23,10 +23,14 @@ utilities shared across the backend modules (``_tfp_mcmc.py``,
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from xarray import DataTree
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsMean
@@ -35,6 +39,7 @@ from ..custom_types import Array, ArrayLike
 
 
 __all__ = [
+    "build_mcmc_datatree",
     "build_target_log_prob",
     "build_target_log_prob_flat",
     "get_init_state",
@@ -239,3 +244,58 @@ def build_target_log_prob_flat(
         return target_record(flat_prior.unflatten_sample(theta_flat))
 
     return target_flat, init_record, record_template
+
+
+# ---------------------------------------------------------------------------
+# ArviZ DataTree builder (backend-agnostic)
+# ---------------------------------------------------------------------------
+
+
+def build_mcmc_datatree(
+    chains: list[Array],
+    sample_stats: dict[str, np.ndarray] | None = None,
+    warmup_chains: list[Array] | None = None,
+) -> "DataTree":
+    """Build an arviz-convention DataTree from MCMC chains + diagnostics.
+
+    Groups: ``posterior``, ``sample_stats`` (if provided), ``warmup``
+    (if provided). Backend-agnostic — consumed by both the TFP and
+    BlackJAX MCMC paths.
+    """
+    import arviz as az
+    import xarray as xr
+
+    def _stack(chain_list):
+        return np.stack([np.asarray(c) for c in chain_list], axis=0)
+
+    posterior_dict = {"params": _stack(chains)}
+    # arviz 1.x ``from_dict`` takes a positional groups dict; arviz 0.x
+    # takes keyword arguments (``posterior=``, ``sample_stats=``, ...).
+    import inspect
+    sig = inspect.signature(az.from_dict)
+    first_param = next(iter(sig.parameters))
+    if first_param == "posterior":
+        kw: dict = {"posterior": posterior_dict}
+        if sample_stats:
+            kw["sample_stats"] = sample_stats
+        dt = az.from_dict(**kw)
+    else:
+        groups: dict = {"posterior": posterior_dict}
+        if sample_stats:
+            groups["sample_stats"] = sample_stats
+        dt = az.from_dict(groups)
+
+    if warmup_chains is not None and all(w is not None for w in warmup_chains):
+        warmup_array = _stack(warmup_chains)
+        n_chains, n_warmup = warmup_array.shape[:2]
+        event_dims = [f"params_dim_{i}" for i in range(warmup_array.ndim - 2)]
+        dims = ["chain", "draw"] + event_dims
+        warmup_ds = xr.Dataset({
+            "params": xr.DataArray(
+                warmup_array, dims=dims,
+                coords={"chain": np.arange(n_chains), "draw": np.arange(n_warmup)},
+            ),
+        })
+        dt["warmup"] = xr.DataTree(dataset=warmup_ds)
+
+    return dt

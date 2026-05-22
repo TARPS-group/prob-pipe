@@ -18,6 +18,7 @@ from ..core.protocols import SupportsUnnormalizedLogProb
 from ..custom_types import Array
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (
+    build_mcmc_datatree,
     build_target_log_prob,
     extract_record_template,
     get_init_state,
@@ -115,62 +116,6 @@ def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, np.ndarray]
 
 
 # ---------------------------------------------------------------------------
-# Auxiliary DataTree builder (MCMC-specific)
-# ---------------------------------------------------------------------------
-
-
-def _build_mcmc_datatree(
-    chains: list[Array],
-    sample_stats: dict[str, np.ndarray] | None = None,
-    warmup_chains: list[Array] | None = None,
-) -> DataTree:
-    """Build an arviz-convention DataTree from MCMC chains + diagnostics.
-
-    Groups: ``posterior``, ``sample_stats`` (if provided), ``warmup``
-    (if provided).
-    """
-    import arviz as az
-    import xarray as xr
-
-    def _stack(chain_list):
-        return np.stack([np.asarray(c) for c in chain_list], axis=0)
-
-    posterior_dict = {"params": _stack(chains)}
-    # arviz 1.x from_dict takes a positional groups dict;
-    # arviz 0.x takes keyword arguments (posterior=, sample_stats=, ...).
-    import inspect
-    sig = inspect.signature(az.from_dict)
-    first_param = next(iter(sig.parameters))
-    if first_param == "posterior":
-        # arviz 0.x keyword-style API
-        kw: dict = {"posterior": posterior_dict}
-        if sample_stats:
-            kw["sample_stats"] = sample_stats
-        dt = az.from_dict(**kw)
-    else:
-        # arviz 1.x groups-dict API
-        groups: dict = {"posterior": posterior_dict}
-        if sample_stats:
-            groups["sample_stats"] = sample_stats
-        dt = az.from_dict(groups)
-
-    if warmup_chains is not None and all(w is not None for w in warmup_chains):
-        warmup_array = _stack(warmup_chains)
-        n_chains, n_warmup = warmup_array.shape[:2]
-        event_dims = [f"params_dim_{i}" for i in range(warmup_array.ndim - 2)]
-        dims = ["chain", "draw"] + event_dims
-        warmup_ds = xr.Dataset({
-            "params": xr.DataArray(
-                warmup_array, dims=dims,
-                coords={"chain": np.arange(n_chains), "draw": np.arange(n_warmup)},
-            ),
-        })
-        dt["warmup"] = xr.DataTree(dataset=warmup_ds)
-
-    return dt
-
-
-# ---------------------------------------------------------------------------
 # Inference methods
 # ---------------------------------------------------------------------------
 
@@ -231,7 +176,7 @@ class _TFPGradientMethod(InferenceMethod):
             step_size=kwargs.get("step_size", 0.1),
             random_seed=kwargs.get("random_seed", 0),
         )
-        auxiliary = _build_mcmc_datatree(chains, sample_stats)
+        auxiliary = build_mcmc_datatree(chains, sample_stats)
         return make_posterior(
             chains, parents=(prior,), algorithm=self._method_name,
             auxiliary=auxiliary, record_template=record_template,

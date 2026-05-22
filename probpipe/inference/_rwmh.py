@@ -16,12 +16,12 @@ from ..custom_types import ArrayLike
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 from ._inference_utils import (
+    build_mcmc_datatree,
     extract_record_template,
     get_init_state,
     get_prior,
     is_simple_model,
 )
-from ._tfp_mcmc import _build_mcmc_datatree
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +128,7 @@ def rwmh(
     accept_rate = total_accepts / total_steps
     warmup = warmup_chains if all(w is not None for w in warmup_chains) else None
 
-    auxiliary = _build_mcmc_datatree(chains, warmup_chains=warmup)
+    auxiliary = build_mcmc_datatree(chains, warmup_chains=warmup)
 
     record_template = extract_record_template(dist)
     return make_posterior(
