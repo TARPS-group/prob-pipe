@@ -74,15 +74,14 @@ def _production_sigma(cov: Array, d: int) -> Array:
     """RGG-scaled Cholesky of an empirical covariance estimate.
 
     Returns a lower-triangular ``(d, d)`` matrix usable as the BlackJAX
-    ``normal_random_walk`` ``sigma`` argument. Falls back to a diagonal
-    of the per-dimension empirical standard deviations when ``cov`` is
-    not positive-definite (rare but possible early in warmup).
+    ``normal_random_walk`` ``sigma`` argument. Adds a small diagonal
+    jitter (``1e-8 * I``) before factorising so the call is safe inside
+    ``lax.scan`` / ``vmap`` — under tracing, ``cholesky`` of a
+    non-positive-definite matrix yields silent NaNs rather than raising,
+    so a Python-level ``try/except`` cannot protect the fast path.
     """
-    try:
-        chol = jsl.cholesky(cov, lower=True)
-    except Exception:
-        diag = jnp.sqrt(jnp.clip(jnp.diag(cov), a_min=1e-8))
-        chol = jnp.diag(diag)
+    jitter = jnp.eye(d, dtype=cov.dtype) * 1e-8
+    chol = jsl.cholesky(cov + jitter, lower=True)
     return chol * _rgg_scale(d)
 
 
@@ -315,10 +314,16 @@ def _run_one_chain(
         sigma = proposal_sigma_override
         warmup_positions = None
         if num_warmup > 0:
-            _, _, warmup_positions = (
-                _adaptive_warmup_fast if traceable else _adaptive_warmup_eager
-            )(target_log_prob_fn, init_state, warmup_key, num_warmup,
-              n_windows=n_windows)
+            # Burn in under the user-supplied sigma — do NOT run adaptive
+            # warmup here, since the whole point of the override is to
+            # bypass adaptation. Use the same fixed-sigma sampling loop
+            # the ``adapt=False`` branch uses below.
+            run_warmup = (
+                _sample_chain_fast if traceable else _sample_chain_eager
+            )
+            warmup_positions, _ = run_warmup(
+                target_log_prob_fn, init_state, sigma, num_warmup, warmup_key,
+            )
             init_position = warmup_positions[-1]
         else:
             init_position = init_state

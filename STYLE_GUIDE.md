@@ -109,7 +109,7 @@ condition_on_nutpie = WorkflowFunction(
 ### 1.6 Modules
 
 - **Private implementation modules:** Leading underscore — `_simple.py`,
-  `_stan.py`, `_rwmh.py`, `_nutpie.py`.
+  `_stan.py`, `_blackjax_rwmh.py`, `_nutpie.py`.
 - **Public modules:** Descriptive names — `continuous.py`, `discrete.py`,
   `protocols.py`, `ops.py`.
 - **Package `__init__.py`** files re-export the public API. Users should
@@ -122,7 +122,8 @@ Inference methods registered with the ``MethodRegistry`` follow
 ``{backend}_{algorithm}`` naming in ``snake_case``:
 
 ```
-tfp_nuts, tfp_hmc, tfp_rwmh, nutpie_nuts, cmdstan_nuts, pymc_nuts, pymc_advi
+blackjax_nuts, blackjax_hmc, blackjax_rwmh, blackjax_elliptical_slice,
+nutpie_nuts, cmdstan_nuts, pymc_nuts, pymc_advi
 ```
 
 Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
@@ -257,7 +258,7 @@ positive vs bounded).
 ### 2.3 Private vs public modules
 
 Implementation modules use a leading underscore (`_simple.py`,
-`_rwmh.py`, `_array_backend.py`); the package `__init__.py`
+`_blackjax_rwmh.py`, `_array_backend.py`); the package `__init__.py`
 re-exports their public symbols so users never need to import from
 underscore modules directly.
 
