@@ -1,26 +1,22 @@
 """BlackJAX-backed gradient-free MCMC: random-walk Metropolis-Hastings.
 
-Replaces the hand-rolled Python-loop RWMH in ``_rwmh.py``. Two execution
-paths share the same BlackJAX kernel:
+Two execution paths share the same BlackJAX kernel:
 
 * **Fast path** — ``jax.lax.scan`` for the inner step loop, ``jax.vmap``
   across chains. Used when the target log-density is JAX-traceable.
-  Matches the performance shape of :mod:`probpipe.inference._blackjax_mcmc`.
 * **Eager fallback** — a Python ``for`` loop over ``sampler.step``,
   used when the target is *not* JAX-traceable (BridgeStan / scipy /
   external-simulator likelihoods). BlackJAX's ``sampler.step`` accepts
-  concrete arrays and runs the user's log-density host-side; the
-  hand-rolled accept/reject logic is delegated to the kernel rather
-  than re-implemented locally.
+  concrete arrays and runs the user's log-density host-side.
 
-The adaptive warmup is single-phase: a fixed-scale ``2.38 / sqrt(d) * I``
-proposal during warmup, with online Welford covariance estimation on
-the chain positions. Production sampling uses
+The default warmup is a Stan-style window adaptation: ``n_windows``
+geometrically-growing windows each sample with the current proposal
+Cholesky and accumulate Welford statistics on positions, refreshing
+the proposal at window boundaries. Production samples with
 ``proposal = chol(Sigma_hat) * 2.38 / sqrt(d)``, the
 Roberts-Gelman-Gilks scaling
 ([Roberts, Gelman & Gilks 1997](https://projecteuclid.org/journals/annals-of-applied-probability/volume-7/issue-1/Weak-convergence-and-optimal-scaling-of-random-walk-Metropolis-algorithms/10.1214/aoap/1034625254.full)).
-The ``adapt=False`` path falls back to ``sigma = step_size * I`` for
-parity with the legacy ``_rwmh.py`` behavior.
+The ``adapt=False`` path uses ``sigma = step_size * I`` throughout.
 """
 
 from __future__ import annotations
@@ -474,8 +470,7 @@ def rwmh(
         MCMC tuning parameters.
     step_size
         Diagonal proposal scale used when ``adapt=False`` and
-        ``proposal_cov=None``. Default ``0.1`` matches the legacy
-        ``_rwmh.py`` behavior.
+        ``proposal_cov=None``.
     adapt
         When ``True`` (default), runs a window-style adaptive warmup —
         ``n_windows`` geometrically-growing windows that each sample
@@ -561,11 +556,9 @@ class BlackJAXRWMHMethod(InferenceMethod):
     """Gradient-free RWMH on top of BlackJAX's ``normal_random_walk``.
 
     Tier 51-60 (slow per effective sample in high dimensions even when
-    tuned). Priority 55. Auto-dispatched only when no gradient-based
-    method passes ``check()`` — e.g., for log-densities that are not
-    JAX-traceable (the eager-fallback case the hand-rolled
-    ``_rwmh.py`` previously addressed) or where the user has pinned
-    ``method="blackjax_rwmh"``.
+    tuned). Priority 55. Auto-dispatched when no gradient-based method
+    passes ``check()`` — e.g., for log-densities that are not
+    JAX-traceable — or when the user pins ``method="blackjax_rwmh"``.
     """
 
     @property
@@ -623,16 +616,9 @@ class BlackJAXRWMHMethod(InferenceMethod):
 class TFPRWMHMethod(BlackJAXRWMHMethod):
     """Deprecated alias for :class:`BlackJAXRWMHMethod`.
 
-    The legacy ``tfp_rwmh`` method name predates the BlackJAX migration
-    — the implementation has never been TFP-backed (it was a hand-rolled
-    Python loop), but external callers may pin
-    ``method="tfp_rwmh"``. Registered at the opt-in-only sentinel
-    ``priority=0`` so auto-dispatch always picks ``blackjax_rwmh``;
-    explicit ``method="tfp_rwmh"`` still works through this shim and
-    emits a :class:`DeprecationWarning`.
-
-    To be removed one minor release after the BlackJAX gradient-free
-    migration lands.
+    Registered at ``priority=0`` (opt-in only) so auto-dispatch never
+    selects it; explicit ``method="tfp_rwmh"`` keeps working and emits
+    a :class:`DeprecationWarning`. To be removed one minor release out.
     """
 
     @property

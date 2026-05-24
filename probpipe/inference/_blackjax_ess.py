@@ -81,8 +81,6 @@ def _gaussian_prior_params(prior: Distribution) -> tuple[Array, Array] | None:
     Gamma / Beta / Dirichlet / non-Gaussian priors, and improper
     priors (which have no ``_sample`` to draw the auxiliary from).
     """
-    # Lazy imports to avoid pulling in TFP-backed leaf classes at module
-    # import time and to keep the inference layer's import surface flat.
     from ..distributions import MultivariateNormal, Normal, ProductDistribution
 
     if isinstance(prior, MultivariateNormal):
@@ -275,9 +273,7 @@ class BlackJAXESSMethod(InferenceMethod):
     """Elliptical slice sampling on top of ``blackjax.elliptical_slice``.
 
     Tier 71-80 (self-tuning, converges robustly without per-model
-    hyperparameter selection). Priority 75. The
-    :doc:`extending docs <api/extending>` make explicit that
-    model-class breadth is a tiebreaker only — the narrow Gaussian-prior
+    hyperparameter selection). Priority 75. The narrow Gaussian-prior
     feasibility class is enforced in ``check()``, not by priority.
     """
 
@@ -322,10 +318,8 @@ class BlackJAXESSMethod(InferenceMethod):
                 feasible=False, method_name=self.name,
                 description="Does not support dict-based conditioning",
             )
-        # Verify the likelihood is JAX-traceable at the prior mean.
-        # The runner uses ``lax.scan`` over the BlackJAX ESS step
-        # function, which is unconditionally traced — there is no eager
-        # fallback in this method. Catching non-traceable likelihoods
+        # The runner traces the BlackJAX ESS step under ``lax.scan``;
+        # there's no eager fallback. Catching non-traceable likelihoods
         # here lets auto-dispatch slide down to RWMH instead.
         try:
             likelihood = dist._likelihood

@@ -39,26 +39,22 @@ __all__ = [
 # Register built-in inference methods
 # ---------------------------------------------------------------------------
 
-# TFP-backed methods (always available since TFP is a core dependency).
-# These are opt-in-only (priority 0) after the BlackJAX migration —
-# auto-dispatch picks the BlackJAX-backed equivalents below.
+# TFP-backed MCMC — registered at priority 0 (opt-in only); BlackJAX
+# methods below win auto-dispatch.
 from ._tfp_mcmc import TFPNutsMethod, TFPHmcMethod
 
 inference_method_registry.register(TFPNutsMethod())
 inference_method_registry.register(TFPHmcMethod())
 
-# BlackJAX MCMC (gradient-based) — the auto-dispatch default for any
-# JAX-traceable SupportsLogProb target.
+# BlackJAX MCMC (gradient-based) — auto-dispatch default for any
+# JAX-traceable ``SupportsLogProb`` target.
 from ._blackjax_mcmc import BlackJAXNutsMethod, BlackJAXHmcMethod
 
 inference_method_registry.register(BlackJAXNutsMethod())
 inference_method_registry.register(BlackJAXHmcMethod())
 
 # BlackJAX gradient-free MCMC: RWMH (catch-all) and ESS (Gaussian-prior).
-# ``TFPRWMHMethod`` is a deprecated alias kept for one minor release —
-# the legacy ``tfp_rwmh`` name pre-dates the BlackJAX migration and was
-# never actually TFP-backed (the original implementation was a
-# hand-rolled Python loop).
+# ``TFPRWMHMethod`` is a deprecated alias for ``BlackJAXRWMHMethod``.
 from ._blackjax_rwmh import BlackJAXRWMHMethod, TFPRWMHMethod
 from ._blackjax_ess import BlackJAXESSMethod
 

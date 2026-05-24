@@ -1,12 +1,11 @@
 """Tests specific to the BlackJAX-backed RWMH implementation.
 
-The legacy ``TestRWMH`` suite in ``test_inference.py`` exercises shapes,
-provenance, multi-chain, and the conjugate Normal-Normal recovery path.
-This file covers behavior new to the BlackJAX migration:
+Covers behavior beyond the generic ``TestRWMH`` suite in
+``test_inference.py``:
 
 * the adaptive warmup (RGG-scaled proposal with Welford covariance refit),
 * the eager-fallback path for non-JAX-traceable log-densities,
-* the deprecated ``tfp_rwmh`` alias keeps existing pinned callers working.
+* the deprecated ``tfp_rwmh`` alias.
 """
 
 from __future__ import annotations
@@ -48,7 +47,7 @@ class TestRegistration:
         assert inference_method_registry.get_method("blackjax_rwmh").priority == 55
 
     def test_tfp_rwmh_alias_registered_opt_in(self):
-        """The legacy ``tfp_rwmh`` name resolves but is opt-in only."""
+        """``tfp_rwmh`` resolves to the deprecated alias at priority 0."""
         names = inference_method_registry.list_methods()
         assert "tfp_rwmh" in names
         assert inference_method_registry.get_method("tfp_rwmh").priority == 0
@@ -101,11 +100,7 @@ class TestAdaptiveWarmup:
         assert 0.10 < accept_rate < 0.65, f"unexpected accept_rate {accept_rate}"
 
     def test_adapt_false_falls_back_to_fixed_step(self):
-        """``adapt=False`` runs with ``sigma = step_size * I`` throughout.
-
-        The step_size kwarg is forwarded into the production proposal —
-        legacy behavior. Verifies the opt-out path stays available.
-        """
+        """``adapt=False`` runs with ``sigma = step_size * I`` throughout."""
         dist = MultivariateNormal(
             loc=jnp.zeros(2), cov=jnp.eye(2), name="z",
         )
