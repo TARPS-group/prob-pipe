@@ -680,7 +680,6 @@ class TestDispatchConsistency:
         for mode in self.SAMPLE_DISPATCH_MODES:
             r = self._run(mode, add_them, a=n1, b=n2, n_broadcast_samples=50)
             assert r.num_atoms == 50, f"{mode}: expected n=50, got {r.num_atoms}"
-<<<<<<< HEAD
 
     def test_jax_dispatch_rejects_exact_empirical_enumeration(self):
         def identity(x):
@@ -690,5 +689,3 @@ class TestDispatchConsistency:
 
         with pytest.raises(ValueError, match="does not support exact empirical"):
             self._run("jax", identity, x=empirical, n_broadcast_samples=20)
-=======
->>>>>>> fix(rename): catch the leftover .n call sites missed by the bulk rename

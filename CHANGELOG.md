@@ -31,7 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RecordBootstrapReplicateDistribution.num_observations`. The
   constructor kwarg changes from ``n=`` to ``num_observations=``;
   the related ``source_n`` property becomes
-  ``num_source_observations``.
+  ``num_source_observations``. Callers that previously wrote
+  ``BootstrapReplicateDistribution(data, n=N)`` will now get a
+  ``TypeError`` and must rename to ``num_observations=N``.
 
   *Generative-likelihood observation count.*
   ``generate_data(params, n_samples, ...)`` is now
