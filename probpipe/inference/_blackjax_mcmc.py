@@ -42,6 +42,7 @@ from ._inference_utils import (
     build_target_log_prob_flat,
     get_prior,
     is_jax_traceable,
+    run_chain_scan,
 )
 from ._registry import InferenceMethod
 
@@ -119,14 +120,7 @@ def _run_blackjax_chains(
         warmup_key, sample_key = jax.random.split(chain_key)
         state, adapted_params = _adapt(warmup_key)
         kernel = kernel_factory(target_log_prob_fn, **adapted_params)
-
-        def one_step(state, step_key):
-            state, info = kernel.step(step_key, state)
-            return state, (state.position, info)
-
-        sample_keys = jax.random.split(sample_key, num_results)
-        _, (positions, infos) = jax.lax.scan(one_step, state, sample_keys)
-        return positions, infos
+        return run_chain_scan(kernel, state, num_results, sample_key)
 
     all_positions, all_infos = jax.vmap(run_one_chain)(chain_keys)
     chains = [all_positions[c] for c in range(num_chains)]

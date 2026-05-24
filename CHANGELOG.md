@@ -7,23 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+
+- **`tfp_rwmh` removed.** The hand-rolled Python-loop RWMH that sat
+  behind ``method="tfp_rwmh"`` is gone; ``blackjax_rwmh`` is the only
+  RWMH backend. Callers must rename ``method="tfp_rwmh"`` →
+  ``method="blackjax_rwmh"``.
+
 ### Added
 
 - **BlackJAX-backed gradient-free MCMC.** Two new inference methods
   bundled with the BlackJAX MCMC migration:
   - **`blackjax_rwmh`** (priority 55) replaces the hand-rolled
-    Python-loop RWMH that previously sat behind ``method="tfp_rwmh"``.
-    Two execution paths share the same BlackJAX kernel: a fast path
-    (`jax.lax.scan` + `jax.vmap` across chains) when the target
-    log-density is JAX-traceable, and an eager Python-loop fallback
-    when it isn't (BridgeStan / scipy / external-simulator
-    likelihoods — the case the hand-rolled loop existed to support).
-    The default warmup is a Stan-style window adaptation: ``n_windows``
-    (default 4) geometrically-growing windows, each sampling with the
-    current proposal Cholesky and accumulating Welford statistics on
-    positions, refreshing the proposal at window boundaries. Production
-    sigma is ``chol(Sigma_hat) * 2.38 / sqrt(d)`` per Roberts-Gelman-
-    Gilks. Short warmups (``< 50`` steps) collapse to a single phase
+    Python-loop RWMH. Two execution paths share the same BlackJAX
+    kernel: a fast path (`jax.lax.scan` + `jax.vmap` across chains)
+    when the target log-density is JAX-traceable, and an eager
+    Python-loop fallback when it isn't (BridgeStan / scipy /
+    external-simulator likelihoods — the case the hand-rolled loop
+    existed to support). The default warmup is a Stan-style window
+    adaptation: ``n_windows`` (default 4) geometrically-growing
+    windows, each sampling with the current proposal Cholesky and
+    accumulating Welford statistics on positions, refreshing the
+    proposal at window boundaries. Production sigma is
+    ``chol(Sigma_hat) * 2.38 / sqrt(d)`` per Roberts-Gelman-Gilks.
+    Short warmups (``< 50`` steps) collapse to a single phase
     automatically. ``adapt=False`` falls back to the legacy
     ``step_size * I`` for parity with the prior behavior.
   - **`blackjax_elliptical_slice`** (priority 75, tier 71-80
@@ -31,9 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Gaussian prior and a JAX-traceable likelihood. Recognises
     `Normal`, `MultivariateNormal`, and `ProductDistribution`
     compositions via the new `_gaussian_prior_params` helper.
-  - **`method="tfp_rwmh"`** is now a deprecated alias for
-    `blackjax_rwmh` — emits a `DeprecationWarning` and runs the same
-    code. To be removed one minor release out.
 - New workflow function `probpipe.elliptical_slice(model, data, ...)`.
 
 ### Changed (breaking)

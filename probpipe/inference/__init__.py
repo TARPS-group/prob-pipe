@@ -54,13 +54,11 @@ inference_method_registry.register(BlackJAXNutsMethod())
 inference_method_registry.register(BlackJAXHmcMethod())
 
 # BlackJAX gradient-free MCMC: RWMH (catch-all) and ESS (Gaussian-prior).
-# ``TFPRWMHMethod`` is a deprecated alias for ``BlackJAXRWMHMethod``.
-from ._blackjax_rwmh import BlackJAXRWMHMethod, TFPRWMHMethod
+from ._blackjax_rwmh import BlackJAXRWMHMethod
 from ._blackjax_ess import BlackJAXESSMethod
 
 inference_method_registry.register(BlackJAXRWMHMethod())
 inference_method_registry.register(BlackJAXESSMethod())
-inference_method_registry.register(TFPRWMHMethod())
 
 # BlackJAX SGMCMC
 from ._blackjax_sgmcmc import BlackJAXSGLDMethod, BlackJAXSGHMCMethod

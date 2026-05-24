@@ -45,12 +45,13 @@ from ._inference_utils import (
     get_prior,
     is_jax_traceable,
     is_simple_model,
+    run_chain_scan,
 )
 from ._registry import InferenceMethod
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["rwmh", "BlackJAXRWMHMethod", "TFPRWMHMethod"]
+__all__ = ["rwmh", "BlackJAXRWMHMethod"]
 
 
 # ---------------------------------------------------------------------------
@@ -248,14 +249,11 @@ def _sample_chain_fast(
     """Run ``num_results`` BlackJAX RWMH steps under ``lax.scan``."""
     sampler = blackjax.normal_random_walk(target_log_prob_fn, sigma=sigma)
     state = sampler.init(init_position)
-
-    def step(state, step_key):
-        state, info = sampler.step(step_key, state)
-        return state, (state.position, info.acceptance_rate, info.is_accepted)
-
-    keys = jax.random.split(key, num_results)
-    _, (positions, acc_rate, is_accepted) = jax.lax.scan(step, state, keys)
-    return positions, {"acceptance_rate": acc_rate, "is_accepted": is_accepted}
+    positions, infos = run_chain_scan(sampler, state, num_results, key)
+    return positions, {
+        "acceptance_rate": infos.acceptance_rate,
+        "is_accepted": infos.is_accepted,
+    }
 
 
 def _sample_chain_eager(
@@ -616,29 +614,3 @@ class BlackJAXRWMHMethod(InferenceMethod):
             init=init,
             random_seed=random_seed,
         )
-
-
-class TFPRWMHMethod(BlackJAXRWMHMethod):
-    """Deprecated alias for :class:`BlackJAXRWMHMethod`.
-
-    Registered at ``priority=0`` (opt-in only) so auto-dispatch never
-    selects it; explicit ``method="tfp_rwmh"`` keeps working and emits
-    a :class:`DeprecationWarning`. To be removed one minor release out.
-    """
-
-    @property
-    def name(self) -> str:
-        return "tfp_rwmh"
-
-    @property
-    def priority(self) -> int:
-        return 0
-
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
-        import warnings
-        warnings.warn(
-            'method="tfp_rwmh" is deprecated; use method="blackjax_rwmh" '
-            "(the default for gradient-free MCMC) instead.",
-            DeprecationWarning, stacklevel=2,
-        )
-        return super().execute(dist, observed, **kwargs)

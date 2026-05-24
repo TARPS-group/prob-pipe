@@ -53,6 +53,7 @@ __all__ = [
     "extract_record_template",
     "is_jax_traceable",
     "is_simple_model",
+    "run_chain_scan",
 ]
 
 
@@ -346,3 +347,37 @@ def build_mcmc_datatree(
         dt["warmup"] = xr.DataTree(dataset=warmup_ds)
 
     return dt
+
+
+# ---------------------------------------------------------------------------
+# Shared per-chain scan loop
+# ---------------------------------------------------------------------------
+
+
+def run_chain_scan(
+    sampler: Any,
+    init_state: Any,
+    num_results: int,
+    key: Array,
+) -> tuple[Array, Any]:
+    """Step a BlackJAX-style sampler under ``jax.lax.scan``.
+
+    Drives the standard ``state, info = sampler.step(key, state)``
+    contract for ``num_results`` iterations. Returns
+    ``(positions, infos)`` where ``positions`` has shape
+    ``(num_results, *event_shape)`` and ``infos`` is a pytree of
+    per-step info objects stacked along the leading axis. The caller
+    is responsible for packing ``infos`` into whatever output shape
+    its consumer expects (e.g. an ArviZ-flavoured ``sample_stats``
+    dict).
+
+    Used by both the NUTS / HMC and the RWMH / ESS backends; the
+    contract is identical because BlackJAX samplers share it.
+    """
+    def one_step(state, step_key):
+        state, info = sampler.step(step_key, state)
+        return state, (state.position, info)
+
+    keys = jax.random.split(key, num_results)
+    _, (positions, infos) = jax.lax.scan(one_step, init_state, keys)
+    return positions, infos

@@ -4,8 +4,7 @@ Covers behavior beyond the generic ``TestRWMH`` suite in
 ``test_inference.py``:
 
 * the adaptive warmup (RGG-scaled proposal with Welford covariance refit),
-* the eager-fallback path for non-JAX-traceable log-densities,
-* the deprecated ``tfp_rwmh`` alias.
+* the eager-fallback path for non-JAX-traceable log-densities.
 """
 
 from __future__ import annotations
@@ -20,10 +19,7 @@ from probpipe.inference import (
     inference_method_registry,
     rwmh,
 )
-from probpipe.inference._blackjax_rwmh import (
-    BlackJAXRWMHMethod,
-    TFPRWMHMethod,
-)
+from probpipe.inference._blackjax_rwmh import BlackJAXRWMHMethod
 from probpipe.modeling._likelihood import Likelihood
 
 # Suppress an unrelated TFP/JAX deprecation that fires during random-key
@@ -39,18 +35,17 @@ pytestmark = pytest.mark.filterwarnings(
 
 
 class TestRegistration:
-    """Registry surface for the new method + deprecated alias."""
+    """Registry surface for ``blackjax_rwmh``."""
 
     def test_blackjax_rwmh_registered(self):
         names = inference_method_registry.list_methods()
         assert "blackjax_rwmh" in names
         assert inference_method_registry.get_method("blackjax_rwmh").priority == 55
 
-    def test_tfp_rwmh_alias_registered_opt_in(self):
-        """``tfp_rwmh`` resolves to the deprecated alias at priority 0."""
+    def test_tfp_rwmh_removed(self):
+        """The hand-rolled-RWMH alias ``tfp_rwmh`` no longer exists."""
         names = inference_method_registry.list_methods()
-        assert "tfp_rwmh" in names
-        assert inference_method_registry.get_method("tfp_rwmh").priority == 0
+        assert "tfp_rwmh" not in names
 
 
 # ---------------------------------------------------------------------------
@@ -246,36 +241,6 @@ class TestEagerFallback:
 
 
 # ---------------------------------------------------------------------------
-# Deprecated ``tfp_rwmh`` alias
-# ---------------------------------------------------------------------------
-
-
-class TestDeprecatedAlias:
-    """Existing ``method="tfp_rwmh"`` callers continue to work."""
-
-    def test_method_resolves_and_warns(self):
-        from probpipe import condition_on
-
-        prior = MultivariateNormal(
-            loc=jnp.zeros(2), cov=jnp.eye(2), name="mu",
-        )
-
-        class _ZeroLikelihood(Likelihood):
-            def log_likelihood(self, params, data):
-                return jnp.asarray(0.0)
-
-        model = SimpleModel(prior, _ZeroLikelihood(), name="m")
-        data = jnp.zeros((5, 2))
-        with pytest.warns(DeprecationWarning, match='method="tfp_rwmh"'):
-            posterior = condition_on(
-                model, data, method="tfp_rwmh",
-                num_results=50, num_warmup=20, random_seed=0,
-            )
-        # Algorithm label is the workflow-function name, unchanged.
-        assert posterior.algorithm == "rwmh"
-
-
-# ---------------------------------------------------------------------------
 # Class-level smoke
 # ---------------------------------------------------------------------------
 
@@ -283,12 +248,6 @@ class TestDeprecatedAlias:
 class TestClassesExpose:
     def test_blackjax_rwmh_method_has_expected_check(self):
         m = BlackJAXRWMHMethod()
-        info = m.check(MultivariateNormal(
-            loc=jnp.zeros(2), cov=jnp.eye(2), name="z"), None)
-        assert info.feasible
-
-    def test_deprecated_alias_inherits_check(self):
-        m = TFPRWMHMethod()
         info = m.check(MultivariateNormal(
             loc=jnp.zeros(2), cov=jnp.eye(2), name="z"), None)
         assert info.feasible

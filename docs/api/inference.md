@@ -57,7 +57,6 @@ when choosing a number for a new method are documented under
 | `pymc_advi` | 0 | `PyMCModel` + pymc | PyMC (opt-in only) |
 | `tfp_nuts` | 0 | `SupportsLogProb` + JAX-traceable | TFP (opt-in only) |
 | `tfp_hmc` | 0 | `SupportsLogProb` + JAX-traceable | TFP (opt-in only) |
-| `tfp_rwmh` | 0 | `SupportsLogProb` | deprecated alias for `blackjax_rwmh` |
 
 ::: probpipe.ApproximateDistribution
 

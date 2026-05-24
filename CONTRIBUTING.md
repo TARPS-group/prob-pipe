@@ -369,7 +369,6 @@ Built-in methods:
 | 0 | `pymc_advi` | PyMC | `PyMCModel`; opt-in only via `method=` |
 | 0 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 | 0 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
-| 0 | `tfp_rwmh` | BlackJAX | Deprecated alias for `blackjax_rwmh`; emits `DeprecationWarning` |
 
 ### Converter priority system
 

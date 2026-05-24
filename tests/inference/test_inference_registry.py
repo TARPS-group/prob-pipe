@@ -129,22 +129,22 @@ class TestInferenceMethodRegistry:
         methods = inference_method_registry.list_methods()
         assert "tfp_nuts" in methods
         assert "tfp_hmc" in methods
-        assert "tfp_rwmh" in methods
+        assert "blackjax_rwmh" in methods
 
     def test_priority_order(self):
-        """RWMH stays above the opt-in-only TFP gradient methods.
+        """BlackJAX RWMH stays above the opt-in-only TFP gradient methods.
 
-        After the BlackJAX migration, ``tfp_nuts`` and ``tfp_hmc`` are at
-        priority 0 (opt-in only) and so don't participate in the order
-        ``list_methods()`` exposes for auto-dispatch. ``tfp_rwmh``
-        remains at priority 55 — gradient-free with no BlackJAX
-        replacement in this PR.
+        After the BlackJAX migration, ``tfp_nuts`` and ``tfp_hmc`` are
+        at priority 0 (opt-in only) and so don't participate in the
+        order ``list_methods()`` exposes for auto-dispatch.
+        ``blackjax_rwmh`` (priority 55) is the gradient-free
+        auto-dispatch entry point.
         """
         methods = inference_method_registry.list_methods()
         # All three remain registered.
-        assert {"tfp_nuts", "tfp_hmc", "tfp_rwmh"}.issubset(methods)
-        # blackjax_nuts (85) outranks tfp_rwmh (55) outranks the opt-in TFP pair.
-        assert methods.index("blackjax_nuts") < methods.index("tfp_rwmh")
+        assert {"tfp_nuts", "tfp_hmc", "blackjax_rwmh"}.issubset(methods)
+        # blackjax_nuts (85) outranks blackjax_rwmh (55) outranks the opt-in TFP pair.
+        assert methods.index("blackjax_nuts") < methods.index("blackjax_rwmh")
 
     def test_auto_select_nuts(self, simple_model, data):
         """BlackJAX NUTS is the auto-dispatch winner for any JAX-traceable model."""
@@ -155,7 +155,7 @@ class TestInferenceMethodRegistry:
     def test_method_override(self, simple_model, data):
         """method= should override auto-selection."""
         posterior = condition_on(
-            simple_model, data, method="tfp_rwmh",
+            simple_model, data, method="blackjax_rwmh",
             num_results=50, num_warmup=20, random_seed=0,
         )
         assert posterior.algorithm == "rwmh"
@@ -196,13 +196,13 @@ class TestInferenceMethodRegistry:
 
     def test_set_priorities_changes_selection(self, simple_model, data):
         """set_priorities should change which method is auto-selected."""
-        original = inference_method_registry.get_method("tfp_rwmh").priority
-        inference_method_registry.set_priorities(tfp_rwmh=200)
+        original = inference_method_registry.get_method("blackjax_rwmh").priority
+        inference_method_registry.set_priorities(blackjax_rwmh=200)
         try:
             info = inference_method_registry.check(simple_model, data)
-            assert info.method_name == "tfp_rwmh"
+            assert info.method_name == "blackjax_rwmh"
         finally:
-            inference_method_registry.set_priorities(tfp_rwmh=original)
+            inference_method_registry.set_priorities(blackjax_rwmh=original)
 
 
 # ---------------------------------------------------------------------------
@@ -328,10 +328,6 @@ class TestBuiltInPriorityAnchors:
         "pymc_advi": 0,
         "tfp_nuts": 0,
         "tfp_hmc": 0,
-        # ``tfp_rwmh`` is a deprecated alias for ``blackjax_rwmh``;
-        # registered at the opt-in sentinel so existing pinned callers
-        # keep working through the deprecation window.
-        "tfp_rwmh": 0,
     }
 
     def test_priorities_match_anchors(self):
@@ -467,7 +463,7 @@ class TestUnnormalizedLogProbInference:
 
         dist = _make_unnormalized_distribution()
         posterior = condition_on(
-            dist, method="tfp_rwmh",
+            dist, method="blackjax_rwmh",
             num_results=200, num_warmup=100, step_size=0.5, random_seed=0,
         )
         assert isinstance(posterior, ApproximateDistribution)
@@ -492,7 +488,7 @@ class TestUnnormalizedLogProbInference:
 
         dist = _make_normalized_distribution()
         posterior = condition_on(
-            dist, method="tfp_rwmh",
+            dist, method="blackjax_rwmh",
             num_results=100, num_warmup=50, step_size=0.5, random_seed=0,
         )
         assert isinstance(posterior, ApproximateDistribution)
@@ -508,7 +504,7 @@ class TestUnnormalizedLogProbInference:
                 super().__init__(name="no_density")
 
         dist = NoDensityDist()
-        for method in ("tfp_nuts", "tfp_hmc", "tfp_rwmh"):
+        for method in ("tfp_nuts", "tfp_hmc", "blackjax_rwmh"):
             m = inference_method_registry.get_method(method)
             info = m.check(dist, None)
             assert not info.feasible
