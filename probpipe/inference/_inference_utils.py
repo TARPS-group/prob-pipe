@@ -29,9 +29,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from xarray import DataTree
 
+import logging
+
 import jax
 import jax.numpy as jnp
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsSampling
@@ -69,6 +73,7 @@ def is_jax_traceable(fn: Callable, init_state: jnp.ndarray) -> bool:
         jax.make_jaxpr(fn)(init_state)
         return True
     except Exception:
+        logger.debug("is_jax_traceable: trace failed for %r", fn, exc_info=True)
         return False
 
 
@@ -142,7 +147,10 @@ def get_init_state(
                 s = s.flatten()
             return jnp.atleast_1d(jnp.asarray(s, dtype=target_dtype))
         except Exception:
-            pass
+            logger.debug(
+                "get_init_state: prior._sample failed for %r; falling "
+                "back to Uniform(-2, 2)", prior, exc_info=True,
+            )
 
     if hasattr(prior, "event_shape"):
         return jax.random.uniform(
