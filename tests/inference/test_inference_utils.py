@@ -378,19 +378,41 @@ class TestParallelChainMap:
        chain scaling on CPU without code changes.
     """
 
-    def test_uses_vmap_when_single_device(self):
-        """Default 1-device CPU runs hit the vmap fallback."""
-        import jax
-        from probpipe.inference._inference_utils import parallel_chain_map
+    def test_uses_vmap_when_single_device(self, monkeypatch):
+        """With ``local_device_count() == 1``, multi-chain calls hit ``jax.vmap``.
 
-        # Sanity: the test process has the default 1-device CPU.
-        assert jax.local_device_count() == 1
+        Patches both ``jax.pmap`` and ``jax.vmap`` so we can witness
+        the dispatch directly (a runtime ``Array`` doesn't distinguish
+        the two on a single device).
+        """
+        import jax
+        from probpipe.inference import _inference_utils as iu
+
+        if jax.local_device_count() != 1:
+            import pytest as _pytest
+            _pytest.skip(
+                "test requires the default 1-device CPU; got "
+                f"{jax.local_device_count()} — set XLA_FLAGS in your shell?"
+            )
+
+        called = {"pmap": 0, "vmap": 0}
+        real_vmap = jax.vmap
+
+        def _spy_pmap(fn):
+            called["pmap"] += 1
+            raise AssertionError("pmap path should not fire on single device")
+
+        def _spy_vmap(fn):
+            called["vmap"] += 1
+            return real_vmap(fn)
+
+        monkeypatch.setattr(iu.jax, "pmap", _spy_pmap)
+        monkeypatch.setattr(iu.jax, "vmap", _spy_vmap)
 
         keys = jax.random.split(jax.random.PRNGKey(0), 4)
-        out = parallel_chain_map(lambda k: jax.random.normal(k, (3,)), keys)
+        out = iu.parallel_chain_map(lambda k: jax.random.normal(k, (3,)), keys)
         assert out.shape == (4, 3)
-        # ``jax.vmap`` returns a regular Array, not a sharded one.
-        assert type(out).__name__ == "ArrayImpl"
+        assert called == {"pmap": 0, "vmap": 1}
 
     def test_pmap_path_via_subprocess(self):
         """Subprocess with virtual devices exercises the pmap branch.
