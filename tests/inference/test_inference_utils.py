@@ -357,3 +357,73 @@ class TestGetInitState:
         np.testing.assert_array_equal(np.asarray(a), np.asarray(b))
         c = get_init_state(dist, init=None, random_seed=8)
         assert not bool(jnp.all(a == c))
+
+
+# ---------------------------------------------------------------------------
+# parallel_chain_map
+# ---------------------------------------------------------------------------
+
+
+class TestParallelChainMap:
+    """``parallel_chain_map`` picks pmap when enough devices, vmap otherwise.
+
+    The pmap-when-available path matters for two reasons:
+
+    1. **NUTS bit-identicalness.** ``jax.vmap`` of NUTS masks data-dependent
+       trajectory length, so vmap'd draws don't match sequential at the same
+       seed. ``jax.pmap`` runs each chain on its own device and is
+       bit-identical. The pmap path is exercised in a subprocess test below.
+    2. **CPU multi-device parallelism.** Users who set
+       ``XLA_FLAGS=--xla_force_host_platform_device_count=N`` get linear
+       chain scaling on CPU without code changes.
+    """
+
+    def test_uses_vmap_when_single_device(self):
+        """Default 1-device CPU runs hit the vmap fallback."""
+        import jax
+        from probpipe.inference._inference_utils import parallel_chain_map
+
+        # Sanity: the test process has the default 1-device CPU.
+        assert jax.local_device_count() == 1
+
+        keys = jax.random.split(jax.random.PRNGKey(0), 4)
+        out = parallel_chain_map(lambda k: jax.random.normal(k, (3,)), keys)
+        assert out.shape == (4, 3)
+        # ``jax.vmap`` returns a regular Array, not a sharded one.
+        assert type(out).__name__ == "ArrayImpl"
+
+    def test_pmap_path_via_subprocess(self):
+        """Subprocess with virtual devices exercises the pmap branch.
+
+        Done as a subprocess because ``XLA_FLAGS`` is read once at JAX
+        import time — setting it inside this process has no effect.
+        """
+        import os
+        import subprocess
+        import sys
+        import textwrap
+
+        script = textwrap.dedent("""
+            import jax, jax.numpy as jnp
+            from probpipe.inference._inference_utils import parallel_chain_map
+
+            assert jax.local_device_count() == 4, f"expected 4 devices, got {jax.local_device_count()}"
+            keys = jax.random.split(jax.random.PRNGKey(0), 4)
+            out = parallel_chain_map(lambda k: jax.random.normal(k, (3,)), keys)
+            assert out.shape == (4, 3), f"shape {out.shape}"
+
+            # Bit-identical to sequential single-chain runs at the same per-key seed.
+            expected = jnp.stack([jax.random.normal(k, (3,)) for k in keys])
+            assert jnp.allclose(out, expected, atol=1e-6), "pmap result diverges from sequential"
+            print("OK")
+        """)
+        env = os.environ.copy()
+        env["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            env=env, capture_output=True, text=True, timeout=120,
+        )
+        assert result.returncode == 0, (
+            f"subprocess failed: stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        assert "OK" in result.stdout

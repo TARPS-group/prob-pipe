@@ -46,6 +46,7 @@ from ._inference_utils import (
     build_target_log_prob_flat,
     get_prior,
     is_jax_traceable,
+    parallel_chain_map,
     run_chain_scan,
 )
 from ._registry import InferenceMethod
@@ -131,7 +132,9 @@ def _run_blackjax_chains(
         # sample-stats dict below.
         return positions, infos, adapted_params["step_size"]
 
-    all_positions, all_infos, adapted_step_sizes = jax.vmap(run_one_chain)(chain_keys)
+    all_positions, all_infos, adapted_step_sizes = parallel_chain_map(
+        run_one_chain, chain_keys,
+    )
     chains = [all_positions[c] for c in range(num_chains)]
     sample_stats = _extract_blackjax_sample_stats(all_infos, adapted_step_sizes, num_results)
     return chains, sample_stats
