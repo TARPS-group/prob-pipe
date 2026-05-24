@@ -76,41 +76,41 @@ def is_jax_traceable(fn: Callable, init_state: jnp.ndarray) -> bool:
 def get_init_state(
     dist: Distribution,
     init: ArrayLike | None,
-    observed: ArrayLike | None = None,
     *,
     random_seed: int | Array = 0,
 ) -> jnp.ndarray:
     """Determine an initial chain state.
 
+    Pass the full target (a ``SimpleModel`` or a bare ``Distribution``);
+    this helper calls :func:`get_prior` internally and works against
+    the prior — that is the parameter-space distribution from which
+    init candidates should be drawn.
+
     Resolution order:
 
     1. Explicit ``init`` — trusted, returned verbatim (cast to the
-       target dtype).
-    2. **Prior sample** — if ``dist`` implements ``SupportsSampling``,
+       prior's dtype).
+    2. **Prior sample** — if the prior implements ``SupportsSampling``,
        draw a single sample with the supplied ``random_seed``. For a
        ``RecordDistribution`` the sample is flattened to a numeric
        vector via ``NumericRecord``.
-    3. **Stan default** — if no prior is available but ``dist`` exposes
-       ``event_shape``, return a coordinate-wise ``Uniform(-2, 2)``
-       draw, matching Stan's default init for unconstrained
-       parameters. The gradient-based MCMC methods this helper feeds
-       all assume an unconstrained parameter space, so the box is
-       guaranteed to be inside the support.
+    3. **Stan default** — if the prior has no sampling path but
+       exposes ``event_shape``, return a coordinate-wise
+       ``Uniform(-2, 2)`` draw, matching Stan's default init for
+       unconstrained parameters. The gradient-based MCMC methods this
+       helper feeds all assume an unconstrained parameter space, so
+       the box is guaranteed to be inside the support.
     4. Raise — no init heuristic applies.
 
-    ``observed`` is accepted for signature uniformity with the other
-    backend-agnostic helpers but is intentionally not used: a
-    ``mean(observed)`` heuristic would live in the *data* space while
-    the chain state lives in the *parameter* space, and the two
-    coincide only for pure location models. Callers that genuinely
-    need a data-derived init should pass ``init=`` explicitly.
-
-    Inherits dtype from the target distribution when available so
-    ``log_prob`` / ``sample`` stay self-consistent under JAX x64.
+    Observed data is deliberately not consulted: a ``mean(observed)``
+    heuristic would live in the *data* space while the chain state
+    lives in the *parameter* space, and the two coincide only for
+    pure location models. Callers that genuinely need a data-derived
+    init should pass ``init=`` explicitly.
     """
-    del observed  # accepted for signature uniformity; see docstring
+    prior = get_prior(dist)
 
-    target_dtype = getattr(dist, "dtype", None)
+    target_dtype = getattr(prior, "dtype", None)
     if not isinstance(target_dtype, jnp.dtype):
         from .._dtype import _default_float_dtype
         target_dtype = _default_float_dtype()
@@ -121,9 +121,9 @@ def get_init_state(
     key = (jax.random.PRNGKey(random_seed)
            if isinstance(random_seed, int) else random_seed)
 
-    if isinstance(dist, SupportsSampling):
+    if isinstance(prior, SupportsSampling):
         try:
-            s = dist._sample(key, sample_shape=())
+            s = prior._sample(key, sample_shape=())
             if isinstance(s, Record):
                 from ..core._numeric_record import NumericRecord
                 if not isinstance(s, NumericRecord):
@@ -133,16 +133,16 @@ def get_init_state(
         except Exception:
             pass
 
-    if hasattr(dist, "event_shape"):
+    if hasattr(prior, "event_shape"):
         return jax.random.uniform(
-            key, shape=dist.event_shape,
+            key, shape=prior.event_shape,
             minval=-2.0, maxval=2.0, dtype=target_dtype,
         )
 
     raise ValueError(
         "Cannot determine initial state: pass init= explicitly, or "
-        "provide a distribution that implements SupportsSampling or "
-        "exposes event_shape."
+        "provide a distribution whose prior implements "
+        "SupportsSampling or exposes event_shape."
     )
 
 
@@ -260,7 +260,7 @@ def build_target_log_prob_flat(
     """
     prior = get_prior(dist)
     target_record = build_target_log_prob(dist, observed)
-    flat_init = get_init_state(prior, init, observed, random_seed=random_seed)
+    flat_init = get_init_state(dist, init, random_seed=random_seed)
 
     flat_view = getattr(prior, "as_flat_distribution", None)
     record_template = getattr(prior, "record_template", None)

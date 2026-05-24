@@ -163,7 +163,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         # Initial position from prior or user-supplied init.
         prior = dist.prior
         init = get_init_state(
-            prior, kwargs.get("init"), observed, random_seed=random_seed,
+            dist, kwargs.get("init"), random_seed=random_seed,
         )
         state = algorithm.init(init)
 

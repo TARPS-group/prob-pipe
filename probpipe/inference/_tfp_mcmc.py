@@ -149,7 +149,7 @@ class _TFPGradientMethod(InferenceMethod):
         try:
             target = build_target_log_prob(dist, observed)
             init = get_init_state(
-                get_prior(dist), kwargs.get("init"), observed,
+                dist, kwargs.get("init"),
                 random_seed=kwargs.get("random_seed", 0),
             )
             if not is_jax_traceable(target, init):
@@ -165,7 +165,7 @@ class _TFPGradientMethod(InferenceMethod):
         target = build_target_log_prob(dist, observed)
         prior = get_prior(dist)
         init = get_init_state(
-            prior, kwargs.get("init"), observed, random_seed=random_seed,
+            dist, kwargs.get("init"), random_seed=random_seed,
         )
         record_template = extract_record_template(dist)
 

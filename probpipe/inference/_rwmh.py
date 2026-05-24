@@ -82,12 +82,7 @@ def rwmh(
         def target_log_prob(params):
             return dist._unnormalized_log_prob(params)
 
-    # Extract the prior so ``get_init_state`` reaches the
-    # ``SupportsSampling`` path on ``SimpleModel`` targets (the model
-    # itself doesn't implement the protocol; its prior does).
-    init_state = get_init_state(
-        get_prior(dist), init, data, random_seed=random_seed,
-    )
+    init_state = get_init_state(dist, init, random_seed=random_seed)
 
     d = init_state.shape[0]
     key = jax.random.PRNGKey(random_seed)
@@ -184,9 +179,7 @@ class TFPRWMHMethod(InferenceMethod):
         random_seed = kwargs.get("random_seed", 0)
         init = kwargs.get("init")
         if init is None:
-            init = get_init_state(
-                prior, None, observed, random_seed=random_seed,
-            )
+            init = get_init_state(dist, None, random_seed=random_seed)
 
         return rwmh._func(
             prior, observed,
