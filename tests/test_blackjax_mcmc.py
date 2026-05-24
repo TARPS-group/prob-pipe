@@ -88,8 +88,6 @@ class TestBlackJAXNuts:
 
     def test_collapses_to_prior_under_identity_likelihood(self, small_model):
         # With an identity likelihood, the posterior is the prior.
-        # 800 draws across 2 chains gives ample MC precision for the
-        # tolerances below.
         posterior = condition_on(
             small_model, jnp.zeros((4,)), method="blackjax_nuts",
             num_results=400, num_warmup=400, num_chains=2, random_seed=0,
@@ -99,14 +97,14 @@ class TestBlackJAXNuts:
         np.testing.assert_allclose(float(m["b"].squeeze()), -2.0, atol=0.15)
 
     def test_closed_form_gaussian_target(self):
-        """Acceptance gate from plan §6.1: mean within 0.5 σ_MC, cov within 5%.
+        """Single-parameter conjugate Gaussian: closed-form posterior recovery.
 
-        Single-parameter Gaussian: prior ``N(0, 1)``, likelihood is
-        ``sum_i log N(y_i; mu, 1)`` with ``y = [1.0, 2.0, 3.0]``. The
-        posterior is ``N(1.5, 0.25)`` — prior precision ``1`` + likelihood
-        precision ``n = 3``, posterior precision ``4`` ⇒ variance
-        ``0.25``; posterior mean is the precision-weighted average
-        ``(0 * 1 + sum(y) * 1) / 4 = 6/4 = 1.5``.
+        Prior ``N(0, 1)``, likelihood is ``sum_i log N(y_i; mu, 1)``
+        with ``y = [1.0, 2.0, 3.0]``. The posterior is ``N(1.5, 0.25)``:
+        prior precision ``1`` + likelihood precision ``n = 3`` ⇒
+        posterior precision ``4`` (variance ``0.25``); posterior mean
+        is the precision-weighted average ``sum(y) / 4 = 1.5``.
+        Tolerances below check mean to ~3 σ_MC and variance to 10%.
         """
         prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
         model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")

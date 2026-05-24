@@ -18,6 +18,7 @@ from ..core.protocols import SupportsUnnormalizedLogProb
 from ..custom_types import Array
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (
+    as_prng_key,
     build_mcmc_datatree,
     build_target_log_prob,
     extract_record_template,
@@ -68,8 +69,7 @@ def _run_tfp_chains(
     else:
         kernel = inner_kernel
 
-    key = jax.random.PRNGKey(random_seed)
-    chain_keys = jax.random.split(key, num_chains)
+    chain_keys = jax.random.split(as_prng_key(random_seed), num_chains)
 
     def _run_one_chain(chain_key):
         return tfp_mcmc.sample_chain(
@@ -193,12 +193,11 @@ class _TFPGradientMethod(InferenceMethod):
 def TFPNutsMethod() -> _TFPGradientMethod:
     """TFP No-U-Turn Sampler (gradient-based MCMC).
 
-    Demoted to ``priority=0`` (opt-in only) by the BlackJAX MCMC
-    migration: ``blackjax_nuts`` (priority 85) is now the auto-dispatch
-    default for any ``SupportsLogProb`` + JAX-traceable target. This
-    method stays registered so callers can pin
-    ``method="tfp_nuts"`` for bit-pattern regression or to compare
-    backends — it just no longer wins auto-dispatch.
+    Opt-in only (``priority=0``); reach via ``method="tfp_nuts"``.
+    ``blackjax_nuts`` is the auto-dispatch default for any
+    ``SupportsLogProb`` + JAX-traceable target. This method stays
+    available for bit-pattern regression or side-by-side backend
+    comparison.
     """
     return _TFPGradientMethod("nuts", "tfp_nuts", 0)
 
@@ -206,10 +205,9 @@ def TFPNutsMethod() -> _TFPGradientMethod:
 def TFPHmcMethod() -> _TFPGradientMethod:
     """TFP Hamiltonian Monte Carlo.
 
-    Demoted to ``priority=0`` (opt-in only) by the BlackJAX MCMC
-    migration alongside ``tfp_nuts``. ``blackjax_hmc`` is also at
-    ``priority=0`` (structurally unreachable in auto-dispatch — same
-    ``check()`` as ``blackjax_nuts``); both backends' HMC kernels are
-    opt-in via ``method="tfp_hmc"`` / ``method="blackjax_hmc"``.
+    Opt-in only (``priority=0``); reach via ``method="tfp_hmc"``.
+    Both HMC kernels (``tfp_hmc`` and ``blackjax_hmc``) sit at
+    ``priority=0`` — they share their respective NUTS sibling's
+    ``check()`` and so are structurally unreachable in auto-dispatch.
     """
     return _TFPGradientMethod("hmc", "tfp_hmc", 0)

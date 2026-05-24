@@ -40,7 +40,7 @@ from ..custom_types import PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._minibatch import MinibatchedDistribution
 from ._registry import InferenceMethod
-from ._inference_utils import get_init_state, is_simple_model
+from ._inference_utils import as_prng_key, get_init_state, is_simple_model
 
 __all__ = ["BlackJAXSGLDMethod", "BlackJAXSGHMCMethod"]
 
@@ -167,20 +167,15 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         )
         state = algorithm.init(init)
 
-        # Iterate. The kernel itself jitf within run_loop's step closure.
-        key = (
-            jax.random.PRNGKey(random_seed)
-            if isinstance(random_seed, int)
-            else random_seed
-        )
+        # Iterate. The kernel itself jits within run_loop's step closure.
         positions = _run_sgmcmc_loop(
-            algorithm, state, key, step_size, num_warmup, num_results,
+            algorithm, state, as_prng_key(random_seed),
+            step_size, num_warmup, num_results,
         )
 
-        # Stack into a chain shaped (num_results, *event_shape) and wrap.
-        # ``check()`` rejects any non-SimpleModel target, and SimpleModel
-        # requires a RecordDistribution prior (PR #200), so the
-        # ``record_template`` attribute is guaranteed here.
+        # ``check()`` rejects any non-SimpleModel target, and a
+        # SimpleModel prior is always a RecordDistribution, so
+        # ``record_template`` is guaranteed here.
         chain = jnp.stack(positions, axis=0)
         record_template = prior.record_template
         return make_posterior(

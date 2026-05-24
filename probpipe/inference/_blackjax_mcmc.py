@@ -17,12 +17,8 @@ then lift the resulting chain back through the prior's
 parameterisation.
 
 The per-step diagnostics (``step_size``, ``acceptance_rate``, ...) are
-packed into the same dict shape ``_tfp_mcmc.py`` produces, so the
-ArviZ-converting :func:`build_mcmc_datatree` is reused unchanged. A
-backend-neutral ``SampleStats`` dataclass replacing the dict is a
-sensible follow-up but not load-bearing — TFP NUTS / HMC stay
-registered (at priority 0) as opt-in fallbacks, so both backends are
-permanent.
+packed into a dict consumed by :func:`build_mcmc_datatree`, the same
+ArviZ converter the TFP path uses.
 """
 
 from __future__ import annotations
@@ -41,6 +37,7 @@ from ..core.protocols import SupportsUnnormalizedLogProb
 from ..custom_types import Array
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (
+    as_prng_key,
     build_mcmc_datatree,
     build_target_log_prob_flat,
     get_prior,
@@ -50,10 +47,6 @@ from ._registry import InferenceMethod
 
 __all__ = ["BlackJAXNutsMethod", "BlackJAXHmcMethod"]
 
-# Algorithm dispatch — keyed by the same string the registered method
-# names embed (``blackjax_<algorithm>``). Centralises the BlackJAX-kernel
-# factory and the algorithm-specific kwarg builder so the rest of the
-# file stays branch-free.
 Algorithm = Literal["nuts", "hmc"]
 
 _KERNEL_FACTORY: dict[Algorithm, Callable[..., Any]] = {
@@ -93,15 +86,10 @@ def _run_blackjax_chains(
     :func:`jax.lax.scan` over the adapted kernel. ``num_integration_steps``
     applies to HMC only (window adaptation does not tune it).
     """
-    if algorithm not in _KERNEL_FACTORY:
-        raise ValueError(
-            f"algorithm must be one of {sorted(_KERNEL_FACTORY)}; got {algorithm!r}"
-        )
     kernel_factory = _KERNEL_FACTORY[algorithm]
     extra_kwargs = _EXTRA_KWARGS[algorithm](num_integration_steps)
 
-    key = jax.random.PRNGKey(random_seed)
-    chain_keys = jax.random.split(key, num_chains)
+    chain_keys = jax.random.split(as_prng_key(random_seed), num_chains)
 
     def _adapt(warmup_key: Array) -> tuple[Any, dict[str, Any]]:
         """Either run window-adaptation or fall back to user-provided params.
@@ -191,9 +179,6 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         return self._method_priority
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
-        # Mirrors ``_TFPGradientMethod.check`` — same JAX-traceability
-        # probe, same protocol gate. Targets that BlackJAX can run but
-        # TFP cannot (or vice versa) are not handled differently here.
         if not isinstance(dist, SupportsUnnormalizedLogProb):
             return MethodInfo(
                 feasible=False, method_name=self.name,

@@ -2,22 +2,22 @@
 
 Functions for building target log-density callables and initial chain
 states from a :class:`~probpipe.core.distribution.Distribution` plus
-observed data. Lifted out of ``_tfp_mcmc.py`` so both the TFP and
-BlackJAX MCMC paths consume the same source of truth, and so future
-backends (VI, SMC, Laplace) get the same machinery.
+observed data. Shared across every inference backend in
+``probpipe.inference`` so they consume the same source of truth.
 
-The Record-shaped path (:func:`build_target_log_prob`) is the original
-TFP-flavoured interface. The flat-vector path
-(:func:`build_target_log_prob_flat`) is the BlackJAX entry point — it
-wraps the Record-shaped target through the prior's
-:meth:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution.as_flat_distribution`
-view so kernels that operate on flat parameter vectors can plug in
-without per-backend flatten / unflatten plumbing.
+Two target builders:
+
+- :func:`build_target_log_prob` returns a Record-shaped target
+  (the TFP-flavoured interface).
+- :func:`build_target_log_prob_flat` returns a flat-vector target —
+  the BlackJAX entry point. It wraps the Record-shaped target through
+  the prior's
+  :meth:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution.as_flat_distribution`
+  view so kernels that operate on flat parameter vectors plug in
+  without per-backend flatten / unflatten plumbing.
 
 Scope: private to ``probpipe.inference``. Symbols are package-private
-utilities shared across the backend modules (``_tfp_mcmc.py``,
-``_rwmh.py``, ``_blackjax_sgmcmc.py``, and the forthcoming
-``_blackjax_mcmc.py``); they are not re-exported through
+utilities shared across the backend modules; not re-exported through
 ``probpipe.inference.__init__`` or the top-level package.
 """
 
@@ -40,6 +40,7 @@ from ..custom_types import Array, ArrayLike
 
 
 __all__ = [
+    "as_prng_key",
     "build_mcmc_datatree",
     "build_target_log_prob",
     "build_target_log_prob_flat",
@@ -58,15 +59,26 @@ __all__ = [
 def is_jax_traceable(fn: Callable, init_state: jnp.ndarray) -> bool:
     """Probe whether *fn* can be traced by JAX at *init_state*.
 
-    Used by gradient-based MCMC `check()` methods to filter out targets
-    that would fail at execute() time. The cost is ~one JAX trace,
-    cached by JAX on subsequent calls.
+    Used by gradient-based MCMC ``check()`` methods to filter out
+    targets that would fail at ``execute()`` time. Costs ~one JAX
+    trace — note that ``jax.make_jaxpr`` does not populate the JIT
+    cache, so the subsequent ``lax.scan`` / ``vmap`` inside the
+    runner re-traces from scratch.
     """
     try:
         jax.make_jaxpr(fn)(init_state)
         return True
     except Exception:
         return False
+
+
+def as_prng_key(seed: int | Array) -> Array:
+    """Upgrade an ``int`` seed to a ``PRNGKey``; pass keys through.
+
+    Centralises the ``isinstance(seed, int)`` branch repeated across
+    the gradient-MCMC backends.
+    """
+    return jax.random.PRNGKey(seed) if isinstance(seed, int) else seed
 
 
 # ---------------------------------------------------------------------------
@@ -118,8 +130,7 @@ def get_init_state(
     if init is not None:
         return jnp.atleast_1d(jnp.asarray(init, dtype=target_dtype))
 
-    key = (jax.random.PRNGKey(random_seed)
-           if isinstance(random_seed, int) else random_seed)
+    key = as_prng_key(random_seed)
 
     if isinstance(prior, SupportsSampling):
         try:
@@ -164,12 +175,10 @@ def get_prior(dist: Distribution) -> Distribution:
 def extract_record_template(dist: Distribution) -> RecordTemplate | None:
     """Return *dist*'s prior's ``record_template``, or ``None``.
 
-    Uses ``getattr`` so a non-``RecordDistribution`` prior (which has
-    no ``record_template`` after the PR #200 hierarchy cleanup) yields
-    ``None`` rather than ``AttributeError``. SimpleModel-rooted callers
-    can rely on the prior being a ``RecordDistribution`` and read
-    ``prior.record_template`` directly; this helper exists for the
-    bare ``SupportsLogProb`` paths.
+    Uses ``getattr`` to tolerate priors that aren't a
+    ``RecordDistribution`` (e.g. bare ``SupportsLogProb`` targets);
+    SimpleModel-rooted callers can rely on the prior being a
+    ``RecordDistribution`` and read ``prior.record_template`` directly.
     """
     prior = get_prior(dist)
     return getattr(prior, "record_template", None)
@@ -184,15 +193,15 @@ def build_target_log_prob(
 ) -> Callable[[Any], Array]:
     """Build a ``target_log_prob_fn(params)`` from *dist* and *observed*.
 
-    Three cases:
+    Three cases, in the order the body dispatches them:
 
     1. **SimpleModel** (has prior + likelihood):
        ``prior._log_prob(params) + likelihood.log_likelihood(params, data)``.
-    2. **Bare ``SupportsUnnormalizedLogProb`` with data**:
-       ``dist._unnormalized_log_prob(params)`` (data is assumed already
-       folded in, e.g., via closure).
-    3. **Joint over (params, data)**:
-       ``dist._unnormalized_log_prob((params, data))``.
+    2. **Bare target with data**: joint over ``(params, data)``,
+       evaluated as ``dist._unnormalized_log_prob((params, data))``.
+    3. **Bare target without data**: ``dist._unnormalized_log_prob``
+       returned directly (the caller is presumed to have already
+       folded the data into the distribution, e.g. via closure).
 
     The unnormalized accessor is used for cases 2 and 3 because MCMC
     samplers do not require a normalized density. Distributions that
@@ -244,10 +253,9 @@ def build_target_log_prob_flat(
 
     Two cases:
 
-    1. **Record-shaped prior** (a :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`,
-       which a ``SimpleModel`` prior is required to be under the PR
-       #200 hierarchy cleanup). ``target_flat_fn`` composes
-       :func:`build_target_log_prob` with the prior's
+    1. **Record-shaped prior** (a :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`
+       — every ``SimpleModel`` prior is one). ``target_flat_fn``
+       composes :func:`build_target_log_prob` with the prior's
        :meth:`~probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.unflatten_sample`,
        and the record template is returned for downstream lift-back.
     2. **Bare ``SupportsLogProb`` target** with no Record-shaped prior
