@@ -15,11 +15,7 @@ Most workflows for probabilistic inference can be described in terms of **distri
 - **Algorithmic challenges.** There are many possible algorithms for common operations, with varying trade-offs that need to be explored in a problem-specific manner. A posterior could be approximated using a variety of MCMC algorithms, variational inference methods, or sequential Monte Carlo, or might require more specialized methods such as those for amortized and simulation-based inference. 
 - **Representational challenges.** Algorithms expect (and produce) specific formats for distributions and fixed values, and those formats are not always compatible with other parts of the workflow. Fixed values may be named parameter vectors, covariate matrices, or structured observations, and different algorithms expect different representations.
 
-In practice, these issues make it hard to explore the full design space of available methods or to build more complex workflows that many algorithms for different steps. 
-
-### Simplification via abstraction
-
-ProbPipe addresses these challenges through a single design principle: **simplification via abstraction**. There are just three core types:
+In practice, these issues make it hard to explore the full design space of available methods or to build more complex workflows that many algorithms for different steps. ProbPipe addresses these challenges through a single design principle: **simplification via abstraction**. There are just three core types:
 
 1. **`Distribution`**: the universal representation of random quantities (priors, posteriors, data-generating processes). A distribution's capabilities are declared via protocols (`SupportsSampling`, `SupportsLogProb`, ...), and ProbPipe converts between representations as needed.
 2. **`Record`**: the universal container for non-random structured data (observed datasets, hyperparameters, design matrices). `Record` is the deterministic counterpart of `Distribution`.
@@ -36,8 +32,6 @@ ProbPipe provides a set of built-in **ops**, which are workflow functions that c
 - **`sample`**, **`log_prob`**: draw samples or evaluate densities through a uniform interface.
 - **`from_distribution`**: convert between distribution representations via a customizable converter registry.
 - **`predictive_check`**: built-in prior and posterior predictive model checking.
-
-**[Documentation](https://tarps-group.github.io/prob-pipe/)** | **[Getting Started Tutorial](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** | **[API Reference](https://tarps-group.github.io/prob-pipe/)**
 
 ## Quick Example
 
