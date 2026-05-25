@@ -10,30 +10,32 @@ ProbPipe is a Python framework for building scalable probabilistic pipelines wit
 
 ### Why ProbPipe?
 
-Most workflows for probabilistic inference can be described in terms of **distributions**, **fixed values** (data, hyperparameters, covariates), and **operations** that transform distributions. Implementing these workflows, however, is harder than describing them:
+Most workflows for probabilistic inference can be described in terms of **distributions**, **fixed values** (data, hyperparameters, covariates), and **operations** that transform distributions. But implementing these workflows is harder than describing them because math has to be translated into computation:
 
-1. **Algorithmic challenges.** There are many possible algorithms for common operations, with varying trade-offs that need to be explored in a problem-specific manner. A posterior could be approximated using different MCMC algorithms, variational inference, or sequential Monte Carlo.
-2. **Representational challenges.** Algorithms expect (and produce) specific formats for distributions and fixed values, and those formats are not always compatible with other parts of the workflow. Fixed values may be named parameter vectors, covariate matrices, or structured observations, and different algorithms expect different representations.
+- **Algorithmic challenges.** There are many possible algorithms for common operations, with varying trade-offs that need to be explored in a problem-specific manner. A posterior could be approximated using a variety of MCMC algorithms, variational inference methods, or sequential Monte Carlo, or might require more specialized methods such as those for amortized and simulation-based inference. 
+- **Representational challenges.** Algorithms expect (and produce) specific formats for distributions and fixed values, and those formats are not always compatible with other parts of the workflow. Fixed values may be named parameter vectors, covariate matrices, or structured observations, and different algorithms expect different representations.
+
+In practice, these issues make it hard to explore the full design space of available methods or to build more complex workflows that many algorithms for different steps. 
 
 ### Simplification via abstraction
 
 ProbPipe addresses these challenges through a single design principle: **simplification via abstraction**. There are just three core types:
 
-- **`Distribution`**: the universal representation of random quantities (priors, posteriors, data-generating processes). A distribution's capabilities are declared via protocols (`SupportsSampling`, `SupportsLogProb`, ...), and ProbPipe converts between representations as needed.
-- **`Record`**: the universal container for non-random structured data (observed datasets, hyperparameters, design matrices). `Record` is the deterministic counterpart of `Distribution`.
-- **`WorkflowFunction`**: any function decorated with `@workflow_function`. Pass concrete values and it runs normally; pass a `Distribution` where a concrete value is expected and ProbPipe propagates uncertainty automatically, returning a `Distribution` over the results. Array-valued inputs (`RecordArray`, `DistributionArray`) drive parameter sweeps; all returns are wrapped in the same `Record` / `Distribution` contract so pipelines compose cleanly.
+1. **`Distribution`**: the universal representation of random quantities (priors, posteriors, data-generating processes). A distribution's capabilities are declared via protocols (`SupportsSampling`, `SupportsLogProb`, ...), and ProbPipe converts between representations as needed.
+2. **`Record`**: the universal container for non-random structured data (observed datasets, hyperparameters, design matrices). `Record` is the deterministic counterpart of `Distribution`.
+3. **`WorkflowFunction`**: Usually construction by decorating a function with  `@workflow_function`. Pass the declared types of values, the workflow function runs normally. But pass a `Distribution` where a concrete value is expected, and ProbPipe propagates uncertainty automatically, returning a `Distribution` over the functions declared result type. Similarly, array-valued inputs (a `RecordArray`) broadcast across fixed values (e.g., for hyperparameter sweeps). To ensure composability and modularity, all returned values from a workflow function are wrapped as an appropriate `Record` / `Distribution`. 
 
-`Distribution` and `Record` share a single interface for named-field access (`fields`, `select(...)`, `select_all()`) and passing components into a `WorkflowFunction`, so they are interchangeable at call sites. Fields split out of a common parent stay correlated end-to-end, so the two natural shapes — `f(p=posterior)` and `f(**posterior.select_all())` — produce identical outputs. Implementation details (algorithms, data and distribution representations) stay invisible by default, while remaining fully configurable when control is needed.
+`Distribution` and `Record` share a single interface for named-field access (`fields`, `select(...)`, `select_all()`) and passing components into a `WorkflowFunction`, so they are interchangeable as arguments to workflow function. 
 
 ### Built-in operations
 
-ProbPipe provides a set of built-in **ops**, which are special workflow functions that dispatch based on a distribution's protocols:
+ProbPipe provides a set of built-in **ops**, which are workflow functions that can support specalized features to streamline pipeline construction:
 
 - **`condition_on`**: condition a model on observed data, automatically selecting the best inference algorithm (or specify one with `method=`).
 - **`mean`**, **`variance`**, **`cov`**, **`expectation`**: compute distributional summaries, with automatic Monte Carlo fallback when exact computation is unavailable.
 - **`sample`**, **`log_prob`**: draw samples or evaluate densities through a uniform interface.
-- **`from_distribution`**: convert between distribution representations via the converter registry.
-- **`predictive_check`**: built-in prior and posterior predictive checking.
+- **`from_distribution`**: convert between distribution representations via a customizable converter registry.
+- **`predictive_check`**: built-in prior and posterior predictive model checking.
 
 **[Documentation](https://tarps-group.github.io/prob-pipe/)** | **[Getting Started Tutorial](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** | **[API Reference](https://tarps-group.github.io/prob-pipe/)**
 
