@@ -25,8 +25,51 @@ ProbPipe provides a set of built-in **ops**, which are workflow functions that c
 - **`from_distribution`**: convert between distribution representations via a customizable converter registry.
 - **`predictive_check`**: built-in prior and posterior predictive model checking.
 
+## Installation
+
+ProbPipe requires Python ≥ 3.12 (tested on 3.12 and 3.13).
+
+```bash
+git clone https://github.com/TARPS-group/prob-pipe.git
+cd prob-pipe
+pip install .
+```
+
+Core dependencies: JAX and TensorFlow Probability. ProbPipe uses [tfp-nightly](https://pypi.org/project/tfp-nightly/), which is the [recommended approach](https://github.com/tensorflow/probability/issues/1994#issuecomment-3129033043) for TFP on JAX since stable TFP releases are tied to TensorFlow and often lag behind JAX.
+
+Optional extras:
+
+```bash
+pip install .[dev]       # pytest, jupyter, matplotlib, graphviz
+pip install .[prefect]   # Prefect orchestration backend
+pip install .[stan]      # Stan models via BridgeStan + CmdStanPy
+pip install .[pymc]      # PyMC model integration
+pip install .[nutpie]    # nutpie Markov chain Monte Carlo (MCMC) sampler
+```
+
+### Ray via Prefect
+
+ProbPipe can dispatch Prefect-orchestrated `WorkflowFunction` tasks to Ray via Prefect-Ray:
+
+```bash
+pip install "probpipe[prefect]"
+pip install "prefect[ray]"
+```
+
+The local demo uses a persistent Ray head:
+
+```bash
+prefect server start
+ray start --head
+python example_scripts/run_ray_demo.py
+```
+
+See the [Ray via Prefect guide](orchestration/ray.md) for setup details, deployment notes, and current support boundaries.
+
 ## Next Steps
 
-- [Getting Started tutorial](tutorials/getting_started.ipynb) -- iterative Bayesian model building following the Bayesian Workflow (Gelman et al., 2020)
-- [User Guide](user_guide.md) -- in-depth coverage of specific ProbPipe features
-- [API Reference](api/index.md) -- full class and function documentation
+Once installed, the **[Getting Started Tutorial](tutorials/getting_started.ipynb)** is the recommended on-ramp: it walks through a complete Bayesian workflow (priors, conditioning, posterior predictive checks, refinement) end-to-end on a real dataset, introducing the core types in context. From there:
+
+- **[User Guide](user_guide.md)** — focused walks through individual ProbPipe features (records, broadcasting, joints, conversions, sequential updating, …).
+- **[API Reference](api/index.md)** — full class and function documentation.
+- **[Contributing Guide](https://github.com/TARPS-group/prob-pipe/blob/main/CONTRIBUTING.md)** — development setup, PR workflow, and conventions for new contributors.
