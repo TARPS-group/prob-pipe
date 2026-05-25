@@ -193,14 +193,14 @@ jobs:
           pytest --cov-report=xml --cov-report=html
 
       - name: Upload coverage reports to Codecov
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.12' && steps.changed.outputs.run_all == 'true'
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: TARPS-group/prob-pipe
 
       - name: Upload coverage HTML report
-        if: always() && matrix.python-version == '3.12'
+        if: always() && matrix.python-version == '3.12' && steps.changed.outputs.run_all == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-html
