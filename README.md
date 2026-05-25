@@ -126,6 +126,38 @@ pip install .[pymc]      # PyMC model integration
 pip install .[nutpie]    # nutpie Markov chain Monte Carlo (MCMC) sampler
 ```
 
+### Ray via Prefect
+
+ProbPipe can dispatch Prefect-orchestrated `WorkflowFunction` tasks to Ray via
+Prefect-Ray. This is not a native Ray backend: there is no `WorkflowKind.RAY`,
+`probpipe.ray` module, or direct ProbPipe API for `ray.remote`, `ray.put`,
+actors, placement groups, or resource hints.
+
+Install Ray support through Prefect-Ray:
+
+```bash
+pip install "probpipe[prefect]"
+pip install "prefect[ray]"
+```
+
+For local development from this repository:
+
+```bash
+pip install -e ".[prefect]"
+pip install "prefect[ray]"
+```
+
+The local demo uses a persistent Ray head:
+
+```bash
+prefect server start
+ray start --head
+python example_scripts/run_ray_demo.py
+```
+
+See the [Ray via Prefect guide](https://tarps-group.github.io/prob-pipe/orchestration/ray/)
+for setup details, deployment notes, and current support boundaries.
+
 ## Next Steps
 
 - **[Getting Started Tutorial](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)**: iterative Bayesian model building with ProbPipe

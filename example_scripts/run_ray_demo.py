@@ -1,11 +1,18 @@
-"""Distributed bagged posteriors with Prefect + Ray.
+"""Distributed bagged posteriors with Ray via Prefect.
 
 Runs the same bagged posterior workflow as ``run_prefect_demo.py``, but
 uses ``RayTaskRunner`` so each bootstrap MCMC fit runs in a separate Ray
 worker process — true parallelism across CPU cores.
 
+This is the current Ray support path for ProbPipe: Prefect orchestrates
+``WorkflowFunction`` tasks, and Prefect-Ray submits those tasks to Ray. It is
+not a native Ray backend and does not expose ``ray.remote`` or ``ray.put``
+through ProbPipe.
+
 This works because ``Record.__reduce__`` was added to make Records
 pickle-serializable, which is required for Ray to ship arguments to workers.
+The task function, arguments, closed-over state, and return value must all be
+serializable.
 
 Usage
 -----
@@ -39,7 +46,11 @@ dashboard, dispatched across Ray worker processes.
 Prerequisites
 -------------
     pip install probpipe[prefect]
-    pip install ray prefect-ray
+    pip install "prefect[ray]"
+
+For production deployments, read the Prefect-Ray driver-placement guidance and
+Ray's serialization and dependency documentation before choosing between
+``address="auto"`` and ``ray://<head>:10001``.
 
 """
 

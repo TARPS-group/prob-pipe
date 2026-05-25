@@ -89,4 +89,4 @@ sampled jointly.
 
 - [Getting Started tutorial](tutorials/getting_started.ipynb) -- iterative Bayesian model building following the Bayesian Workflow (Gelman et al., 2020)
 - [Reference Notebooks](reference_notebooks.md) -- in-depth coverage of specific ProbPipe features
-- [API Reference](api/distributions.md) -- full class and function documentation
+- [API Reference](api/index.md) -- full class and function documentation
