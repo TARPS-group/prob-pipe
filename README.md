@@ -4,6 +4,8 @@
 [![codecov](https://codecov.io/gh/TARPS-group/prob-pipe/branch/main/graph/badge.svg)](https://codecov.io/gh/TARPS-group/prob-pipe)
 [![docs](https://img.shields.io/badge/docs-tarps--group.github.io%2Fprob--pipe-blue)](https://tarps-group.github.io/prob-pipe/)
 
+**[Install](#installation)** | **[Getting Started](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** | **[Documentation](https://tarps-group.github.io/prob-pipe/)** | **[API Reference](https://tarps-group.github.io/prob-pipe/)**
+
 ProbPipe is a Python framework for building scalable probabilistic pipelines with automated uncertainty quantification.
 
 ### Why ProbPipe?
@@ -25,7 +27,7 @@ ProbPipe addresses these challenges through a single design principle: **simplif
 
 ### Built-in operations
 
-ProbPipe provides a set of built-in **ops**, special workflow functions that dispatch based on a distribution's protocols:
+ProbPipe provides a set of built-in **ops**, which are special workflow functions that dispatch based on a distribution's protocols:
 
 - **`condition_on`**: condition a model on observed data, automatically selecting the best inference algorithm (or specify one with `method=`).
 - **`mean`**, **`variance`**, **`cov`**, **`expectation`**: compute distributional summaries, with automatic Monte Carlo fallback when exact computation is unavailable.
@@ -78,16 +80,20 @@ predictive = predict_prob(**posterior.select('intercept', 'slope'),
 # posterior mean: ~0.98 at 31°F, ~0.46 at 65°F
 ```
 
-`predict_prob` is a `@workflow_function`: ProbPipe samples from the posterior and evaluates the function for each draw, returning the full predictive distribution. The two posterior fields are splatted from a single parent, so ProbPipe draws them jointly — each `(intercept, slope)` pair stays correlated. Plotting the full predictive curve across the temperature range tells the story:
+Since `predict_prob` is constructed to be a workflow function, ProbPipe samples from the posterior and evaluates the function for each draw, yielding a Monte Carlo approximation to the full predictive distribution. The two posterior fields are extracted from a single parent, so their values are sampled jointly, ensuring each `(intercept, slope)` pair stays correlated. From there, we can easily plot the full predictive curve across:
 
 ```python
 import numpy as np, matplotlib.pyplot as plt
 
+# grid of temperature values
 t_grid = jnp.linspace(30, 85, 50)
+# predictive distribution at each temperature
 curves = predict_prob(**posterior.select('intercept', 'slope'), x=t_grid)
+# curves is a Distribution, so extract samples for plotting
 S = np.array(curves.samples)         # (n_draws, 50)
+# compute 90% credible intervals
 lo, hi = np.percentile(S, [5, 95], axis=0)
-plt.fill_between(np.array(t_grid), lo, hi, alpha=0.3, label='90% CI')
+plt.fill_between(np.array(t_grid), lo, hi, alpha=0.3, label='90% credible interval')
 plt.plot(np.array(t_grid), S.mean(axis=0), lw=2, label='Posterior mean')
 plt.scatter(np.array(temperature), np.array(damage), s=20, label='Data')
 plt.axvline(31, ls='--', color='red', label='Challenger launch (31°F)')
@@ -167,3 +173,5 @@ for setup details, deployment notes, and current support boundaries.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, PR workflow, and guidelines.
+
+
