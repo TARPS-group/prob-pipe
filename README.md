@@ -4,7 +4,7 @@
 [![codecov](https://codecov.io/gh/TARPS-group/prob-pipe/branch/main/graph/badge.svg)](https://codecov.io/gh/TARPS-group/prob-pipe)
 [![docs](https://img.shields.io/badge/docs-tarps--group.github.io%2Fprob--pipe-blue)](https://tarps-group.github.io/prob-pipe/)
 
-**[Install](#installation)** | **[Getting Started](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** | **[Documentation](https://tarps-group.github.io/prob-pipe/)** | **[API Reference](https://tarps-group.github.io/prob-pipe/)**
+**[Installation Guide](#installation)** | **[Getting Started](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** | **[Full Documentation](https://tarps-group.github.io/prob-pipe/)**
 
 ProbPipe is a Python framework for building scalable probabilistic pipelines with automated uncertainty quantification.
 
@@ -85,13 +85,12 @@ Since `predict_prob` is constructed to be a workflow function, ProbPipe samples 
 ```python
 import numpy as np, matplotlib.pyplot as plt
 
-# grid of temperature values
-t_grid = jnp.linspace(30, 85, 50)
+t_grid = jnp.linspace(30, 85, 50)  # grid of temperature values
 # predictive distribution at each temperature
 curves = predict_prob(**posterior.select('intercept', 'slope'), x=t_grid)
 # curves is a Distribution, so extract samples for plotting
 S = np.array(curves.samples)         # (n_draws, 50)
-# compute 90% credible intervals
+# compute 90% credible intervals, then plot 
 lo, hi = np.percentile(S, [5, 95], axis=0)
 plt.fill_between(np.array(t_grid), lo, hi, alpha=0.3, label='90% credible interval')
 plt.plot(np.array(t_grid), S.mean(axis=0), lw=2, label='Posterior mean')
@@ -136,21 +135,10 @@ pip install .[nutpie]    # nutpie Markov chain Monte Carlo (MCMC) sampler
 ### Ray via Prefect
 
 ProbPipe can dispatch Prefect-orchestrated `WorkflowFunction` tasks to Ray via
-Prefect-Ray. This is not a native Ray backend: there is no `WorkflowKind.RAY`,
-`probpipe.ray` module, or direct ProbPipe API for `ray.remote`, `ray.put`,
-actors, placement groups, or resource hints.
-
-Install Ray support through Prefect-Ray:
+Prefect-Ray:
 
 ```bash
 pip install "probpipe[prefect]"
-pip install "prefect[ray]"
-```
-
-For local development from this repository:
-
-```bash
-pip install -e ".[prefect]"
 pip install "prefect[ray]"
 ```
 
@@ -167,11 +155,8 @@ for setup details, deployment notes, and current support boundaries.
 
 ## Next Steps
 
-- **[Getting Started Tutorial](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)**: iterative Bayesian model building with ProbPipe
-- **[API Reference](https://tarps-group.github.io/prob-pipe/)**: full class and function documentation
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, PR workflow, and guidelines.
+- For a more detailed overview of ProbPipe, see the **[Getting Started Tutorial](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)**
+- For all the details of the ProbPipe API, see the **[Reference Documentation](https://tarps-group.github.io/prob-pipe/)**
+- For getting started as a ProbPipe developer, see the **[Contributing Guide](CONTRIBUTING.md)**.
 
 
