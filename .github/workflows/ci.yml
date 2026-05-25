@@ -274,6 +274,27 @@ jobs:
                           if alias.name.startswith('probpipe'):
                               rdeps[alias.name].add(importer)
 
+          # Build symbol definition map: name -> module where it is actually
+          # defined. Non-__init__ files take priority (they are the true
+          # definition sites); __init__ files are a fallback for anything
+          # defined directly inside a package init.
+          sym_defs = {}
+          for fpath in Path('probpipe').rglob('*.py'):
+              if fpath.name == '__init__.py':
+                  continue
+              mod = file_to_module(str(fpath))
+              try:
+                  tree = ast.parse(fpath.read_text())
+              except Exception:
+                  continue
+              for node in ast.walk(tree):
+                  if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                      sym_defs.setdefault(node.name, mod)
+                  elif isinstance(node, ast.Assign):
+                      for target in node.targets:
+                          if isinstance(target, ast.Name):
+                              sym_defs.setdefault(target.id, mod)
+
           changed_nbs = [f for f in sys.argv[1:] if f.startswith('docs/examples/') and f.endswith('.ipynb') and Path(f).exists()]
           changed_sources = [f for f in sys.argv[1:] if f.startswith('probpipe/')]
 
@@ -289,7 +310,7 @@ jobs:
 
           def notebook_affected(nb_path):
               nb = json.loads(Path(nb_path).read_text())
-              nb_imports = set()
+              nb_resolved = set()
               for cell in nb.get('cells', []):
                   if cell.get('cell_type') != 'code':
                       continue
@@ -300,15 +321,34 @@ jobs:
                       continue
                   for node in ast.walk(tree):
                       if isinstance(node, ast.ImportFrom):
-                          if node.level == 0 and node.module and node.module.startswith('probpipe'):
-                              nb_imports.add(node.module)
+                          if node.level != 0 or not node.module or not node.module.startswith('probpipe'):
+                              continue
+                          src_mod = node.module
+                          src_file = module_to_file(src_mod)
+                          if src_file and src_file.endswith('__init__.py'):
+                              # e.g. "from probpipe import WorkflowFunction, Normal"
+                              # Resolve each name to where it is actually defined.
+                              for alias in node.names:
+                                  if alias.name == '*':
+                                      nb_resolved.add(src_mod)
+                                  elif alias.name in sym_defs:
+                                      nb_resolved.add(sym_defs[alias.name])
+                                  else:
+                                      nb_resolved.add(src_mod)
+                          else:
+                              # e.g. "from probpipe.core.node import WorkflowFunction"
+                              # Module is already the definition site.
+                              nb_resolved.add(src_mod)
                       elif isinstance(node, ast.Import):
                           for alias in node.names:
                               if alias.name.startswith('probpipe'):
-                                  nb_imports.add(alias.name)
-              for imp in nb_imports:
+                                  # "import probpipe" — bare module import,
+                                  # can't resolve symbols statically; treat as
+                                  # matching anything under that prefix.
+                                  nb_resolved.add(alias.name)
+              for nb_mod in nb_resolved:
                   for af_mod in affected_mods:
-                      if af_mod == imp or af_mod.startswith(imp + '.'):
+                      if af_mod == nb_mod or af_mod.startswith(nb_mod + '.'):
                           return True
               return False
 
