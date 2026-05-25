@@ -7,7 +7,7 @@ Most workflows for probabilistic inference can be described in terms of **distri
 - **Algorithmic challenges.** There are many possible algorithms for common operations, with varying trade-offs that need to be explored in a problem-specific manner. A posterior could be approximated using a variety of MCMC algorithms, variational inference methods, or sequential Monte Carlo, or might require more specialized methods such as those for amortized and simulation-based inference. 
 - **Representational challenges.** Algorithms expect (and produce) specific formats for distributions and fixed values, and those formats are not always compatible with other parts of the workflow. Fixed values may be named parameter vectors, covariate matrices, or structured observations, and different algorithms expect different representations.
 
-In practice, these issues make it hard to explore the full design space of available methods or to build more complex workflows that many algorithms for different steps. ProbPipe addresses these challenges through a single design principle: **simplification via abstraction**. There are just three core types:
+In practice, these issues make it hard to explore the full design space of available methods or to build more complex workflows that many algorithms for different steps. ProbPipe addresses these challenges through the **simplification via abstraction** design principle. For example, there are just three core types:
 
 1. **`Distribution`**: the universal representation of random quantities (priors, posteriors, data-generating processes). A distribution's capabilities are declared via protocols (`SupportsSampling`, `SupportsLogProb`, ...), and ProbPipe converts between representations as needed.
 2. **`Record`**: the universal container for non-random structured data (observed datasets, hyperparameters, design matrices). `Record` is the deterministic counterpart of `Distribution`.
@@ -68,8 +68,8 @@ See the [Ray via Prefect guide](orchestration/ray.md) for setup details, deploym
 
 ## Next Steps
 
-Once installed, the **[Getting Started Tutorial](tutorials/getting_started.ipynb)** is the recommended on-ramp: it walks through a complete Bayesian workflow (priors, conditioning, posterior predictive checks, refinement) end-to-end on a real dataset, introducing the core types in context. From there:
+Once you've installed ProbPipe, check out the **[Getting Started Tutorial](tutorials/getting_started.ipynb)**. You can also check out:
 
-- **[User Guide](user_guide.md)** — focused walks through individual ProbPipe features (records, broadcasting, joints, conversions, sequential updating, …).
-- **[API Reference](api/index.md)** — full class and function documentation.
-- **[Contributing Guide](https://github.com/TARPS-group/prob-pipe/blob/main/CONTRIBUTING.md)** — development setup, PR workflow, and conventions for new contributors.
+- **[User Guide](user_guide.md)**
+- **[API Reference](api/index.md)**
+- **[Contributing Guide](https://github.com/TARPS-group/prob-pipe/blob/main/CONTRIBUTING.md)**
