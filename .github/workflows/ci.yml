@@ -114,42 +114,53 @@ jobs:
           PYEOF
 
             # Split CHANGED into test files (include directly) and source
-            # files (expand via import graph before mapping to tests).
+            # files (expand via import graph before mapping to test folders).
             CHANGED_SOURCE=""
-            TEST_FILES=""
+            TEST_TARGETS=""
             for f in $CHANGED; do
               if echo "$f" | grep -qE '^tests/.*\.py$'; then
-                [ -f "$f" ] && TEST_FILES="$TEST_FILES $f"
+                [ -f "$f" ] && TEST_TARGETS="$TEST_TARGETS $f"
               else
                 CHANGED_SOURCE="$CHANGED_SOURCE $f"
               fi
             done
 
-            # Expand source files transitively and map each to its tests.
+            # Expand source files transitively and map each to its test folder.
+            # Subpackage modules (probpipe/core/node.py) map to tests/core/.
+            # Root-level modules (probpipe/_utils.py) map to test files at
+            # tests/ root only (not descending into subfolders).
             if [ -n "$CHANGED_SOURCE" ]; then
               EXPANDED=$(python3 /tmp/expand_deps.py $CHANGED_SOURCE)
               echo "Expanded source files (via import graph):"
               echo "$EXPANDED"
+              HAS_ROOT_CHANGE=false
               for f in $EXPANDED; do
-                basename=$(basename "$f" .py)
-                for candidate in $(find tests -name "test_${basename}.py" -o -name "test_${basename}_*.py" 2>/dev/null); do
-                  TEST_FILES="$TEST_FILES $candidate"
-                done
+                rel="${f#probpipe/}"
+                if echo "$rel" | grep -q '/'; then
+                  subpkg=$(echo "$rel" | cut -d'/' -f1)
+                  [ -d "tests/$subpkg" ] && TEST_TARGETS="$TEST_TARGETS tests/$subpkg"
+                else
+                  HAS_ROOT_CHANGE=true
+                fi
               done
+              if [ "$HAS_ROOT_CHANGE" = "true" ]; then
+                ROOT_FILES=$(find tests -maxdepth 1 -name "test_*.py" | tr '\n' ' ')
+                TEST_TARGETS="$TEST_TARGETS $ROOT_FILES"
+              fi
             fi
 
-            # Deduplicate
-            TEST_FILES=$(echo "$TEST_FILES" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
+            # Deduplicate (works for both file paths and directory paths)
+            TEST_TARGETS=$(echo "$TEST_TARGETS" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
 
-            if [ -z "$TEST_FILES" ]; then
+            if [ -z "$TEST_TARGETS" ]; then
               echo "skip=true" >> "$GITHUB_OUTPUT"
               echo "run_all=false" >> "$GITHUB_OUTPUT"
-              echo "No matching test files found — skipping tests."
+              echo "No matching test targets found — skipping tests."
             else
               echo "skip=false" >> "$GITHUB_OUTPUT"
               echo "run_all=false" >> "$GITHUB_OUTPUT"
-              echo "test_files=$TEST_FILES" >> "$GITHUB_OUTPUT"
-              echo "Will run: $TEST_FILES"
+              echo "test_files=$TEST_TARGETS" >> "$GITHUB_OUTPUT"
+              echo "Will run: $TEST_TARGETS"
             fi
           fi
 
@@ -271,7 +282,7 @@ jobs:
           while queue:
               m = queue.pop(0)
               for dep in rdeps.get(m, []):
-                  if dep not in seen:
+                  if dep not in seen and dep.split('.')[-1] != '__init__':
                       seen.add(dep)
                       queue.append(dep)
           affected_mods = seen
