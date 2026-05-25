@@ -37,60 +37,61 @@ ProbPipe provides a set of built-in **ops**, special workflow functions that dis
 
 ## Quick Example
 
-Logistic regression with named parameters: simulate data, fit the model, and propagate posterior uncertainty through a prediction.
+Logistic regression on the [Challenger O-ring data](https://en.wikipedia.org/wiki/Space_Shuttle_Challenger_disaster) (Dalal, Fowlkes & Hoadley, 1989): 23 launches, each with a launch temperature and a binary O-ring damage indicator. Fit a Bayesian logistic regression, then propagate posterior uncertainty through a predicted damage probability at the Challenger launch temperature (31°F) and a typical launch temperature (65°F).
 
 ```python
 import jax, jax.numpy as jnp
+import pandas as pd
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 from probpipe import (
     Normal, ProductDistribution, GLMLikelihood, SimpleModel,
-    workflow_function, condition_on, mean,
+    workflow_function, condition_on,
 )
 
-# --- Simulate data from a logistic regression ---
-beta_true = jnp.array([-1.0, 2.0])  # intercept, slope
-x = jax.random.normal(jax.random.PRNGKey(0), shape=(200,))
-X = jnp.column_stack([jnp.ones_like(x), x])
-
-likelihood = GLMLikelihood(tfp_glm.Bernoulli(), X, seed=1)
-y = likelihood.generate_data(beta_true, 200)
+# --- Load data ---
+df = pd.read_csv("docs/tutorials/data/challenger.csv")
+temperature = jnp.asarray(df["temperature"].values, dtype=jnp.float32)
+damage = jnp.asarray(df["damage"].values, dtype=jnp.float32)
 
 # --- 1. Build a model with named parameters ---
+likelihood = GLMLikelihood(tfp_glm.Bernoulli(), temperature)
 prior = ProductDistribution(
-    intercept=Normal(loc=0.0, scale=5.0, name="intercept"),
-    slope=Normal(loc=0.0, scale=5.0, name="slope"),
+    intercept=Normal(loc=0.0, scale=10.0, name="intercept"),
+    slope=Normal(loc=0.0, scale=1.0, name="slope"),
 )
 model = SimpleModel(prior, likelihood)
 
 # --- 2. Condition on data (auto-selects NUTS) ---
-posterior = condition_on(model, y)
+posterior = condition_on(model, damage, random_seed=0)
 draws = posterior.draws()            # NumericRecordArray(intercept=..., slope=...)
-draws["intercept"].mean()            # -0.93  (true: -1.0)
-draws["slope"].mean()                #  2.18  (true:  2.0)
+float(draws["intercept"].mean())     #  ~12.8 — high baseline log-odds…
+float(draws["slope"].mean())         #  ~-0.2 — …attenuated by temperature
 
-# --- 3. Propagate uncertainty through a prediction ---
+# --- 3. Propagate posterior uncertainty through a prediction ---
 @workflow_function
 def predict_prob(intercept, slope, x):
     return jax.nn.sigmoid(intercept + slope * x)
 
-x_new = jnp.linspace(-3, 3, 50)
-predictive = predict_prob(**posterior.select('intercept', 'slope'), x=x_new)
-# predictive is a Distribution over predicted P(y=1|x) curves
+predictive = predict_prob(**posterior.select('intercept', 'slope'),
+                          x=jnp.array([31.0, 65.0]))
+# predictive is a Distribution over (P(damage|T=31°F), P(damage|T=65°F))
+# posterior mean: ~0.98 at 31°F, ~0.46 at 65°F
 ```
 
-`predict_prob` is a `@workflow_function`: ProbPipe samples from the posterior and evaluates the function for each draw, returning the full predictive distribution. The two posterior fields are splatted from a single parent, so ProbPipe draws them jointly — each `(intercept, slope)` pair stays correlated. Plotting the result:
+`predict_prob` is a `@workflow_function`: ProbPipe samples from the posterior and evaluates the function for each draw, returning the full predictive distribution. The two posterior fields are splatted from a single parent, so ProbPipe draws them jointly — each `(intercept, slope)` pair stays correlated. Plotting the full predictive curve across the temperature range tells the story:
 
 ```python
 import numpy as np, matplotlib.pyplot as plt
 
-S = np.array(predictive.samples)     # (n_draws, 50)
+t_grid = jnp.linspace(30, 85, 50)
+curves = predict_prob(**posterior.select('intercept', 'slope'), x=t_grid)
+S = np.array(curves.samples)         # (n_draws, 50)
 lo, hi = np.percentile(S, [5, 95], axis=0)
-plt.fill_between(np.array(x_new), lo, hi, alpha=0.3, label='90% CI')
-plt.plot(np.array(x_new), S.mean(axis=0), lw=2, label='Posterior mean')
-true_curve = jax.nn.sigmoid(beta_true[0] + beta_true[1] * x_new)
-plt.plot(np.array(x_new), np.array(true_curve), 'k--', label='True')
-plt.scatter(np.array(x), np.array(y), s=12, alpha=0.4, label='Data')
-plt.xlabel('x'); plt.ylabel('P(y = 1 | x)'); plt.legend(fontsize=8)
+plt.fill_between(np.array(t_grid), lo, hi, alpha=0.3, label='90% CI')
+plt.plot(np.array(t_grid), S.mean(axis=0), lw=2, label='Posterior mean')
+plt.scatter(np.array(temperature), np.array(damage), s=20, label='Data')
+plt.axvline(31, ls='--', color='red', label='Challenger launch (31°F)')
+plt.xlabel('Temperature (°F)'); plt.ylabel('P(O-ring damage)'); plt.legend()
 ```
 
 ![Posterior predictive](docs/assets/images/readme_logistic.png)
