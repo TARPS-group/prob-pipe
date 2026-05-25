@@ -43,7 +43,10 @@ class PyMCNutsMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        return 60
+        # Tier 81-90 (optimised backend; native PyMC NUTS, narrower
+        # than tfp_nuts but better tailored to PyMCModel). Below
+        # nutpie_nuts (85) and cmdstan_nuts (82).
+        return 81
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         if not isinstance(dist, self._model_type):
@@ -74,7 +77,7 @@ class PyMCNutsMethod(InferenceMethod):
 
         return make_posterior(
             chains, parents=(dist,), algorithm="pymc_nuts",
-            auxiliary=trace,
+            auxiliary=trace, record_template=dist.record_template,
             num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         )
 
@@ -95,7 +98,9 @@ class PyMCADVIMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        return 35
+        # Tier 21-30 (parametric variational approximation; quality
+        # bounded by the mean-field family).
+        return 25
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         if not isinstance(dist, self._model_type):
@@ -127,6 +132,6 @@ class PyMCADVIMethod(InferenceMethod):
 
         return make_posterior(
             chains, parents=(dist,), algorithm=algorithm,
-            auxiliary=trace,
+            auxiliary=trace, record_template=dist.record_template,
             num_iterations=num_iterations,
         )

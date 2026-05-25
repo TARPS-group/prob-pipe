@@ -161,11 +161,13 @@ class TestNutpieIntegration:
         y_bar = float(y_obs.mean())
         post_mean = 5.0 * y_bar / (1.0 / 100.0 + 5.0)
         post_sd = np.sqrt(1.0 / (1.0 / 100.0 + 5.0))
-        # PyMCModel.record_template is None, so draws() returns a flat
-        # (num_draws, n_params) array. The only parameter is mu.
+        # PyMCModel now provides a record_template (one field per PyMC RV),
+        # so draws() returns a NumericRecordArray keyed by RV name. The
+        # only parameter is `mu`, with event_shape ().
         draws = result.draws()
-        assert draws.shape[1] == 1
-        mu_draws = draws[:, 0]
+        assert draws.fields == ("mu",)
+        mu_draws = jnp.asarray(draws["mu"])
+        assert mu_draws.shape == (1000,)  # 2 chains × 500 draws, flattened
         # With 1000 draws total, MC SE for mean ~ post_sd / sqrt(1000) ~ 0.014
         np.testing.assert_allclose(float(jnp.mean(mu_draws)), post_mean, atol=0.05)
         np.testing.assert_allclose(float(jnp.std(mu_draws)), post_sd, atol=0.05)

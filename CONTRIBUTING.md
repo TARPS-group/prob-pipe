@@ -4,20 +4,32 @@
 
 ### 1. Plan first (for significant changes)
 
-If the change is significant, start by creating a PR that contains only a
-plan document at the repo root named `<PR-description>_plan.md`. The plan
-should describe the motivation, proposed design, and any trade-offs.
+If the change is significant, start by opening a GitHub **issue**
+containing the plan: motivation, proposed design, trade-offs, and a
+task checklist for the implementation work. Tag with an appropriate
+label (typically `enhancement`).
+[#196](https://github.com/TARPS-group/prob-pipe/issues/196) is a
+representative model.
+
+The issue is the durable record of intent and stays open across the
+implementation, even when the work spans multiple PRs — its task
+checklist is the cross-PR progress tracker. This is a cleaner split
+of concerns than carrying the plan in a PR: the plan document outlives
+any single PR, and implementation PRs stay focused on code rather
+than doubling as design-discussion threads.
 
 ### 2. Request a review
 
-Request a review from **@jhuggins** and/or **@arob5**. You will receive
-feedback on the PR or the plan document.
+Tag **@jhuggins** and/or **@arob5** on the issue. Feedback lands in
+the issue thread.
 
 ### 3. Wait for approval before implementing
 
-If you submitted a plan, do **not** start implementing until the plan is
-approved. Once approved, open a follow-up PR (or update the existing one)
-with the implementation and request another review.
+Do not start implementing until the plan issue is approved. Once
+approved, open implementation PR(s) referencing the issue (`Refs
+#N` in the PR body for stage PRs, `Closes #N` on the final one).
+Check off tasks on the issue as PRs land; the issue closes when the
+last task is done.
 
 ### What counts as "significant"?
 
@@ -72,6 +84,60 @@ pytest --cov=probpipe --cov-report=term-missing
 ```
 
 Target: >90% on all modules.
+
+### Code formatting
+
+Keep Python code compact horizontally. The hard upper bound is 100
+chars per line; the soft target is 80–100. **Do not introduce line
+breaks that aren't needed to stay within that range** — multi-name
+imports should be packed per line rather than spread one name per
+line, and short function calls should stay on one line.
+
+```python
+# Avoid — over-vertical:
+from probpipe import (
+    Normal,
+    Beta,
+    Gamma,
+    sample,
+    log_prob,
+)
+
+# Prefer — packed (drop the parens when the whole import fits one line):
+from probpipe import Normal, Beta, Gamma, sample, log_prob
+```
+
+Same idea applies to *where* you break a function call, container
+literal, or import — prefer keeping the first argument on the opener
+line and aligning subsequent lines under it, rather than breaking
+right after the open paren / bracket / brace. Break after `(` only
+when the opener line is already long enough that aligned continuation
+would have too little horizontal room.
+
+```python
+# Avoid — gratuitous break after `(`:
+result = expectation(
+    n, lambda x: jnp.sin(x),
+    key=jax.random.PRNGKey(10),
+)
+
+# Prefer — first arg on opener line, continuation aligned:
+result = expectation(n, lambda x: jnp.sin(x),
+                     key=jax.random.PRNGKey(10))
+
+# OK to break after `(` when the opener is already long:
+result = some.deeply.nested.module.function_with_long_name(
+    arg1, arg2, kwarg=value,
+)
+```
+
+The exception is constructions where each kwarg's value is itself a
+meaningful sub-expression — `MultivariateNormal(loc=..., cov=...)`,
+`xr.DataArray(data, dims=..., coords=...)`, etc. Per-kwarg vertical
+layout helps readability there even when the call would fit on one
+line.
+
+This applies equally to source files and notebook code cells.
 
 ### Documentation
 
@@ -240,6 +306,9 @@ full public API surface.
 | `RecordDistribution` | Record-based distribution base; `fields`, `__getitem__` → `_RecordDistributionView`, `select()` / `select_all()` for correlated broadcasting. A `Distribution` represents one random variable; use `DistributionArray` for collections. |
 | `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
 | `NumericRecordDistribution` | Numeric-array distribution base; per-field `dtypes`, `supports`, `event_shapes`; base for all TFP-backed distributions |
+| `FlatNumericRecordDistribution` | Refinement of `NumericRecordDistribution` enforcing the flat contract: single field, `event_shape == (N,)`. Carries `flat_size` and `as_record_distribution(template=…)` — the inverse of `as_flat_distribution()`, lifting a flat distribution to a Record-keyed view under a user-supplied `NumericRecordTemplate`. Algorithms that consume a flat parameter vector (MCMC, optimisers, VI / Pathfinder / Laplace surrogates) should declare their input as this type. Natively-multivariate parametrics (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `VonMisesFisher`) and `FlattenedDistributionView` all implement it. |
+| `FlattenedDistributionView` | A `FlatNumericRecordDistribution` produced by `nrd.as_flat_distribution()`. Wraps any base distribution and exposes flat-vector samples / log-probs (`event_shape == (event_size,)`), delegating through the base. |
+| `NumericRecordDistributionView` | The inverse view, produced by `FlatNumericRecordDistribution.as_record_distribution(template=…)`. Lifts a flat distribution to a Record-keyed structure; samples come back as `NumericRecord` / `NumericRecordArray` keyed by `template.fields`. |
 | `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `components`). Vectorized ops are delivered by the `WorkflowFunction` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordArray` / `RecordArray` / (nested) `DistributionArray`. Produced by parameter-sweep workflow functions whose inner call returns a `Distribution`. |
 | `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling + conditioning; the numeric subclass adds exact `SupportsMean` / `SupportsVariance`. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. (Empirical distributions do not claim `SupportsLogProb`; use `from_distribution(emp, KDEDistribution, …)` for a density.) |
 | `EmpiricalDistribution[T]` / `RecordEmpiricalDistribution` | Weighted empirical distribution. Generic base over arbitrary sample type ``T``; Record-based specialisation adds `event_shapes`, exact moments (`SupportsMean` / `SupportsVariance` / `SupportsCovariance`), and TFP-style shape semantics. Numeric-array sources auto-wrap as a single-field Record (requires `name=`). Two views on the stored draws: `samples` (structured `NumericRecord`, per-field access via `samples[name]`) and `flat_samples` (flat `(n, dim)` matrix across all fields, in insertion order). Use `flat_samples` for stacked-matrix idioms like `post.flat_samples.mean(axis=0)` for per-parameter posterior summaries. |
@@ -268,18 +337,27 @@ handled entirely by registered methods.  The removed protocol
 `SupportsConditionableComponents` is no longer part of the public API;
 use `fields` and the inference registry instead.
 
+Priorities follow a semantic convention (issue #189): values above
+``50`` mark *exact* methods, values in ``(0, 50]`` mark *inexact*
+methods, and ``0`` is the opt-in-only sentinel (selectable by name but
+skipped during auto-dispatch). The contributor-facing tier criteria
+for picking a number when registering a new method live under
+[Extending ProbPipe → Setting priority for a new method](docs/api/extending.md#setting-priority-for-a-new-method).
+
 Built-in methods:
 
 | Priority | Name | Backend | Applies to |
 |----------|------|---------|------------|
-| 100 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable) |
-| 90 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable) |
-| 80 | `nutpie_nuts` | nutpie | `StanModel`, `PyMCModel` |
-| 70 | `cmdstan_nuts` | CmdStanPy | `StanModel` |
-| 60 | `pymc_nuts` | PyMC | `PyMCModel` |
-| 50 | `tfp_rwmh` | TFP | Any `SupportsLogProb` |
-| 40 | `sbijax_smcabc` | sbijax | `SimpleGenerativeModel` |
-| 35 | `pymc_advi` | PyMC | `PyMCModel` |
+| 85 | `nutpie_nuts` | nutpie | `StanModel`, `PyMCModel` |
+| 82 | `cmdstan_nuts` | CmdStanPy | `StanModel` |
+| 81 | `pymc_nuts` | PyMC | `PyMCModel` |
+| 75 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable) |
+| 65 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable) |
+| 55 | `tfp_rwmh` | TFP | Any `SupportsLogProb` |
+| 45 | `blackjax_sgld` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
+| 42 | `blackjax_sghmc` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
+| 25 | `pymc_advi` | PyMC | `PyMCModel` |
+| 5 | `sbijax_smcabc` | sbijax | `SimpleGenerativeModel` |
 
 ### Converter priority system
 
@@ -414,6 +492,18 @@ Three rules govern how the framework's universal types relate.
    No third "numeric-array" variant. Records *are* array-based — a
    single numeric array becomes a single-field Record at the
    constructor boundary.
+
+   `NumericRecordDistribution` additionally has the
+   `FlatNumericRecordDistribution` *refinement* — not a third
+   implementation, just a tighter-typed subset (single field,
+   `event_shape == (N,)`). Natively-multivariate parametrics
+   (`MultivariateNormal`, `Dirichlet`, `Multinomial`,
+   `VonMisesFisher`) and `FlattenedDistributionView` implement the
+   refinement; scalar parametrics route through `as_flat_distribution()`
+   first. Algorithms that consume a flat parameter vector should
+   declare their input as `FlatNumericRecordDistribution` so
+   receiver typing — not a runtime shape probe — enforces the
+   contract.
 
 3. **Iteration is a Record-family convention.** `Record`,
    `NumericRecord`, `RecordArray`, `NumericRecordArray` iterate field

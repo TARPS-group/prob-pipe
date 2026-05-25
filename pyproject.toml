@@ -14,6 +14,7 @@ authors = [
   { name = "Andrew Roberts",   email = "arober@bu.edu" },
   { name = "Yongho Lim",      email = "ylim2@bu.edu" },
   { name = "Can Erozer",      email = "caner@bu.edu" },
+  { name = "Jiaqiang Zhu",      email = "julian25@bu.edu" },
 ]  # See AUTHORS file for full list
 dependencies = [
   # sbijax 0.3.6 (latest) pins jaxlib==0.8.1, so we cap below 0.9 to keep
@@ -21,6 +22,7 @@ dependencies = [
   "jax>=0.8.1,<0.9",
   "jaxlib>=0.8.1,<0.9",
   "tfp-nightly>=0.26.0.dev20260318",
+  "blackjax>=1.3",
   # sbijax 0.3.6 hard-pins arviz==1.0.0, but no released pymc yet accepts
   # arviz 1.0 (the switch landed on pymc's v6 branch in pymc-devs/pymc#8019
   # but 6.0 is unreleased as of 2026-04-16), and nutpie has not caught up

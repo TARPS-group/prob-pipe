@@ -35,15 +35,19 @@ def _coerce_array(x: ArrayLike | Record) -> jnp.ndarray:
 class GLMLikelihood:
     """Wraps a TFP GLM family + design matrix into a Likelihood and GenerativeLikelihood.
 
-    The design matrix ``X`` can be provided at construction (default)
-    or per-call via ``data=Record(X=..., y=...)``.  When ``data``
-    is a ``Record`` with ``X`` and ``y`` fields, both are extracted;
-    otherwise ``data`` is treated as the response and the stored ``X``
-    is used.
+    Two accepted data forms:
 
-    This enables joint bootstrapping of covariates and response::
+    * ``data = Record(X=X_covariates, y=y_observed)`` — both fields
+      explicit; the canonical form. ``X`` is the covariate matrix only;
+      *do not* include a constant column for the intercept.
+    * ``data = y_observed`` (a bare response array) when ``X`` was
+      supplied at construction time — the construction-time ``X`` is
+      used.
 
-        Xy = Record(X=X_design, y=y_observed)
+    Joint bootstrapping of covariates and response uses the Record
+    form::
+
+        Xy = Record(X=X_covariates, y=y_observed)
         bootstrap = BootstrapReplicateDistribution(EmpiricalDistribution(Xy))
         bagged = condition_on(model, bootstrap, n_broadcast_samples=16)
 
@@ -53,8 +57,18 @@ class GLMLikelihood:
         TFP GLM family (e.g., ``Poisson()``, ``Bernoulli()``,
         ``NegativeBinomial()``).
     x : array-like or None
-        Default design matrix of shape ``(n, p)``.  If ``None``, must
-        be provided per-call via ``data=Record(X=..., y=...)``.
+        Default covariate matrix of shape ``(n, p)``. If ``None``, must
+        be provided per-call via ``data=Record(X=..., y=...)``. Should
+        contain **only the covariates** — the intercept is fit
+        separately when ``fit_intercept=True``.
+    fit_intercept : bool, default True
+        When True, the likelihood expects ``params`` to flatten to
+        ``(intercept, *slopes)`` of length ``p + 1`` and computes
+        ``eta = intercept + X @ slopes``. When False, ``params``
+        flattens to length ``p`` and the likelihood computes
+        ``eta = X @ params`` directly — useful when the user wants to
+        carry the intercept as a constant column in ``X`` themselves
+        (the classical "model matrix" convention).
     seed : int
         Random seed for data generation.
     """
@@ -64,6 +78,7 @@ class GLMLikelihood:
         family: tfp_glm.ExponentialFamily,
         x: ArrayLike | None = None,
         *,
+        fit_intercept: bool = True,
         seed: int = 0,
     ):
         self.family = family
@@ -73,7 +88,15 @@ class GLMLikelihood:
                 self._x = self._x.T
         else:
             self._x = None
+        self._fit_intercept = bool(fit_intercept)
         self._key = jax.random.PRNGKey(seed)
+
+    def _linear_predictor(self, X: Array, params: ArrayLike | Record) -> Array:
+        """``eta = intercept + X @ slopes`` (or ``X @ params`` if fit_intercept=False)."""
+        beta = _coerce_array(params)
+        if self._fit_intercept:
+            return beta[0] + X @ beta[1:]
+        return X @ beta
 
     @property
     def data_template(self) -> RecordTemplate:
@@ -83,41 +106,89 @@ class GLMLikelihood:
     def _extract_X_y(self, data):
         """Extract design matrix and response from data.
 
-        Resolution order:
+        Two accepted forms:
 
-        1. ``data = Record(X=..., y=...)`` → extract both fields.
-        2. ``data`` is an array with more columns than ``p`` (the number
-           of coefficients, inferred from the stored ``X``) → last column
-           is the response, preceding columns are the design matrix.
-        3. ``data`` is a response array → use the stored ``X``.
+        1. ``data = Record(X=..., y=...)`` — both fields explicit; the
+           canonical form, free of axis-position ambiguity.
+        2. ``data`` is a response array, and ``X`` was supplied at
+           construction time — use the construction-time ``X``.
+
+        A bare array without a construction-time ``X`` is rejected —
+        ProbPipe uses named Records precisely to avoid "is column N
+        the response or a covariate?" guessing.
         """
         if isinstance(data, Record) and "X" in data and "y" in data:
-            return jnp.asarray(data["X"]), _coerce_array(data["y"])
-        data_arr = _coerce_array(data)
+            X_raw = jnp.asarray(data["X"])
+            # Single-covariate convenience: a 1-D X array is the natural
+            # form when there is only one covariate (no need for a
+            # gratuitous trailing axis). The linear-predictor math
+            # downstream wants 2-D, so reshape here once.
+            if X_raw.ndim == 1:
+                X_raw = X_raw[:, None]
+            return X_raw, _coerce_array(data["y"])
         if self._x is not None:
-            p = self._x.shape[1]
-            if data_arr.ndim == 2 and data_arr.shape[1] > p:
-                # Stacked (X, y) array — split columns
-                return data_arr[:, :p], data_arr[:, p]
-            return self._x, data_arr
-        # No stored X: data must be a stacked (X, y) array
-        if data_arr.ndim == 2 and data_arr.shape[1] > 1:
-            return data_arr[:, :-1], data_arr[:, -1]
+            return self._x, _coerce_array(data)
         raise ValueError(
-            "No design matrix: pass X at construction or "
-            "via data=Record(X=..., y=...)"
+            "GLMLikelihood data must be either a Record(X=..., y=...) "
+            "or a response array paired with an X passed at "
+            "construction time."
         )
 
     def log_likelihood(self, params: ArrayLike | Record, data: ArrayLike | Record) -> float:
         """Log-likelihood: sum of per-observation log-probs.
 
         *params* and *data* can be raw arrays or ``Record`` objects.
-        When *data* is ``Record(X=..., y=...)``, both the design matrix
-        and response are extracted.
+        When *data* is ``Record(X=..., y=...)``, both the covariate
+        matrix and response are extracted. The linear predictor
+        ``eta = intercept + X @ slopes`` is computed via
+        :meth:`_linear_predictor` so the ``fit_intercept`` convention is
+        respected uniformly across the public methods.
         """
         X, y = self._extract_X_y(data)
-        eta = X @ _coerce_array(params)
+        eta = self._linear_predictor(X, params)
         return jnp.sum(self.family.log_prob(y, eta))
+
+    def per_datum_log_likelihood(
+        self, params: ArrayLike | Record, datum: Record,
+    ) -> Array:
+        """Log-density of a single observation given parameters.
+
+        Satisfies :class:`~probpipe.ConditionallyIndependentLikelihood`.
+        Evaluates ``family.log_prob(y_i, x_i @ params)`` directly on a
+        scalar response, bypassing the length-1-batch reshape that the
+        default fallback (``log_likelihood(params, datum[None, ...])``)
+        would add. The saved per-call overhead matters when this method
+        is called inside a stochastic-gradient inner loop.
+
+        Parameters
+        ----------
+        params : Array or Record
+            Coefficient vector of shape ``(p,)``.
+        datum : Record
+            ``Record(X=x_i, y=y_i)`` with ``x_i`` of shape ``(p,)``
+            and ``y_i`` scalar.
+
+        Raises
+        ------
+        TypeError
+            If ``datum`` is not a ``Record(X=..., y=...)``.
+        """
+        if not (isinstance(datum, Record) and "X" in datum and "y" in datum):
+            raise TypeError(
+                "GLMLikelihood.per_datum_log_likelihood requires "
+                "datum=Record(X=x_i, y=y_i)."
+            )
+        # `atleast_1d` accommodates the single-covariate case where the
+        # per-observation X leaf is naturally scalar — the matmul below
+        # still needs a 1-D vector.
+        x_i = jnp.atleast_1d(jnp.asarray(datum["X"]))
+        y_i = jnp.asarray(datum["y"])
+        beta = _coerce_array(params)
+        if self._fit_intercept:
+            eta = beta[0] + x_i @ beta[1:]
+        else:
+            eta = x_i @ beta
+        return self.family.log_prob(y_i, eta)
 
     def generate_data(
         self,
@@ -146,6 +217,18 @@ class GLMLikelihood:
             raise ValueError(
                 "generate_data requires a stored design matrix (pass x at construction)"
             )
-        eta = _coerce_array(params) @ X[:n_samples].T
+        # Linear predictor — same convention as log_likelihood:
+        #   fit_intercept=True  → eta = intercept + X @ slopes
+        #   fit_intercept=False → eta = X @ params (classical model-matrix form)
+        # Batched params come in as ``(*batch, p_total)``; broadcast against
+        # ``X[:n_samples]`` of shape ``(n_samples, p)``.
+        beta = _coerce_array(params)
+        Xn = X[:n_samples]
+        if self._fit_intercept:
+            slopes = beta[..., 1:]
+            intercept = beta[..., 0:1]  # keep last axis for broadcasting
+            eta = intercept + slopes @ Xn.T
+        else:
+            eta = beta @ Xn.T
         dist = self.family.as_distribution(eta)
         return dist.sample(seed=key)

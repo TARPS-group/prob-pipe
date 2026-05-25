@@ -23,7 +23,9 @@ from probpipe.core.distribution import (
     Distribution,
     RecordDistribution,
     NumericRecordDistribution,
-    FlattenedView,
+    FlatNumericRecordDistribution,
+    FlattenedDistributionView,
+    NumericRecordDistributionView,
     EmpiricalDistribution,
     RecordEmpiricalDistribution,
     BroadcastDistribution,
@@ -119,13 +121,17 @@ from probpipe.core.transition import (
     with_conversion,
     with_resampling,
 )
-from probpipe.modeling import GLMLikelihood, Likelihood, GenerativeLikelihood, IncrementalConditioner
+from probpipe.modeling import (
+    GLMLikelihood, Likelihood, ConditionallyIndependentLikelihood,
+    GenerativeLikelihood, IncrementalConditioner,
+)
 from probpipe.record import Design, FullFactorialDesign
 from probpipe.inference import (
     ApproximateDistribution,
     inference_method_registry,
     rwmh,
     condition_on_nutpie,
+    MinibatchedDistribution,
     sbi_learn_conditional,
     sbi_learn_likelihood,
 )
@@ -169,7 +175,9 @@ __all__ = [
     "Distribution",
     "RecordDistribution",
     "NumericRecordDistribution",
-    "FlattenedView",
+    "FlatNumericRecordDistribution",
+    "FlattenedDistributionView",
+    "NumericRecordDistributionView",
     "DistributionArray",
     "TFPDistribution",
     "EmpiricalDistribution",
@@ -271,6 +279,7 @@ __all__ = [
     # Modeling
     "GLMLikelihood",
     "Likelihood",
+    "ConditionallyIndependentLikelihood",
     "GenerativeLikelihood",
     "IncrementalConditioner",
     "ProbabilisticModel",
@@ -284,6 +293,7 @@ __all__ = [
     "inference_method_registry",
     "rwmh",
     "condition_on_nutpie",
+    "MinibatchedDistribution",
     "sbi_learn_conditional",
     "sbi_learn_likelihood",
     # Validation

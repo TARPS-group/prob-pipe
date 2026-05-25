@@ -248,6 +248,11 @@ class _NLELikelihood:
     The trained network represents :math:`p(y \\mid \\theta)`.  We expose
     its ``log_prob`` so that probpipe's standard inference registry can
     drive MCMC over the parameters.
+
+    Satisfies :class:`~probpipe.ConditionallyIndependentLikelihood` —
+    neural-likelihood estimators evaluate one observation at a time, so
+    the per-datum form is just :meth:`log_likelihood` on a length-1
+    batch.
     """
 
     def __init__(self, sbijax_model: Any, params: Any):
@@ -267,6 +272,11 @@ class _NLELikelihood:
         )
         return jnp.sum(lp)
 
+    def per_datum_log_likelihood(self, params: Array, datum: Array) -> Array:
+        """Log-density of a single observation under the neural likelihood."""
+        from ..modeling._likelihood import _default_per_datum_log_likelihood
+        return _default_per_datum_log_likelihood(self, params, datum)
+
 
 class _NRELikelihood:
     """Wrap a trained sbijax NRE model as a :class:`Likelihood`.
@@ -275,6 +285,10 @@ class _NRELikelihood:
     :math:`\\log r(y, \\theta) \\propto \\log p(y \\mid \\theta) - \\log p(y)`.
     We return only the ratio term — the prior log-density is added by
     :class:`~probpipe.modeling.SimpleModel`.
+
+    Satisfies :class:`~probpipe.ConditionallyIndependentLikelihood` —
+    the ratio network evaluates one observation at a time, so the
+    per-datum form is just :meth:`log_likelihood` on a length-1 batch.
     """
 
     def __init__(self, sbijax_model: Any, params: Any):
@@ -292,6 +306,11 @@ class _NRELikelihood:
             self._params, joint, is_training=False,
         )
         return jnp.sum(lr)
+
+    def per_datum_log_likelihood(self, params: Array, datum: Array) -> Array:
+        """Log-density-ratio for a single observation under the NRE estimator."""
+        from ..modeling._likelihood import _default_per_datum_log_likelihood
+        return _default_per_datum_log_likelihood(self, params, datum)
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +562,12 @@ class SbiSMCABCMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        return 40
+        # Tier 1-10 (no asymptotic-to-exact guarantee in practice;
+        # quality bounded by summary statistics and tolerance choices).
+        # The only auto-dispatchable inference method for a pure
+        # SimpleGenerativeModel today, so the low priority is the
+        # categorisation, not a fallback signal.
+        return 5
 
     def check(
         self, dist: Any, observed: Any, **kwargs: Any

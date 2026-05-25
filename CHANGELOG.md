@@ -7,7 +7,229 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`GLMLikelihood` fits an intercept by default** (``fit_intercept=True``).
+  The covariate matrix ``X`` carries only the covariates — no leading
+  column of 1s. ``params`` flattens to ``(intercept, *slopes)`` and the
+  likelihood computes ``eta = intercept + X @ slopes``. Pass
+  ``fit_intercept=False`` for the classical "model matrix" convention
+  where the user prepends the constant column to ``X`` themselves.
+  Avoids the axis-position ambiguity of stacking the intercept slot
+  into ``X``; matches the pattern in sklearn / statsmodels GLM APIs.
+
+- **Inference-method registry priorities re-anchored with a semantic
+  convention (issue #189).**
+  - `priority > 50` marks *exact* methods; `0 < priority <= 50` marks
+    *inexact* methods; `priority == 0` is the opt-in-only sentinel
+    (selectable by name via `method="..."` but skipped during
+    auto-dispatch). This is the new default value inherited from
+    `Method.priority`.
+  - Built-in priorities re-anchored: `nutpie_nuts` 80→85,
+    `cmdstan_nuts` 70→82, `pymc_nuts` 60→81, `tfp_nuts` 100→75,
+    `tfp_hmc` 90→65, `tfp_rwmh` 50→55, `blackjax_sgld` 30→45,
+    `blackjax_sghmc` 25→42, `pymc_advi` 35→25, `sbijax_smcabc` 40→5.
+    The relative ordering among exact methods is corrected so that
+    optimised backends (`nutpie_nuts`, `cmdstan_nuts`, `pymc_nuts`)
+    sit above the general-purpose `tfp_nuts`.
+  - `MethodRegistry._find_methods()` now skips priority-0 methods
+    during auto-dispatch. `MethodRegistry.set_priorities()` emits a
+    `UserWarning` when an override crosses into or out of `0`;
+    crossings of the documentary `50` break do not warn.
+  - The `OPT_IN_ONLY_PRIORITY` sentinel is exported from
+    `probpipe.core._registry` for use in `Method` subclasses that
+    want to opt out of auto-dispatch by name.
+  - The contributor-facing selection criteria and tier ranges for
+    setting a new method's priority are documented under
+    [Extending ProbPipe → Setting priority for a new method](docs/api/extending.md#setting-priority-for-a-new-method).
+  - Migration: a `Method` subclass that previously relied on
+    inheriting `priority = 0` from the base class while expecting
+    auto-dispatch must now set a positive priority explicitly.
+    `set_priorities` calls that stay within positive priorities are
+    unaffected; calls that move a method to or from `0` emit a
+    warning explaining the auto-dispatch participation change.
+
+- **PyMC-backed posteriors now carry RV-keyed Record structure.**
+  ``PyMCModel`` exposes a ``record_template`` property that pairs each
+  free RV with its event shape (scalar RVs → ``()``; shape-`k` RVs →
+  ``(k,)``). The PyMC NUTS, PyMC ADVI, and nutpie inference paths all
+  thread this through to ``make_posterior``, so ``mean(post)`` returns
+  a ``NumericRecord`` keyed by RV name and ``draws()`` returns a
+  ``NumericRecordArray``. Previously, PyMC posteriors had no field
+  structure and ``draws()`` returned a flat ``(n_draws, n_params)``
+  array. Models declared with multiple scalar RVs (e.g. separate
+  ``intercept`` and ``slope`` ``pm.Normal`` calls) now produce a
+  field-per-RV posterior matching the ``ProductDistribution``-prior
+  workflow.
+
+  Free RVs whose ``type.shape`` contains a ``None`` dimension are
+  rejected with ``ValueError`` — silently dropping unknown dims would
+  produce an under-shaped template.
+
+- **`GLMLikelihood` no longer accepts stacked ``(X, y)`` arrays.** Both
+  ``log_likelihood`` and ``per_datum_log_likelihood`` now require either
+  ``data = Record(X=..., y=...)`` (canonical) or, for ``log_likelihood``
+  only, a bare response array when ``X`` was supplied at construction
+  time. Passing a single matrix whose last column was interpreted as
+  the response is intentionally rejected — ProbPipe uses named Records
+  to avoid axis-position ambiguity. Existing call sites that used a
+  ``Record`` are unaffected.
+
+- **`SimpleModel.prior` / `SimpleGenerativeModel.prior` type
+  annotations tightened** from ``Distribution[P]`` /
+  ``SupportsSampling[P]`` to the specific capability protocol
+  (``SupportsLogProb[P]`` / ``SupportsSampling[P]``). Static type
+  checkers now catch wrong-type priors at the call site; the
+  construction-time ``isinstance`` check stays as a backstop. The two
+  model wrappers are now parallel in both the input typing and the
+  ``.prior`` property return type.
+
 ### Added
+
+- **BlackJAX-backed SGMCMC methods** registered with
+  ``inference_method_registry``:
+  - ``blackjax_sgld`` — Stochastic Gradient Langevin Dynamics. Priority 45.
+  - ``blackjax_sghmc`` — Stochastic Gradient Hamiltonian Monte Carlo. Priority 42.
+
+  Both consume a `SimpleModel` whose `likelihood` satisfies
+  `ConditionallyIndependentLikelihood`, plus a required `batch_size=`
+  kwarg. Internally they wrap the model+data in a
+  `MinibatchedDistribution` and feed BlackJAX's gradient estimator
+  via the per-step random-measure draw — the kernel stays oblivious
+  to the minibatching convention.
+
+  ```python
+  posterior = condition_on(
+      model, data,
+      method="blackjax_sgld",
+      batch_size=64, num_steps=2000, num_warmup=500, step_size=1e-3,
+  )
+  ```
+
+  Priorities sit in the refinement-based MC tier (1–50), below every
+  exact full-batch gradient method (`tfp_nuts=75`, `tfp_hmc=65`,
+  `tfp_rwmh=55`). SGMCMC's `check()` also requires `batch_size=`, so
+  it does not fire on a routine `condition_on(model, observed)` call —
+  the user opts in by passing `batch_size=` (and typically the
+  matching `method=`).
+
+- **`MinibatchedDistribution`** (`probpipe.MinibatchedDistribution`)
+  — a `RandomMeasure[Record]` over fixed-minibatch stochastic
+  surrogates of the full-data unnormalized log-posterior. A draw is a
+  `Distribution[Record]` with unnormalized log-density
+  `log p(theta) + (N/b) * sum_{d in B} log p(d|theta)`, an unbiased
+  stochastic surrogate (in expectation over the minibatch `B`) of the
+  full-data target; the `N/b` rescaling makes the gradient an unbiased
+  estimator.
+
+  The constructor takes a prior and a conditionally-independent
+  likelihood directly, mirroring `SimpleModel(prior, likelihood)` on
+  the first two args. Consume the measure via
+  `SupportsRandomUnnormalizedLogProb` to get the per-minibatch
+  log-density callable that SGMCMC kernels feed `jax.grad`:
+
+  ```python
+  from probpipe import MinibatchedDistribution, Record, random_unnormalized_log_prob
+
+  m = MinibatchedDistribution(prior, likelihood, Record(X=X, y=y), batch_size=64)
+
+  rf = random_unnormalized_log_prob(m)
+  target = rf._sample(k)                     # callable: theta -> log~D_B(theta)
+  grad = jax.grad(target)(theta)             # unbiased gradient estimate
+  ```
+
+  This is the path stochastic-gradient MCMC kernels use under the
+  hood; the BlackJAX SGLD / SGHMC dispatch builds a `MinibatchedDistribution`
+  internally and threads `target` into the BlackJAX gradient
+  estimator. Tempered SMC (future work) is expected to consume the
+  same surface.
+
+- **`ConditionallyIndependentLikelihood`** (`probpipe.ConditionallyIndependentLikelihood`)
+  — a `Likelihood` subclass / Protocol whose observations factorise as
+  `log p(D | theta) = sum_i log p(d_i | theta)`. Adds a
+  `per_datum_log_likelihood(params, datum)` method on top of the base
+  `Likelihood`'s `log_likelihood(params, data)`. Required by
+  stochastic-gradient inference (the upcoming `MinibatchedDistribution`)
+  and independently useful for held-out predictive log-likelihoods,
+  leave-one-out cross-validation, and PSIS-LOO. The existing concrete
+  likelihoods (`GLMLikelihood`, `_NLELikelihood`, `_NRELikelihood`) all
+  satisfy the Protocol — `GLMLikelihood` via a direct family
+  `log_prob` evaluation that skips the per-batch tile, the two
+  sbijax-backed classes via a length-1-batch fallback.
+
+  A standalone helper `_default_per_datum_log_likelihood(likelihood,
+  params, datum)` provides the length-1-batch implementation for
+  subclasses that want a default rather than an efficient override.
+
+- **`SimpleModel.prior` / `SimpleModel.likelihood`** and
+  **`SimpleGenerativeModel.prior` / `SimpleGenerativeModel.likelihood`**
+  — public read-only properties that expose the underlying components
+  without poking at private state. The two model wrappers stay
+  symmetric: `SimpleModel.likelihood` is typed `Likelihood`,
+  `SimpleGenerativeModel.likelihood` is typed `GenerativeLikelihood`.
+
+- **`FlatNumericRecordDistribution`** (`probpipe.FlatNumericRecordDistribution`)
+  — a `NumericRecordDistribution` subclass that enforces the flat
+  contract (single field, `event_shape == (N,)`). Algorithms that
+  operate on a flat parameter vector (MCMC kernels, optimisers,
+  Hessian / curvature builders, variational families, Pathfinder /
+  Laplace surrogates) can require this type rather than runtime
+  shape probes. Carries the `flat_size: int` shortcut (=
+  `event_shape[0]`) and the `as_record_distribution(template=...)`
+  method.
+
+  The natively-multivariate parametrics
+  (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `VonMisesFisher`)
+  now inherit from `FlatNumericRecordDistribution` in addition to
+  `TFPDistribution`. `FlattenedDistributionView` also implements the
+  contract by construction. Scalar parametrics (`Normal`, `Beta`,
+  `Bernoulli`, …) have `event_shape == ()` and do not satisfy the
+  contract directly; call `.as_flat_distribution()` to obtain a
+  `FlattenedDistributionView` with `event_shape == (1,)`.
+
+- **`FlatNumericRecordDistribution.as_record_distribution(template=...)`**
+  — inverse of `as_flat_distribution()`. Lifts a flat distribution to
+  a Record-keyed view under a user-supplied `NumericRecordTemplate`.
+  Sampling, log-prob, and moments delegate to the source and reshape
+  via the template; capability protocols (`SupportsX`) match the
+  source via dynamic isinstance dispatch. The view is a thin wrapper —
+  no value copying.
+
+  ```python
+  from probpipe import MultivariateNormal, NumericRecordTemplate
+
+  mvn = MultivariateNormal(                     # already a FlatNRD
+      loc=jnp.array([1.0, 2.0, 3.0, 4.0]),
+      cov=jnp.diag(jnp.array([0.5, 1.0, 1.5, 2.0])),
+      name="theta",
+  )
+  template = NumericRecordTemplate(intercept=(), slope=(3,))
+  posterior = mvn.as_record_distribution(template=template)
+  draw = sample(posterior, key=k)         # NumericRecord(intercept, slope)
+  mean(posterior)["slope"]                # vector mean of the slope block
+  ```
+
+### Changed
+
+- **`FlattenedView` renamed to `FlattenedDistributionView`** and now
+  inherits from `FlatNumericRecordDistribution` (formerly
+  `NumericRecordDistribution`). The view's flat contract was always
+  satisfied structurally; the new base class makes it explicit and
+  enables receiver-type-driven dispatch for `as_record_distribution`.
+- **`_RecordLiftedView` renamed to `NumericRecordDistributionView`** and
+  made public. Constructed via
+  `FlatNumericRecordDistribution.as_record_distribution(template=...)`.
+
+### Migration
+
+- Code that imports `FlattenedView`: rename to `FlattenedDistributionView`.
+- Code that imports `_RecordLiftedView`: rename to
+  `NumericRecordDistributionView`.
+- Code that calls `as_record_distribution` on a non-flat distribution
+  (e.g., a scalar `Normal`): chain via `.as_flat_distribution()` first.
+  Calling it directly on a non-flat `NumericRecordDistribution` now
+  raises `TypeError` instead of `ValueError` and points at the
+  `as_flat_distribution()` chain.
 
 - **`SupportsArrayBackend` capability protocol** (`probpipe.SupportsArrayBackend`)
   declares that a `Distribution` subclass can produce a fused storage
