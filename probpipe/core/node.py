@@ -5,7 +5,6 @@ import logging
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
-from concurrent.futures import ThreadPoolExecutor
 from itertools import product as cartesian_product
 from types import MappingProxyType
 from typing import Any, get_type_hints
@@ -28,7 +27,7 @@ except ImportError:
 from .._utils import prod
 from ..converters import converter_registry
 from ..custom_types import Array, PRNGKey
-from . import _workflow_result
+from . import _workflow_execution, _workflow_result
 from ._broadcast_distributions import _make_stack
 from ._distribution_array import DistributionArray, _make_distribution_array
 from ._record_array import RecordArray, _RecordArrayView
@@ -417,6 +416,48 @@ class WorkflowFunction(Node):
             return WorkflowKind.OFF
 
         return kind
+
+    def _make_execution_config(
+        self,
+        *,
+        mode: _workflow_execution.WorkflowExecutionMode | None = None,
+    ) -> _workflow_execution.WorkflowExecutionConfig:
+        """Build resolved execution metadata for loop-style call dispatch."""
+        if mode is None:
+            kind = self.effective_workflow_kind
+            if kind is WorkflowKind.TASK:
+                mode = "prefect_task"
+            elif kind is WorkflowKind.FLOW:
+                mode = "prefect_flow"
+            elif self._parallel is not False:
+                mode = "thread"
+            else:
+                mode = "sequential"
+
+        prefect_task_runner = (
+            prefect_config.resolve_task_runner()
+            if mode in ("prefect_task", "prefect_flow")
+            else None
+        )
+        return _workflow_execution.WorkflowExecutionConfig(
+            mode=mode,
+            parallel=self._parallel,
+            name=self._name,
+            prefect_task_runner=prefect_task_runner,
+        )
+
+    def _make_execution_request(
+        self,
+        call_value_list: list[dict[str, Any]],
+        *,
+        mode: _workflow_execution.WorkflowExecutionMode | None = None,
+    ) -> _workflow_execution.WorkflowExecutionRequest:
+        """Build a backend-neutral execution request without capturing ``self``."""
+        return _workflow_execution.WorkflowExecutionRequest(
+            func=self._func,
+            call_value_list=call_value_list,
+            execution=self._make_execution_config(mode=mode),
+        )
 
     def _is_dependency_param(self, name: str) -> bool:
         """
@@ -1353,100 +1394,48 @@ class WorkflowFunction(Node):
         )
 
     def _execute_many(self, call_value_list: list[dict[str, Any]]) -> list:
-        """
-        Execute the wrapped function for every dict in *call_value_list* and
-        return the results in the same order.
-
-        Dispatch strategy:
-          - workflow_kind="task"  → Prefect task.map() (single mapped task)
-          - workflow_kind="flow"  → Prefect: one wrapping flow with task.map()
-          - parallel=True/int    → concurrent.futures.ThreadPoolExecutor
-          - otherwise            → sequential list comprehension
-        """
+        """Compatibility wrapper around ``_workflow_execution.execute_many``."""
         if not call_value_list:
             return []
-
-        kind = self.effective_workflow_kind
-        if kind is WorkflowKind.TASK:
-            return self._execute_many_prefect_task(call_value_list)
-
-        if kind is WorkflowKind.FLOW:
-            return self._execute_many_prefect_flow(call_value_list)
-
-        if self._parallel is not False:
-            return self._execute_many_threaded(call_value_list)
-
-        return [self._func(**v) for v in call_value_list]
+        request = self._make_execution_request(call_value_list)
+        return _workflow_execution.execute_many(request)
 
     def _execute_many_threaded(self, call_value_list: list[dict[str, Any]]) -> list:
-        max_workers = None  # ThreadPoolExecutor default for parallel=True
-
-        if isinstance(self._parallel, int) and not isinstance(self._parallel, bool):
-            if self._parallel < 1:
-                raise ValueError(
-                    f"self._parallel must be True, False, or a positive int; got {self._parallel!r}"
-                )
-            max_workers = self._parallel
-
-        elif self._parallel is not True:
-            raise TypeError(
-                f"parallel must be True, False, or a positive int; got {self._parallel!r}"
-            )
-
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            return list(pool.map(lambda kwargs: self._func(**kwargs), call_value_list))
-
-    def _map_task(self, call_value_list: list[dict[str, Any]], task_name: str | None = None) -> list:
-        """Create a Prefect task wrapping self._func, .map() over all calls, and resolve."""
+        """Compatibility wrapper around threaded workflow execution."""
         if not call_value_list:
             return []
+        request = self._make_execution_request(call_value_list, mode="thread")
+        return _workflow_execution.execute_many_threaded(request)
 
-        if task is None:
-            raise RuntimeError(
-                "Prefect task execution was requested, but Prefect is not installed. "
-                "Install with: pip install probpipe[prefect]"
-            )
-
-        func = self._func
-
-        @task(name=task_name or self._name)
-        def run_func(**kwargs):
-            return func(**kwargs)
-
-        keys = call_value_list[0].keys()
-        kwargs_by_param = {k: [d[k] for d in call_value_list] for k in keys}
-        futures = run_func.map(**kwargs_by_param)
-        return [future.result() for future in futures]
+    def _map_task(self, call_value_list: list[dict[str, Any]], task_name: str | None = None) -> list:
+        """Compatibility wrapper around Prefect task mapping."""
+        if not call_value_list:
+            return []
+        request = _workflow_execution.WorkflowExecutionRequest(
+            func=self._func,
+            call_value_list=call_value_list,
+            execution=_workflow_execution.WorkflowExecutionConfig(
+                mode="prefect_task",
+                parallel=self._parallel,
+                name=self._name,
+            ),
+        )
+        return _workflow_execution.map_task(request, task_name=task_name)
 
     def _execute_many_prefect_task(self, call_value_list: list[dict[str, Any]]) -> list:
-        """Use Prefect task.map() inside a lightweight flow.
-
-        Prefect 3.x requires ``task.map()`` to be called within a flow
-        context.  This mode creates a minimal wrapper flow so the mapped
-        task runs are tracked but not grouped under a named flow.
-        """
-        outer = self
-        runner = prefect_config.resolve_task_runner()
-
-        @flow(name=f"{self._name}_map",
-              **({"task_runner": runner} if runner is not None else {}))
-        def _task_map_flow():
-            return outer._map_task(call_value_list)
-
-        return _task_map_flow()
+        """Compatibility wrapper around Prefect task execution."""
+        if not call_value_list:
+            return []
+        request = self._make_execution_request(call_value_list, mode="prefect_task")
+        return _workflow_execution.execute_many_prefect_task(request)
 
     def _execute_many_prefect_flow(self, call_value_list: list[dict[str, Any]]) -> list:
-        """Wrap a mapped task inside a named Prefect flow."""
-        outer = self
-        runner = prefect_config.resolve_task_runner()
+        """Compatibility wrapper around Prefect flow execution."""
+        if not call_value_list:
+            return []
+        request = self._make_execution_request(call_value_list, mode="prefect_flow")
+        return _workflow_execution.execute_many_prefect_flow(request)
 
-        @flow(name=self._name,
-              **({"task_runner": runner} if runner is not None else {}))
-        def mapped_flow():
-            return outer._map_task(call_value_list, task_name=f"{outer._name}_run")
-
-        return mapped_flow()
- 
 
 class Module(Node):
     """
