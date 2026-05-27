@@ -192,7 +192,7 @@ class TestPrefectMapping:
         monkeypatch.setattr(execution_mod, "flow", None)
         request = make_request(mode="prefect_task")
 
-        with pytest.raises(RuntimeError, match="Prefect task execution was requested"):
+        with pytest.raises(RuntimeError, match=r"Prefect task.*execution was requested"):
             execution_mod.map_task(request)
 
     def test_map_task_maps_keyword_arguments_and_resolves_futures(self, monkeypatch):
@@ -245,6 +245,16 @@ class TestWorkflowFunctionCompatibility:
         wf = WorkflowFunction(func=add_one, vectorize="loop", parallel=False)
 
         assert wf._execute_many([{"x": 1}, {"x": 2}]) == [2, 3]
+
+    def test_make_execution_config_resolves_truthy_parallel_to_thread(self):
+        wf = WorkflowFunction(
+            func=add_one,
+            vectorize="loop",
+            workflow_kind=WorkflowKind.OFF,
+            parallel=True,
+        )
+
+        assert wf._make_execution_config().mode == "thread"
 
     def test_private_wrappers_return_empty_before_building_request(self, monkeypatch):
         wf = WorkflowFunction(func=add_one, workflow_kind=WorkflowKind.TASK, vectorize="loop")

@@ -138,7 +138,7 @@ def _resolve_max_workers(parallel: bool | int) -> int | None:
     if isinstance(parallel, int) and not isinstance(parallel, bool):
         if parallel < 1:
             raise ValueError(
-                f"self._parallel must be True, False, or a positive int; got {parallel!r}"
+                f"parallel must be True, False, or a positive int; got {parallel!r}"
             )
         return parallel
 
@@ -153,7 +153,7 @@ def _resolve_max_workers(parallel: bool | int) -> int | None:
 def _ensure_prefect_task_available() -> None:
     if task is None:
         raise RuntimeError(
-            "Prefect task execution was requested, but Prefect is not installed. "
+            "Prefect task or flow execution was requested, but Prefect is not installed. "
             "Install with: pip install probpipe[prefect]"
         )
 
@@ -161,6 +161,6 @@ def _ensure_prefect_task_available() -> None:
 def _ensure_prefect_flow_available() -> None:
     if task is None or flow is None:
         raise RuntimeError(
-            "Prefect task execution was requested, but Prefect is not installed. "
+            "Prefect task or flow execution was requested, but Prefect is not installed. "
             "Install with: pip install probpipe[prefect]"
         )
