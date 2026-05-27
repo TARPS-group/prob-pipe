@@ -1409,8 +1409,6 @@ class WorkflowFunction(Node):
 
     def _map_task(self, call_value_list: list[dict[str, Any]], task_name: str | None = None) -> list:
         """Compatibility wrapper around Prefect task mapping."""
-        if not call_value_list:
-            return []
         request = _workflow_execution.WorkflowExecutionRequest(
             func=self._func,
             call_value_list=call_value_list,
