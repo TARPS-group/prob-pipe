@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Literal
 
 try:
     from prefect import flow, task
@@ -44,37 +44,20 @@ class WorkflowExecutionRequest:
     execution: WorkflowExecutionConfig
 
 
-class _WorkflowExecutor(Protocol):
-    def execute_many(self, request: WorkflowExecutionRequest) -> list[Any]:
-        """Execute the request and return results in call order."""
-        ...
-
-
-class _SequentialExecutor:
-    def execute_many(self, request: WorkflowExecutionRequest) -> list[Any]:
-        return [request.func(**values) for values in request.call_value_list]
-
-
-class _ThreadExecutor:
-    def execute_many(self, request: WorkflowExecutionRequest) -> list[Any]:
-        return execute_many_threaded(request)
-
-
-class _PrefectTaskExecutor:
-    def execute_many(self, request: WorkflowExecutionRequest) -> list[Any]:
-        return execute_many_prefect_task(request)
-
-
-class _PrefectFlowExecutor:
-    def execute_many(self, request: WorkflowExecutionRequest) -> list[Any]:
-        return execute_many_prefect_flow(request)
-
-
 def execute_many(request: WorkflowExecutionRequest) -> list[Any]:
     """Execute all call dictionaries using the configured dispatch mode."""
     if not request.call_value_list:
         return []
-    return _resolve_executor(request.execution).execute_many(request)
+
+    if request.execution.mode == "sequential":
+        return [request.func(**values) for values in request.call_value_list]
+    if request.execution.mode == "thread":
+        return execute_many_threaded(request)
+    if request.execution.mode == "prefect_task":
+        return execute_many_prefect_task(request)
+    if request.execution.mode == "prefect_flow":
+        return execute_many_prefect_flow(request)
+    raise ValueError(f"Unknown workflow execution mode: {request.execution.mode!r}")
 
 
 def execute_many_threaded(request: WorkflowExecutionRequest) -> list[Any]:
@@ -149,18 +132,6 @@ def execute_many_prefect_flow(request: WorkflowExecutionRequest) -> list[Any]:
         return map_task(request, task_name=f"{request.execution.name}_run")
 
     return mapped_flow()
-
-
-def _resolve_executor(execution: WorkflowExecutionConfig) -> _WorkflowExecutor:
-    if execution.mode == "sequential":
-        return _SequentialExecutor()
-    if execution.mode == "thread":
-        return _ThreadExecutor()
-    if execution.mode == "prefect_task":
-        return _PrefectTaskExecutor()
-    if execution.mode == "prefect_flow":
-        return _PrefectFlowExecutor()
-    raise ValueError(f"Unknown workflow execution mode: {execution.mode!r}")
 
 
 def _resolve_max_workers(parallel: bool | int) -> int | None:
