@@ -49,15 +49,17 @@ def execute_many(request: WorkflowExecutionRequest) -> list[Any]:
     if not request.call_value_list:
         return []
 
-    if request.execution.mode == "sequential":
-        return [request.func(**values) for values in request.call_value_list]
-    if request.execution.mode == "thread":
-        return execute_many_threaded(request)
-    if request.execution.mode == "prefect_task":
-        return execute_many_prefect_task(request)
-    if request.execution.mode == "prefect_flow":
-        return execute_many_prefect_flow(request)
-    raise ValueError(f"Unknown workflow execution mode: {request.execution.mode!r}")
+    match request.execution.mode:
+        case "sequential":
+            return [request.func(**values) for values in request.call_value_list]
+        case "thread":
+            return execute_many_threaded(request)
+        case "prefect_task":
+            return execute_many_prefect_task(request)
+        case "prefect_flow":
+            return execute_many_prefect_flow(request)
+        case unknown:
+            raise ValueError(f"Unknown workflow execution mode: {unknown!r}")
 
 
 def execute_many_threaded(request: WorkflowExecutionRequest) -> list[Any]:

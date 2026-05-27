@@ -1400,6 +1400,10 @@ class WorkflowFunction(Node):
         request = self._make_execution_request(call_value_list)
         return _workflow_execution.execute_many(request)
 
+    # Cleanup note (#196): these mode-specific wrappers are retained for
+    # private-call compatibility during the staged execution extraction.
+    # Future cleanup can move tests/callers to ``_workflow_execution`` and
+    # remove the wrappers below.
     def _execute_many_threaded(self, call_value_list: list[dict[str, Any]]) -> list:
         """Compatibility wrapper around threaded workflow execution."""
         if not call_value_list:
