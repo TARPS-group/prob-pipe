@@ -35,13 +35,19 @@ jobs:
           echo "$CHANGED"
 
           # If foundational files changed, run the full suite.
-          RUN_ALL=false
-          for f in $CHANGED; do
-            case "$f" in
-              pyproject.toml|setup.cfg|setup.py|tests/conftest.py|probpipe/__init__.py)
-                RUN_ALL=true ;;
-            esac
-          done
+          # Also force the full suite on direct pushes to main (post-merge
+          # safety net — targeted tests are for PRs only).
+          if [ "${{ github.event_name }}" = "push" ]; then
+            RUN_ALL=true
+          else
+            RUN_ALL=false
+            for f in $CHANGED; do
+              case "$f" in
+                pyproject.toml|setup.cfg|setup.py|tests/conftest.py|probpipe/__init__.py)
+                  RUN_ALL=true ;;
+              esac
+            done
+          fi
 
           if [ -z "$CHANGED" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
