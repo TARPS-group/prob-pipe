@@ -88,6 +88,7 @@ def make_request(
     *,
     mode="sequential",
     parallel=False,
+    max_workers=None,
     calls=None,
     func=add_one,
     name="add_one",
@@ -99,6 +100,7 @@ def make_request(
         execution=execution_mod.WorkflowExecutionConfig(
             mode=mode,
             parallel=parallel,
+            max_workers=max_workers,
             name=name,
             prefect_task_runner=prefect_task_runner,
         ),
@@ -157,25 +159,26 @@ class TestThreadExecution:
         assert len(RecordingExecutor.instances) == 1
         assert RecordingExecutor.instances[0].max_workers is None
 
-    def test_execute_many_parallel_int_uses_explicit_worker_count(self, monkeypatch):
+    def test_execute_many_max_workers_uses_explicit_worker_count(self, monkeypatch):
         monkeypatch.setattr(execution_mod, "ThreadPoolExecutor", RecordingExecutor)
-        request = make_request(mode="thread", parallel=3)
+        request = make_request(mode="thread", parallel=True, max_workers=3)
 
         assert execution_mod.execute_many(request) == [2, 3]
         assert len(RecordingExecutor.instances) == 1
         assert RecordingExecutor.instances[0].max_workers == 3
 
-    @pytest.mark.parametrize("parallel", [0, -1])
-    def test_execute_many_rejects_non_positive_parallel_int(self, parallel):
-        request = make_request(mode="thread", parallel=parallel)
+    @pytest.mark.parametrize("max_workers", [0, -1])
+    def test_execute_many_rejects_non_positive_max_workers(self, max_workers):
+        request = make_request(mode="thread", parallel=True, max_workers=max_workers)
 
         with pytest.raises(ValueError, match="positive int"):
             execution_mod.execute_many(request)
 
-    def test_execute_many_rejects_invalid_parallel_value(self):
-        request = make_request(mode="thread", parallel=None)
+    @pytest.mark.parametrize("max_workers", [True, "3"])
+    def test_execute_many_rejects_invalid_max_workers_value(self, max_workers):
+        request = make_request(mode="thread", parallel=True, max_workers=max_workers)
 
-        with pytest.raises(TypeError, match="positive int"):
+        with pytest.raises(TypeError, match="max_workers"):
             execution_mod.execute_many(request)
 
 
@@ -256,6 +259,34 @@ class TestWorkflowFunctionCompatibility:
 
         assert wf._make_execution_config().mode == "thread"
 
+    def test_make_execution_config_ignores_max_workers_when_parallel_false(self):
+        wf = WorkflowFunction(
+            func=add_one,
+            vectorize="loop",
+            workflow_kind=WorkflowKind.OFF,
+            parallel=False,
+            max_workers=3,
+        )
+        execution = wf._make_execution_config()
+
+        assert execution.mode == "sequential"
+        assert execution.max_workers == 3
+
+    @pytest.mark.parametrize("parallel", [1, 0, None, "yes"])
+    def test_workflow_function_rejects_non_bool_parallel(self, parallel):
+        with pytest.raises(TypeError, match="parallel must be a bool"):
+            WorkflowFunction(func=add_one, vectorize="loop", parallel=parallel)
+
+    @pytest.mark.parametrize("max_workers", [0, -1])
+    def test_workflow_function_rejects_non_positive_max_workers(self, max_workers):
+        with pytest.raises(ValueError, match="max_workers"):
+            WorkflowFunction(func=add_one, vectorize="loop", max_workers=max_workers)
+
+    @pytest.mark.parametrize("max_workers", [True, "3"])
+    def test_workflow_function_rejects_invalid_max_workers(self, max_workers):
+        with pytest.raises(TypeError, match="max_workers"):
+            WorkflowFunction(func=add_one, vectorize="loop", max_workers=max_workers)
+
     def test_private_wrappers_return_empty_before_building_request(self, monkeypatch):
         wf = WorkflowFunction(func=add_one, workflow_kind=WorkflowKind.TASK, vectorize="loop")
 
@@ -297,7 +328,7 @@ class TestWorkflowFunctionCompatibility:
 
     def test_threaded_wrapper_delegates_to_execution_module(self, monkeypatch):
         monkeypatch.setattr(execution_mod, "ThreadPoolExecutor", RecordingExecutor)
-        wf = WorkflowFunction(func=add_one, vectorize="loop", parallel=2)
+        wf = WorkflowFunction(func=add_one, vectorize="loop", parallel=True, max_workers=2)
 
         assert wf._execute_many_threaded([{"x": 1}, {"x": 2}]) == [2, 3]
         assert RecordingExecutor.instances[0].max_workers == 2

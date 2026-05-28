@@ -294,11 +294,15 @@ class WorkflowFunction(Node):
         - ``"jax"``: vectorise via ``jax.vmap``.  Requires the wrapped
           function to be JAX-traceable.
         - ``"loop"``: Python loop (optionally threaded via *parallel*).
-    parallel : bool or int
+    parallel : bool
         Controls parallel execution during broadcasting (``"loop"``
-        vectorization only).  ``False`` → sequential, ``True`` →
-        ``ThreadPoolExecutor`` with default workers, ``int`` → explicit
-        ``max_workers``.
+        vectorization only). ``False`` runs sequentially; ``True`` uses
+        ``ThreadPoolExecutor``.
+    max_workers : int or None
+        Worker count for threaded loop execution. ``None`` lets
+        ``ThreadPoolExecutor`` choose automatically; a positive integer
+        sets the worker count explicitly. Ignored unless ``parallel`` is
+        ``True``.
     seed : int
         Random seed for JAX PRNG key management during broadcasting.
     """
@@ -315,11 +319,24 @@ class WorkflowFunction(Node):
         module: Any | None = None,                  # typically a Module; kept as Any to avoid import cycles
         n_broadcast_samples: int | None = None,      # default number of samples for broadcasting
         vectorize: str = "auto",                     # "auto" | "jax" | "loop"
-        parallel: bool | int = False,               # True/int for ThreadPoolExecutor, or Prefect .map()
+        parallel: bool = False,                     # True for ThreadPoolExecutor loop dispatch
+        max_workers: int | None = None,             # ThreadPoolExecutor worker count
         seed: int = 0,                              # JAX PRNG seed for broadcasting
         include_inputs: bool = False,                # True → return BroadcastDistribution (joint over inputs+outputs)
         **kwargs: Any,                              # convenience bindings (merged into bind)
     ):
+        if not isinstance(parallel, bool):
+            raise TypeError(f"parallel must be a bool; got {parallel!r}")
+        if max_workers is not None:
+            if isinstance(max_workers, bool) or not isinstance(max_workers, int):
+                raise TypeError(
+                    f"max_workers must be None or a positive int; got {max_workers!r}"
+                )
+            if max_workers < 1:
+                raise ValueError(
+                    f"max_workers must be None or a positive int; got {max_workers!r}"
+                )
+
         self._func = func
         self._sig = inspect.signature(func)
         self._hints = get_type_hints(func)
@@ -345,6 +362,7 @@ class WorkflowFunction(Node):
         self._n_broadcast_samples = n_broadcast_samples if n_broadcast_samples is not None else self.DEFAULT_N_BROADCAST_SAMPLES
         self._vectorize = vectorize
         self._parallel = parallel
+        self._max_workers = max_workers
         self._key = jax.random.PRNGKey(seed)
         self._include_inputs = include_inputs
         self._resolved_vectorize: str | None = None  # cached auto-detection result
@@ -429,7 +447,7 @@ class WorkflowFunction(Node):
                 mode = "prefect_task"
             elif kind is WorkflowKind.FLOW:
                 mode = "prefect_flow"
-            elif self._parallel is not False:
+            elif self._parallel:
                 mode = "thread"
             else:
                 mode = "sequential"
@@ -442,6 +460,7 @@ class WorkflowFunction(Node):
         return _workflow_execution.WorkflowExecutionConfig(
             mode=mode,
             parallel=self._parallel,
+            max_workers=self._max_workers,
             name=self._name,
             prefect_task_runner=prefect_task_runner,
         )
@@ -1419,6 +1438,7 @@ class WorkflowFunction(Node):
             execution=_workflow_execution.WorkflowExecutionConfig(
                 mode="prefect_task",
                 parallel=self._parallel,
+                max_workers=self._max_workers,
                 name=self._name,
             ),
         )
