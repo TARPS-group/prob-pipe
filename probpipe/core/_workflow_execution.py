@@ -81,7 +81,7 @@ def map_task(
     if not request.call_value_list:
         return []
 
-    _ensure_prefect_task_available()
+    _ensure_prefect_available()
 
     func = request.func
 
@@ -105,7 +105,7 @@ def execute_many_prefect_task(request: WorkflowExecutionRequest) -> list[Any]:
     if not request.call_value_list:
         return []
 
-    _ensure_prefect_flow_available()
+    _ensure_prefect_available()
     runner = request.execution.prefect_task_runner
 
     @flow(
@@ -123,7 +123,7 @@ def execute_many_prefect_flow(request: WorkflowExecutionRequest) -> list[Any]:
     if not request.call_value_list:
         return []
 
-    _ensure_prefect_flow_available()
+    _ensure_prefect_available()
     runner = request.execution.prefect_task_runner
 
     @flow(
@@ -152,16 +152,8 @@ def _resolve_max_workers(parallel: bool | int) -> int | None:
     )
 
 
-def _ensure_prefect_task_available() -> None:
+def _ensure_prefect_available() -> None:
     if task is None:
-        raise RuntimeError(
-            "Prefect task or flow execution was requested, but Prefect is not installed. "
-            "Install with: pip install probpipe[prefect]"
-        )
-
-
-def _ensure_prefect_flow_available() -> None:
-    if task is None or flow is None:
         raise RuntimeError(
             "Prefect task or flow execution was requested, but Prefect is not installed. "
             "Install with: pip install probpipe[prefect]"
