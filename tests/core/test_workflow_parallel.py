@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import fields
 from typing import ClassVar
 
 import pytest
 
 import probpipe.core._workflow_execution as execution_mod
 import probpipe.core.node as node_mod
-from probpipe.core.config import WorkflowKind
+from probpipe import Normal
+from probpipe.core.config import WorkflowKind, prefect_config
 from probpipe.core.node import WorkflowFunction
 
 
@@ -87,7 +89,6 @@ def fake_flow(name=None, **flow_kwargs):
 def make_request(
     *,
     mode="sequential",
-    parallel=False,
     max_workers=None,
     calls=None,
     func=add_one,
@@ -99,7 +100,6 @@ def make_request(
         call_value_list=calls if calls is not None else [{"x": 1}, {"x": 2}],
         execution=execution_mod.WorkflowExecutionConfig(
             mode=mode,
-            parallel=parallel,
             max_workers=max_workers,
             name=name,
             prefect_task_runner=prefect_task_runner,
@@ -109,16 +109,31 @@ def make_request(
 
 @pytest.fixture(autouse=True)
 def _reset_fakes():
+    prefect_config.workflow_kind = WorkflowKind.OFF
+    prefect_config.task_runner = None
     RecordingExecutor.instances.clear()
     FakeMappedTask.created_names.clear()
     RecordingFlow.calls.clear()
     yield
+    prefect_config.workflow_kind = WorkflowKind.OFF
+    prefect_config.task_runner = None
     RecordingExecutor.instances.clear()
     FakeMappedTask.created_names.clear()
     RecordingFlow.calls.clear()
 
 
 class TestExecutionRequestShape:
+    def test_execution_config_has_resolved_execution_fields_only(self):
+        field_names = {field.name for field in fields(execution_mod.WorkflowExecutionConfig)}
+
+        assert "parallel" not in field_names
+        assert field_names == {
+            "mode",
+            "max_workers",
+            "name",
+            "prefect_task_runner",
+        }
+
     def test_workflow_function_request_contains_plain_function(self, monkeypatch):
         seen = {}
 
@@ -136,24 +151,24 @@ class TestExecutionRequestShape:
 
 
 class TestSequentialExecution:
-    def test_execute_many_parallel_false_runs_sequentially(self):
-        request = make_request(mode="sequential", parallel=False)
+    def test_execute_many_sequential_mode_preserves_order(self):
+        request = make_request(mode="sequential")
 
         assert execution_mod.execute_many(request) == [2, 3]
         assert RecordingExecutor.instances == []
 
     def test_execute_many_empty_input_returns_empty_without_executor(self, monkeypatch):
         monkeypatch.setattr(execution_mod, "ThreadPoolExecutor", RecordingExecutor)
-        request = make_request(mode="thread", parallel=True, calls=[])
+        request = make_request(mode="thread", calls=[])
 
         assert execution_mod.execute_many(request) == []
         assert RecordingExecutor.instances == []
 
 
 class TestThreadExecution:
-    def test_execute_many_parallel_true_uses_executor_default_workers(self, monkeypatch):
+    def test_execute_many_thread_mode_uses_executor_default_workers(self, monkeypatch):
         monkeypatch.setattr(execution_mod, "ThreadPoolExecutor", RecordingExecutor)
-        request = make_request(mode="thread", parallel=True)
+        request = make_request(mode="thread")
 
         assert execution_mod.execute_many(request) == [2, 3]
         assert len(RecordingExecutor.instances) == 1
@@ -161,7 +176,7 @@ class TestThreadExecution:
 
     def test_execute_many_max_workers_uses_explicit_worker_count(self, monkeypatch):
         monkeypatch.setattr(execution_mod, "ThreadPoolExecutor", RecordingExecutor)
-        request = make_request(mode="thread", parallel=True, max_workers=3)
+        request = make_request(mode="thread", max_workers=3)
 
         assert execution_mod.execute_many(request) == [2, 3]
         assert len(RecordingExecutor.instances) == 1
@@ -169,14 +184,14 @@ class TestThreadExecution:
 
     @pytest.mark.parametrize("max_workers", [0, -1])
     def test_execute_many_rejects_non_positive_max_workers(self, max_workers):
-        request = make_request(mode="thread", parallel=True, max_workers=max_workers)
+        request = make_request(mode="thread", max_workers=max_workers)
 
         with pytest.raises(ValueError, match="positive int"):
             execution_mod.execute_many(request)
 
-    @pytest.mark.parametrize("max_workers", [True, "3"])
+    @pytest.mark.parametrize("max_workers", [True, False, "3"])
     def test_execute_many_rejects_invalid_max_workers_value(self, max_workers):
-        request = make_request(mode="thread", parallel=True, max_workers=max_workers)
+        request = make_request(mode="thread", max_workers=max_workers)
 
         with pytest.raises(TypeError, match="max_workers"):
             execution_mod.execute_many(request)
@@ -259,7 +274,7 @@ class TestWorkflowFunctionCompatibility:
 
         assert wf._make_execution_config().mode == "thread"
 
-    def test_make_execution_config_ignores_max_workers_when_parallel_false(self):
+    def test_make_execution_config_rejects_max_workers_when_parallel_false(self):
         wf = WorkflowFunction(
             func=add_one,
             vectorize="loop",
@@ -267,10 +282,9 @@ class TestWorkflowFunctionCompatibility:
             parallel=False,
             max_workers=3,
         )
-        execution = wf._make_execution_config()
 
-        assert execution.mode == "sequential"
-        assert execution.max_workers == 3
+        with pytest.raises(ValueError, match="requires parallel=True"):
+            wf._make_execution_config()
 
     @pytest.mark.parametrize("parallel", [1, 0, None, "yes"])
     def test_workflow_function_rejects_non_bool_parallel(self, parallel):
@@ -282,10 +296,87 @@ class TestWorkflowFunctionCompatibility:
         with pytest.raises(ValueError, match="max_workers"):
             WorkflowFunction(func=add_one, vectorize="loop", max_workers=max_workers)
 
-    @pytest.mark.parametrize("max_workers", [True, "3"])
+    @pytest.mark.parametrize("max_workers", [True, False, "3"])
     def test_workflow_function_rejects_invalid_max_workers(self, max_workers):
         with pytest.raises(TypeError, match="max_workers"):
             WorkflowFunction(func=add_one, vectorize="loop", max_workers=max_workers)
+
+    def test_explicit_prefect_warns_and_ignores_local_thread_options(self, monkeypatch):
+        monkeypatch.setattr(node_mod, "task", object())
+        wf = WorkflowFunction(
+            func=add_one,
+            workflow_kind=WorkflowKind.TASK,
+            vectorize="loop",
+            parallel=True,
+            max_workers=3,
+        )
+
+        with pytest.warns(UserWarning, match="do not control Prefect execution"):
+            execution = wf._make_execution_config()
+
+        assert execution.mode == "prefect_task"
+        assert execution.max_workers is None
+
+    def test_global_prefect_warns_and_ignores_max_workers_with_parallel_false(
+        self,
+        monkeypatch,
+    ):
+        monkeypatch.setattr(node_mod, "task", object())
+        prefect_config.workflow_kind = WorkflowKind.FLOW
+        wf = WorkflowFunction(
+            func=add_one,
+            vectorize="loop",
+            parallel=False,
+            max_workers=3,
+        )
+
+        with pytest.warns(UserWarning, match="do not control Prefect execution"):
+            execution = wf._make_execution_config()
+
+        assert execution.mode == "prefect_flow"
+        assert execution.max_workers is None
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"parallel": True},
+            {"parallel": True, "max_workers": 2},
+        ],
+    )
+    def test_jax_vectorize_warns_for_local_thread_options(self, kwargs):
+        with pytest.warns(UserWarning, match="do not control JAX vmap"):
+            WorkflowFunction(func=add_one, vectorize="jax", **kwargs)
+
+    def test_jax_vectorize_max_workers_still_rejects_local_sequential_config(self):
+        with pytest.warns(UserWarning, match="do not control JAX vmap"):
+            wf = WorkflowFunction(
+                func=add_one,
+                vectorize="jax",
+                workflow_kind=WorkflowKind.OFF,
+                max_workers=3,
+            )
+
+        with pytest.raises(ValueError, match="requires parallel=True"):
+            wf._make_execution_config()
+
+    def test_jax_broadcast_ignores_max_workers_after_warning(self, monkeypatch):
+        def fail_executor(*args, **kwargs):
+            raise AssertionError("JAX broadcast should not use ThreadPoolExecutor")
+
+        monkeypatch.setattr(execution_mod, "ThreadPoolExecutor", fail_executor)
+        with pytest.warns(UserWarning, match="do not control JAX vmap"):
+            wf = WorkflowFunction(
+                func=add_one,
+                vectorize="jax",
+                workflow_kind=WorkflowKind.OFF,
+                max_workers=3,
+                n_broadcast_samples=8,
+                seed=0,
+            )
+
+        result = wf(x=Normal(loc=0.0, scale=1.0, name="x"))
+
+        assert result.n == 8
 
     def test_private_wrappers_return_empty_before_building_request(self, monkeypatch):
         wf = WorkflowFunction(func=add_one, workflow_kind=WorkflowKind.TASK, vectorize="loop")

@@ -295,14 +295,19 @@ class WorkflowFunction(Node):
           function to be JAX-traceable.
         - ``"loop"``: Python loop (optionally threaded via *parallel*).
     parallel : bool
-        Controls parallel execution during broadcasting (``"loop"``
-        vectorization only). ``False`` runs sequentially; ``True`` uses
-        ``ThreadPoolExecutor``.
+        Controls local threaded execution for loop-style call-list
+        dispatch only. ``False`` runs sequentially; ``True`` uses
+        ``ThreadPoolExecutor``. This does not control JAX ``vmap``,
+        Prefect, Ray, or Dask concurrency.
     max_workers : int or None
         Worker count for threaded loop execution. ``None`` lets
         ``ThreadPoolExecutor`` choose automatically; a positive integer
-        sets the worker count explicitly. Ignored unless ``parallel`` is
-        ``True``.
+        sets the worker count explicitly. Only applies when ``parallel``
+        is ``True`` and execution resolves to local thread dispatch.
+        Supplying ``max_workers`` when execution resolves to local
+        sequential dispatch raises ``ValueError``. JAX ``vmap`` and
+        Prefect execution ignore local thread settings with warnings
+        rather than using them.
     seed : int
         Random seed for JAX PRNG key management during broadcasting.
     """
@@ -336,6 +341,12 @@ class WorkflowFunction(Node):
                 raise ValueError(
                     f"max_workers must be None or a positive int; got {max_workers!r}"
                 )
+        if vectorize == "jax" and (parallel or max_workers is not None):
+            warnings.warn(
+                "parallel and max_workers configure only local threaded loop "
+                "dispatch; they do not control JAX vmap.",
+                stacklevel=2,
+            )
 
         self._func = func
         self._sig = inspect.signature(func)
@@ -452,6 +463,22 @@ class WorkflowFunction(Node):
             else:
                 mode = "sequential"
 
+        max_workers = None
+        if mode == "thread":
+            max_workers = self._max_workers
+        elif mode == "sequential" and self._max_workers is not None:
+            raise ValueError(
+                "max_workers requires parallel=True for local threaded loop "
+                "dispatch."
+            )
+        elif mode in ("prefect_task", "prefect_flow"):
+            if self._parallel or self._max_workers is not None:
+                warnings.warn(
+                    "parallel and max_workers configure only local threaded loop "
+                    "dispatch; they do not control Prefect execution.",
+                    stacklevel=2,
+                )
+
         prefect_task_runner = (
             prefect_config.resolve_task_runner()
             if mode in ("prefect_task", "prefect_flow")
@@ -459,8 +486,7 @@ class WorkflowFunction(Node):
         )
         return _workflow_execution.WorkflowExecutionConfig(
             mode=mode,
-            parallel=self._parallel,
-            max_workers=self._max_workers,
+            max_workers=max_workers,
             name=self._name,
             prefect_task_runner=prefect_task_runner,
         )
@@ -1437,8 +1463,6 @@ class WorkflowFunction(Node):
             call_value_list=call_value_list,
             execution=_workflow_execution.WorkflowExecutionConfig(
                 mode="prefect_task",
-                parallel=self._parallel,
-                max_workers=self._max_workers,
                 name=self._name,
             ),
         )

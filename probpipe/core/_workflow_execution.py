@@ -30,7 +30,6 @@ class WorkflowExecutionConfig:
     """Resolved execution settings for ordered workflow calls."""
 
     mode: WorkflowExecutionMode
-    parallel: bool = False
     max_workers: int | None = None
     name: str = "workflow"
     prefect_task_runner: Any | None = None
