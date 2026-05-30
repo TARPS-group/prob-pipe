@@ -51,7 +51,7 @@ class TestHintedDistributionConversion:
         normal_external,
     ):
         mean_of_normal, seen = mean_recorder
-        wf = WorkflowFunction(func=mean_of_normal, vectorize="loop")
+        wf = WorkflowFunction(func=mean_of_normal, dispatch="sequential")
 
         result = wf(dist=normal_external)
 
@@ -65,7 +65,7 @@ class TestHintedDistributionConversion:
             seen.append(dist)
             return log_prob(dist, jnp.asarray([0.0]))
 
-        wf = WorkflowFunction(func=log_prob_at_zero, vectorize="loop")
+        wf = WorkflowFunction(func=log_prob_at_zero, dispatch="sequential")
 
         result = wf(dist=empirical_dist)
 
@@ -88,7 +88,7 @@ class TestDistributionArrayHandling:
             scale=jnp.asarray(1.0),
             name="zero_d",
         )
-        wf = WorkflowFunction(func=mean_of_normal, vectorize="loop")
+        wf = WorkflowFunction(func=mean_of_normal, dispatch="sequential")
 
         result = wf(dist=da)
 
@@ -104,7 +104,7 @@ class TestDistributionArrayHandling:
             scale=jnp.asarray([1.0]),
             name="one_cell",
         )
-        wf = WorkflowFunction(func=mean_of_normal, vectorize="loop")
+        wf = WorkflowFunction(func=mean_of_normal, dispatch="sequential")
 
         result = wf(dist=da)
 
@@ -125,7 +125,7 @@ class TestUnhintedExternalDistribution:
         wf = WorkflowFunction(
             func=double,
             n_broadcast_samples=8,
-            vectorize="loop",
+            dispatch="sequential",
             seed=42,
         )
         external = tfd.Normal(loc=1.0, scale=0.1)

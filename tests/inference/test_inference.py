@@ -7,6 +7,8 @@ Covers:
 - rwmh workflow function: basic sampling with SupportsLogProb
 """
 
+from __future__ import annotations
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -24,13 +26,10 @@ from probpipe import (
     sample,
     variance,
 )
-from unittest.mock import MagicMock
-
-from probpipe.inference import rwmh
 from probpipe.core.distribution import _RecordDistributionView
+from probpipe.inference import rwmh
 from probpipe.inference._approximate_distribution import make_posterior
 from probpipe.inference._tfp_mcmc import _build_mcmc_datatree
-
 
 # ---------------------------------------------------------------------------
 # ApproximateDistribution
@@ -277,7 +276,8 @@ class TestApproximateDistributionValuesTemplate:
         assert post.record_template["params"].fields == ("a", "b")
         # Moments key by the user's top-level fields, not by an
         # auto-wrap leaf.
-        from probpipe import mean as op_mean, variance as op_variance
+        from probpipe import mean as op_mean
+        from probpipe import variance as op_variance
         m = op_mean(post)
         assert m.fields == expected_fields
         assert m["params"].shape == (2,)  # flat per-component means
@@ -731,7 +731,7 @@ class TestViewProtocolDuckTyping:
 
     def test_view_always_isinstance_sampling(self):
         """Every view is SupportsSampling regardless of parent type."""
-        from probpipe import SupportsSampling, ProductDistribution
+        from probpipe import ProductDistribution, SupportsSampling
         joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
         assert isinstance(joint["x"], SupportsSampling)
 
@@ -744,7 +744,7 @@ class TestViewProtocolDuckTyping:
 
     def test_view_always_isinstance_mean_variance(self):
         """Every view is SupportsMean and SupportsVariance."""
-        from probpipe import SupportsMean, SupportsVariance, ProductDistribution
+        from probpipe import ProductDistribution, SupportsMean, SupportsVariance
         joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
         view = joint["x"]
         assert isinstance(view, SupportsMean)
@@ -752,8 +752,9 @@ class TestViewProtocolDuckTyping:
 
     def test_view_log_prob_delegates_to_component(self):
         """View _log_prob delegates to the underlying component distribution."""
-        from probpipe import ProductDistribution
         import scipy.stats
+
+        from probpipe import ProductDistribution
         joint = ProductDistribution(x=Normal(loc=2.0, scale=0.5, name="x"), y=Normal(0, 1, name="y"))
         view = joint["x"]
         lp = float(view._log_prob(jnp.array(2.0)))
@@ -762,14 +763,14 @@ class TestViewProtocolDuckTyping:
 
     def test_view_no_cov_when_parent_lacks_it(self):
         """View lacks SupportsCovariance when parent doesn't have it."""
-        from probpipe import SupportsCovariance, ProductDistribution
+        from probpipe import ProductDistribution, SupportsCovariance
         joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
         view = joint["x"]
         assert not isinstance(view, SupportsCovariance)
 
     def test_dynamic_protocol_depends_on_parent(self):
         """Same _RecordDistributionView base, different isinstance results."""
-        from probpipe import SupportsLogProb, ProductDistribution
+        from probpipe import ProductDistribution, SupportsLogProb
         # ProductDistribution parent → isinstance True
         joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
         view_with = joint["x"]
@@ -979,7 +980,7 @@ class TestEndToEndValuesPipeline:
         """Broadcast predict(params, x) computes correct function of posterior."""
         from probpipe.core.node import workflow_function
 
-        @workflow_function(n_broadcast_samples=100, vectorize="loop", seed=0)
+        @workflow_function(n_broadcast_samples=100, dispatch="sequential", seed=0)
         def predict(params, x):
             return params[0] + params[1] * x
 
@@ -998,7 +999,7 @@ class TestEndToEndValuesPipeline:
         """
         from probpipe.core.node import workflow_function
 
-        @workflow_function(n_broadcast_samples=50, vectorize="loop", seed=0)
+        @workflow_function(n_broadcast_samples=50, dispatch="sequential", seed=0)
         def identity_pair(a, b):
             return a - b
 
@@ -1026,7 +1027,6 @@ class TestEndToEndValuesPipeline:
 
         # Per-field views
         view_a = post["a"]
-        view_b = post["b"]
         assert isinstance(view_a, _RecordDistributionView)
         np.testing.assert_allclose(
             float(view_a._mean()), float(draws["a"].mean()), atol=1e-5
@@ -1040,7 +1040,7 @@ class TestEndToEndValuesPipeline:
         """Workflow with both posterior views and an independent distribution."""
         from probpipe.core.node import workflow_function
 
-        @workflow_function(n_broadcast_samples=50, vectorize="loop", seed=0)
+        @workflow_function(n_broadcast_samples=50, dispatch="sequential", seed=0)
         def noisy_predict(params, noise):
             return params[0] + params[1] * 0.5 + noise
 

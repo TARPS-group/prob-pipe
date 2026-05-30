@@ -1,24 +1,31 @@
 """Comprehensive tests for joint distribution classes."""
 
+from __future__ import annotations
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from probpipe import (
-    Normal,
-    MultivariateNormal,
-    Gamma,
-    ProductDistribution,
-    EmpiricalDistribution,
-    NumericRecordDistribution,
-    RecordDistribution,
-)
-from probpipe.core._record_distribution import _RecordDistributionView
-from probpipe.core.record import Record
-from probpipe.core._record_array import RecordArray
-from probpipe.core.node import WorkflowFunction
-from probpipe import condition_on, from_distribution, log_prob, mean, sample, variance
 
+from probpipe import (
+    EmpiricalDistribution,
+    Gamma,
+    MultivariateNormal,
+    Normal,
+    NumericRecordDistribution,
+    ProductDistribution,
+    RecordDistribution,
+    condition_on,
+    from_distribution,
+    log_prob,
+    mean,
+    sample,
+    variance,
+)
+from probpipe.core._record_array import RecordArray
+from probpipe.core._record_distribution import _RecordDistributionView
+from probpipe.core.node import WorkflowFunction
+from probpipe.core.record import Record
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -338,14 +345,14 @@ class TestBroadcastingReconnection:
     """Test that _RecordDistributionViews from the same parent are sampled jointly."""
 
     @staticmethod
-    def _make_add_workflow(backend="loop"):
+    def _make_add_workflow(backend="sequential"):
         """Create a workflow that adds two arrays."""
         def add(a: float, b: float) -> float:
             return a + b
 
         return WorkflowFunction(
             func=add,
-            vectorize=backend,
+            dispatch=backend,
             n_broadcast_samples=50,
             seed=42,
         )
@@ -367,7 +374,7 @@ class TestBroadcastingReconnection:
             x=Normal(loc=0.0, scale=1.0, name="x"),
             y=Normal(loc=10.0, scale=1.0, name="y"),
         )
-        wf = self._make_add_workflow("loop")
+        wf = self._make_add_workflow("sequential")
         result = wf(a=joint["x"], b=joint["y"])
         assert hasattr(result, "samples")
         # x ~ N(0,1), y ~ N(10,1), independent => a+b ~ N(10, sqrt(2))
@@ -392,7 +399,7 @@ class TestBroadcastingReconnection:
 
         wf = WorkflowFunction(
             func=subtract,
-            vectorize="loop",
+            dispatch="sequential",
             n_broadcast_samples=20,
             seed=99,
         )
@@ -416,7 +423,7 @@ class TestBroadcastingReconnection:
 
         wf = WorkflowFunction(
             func=add3,
-            vectorize="loop",
+            dispatch="sequential",
             n_broadcast_samples=50,
             seed=77,
         )
@@ -438,7 +445,7 @@ class TestBroadcastingReconnection:
 
         wf = WorkflowFunction(
             func=add,
-            vectorize="jax",
+            dispatch="jax",
             n_broadcast_samples=50,
             seed=55,
         )
@@ -460,7 +467,7 @@ class TestBroadcastingReconnection:
 
         wf = WorkflowFunction(
             func=subtract,
-            vectorize="jax",
+            dispatch="jax",
             n_broadcast_samples=20,
             seed=88,
         )
@@ -532,7 +539,7 @@ class TestProductProtocolDuckTyping:
 
     def test_mixed_no_log_prob(self):
         """Component lacking SupportsLogProb → product lacks it too."""
-        from probpipe import SupportsLogProb, BootstrapDistribution
+        from probpipe import BootstrapDistribution, SupportsLogProb
         boot = BootstrapDistribution(jnp.array([1.0, 2.0, 3.0]), name="y")
         joint = ProductDistribution(x=Normal(0, 1, name="x"), y=boot)
         assert not isinstance(joint, SupportsLogProb)
@@ -639,7 +646,6 @@ class TestPositionalAndAutoRename:
 
     def test_auto_rename_preserves_provenance(self):
         """Auto-renamed component tracks provenance back to the original."""
-        from probpipe.core.provenance import Provenance
         n = Normal(loc=0.0, scale=1.0, name="x")
         joint = ProductDistribution(growth_rate=n)
         comp = joint.components["growth_rate"]
@@ -755,7 +761,7 @@ class TestEnumerateWithDistributionViews:
 
         wf = WorkflowFunction(
             func=compute,
-            vectorize="loop",
+            dispatch="sequential",
             n_broadcast_samples=50,
             seed=123,
         )
@@ -1100,7 +1106,7 @@ class TestNestedProductDistribution:
 
         wf = WorkflowFunction(
             func=add,
-            vectorize="loop",
+            dispatch="sequential",
             n_broadcast_samples=30,
             seed=42,
         )

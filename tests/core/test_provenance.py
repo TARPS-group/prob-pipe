@@ -1,28 +1,26 @@
 """Comprehensive tests for provenance tracking across all distribution operations."""
 
-import jax
+from __future__ import annotations
+
 import jax.numpy as jnp
-import numpy as np
 import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from probpipe import (
-    Normal,
     Beta,
-    MultivariateNormal,
-    RecordEmpiricalDistribution,
-    TransformedDistribution,
-    ProductDistribution,
-    SequentialJointDistribution,
     JointGaussian,
+    Normal,
+    ProductDistribution,
     Provenance,
-    provenance_ancestors,
-    provenance_dag,
+    RecordEmpiricalDistribution,
+    SequentialJointDistribution,
+    TransformedDistribution,
     condition_on,
     from_distribution,
+    provenance_ancestors,
+    provenance_dag,
 )
 from probpipe.core.node import WorkflowFunction
-
 
 # ===========================================================================
 # 1. Provenance basics (dataclass, with_source, write-once)
@@ -151,14 +149,14 @@ class TestBroadcastingProvenance:
         def identity(x: float) -> float:
             return x
 
-        wf = WorkflowFunction(func=identity, vectorize="loop",
+        wf = WorkflowFunction(func=identity, dispatch="sequential",
                       n_broadcast_samples=20, seed=42)
         result = wf(x=n)
         assert hasattr(result, "samples")
         assert result.source is not None
         assert result.source.operation == "broadcast"
         assert result.source.parents == (n,)
-        assert result.source.metadata["vectorize"] == "loop"
+        assert result.source.metadata["dispatch"] == "sequential"
         assert result.source.metadata["n_samples"] == 20
         assert result.source.metadata["func"] == "identity"
         assert result.source.metadata["broadcast_args"] == ["x"]
@@ -169,13 +167,13 @@ class TestBroadcastingProvenance:
         def double(x: float) -> float:
             return 2.0 * x
 
-        wf = WorkflowFunction(func=double, vectorize="jax",
+        wf = WorkflowFunction(func=double, dispatch="jax",
                       n_broadcast_samples=20, seed=42)
         result = wf(x=n)
         assert hasattr(result, "samples")
         assert result.source is not None
         assert result.source.operation == "broadcast"
-        assert result.source.metadata["vectorize"] == "jax"
+        assert result.source.metadata["dispatch"] == "jax"
 
     def test_broadcast_multiple_parents(self):
         a = Normal(loc=0.0, scale=1.0, name="a")
@@ -184,7 +182,7 @@ class TestBroadcastingProvenance:
         def add(x: float, y: float) -> float:
             return x + y
 
-        wf = WorkflowFunction(func=add, vectorize="loop",
+        wf = WorkflowFunction(func=add, dispatch="sequential",
                       n_broadcast_samples=20, seed=42)
         result = wf(x=a, y=b)
         assert result.source is not None
@@ -198,7 +196,7 @@ class TestBroadcastingProvenance:
         def add(a: float, b: float) -> float:
             return a + b
 
-        wf = WorkflowFunction(func=add, vectorize="loop",
+        wf = WorkflowFunction(func=add, dispatch="sequential",
                       n_broadcast_samples=20, seed=42)
         result = wf(a=ed, b=n)
         assert hasattr(result, "samples")
@@ -235,7 +233,7 @@ class TestProvenanceChains:
         def log_val(x: float) -> float:
             return jnp.log(x)
 
-        wf = WorkflowFunction(func=log_val, vectorize="loop",
+        wf = WorkflowFunction(func=log_val, dispatch="sequential",
                       n_broadcast_samples=20, seed=42)
         result = wf(x=td)
         # result → broadcast → td → transform → base
@@ -335,7 +333,7 @@ class TestProvenanceAncestors:
         def identity(x: float) -> float:
             return x
 
-        wf = WorkflowFunction(func=identity, vectorize="loop",
+        wf = WorkflowFunction(func=identity, dispatch="sequential",
                       n_broadcast_samples=10, seed=42)
         result = wf(x=td)
         ancestors = provenance_ancestors(result)
@@ -351,7 +349,7 @@ class TestProvenanceAncestors:
         def add(x: float, y: float) -> float:
             return x + y
 
-        wf = WorkflowFunction(func=add, vectorize="loop",
+        wf = WorkflowFunction(func=add, dispatch="sequential",
                       n_broadcast_samples=10, seed=42)
         result = wf(x=n, y=n)
         ancestors = provenance_ancestors(result)
@@ -401,7 +399,7 @@ class TestProvenanceDag:
         def identity(x: float) -> float:
             return x
 
-        wf = WorkflowFunction(func=identity, vectorize="loop",
+        wf = WorkflowFunction(func=identity, dispatch="sequential",
                       n_broadcast_samples=10, seed=42)
         result = wf(x=td)
         dag = provenance_dag(result)
