@@ -4,20 +4,32 @@
 
 ### 1. Plan first (for significant changes)
 
-If the change is significant, start by creating a PR that contains only a
-plan document at the repo root named `<PR-description>_plan.md`. The plan
-should describe the motivation, proposed design, and any trade-offs.
+If the change is significant, start by opening a GitHub **issue**
+containing the plan: motivation, proposed design, trade-offs, and a
+task checklist for the implementation work. Tag with an appropriate
+label (typically `enhancement`).
+[#196](https://github.com/TARPS-group/prob-pipe/issues/196) is a
+representative model.
+
+The issue is the durable record of intent and stays open across the
+implementation, even when the work spans multiple PRs — its task
+checklist is the cross-PR progress tracker. This is a cleaner split
+of concerns than carrying the plan in a PR: the plan document outlives
+any single PR, and implementation PRs stay focused on code rather
+than doubling as design-discussion threads.
 
 ### 2. Request a review
 
-Request a review from **@jhuggins** and/or **@arob5**. You will receive
-feedback on the PR or the plan document.
+Tag **@jhuggins** and/or **@arob5** on the issue. Feedback lands in
+the issue thread.
 
 ### 3. Wait for approval before implementing
 
-If you submitted a plan, do **not** start implementing until the plan is
-approved. Once approved, open a follow-up PR (or update the existing one)
-with the implementation and request another review.
+Do not start implementing until the plan issue is approved. Once
+approved, open implementation PR(s) referencing the issue (`Refs
+#N` in the PR body for stage PRs, `Closes #N` on the final one).
+Check off tasks on the issue as PRs land; the issue closes when the
+last task is done.
 
 ### What counts as "significant"?
 

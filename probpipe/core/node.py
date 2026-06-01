@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import Any, Callable, Literal, Mapping, get_type_hints
 import inspect
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import warnings
+from abc import ABC, abstractmethod
+from collections.abc import Callable, Mapping
 from itertools import product as cartesian_product
 from types import MappingProxyType
-import warnings
+from typing import Any, get_type_hints
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 try:
-    from prefect import task, flow
+    from prefect import flow, task
 except ImportError:
     task = flow = None
 
@@ -26,21 +25,19 @@ except ImportError:
     Digraph = None
 
 from .._utils import prod
-from ..custom_types import PRNGKey, Array
+from ..converters import converter_registry
+from ..custom_types import Array, PRNGKey
+from . import _workflow_execution, _workflow_result
+from ._broadcast_distributions import _make_stack
+from ._distribution_array import DistributionArray, _make_distribution_array
+from ._record_array import RecordArray, _RecordArrayView
+from ._record_distribution import _RecordDistributionView
 from .distribution import (
-    NumericRecordDistribution,
     BroadcastDistribution,
     Distribution,
     EmpiricalDistribution,
-    _make_marginal,
+    NumericRecordDistribution,
 )
-from ._broadcast_distributions import _make_stack
-from ._distribution_array import DistributionArray, _make_distribution_array
-from ._numeric_record import NumericRecord, _is_numeric_leaf
-from ._record_array import RecordArray, _RecordArrayView
-from ._record_distribution import _RecordDistributionView
-from .provenance import Provenance
-from .record import Record
 from .protocols import (
     SupportsConditioning,
     SupportsCovariance,
@@ -53,6 +50,7 @@ from .protocols import (
     SupportsUnnormalizedLogProb,
     SupportsVariance,
 )
+from .provenance import Provenance
 
 # Protocol types that indicate a parameter expects a distribution object.
 # Used by _find_broadcast_args to avoid broadcasting over such parameters.
@@ -68,7 +66,6 @@ _DISTRIBUTION_PROTOCOLS: tuple[type, ...] = (
     SupportsRandomUnnormalizedLogProb,
     SupportsConditioning,
 )
-from ..converters import converter_registry
 
 logger = logging.getLogger(__name__)
 
@@ -77,111 +74,15 @@ logger = logging.getLogger(__name__)
 # Output-type coercion for WorkflowFunction returns (issue #130)
 # ---------------------------------------------------------------------------
 
-# Broadcast modes: how a value reached ``_coerce_output``. Named
-# constants so callsites use the same spelling and typos fail loudly.
-# ``BROADCAST_MARGINALISE`` is intentionally absent — the
-# Distribution-only path goes through
-# ``_broadcast_distributions_only`` and doesn't call
-# ``_coerce_output`` at all; its marginal already carries provenance.
-BroadcastMode = Literal["wrap", "stack", "nested"]
-BROADCAST_WRAP: BroadcastMode = "wrap"
-BROADCAST_STACK: BroadcastMode = "stack"
-BROADCAST_NESTED: BroadcastMode = "nested"
-
-
-def _wrap_as_record(value: Any, field_name: str) -> Any:
-    """Coerce a raw return into the Record | RecordArray | Distribution contract.
-
-    Uniform rule applied at the WorkflowFunction boundary:
-
-    - Already-structured values (``Record`` / ``RecordArray`` /
-      ``Distribution``) pass through unchanged — their domain field
-      names are preserved.
-    - ``dict`` (non-empty) → ``Record(dict(value))``: caller's keys
-      stay addressable as field names.
-    - Non-empty ``list`` / ``tuple`` → ``_make_stack``: assembles a
-      ``DistributionArray`` / ``RecordArray`` / ``NumericRecordArray``
-      matching the inner element type.
-    - Scalar numeric / ``jnp.ndarray`` → ``NumericRecord({field_name: value})``
-      with the function's own name as the single field name. Raw
-      numeric access round-trips via the single-field shim:
-      ``float(x)``, ``jnp.array(x)``, and (for callable-valued fields)
-      ``x(args)`` call-forwarding.
-    - Anything else (opaque Python object) → ``Record({field_name: value})``.
-    """
-    if isinstance(value, (Distribution, Record)):
-        return value
-    if isinstance(value, dict) and value:
-        return Record(dict(value))
-    if isinstance(value, (list, tuple)) and value:
-        try:
-            return _make_stack(list(value), n=len(value), field_name=field_name)
-        except (TypeError, ValueError):
-            pass
-    # Numeric scalar / array → NumericRecord with the function's
-    # name as the single field; the wrap adds no batch_shape of its
-    # own (batching comes from sweeps). ``_is_numeric_leaf`` excludes
-    # opaque duck-typed objects (``unittest.mock.MagicMock`` etc.)
-    # whose attribute probing would recurse inside ``jnp.asarray``.
-    if _is_numeric_leaf(value):
-        return NumericRecord({field_name: jnp.asarray(value)})
-    return Record({field_name: value})
-
-
-def _coerce_output(
-    value: Any,
-    *,
-    broadcast_mode: BroadcastMode,
-    provenance: Provenance | None,
-    field_name: str,
-) -> Any:
-    """Enforce the Record | RecordArray | Distribution output contract.
-
-    Parameters
-    ----------
-    value
-        The raw output produced by the function body or a broadcast
-        aggregator. For ``broadcast_mode != "wrap"`` this is always
-        already one of the three contract types.
-    broadcast_mode : {"wrap", "stack", "nested"}
-        How the value was produced:
-
-        * ``"wrap"`` — non-broadcast call; ``value`` is whatever the
-          user's function returned. Scalars / arrays become
-          ``NumericRecord({field_name: value})``; dict / list / tuple
-          promote via ``_wrap_as_record``; existing Record /
-          RecordArray / Distribution values pass through.
-        * ``"stack"`` — array-valued broadcast; ``value`` is a stacked
-          aggregate from ``_make_stack`` (``NumericRecordArray`` /
-          ``RecordArray`` / ``DistributionArray``).
-        * ``"nested"`` — array + Distribution broadcast; ``value`` is
-          a ``DistributionArray`` of per-row marginals.
-    provenance : Provenance or None
-        Provenance node to attach. ``None`` skips the attachment step.
-    field_name : str
-        Name used when wrapping bare scalar / array returns — always
-        the WorkflowFunction's own name so the single-field record
-        maps back to the op that produced it.
-
-    Returns
-    -------
-    Record | RecordArray | Distribution
-        The value, possibly wrapped, with ``.source`` attached when it
-        was empty. An already-sourced value keeps its existing source
-        (inner marginals produced by the broadcast layer carry their
-        own provenance; ``_coerce_output`` doesn't overwrite).
-    """
-    if broadcast_mode == BROADCAST_WRAP:
-        value = _wrap_as_record(value, field_name)
-    if provenance is not None and hasattr(value, "with_source"):
-        try:
-            value.with_source(provenance)
-        except RuntimeError:
-            # Value already has a source (e.g., an inner marginal that
-            # the broadcasting layer built with its own provenance).
-            # Leave the existing source in place.
-            pass
-    return value
+# Compatibility aliases for tests or downstream code that imported these
+# private helpers from ``probpipe.core.node`` before the extraction.
+# Will be removed in a follow-up issue after downstream updates.
+BroadcastMode = _workflow_result.BroadcastMode
+BROADCAST_WRAP = _workflow_result.BROADCAST_WRAP
+BROADCAST_STACK = _workflow_result.BROADCAST_STACK
+BROADCAST_NESTED = _workflow_result.BROADCAST_NESTED
+_wrap_as_record = _workflow_result._wrap_as_record
+_coerce_output = _workflow_result._coerce_output
 
 __all__ = [
     "InputFrozenError",
@@ -285,7 +186,7 @@ class Node(ABC):
         self._inputs = MappingProxyType(inputs)
 
     @property
-    def child_nodes(self) -> Mapping[str, "Node"]:
+    def child_nodes(self) -> Mapping[str, Node]:
         return self._child_nodes
 
     @property
@@ -329,8 +230,8 @@ def _index_sample(s: Any, i: int) -> Any:
     """
     # Local imports to avoid module-load circularity with
     # ``record`` / ``_numeric_record``.
-    from .record import Record
     from ._numeric_record import NumericRecord
+    from .record import Record
 
     if isinstance(s, Record):
         if len(s.fields) == 1:
@@ -515,6 +416,48 @@ class WorkflowFunction(Node):
             return WorkflowKind.OFF
 
         return kind
+
+    def _make_execution_config(
+        self,
+        *,
+        mode: _workflow_execution.WorkflowExecutionMode | None = None,
+    ) -> _workflow_execution.WorkflowExecutionConfig:
+        """Build resolved execution metadata for loop-style call dispatch."""
+        if mode is None:
+            kind = self.effective_workflow_kind
+            if kind is WorkflowKind.TASK:
+                mode = "prefect_task"
+            elif kind is WorkflowKind.FLOW:
+                mode = "prefect_flow"
+            elif self._parallel is not False:
+                mode = "thread"
+            else:
+                mode = "sequential"
+
+        prefect_task_runner = (
+            prefect_config.resolve_task_runner()
+            if mode in ("prefect_task", "prefect_flow")
+            else None
+        )
+        return _workflow_execution.WorkflowExecutionConfig(
+            mode=mode,
+            parallel=self._parallel,
+            name=self._name,
+            prefect_task_runner=prefect_task_runner,
+        )
+
+    def _make_execution_request(
+        self,
+        call_value_list: list[dict[str, Any]],
+        *,
+        mode: _workflow_execution.WorkflowExecutionMode | None = None,
+    ) -> _workflow_execution.WorkflowExecutionRequest:
+        """Build a backend-neutral execution request without capturing ``self``."""
+        return _workflow_execution.WorkflowExecutionRequest(
+            func=self._func,
+            call_value_list=call_value_list,
+            execution=self._make_execution_config(mode=mode),
+        )
 
     def _is_dependency_param(self, name: str) -> bool:
         """
@@ -1451,100 +1394,50 @@ class WorkflowFunction(Node):
         )
 
     def _execute_many(self, call_value_list: list[dict[str, Any]]) -> list:
-        """
-        Execute the wrapped function for every dict in *call_value_list* and
-        return the results in the same order.
-
-        Dispatch strategy:
-          - workflow_kind="task"  → Prefect task.map() (single mapped task)
-          - workflow_kind="flow"  → Prefect: one wrapping flow with task.map()
-          - parallel=True/int    → concurrent.futures.ThreadPoolExecutor
-          - otherwise            → sequential list comprehension
-        """
+        """Compatibility wrapper around ``_workflow_execution.execute_many``."""
         if not call_value_list:
             return []
+        request = self._make_execution_request(call_value_list)
+        return _workflow_execution.execute_many(request)
 
-        kind = self.effective_workflow_kind
-        if kind is WorkflowKind.TASK:
-            return self._execute_many_prefect_task(call_value_list)
-
-        if kind is WorkflowKind.FLOW:
-            return self._execute_many_prefect_flow(call_value_list)
-
-        if self._parallel is not False:
-            return self._execute_many_threaded(call_value_list)
-
-        return [self._func(**v) for v in call_value_list]
-
+    # Cleanup note (#196): these mode-specific wrappers are retained for
+    # private-call compatibility during the staged execution extraction.
+    # Future cleanup can move tests/callers to ``_workflow_execution`` and
+    # remove the wrappers below.
     def _execute_many_threaded(self, call_value_list: list[dict[str, Any]]) -> list:
-        max_workers = None  # ThreadPoolExecutor default for parallel=True
-
-        if isinstance(self._parallel, int) and not isinstance(self._parallel, bool):
-            if self._parallel < 1:
-                raise ValueError(
-                    f"self._parallel must be True, False, or a positive int; got {self._parallel!r}"
-                )
-            max_workers = self._parallel
-
-        elif self._parallel is not True:
-            raise TypeError(
-                f"parallel must be True, False, or a positive int; got {self._parallel!r}"
-            )
-
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            return list(pool.map(lambda kwargs: self._func(**kwargs), call_value_list))
+        """Compatibility wrapper around threaded workflow execution."""
+        if not call_value_list:
+            return []
+        request = self._make_execution_request(call_value_list, mode="thread")
+        return _workflow_execution.execute_many_threaded(request)
 
     def _map_task(self, call_value_list: list[dict[str, Any]], task_name: str | None = None) -> list:
-        """Create a Prefect task wrapping self._func, .map() over all calls, and resolve."""
-        if not call_value_list:
-            return []
-
-        if task is None:
-            raise RuntimeError(
-                "Prefect task execution was requested, but Prefect is not installed. "
-                "Install with: pip install probpipe[prefect]"
-            )
-
-        func = self._func
-
-        @task(name=task_name or self._name)
-        def run_func(**kwargs):
-            return func(**kwargs)
-
-        keys = call_value_list[0].keys()
-        kwargs_by_param = {k: [d[k] for d in call_value_list] for k in keys}
-        futures = run_func.map(**kwargs_by_param)
-        return [future.result() for future in futures]
+        """Compatibility wrapper around Prefect task mapping."""
+        request = _workflow_execution.WorkflowExecutionRequest(
+            func=self._func,
+            call_value_list=call_value_list,
+            execution=_workflow_execution.WorkflowExecutionConfig(
+                mode="prefect_task",
+                parallel=self._parallel,
+                name=self._name,
+            ),
+        )
+        return _workflow_execution.map_task(request, task_name=task_name)
 
     def _execute_many_prefect_task(self, call_value_list: list[dict[str, Any]]) -> list:
-        """Use Prefect task.map() inside a lightweight flow.
-
-        Prefect 3.x requires ``task.map()`` to be called within a flow
-        context.  This mode creates a minimal wrapper flow so the mapped
-        task runs are tracked but not grouped under a named flow.
-        """
-        outer = self
-        runner = prefect_config.resolve_task_runner()
-
-        @flow(name=f"{self._name}_map",
-              **({"task_runner": runner} if runner is not None else {}))
-        def _task_map_flow():
-            return outer._map_task(call_value_list)
-
-        return _task_map_flow()
+        """Compatibility wrapper around Prefect task execution."""
+        if not call_value_list:
+            return []
+        request = self._make_execution_request(call_value_list, mode="prefect_task")
+        return _workflow_execution.execute_many_prefect_task(request)
 
     def _execute_many_prefect_flow(self, call_value_list: list[dict[str, Any]]) -> list:
-        """Wrap a mapped task inside a named Prefect flow."""
-        outer = self
-        runner = prefect_config.resolve_task_runner()
+        """Compatibility wrapper around Prefect flow execution."""
+        if not call_value_list:
+            return []
+        request = self._make_execution_request(call_value_list, mode="prefect_flow")
+        return _workflow_execution.execute_many_prefect_flow(request)
 
-        @flow(name=self._name,
-              **({"task_runner": runner} if runner is not None else {}))
-        def mapped_flow():
-            return outer._map_task(call_value_list, task_name=f"{outer._name}_run")
-
-        return mapped_flow()
- 
 
 class Module(Node):
     """

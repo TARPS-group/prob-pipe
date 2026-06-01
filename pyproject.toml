@@ -14,6 +14,7 @@ authors = [
   { name = "Andrew Roberts",   email = "arober@bu.edu" },
   { name = "Yongho Lim",      email = "ylim2@bu.edu" },
   { name = "Can Erozer",      email = "caner@bu.edu" },
+  { name = "Jiaqiang Zhu",      email = "julian25@bu.edu" },
 ]  # See AUTHORS file for full list
 dependencies = [
   # sbijax 0.3.6 (latest) pins jaxlib==0.8.1, so we cap below 0.9 to keep
