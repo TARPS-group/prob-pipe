@@ -11,16 +11,28 @@ from ._registry import (
     InferenceMethod,
     inference_method_registry,
 )
-from ..core._registry import Method, MethodInfo, MethodRegistry
+from ..core._registry import (
+    BaseDispatchMethod,
+    BaseDispatchRegistry,
+    BinaryDispatchMethod,
+    BinaryDispatchRegistry,
+    MethodInfo,
+    UnaryDispatchMethod,
+    UnaryDispatchRegistry,
+)
 from ._rwmh import rwmh
 from ._nutpie import condition_on_nutpie
 from ._minibatch import MinibatchedDistribution
 
 __all__ = [
     "ApproximateDistribution",
-    "Method",
+    "BaseDispatchMethod",
+    "BaseDispatchRegistry",
+    "BinaryDispatchMethod",
+    "BinaryDispatchRegistry",
     "MethodInfo",
-    "MethodRegistry",
+    "UnaryDispatchMethod",
+    "UnaryDispatchRegistry",
     "InferenceMethod",
     "inference_method_registry",
     "rwmh",

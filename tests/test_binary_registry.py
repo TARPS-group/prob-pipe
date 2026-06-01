@@ -15,9 +15,7 @@ from probpipe.core._registry import (
     BaseDispatchRegistry,
     BinaryDispatchMethod,
     BinaryDispatchRegistry,
-    Method,
     MethodInfo,
-    MethodRegistry,
     OPT_IN_ONLY_PRIORITY,
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
@@ -83,16 +81,10 @@ class FakeBinaryMethod(BinaryDispatchMethod):
 
 
 # ---------------------------------------------------------------------------
-# Aliases and class hierarchy
+# Class hierarchy
 # ---------------------------------------------------------------------------
 
 class TestPublicAPI:
-
-    def test_method_is_unary_dispatch_method(self):
-        assert Method is UnaryDispatchMethod
-
-    def test_method_registry_is_unary_dispatch_registry(self):
-        assert MethodRegistry is UnaryDispatchRegistry
 
     def test_unary_is_subclass_of_base_method(self):
         assert issubclass(UnaryDispatchMethod, BaseDispatchMethod)
@@ -363,3 +355,55 @@ class TestCacheInvalidation:
             warnings.simplefilter("ignore", UserWarning)
             reg.set_priorities(a=0)  # demote a to opt-in only
         assert reg.execute(object(), object()) == "b"
+
+
+# ---------------------------------------------------------------------------
+# Argument-count guards on check / execute
+# ---------------------------------------------------------------------------
+
+class TestArgumentCountGuards:
+    """No-arg and single-arg dispatch must fail with a clear error."""
+
+    def test_check_no_args_returns_infeasible(self):
+        reg = BinaryDispatchRegistry()
+        info = reg.check()
+        assert not info.feasible
+        assert "No arguments provided" in info.description
+
+    def test_execute_no_args_raises(self):
+        reg = BinaryDispatchRegistry()
+        with pytest.raises(TypeError, match="No arguments provided"):
+            reg.execute()
+
+    def test_execute_one_arg_raises_typeerror(self):
+        """A single-arg execute on a binary registry must raise TypeError,
+        not bare IndexError from tuple-unpacking inside _cache_key."""
+        reg = BinaryDispatchRegistry()
+        with pytest.raises(TypeError, match="at least two positional arguments"):
+            reg.execute(Left())
+
+    def test_check_one_arg_raises_typeerror(self):
+        reg = BinaryDispatchRegistry()
+        with pytest.raises(TypeError, match="at least two positional arguments"):
+            reg.check(Left())
+
+
+# ---------------------------------------------------------------------------
+# Registration guards
+# ---------------------------------------------------------------------------
+
+class TestRegistrationGuards:
+
+    def test_empty_name_rejected(self):
+        reg = BinaryDispatchRegistry()
+        with pytest.raises(ValueError, match="non-empty"):
+            reg.register(FakeBinaryMethod("", priority=10))
+
+    def test_none_name_rejected(self):
+        """The guard is `not method.name`, so it catches falsy non-strings
+        (e.g., `None` from a subclass that forgets to set `name`) and
+        rejects them with the same "non-empty" error as the empty-string
+        case — not a downstream TypeError or KeyError."""
+        reg = BinaryDispatchRegistry()
+        with pytest.raises(ValueError, match="non-empty"):
+            reg.register(FakeBinaryMethod(None, priority=10))  # type: ignore[arg-type]

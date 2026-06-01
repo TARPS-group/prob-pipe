@@ -18,6 +18,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Avoids the axis-position ambiguity of stacking the intercept slot
   into ``X``; matches the pattern in sklearn / statsmodels GLM APIs.
 
+- **Dispatch-registry hierarchy split: `BaseDispatchRegistry`,
+  `UnaryDispatchRegistry`, `BinaryDispatchRegistry`.** The
+  arity-independent logic (registration, priority management, opt-in
+  filtering, `check`/`execute` loop) lives on the new
+  `BaseDispatchRegistry` abstract base. `UnaryDispatchRegistry` is the
+  single-argument concrete subclass that replaces the previous
+  `MethodRegistry` and now backs the inference method registry.
+  `BinaryDispatchRegistry` adds two-argument dispatch on the joint type
+  of the first two positional args. `BaseDispatchMethod` /
+  `UnaryDispatchMethod` / `BinaryDispatchMethod` mirror the registry
+  split on the method side. The previous `Method` / `MethodRegistry`
+  aliases are removed — inference-method subclasses should subclass
+  `UnaryDispatchMethod` (or the `InferenceMethod` re-export from
+  `probpipe.inference`).
+
 - **Inference-method registry priorities re-anchored with a semantic
   convention (issue #189).**
   - `priority > 50` marks *exact* methods; `0 < priority <= 50` marks
