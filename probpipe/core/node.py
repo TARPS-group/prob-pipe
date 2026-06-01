@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from itertools import product as cartesian_product
 from types import MappingProxyType
-from typing import Any, get_type_hints
+from typing import Any, Literal, TypeAlias, get_args, get_type_hints
 
 import jax
 import jax.numpy as jnp
@@ -93,6 +93,10 @@ __all__ = [
     "WorkflowFunction",
     "Module",
     "AbstractModule",
+]
+
+WorkflowFunctionDispatch: TypeAlias = Literal[
+    "auto", "jax", "sequential", "thread"
 ]
 
 class InputFrozenError(Exception):
@@ -310,6 +314,7 @@ class WorkflowFunction(Node):
     """
 
     DEFAULT_N_BROADCAST_SAMPLES: int = 128
+    _VALID_DISPATCH_STRATEGIES = get_args(WorkflowFunctionDispatch)
 
     def __init__(
         self,
@@ -320,7 +325,7 @@ class WorkflowFunction(Node):
         bind: dict[str, Any] | None = None,         # construction-time bindings (defaults/config)
         module: Any | None = None,                  # typically a Module; kept as Any to avoid import cycles
         n_broadcast_samples: int | None = None,      # default number of samples for broadcasting
-        dispatch: str = "auto",                     # "auto" | "jax" | "sequential" | "thread"
+        dispatch: WorkflowFunctionDispatch = "auto", # "auto" | "jax" | "sequential" | "thread"
         max_workers: int | None = None,             # ThreadPoolExecutor worker count
         seed: int = 0,                              # JAX PRNG seed for broadcasting
         include_inputs: bool = False,                # True → return BroadcastDistribution (joint over inputs+outputs)
@@ -333,20 +338,11 @@ class WorkflowFunction(Node):
                 f"WorkflowFunction no longer accepts {names}; use dispatch= instead."
             )
 
-        if dispatch not in ("auto", "jax", "sequential", "thread"):
+        if dispatch not in self._VALID_DISPATCH_STRATEGIES:
             raise ValueError(
-                "dispatch must be one of 'auto', 'jax', 'sequential', or "
-                f"'thread'; got {dispatch!r}"
+                f"dispatch must be one of {self._VALID_DISPATCH_STRATEGIES}; got {dispatch!r}"
             )
-        if max_workers is not None:
-            if isinstance(max_workers, bool) or not isinstance(max_workers, int):
-                raise TypeError(
-                    f"max_workers must be None or a positive int; got {max_workers!r}"
-                )
-            if max_workers < 1:
-                raise ValueError(
-                    f"max_workers must be None or a positive int; got {max_workers!r}"
-                )
+        _workflow_execution._validate_max_workers(max_workers)
         if dispatch != "thread" and max_workers is not None:
             warnings.warn(
                 "max_workers configures only dispatch='thread'; ignoring it "

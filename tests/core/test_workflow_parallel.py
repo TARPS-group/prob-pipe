@@ -183,14 +183,22 @@ class TestThreadExecution:
         assert len(RecordingExecutor.instances) == 1
         assert RecordingExecutor.instances[0].max_workers == 3
 
-    @pytest.mark.parametrize("max_workers", [0, -1])
+    def test_execute_many_accepts_true_max_workers_as_positive_int(self, monkeypatch):
+        monkeypatch.setattr(execution_mod, "ThreadPoolExecutor", RecordingExecutor)
+        request = make_request(mode="thread", max_workers=True)
+
+        assert execution_mod.execute_many(request) == [2, 3]
+        assert len(RecordingExecutor.instances) == 1
+        assert RecordingExecutor.instances[0].max_workers is True
+
+    @pytest.mark.parametrize("max_workers", [0, -1, False])
     def test_execute_many_rejects_non_positive_max_workers(self, max_workers):
         request = make_request(mode="thread", max_workers=max_workers)
 
         with pytest.raises(ValueError, match="positive int"):
             execution_mod.execute_many(request)
 
-    @pytest.mark.parametrize("max_workers", [True, False, "3"])
+    @pytest.mark.parametrize("max_workers", ["3"])
     def test_execute_many_rejects_invalid_max_workers_value(self, max_workers):
         request = make_request(mode="thread", max_workers=max_workers)
 
@@ -282,6 +290,14 @@ class TestWorkflowFunctionCompatibility:
         assert execution.mode == "thread"
         assert execution.max_workers == 3
 
+    def test_thread_dispatch_accepts_true_max_workers_as_positive_int(self):
+        wf = WorkflowFunction(func=add_one, dispatch="thread", max_workers=True)
+
+        execution = wf._make_execution_config()
+
+        assert execution.mode == "thread"
+        assert execution.max_workers is True
+
     def test_auto_dispatch_does_not_use_max_workers_as_mode_switch(self):
         with pytest.warns(UserWarning, match="max_workers configures only"):
             wf = WorkflowFunction(func=add_one, dispatch="auto", max_workers=3)
@@ -301,12 +317,12 @@ class TestWorkflowFunctionCompatibility:
         with pytest.raises(ValueError, match="dispatch must be one of"):
             WorkflowFunction(func=add_one, dispatch=dispatch)
 
-    @pytest.mark.parametrize("max_workers", [0, -1])
+    @pytest.mark.parametrize("max_workers", [0, -1, False])
     def test_workflow_function_rejects_non_positive_max_workers(self, max_workers):
         with pytest.raises(ValueError, match="max_workers"):
             WorkflowFunction(func=add_one, dispatch="sequential", max_workers=max_workers)
 
-    @pytest.mark.parametrize("max_workers", [True, False, "3"])
+    @pytest.mark.parametrize("max_workers", ["3"])
     def test_workflow_function_rejects_invalid_max_workers(self, max_workers):
         with pytest.raises(TypeError, match="max_workers"):
             WorkflowFunction(func=add_one, dispatch="sequential", max_workers=max_workers)

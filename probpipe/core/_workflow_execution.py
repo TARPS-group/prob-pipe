@@ -67,7 +67,7 @@ def execute_many_threaded(request: WorkflowExecutionRequest) -> list[Any]:
     if not request.call_value_list:
         return []
 
-    max_workers = _resolve_max_workers(request.execution.max_workers)
+    max_workers = _validate_max_workers(request.execution.max_workers)
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         return list(pool.map(lambda kwargs: request.func(**kwargs), request.call_value_list))
 
@@ -136,11 +136,11 @@ def execute_many_prefect_flow(request: WorkflowExecutionRequest) -> list[Any]:
     return mapped_flow()
 
 
-def _resolve_max_workers(max_workers: int | None) -> int | None:
+def _validate_max_workers(max_workers: int | None) -> int | None:
     if max_workers is None:
         return None
 
-    if isinstance(max_workers, bool) or not isinstance(max_workers, int):
+    if not isinstance(max_workers, int):
         raise TypeError(
             f"max_workers must be None or a positive int; got {max_workers!r}"
         )
