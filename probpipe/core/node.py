@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from itertools import product as cartesian_product
 from types import MappingProxyType
-from typing import Any, Literal, TypeAlias, get_args, get_type_hints
+from typing import Any, ClassVar, Literal, TypeAlias, get_args, get_type_hints
 
 import jax
 import jax.numpy as jnp
@@ -95,9 +95,10 @@ __all__ = [
     "AbstractModule",
 ]
 
-WorkflowFunctionDispatch: TypeAlias = Literal[
+_WorkflowFunctionDispatch: TypeAlias = Literal[
     "auto", "jax", "sequential", "thread"
 ]
+
 
 class InputFrozenError(Exception):
     pass
@@ -303,7 +304,7 @@ class WorkflowFunction(Node):
         - ``"thread"``: local row-wise/function-call dispatch through
           ``ThreadPoolExecutor``.
     max_workers : int or None
-        Worker count for threaded loop execution. ``None`` lets
+        Worker count for threaded sequential execution. ``None`` lets
         ``ThreadPoolExecutor`` choose automatically; a positive integer
         sets the worker count explicitly. Only applies when ``dispatch`` is
         ``"thread"`` and execution resolves to local thread dispatch. JAX
@@ -314,7 +315,9 @@ class WorkflowFunction(Node):
     """
 
     DEFAULT_N_BROADCAST_SAMPLES: int = 128
-    _VALID_DISPATCH_STRATEGIES = get_args(WorkflowFunctionDispatch)
+    _VALID_DISPATCH_STRATEGIES: ClassVar[tuple[str, ...]] = get_args(
+        _WorkflowFunctionDispatch
+    )
 
     def __init__(
         self,
@@ -325,7 +328,7 @@ class WorkflowFunction(Node):
         bind: dict[str, Any] | None = None,         # construction-time bindings (defaults/config)
         module: Any | None = None,                  # typically a Module; kept as Any to avoid import cycles
         n_broadcast_samples: int | None = None,      # default number of samples for broadcasting
-        dispatch: WorkflowFunctionDispatch = "auto", # "auto" | "jax" | "sequential" | "thread"
+        dispatch: _WorkflowFunctionDispatch = "auto", # "auto" | "jax" | "sequential" | "thread"
         max_workers: int | None = None,             # ThreadPoolExecutor worker count
         seed: int = 0,                              # JAX PRNG seed for broadcasting
         include_inputs: bool = False,                # True → return BroadcastDistribution (joint over inputs+outputs)
@@ -452,7 +455,7 @@ class WorkflowFunction(Node):
         *,
         mode: _workflow_execution.WorkflowExecutionMode | None = None,
     ) -> _workflow_execution.WorkflowExecutionConfig:
-        """Build resolved execution metadata for loop-style call dispatch."""
+        """Build resolved execution metadata for sequential call dispatch."""
         if mode is None:
             kind = self.effective_workflow_kind
             if kind is WorkflowKind.TASK:
@@ -1088,7 +1091,7 @@ class WorkflowFunction(Node):
         """Execute ``n_total`` inner calls, one per sweep cell in flat
         row-major order over the concatenated ``sweep_batch_shape``.
 
-        Returns a Python list of outputs (loop path) or a stacked
+        Returns a Python list of outputs (sequential path) or a stacked
         pytree with leading axis ``n_total`` (vmap path). Either form
         is a valid input for ``_make_stack``.
         """
@@ -1142,7 +1145,7 @@ class WorkflowFunction(Node):
                 }
             return jax.vmap(single_call)(vmap_input)
 
-        # Loop path.
+        # Sequential path.
         per_row_values = [
             self._slice_ra_args(values, ra_args, i, ra_groups)
             for i in range(n_total)
