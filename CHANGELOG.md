@@ -44,8 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   near its start, giving high acceptance and zero divergences yet poor
   mixing and up to ~30% posterior-variance under-estimation. Jittering
   `L` around the same mean breaks the resonance (Neal 2011, sec. 4.2).
-  Warmup still window-adapts step size + mass matrix on the fixed-`L`
-  kernel; `num_integration_steps` is now the *mean*. NUTS is unaffected.
+  Window adaptation tunes step size + mass matrix against the *same*
+  randomized-`L` kernel, so dual-averaging's acceptance target is
+  calibrated to the kernel that actually runs; `num_integration_steps`
+  is now the *mean*. NUTS is unaffected.
 - **Multi-chain BlackJAX MCMC dispatch picks `jax.pmap` when devices
   permit.** When `jax.local_device_count() >= num_chains` the per-chain
   runner is mapped with `pmap` (each chain on its own device,

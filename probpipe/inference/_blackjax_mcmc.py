@@ -31,13 +31,18 @@ into the same dict (broadcast across draws).
 from __future__ import annotations
 
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any, Literal
 
 import blackjax
 import jax
 import jax.numpy as jnp
 import numpy as np
-from blackjax.mcmc.dynamic_hmc import halton_trajectory_length
+from blackjax.mcmc.dynamic_hmc import (
+    build_kernel as _dynamic_hmc_build_kernel,
+    halton_trajectory_length,
+    init as _dynamic_hmc_init,
+)
 
 from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
@@ -70,6 +75,49 @@ _EXTRA_KWARGS: dict[Algorithm, Callable[[int], dict[str, Any]]] = {
         "num_integration_steps": num_integration_steps,
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# Randomized HMC trajectory length (shared by warmup and production)
+# ---------------------------------------------------------------------------
+
+
+def _next_random_arg(i: Array) -> Array:
+    """Advance the Halton counter one step (``DynamicHMCState`` carries it)."""
+    return i + 1
+
+
+def _halton_steps_fn(num_integration_steps: int) -> Callable[[Array], Array]:
+    """Quasi-random leapfrog-step count with mean ``num_integration_steps``."""
+    return lambda i: halton_trajectory_length(i, num_integration_steps)
+
+
+def _halton_warmup_algorithm(num_integration_steps: int) -> Any:
+    """A ``window_adaptation``-compatible *algorithm* wrapping ``dynamic_hmc``
+    with the same Halton trajectory length used at production.
+
+    ``window_adaptation`` only touches ``algorithm.init(position,
+    logdensity_fn)`` and ``algorithm.build_kernel(integrator)`` (a module-
+    like interface), so a tiny namespace shim suffices. Tuning against the
+    randomized-``L`` kernel — rather than a fixed-``L`` stand-in — keeps
+    dual-averaging's acceptance target calibrated to the kernel that
+    actually runs, since acceptance is nonlinear in the trajectory length.
+    """
+    steps_fn = _halton_steps_fn(num_integration_steps)
+
+    def init(position: Any, logdensity_fn: Callable, random_generator_arg: Array | None = None):
+        if random_generator_arg is None:
+            random_generator_arg = jnp.asarray(0)
+        return _dynamic_hmc_init(position, logdensity_fn, random_generator_arg)
+
+    def build_kernel(integrator: Callable) -> Callable:
+        return _dynamic_hmc_build_kernel(
+            integrator=integrator,
+            next_random_arg_fn=_next_random_arg,
+            integration_steps_fn=steps_fn,
+        )
+
+    return SimpleNamespace(init=init, build_kernel=build_kernel)
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +158,12 @@ def _run_blackjax_chains(
         directly from ``step_size`` plus an identity mass matrix
         (BlackJAX NUTS / HMC both require ``inverse_mass_matrix`` as a
         constructor argument — window-adaptation normally supplies it).
+
+        For HMC, window-adaptation tunes against the *same* Halton
+        randomized-trajectory-length kernel used at production (via
+        :func:`_halton_warmup_algorithm`), so dual-averaging's acceptance
+        target is calibrated to the kernel that actually runs rather than
+        a fixed-``L`` stand-in.
         """
         if num_warmup <= 0:
             params = {
@@ -119,11 +173,16 @@ def _run_blackjax_chains(
             }
             state = kernel_factory(target_log_prob_fn, **params).init(init_state)
             return state, params
-        warmup = blackjax.window_adaptation(
-            kernel_factory, target_log_prob_fn,
-            initial_step_size=step_size,
-            **extra_kwargs,
-        )
+        if algorithm == "hmc":
+            warmup_algorithm = _halton_warmup_algorithm(num_integration_steps)
+            warmup = blackjax.window_adaptation(
+                warmup_algorithm, target_log_prob_fn, initial_step_size=step_size,
+            )
+        else:
+            warmup = blackjax.window_adaptation(
+                kernel_factory, target_log_prob_fn,
+                initial_step_size=step_size, **extra_kwargs,
+            )
         (state, params), _ = warmup.run(warmup_key, init_state, num_steps=num_warmup)
         return state, params
 
@@ -137,19 +196,17 @@ def _run_blackjax_chains(
             # start for near-periodic (e.g. near-Gaussian) targets — high
             # acceptance, no divergences, yet poor mixing. Jittering L breaks
             # that resonance (Neal 2011, "MCMC using Hamiltonian dynamics",
-            # sec. 4.2). Warmup still adapts step size + mass matrix on the
-            # fixed-L kernel above; only production samples with random L.
+            # sec. 4.2). Warmup (above) tunes step size + mass matrix on the
+            # same randomized-L kernel.
             kernel = blackjax.dynamic_hmc(
                 target_log_prob_fn,
                 step_size=adapted_params["step_size"],
                 inverse_mass_matrix=adapted_params["inverse_mass_matrix"],
-                next_random_arg_fn=lambda i: i + 1,
-                integration_steps_fn=lambda i: halton_trajectory_length(
-                    i, num_integration_steps,
-                ),
+                next_random_arg_fn=_next_random_arg,
+                integration_steps_fn=_halton_steps_fn(num_integration_steps),
             )
             # ``dynamic_hmc`` state carries the Halton counter; re-init from
-            # the warmup position (the static-HMC state has no such field).
+            # the (possibly dynamic) warmup state's position.
             state = kernel.init(state.position, jnp.asarray(0))
         else:
             kernel = kernel_factory(target_log_prob_fn, **adapted_params)
