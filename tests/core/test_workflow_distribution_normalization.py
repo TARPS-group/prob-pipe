@@ -8,6 +8,7 @@ import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
+    Distribution,
     DistributionArray,
     EmpiricalDistribution,
     KDEDistribution,
@@ -49,6 +50,8 @@ def mean_recorder():
 
 
 class TestNormalizeDistributionValues:
+    """Direct helper coverage mirrors facade cases for clearer failure locality."""
+
     def test_concrete_distribution_hint_converts_external_distribution(
         self,
         normal_external,
@@ -60,6 +63,21 @@ class TestNormalizeDistributionValues:
 
         assert isinstance(normalized["dist"], Normal)
         assert normalized["dist"] is not normal_external
+
+    def test_concrete_distribution_hint_without_converter_raises(self):
+        class UnsupportedDistribution(Distribution):
+            pass
+
+        source = Normal(loc=0.0, scale=1.0, name="source")
+
+        with pytest.raises(
+            TypeError,
+            match=r"No converter registered for Normal -> UnsupportedDistribution",
+        ):
+            normalize_distribution_values(
+                values={"dist": source},
+                hints={"dist": UnsupportedDistribution},
+            )
 
     def test_protocol_hint_converts_distribution_that_lacks_protocol(
         self,
@@ -120,6 +138,7 @@ class TestNormalizeDistributionValues:
         assert normalized["x"] is not normal_external
 
 
+# Facade checks below are retained to verify WorkflowFunction wiring.
 class TestHintedDistributionConversion:
     def test_concrete_distribution_hint_converts_external_distribution(
         self,
