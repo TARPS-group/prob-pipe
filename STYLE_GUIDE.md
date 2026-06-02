@@ -135,7 +135,7 @@ Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
 and `include_inputs` internally. Use `random_seed` instead when defining
 functions that accept a PRNG seed.
 
-### 1.9 The `num_atoms` / `num_observations` property convention
+### 1.9 The `num_atoms` / `replicate_size` property convention
 
 Finite-sample distribution classes expose a read-only `int` property
 naming the size of the finite collection they hold. The name reflects
@@ -144,9 +144,11 @@ naming the size of the finite collection they hold. The name reflects
 - **`num_atoms`** — items in an empirical *measure* (atoms / point
   masses in `\sum_i w_i \delta_{x_i}`). Use for any class whose
   ``_sample`` returns *one of N stored realisations*.
-- **`num_observations`** — observations in a single bootstrap
-  *dataset*. Use for any class whose ``_sample`` returns a *whole
-  resampled dataset* whose size is the named count.
+- **`replicate_size`** — items in a single bootstrap *replicate*. Use
+  for any class whose ``_sample`` returns a *whole resampled dataset*
+  whose size is the named count. (`*_size` rather than `num_*` because
+  a generative resampler holds no finite atom set — the count is a
+  parameter of the resample, like `batch_size` / `event_size`.)
 
 | Class | Property | Meaning |
 |-------|----------|---------|
@@ -157,12 +159,12 @@ naming the size of the finite collection they hold. The name reflects
 | `KDEDistribution` | `num_atoms` | Kernel centres |
 | `BroadcastDistribution`, `_RecordMarginal`, `_MixtureMarginal`, `_ListMarginal` | `num_atoms` | Output samples / components |
 | `ApproximateDistribution` | `num_atoms` (inherited) + `num_draws` (per chain) | total chain × draw / per-chain |
-| `BootstrapReplicateDistribution`, `RecordBootstrapReplicateDistribution` | `num_observations` (+ `num_source_observations`) | Observations per bootstrap dataset, plus optional source-data count |
+| `BootstrapReplicateDistribution`, `RecordBootstrapReplicateDistribution` | `replicate_size` (+ `source_size`) | Items per bootstrap replicate, plus optional source-pool size |
 
 When adding a new class that wraps a finite collection, define the
 property as a `@property` returning `int`. Pick the name based on
 what each `_sample` call produces — a single atom (use `num_atoms`)
-or a dataset of observations (use `num_observations`).
+or a whole resampled replicate (use `replicate_size`).
 
 ### 1.10 Record field iteration and path access
 
@@ -197,7 +199,7 @@ collection. Every concrete `Distribution` subclass —
 joint distributions, marginals — is **non-iterable**. For the
 finite-sample subclasses listed in §1.9, stored samples are
 accessed via `.samples` / `.draws()` and the size property
-(`num_atoms` or `num_observations` per §1.9) reports the count.
+(`num_atoms` or `replicate_size` per §1.9) reports the count.
 Parametric distributions do not have either property.
 
 Iteration is reserved for the `Record` family — `Record`,

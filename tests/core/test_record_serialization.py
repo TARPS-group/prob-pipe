@@ -210,4 +210,4 @@ def test_bootstrap_replicate_pickle():
     brd2 = roundtrip(brd)
     # Verify it round-tripped as the right type and is callable
     assert type(brd2).__name__ == "RecordBootstrapReplicateDistribution"
-    assert "num_observations=3" in repr(brd2)
+    assert "replicate_size=3" in repr(brd2)

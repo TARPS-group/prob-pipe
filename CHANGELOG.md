@@ -25,15 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inherits `num_atoms` (total chain×draw count) and additionally
   exposes `num_draws` (draws *per chain*).
 
-  *Bootstrap dataset size.* Use **`num_observations`** for
-  observations per bootstrap dataset:
-  `BootstrapReplicateDistribution.num_observations`,
-  `RecordBootstrapReplicateDistribution.num_observations`. The
-  constructor kwarg changes from ``n=`` to ``num_observations=``;
-  the related ``source_n`` property becomes
-  ``num_source_observations``. Callers that previously wrote
-  ``BootstrapReplicateDistribution(data, n=N)`` will now get a
-  ``TypeError`` and must rename to ``num_observations=N``.
+  *Bootstrap replicate size.* Use **`replicate_size`** for the number
+  of items in each bootstrap replicate:
+  `BootstrapReplicateDistribution.replicate_size`,
+  `RecordBootstrapReplicateDistribution.replicate_size`. The
+  constructor kwarg changes from ``n=`` to ``replicate_size=``; the
+  related ``source_n`` property becomes ``source_size``. Callers that
+  previously wrote ``BootstrapReplicateDistribution(data, n=N)`` will
+  now get a ``TypeError`` and must rename to ``replicate_size=N``.
+  (`replicate_size`, not `num_observations`: the resampled items come
+  from an arbitrary source — parameter samples, function values, etc. —
+  so "observations" would overclaim.)
 
   *Generative-likelihood observation count.*
   ``generate_data(params, n_samples, ...)`` is now

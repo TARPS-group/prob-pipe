@@ -30,26 +30,26 @@ class TestConstruction:
         data = jnp.arange(20.0).reshape(10, 2)
         emp = EmpiricalDistribution(data, name="x")
         dist = BootstrapReplicateDistribution(emp, name="x")
-        assert dist.num_observations == 10
+        assert dist.replicate_size == 10
 
     def test_from_array(self):
         data = jnp.arange(20.0).reshape(10, 2)
         dist = BootstrapReplicateDistribution(data, name="x")
-        assert dist.num_observations == 10
+        assert dist.replicate_size == 10
 
     def test_custom_n(self):
         data = jnp.ones((50, 3))
-        dist = BootstrapReplicateDistribution(data, num_observations=30, name="x")
-        assert dist.num_observations == 30
+        dist = BootstrapReplicateDistribution(data, replicate_size=30, name="x")
+        assert dist.replicate_size == 30
 
     def test_n_from_empirical_default(self):
         emp = EmpiricalDistribution(jnp.ones((20, 4)), name="x")
         dist = BootstrapReplicateDistribution(emp, name="x")
-        assert dist.num_observations == 20
+        assert dist.replicate_size == 20
 
     def test_invalid_n(self):
         with pytest.raises(ValueError, match="positive"):
-            BootstrapReplicateDistribution(jnp.ones((5, 2)), num_observations=0, name="x")
+            BootstrapReplicateDistribution(jnp.ones((5, 2)), replicate_size=0, name="x")
 
     def test_scalar_source_raises(self):
         with pytest.raises(ValueError, match="at least 1 dimension"):
@@ -149,7 +149,7 @@ class TestSampling:
 
     def test_custom_n_changes_shape(self):
         data = jnp.ones((50, 2))
-        dist = BootstrapReplicateDistribution(data, num_observations=20, name="x")
+        dist = BootstrapReplicateDistribution(data, replicate_size=20, name="x")
         s = dist._sample(jax.random.PRNGKey(0))
         assert s.shape == (20, 2)
 
@@ -186,46 +186,46 @@ class TestSampleableSource:
     def test_construction_keeps_generic_base(self):
         # SupportsSampling sources stay in the generic base (no Record
         # data to wrap), unlike numeric arrays / Records / Empirical.
-        d = BootstrapReplicateDistribution(self._normal(), num_observations=10)
+        d = BootstrapReplicateDistribution(self._normal(), replicate_size=10)
         assert isinstance(d, BootstrapReplicateDistribution)
         assert not isinstance(d, RecordBootstrapReplicateDistribution)
-        assert d.num_observations == 10
-        assert d.num_source_observations is None  # no canonical observation count
+        assert d.replicate_size == 10
+        assert d.source_size is None  # no canonical observation count
 
     def test_missing_n_raises(self):
-        with pytest.raises(ValueError, match="num_observations must be a "):
+        with pytest.raises(ValueError, match="replicate_size must be a "):
             BootstrapReplicateDistribution(self._normal())
 
     def test_zero_n_raises(self):
-        with pytest.raises(ValueError, match="num_observations must be a "):
-            BootstrapReplicateDistribution(self._normal(), num_observations=0)
+        with pytest.raises(ValueError, match="replicate_size must be a "):
+            BootstrapReplicateDistribution(self._normal(), replicate_size=0)
 
     def test_negative_n_raises(self):
-        with pytest.raises(ValueError, match="num_observations must be a "):
-            BootstrapReplicateDistribution(self._normal(), num_observations=-3)
+        with pytest.raises(ValueError, match="replicate_size must be a "):
+            BootstrapReplicateDistribution(self._normal(), replicate_size=-3)
 
     def test_sample_empty_shape(self):
         # One bootstrap replicate is ``n`` i.i.d. draws from source._sample.
-        d = BootstrapReplicateDistribution(self._normal(), num_observations=10)
+        d = BootstrapReplicateDistribution(self._normal(), replicate_size=10)
         s = d._sample(jax.random.PRNGKey(0), ())
         assert s.shape == (10,)
 
     def test_sample_with_shape(self):
         # sample_shape prepends; total = sample_shape + (n,) + event_shape.
-        d = BootstrapReplicateDistribution(self._normal(), num_observations=10)
+        d = BootstrapReplicateDistribution(self._normal(), replicate_size=10)
         s = d._sample(jax.random.PRNGKey(1), sample_shape=(3,))
         assert s.shape == (3, 10)
 
     def test_data_is_none_for_sampleable_source(self):
         # No stored observations.
-        d = BootstrapReplicateDistribution(self._normal(), num_observations=5)
+        d = BootstrapReplicateDistribution(self._normal(), replicate_size=5)
         assert d.data is None
         assert d.weights is None
 
     def test_repr_mentions_source(self):
-        d = BootstrapReplicateDistribution(self._normal(), num_observations=5)
+        d = BootstrapReplicateDistribution(self._normal(), replicate_size=5)
         r = repr(d)
-        assert "num_observations=5" in r
+        assert "replicate_size=5" in r
         assert "Normal" in r
 
 
@@ -253,7 +253,7 @@ class TestProperties:
 
     def test_source_n(self):
         dist = BootstrapReplicateDistribution(jnp.ones((15, 3)), name="x")
-        assert dist.num_source_observations == 15
+        assert dist.source_size == 15
 
     def test_is_uniform_from_array(self):
         dist = BootstrapReplicateDistribution(jnp.ones((5, 2)), name="x")
@@ -381,13 +381,13 @@ class TestRecordBootstrapReplicateDistribution:
 
     def test_event_shape(self):
         data = jnp.ones((10, 3))
-        dist = RecordBootstrapReplicateDistribution(data, num_observations=8, name="x")
+        dist = RecordBootstrapReplicateDistribution(data, replicate_size=8, name="x")
         assert dist.event_shape == (8, 3)
 
     def test_from_empirical(self):
         emp = EmpiricalDistribution(jnp.ones((20, 4)), name="x")
         dist = RecordBootstrapReplicateDistribution(emp, name="x")
-        assert dist.num_observations == 20
+        assert dist.replicate_size == 20
 
     def test_rejects_object_array_empirical(self):
         """Generic (object-array) EmpiricalDistribution is rejected.
@@ -417,11 +417,11 @@ class TestRecordBootstrapReplicateDistribution:
         assert dist.obs_shape == ()
 
     def test_dim(self):
-        dist = RecordBootstrapReplicateDistribution(jnp.ones((10, 3)), num_observations=5, name="x")
+        dist = RecordBootstrapReplicateDistribution(jnp.ones((10, 3)), replicate_size=5, name="x")
         assert dist.dim == 5 * 3
 
     def test_dim_scalar_obs(self):
-        dist = RecordBootstrapReplicateDistribution(jnp.ones((10,)), num_observations=5, name="x")
+        dist = RecordBootstrapReplicateDistribution(jnp.ones((10,)), replicate_size=5, name="x")
         assert dist.dim == 5
 
     def test_dtype(self):
@@ -438,11 +438,11 @@ class TestRecordBootstrapReplicateDistribution:
 class TestRepr:
     def test_repr(self):
         data = jnp.ones((10, 3))
-        dist = BootstrapReplicateDistribution(data, num_observations=8, name="x")
+        dist = BootstrapReplicateDistribution(data, replicate_size=8, name="x")
         r = repr(dist)
         assert "BootstrapReplicateDistribution" in r
-        assert "num_observations=8" in r
-        assert "num_source_observations=10" in r
+        assert "replicate_size=8" in r
+        assert "source_size=10" in r
 
 
 # ---------------------------------------------------------------------------
@@ -559,12 +559,12 @@ class TestValuesBootstrapReplicateDistribution:
         assert isinstance(boot, RecordBootstrapReplicateDistribution)
 
     def test_n(self, bootstrap):
-        assert bootstrap.num_observations == 20
+        assert bootstrap.replicate_size == 20
 
     def test_custom_n(self, values_data):
         emp = EmpiricalDistribution(values_data, name="x")
-        boot = BootstrapReplicateDistribution(emp, num_observations=10, name="x")
-        assert boot.num_observations == 10
+        boot = BootstrapReplicateDistribution(emp, replicate_size=10, name="x")
+        assert boot.replicate_size == 10
 
     def test_sample_one_returns_values(self, bootstrap):
         s = sample(bootstrap, key=jax.random.PRNGKey(0))
@@ -613,4 +613,4 @@ class TestValuesBootstrapReplicateDistribution:
     def test_repr(self, bootstrap):
         r = repr(bootstrap)
         assert "RecordBootstrapReplicateDistribution" in r
-        assert "num_observations=20" in r
+        assert "replicate_size=20" in r
