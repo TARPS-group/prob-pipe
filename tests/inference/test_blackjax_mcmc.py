@@ -146,7 +146,7 @@ class TestBlackJAXNuts:
         assert jnp.isfinite(m["b"]).all()
 
         # With no warmup, the kernel runs at exactly the user step size.
-        step_size = posterior._auxiliary["sample_stats"].dataset["step_size"]
+        step_size = posterior.inference_data["sample_stats"]["step_size"]
         np.testing.assert_allclose(np.asarray(step_size), 0.05)
 
 
@@ -211,7 +211,7 @@ class TestSampleStats:
             num_results=num_results, num_warmup=200,
             num_chains=num_chains, random_seed=0,
         )
-        ds = posterior._auxiliary["sample_stats"].dataset
+        ds = posterior.inference_data["sample_stats"]
 
         # NUTS plumbs these four info fields plus the injected step_size.
         expected = {
@@ -248,9 +248,9 @@ class TestSampleStats:
             small_model, jnp.zeros((4,)), method="blackjax_nuts",
             num_results=100, num_warmup=100, num_chains=num_chains, random_seed=0,
         )
-        post_ds = posterior._auxiliary["posterior"].dataset
-        assert post_ds.sizes["chain"] == num_chains
-        assert posterior._auxiliary["sample_stats"].dataset.sizes["chain"] == num_chains
+        post_grp = posterior.inference_data["posterior"]
+        assert post_grp.sizes["chain"] == num_chains
+        assert posterior.inference_data["sample_stats"].sizes["chain"] == num_chains
 
 
 class TestCheckFeasibility:
