@@ -6,7 +6,10 @@ Two :class:`~probpipe.core._registry.Method` subclasses registered with
 * ``blackjax_nuts`` — No-U-Turn Sampler with window-adapted step size and
   mass matrix.
 * ``blackjax_hmc`` — Hamiltonian Monte Carlo with window-adapted step
-  size; ``num_integration_steps`` is a user-tunable kwarg (default ``10``).
+  size and a *randomized* trajectory length: production samples draw the
+  number of leapfrog steps from a low-discrepancy Halton sequence with
+  mean ``num_integration_steps`` (a user-tunable kwarg, default ``10``),
+  breaking the fixed-``L`` resonance that can stall a static-HMC chain.
 
 Both methods consume any :class:`~probpipe.core.protocols.SupportsUnnormalizedLogProb`
 target whose log-density is JAX-traceable. They run on the flat-vector
@@ -34,6 +37,7 @@ import blackjax
 import jax
 import jax.numpy as jnp
 import numpy as np
+from blackjax.mcmc.dynamic_hmc import halton_trajectory_length
 
 from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
@@ -90,7 +94,9 @@ def _run_blackjax_chains(
     Uses :func:`blackjax.window_adaptation` for NUTS / HMC step-size and
     mass-matrix adaptation during the warmup window, then samples via
     :func:`jax.lax.scan` over the adapted kernel. ``num_integration_steps``
-    applies to HMC only (window adaptation does not tune it).
+    applies to HMC only; window adaptation does not tune it, and at
+    production time HMC draws a Halton-quasi-random trajectory length with
+    this value as the *mean* (see :func:`run_one_chain`).
     """
     kernel_factory = _KERNEL_FACTORY[algorithm]
     extra_kwargs = _EXTRA_KWARGS[algorithm](num_integration_steps)
@@ -124,7 +130,29 @@ def _run_blackjax_chains(
     def run_one_chain(chain_key: Array) -> tuple[Array, Any, Array]:
         warmup_key, sample_key = jax.random.split(chain_key)
         state, adapted_params = _adapt(warmup_key)
-        kernel = kernel_factory(target_log_prob_fn, **adapted_params)
+        if algorithm == "hmc":
+            # Randomize the trajectory length around ``num_integration_steps``
+            # (its mean) with a low-discrepancy Halton sequence. A *fixed*
+            # number of leapfrog steps can land the proposal back near the
+            # start for near-periodic (e.g. near-Gaussian) targets — high
+            # acceptance, no divergences, yet poor mixing. Jittering L breaks
+            # that resonance (Neal 2011, "MCMC using Hamiltonian dynamics",
+            # sec. 4.2). Warmup still adapts step size + mass matrix on the
+            # fixed-L kernel above; only production samples with random L.
+            kernel = blackjax.dynamic_hmc(
+                target_log_prob_fn,
+                step_size=adapted_params["step_size"],
+                inverse_mass_matrix=adapted_params["inverse_mass_matrix"],
+                next_random_arg_fn=lambda i: i + 1,
+                integration_steps_fn=lambda i: halton_trajectory_length(
+                    i, num_integration_steps,
+                ),
+            )
+            # ``dynamic_hmc`` state carries the Halton counter; re-init from
+            # the warmup position (the static-HMC state has no such field).
+            state = kernel.init(state.position, jnp.asarray(0))
+        else:
+            kernel = kernel_factory(target_log_prob_fn, **adapted_params)
         positions, infos = run_chain_scan(kernel, state, num_results, sample_key)
         # BlackJAX NUTSInfo / HMCInfo carry no ``step_size`` field, so the
         # adapted (or, for the zero-warmup branch, user-supplied) step size
@@ -261,11 +289,15 @@ def BlackJAXHmcMethod() -> _BlackJAXMCMCMethod:
     """BlackJAX Hamiltonian Monte Carlo.
 
     Tier 61-70 by algorithm category (well-understood, hand-tuned step
-    size + integration steps), but registered at the opt-in-only
-    sentinel ``priority=0``. Reasoning: HMC's ``check()`` is identical
-    to ``blackjax_nuts`` (same ``SupportsUnnormalizedLogProb`` +
-    JAX-traceability gate), so with NUTS at 85, HMC is structurally
-    unreachable in auto-dispatch. Keeping it at 0 makes that explicit;
-    callers who specifically want HMC pin ``method="blackjax_hmc"``.
+    size; trajectory length randomized around a hand-set mean), but
+    registered at the opt-in-only sentinel ``priority=0``. Reasoning:
+    HMC's ``check()`` is identical to ``blackjax_nuts`` (same
+    ``SupportsUnnormalizedLogProb`` + JAX-traceability gate), so with
+    NUTS at 85, HMC is structurally unreachable in auto-dispatch. Keeping
+    it at 0 makes that explicit; callers who specifically want HMC pin
+    ``method="blackjax_hmc"``. The ``num_integration_steps`` kwarg
+    (default ``10``) is the *mean* trajectory length: production draws a
+    Halton-quasi-random number of leapfrog steps so a fixed-``L``
+    resonance cannot silently stall mixing.
     """
     return _BlackJAXMCMCMethod("hmc", "blackjax_hmc", 0)

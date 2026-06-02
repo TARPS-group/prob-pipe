@@ -170,14 +170,14 @@ class TestBlackJAXHmc:
         ``y = [1.0, 2.0, 3.0]`` ⇒ posterior ``N(1.5, 0.25)`` (precision
         ``1 + 3 = 4``; mean ``sum(y) / 4 = 1.5``).
 
-        Pinned to HMC with ``num_integration_steps=5``: with the
-        window-adapted step size this gives a trajectory length short
-        enough to keep the sampler in the well-mixed regime. Empirically
-        (8 seeds) the posterior-mean estimate has SD ≈ 0.005 and the
-        variance estimate stays within ~3% of analytic, so the bands
-        below (mean atol ``0.05`` ≈ several MC σ; variance rtol ``0.10``)
-        are conservative MC-noise tolerances — far tighter than the
-        ``O(0.5)`` error a mis-specified posterior would produce.
+        Pinned to HMC with ``num_integration_steps=5`` — now the *mean*
+        trajectory length, since production randomizes the leapfrog count
+        with a Halton sequence around this value. Empirically (8 seeds)
+        the posterior-mean estimate has SD ≈ 0.005 and the variance
+        estimate stays within ~3% of analytic, so the bands below (mean
+        atol ``0.05`` ≈ several MC σ; variance rtol ``0.10``) are
+        conservative MC-noise tolerances — far tighter than the ``O(0.5)``
+        error a mis-specified posterior would produce.
         """
         prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
         model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
@@ -193,6 +193,54 @@ class TestBlackJAXHmc:
         post_var = float(variance(posterior)["mu"].squeeze())
         np.testing.assert_allclose(post_mean, 1.5, atol=0.05)
         np.testing.assert_allclose(post_var, 0.25, rtol=0.10)
+
+    def test_trajectory_length_is_randomized(self):
+        """Production HMC draws a *random* number of leapfrog steps.
+
+        The ``num_integration_steps`` per-step diagnostic must take many
+        distinct values (not a single constant, as fixed-``L`` HMC would)
+        with mean close to the configured value. This is the direct,
+        deterministic check that the Halton trajectory-length jitter is
+        active.
+        """
+        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
+        model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
+        posterior = condition_on(
+            model, jnp.asarray([1.0, 2.0, 3.0]), method="blackjax_hmc",
+            num_results=1000, num_warmup=500, num_chains=2,
+            step_size=0.1, num_integration_steps=10, random_seed=0,
+        )
+        steps = np.asarray(
+            posterior.inference_data["sample_stats"]["num_integration_steps"]
+        )
+        # Randomized, not a single fixed L.
+        assert np.unique(steps).size >= 5
+        # Mean trajectory length tracks the configured value.
+        np.testing.assert_allclose(steps.mean(), 10, rtol=0.1)
+
+    def test_default_num_integration_steps_recovers_variance(self):
+        """The default mean ``num_integration_steps=10`` recovers the posterior.
+
+        A *fixed* 10-step trajectory at the window-adapted step size can
+        resonate on this near-Gaussian target and under-estimate the
+        posterior variance by ~30% while still showing healthy acceptance
+        and zero divergences (the fragility this change addresses).
+        Randomizing the trajectory length around the same mean recovers
+        the closed-form variance ``0.25`` to within a few percent — checked
+        here at the default ``num_integration_steps`` rather than the
+        hand-dodged value used above.
+        """
+        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
+        model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
+        posterior = condition_on(
+            model, jnp.asarray([1.0, 2.0, 3.0]), method="blackjax_hmc",
+            num_results=4000, num_warmup=2000, num_chains=2,
+            step_size=0.1, num_integration_steps=10, random_seed=0,
+        )
+        post_mean = float(mean(posterior)["mu"].squeeze())
+        post_var = float(variance(posterior)["mu"].squeeze())
+        np.testing.assert_allclose(post_mean, 1.5, atol=0.05)
+        np.testing.assert_allclose(post_var, 0.25, rtol=0.12)
 
 
 class TestSampleStats:
