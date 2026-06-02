@@ -4,8 +4,9 @@ Covers:
 
 * The Gaussian-prior detection helper (``_gaussian_prior_params``)
   against the recognised shapes (``Normal``, ``MultivariateNormal``,
-  ``ProductDistribution`` over both) and the rejected shapes
-  (non-Gaussian families, bare ``Distribution`` subclasses).
+  ``ProductDistribution`` over both — with field-order-sensitive mean
+  and covariance assertions) and the rejected shapes (non-Gaussian
+  families, batched-``Normal`` ``DistributionArray``).
 * ``check()`` infeasibility messages for the three failure modes:
   bare ``SupportsLogProb`` (no SimpleModel decomposition), non-Gaussian
   prior, and missing observed data.
@@ -34,6 +35,7 @@ from probpipe.inference import (
     elliptical_slice,
     inference_method_registry,
 )
+from probpipe.inference._approximate_distribution import ApproximateDistribution
 from probpipe.inference._blackjax_ess import (
     BlackJAXESSMethod,
     _gaussian_prior_params,
@@ -43,6 +45,32 @@ from probpipe.modeling._likelihood import Likelihood
 pytestmark = pytest.mark.filterwarnings(
     "ignore:shape requires ndarray or scalar arguments:DeprecationWarning",
 )
+
+
+# ---------------------------------------------------------------------------
+# Shared fixtures
+# ---------------------------------------------------------------------------
+
+
+class _GaussianMeanLik(Likelihood):
+    """``log p(y | mu) = sum_i log N(y_i; mu, 1)`` — Gaussian likelihood."""
+
+    def log_likelihood(self, params, data):
+        mu = params["mu"] if hasattr(params, "fields") else params
+        return -0.5 * jnp.sum((data - mu) ** 2)
+
+
+@pytest.fixture(scope="module")
+def gaussian_model():
+    """A 1-D ``N(0, 1)`` prior + Gaussian-mean likelihood ``SimpleModel``."""
+    prior = Normal(loc=0.0, scale=1.0, name="mu")
+    return SimpleModel(prior, _GaussianMeanLik(), name="m")
+
+
+@pytest.fixture(scope="module")
+def data():
+    """Observed data for :func:`gaussian_model` (10 zeros)."""
+    return jnp.zeros(10)
 
 
 # ---------------------------------------------------------------------------
@@ -74,11 +102,43 @@ class TestGaussianPriorDetection:
 
     def test_multivariate_normal_dense(self):
         cov_in = jnp.array([[1.0, 0.3], [0.3, 2.0]])
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=cov_in, name="m")
+        loc_in = jnp.array([1.0, -2.0])
+        prior = MultivariateNormal(loc=loc_in, cov=cov_in, name="m")
         params = _gaussian_prior_params(prior)
         assert params is not None
-        _, cov = params
+        mean, cov = params
+        np.testing.assert_allclose(np.asarray(mean), np.asarray(loc_in))
         np.testing.assert_allclose(np.asarray(cov), np.asarray(cov_in))
+
+    def test_normal_scalar_promoted_to_length_one(self):
+        """A scalar ``Normal`` is promoted to a length-1 vector.
+
+        This is the only path the ``jnp.atleast_1d(scale)`` branch of
+        ``_gaussian_prior_params`` ever serves: a genuinely vector-valued
+        ``Normal(loc=[...], scale=[...])`` cannot be constructed — the
+        ``Normal`` constructor rejects a non-scalar ``loc``/``scale`` with
+        a ``ValueError`` directing the user to ``from_batched_params``.
+        """
+        mean, cov = _gaussian_prior_params(Normal(loc=2.0, scale=3.0, name="x"))
+        assert mean.shape == (1,)
+        assert cov.shape == (1, 1)
+        np.testing.assert_allclose(np.asarray(mean), [2.0])
+        np.testing.assert_allclose(np.asarray(cov), [[9.0]])
+
+    def test_batched_normal_distribution_array_returns_none(self):
+        """A batched ``Normal`` (a ``DistributionArray``) is *not* recognised.
+
+        The vector-Normal capability that ``from_batched_params`` provides
+        produces a ``DistributionArray``, not a ``Normal``, so it fails the
+        ``isinstance(prior, Normal)`` check and ``_gaussian_prior_params``
+        returns ``None``. ESS therefore declines such priors (cf. the
+        finding noted on ``test_normal_scalar_promoted_to_length_one``).
+        """
+        da = Normal.from_batched_params(
+            loc=jnp.array([0.0, 1.0]), scale=jnp.array([0.5, 2.0]), name="x",
+        )
+        assert not isinstance(da, Normal)
+        assert _gaussian_prior_params(da) is None
 
     def test_product_of_normals_block_diagonal(self):
         prior = ProductDistribution(
@@ -94,10 +154,18 @@ class TestGaussianPriorDetection:
         )
 
     def test_product_mixed_normal_and_mvn(self):
+        """Block assembly must respect field order for *both* mean and cov.
+
+        Distinct non-zero component means and distinct diagonal variances
+        pin the block order exactly: a field-order permutation in
+        ``_gaussian_prior_params`` would scramble the mean *and* the cov
+        diagonal away from the field-order concatenation
+        ``[theta, beta_0, beta_1]``.
+        """
         prior = ProductDistribution(
-            theta=Normal(loc=0.0, scale=1.0, name="theta"),
+            theta=Normal(loc=3.0, scale=1.0, name="theta"),
             beta=MultivariateNormal(
-                loc=jnp.zeros(2),
+                loc=jnp.array([5.0, -1.0]),
                 cov=jnp.diag(jnp.array([0.5, 2.0])),
                 name="beta",
             ),
@@ -107,19 +175,24 @@ class TestGaussianPriorDetection:
         mean, cov = params
         assert mean.shape == (3,)
         assert cov.shape == (3, 3)
-        # Theta comes first (field order), then the two MVN components.
-        np.testing.assert_allclose(np.asarray(mean), [0.0, 0.0, 0.0])
+        # Field order is [theta, beta...]; both blocks carry distinct,
+        # non-zero values so the assertion detects any permutation.
+        np.testing.assert_allclose(np.asarray(mean), [3.0, 5.0, -1.0])
         np.testing.assert_allclose(
             np.asarray(cov),
             [[1.0, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 2.0]],
             atol=1e-6,
         )
 
-    def test_gamma_returns_none(self):
-        assert _gaussian_prior_params(Gamma(concentration=2.0, rate=1.0, name="g")) is None
-
-    def test_beta_returns_none(self):
-        assert _gaussian_prior_params(Beta(alpha=2.0, beta=2.0, name="b")) is None
+    @pytest.mark.parametrize(
+        "prior",
+        [
+            pytest.param(Gamma(concentration=2.0, rate=1.0, name="g"), id="gamma"),
+            pytest.param(Beta(alpha=2.0, beta=2.0, name="b"), id="beta"),
+        ],
+    )
+    def test_non_gaussian_returns_none(self, prior):
+        assert _gaussian_prior_params(prior) is None
 
     def test_product_with_non_gaussian_component_returns_none(self):
         prior = ProductDistribution(
@@ -255,14 +328,6 @@ class TestDeclinesToRWMH:
 # ---------------------------------------------------------------------------
 
 
-class _GaussianMeanLik(Likelihood):
-    """``log p(y | mu) = sum_i log N(y_i; mu, 1)`` — Gaussian likelihood."""
-
-    def log_likelihood(self, params, data):
-        mu = params["mu"] if hasattr(params, "fields") else params
-        return -0.5 * jnp.sum((data - mu) ** 2)
-
-
 class TestPosteriorRecovery:
     """ESS samples must match the closed-form Gaussian conjugate posterior."""
 
@@ -351,22 +416,18 @@ class TestPosteriorRecovery:
 
 class TestProvenanceAndAuxiliary:
 
-    def test_provenance(self):
-        prior = Normal(loc=0.0, scale=1.0, name="mu")
-        model = SimpleModel(prior, _GaussianMeanLik(), name="m")
-        data = jnp.zeros(10)
+    def test_provenance(self, gaussian_model, data):
         post = elliptical_slice(
-            model, data, num_results=50, num_warmup=20, random_seed=0,
+            gaussian_model, data, num_results=50, num_warmup=20, random_seed=0,
         )
         assert post.algorithm == "elliptical_slice"
         assert post.source.operation == "elliptical_slice"
 
-    def test_auxiliary_datatree_has_subiter_stats(self):
-        prior = Normal(loc=0.0, scale=1.0, name="mu")
-        model = SimpleModel(prior, _GaussianMeanLik(), name="m")
-        data = jnp.zeros(10)
+    def test_auxiliary_datatree_has_subiter_stats(self, gaussian_model, data):
+        num_chains, num_results = 2, 50
         post = elliptical_slice(
-            model, data, num_results=50, num_warmup=20, random_seed=0,
+            gaussian_model, data, num_results=num_results, num_warmup=20,
+            num_chains=num_chains, random_seed=0,
         )
         assert post.inference_data is not None
         assert "posterior" in post.inference_data
@@ -374,24 +435,43 @@ class TestProvenanceAndAuxiliary:
         # The ESS-specific stat is ``subiter`` (number of bracket shrinkages).
         ss = post.inference_data["sample_stats"]
         assert "subiter" in ss.variables
+        subiter = np.asarray(ss["subiter"].values)
+        # One count per (chain, draw); shrinkage counts are positive integers.
+        assert subiter.shape == (num_chains, num_results)
+        assert np.issubdtype(subiter.dtype, np.integer)
+        assert np.all(subiter >= 0)
+        np.testing.assert_array_equal(subiter, np.round(subiter))
 
-    def test_warmup_stored(self):
-        prior = Normal(loc=0.0, scale=1.0, name="mu")
-        model = SimpleModel(prior, _GaussianMeanLik(), name="m")
-        data = jnp.zeros(10)
+    def test_warmup_stored(self, gaussian_model):
         post = elliptical_slice(
-            model, data, num_results=20, num_warmup=15,
+            gaussian_model, jnp.zeros(10), num_results=20, num_warmup=15,
             num_chains=2, random_seed=0,
         )
         assert post.warmup_samples is not None
         assert post.warmup_samples[0].shape == (15, 1)
 
-    def test_multi_chain_shape(self):
-        prior = Normal(loc=0.0, scale=1.0, name="mu")
-        model = SimpleModel(prior, _GaussianMeanLik(), name="m")
-        data = jnp.zeros(10)
+    def test_no_warmup_path(self, gaussian_model, data):
+        """``num_warmup=0`` runs and stores no warmup chains."""
         post = elliptical_slice(
-            model, data, num_results=30, num_warmup=10,
+            gaussian_model, data, num_results=30, num_warmup=0, random_seed=0,
+        )
+        assert isinstance(post, ApproximateDistribution)
+        assert post.warmup_samples is None
+        assert post.num_draws == 30
+
+    def test_explicit_init_smoke(self, gaussian_model, data):
+        """An explicit ``init=`` (matching the 1-D param dim) runs cleanly."""
+        post = elliptical_slice(
+            gaussian_model, data, num_results=30, num_warmup=5,
+            init=jnp.array([2.5]), random_seed=0,
+        )
+        assert isinstance(post, ApproximateDistribution)
+        # 1-D Normal prior → single-parameter chains.
+        assert np.asarray(post.chains[0]).shape == (30, 1)
+
+    def test_multi_chain_shape(self, gaussian_model, data):
+        post = elliptical_slice(
+            gaussian_model, data, num_results=30, num_warmup=10,
             num_chains=3, random_seed=0,
         )
         assert post.num_chains == 3
@@ -423,4 +503,10 @@ class TestErrors:
         with pytest.raises(TypeError, match="Gaussian"):
             elliptical_slice(
                 model, jnp.zeros(5), num_results=10, num_warmup=5,
+            )
+
+    def test_raises_on_none_data(self, gaussian_model):
+        with pytest.raises(TypeError, match="observed data"):
+            elliptical_slice(
+                gaussian_model, data=None, num_results=10, num_warmup=5,
             )

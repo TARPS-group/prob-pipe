@@ -267,8 +267,8 @@ class TestConditionOnDispatch:
         assert isinstance(post, ApproximateDistribution)
         assert post.flat_samples.shape == (1000, 2)
 
-    def test_chain_shape_is_num_steps_by_event_shape(self, logistic_problem):
-        """`post.flat_samples` is `(num_steps, *event_shape)` for a single chain."""
+    def test_chain_shape_is_num_results_by_event_shape(self, logistic_problem):
+        """`post.flat_samples` is `(num_results, *event_shape)` for a single chain."""
         post = BlackJAXSGLDMethod().execute(
             logistic_problem["model"], logistic_problem["data"],
             batch_size=20, num_results=100, num_warmup=0,
@@ -277,7 +277,7 @@ class TestConditionOnDispatch:
         assert post.flat_samples.shape == (100, logistic_problem["P"])
 
     def test_warmup_discards_initial_samples(self, logistic_problem):
-        """``num_warmup=N`` drops the first N samples; ``num_steps`` retained."""
+        """``num_warmup=N`` drops the first N samples; ``num_results`` retained."""
         post = BlackJAXSGLDMethod().execute(
             logistic_problem["model"], logistic_problem["data"],
             batch_size=20, num_results=300, num_warmup=700,
@@ -298,8 +298,21 @@ class TestConditionOnDispatch:
         first = np.asarray(post.flat_samples[0])
         np.testing.assert_allclose(first, np.asarray(init), atol=0.05)
 
-    def test_with_replacement_kwarg_dispatches(self, logistic_problem):
-        """``with_replacement=True`` threads through the registry path."""
+    def test_with_replacement_kwarg_is_accepted_and_dispatches(self, logistic_problem):
+        """``with_replacement=True`` is accepted and dispatches via the registry.
+
+        This is a smoke test, not a behavioral one. ``with_replacement``
+        only changes the index-draw inside
+        :meth:`MinibatchedDistribution._draw_one` (``randint`` vs
+        ``permutation``); it does not surface through the
+        ``ApproximateDistribution`` output, so there is no public handle
+        that distinguishes a with- from a without-replacement run without
+        contrived hooks into the minibatch RNG. We therefore assert only
+        that the kwarg threads through ``condition_on`` -> ``execute()``
+        and yields a finite, correctly-shaped chain. The replacement
+        semantics themselves are covered directly in the
+        ``MinibatchedDistribution`` tests.
+        """
         post = condition_on(
             logistic_problem["model"], logistic_problem["data"],
             method="blackjax_sgld",
@@ -307,5 +320,7 @@ class TestConditionOnDispatch:
             step_size=1e-3, random_seed=4,
             with_replacement=True,
         )
-        # No exception + finite chain == kwarg accepted by execute().
+        # No exception + finite, correctly-shaped chain == kwarg accepted
+        # by execute() and threaded into MinibatchedDistribution.
+        assert post.flat_samples.shape == (100, logistic_problem["P"])
         assert jnp.all(jnp.isfinite(post.flat_samples))

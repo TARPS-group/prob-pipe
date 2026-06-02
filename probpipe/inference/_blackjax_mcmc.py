@@ -16,9 +16,13 @@ then lift the resulting chain back through the prior's
 ``record_template`` so the posterior preserves the structured
 parameterisation.
 
-The per-step diagnostics (``step_size``, ``acceptance_rate``, ...) are
-packed into a dict consumed by :func:`build_mcmc_datatree`, the same
-ArviZ converter the TFP path uses.
+The per-draw diagnostics (``acceptance_rate``, ``is_divergent``,
+``energy``, ``num_integration_steps``) are read off the BlackJAX
+``info`` objects and packed into a dict consumed by
+:func:`build_mcmc_datatree`, the same ArviZ converter the TFP path
+uses. The adapted ``step_size`` is not carried on those ``info``
+objects, so it is threaded out of the warmup separately and injected
+into the same dict (broadcast across draws).
 """
 
 from __future__ import annotations
@@ -116,35 +120,48 @@ def _run_blackjax_chains(
         (state, params), _ = warmup.run(warmup_key, init_state, num_steps=num_warmup)
         return state, params
 
-    def run_one_chain(chain_key: Array) -> tuple[Array, Any]:
+    def run_one_chain(chain_key: Array) -> tuple[Array, Any, Array]:
         warmup_key, sample_key = jax.random.split(chain_key)
         state, adapted_params = _adapt(warmup_key)
         kernel = kernel_factory(target_log_prob_fn, **adapted_params)
-        return run_chain_scan(kernel, state, num_results, sample_key)
+        positions, infos = run_chain_scan(kernel, state, num_results, sample_key)
+        # BlackJAX NUTSInfo / HMCInfo carry no ``step_size`` field, so the
+        # adapted (or, for the zero-warmup branch, user-supplied) step size
+        # has to be threaded out of ``_adapt`` explicitly to land in the
+        # sample-stats dict below.
+        return positions, infos, adapted_params["step_size"]
 
-    all_positions, all_infos = jax.vmap(run_one_chain)(chain_keys)
+    all_positions, all_infos, adapted_step_sizes = jax.vmap(run_one_chain)(chain_keys)
     chains = [all_positions[c] for c in range(num_chains)]
-    sample_stats = _extract_blackjax_sample_stats(all_infos)
+    sample_stats = _extract_blackjax_sample_stats(all_infos, adapted_step_sizes, num_results)
     return chains, sample_stats
 
 
-def _extract_blackjax_sample_stats(infos: Any) -> dict[str, np.ndarray]:
+def _extract_blackjax_sample_stats(
+    infos: Any, step_sizes: Array, num_results: int,
+) -> dict[str, np.ndarray]:
     """Pack BlackJAX per-step ``info`` into a TFP-shaped sample-stats dict.
 
     Mirrors the ArviZ-compatible keys produced by
-    :func:`probpipe.inference._tfp_mcmc._extract_sample_stats` so the
-    downstream :func:`build_mcmc_datatree` consumes both backends
-    uniformly. Missing fields (e.g. ``num_integration_steps`` for the
-    NUTS path) are silently skipped.
+    :func:`probpipe.inference._tfp_mcmc._extract_sample_stats` (each array
+    shaped ``(num_chains, num_results)``) so the downstream
+    :func:`build_mcmc_datatree` consumes both backends uniformly.
+
+    ``step_sizes`` is the per-chain adapted (or user-supplied) step size,
+    shape ``(num_chains,)``; BlackJAX ``NUTSInfo`` / ``HMCInfo`` do not
+    expose ``step_size`` on the per-step info, so it is injected here and
+    broadcast across draws to match the per-draw diagnostics. Info fields
+    not present on a given algorithm are silently skipped.
     """
     stats: dict[str, np.ndarray] = {}
-    for key in (
-        "step_size", "acceptance_rate", "is_divergent",
-        "num_integration_steps", "energy",
-    ):
+    for key in ("acceptance_rate", "is_divergent", "num_integration_steps", "energy"):
         value = getattr(infos, key, None)
         if value is not None:
             stats[key] = np.asarray(value)
+    step_sizes = np.asarray(step_sizes)
+    stats["step_size"] = np.broadcast_to(
+        step_sizes[:, None], (step_sizes.shape[0], num_results),
+    ).copy()
     return stats
 
 
