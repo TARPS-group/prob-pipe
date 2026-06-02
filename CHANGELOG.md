@@ -7,13 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed (breaking)
-
-- **`tfp_rwmh` removed.** The hand-rolled Python-loop RWMH that sat
-  behind ``method="tfp_rwmh"`` is gone; ``blackjax_rwmh`` is the only
-  RWMH backend. Callers must rename ``method="tfp_rwmh"`` →
-  ``method="blackjax_rwmh"``.
-
 ### Added
 
 - **BlackJAX-backed gradient-free MCMC.** Two new inference methods
@@ -42,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`tfp_rwmh` removed.** The hand-rolled Python-loop RWMH that sat
+  behind ``method="tfp_rwmh"`` is gone; ``blackjax_rwmh`` is the only
+  RWMH backend. Callers must rename ``method="tfp_rwmh"`` →
+  ``method="blackjax_rwmh"``.
 - **Sample-count / observation-count terminology unified
   across the codebase.** Several adjacent concepts had drifted into
   different naming styles (`.n`, `num_draws`, `n_samples`, `n_iter`,
