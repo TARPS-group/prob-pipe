@@ -1,10 +1,13 @@
 """Broadcasting tests for JAX-based distribution API."""
+
+from __future__ import annotations
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import BroadcastDistribution, EmpiricalDistribution, MultivariateNormal, Normal, NumericRecordDistribution
+from probpipe import BroadcastDistribution, EmpiricalDistribution, MultivariateNormal, Normal
 from probpipe.core.node import WorkflowFunction
 
 
@@ -14,7 +17,7 @@ def key():
 
 
 # ---------------------------------------------------------------------------
-# Basic broadcasting (loop backend) — default returns marginal
+# Basic broadcasting (loop backend) - default returns marginal
 # ---------------------------------------------------------------------------
 
 class TestBroadcastingBasic:
@@ -22,7 +25,7 @@ class TestBroadcastingBasic:
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = WorkflowFunction(func=double_it, n_broadcast_samples=50, vectorize="loop", seed=0)
+        w = WorkflowFunction(func=double_it, n_broadcast_samples=50, dispatch="sequential", seed=0)
         g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
@@ -33,7 +36,7 @@ class TestBroadcastingBasic:
         def add_one(x: jnp.ndarray) -> jnp.ndarray:
             return x + 1.0
 
-        w = WorkflowFunction(func=add_one, n_broadcast_samples=200, vectorize="loop", seed=1)
+        w = WorkflowFunction(func=add_one, n_broadcast_samples=200, dispatch="sequential", seed=1)
         g = Normal(loc=0.0, scale=0.1, name="x")
         result = w(x=g)
         # Mean should be ~1.0 (0 + 1)
@@ -43,7 +46,7 @@ class TestBroadcastingBasic:
         def compute_norm(x: jnp.ndarray) -> float:
             return float(jnp.linalg.norm(x))
 
-        w = WorkflowFunction(func=compute_norm, n_broadcast_samples=20, vectorize="loop", seed=2)
+        w = WorkflowFunction(func=compute_norm, n_broadcast_samples=20, dispatch="sequential", seed=2)
         mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="x")
         result = w(x=mvn)
         assert not isinstance(result, BroadcastDistribution)
@@ -53,7 +56,7 @@ class TestBroadcastingBasic:
         """WorkflowFunction accepts positional arguments."""
         from probpipe.core.node import workflow_function
 
-        @workflow_function(n_broadcast_samples=30, vectorize="loop", seed=5)
+        @workflow_function(n_broadcast_samples=30, dispatch="sequential", seed=5)
         def add(x, y):
             return x + y
 
@@ -75,7 +78,7 @@ class TestBroadcastingBasic:
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop", seed=0)
+        w = WorkflowFunction(func=double_it, n_broadcast_samples=20, dispatch="sequential", seed=0)
         g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g)
         assert not hasattr(result, 'input_samples')
@@ -86,7 +89,7 @@ class TestBroadcastingMultipleArgs:
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
-        w = WorkflowFunction(func=add_them, n_broadcast_samples=100, vectorize="loop", seed=3)
+        w = WorkflowFunction(func=add_them, n_broadcast_samples=100, dispatch="sequential", seed=3)
         g1 = Normal(loc=1.0, scale=0.1, name="a")
         g2 = Normal(loc=2.0, scale=0.1, name="b")
         result = w(a=g1, b=g2)
@@ -99,7 +102,7 @@ class TestBroadcastingMixedArgs:
         def scale(x: jnp.ndarray, factor: float) -> jnp.ndarray:
             return x * factor
 
-        w = WorkflowFunction(func=scale, n_broadcast_samples=50, vectorize="loop", seed=4)
+        w = WorkflowFunction(func=scale, n_broadcast_samples=50, dispatch="sequential", seed=4)
         g = Normal(loc=5.0, scale=0.1, name="x")
         result = w(x=g, factor=3.0)
         assert result.n == 50
@@ -111,7 +114,7 @@ class TestBroadcastingNSamples:
         def identity(x: jnp.ndarray) -> jnp.ndarray:
             return x
 
-        w = WorkflowFunction(func=identity, vectorize="loop", seed=5)
+        w = WorkflowFunction(func=identity, dispatch="sequential", seed=5)
         g = Normal(loc=0.0, scale=1.0, name="x")
         result = w(x=g)
         assert result.n == WorkflowFunction.DEFAULT_N_BROADCAST_SAMPLES
@@ -120,7 +123,7 @@ class TestBroadcastingNSamples:
         def identity(x: jnp.ndarray) -> jnp.ndarray:
             return x
 
-        w = WorkflowFunction(func=identity, n_broadcast_samples=100, vectorize="loop", seed=6)
+        w = WorkflowFunction(func=identity, n_broadcast_samples=100, dispatch="sequential", seed=6)
         g = Normal(loc=0.0, scale=1.0, name="x")
         result = w(x=g, n_broadcast_samples=10)
         assert result.n == 10
@@ -132,21 +135,21 @@ class TestReservedParameterNames:
             return x
 
         with pytest.raises(ValueError, match="reserved"):
-            WorkflowFunction(func=bad_fn, vectorize="loop")
+            WorkflowFunction(func=bad_fn, dispatch="sequential")
 
     def test_seed_forbidden(self):
         def bad_fn(x: jnp.ndarray, seed: int = 0) -> jnp.ndarray:
             return x
 
         with pytest.raises(ValueError, match="reserved"):
-            WorkflowFunction(func=bad_fn, vectorize="loop")
+            WorkflowFunction(func=bad_fn, dispatch="sequential")
 
     def test_include_inputs_forbidden(self):
         def bad_fn(x: jnp.ndarray, include_inputs: bool = False) -> jnp.ndarray:
             return x
 
         with pytest.raises(ValueError, match="reserved"):
-            WorkflowFunction(func=bad_fn, vectorize="loop")
+            WorkflowFunction(func=bad_fn, dispatch="sequential")
 
 
 class TestWorkflowFunctionCallResolution:
@@ -154,7 +157,7 @@ class TestWorkflowFunctionCallResolution:
         def identity(x):
             return x
 
-        w = WorkflowFunction(func=identity, vectorize="loop")
+        w = WorkflowFunction(func=identity, dispatch="sequential")
 
         with pytest.raises(TypeError, match="unexpected keyword argument 'typo'"):
             w(x=1.0, typo=2.0)
@@ -166,7 +169,7 @@ class TestWorkflowFunctionCallResolution:
             seen.append(kwargs)
             return x
 
-        w = WorkflowFunction(func=identity, vectorize="loop")
+        w = WorkflowFunction(func=identity, dispatch="sequential")
         out = w(x=1.0, kwargs={"scale": 2.0})
 
         assert float(out) == 1.0
@@ -179,7 +182,7 @@ class TestWorkflowFunctionCallResolution:
             seen.append(kwargs)
             return x
 
-        w = WorkflowFunction(func=identity, vectorize="loop")
+        w = WorkflowFunction(func=identity, dispatch="sequential")
         out = w(x=1.0, scale=2.0)
 
         assert float(out) == 1.0
@@ -193,7 +196,7 @@ class TestNoBroadcasting:
         def add(a: float, b: float) -> float:
             return a + b
 
-        w = WorkflowFunction(func=add, vectorize="loop")
+        w = WorkflowFunction(func=add, dispatch="sequential")
         result = w(a=1.0, b=2.0)
         # Concrete args return the workflow-function's auto-wrapped scalar:
         # ``NumericRecord({"add": 3.0})``. The ``__float__`` shim unwraps it.
@@ -213,7 +216,7 @@ class TestBroadcastingEnumeration:
         weights = jnp.array([0.2, 0.3, 0.5])
         ed = EmpiricalDistribution(samples, weights, name="x")
 
-        w = WorkflowFunction(func=identity, n_broadcast_samples=100, vectorize="loop", seed=7)
+        w = WorkflowFunction(func=identity, n_broadcast_samples=100, dispatch="sequential", seed=7)
         result = w(x=ed)
         assert result.n == 3
         np.testing.assert_allclose(result.weights, weights, atol=1e-5)
@@ -225,7 +228,7 @@ class TestBroadcastingEnumeration:
         ed1 = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), name="x")
         ed2 = EmpiricalDistribution(jnp.array([[10.0], [20.0], [30.0]]), name="x")
 
-        w = WorkflowFunction(func=add_them, n_broadcast_samples=100, vectorize="loop", seed=8)
+        w = WorkflowFunction(func=add_them, n_broadcast_samples=100, dispatch="sequential", seed=8)
         result = w(a=ed1, b=ed2)
         assert result.n == 6  # 2 x 3
 
@@ -238,7 +241,7 @@ class TestBroadcastingEnumeration:
         ed_medium = EmpiricalDistribution(jnp.arange(5).reshape(-1, 1).astype(jnp.float32), name="x")  # n=5
         ed_large = EmpiricalDistribution(jnp.arange(20).reshape(-1, 1).astype(jnp.float32), name="x")  # n=20
 
-        w = WorkflowFunction(func=sum_three, n_broadcast_samples=50, vectorize="loop", seed=9)
+        w = WorkflowFunction(func=sum_three, n_broadcast_samples=50, dispatch="sequential", seed=9)
         result = w(a=ed_small, b=ed_medium, c=ed_large)
         # 2*5=10 enumerated, 50//10=5 reps from ed_large per combo → 50 total
         assert result.n == 50
@@ -250,7 +253,7 @@ class TestBroadcastingEnumeration:
         ed = EmpiricalDistribution(jnp.array([[1.0], [2.0], [3.0]]), name="x")
         g = Normal(loc=0.0, scale=1.0, name="b")
 
-        w = WorkflowFunction(func=add_them, n_broadcast_samples=30, vectorize="loop", seed=10)
+        w = WorkflowFunction(func=add_them, n_broadcast_samples=30, dispatch="sequential", seed=10)
         result = w(a=ed, b=g)
         # 3 empirical combos, 30//3=10 reps each → 30 total
         assert result.n == 30
@@ -263,7 +266,7 @@ class TestBroadcastingEnumeration:
         samples = jnp.array([[1.0], [2.0], [3.0]])
         ed = EmpiricalDistribution(samples, name="x")
 
-        w = WorkflowFunction(func=identity, n_broadcast_samples=100, vectorize="loop", seed=7)
+        w = WorkflowFunction(func=identity, n_broadcast_samples=100, dispatch="sequential", seed=7)
         result = w(x=ed, include_inputs=True)
         assert isinstance(result, BroadcastDistribution)
         assert "x" in result.input_samples
@@ -282,7 +285,7 @@ class TestBroadcastingNonNumeric:
         def describe(x: jnp.ndarray) -> str:
             return f"val={float(x):.2f}"
 
-        w = WorkflowFunction(func=describe, n_broadcast_samples=5, vectorize="loop", seed=11)
+        w = WorkflowFunction(func=describe, n_broadcast_samples=5, dispatch="sequential", seed=11)
         g = Normal(loc=0.0, scale=1.0, name="x")
         result = w(x=g)
         # Non-numeric results still return a marginal (ListMarginal)
@@ -300,7 +303,7 @@ class TestBroadcastingJAX:
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = WorkflowFunction(func=double_it, n_broadcast_samples=50, vectorize="jax", seed=20)
+        w = WorkflowFunction(func=double_it, n_broadcast_samples=50, dispatch="jax", seed=20)
         g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
@@ -310,7 +313,7 @@ class TestBroadcastingJAX:
         def add_one(x: jnp.ndarray) -> jnp.ndarray:
             return x + 1.0
 
-        w = WorkflowFunction(func=add_one, n_broadcast_samples=200, vectorize="jax", seed=21)
+        w = WorkflowFunction(func=add_one, n_broadcast_samples=200, dispatch="jax", seed=21)
         g = Normal(loc=0.0, scale=0.1, name="x")
         result = w(x=g)
         assert abs(float(jnp.mean(result.samples)) - 1.0) < 0.1
@@ -319,7 +322,7 @@ class TestBroadcastingJAX:
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
-        w = WorkflowFunction(func=add_them, n_broadcast_samples=100, vectorize="jax", seed=22)
+        w = WorkflowFunction(func=add_them, n_broadcast_samples=100, dispatch="jax", seed=22)
         g1 = Normal(loc=1.0, scale=0.1, name="a")
         g2 = Normal(loc=2.0, scale=0.1, name="b")
         result = w(a=g1, b=g2)
@@ -330,7 +333,7 @@ class TestBroadcastingJAX:
         def scale(x: jnp.ndarray, factor: float) -> jnp.ndarray:
             return x * factor
 
-        w = WorkflowFunction(func=scale, n_broadcast_samples=50, vectorize="jax", seed=23)
+        w = WorkflowFunction(func=scale, n_broadcast_samples=50, dispatch="jax", seed=23)
         g = Normal(loc=5.0, scale=0.1, name="x")
         result = w(x=g, factor=3.0)
         assert result.n == 50
@@ -340,7 +343,7 @@ class TestBroadcastingJAX:
         def halve(x: jnp.ndarray) -> jnp.ndarray:
             return x / 2.0
 
-        w = WorkflowFunction(func=halve, n_broadcast_samples=30, vectorize="jax", seed=24)
+        w = WorkflowFunction(func=halve, n_broadcast_samples=30, dispatch="jax", seed=24)
         mvn = MultivariateNormal(loc=jnp.array([4.0, 6.0]), cov=0.01 * jnp.eye(2), name="x")
         result = w(x=mvn)
         assert result.n == 30
@@ -349,11 +352,11 @@ class TestBroadcastingJAX:
         np.testing.assert_allclose(mean, jnp.array([2.0, 3.0]), atol=0.2)
 
     def test_vmap_input_samples(self):
-        """include_inputs=True preserves input–output alignment for vmap."""
+        """include_inputs=True preserves input-output alignment for vmap."""
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = WorkflowFunction(func=double_it, n_broadcast_samples=30, vectorize="jax", seed=20)
+        w = WorkflowFunction(func=double_it, n_broadcast_samples=30, dispatch="jax", seed=20)
         g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g, include_inputs=True)
         assert isinstance(result, BroadcastDistribution)
@@ -367,31 +370,44 @@ class TestBroadcastingJAX:
 
 
 # ---------------------------------------------------------------------------
-# Auto backend detection
+# Auto dispatch detection
 # ---------------------------------------------------------------------------
 
-class TestAutoBackend:
+
+class TestAutoDispatch:
     def test_auto_selects_jax_for_traceable(self):
         def pure_jax(x: jnp.ndarray) -> jnp.ndarray:
             return jnp.sin(x)
 
-        w = WorkflowFunction(func=pure_jax, n_broadcast_samples=20, vectorize="auto", seed=30)
+        w = WorkflowFunction(func=pure_jax, n_broadcast_samples=20, dispatch="auto", seed=30)
         g = Normal(loc=0.0, scale=1.0, name="x")
         result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
-        assert w._resolved_vectorize == "jax"
+        assert w._resolved_dispatch == "jax"
 
-    def test_auto_falls_back_to_loop_for_non_traceable(self):
+    def test_auto_falls_back_to_sequential_for_non_traceable(self):
         import scipy.special
 
         def scipy_fn(x: jnp.ndarray) -> jnp.ndarray:
             return jnp.asarray(scipy.special.gamma(np.asarray(x)))
 
-        w = WorkflowFunction(func=scipy_fn, n_broadcast_samples=20, vectorize="auto", seed=31)
+        w = WorkflowFunction(func=scipy_fn, n_broadcast_samples=20, dispatch="auto", seed=31)
         g = Normal(loc=2.0, scale=0.1, name="x")
         result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
-        assert w._resolved_vectorize == "loop"
+        assert w._resolved_dispatch == "sequential"
+
+    def test_jax_dispatch_rejects_non_traceable_function_with_clear_error(self):
+        import scipy.special
+
+        def scipy_fn(x: jnp.ndarray) -> jnp.ndarray:
+            return jnp.asarray(scipy.special.gamma(np.asarray(x)))
+
+        w = WorkflowFunction(func=scipy_fn, n_broadcast_samples=20, dispatch="jax", seed=32)
+        g = Normal(loc=2.0, scale=0.1, name="x")
+
+        with pytest.raises(ValueError, match="failed while tracing"):
+            w(x=g)
 
 
 # ---------------------------------------------------------------------------
@@ -405,10 +421,10 @@ class TestSeedManagement:
 
         g = Normal(loc=0.0, scale=1.0, name="x")
 
-        w1 = WorkflowFunction(func=identity, n_broadcast_samples=20, vectorize="loop", seed=0)
+        w1 = WorkflowFunction(func=identity, n_broadcast_samples=20, dispatch="sequential", seed=0)
         r1 = w1(x=g)
 
-        w2 = WorkflowFunction(func=identity, n_broadcast_samples=20, vectorize="loop", seed=99)
+        w2 = WorkflowFunction(func=identity, n_broadcast_samples=20, dispatch="sequential", seed=99)
         r2 = w2(x=g)
 
         assert not jnp.allclose(r1.samples, r2.samples)
@@ -418,7 +434,7 @@ class TestSeedManagement:
             return x
 
         g = Normal(loc=0.0, scale=1.0, name="x")
-        w = WorkflowFunction(func=identity, n_broadcast_samples=20, vectorize="loop", seed=0)
+        w = WorkflowFunction(func=identity, n_broadcast_samples=20, dispatch="sequential", seed=0)
 
         r1 = w(x=g, seed=42)
         # Reset and call with same seed
@@ -435,7 +451,7 @@ class TestIncludeInputsArgument:
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop",
+        w = WorkflowFunction(func=double_it, n_broadcast_samples=20, dispatch="sequential",
                              seed=0, include_inputs=True)
         g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g)
@@ -447,7 +463,7 @@ class TestIncludeInputsArgument:
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop", seed=0)
+        w = WorkflowFunction(func=double_it, n_broadcast_samples=20, dispatch="sequential", seed=0)
         g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g, include_inputs=True)
         assert isinstance(result, BroadcastDistribution)
@@ -457,7 +473,7 @@ class TestIncludeInputsArgument:
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop", seed=0)
+        w = WorkflowFunction(func=double_it, n_broadcast_samples=20, dispatch="sequential", seed=0)
         g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
@@ -467,7 +483,7 @@ class TestIncludeInputsArgument:
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
-        w = WorkflowFunction(func=add_them, n_broadcast_samples=20, vectorize="loop", seed=0)
+        w = WorkflowFunction(func=add_them, n_broadcast_samples=20, dispatch="sequential", seed=0)
         g1 = Normal(loc=1.0, scale=0.1, name="a")
         g2 = Normal(loc=2.0, scale=0.1, name="b")
         result = w(a=g1, b=g2, include_inputs=True)
@@ -486,7 +502,7 @@ class TestNamedComponents:
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
-        w = WorkflowFunction(func=add_them, n_broadcast_samples=20, vectorize="loop", seed=0)
+        w = WorkflowFunction(func=add_them, n_broadcast_samples=20, dispatch="sequential", seed=0)
         g1 = Normal(loc=1.0, scale=0.1, name="a")
         g2 = Normal(loc=2.0, scale=0.1, name="b")
         result = w(a=g1, b=g2, include_inputs=True)
@@ -498,7 +514,7 @@ class TestNamedComponents:
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop", seed=0)
+        w = WorkflowFunction(func=double_it, n_broadcast_samples=20, dispatch="sequential", seed=0)
         g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g, include_inputs=True)
         x_marginal = result["x"]
@@ -509,7 +525,7 @@ class TestNamedComponents:
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = WorkflowFunction(func=double_it, n_broadcast_samples=20, vectorize="loop", seed=0)
+        w = WorkflowFunction(func=double_it, n_broadcast_samples=20, dispatch="sequential", seed=0)
         g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g, include_inputs=True)
         out = result["_output"]
@@ -517,28 +533,27 @@ class TestNamedComponents:
 
 
 # ---------------------------------------------------------------------------
-# Cross-backend consistency: loop / auto / jax must agree
+# Cross-dispatch consistency: sequential / thread / auto must agree
 # ---------------------------------------------------------------------------
 #
 # Empirical enumeration semantics (cartesian product of small
-# empiricals, weighted) must not depend on the vectorization backend.
-# These tests guard against regressions of the kind where the
-# ``vectorize="jax"`` path bypasses enumeration and silently samples
-# instead. The loop and auto paths already test this implicitly; the
-# jax path is the regression surface.
+# empiricals, weighted) must not depend on row-wise dispatch mode.
+# Explicit JAX dispatch rejects exact empirical enumeration because that
+# path cannot run through ``jax.vmap`` without changing semantics.
 # ---------------------------------------------------------------------------
 
 
-class TestVectorizationConsistency:
+class TestDispatchConsistency:
     """Empirical enumeration and count semantics match across
-    ``vectorize="loop" | "auto" | "jax"``."""
+    row-wise dispatch modes."""
 
-    VECTORIZE_MODES = ("loop", "auto", "jax")
+    ROWWISE_DISPATCH_MODES = ("sequential", "thread", "auto")
+    SAMPLE_DISPATCH_MODES = ("sequential", "thread", "auto", "jax")
 
     def _run(self, mode, func, **kwargs):
         w = WorkflowFunction(
             func=func, n_broadcast_samples=kwargs.pop("n_broadcast_samples", 100),
-            vectorize=mode, seed=0,
+            dispatch=mode, seed=0,
         )
         return w(**kwargs)
 
@@ -551,19 +566,22 @@ class TestVectorizationConsistency:
         ed1 = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), name="x")
         ed2 = EmpiricalDistribution(jnp.array([[10.0], [20.0], [30.0]]), name="x")
 
-        results = {m: self._run(m, add_them, a=ed1, b=ed2) for m in self.VECTORIZE_MODES}
-        # Same size (2 x 3 = 6) in every mode — regression guard.
+        results = {
+            m: self._run(m, add_them, a=ed1, b=ed2)
+            for m in self.ROWWISE_DISPATCH_MODES
+        }
+        # Same size (2 x 3 = 6) in every mode - regression guard.
         for mode, r in results.items():
             assert r.n == 6, f"{mode}: expected n=6, got {r.n}"
         # Same sample set (order may differ; compare sorted).
         def _samples_array(d):
             return d.samples[d.samples.fields[0]]
-        ref = sorted(_samples_array(results["loop"]).ravel().tolist())
-        for mode in ("auto", "jax"):
+        ref = sorted(_samples_array(results["sequential"]).ravel().tolist())
+        for mode in ("auto", "thread"):
             got = sorted(_samples_array(results[mode]).ravel().tolist())
             np.testing.assert_allclose(
                 got, ref,
-                err_msg=f"{mode} samples diverged from loop: {got} vs {ref}",
+                err_msg=f"{mode} samples diverged from sequential: {got} vs {ref}",
             )
         # Weights: uniform 1/6 in every mode (inputs unweighted).
         for mode, r in results.items():
@@ -582,7 +600,7 @@ class TestVectorizationConsistency:
         expected_weights = sorted([
             0.8 * 0.25, 0.8 * 0.75, 0.2 * 0.25, 0.2 * 0.75,
         ])
-        for mode in self.VECTORIZE_MODES:
+        for mode in self.ROWWISE_DISPATCH_MODES:
             r = self._run(mode, add_them, a=ed1, b=ed2)
             assert r.n == 4
             got = sorted(np.asarray(r.weights).tolist())
@@ -592,7 +610,7 @@ class TestVectorizationConsistency:
             )
 
     def test_mixed_empirical_and_parametric_count_all_modes(self):
-        """Mixed empirical + continuous: total evaluations (k combos × reps)
+        """Mixed empirical + continuous: total evaluations (k combos x reps)
         must match across backends even though the sampled values differ."""
         def add_them(a, b):
             return a + b
@@ -600,9 +618,9 @@ class TestVectorizationConsistency:
         ed = EmpiricalDistribution(jnp.array([[1.0], [2.0], [3.0]]), name="x")
         g = Normal(loc=0.0, scale=1.0, name="b")
 
-        for mode in self.VECTORIZE_MODES:
+        for mode in self.ROWWISE_DISPATCH_MODES:
             r = self._run(mode, add_them, a=ed, b=g, n_broadcast_samples=30)
-            # 3 empirical combos × 10 reps each = 30 evaluations.
+            # 3 empirical combos x 10 reps each = 30 evaluations.
             assert r.n == 30, f"{mode}: expected n=30, got {r.n}"
             np.testing.assert_allclose(float(r.weights.sum()), 1.0, atol=1e-5)
 
@@ -615,19 +633,28 @@ class TestVectorizationConsistency:
 
         big = EmpiricalDistribution(
             jnp.arange(200).reshape(-1, 1).astype(jnp.float32), name="x")
-        for mode in self.VECTORIZE_MODES:
+        for mode in self.SAMPLE_DISPATCH_MODES:
             r = self._run(mode, identity, x=big, n_broadcast_samples=20)
             assert r.n == 20, f"{mode}: expected n=20, got {r.n}"
 
     def test_no_empiricals_all_modes_same_count(self):
         """Without empirical inputs every backend samples the full
-        budget (values differ — different RNG paths — but count is
+        budget (values differ - different RNG paths - but count is
         identical)."""
         def add_them(a, b):
             return a + b
 
         n1 = Normal(loc=0.0, scale=1.0, name="a")
         n2 = Normal(loc=5.0, scale=1.0, name="b")
-        for mode in self.VECTORIZE_MODES:
+        for mode in self.SAMPLE_DISPATCH_MODES:
             r = self._run(mode, add_them, a=n1, b=n2, n_broadcast_samples=50)
             assert r.n == 50, f"{mode}: expected n=50, got {r.n}"
+
+    def test_jax_dispatch_rejects_exact_empirical_enumeration(self):
+        def identity(x):
+            return x
+
+        empirical = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), name="x")
+
+        with pytest.raises(ValueError, match="does not support exact empirical"):
+            self._run("jax", identity, x=empirical, n_broadcast_samples=20)

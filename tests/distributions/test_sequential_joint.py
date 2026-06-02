@@ -1,5 +1,7 @@
 """Tests for SequentialJointDistribution."""
 
+from __future__ import annotations
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -8,17 +10,17 @@ import scipy.stats
 
 from probpipe import (
     Normal,
-    MultivariateNormal,
-    SequentialJointDistribution,
-    EmpiricalDistribution,
     Record,
-    RecordDistribution,
     RecordArray,
+    RecordDistribution,
+    SequentialJointDistribution,
+    condition_on,
+    log_prob,
+    sample,
+    unnormalized_log_prob,
 )
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.node import WorkflowFunction
-from probpipe import condition_on, log_prob, sample, unnormalized_log_prob
-
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -454,7 +456,7 @@ class TestBroadcastingReconnection:
 
         wf = WorkflowFunction(
             func=subtract,
-            vectorize="loop",
+            dispatch="sequential",
             n_broadcast_samples=30,
             seed=42,
         )
@@ -476,7 +478,7 @@ class TestBroadcastingReconnection:
 
         wf = WorkflowFunction(
             func=subtract,
-            vectorize="jax",
+            dispatch="jax",
             n_broadcast_samples=30,
             seed=55,
         )

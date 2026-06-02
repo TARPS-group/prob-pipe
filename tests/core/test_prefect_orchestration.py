@@ -1,24 +1,26 @@
 """Tests for Prefect orchestration in WorkflowFunction.
 
 Exercises all Prefect dispatch paths:
-- workflow_kind="task" with loop and JAX vectorization
-- workflow_kind="flow" with loop and JAX vectorization
+- workflow_kind="task" with sequential and JAX dispatch
+- workflow_kind="flow" with sequential and JAX dispatch
 - Import guard when Prefect is unavailable
 - Provenance metadata includes orchestration info
 
 Requires ``prefect>=3`` (installed via ``pip install probpipe[prefect]``).
 Uses ``prefect_test_harness()`` for an in-process temporary server.
 """
-import jax
+
+from __future__ import annotations
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-prefect = pytest.importorskip("prefect")
-from prefect.testing.utilities import prefect_test_harness
-
 from probpipe import Normal
 from probpipe.core.node import WorkflowFunction
+
+prefect_testing = pytest.importorskip("prefect.testing.utilities")
+prefect_test_harness = prefect_testing.prefect_test_harness
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -63,17 +65,17 @@ def sum_xy(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# workflow_kind="task" with loop vectorization
+# workflow_kind="task" with sequential dispatch
 # ---------------------------------------------------------------------------
 
 class TestPrefectTaskLoop:
-    """Exercises _execute_many_prefect_task via loop vectorization."""
+    """Exercises _execute_many_prefect_task via sequential dispatch."""
 
     def test_returns_empirical_distribution(self, normal_dist):
         wf = WorkflowFunction(
             func=add_one,
             workflow_kind="task",
-            vectorize="loop",
+            dispatch="sequential",
             n_broadcast_samples=30,
             seed=0,
         )
@@ -85,7 +87,7 @@ class TestPrefectTaskLoop:
         wf = WorkflowFunction(
             func=add_one,
             workflow_kind="task",
-            vectorize="loop",
+            dispatch="sequential",
             n_broadcast_samples=200,
             seed=1,
         )
@@ -99,7 +101,7 @@ class TestPrefectTaskLoop:
         wf = WorkflowFunction(
             func=sum_xy,
             workflow_kind="task",
-            vectorize="loop",
+            dispatch="sequential",
             n_broadcast_samples=30,
             seed=2,
         )
@@ -110,17 +112,17 @@ class TestPrefectTaskLoop:
 
 
 # ---------------------------------------------------------------------------
-# workflow_kind="flow" with loop vectorization
+# workflow_kind="flow" with sequential dispatch
 # ---------------------------------------------------------------------------
 
 class TestPrefectFlowLoop:
-    """Exercises _execute_many_prefect_flow via loop vectorization."""
+    """Exercises _execute_many_prefect_flow via sequential dispatch."""
 
     def test_returns_empirical_distribution(self, normal_dist):
         wf = WorkflowFunction(
             func=double_it,
             workflow_kind="flow",
-            vectorize="loop",
+            dispatch="sequential",
             n_broadcast_samples=25,
             seed=10,
         )
@@ -132,7 +134,7 @@ class TestPrefectFlowLoop:
         wf = WorkflowFunction(
             func=double_it,
             workflow_kind="flow",
-            vectorize="loop",
+            dispatch="sequential",
             n_broadcast_samples=200,
             seed=11,
         )
@@ -144,7 +146,7 @@ class TestPrefectFlowLoop:
 
 
 # ---------------------------------------------------------------------------
-# workflow_kind="task" with JAX vectorization
+# workflow_kind="task" with JAX dispatch
 # ---------------------------------------------------------------------------
 
 class TestPrefectTaskJax:
@@ -154,7 +156,7 @@ class TestPrefectTaskJax:
         wf = WorkflowFunction(
             func=add_one,
             workflow_kind="task",
-            vectorize="jax",
+            dispatch="jax",
             n_broadcast_samples=30,
             seed=20,
         )
@@ -166,7 +168,7 @@ class TestPrefectTaskJax:
         wf = WorkflowFunction(
             func=add_one,
             workflow_kind="task",
-            vectorize="jax",
+            dispatch="jax",
             n_broadcast_samples=200,
             seed=21,
         )
@@ -177,7 +179,7 @@ class TestPrefectTaskJax:
 
 
 # ---------------------------------------------------------------------------
-# workflow_kind="flow" with JAX vectorization
+# workflow_kind="flow" with JAX dispatch
 # ---------------------------------------------------------------------------
 
 class TestPrefectFlowJax:
@@ -187,7 +189,7 @@ class TestPrefectFlowJax:
         wf = WorkflowFunction(
             func=double_it,
             workflow_kind="flow",
-            vectorize="jax",
+            dispatch="jax",
             n_broadcast_samples=25,
             seed=30,
         )
@@ -199,7 +201,7 @@ class TestPrefectFlowJax:
         wf = WorkflowFunction(
             func=double_it,
             workflow_kind="flow",
-            vectorize="jax",
+            dispatch="jax",
             n_broadcast_samples=200,
             seed=31,
         )
@@ -220,7 +222,7 @@ class TestPrefectProvenance:
         wf = WorkflowFunction(
             func=add_one,
             workflow_kind="task",
-            vectorize="loop",
+            dispatch="sequential",
             n_broadcast_samples=20,
             seed=40,
         )
@@ -234,7 +236,7 @@ class TestPrefectProvenance:
         wf = WorkflowFunction(
             func=add_one,
             workflow_kind="flow",
-            vectorize="loop",
+            dispatch="sequential",
             n_broadcast_samples=20,
             seed=41,
         )
@@ -246,7 +248,7 @@ class TestPrefectProvenance:
         wf = WorkflowFunction(
             func=add_one,
             workflow_kind=None,
-            vectorize="loop",
+            dispatch="sequential",
             n_broadcast_samples=20,
             seed=42,
         )
@@ -266,7 +268,7 @@ class TestPrefectNonBroadcast:
         wf = WorkflowFunction(
             func=add_one,
             workflow_kind="task",
-            vectorize="loop",
+            dispatch="sequential",
             seed=50,
         )
         # Pass concrete value, not a distribution — no broadcasting
@@ -277,7 +279,7 @@ class TestPrefectNonBroadcast:
         wf = WorkflowFunction(
             func=double_it,
             workflow_kind="flow",
-            vectorize="loop",
+            dispatch="sequential",
             seed=51,
         )
         result = wf(x=jnp.array(3.0))
@@ -299,7 +301,7 @@ class TestPrefectImportGuard:
         wf = WorkflowFunction(
             func=add_one,
             workflow_kind="task",
-            vectorize="loop",
+            dispatch="sequential",
             n_broadcast_samples=10,
             seed=60,
         )
@@ -315,7 +317,7 @@ class TestPrefectImportGuard:
         wf = WorkflowFunction(
             func=add_one,
             workflow_kind="flow",
-            vectorize="loop",
+            dispatch="sequential",
             n_broadcast_samples=10,
             seed=61,
         )
@@ -331,7 +333,7 @@ class TestPrefectImportGuard:
         wf = WorkflowFunction(
             func=add_one,
             workflow_kind="task",
-            vectorize="jax",
+            dispatch="jax",
             n_broadcast_samples=10,
             seed=62,
         )

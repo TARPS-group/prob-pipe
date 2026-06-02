@@ -2,14 +2,15 @@
 
 The four regimes (no broadcast, distribution-only, RecordArray-only,
 nested) cover the parity matrix in the issue: 4 inner-return types
-(scalar, ndarray, Record/NumericRecord, Distribution) × 2 broadcast
+(scalar, ndarray, Record/NumericRecord, Distribution) x 2 broadcast
 types (Distribution, RecordArray) = 8 core cases plus edge cases.
 
 Provenance tests confirm every broadcast output carries a source node
 pointing back to its input RecordArray / Distribution parents.
 """
 
-import jax
+from __future__ import annotations
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -19,13 +20,11 @@ from probpipe import (
     Normal,
     NumericRecord,
     NumericRecordArray,
-    ProductDistribution,
     Record,
     RecordArray,
     workflow_function,
 )
 from probpipe.core._distribution_base import Distribution
-
 
 # ---------------------------------------------------------------------------
 # Detection: _find_broadcast_args splits args into (dist, ra) groups
@@ -48,7 +47,7 @@ class TestRecordArrayDetection:
 
     def test_recordarray_hint_skips_broadcast(self):
         """When the hint is ``RecordArray``, the batched value flows
-        through as-is — the function expects the batch."""
+        through as-is - the function expects the batch."""
 
         @workflow_function
         def f(ra: NumericRecordArray):
@@ -58,7 +57,7 @@ class TestRecordArrayDetection:
             [NumericRecord(x=float(i)) for i in range(4)]
         )
         out = f(ra=ra)
-        # Single inner call — output is the unwrapped float result.
+        # Single inner call - output is the unwrapped float result.
         assert float(out) == 6.0
 
     def test_scalar_batch_shape_passes_through(self):
@@ -73,7 +72,7 @@ class TestRecordArrayDetection:
         tpl = RecordTemplate(x=())
         scalar_ra = NumericRecordArray({"x": jnp.asarray(7.0)},
                                        batch_shape=(), template=tpl)
-        # No broadcasting — one call with the batch_shape=() RecordArray
+        # No broadcasting - one call with the batch_shape=() RecordArray
         # passed through.
         out = f(p=scalar_ra)
         assert float(out) == 7.0
@@ -99,7 +98,7 @@ class TestRecordArrayDetection:
 
 
 # ---------------------------------------------------------------------------
-# Pure sweep (RecordArray-only) — stacked outputs, no marginalisation
+# Pure sweep (RecordArray-only) - stacked outputs, no marginalisation
 # ---------------------------------------------------------------------------
 
 
@@ -171,13 +170,13 @@ class TestPureSweepParityMatrix:
 
 
 # ---------------------------------------------------------------------------
-# Distribution-only (smoke check — refactor didn't break anything)
+# Distribution-only (smoke check - refactor didn't break anything)
 # ---------------------------------------------------------------------------
 
 
 class TestDistributionOnlyPath:
     def test_scalar_output_still_marginal(self):
-        @workflow_function(n_broadcast_samples=50, vectorize="loop")
+        @workflow_function(n_broadcast_samples=50, dispatch="sequential")
         def f(x: float) -> float:
             return x * 2
 
@@ -190,7 +189,7 @@ class TestDistributionOnlyPath:
 
 
 # ---------------------------------------------------------------------------
-# Nested (RecordArray + Distribution) — per-row marginal, stacked
+# Nested (RecordArray + Distribution) - per-row marginal, stacked
 # ---------------------------------------------------------------------------
 
 
@@ -207,7 +206,7 @@ class TestNestedSweepPlusDistribution:
         )
 
     def test_scalar_inner_gives_distribution_array(self, sweep):
-        @workflow_function(n_broadcast_samples=50, vectorize="loop")
+        @workflow_function(n_broadcast_samples=50, dispatch="sequential")
         def f(p: NumericRecord, noise: float) -> float:
             return p["bias"] + noise
 
@@ -220,7 +219,7 @@ class TestNestedSweepPlusDistribution:
         np.testing.assert_allclose(means, [0.0, 1.0, 2.0], atol=0.2)
 
     def test_record_inner_gives_distribution_array(self, sweep):
-        @workflow_function(n_broadcast_samples=30, vectorize="loop")
+        @workflow_function(n_broadcast_samples=30, dispatch="sequential")
         def f(p: NumericRecord, noise: float) -> NumericRecord:
             return NumericRecord(x=p["bias"] + noise, y=p["bias"] - noise)
 
@@ -229,7 +228,7 @@ class TestNestedSweepPlusDistribution:
         assert out.batch_shape == (3,)
 
     def test_distribution_inner_gives_distribution_array(self, sweep):
-        @workflow_function(n_broadcast_samples=20, vectorize="loop")
+        @workflow_function(n_broadcast_samples=20, dispatch="sequential")
         def f(p: NumericRecord, noise: float) -> Distribution:
             return Normal(loc=p["bias"] + noise, scale=1.0, name="out")
 
@@ -239,20 +238,20 @@ class TestNestedSweepPlusDistribution:
 
 
 # ---------------------------------------------------------------------------
-# Vectorisation — vmap path vs loop path agree on pure-sweep outputs
+# Dispatch - vmap path vs sequential path agree on pure-sweep outputs
 # ---------------------------------------------------------------------------
 
 
-class TestVectorization:
-    """The JAX-vmap and Python-loop execution paths should produce the
+class TestDispatch:
+    """The JAX-vmap and sequential execution paths should produce the
     same stacked output (modulo numerical noise) when both are feasible."""
 
-    def test_vmap_and_loop_agree_on_scalar_output(self):
-        @workflow_function(vectorize="loop")
+    def test_vmap_and_sequential_agree_on_scalar_output(self):
+        @workflow_function(dispatch="sequential")
         def f_loop(p: NumericRecord) -> float:
             return p["r"] * p["k"]
 
-        @workflow_function(vectorize="jax")
+        @workflow_function(dispatch="jax")
         def f_jax(p: NumericRecord) -> float:
             return p["r"] * p["k"]
 
@@ -263,9 +262,24 @@ class TestVectorization:
         out_jax = f_jax(p=sweep)
         np.testing.assert_allclose(out_loop["f_loop"], out_jax["f_jax"])
 
+    def test_explicit_jax_rejects_unsupported_sweep_shape(self):
+        @workflow_function(dispatch="jax")
+        def f(a: NumericRecord, b: NumericRecord) -> float:
+            return a["x"] + b["y"]
+
+        a = NumericRecordArray.stack(
+            [NumericRecord(x=float(i)) for i in range(3)]
+        )
+        b = NumericRecordArray.stack(
+            [NumericRecord(y=float(i)) for i in range(5)]
+        )
+
+        with pytest.raises(ValueError, match="single plain RecordArray sweep"):
+            f(a=a, b=b)
+
 
 # ---------------------------------------------------------------------------
-# Provenance — outputs carry a source pointing back to inputs
+# Provenance - outputs carry a source pointing back to inputs
 # ---------------------------------------------------------------------------
 
 
@@ -287,7 +301,7 @@ class TestProvenanceChain:
         assert out.source.metadata["func"] == "f"
 
     def test_nested_provenance_includes_both(self):
-        @workflow_function(n_broadcast_samples=10, vectorize="loop")
+        @workflow_function(n_broadcast_samples=10, dispatch="sequential")
         def f(p: NumericRecord, noise: float) -> float:
             return p["x"] + noise
 
@@ -386,7 +400,7 @@ class TestMultiDimensionalBatch:
         """Nested regime: each sweep cell marginalises over the MC
         draws; output is a DistributionArray matching the sweep's
         batch_shape."""
-        @workflow_function(n_broadcast_samples=10, vectorize="loop")
+        @workflow_function(n_broadcast_samples=10, dispatch="sequential")
         def f(p: NumericRecord, noise: float) -> float:
             return p["r"] * p["k"] + noise
 
@@ -395,7 +409,7 @@ class TestMultiDimensionalBatch:
         assert out.batch_shape == (3, 2)
 
     def test_3d_sweep(self):
-        """3-D sweep works too — the row-major flattening is general."""
+        """3-D sweep works too - the row-major flattening is general."""
         from probpipe.core.record import RecordTemplate
 
         shape = (2, 3, 4)
@@ -419,7 +433,7 @@ class TestMultiDimensionalBatch:
 class TestAutoWrapFieldName:
     def test_scalar_return_uses_function_name_as_field(self):
         """Scalar returns are auto-wrapped into a ``NumericRecordArray``
-        with a single field named after the ``@workflow_function`` — so
+        with a single field named after the ``@workflow_function`` - so
         the field name reflects which function produced the value rather
         than a fixed sentinel."""
 

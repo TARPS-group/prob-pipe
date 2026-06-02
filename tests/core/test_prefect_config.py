@@ -11,6 +11,8 @@ Exercises:
 - PROBPIPE_WORKFLOW_KIND environment-variable override
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import types
@@ -18,13 +20,12 @@ import types
 import pytest
 
 from probpipe.core.config import (
-    WorkflowKind,
-    PrefectConfig,
-    prefect_config,
-    _auto_detect_task_runner,
     _WORKFLOW_KIND_ENV_VAR,
+    PrefectConfig,
+    WorkflowKind,
+    _auto_detect_task_runner,
+    prefect_config,
 )
-
 
 # ---------------------------------------------------------------------------
 # WorkflowKind enum
@@ -214,7 +215,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = WorkflowFunction(func=noop, vectorize="loop", seed=0)
+        wf = WorkflowFunction(func=noop, dispatch="sequential", seed=0)
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
     def test_explicit_task_overrides_global(self):
@@ -227,7 +228,7 @@ class TestEffectiveWorkflowKind:
             return x
 
         wf = WorkflowFunction(
-            func=noop, workflow_kind=WorkflowKind.TASK, vectorize="loop", seed=0,
+            func=noop, workflow_kind=WorkflowKind.TASK, dispatch="sequential", seed=0,
         )
         import probpipe.core.node as node_mod
         if node_mod.task is not None:
@@ -243,7 +244,7 @@ class TestEffectiveWorkflowKind:
             return x
 
         wf = WorkflowFunction(
-            func=noop, workflow_kind=WorkflowKind.OFF, vectorize="loop", seed=0,
+            func=noop, workflow_kind=WorkflowKind.OFF, dispatch="sequential", seed=0,
         )
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
@@ -259,7 +260,7 @@ class TestEffectiveWorkflowKind:
             return x
 
         wf = WorkflowFunction(
-            func=noop, workflow_kind=WorkflowKind.TASK, vectorize="loop", seed=0,
+            func=noop, workflow_kind=WorkflowKind.TASK, dispatch="sequential", seed=0,
         )
         with pytest.warns(UserWarning, match="Prefect is not installed"):
             kind = wf.effective_workflow_kind
@@ -278,7 +279,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = WorkflowFunction(func=noop, vectorize="loop", seed=0)
+        wf = WorkflowFunction(func=noop, dispatch="sequential", seed=0)
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
     def test_global_flow_applies_to_default_instance(self):
@@ -290,7 +291,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = WorkflowFunction(func=noop, vectorize="loop", seed=0)
+        wf = WorkflowFunction(func=noop, dispatch="sequential", seed=0)
         import probpipe.core.node as node_mod
         if node_mod.task is not None:
             assert wf.effective_workflow_kind is WorkflowKind.FLOW
@@ -302,7 +303,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = WorkflowFunction(func=noop, vectorize="loop", seed=0)
+        wf = WorkflowFunction(func=noop, dispatch="sequential", seed=0)
         prefect_config.workflow_kind = WorkflowKind.OFF
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
@@ -325,7 +326,7 @@ class TestLegacyConversion:
         def noop(x):
             return x
 
-        wf = WorkflowFunction(func=noop, workflow_kind="task", vectorize="loop", seed=0)
+        wf = WorkflowFunction(func=noop, workflow_kind="task", dispatch="sequential", seed=0)
         assert wf._workflow_kind_raw is WorkflowKind.TASK
 
     def test_string_flow_converts(self):
@@ -334,7 +335,7 @@ class TestLegacyConversion:
         def noop(x):
             return x
 
-        wf = WorkflowFunction(func=noop, workflow_kind="flow", vectorize="loop", seed=0)
+        wf = WorkflowFunction(func=noop, workflow_kind="flow", dispatch="sequential", seed=0)
         assert wf._workflow_kind_raw is WorkflowKind.FLOW
 
     def test_none_converts_to_off(self):
@@ -343,7 +344,7 @@ class TestLegacyConversion:
         def noop(x):
             return x
 
-        wf = WorkflowFunction(func=noop, workflow_kind=None, vectorize="loop", seed=0)
+        wf = WorkflowFunction(func=noop, workflow_kind=None, dispatch="sequential", seed=0)
         assert wf._workflow_kind_raw is WorkflowKind.OFF
 
     def test_invalid_string_raises(self):
@@ -353,7 +354,7 @@ class TestLegacyConversion:
             return x
 
         with pytest.raises(ValueError):
-            WorkflowFunction(func=noop, workflow_kind="banana", vectorize="loop", seed=0)
+            WorkflowFunction(func=noop, workflow_kind="banana", dispatch="sequential", seed=0)
 
 
 # ---------------------------------------------------------------------------
