@@ -19,7 +19,11 @@ from probpipe.inference import (
     inference_method_registry,
     rwmh,
 )
-from probpipe.inference._blackjax_rwmh import BlackJAXRWMHMethod
+from probpipe.inference._blackjax_rwmh import (
+    BlackJAXRWMHMethod,
+    _production_sigma,
+    _rgg_scale,
+)
 from probpipe.modeling._likelihood import Likelihood
 
 # Suppress an unrelated TFP/JAX deprecation that fires during random-key
@@ -46,6 +50,54 @@ class TestRegistration:
         """The hand-rolled-RWMH alias ``tfp_rwmh`` no longer exists."""
         names = inference_method_registry.list_methods()
         assert "tfp_rwmh" not in names
+
+
+# ---------------------------------------------------------------------------
+# RGG scaling — the unit-level math behind the adaptive proposal
+# ---------------------------------------------------------------------------
+
+
+class TestProductionSigma:
+    """``_production_sigma`` produces ``chol(Σ̂) · 2.38 / √d`` (the
+    Roberts-Gelman-Gilks optimal-scaling proposal Cholesky)."""
+
+    def test_matches_chol_times_rgg_scale(self):
+        # A non-trivial PD covariance with off-diagonal structure.
+        cov = jnp.array([[4.0, 1.0], [1.0, 2.0]])
+        d = 2
+        sigma = _production_sigma(cov, d)
+        # Reference: jitter is negligible relative to the matrix scale,
+        # so chol(cov) · 2.38/√d to floating tolerance.
+        expected = np.linalg.cholesky(np.asarray(cov)) * (2.38 / np.sqrt(d))
+        np.testing.assert_allclose(np.asarray(sigma), expected, atol=1e-5)
+
+    def test_proposal_covariance_is_rgg_scaled(self):
+        """The *covariance* L Lᵀ of the proposal equals (2.38²/d)·Σ̂ —
+        the RGG asymptotic optimum, since ``sigma`` is the Cholesky
+        factor (not the covariance)."""
+        cov = jnp.array([[4.0, 1.0], [1.0, 2.0]])
+        d = 2
+        sigma = np.asarray(_production_sigma(cov, d))
+        proposal_cov = sigma @ sigma.T
+        expected = (2.38 ** 2 / d) * np.asarray(cov)
+        np.testing.assert_allclose(proposal_cov, expected, atol=1e-4)
+
+    def test_rgg_scale_value(self):
+        assert _rgg_scale(1) == pytest.approx(2.38)
+        assert _rgg_scale(4) == pytest.approx(2.38 / 2.0)
+
+    def test_jitter_is_scale_relative(self):
+        """A large-variance target still gets a Cholesky close to the
+        un-jittered factor — the scale-relative jitter doesn't dominate
+        (an absolute 1e-8 jitter would be negligible here too, but a
+        tiny-variance target is where scale-relative matters)."""
+        # Tiny-variance covariance: absolute 1e-8 jitter would be ~comparable
+        # to the signal; scale-relative jitter stays proportionate.
+        cov = jnp.eye(2) * 1e-6
+        sigma = np.asarray(_production_sigma(cov, 2))
+        expected = np.linalg.cholesky(np.asarray(cov)) * (2.38 / np.sqrt(2))
+        # Within 0.1% — jitter is 1e-8 * scale, far below the signal.
+        np.testing.assert_allclose(sigma, expected, rtol=1e-3)
 
 
 # ---------------------------------------------------------------------------

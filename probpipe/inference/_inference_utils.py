@@ -45,6 +45,7 @@ from ..custom_types import Array, ArrayLike
 
 __all__ = [
     "as_prng_key",
+    "build_likelihood_flat",
     "build_mcmc_datatree",
     "build_target_log_prob",
     "build_target_log_prob_flat",
@@ -292,6 +293,46 @@ def build_target_log_prob_flat(
     # Bare array-shaped target: ``target_record`` already accepts a
     # flat array and no template is available to lift the chain.
     return target_record, flat_init, None
+
+
+def build_likelihood_flat(
+    prior: Distribution,
+    likelihood: Any,
+    data: ArrayLike | Record | None,
+) -> Callable[[Array], Array]:
+    """Build a flat-vector ``loglikelihood_fn(theta_flat)`` from a prior +
+    likelihood + data.
+
+    Unlike :func:`build_target_log_prob_flat` (which builds the *joint*
+    prior + likelihood density), this returns the *likelihood alone* as
+    a function of a flat parameter vector. Elliptical slice sampling
+    folds the Gaussian prior into the proposal mechanism, so it needs
+    the likelihood by itself.
+
+    Two cases:
+
+    - **Record-shaped prior** (any ``SimpleModel`` prior): the flat
+      vector unflattens through the prior's
+      :meth:`~probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.unflatten_sample`
+      so the likelihood sees structured ``Record``-shaped params.
+    - **Bare-array prior**: the likelihood already accepts a flat
+      vector, so it is called directly.
+    """
+    flat_view = getattr(prior, "as_flat_distribution", None)
+    record_template = getattr(prior, "record_template", None)
+    if flat_view is not None and record_template is not None:
+        flat_prior = flat_view()
+
+        def loglikelihood_fn(theta_flat: Array) -> Array:
+            params = flat_prior.unflatten_sample(theta_flat)
+            return likelihood.log_likelihood(params=params, data=data)
+
+        return loglikelihood_fn
+
+    def loglikelihood_fn(theta_flat: Array) -> Array:
+        return likelihood.log_likelihood(params=theta_flat, data=data)
+
+    return loglikelihood_fn
 
 
 # ---------------------------------------------------------------------------

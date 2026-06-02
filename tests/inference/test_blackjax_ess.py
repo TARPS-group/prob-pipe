@@ -203,6 +203,53 @@ class TestFeasibilityCheck:
         assert info.feasible
 
 
+class _NonTraceableGaussianLik(Likelihood):
+    """Gaussian-shaped likelihood whose body is *not* JAX-traceable.
+
+    The ``np.asarray(...)`` + Python ``float`` coercion forces a
+    concrete value, so ``jax.make_jaxpr`` can't trace it — standing in
+    for a BridgeStan / scipy / external-simulator likelihood.
+    """
+
+    def log_likelihood(self, params, data):
+        mu = params["mu"] if hasattr(params, "fields") else params
+        resid = np.asarray(data) - np.asarray(mu)
+        return float(-0.5 * np.sum(resid ** 2))
+
+
+class TestDeclinesToRWMH:
+    """When ESS declines, auto-dispatch must fall through to RWMH.
+
+    ESS (priority 75) outranks RWMH (55), but ESS requires a
+    JAX-traceable likelihood. With a Gaussian prior + non-traceable
+    likelihood, the gradient methods (NUTS/HMC) also decline, so the
+    highest-priority *feasible* method is ``blackjax_rwmh`` (which has
+    an eager Python-loop fallback for exactly this case).
+    """
+
+    def _model(self):
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="mu")
+        return SimpleModel(prior, _NonTraceableGaussianLik(), name="m")
+
+    def test_ess_check_infeasible_on_non_traceable_likelihood(self):
+        model = self._model()
+        info = BlackJAXESSMethod().check(model, np.zeros((5, 2)))
+        assert not info.feasible
+        assert "traceable" in info.description.lower()
+
+    def test_auto_dispatch_lands_on_rwmh(self):
+        from probpipe import condition_on
+
+        model = self._model()
+        # No method= → registry auto-selects. ESS (75) declines
+        # (non-traceable), NUTS/HMC (gradient) decline, so RWMH (55) wins.
+        posterior = condition_on(
+            model, np.zeros((5, 2)),
+            num_results=50, num_warmup=20, random_seed=0,
+        )
+        assert posterior.algorithm == "blackjax_rwmh"
+
+
 # ---------------------------------------------------------------------------
 # Posterior recovery on conjugate targets
 # ---------------------------------------------------------------------------

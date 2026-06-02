@@ -158,7 +158,7 @@ class TestInferenceMethodRegistry:
             simple_model, data, method="blackjax_rwmh",
             num_results=50, num_warmup=20, random_seed=0,
         )
-        assert posterior.algorithm == "rwmh"
+        assert posterior.algorithm == "blackjax_rwmh"
 
     def test_condition_on_default(self, simple_model, data):
         """Default condition_on should work through the registry."""

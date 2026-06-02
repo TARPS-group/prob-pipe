@@ -284,7 +284,7 @@ def make_posterior(
     parents : tuple of Distribution
         Parent distributions for provenance tracking.
     algorithm : str
-        Inference algorithm name (e.g. ``"tfp_nuts"``, ``"rwmh"``).
+        Inference algorithm name (e.g. ``"tfp_nuts"``, ``"blackjax_rwmh"``).
     auxiliary : DataTree or None
         Pre-built auxiliary DataTree (diagnostics, sample stats, warmup).
         Inference methods are responsible for building this.

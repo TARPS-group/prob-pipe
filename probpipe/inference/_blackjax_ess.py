@@ -36,10 +36,10 @@ import numpy as np
 
 from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
-from ..core.node import workflow_function
 from ..custom_types import Array, ArrayLike
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (
+    build_likelihood_flat,
     build_mcmc_datatree,
     extract_record_template,
     get_init_state,
@@ -172,11 +172,10 @@ def _run_ess_chains(
 
 
 # ---------------------------------------------------------------------------
-# Workflow function
+# Inference entry point
 # ---------------------------------------------------------------------------
 
 
-@workflow_function
 def elliptical_slice(
     model: Distribution,
     data: ArrayLike,
@@ -234,20 +233,8 @@ def elliptical_slice(
     init_state = get_init_state(model, init, random_seed=random_seed)
 
     # ESS consumes the log-likelihood alone — the prior is folded into
-    # the proposal mechanism via the ellipse construction. The flat
-    # parameter vector unflattens through the prior's record template
-    # so the likelihood sees the structured ``Record``-shaped params.
-    flat_view = getattr(prior, "as_flat_distribution", None)
-    if flat_view is not None and prior.record_template is not None:
-        flat_prior = flat_view()
-
-        def loglikelihood_fn(theta_flat: Array) -> Array:
-            params = flat_prior.unflatten_sample(theta_flat)
-            return likelihood.log_likelihood(params=params, data=data)
-    else:
-        # Bare-array prior — likelihood already accepts a flat vector.
-        def loglikelihood_fn(theta_flat: Array) -> Array:
-            return likelihood.log_likelihood(params=theta_flat, data=data)
+    # the proposal mechanism via the ellipse construction.
+    loglikelihood_fn = build_likelihood_flat(prior, likelihood, data)
 
     chains, warmups, sample_stats = _run_ess_chains(
         loglikelihood_fn, init_state, prior_mean, prior_cov,
@@ -324,18 +311,7 @@ class BlackJAXESSMethod(InferenceMethod):
         try:
             likelihood = dist._likelihood
             flat_init = jnp.asarray(gp[0])
-            flat_view = getattr(prior, "as_flat_distribution", None)
-            if flat_view is not None and prior.record_template is not None:
-                fp = flat_view()
-
-                def loglikelihood_fn(theta_flat):
-                    params = fp.unflatten_sample(theta_flat)
-                    return likelihood.log_likelihood(params=params, data=observed)
-            else:
-                def loglikelihood_fn(theta_flat):
-                    return likelihood.log_likelihood(
-                        params=theta_flat, data=observed,
-                    )
+            loglikelihood_fn = build_likelihood_flat(prior, likelihood, observed)
             if not is_jax_traceable(loglikelihood_fn, flat_init):
                 return MethodInfo(
                     feasible=False, method_name=self.name,
@@ -348,7 +324,7 @@ class BlackJAXESSMethod(InferenceMethod):
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
-        return elliptical_slice._func(
+        return elliptical_slice(
             dist, observed,
             num_results=kwargs.get("num_results", 1000),
             num_warmup=kwargs.get("num_warmup", 500),

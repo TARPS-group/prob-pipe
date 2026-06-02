@@ -344,7 +344,7 @@ class TestRWMH:
         assert result.num_draws == 100
         assert result.num_chains == 1
         assert result.event_shape == (2,)
-        assert result.algorithm == "rwmh"
+        assert result.algorithm == "blackjax_rwmh"
 
     def test_inference_data_produced(self):
         """RWMH produces auxiliary DataTree with posterior group."""
@@ -402,7 +402,7 @@ class TestRWMH:
             random_seed=42,
         )
         assert result.source is not None
-        assert result.source.operation == "rwmh"
+        assert result.source.operation == "blackjax_rwmh"
 
     def test_with_log_prob_fn_normal_normal_conjugate(self):
         """RWMH posterior must recover the analytical Normal-Normal conjugate.
@@ -446,8 +446,11 @@ class TestRWMH:
             )
         draws = np.asarray(raw_draws).reshape(-1, 2)
         # MC standard error: posterior_sd / sqrt(effective_n).
-        # RWMH on this 2D target with step_size=0.3 has heavy autocorrelation,
-        # so effective_n << 8000. Assume n_eff ~ 300 conservatively.
+        # ``adapt=True`` (the default) fits the proposal covariance from
+        # warmup, so ``step_size=0.3`` is ignored for sampling and mixing
+        # is better than a fixed-step chain would give. Assume n_eff ~ 300
+        # conservatively — the tolerance is looser than the true effective
+        # sample size warrants, which keeps the test robust.
         n_eff = 300
         mc_se_mean = 4.0 * np.sqrt(analytical_var / n_eff)
         np.testing.assert_allclose(draws.mean(0), analytical_mean, atol=mc_se_mean)

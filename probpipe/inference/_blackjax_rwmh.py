@@ -22,6 +22,7 @@ The ``adapt=False`` path uses ``sigma = step_size * I`` throughout.
 from __future__ import annotations
 
 import logging
+import warnings
 from collections.abc import Callable
 from typing import Any
 
@@ -34,7 +35,6 @@ from blackjax.adaptation.mass_matrix import welford_algorithm
 
 from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
-from ..core.node import workflow_function
 from ..core.protocols import SupportsUnnormalizedLogProb
 from ..custom_types import Array, ArrayLike
 from ._approximate_distribution import ApproximateDistribution, make_posterior
@@ -76,12 +76,22 @@ def _production_sigma(cov: Array, d: int) -> Array:
 
     Returns a lower-triangular ``(d, d)`` matrix usable as the BlackJAX
     ``normal_random_walk`` ``sigma`` argument. Adds a small diagonal
-    jitter (``1e-8 * I``) before factorising so the call is safe inside
-    ``lax.scan`` / ``vmap`` — under tracing, ``cholesky`` of a
-    non-positive-definite matrix yields silent NaNs rather than raising,
-    so a Python-level ``try/except`` cannot protect the fast path.
+    jitter before factorising so the call is safe inside ``lax.scan`` /
+    ``vmap`` — under tracing, ``cholesky`` of a non-positive-definite
+    matrix yields silent NaNs rather than raising, so a Python-level
+    ``try/except`` cannot protect the fast path.
+
+    The jitter is *scale-relative* (``1e-8 * mean(diag(cov))``): an
+    absolute ``1e-8`` would be a no-op for large-variance targets (e.g.
+    a coordinate with variance ~1e3) and could be too large for tiny-
+    variance ones. Scaling by the mean diagonal keeps the regularisation
+    proportionate to the magnitudes actually present in ``cov``.
     """
-    jitter = jnp.eye(d, dtype=cov.dtype) * 1e-8
+    # ``mean(diag(cov))`` == ``trace(cov) / d``. Floor at a tiny absolute
+    # value so an all-zero covariance (degenerate single-sample warmup)
+    # still factorises to a (vanishing but finite) lower-triangular form.
+    scale = jnp.maximum(jnp.trace(cov) / d, 1e-12)
+    jitter = jnp.eye(d, dtype=cov.dtype) * (1e-8 * scale)
     chol = jsl.cholesky(cov + jitter, lower=True)
     return chol * _rgg_scale(d)
 
@@ -428,11 +438,10 @@ def _run_blackjax_rwmh(
 
 
 # ---------------------------------------------------------------------------
-# Workflow function
+# Inference entry point
 # ---------------------------------------------------------------------------
 
 
-@workflow_function
 def rwmh(
     dist: SupportsUnnormalizedLogProb,
     data: ArrayLike | None = None,
@@ -514,6 +523,19 @@ def rwmh(
             "(does not implement SupportsUnnormalizedLogProb)"
         )
 
+    # Adaptation needs warmup samples to fit the proposal covariance.
+    # With ``num_warmup == 0`` there is nothing to adapt on, so the
+    # proposal silently falls back to ``step_size * I`` — warn rather
+    # than degrade quietly, since the caller asked for adaptation.
+    if adapt and num_warmup == 0 and proposal_cov is None:
+        warnings.warn(
+            "rwmh(adapt=True) with num_warmup=0 cannot fit a proposal "
+            "covariance; falling back to sigma = step_size * I. Pass "
+            "num_warmup > 0 to adapt, or adapt=False to silence this "
+            "warning.",
+            stacklevel=2,
+        )
+
     if log_prob_fn is not None and data is not None:
         def target_log_prob(params):
             return dist._unnormalized_log_prob(params) + log_prob_fn(params, data)
@@ -542,7 +564,7 @@ def rwmh(
     auxiliary = build_mcmc_datatree(chains, sample_stats, warmup_chains=warmups)
     record_template = extract_record_template(dist)
     return make_posterior(
-        chains, parents=(dist,), algorithm="rwmh",
+        chains, parents=(dist,), algorithm="blackjax_rwmh",
         auxiliary=auxiliary, record_template=record_template,
         num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         step_size=step_size, accept_rate=accept_rate, adapt=adapt,
@@ -601,7 +623,7 @@ class BlackJAXRWMHMethod(InferenceMethod):
         if init is None:
             init = get_init_state(dist, None, random_seed=random_seed)
 
-        return rwmh._func(
+        return rwmh(
             prior, observed,
             log_prob_fn=log_prob_fn,
             num_results=kwargs.get("num_results", 1000),
