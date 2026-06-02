@@ -236,11 +236,12 @@ class MinibatchedDistribution(
     def dataset_size(self) -> int:
         """Total number of observations in the dataset (``len(data)``).
 
-        Named ``dataset_size`` rather than ``.n`` to avoid colliding
-        with STYLE_GUIDE §1.9's "how many items does this hold?"
-        semantics — :class:`MinibatchedDistribution` is not a
-        finite-sample distribution; it doesn't hold a finite
-        collection of realisations.
+        Named ``dataset_size`` rather than ``num_atoms`` (the
+        finite-sample-size convention used by
+        :class:`EmpiricalDistribution` and siblings) because
+        :class:`MinibatchedDistribution` is not a finite-sample
+        distribution; it doesn't hold a finite collection of
+        realisations.
         """
         return self._n
 

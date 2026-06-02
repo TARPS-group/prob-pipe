@@ -93,7 +93,7 @@ class TestProbPipeConverter:
         n = Normal(loc=0.0, scale=1.0, name="x")
         emp = converter_registry.convert(n, RecordEmpiricalDistribution, num_samples=100)
         assert isinstance(emp, RecordEmpiricalDistribution)
-        assert emp.n == 100
+        assert emp.num_atoms == 100
 
     def test_provenance_attached(self):
         g = Gamma(concentration=3.0, rate=1.0, name="prior")
@@ -206,7 +206,7 @@ class TestAllCrossFamilyConversions:
         w = Wishart(df=5.0, scale_tril=jnp.eye(2), name="w")
         result = converter_registry.convert(w, RecordEmpiricalDistribution, num_samples=50)
         assert isinstance(result, RecordEmpiricalDistribution)
-        assert result.n == 50
+        assert result.num_atoms == 50
 
     def test_vonmisesfisher_same_class(self):
         vmf = VonMisesFisher(mean_direction=jnp.array([1.0, 0.0, 0.0]),
@@ -284,7 +284,7 @@ class TestTFPConverter:
         tfp_dist = tfd.VonMises(loc=0.0, concentration=1.0)
         result = converter_registry.convert(tfp_dist, RecordEmpiricalDistribution, num_samples=50)
         assert isinstance(result, RecordEmpiricalDistribution)
-        assert result.n == 50
+        assert result.num_atoms == 50
 
     def test_probpipe_mvn_to_tfp(self):
         loc = jnp.array([1.0, 2.0])
@@ -466,7 +466,7 @@ class TestScipyConverter:
         # Use a scipy distribution we haven't mapped (e.g., chi2)
         result = converter_registry.convert(ss.chi2(df=3), RecordEmpiricalDistribution, num_samples=100)
         assert isinstance(result, RecordEmpiricalDistribution)
-        assert result.n == 100
+        assert result.num_atoms == 100
 
     def test_scipy_check_unknown_type(self):
         import scipy.stats as ss
@@ -554,7 +554,7 @@ class TestFromDistributionDelegation:
         n = Normal(loc=0.0, scale=1.0, name="x")
         emp = from_distribution(n, RecordEmpiricalDistribution, num_samples=50)
         assert isinstance(emp, RecordEmpiricalDistribution)
-        assert emp.n == 50
+        assert emp.num_atoms == 50
 
     def test_empirical_to_empirical_returns_source(self):
         samples = jnp.array([[1.0], [2.0], [3.0]])
@@ -693,7 +693,7 @@ class TestProtocolConversion:
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
         # KDE got the flat (n, 2) matrix.
-        assert result.n == n
+        assert result.num_atoms == n
         # log_prob over a single 2-vector returns a scalar.
         lp = result._log_prob(jnp.array([0.0, 0.0]))
         assert lp.shape == ()
@@ -804,13 +804,13 @@ class TestKDEDistribution:
         kde = KDEDistribution(samples)
         assert kde.event_shape == ()
         assert not hasattr(kde, "batch_shape")
-        assert kde.n == 100
+        assert kde.num_atoms == 100
 
     def test_multivariate_construction(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
         kde = KDEDistribution(samples)
         assert kde.event_shape == (3,)
-        assert kde.n == 100
+        assert kde.num_atoms == 100
 
     def test_log_prob_finite(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
@@ -856,7 +856,7 @@ class TestKDEDistribution:
         weights = jnp.ones(100)
         weights = weights.at[0].set(10.0)
         kde = KDEDistribution(samples, weights=weights)
-        assert kde.n == 100
+        assert kde.num_atoms == 100
         lp = kde._log_prob(0.0)
         assert jnp.isfinite(lp)
 
@@ -881,7 +881,7 @@ class TestKDEDistribution:
         emp = RecordEmpiricalDistribution(samples, name="x")
         kde = converter_registry.convert(emp, KDEDistribution)
         assert isinstance(kde, KDEDistribution)
-        assert kde.n == 200
+        assert kde.num_atoms == 200
         np.testing.assert_allclose(
             float(kde._mean()), float(emp._mean()), atol=0.01,
         )
@@ -891,7 +891,7 @@ class TestKDEDistribution:
         n = Normal(loc=0.0, scale=1.0, name="x")
         kde = converter_registry.convert(n, KDEDistribution, num_samples=500)
         assert isinstance(kde, KDEDistribution)
-        assert kde.n == 500
+        assert kde.num_atoms == 500
 
     def test_cov_scalar(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
@@ -910,4 +910,4 @@ class TestKDEDistribution:
         kde = KDEDistribution(samples, name="test_kde")
         r = repr(kde)
         assert "KDEDistribution" in r
-        assert "n=50" in r
+        assert "num_atoms=50" in r

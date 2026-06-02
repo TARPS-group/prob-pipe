@@ -12,10 +12,10 @@ from probpipe.modeling import GenerativeLikelihood, ProbabilisticModel
 class GaussianSimulator:
     """Simple Gaussian simulator for testing."""
 
-    def generate_data(self, params, n_samples, *, key=None):
+    def generate_data(self, params, num_observations, *, key=None):
         if key is None:
             key = jax.random.PRNGKey(0)
-        return params + jax.random.normal(key, shape=(n_samples,) + params.shape)
+        return params + jax.random.normal(key, shape=(num_observations,) + params.shape)
 
 
 @pytest.fixture

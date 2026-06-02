@@ -1248,18 +1248,21 @@ class WorkflowFunction(Node):
         sample_args: dict[str, Distribution] = {}
         for name in broadcast_args:
             dist = values[name]
-            if isinstance(dist, EmpiricalDistribution) and dist.n <= n_broadcast_samples:
+            if (
+                isinstance(dist, EmpiricalDistribution)
+                and dist.num_atoms <= n_broadcast_samples
+            ):
                 candidates.append((name, dist))
             else:
                 sample_args[name] = dist
-        candidates.sort(key=lambda pair: pair[1].n)
+        candidates.sort(key=lambda pair: pair[1].num_atoms)
 
         empirical_args: dict[str, EmpiricalDistribution] = {}
         product_size = 1
         for name, dist in candidates:
-            if product_size * dist.n <= n_broadcast_samples:
+            if product_size * dist.num_atoms <= n_broadcast_samples:
                 empirical_args[name] = dist
-                product_size *= dist.n
+                product_size *= dist.num_atoms
             else:
                 # Too large to enumerate — sample from it instead.
                 sample_args[name] = dist
@@ -1445,7 +1448,7 @@ class WorkflowFunction(Node):
 
         all_broadcast_args = emp_names + sample_arg_names
 
-        for combo in cartesian_product(*(range(d.n) for d in emp_dists)):
+        for combo in cartesian_product(*(range(d.num_atoms) for d in emp_dists)):
             # Compute empirical product weight
             emp_weight = 1.0
             for name, dist, i in zip(emp_names, emp_dists, combo):

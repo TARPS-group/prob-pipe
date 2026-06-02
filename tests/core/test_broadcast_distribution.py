@@ -45,7 +45,7 @@ class TestBroadcastDistributionConstruction:
             weights=None,
             broadcast_args=["x"],
         )
-        assert bd.n == n
+        assert bd.num_atoms == n
         assert bd.fields == ("x", "_output")
 
     def test_with_weights(self):
@@ -256,7 +256,7 @@ class TestArrayMarginal:
     def test_properties(self):
         samples = jnp.ones((10, 3))
         m = _RecordMarginal(samples, None)
-        assert m.n == 10
+        assert m.num_atoms == 10
         assert m.event_shape == (3,)
         assert m.dim == 3
 
@@ -322,7 +322,7 @@ class TestMixtureMarginal:
     def test_properties(self):
         components = [Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=5.0, scale=1.0, name="y")]
         m = _make_mixture_marginal(components, None)
-        assert m.n == 2
+        assert m.num_atoms == 2
         assert m.components is components
 
 
@@ -340,7 +340,7 @@ class TestListMarginal:
     def test_properties(self):
         items = ["hello", "world"]
         m = _ListMarginal(items, None)
-        assert m.n == 2
+        assert m.num_atoms == 2
         assert m.items == items
 
 
@@ -482,7 +482,7 @@ class TestArrayMarginalAdditional:
         m = _RecordMarginal(jnp.ones((10, 3)), None)
         r = repr(m)
         assert "MarginalizedBroadcastDistribution" in r
-        assert "n=10" in r
+        assert "num_atoms=10" in r
         # Auto-wrapped as a single-field Record keyed by the default
         # marginal name.
         assert "fields=(marginal)" in r
@@ -596,7 +596,7 @@ class TestMixtureMarginalAdditional:
         r = repr(m)
         assert "MarginalizedBroadcastDistribution" in r
         assert "mixture" in r
-        assert "n=2" in r
+        assert "num_atoms=2" in r
 
     def test_sample_scalar(self, key):
         """Single draw (sample_shape=()) returns scalar."""
@@ -622,7 +622,7 @@ class TestListMarginalAdditional:
         r = repr(m)
         assert "MarginalizedBroadcastDistribution" in r
         assert "list" in r
-        assert "n=2" in r
+        assert "num_atoms=2" in r
 
     def test_weights_uniform(self):
         m = _ListMarginal(["a", "b"], None)

@@ -102,7 +102,7 @@ DISTRIBUTIONS = [
     ),
     pytest.param(
         lambda: BootstrapReplicateDistribution(
-            Normal(loc=0.0, scale=1.0, name="x"), n=5,
+            Normal(loc=0.0, scale=1.0, name="x"), replicate_size=5,
         ),
         id="BootstrapReplicateDistribution_sampleable",
     ),

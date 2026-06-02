@@ -617,10 +617,10 @@ class TestSimpleGenerativeModelSampling:
         from probpipe.modeling import GenerativeLikelihood
 
         class _L:
-            def generate_data(self, params, n_samples, *, key):
+            def generate_data(self, params, num_observations, *, key):
                 import jax
                 k = key if key is not None else jax.random.PRNGKey(0)
-                return jax.random.normal(k, (n_samples, 3))
+                return jax.random.normal(k, (num_observations, 3))
 
         model = SimpleGenerativeModel(
             prior=Normal(loc=0.0, scale=1.0, name="theta"),

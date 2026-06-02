@@ -320,4 +320,4 @@ class TestFromDistribution:
     def test_empirical_from_normal(self, key):
         n = Normal(loc=0.0, scale=1.0, name="n")
         ed = from_distribution(n, RecordEmpiricalDistribution, key=key, num_samples=100)
-        assert ed.n == 100
+        assert ed.num_atoms == 100

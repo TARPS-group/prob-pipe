@@ -229,7 +229,7 @@ def with_resampling(
         out_dist = step_fn(dist, inp)
 
         if isinstance(out_dist, EmpiricalDistribution):
-            n = out_dist.n
+            n = out_dist.num_atoms
             ess = float(out_dist.effective_sample_size)
             ess_ratio = ess / n
 

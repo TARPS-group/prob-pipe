@@ -38,7 +38,7 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsSampl
     prior : SupportsSampling[P]
         Prior distribution over model parameters.  Must support sampling.
     likelihood : GenerativeLikelihood[P, D]
-        Must have a ``generate_data(params, n_samples, *, key)`` method.
+        Must have a ``generate_data(params, num_observations, *, key)`` method.
     name : str or None
         Model name for provenance.
     """

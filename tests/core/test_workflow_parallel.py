@@ -401,7 +401,7 @@ class TestWorkflowFunctionCompatibility:
 
         result = wf(x=Normal(loc=0.0, scale=1.0, name="x"))
 
-        assert result.n == 8
+        assert result.num_atoms == 8
 
     def test_private_wrappers_return_empty_before_building_request(self, monkeypatch):
         wf = WorkflowFunction(func=add_one, workflow_kind=WorkflowKind.TASK, dispatch="sequential")

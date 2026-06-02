@@ -153,7 +153,13 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
     @property
     def num_draws(self) -> int:
-        """Number of draws per chain (assumes equal-length chains)."""
+        """Number of draws *per chain* (assumes equal-length chains).
+
+        Distinct from ``num_atoms`` (inherited from
+        :class:`~probpipe.core._empirical.RecordEmpiricalDistribution`),
+        which counts the total atoms across all chains —
+        ``num_atoms == num_chains * num_draws``.
+        """
         return self._chains[0].shape[0]
 
     @property

@@ -195,7 +195,7 @@ class TestMultivariateNormal:
 class TestEmpiricalDistribution:
     def test_uniform_weights(self, simple_samples):
         ed = RecordEmpiricalDistribution(simple_samples, name="x")
-        assert ed.n == 3
+        assert ed.num_atoms == 3
         assert ed.dim == 1
         np.testing.assert_allclose(ed.weights, jnp.ones(3) / 3)
 
@@ -296,7 +296,7 @@ class TestEmpiricalDistribution:
         ed = from_distribution(
             gaussian, RecordEmpiricalDistribution, key=key, num_samples=50
         )
-        assert ed.n == 50
+        assert ed.num_atoms == 50
         assert ed.event_shape == gaussian.event_shape
         assert ed.source is not None
         assert ed.source.operation == "from_distribution"
@@ -311,7 +311,7 @@ class TestEmpiricalDistribution:
     def test_from_distribution_default_key(self, gaussian):
         """from_distribution should work without explicit key."""
         ed = from_distribution(gaussian, RecordEmpiricalDistribution, num_samples=10)
-        assert ed.n == 10
+        assert ed.num_atoms == 10
 
 
 class TestEmpiricalValidationMessages:
