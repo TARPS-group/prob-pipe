@@ -457,38 +457,33 @@ class WorkflowFunction(Node):
     ) -> _workflow_execution.WorkflowExecutionConfig:
         """Build resolved execution metadata for sequential call dispatch."""
         if mode is None:
-            kind = self.effective_workflow_kind
-            if kind is WorkflowKind.TASK:
-                mode = "prefect_task"
-            elif kind is WorkflowKind.FLOW:
-                mode = "prefect_flow"
-            elif self._dispatch == "thread":
-                mode = "thread"
-            else:
-                mode = "sequential"
+            match self.effective_workflow_kind:
+                case WorkflowKind.TASK:
+                    mode = "prefect_task"
+                case WorkflowKind.FLOW:
+                    mode = "prefect_flow"
+                case _ if self._dispatch == "thread":
+                    mode = "thread"
+                case _:
+                    mode = "sequential"
 
-        max_workers = None
-        if mode == "thread":
-            max_workers = self._max_workers
-        elif mode in ("prefect_task", "prefect_flow"):
-            if self._dispatch == "thread" or self._max_workers is not None:
-                warnings.warn(
-                    "dispatch='thread' and max_workers configure only local "
-                    "ThreadPoolExecutor dispatch; they do not control Prefect "
-                    "scheduling.",
-                    stacklevel=2,
-                )
+        is_prefect = mode in ("prefect_task", "prefect_flow")
 
-        prefect_task_runner = (
-            prefect_config.resolve_task_runner()
-            if mode in ("prefect_task", "prefect_flow")
-            else None
-        )
+        if is_prefect and (self._dispatch == "thread" or self._max_workers is not None):
+            warnings.warn(
+                "dispatch='thread' and max_workers configure only local "
+                "ThreadPoolExecutor dispatch; they do not control Prefect "
+                "scheduling.",
+                stacklevel=2,
+            )
+
         return _workflow_execution.WorkflowExecutionConfig(
             mode=mode,
-            max_workers=max_workers,
+            max_workers=self._max_workers if mode == "thread" else None,
             name=self._name,
-            prefect_task_runner=prefect_task_runner,
+            prefect_task_runner=(
+                prefect_config.resolve_task_runner() if is_prefect else None
+            ),
         )
 
     def _make_execution_request(
