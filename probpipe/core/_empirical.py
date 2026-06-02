@@ -706,8 +706,9 @@ class BootstrapReplicateDistribution[T](
 ):
     """N-fold product of an empirical distribution (bootstrap resampling).
 
-    Each draw from this distribution is a *bootstrapped dataset* — ``n``
-    observations drawn i.i.d. (with replacement) from the source.
+    Each draw from this distribution is a *bootstrapped dataset* —
+    ``num_observations`` observations drawn i.i.d. (with replacement)
+    from the source.
 
     **Source dispatch:**
 
@@ -716,9 +717,10 @@ class BootstrapReplicateDistribution[T](
       :class:`RecordBootstrapReplicateDistribution`. The numeric array
       path requires ``name=`` (single-field auto-wrap).
     - Any :class:`SupportsSampling` source (e.g. ``Normal``, a custom
-      ``Distribution``) → stays in the generic base. ``n`` is mandatory
-      because no canonical observation count exists; each replicate is
-      ``n`` i.i.d. draws from ``source._sample``.
+      ``Distribution``) → stays in the generic base.
+      ``num_observations`` is mandatory because no canonical observation
+      count exists; each replicate is ``num_observations`` i.i.d. draws
+      from ``source._sample``.
     - Any other sequence → generic base, equally weighted, with
       object-array storage.
 
@@ -726,7 +728,7 @@ class BootstrapReplicateDistribution[T](
     ----------
     source : Record | EmpiricalDistribution | SupportsSampling | sequence
         Data to bootstrap from.
-    n : int or None
+    num_observations : int or None
         Number of observations per bootstrap dataset. Required when
         ``source`` is a non-array ``SupportsSampling`` (no canonical
         count); defaults to the source's observation count otherwise.
