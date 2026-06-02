@@ -27,12 +27,12 @@ from probpipe import (
 from probpipe.core._distribution_base import Distribution
 
 # ---------------------------------------------------------------------------
-# Detection: _find_broadcast_args splits args into (dist, ra) groups
+# Detection: BroadcastPlan splits args into distribution and array groups
 # ---------------------------------------------------------------------------
 
 
 class TestRecordArrayDetection:
-    """``_find_broadcast_args`` classifies inputs and validates shapes."""
+    """Broadcast planning classifies inputs and validates shapes."""
 
     def test_recordarray_triggers_broadcast(self):
         @workflow_function

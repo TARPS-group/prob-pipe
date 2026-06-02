@@ -24,10 +24,14 @@ try:
 except ImportError:
     Digraph = None
 
-from .._utils import prod
-from ..converters import converter_registry
 from ..custom_types import Array, PRNGKey
-from . import _workflow_call, _workflow_execution, _workflow_result
+from . import (
+    _workflow_call,
+    _workflow_distribution_normalization,
+    _workflow_execution,
+    _workflow_plan,
+    _workflow_result,
+)
 from ._broadcast_distributions import _make_stack
 from ._distribution_array import DistributionArray, _make_distribution_array
 from ._record_array import RecordArray, _RecordArrayView
@@ -36,36 +40,8 @@ from .distribution import (
     BroadcastDistribution,
     Distribution,
     EmpiricalDistribution,
-    NumericRecordDistribution,
-)
-from .protocols import (
-    SupportsConditioning,
-    SupportsCovariance,
-    SupportsExpectation,
-    SupportsLogProb,
-    SupportsMean,
-    SupportsRandomLogProb,
-    SupportsRandomUnnormalizedLogProb,
-    SupportsSampling,
-    SupportsUnnormalizedLogProb,
-    SupportsVariance,
 )
 from .provenance import Provenance
-
-# Protocol types that indicate a parameter expects a distribution object.
-# Used by _find_broadcast_args to avoid broadcasting over such parameters.
-_DISTRIBUTION_PROTOCOLS: tuple[type, ...] = (
-    SupportsExpectation,
-    SupportsSampling,
-    SupportsUnnormalizedLogProb,
-    SupportsLogProb,
-    SupportsMean,
-    SupportsVariance,
-    SupportsCovariance,
-    SupportsRandomLogProb,
-    SupportsRandomUnnormalizedLogProb,
-    SupportsConditioning,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -102,24 +78,6 @@ _WorkflowFunctionDispatch: TypeAlias = Literal[
 
 class InputFrozenError(Exception):
     pass
-
-
-def _group_by_parent(
-    values: dict[str, Any],
-    names: list[str],
-) -> dict[int, list[str]]:
-    """Group arg names by the ``id()`` of their source parent.
-
-    Views (``_RecordArrayView`` / ``_RecordDistributionView``) expose
-    ``.parent`` and group with other views sharing it; plain container
-    args are each their own parent. First-occurrence order preserved.
-    """
-    groups: dict[int, list[str]] = {}
-    for name in names:
-        value = values[name]
-        parent = getattr(value, "parent", value)
-        groups.setdefault(id(parent), []).append(name)
-    return groups
 
 
 def workflow_method(func: Callable):
@@ -520,15 +478,16 @@ class WorkflowFunction(Node):
         if call.overrides.seed is not None:
             self._key = jax.random.PRNGKey(call.overrides.seed)
 
-        values = call.values
-        values = self._convert_distributions(values)
-
-        dist_args, ra_args = self._find_broadcast_args(values)
-        if dist_args or ra_args:
+        values = _workflow_distribution_normalization.normalize_distribution_values(
+            values=call.values, hints=self._hints,
+        )
+        broadcast_plan = _workflow_plan.build_broadcast_plan(
+            values=values, hints=self._hints,
+        )
+        if broadcast_plan.regime != "none":
             return self._broadcast(
                 values,
-                dist_args,
-                ra_args,
+                broadcast_plan,
                 call.overrides.n_broadcast_samples,
                 call.overrides.include_inputs,
             )
@@ -570,171 +529,6 @@ class WorkflowFunction(Node):
             dependency_type=Node,
             workflow_name=self._name,
         )
-
-    def _convert_distributions(self, values: dict[str, Any]) -> dict[str, Any]:
-        """Convert distribution-valued args based on type hints.
-
-        Handles two conversion cases and one skip:
-
-        1. **Concrete type hints** – if the hint is a ``Distribution``
-           subclass and the value is a recognised distribution that is
-           not already an instance, convert via the registry.
-        2. **Protocol type hints** – if the hint is a
-           ``@runtime_checkable`` protocol (e.g., ``SupportsLogProb``)
-           and the value is a ``Distribution`` that does not satisfy the
-           protocol, convert via protocol-based resolution.
-        3. **``DistributionArray`` skip** – ``Array[Distribution]``
-           values are handled by the sweep path in
-           ``_find_broadcast_args`` (cell-by-cell); they never go
-           through the scalar-distribution conversion.
-        """
-        out = dict(values)
-
-        for name, value in values.items():
-            expected = self._hints.get(name)
-            # DistributionArray is ``Array[Distribution]`` — handled by
-            # the sweep path, not the scalar-distribution conversion.
-            # A 0-d DA (``batch_shape == ()``) has zero axes to sweep
-            # over, so the sweep path would skip it and the op would
-            # see a raw ``DistributionArray`` in a scalar-Distribution
-            # slot. Unwrap it here unless the hint explicitly asks for
-            # a DA (or ``Any``), so the cell flows through dispatch as
-            # any scalar Distribution would — the natural extension of
-            # the sweep convention "no batch cells to iterate → one
-            # call with the cell". Size-1 DAs (``batch_shape == (1,)``)
-            # are *not* collapsed here: their sweep is well-defined
-            # (one cell → ``batch_shape=(1,)`` output), and treating
-            # them as scalars would silently change the result shape
-            # of ``mean(da)`` / ``sample(da)`` for any deliberately
-            # one-element batch.
-            if isinstance(value, DistributionArray):
-                if value.batch_shape == ():
-                    try:
-                        wants_da = (
-                            isinstance(expected, type)
-                            and issubclass(expected, DistributionArray)
-                        )
-                    except TypeError:
-                        wants_da = False
-                    if not wants_da and expected is not Any:
-                        out[name] = value._flat_component(0)
-                continue
-            if expected is None:
-                continue
-
-            try:
-                is_dist_subclass = isinstance(expected, type) and issubclass(
-                    expected, Distribution
-                )
-            except TypeError:
-                is_dist_subclass = False
-
-            if (
-                is_dist_subclass
-                and converter_registry.is_distribution_type(value)
-                and not isinstance(value, expected)
-            ):
-                out[name] = converter_registry.convert(value, expected)
-            elif (
-                not is_dist_subclass
-                and expected in _DISTRIBUTION_PROTOCOLS
-                and isinstance(value, Distribution)
-                and not isinstance(value, expected)
-            ):
-                try:
-                    out[name] = converter_registry.convert(value, expected)
-                except (TypeError, AttributeError):
-                    pass  # Let the impl function's own check raise
-
-        return out
-
-    def _find_broadcast_args(
-        self, values: dict[str, Any]
-    ) -> tuple[list[str], list[str]]:
-        """Classify argument values into distribution-broadcast and
-        array-broadcast groups.
-
-        Returns
-        -------
-        (dist_args, ra_args) : tuple of list
-            - ``dist_args``: scalar Distribution args passed to a slot
-              whose type hint is *not* a Distribution; sampled from
-              and Monte-Carlo-marginalised.
-            - ``ra_args``: array-valued args (``RecordArray`` or
-              ``DistributionArray`` with nonempty ``batch_shape``)
-              passed to a slot whose type hint is *not* that same array
-              type. Multiple ``ra_args`` combine by the **product
-              rule**: one call per cell of the Cartesian product across
-              all array inputs' batch shapes.
-
-        A ``DistributionArray`` is treated as ``Array[Distribution]``:
-        always a sweep arg (not marginalised), even when the hint is a
-        distribution protocol like ``SupportsSampling``. Each cell's
-        component becomes the scalar Distribution seen by the inner
-        call.
-
-        The two groups are disjoint — a value is either an array or a
-        (scalar) Distribution or neither. Both groups firing on the
-        same call triggers the nested regime in ``_broadcast``: outer
-        stack over the array product, inner marginalise over the
-        Distribution MC draws.
-        """
-        dist_broadcast: list[str] = []
-        ra_broadcast: list[str] = []
-        for name, value in values.items():
-            expected = self._hints.get(name)
-
-            # --- Array-valued branch (RecordArray + DistributionArray) ---
-            is_record_array = isinstance(value, RecordArray)
-            is_dist_array = isinstance(value, DistributionArray)
-            if (is_record_array or is_dist_array) and len(value.batch_shape) > 0:
-                # Hint matches the batched type exactly → caller wants
-                # the batched object as-is.
-                # ``typing.Any`` → caller opted out of broadcasting.
-                # Anything else (scalar Record / Distribution / protocol
-                # / no hint) → per-cell sweep.
-                try:
-                    is_same_array_hint = (
-                        isinstance(expected, type) and (
-                            (is_record_array and issubclass(expected, RecordArray))
-                            or (is_dist_array and issubclass(expected, DistributionArray))
-                        )
-                    )
-                except TypeError:
-                    is_same_array_hint = False
-                is_any_hint = expected is Any
-                if is_same_array_hint or is_any_hint:
-                    continue
-                ra_broadcast.append(name)
-                continue
-
-            # --- Scalar-Distribution branch -------------------------------
-            if not converter_registry.is_distribution_type(value):
-                continue
-            # Unwrap parameterized generics (e.g. Distribution[T]).
-            origin = getattr(expected, "__origin__", None)
-            expected_type = origin if isinstance(origin, type) else expected
-            try:
-                is_dist_hint = (
-                    expected_type is not None
-                    and isinstance(expected_type, type)
-                    and issubclass(expected_type, Distribution)
-                )
-            except TypeError:
-                is_dist_hint = False
-            if not is_dist_hint and expected in _DISTRIBUTION_PROTOCOLS:
-                is_dist_hint = True
-            if is_dist_hint:
-                continue
-            # Auto-convert external distribution types to ProbPipe
-            if not isinstance(value, Distribution):
-                values[name] = converter_registry.convert(
-                    value, NumericRecordDistribution,
-                )
-                value = values[name]
-            dist_broadcast.append(name)
-
-        return dist_broadcast, ra_broadcast
 
     def _get_key(self):
         """Split and advance the internal PRNG key."""
@@ -848,8 +642,7 @@ class WorkflowFunction(Node):
     def _broadcast(
         self,
         values: dict[str, Any],
-        dist_args: list[str],
-        ra_args: list[str],
+        broadcast_plan: _workflow_plan.BroadcastPlan,
         n_broadcast_samples: int,
         do_include_inputs: bool = False,
     ) -> Any:
@@ -877,6 +670,9 @@ class WorkflowFunction(Node):
         inputs are known via provenance). Calling with
         ``include_inputs=True`` and any ``ra_args`` raises.
         """
+        dist_args = list(broadcast_plan.dist_args)
+        ra_args = list(broadcast_plan.array_args)
+
         # ---- No RecordArray: delegate to the existing path -------------
         if not ra_args:
             return self._broadcast_distributions_only(
@@ -890,18 +686,9 @@ class WorkflowFunction(Node):
                 "provenance on the stacked output."
             )
 
-        # Group ``ra_args`` by parent identity. Views from the same
-        # ``RecordArray`` (e.g. ``Design.select_all()`` outputs) zip —
-        # they contribute a single axis block to the sweep. Plain
-        # ``RecordArray`` / ``DistributionArray`` args and views from
-        # different parents each form their own group and product
-        # across the sweep. Insertion order of first occurrence
-        # preserves axis ordering in the output.
-        ra_groups = self._group_ra_args_by_parent(values, ra_args)
-        sweep_batch_shape = tuple(
-            ax for _, bshape, _ in ra_groups for ax in bshape
-        )
-        n_total = prod(sweep_batch_shape) if sweep_batch_shape else 1
+        ra_groups = broadcast_plan.array_groups
+        sweep_batch_shape = broadcast_plan.sweep_batch_shape
+        n_total = broadcast_plan.n_sweep
 
         # ---- Pure sweep (no Distribution args) -------------------------
         if not dist_args:
@@ -932,7 +719,7 @@ class WorkflowFunction(Node):
         # multi-d batch_shape.
         per_row_marginals: list[Distribution] = []
         for i in range(n_total):
-            row_values = self._slice_ra_args(values, ra_args, i, ra_groups)
+            row_values = self._slice_ra_args(values, i, ra_groups)
             inner = self._broadcast_distributions_only(
                 row_values, dist_args, n_broadcast_samples,
                 do_include_inputs=True,
@@ -961,55 +748,26 @@ class WorkflowFunction(Node):
 
     # ----- Helpers for the array-broadcast path ---------------------------
 
-    def _group_ra_args_by_parent(
-        self,
-        values: dict[str, Any],
-        ra_args: list[str],
-    ) -> list[tuple[list[str], tuple[int, ...], int]]:
-        """Group array-valued sweep args by parent identity.
-
-        Views (``_RecordArrayView``) from the same parent
-        ``RecordArray`` — e.g. the output dict of
-        ``Design.select_all()`` — belong to one group and iterate in
-        lockstep (zip). Plain ``RecordArray`` / ``DistributionArray``
-        args and views from distinct parents each form their own group
-        and product across the sweep.
-
-        Returns a list of tuples ``(arg_names, batch_shape, size)``
-        in first-occurrence order; each tuple is one axis block of the
-        sweep. ``size`` is ``prod(batch_shape)``.
-        """
-        groups: list[tuple[list[str], tuple[int, ...], int]] = []
-        for arg_names in _group_by_parent(values, ra_args).values():
-            # Sibling views share their parent's batch_shape by
-            # construction, so the first arg's batch_shape stands for
-            # the group.
-            bshape = tuple(values[arg_names[0]].batch_shape)
-            groups.append((arg_names, bshape, prod(bshape) if bshape else 1))
-        return groups
-
     def _slice_ra_args(
         self,
         values: dict[str, Any],
-        ra_args: list[str],
         i: int,
-        ra_groups: list[tuple[list[str], tuple[int, ...], int]],
+        ra_groups: tuple[_workflow_plan.ArrayBroadcastGroup, ...],
     ) -> dict[str, Any]:
         """Materialise the ``i``-th sweep cell under parent-grouped sweep.
 
-        ``ra_groups`` is the per-parent grouping from
-        :meth:`_group_ra_args_by_parent`. Each group's args share a flat
-        in-group index (zip); groups compose by row-major unravel of
-        the outer flat index ``i`` over the concatenated batch shapes.
+        Each group's args share a flat in-group index (zip); groups
+        compose by row-major unravel of the outer flat index ``i`` over
+        the concatenated batch shapes.
         """
         out = dict(values)
         rem = i
         # Highest-index group varies fastest (row-major over the
         # concatenated sweep shape).
-        for arg_names, _, size in reversed(ra_groups):
-            idx = rem % size
-            rem = rem // size
-            for name in arg_names:
+        for group in reversed(ra_groups):
+            idx = rem % group.size
+            rem = rem // group.size
+            for name in group.arg_names:
                 source = values[name]
                 if isinstance(source, DistributionArray):
                     out[name] = source._flat_component(idx)
@@ -1023,7 +781,7 @@ class WorkflowFunction(Node):
         ra_args: list[str],
         n_total: int,
         sweep_batch_shape: tuple[int, ...],
-        ra_groups: list[tuple[list[str], tuple[int, ...], int]],
+        ra_groups: tuple[_workflow_plan.ArrayBroadcastGroup, ...],
     ) -> Any:
         """Execute ``n_total`` inner calls, one per sweep cell in flat
         row-major order over the concatenated ``sweep_batch_shape``.
@@ -1084,7 +842,7 @@ class WorkflowFunction(Node):
 
         # Sequential path.
         per_row_values = [
-            self._slice_ra_args(values, ra_args, i, ra_groups)
+            self._slice_ra_args(values, i, ra_groups)
             for i in range(n_total)
         ]
         return self._execute_many(per_row_values)
@@ -1133,7 +891,7 @@ class WorkflowFunction(Node):
         """Distribution-only broadcast path (Monte Carlo marginalisation).
 
         Samples from each ``broadcast_args`` entry (all of which are
-        ``Distribution`` instances after ``_find_broadcast_args``),
+        ``Distribution`` instances after workflow normalization),
         calls the user's function once per sample, and wraps the n
         outputs as a single marginal distribution.
 
@@ -1257,7 +1015,9 @@ class WorkflowFunction(Node):
         even if the same object is passed under multiple names.
         """
         sampled: dict[str, Array] = {}
-        for arg_names in _group_by_parent(values, broadcast_args).values():
+        for arg_names in _workflow_plan.group_by_parent(
+            values=values, names=broadcast_args,
+        ).values():
             first = values[arg_names[0]]
             if not isinstance(first, _RecordDistributionView):
                 for arg_name in arg_names:

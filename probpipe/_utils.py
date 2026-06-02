@@ -1,13 +1,12 @@
-"""Shared utility functions for probpipe."""
+"""Shared utility functions for ProbPipe."""
 
 from __future__ import annotations
 
 import math
-
-import numpy as np
+from collections.abc import Iterable
 
 import jax
-import jax.numpy as jnp
+import numpy as np
 
 from .custom_types import PRNGKey
 
@@ -43,11 +42,10 @@ def _is_numeric_array(x: object) -> bool:
     return False
 
 
-def prod(shape: tuple[int, ...]) -> int:
-    """Product of a shape tuple, returning 1 for an empty tuple.
+def prod(values: Iterable[int]) -> int:
+    """Return the product of integer values.
 
-    This is a thin wrapper around :func:`math.prod` that treats the empty
-    tuple as having product 1, which is the correct convention for scalar
-    (0-dimensional) shapes throughout probpipe.
+    This is a compatibility wrapper around :func:`math.prod`; empty
+    iterables naturally return 1.
     """
-    return math.prod(shape) if shape else 1
+    return math.prod(values)
