@@ -242,6 +242,50 @@ class TestBlackJAXHmc:
         np.testing.assert_allclose(post_mean, 1.5, atol=0.05)
         np.testing.assert_allclose(post_var, 0.25, rtol=0.12)
 
+    def test_halton_steps_floored_at_one(self):
+        """``_halton_steps_fn`` never returns a 0-step trajectory.
+
+        BlackJAX's ``halton_trajectory_length`` spans ``[0, 2L-1]`` and
+        returns ``0`` for a handful of counter values (a no-op leapfrog).
+        The shared step-count helper floors at ``1``; checked over a wide
+        sweep of counter values that includes indices which map to ``0``
+        unfloored, so this deterministically exercises the clamp.
+        """
+        from probpipe.inference._blackjax_mcmc import _halton_steps_fn
+
+        steps_fn = _halton_steps_fn(10)
+        counts = np.asarray([int(steps_fn(jnp.asarray(i))) for i in range(5000)])
+        assert counts.min() >= 1
+        # Clamping the rare zeros leaves the mean essentially unchanged.
+        np.testing.assert_allclose(counts.mean(), 10, rtol=0.05)
+
+    def test_zero_warmup_runs_end_to_end(self):
+        """HMC with ``num_warmup=0`` re-inits the production ``dynamic_hmc``
+        from the fixed-``L`` ``HMCState`` position and runs.
+
+        The existing zero-warmup test targets NUTS; this pins the HMC
+        ``num_warmup == 0`` branch (no adapted step size / mass matrix —
+        the user-supplied ``step_size`` is used directly) against the
+        randomized-``L`` production kernel.
+        """
+        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
+        model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
+        posterior = condition_on(
+            model, jnp.asarray([1.0, 2.0, 3.0]), method="blackjax_hmc",
+            num_results=100, num_warmup=0, num_chains=1,
+            step_size=0.1, num_integration_steps=10, random_seed=0,
+        )
+        draws = np.asarray(posterior.draws()["mu"]).reshape(-1)
+        assert draws.shape[0] == 100
+        assert np.all(np.isfinite(draws))
+        # Trajectory length is still randomized (and floored) on the
+        # zero-warmup path.
+        steps = np.asarray(
+            posterior.inference_data["sample_stats"]["num_integration_steps"]
+        )
+        assert steps.min() >= 1
+        assert np.unique(steps).size >= 5
+
 
 class TestSampleStats:
     """The ``sample_stats`` auxiliary group is populated correctly.

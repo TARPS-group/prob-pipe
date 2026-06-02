@@ -88,8 +88,19 @@ def _next_random_arg(i: Array) -> Array:
 
 
 def _halton_steps_fn(num_integration_steps: int) -> Callable[[Array], Array]:
-    """Quasi-random leapfrog-step count with mean ``num_integration_steps``."""
-    return lambda i: halton_trajectory_length(i, num_integration_steps)
+    """Quasi-random leapfrog-step count with mean ``num_integration_steps``.
+
+    BlackJAX's ``halton_trajectory_length`` spans ``[0, 2L-1]`` and so
+    occasionally returns ``0`` (~0.1% of draws at ``L=10``). A zero-step
+    trajectory is a no-op leapfrog — the proposal equals the current
+    position and is always "accepted" — which wastes the draw and
+    inflates the acceptance rate. Floor at ``1`` so every iteration makes
+    at least one leapfrog step. The mean shift from clamping the rare
+    zeros is negligible (< 0.001 at ``L=10``); the floor is applied in
+    this one shared helper so warmup and production stay calibrated to
+    the identical step-count distribution.
+    """
+    return lambda i: jnp.maximum(halton_trajectory_length(i, num_integration_steps), 1)
 
 
 def _halton_warmup_algorithm(num_integration_steps: int) -> Any:
@@ -97,11 +108,15 @@ def _halton_warmup_algorithm(num_integration_steps: int) -> Any:
     with the same Halton trajectory length used at production.
 
     ``window_adaptation`` only touches ``algorithm.init(position,
-    logdensity_fn)`` and ``algorithm.build_kernel(integrator)`` (a module-
-    like interface), so a tiny namespace shim suffices. Tuning against the
-    randomized-``L`` kernel — rather than a fixed-``L`` stand-in — keeps
-    dual-averaging's acceptance target calibrated to the kernel that
-    actually runs, since acceptance is nonlinear in the trajectory length.
+    logdensity_fn, random_generator_arg)`` and
+    ``algorithm.build_kernel(integrator)`` (a module-like interface), so a
+    tiny namespace shim suffices. ``dynamic_hmc``'s ``init`` takes the
+    Halton-counter seed as a third argument; the shim defaults it to ``0``
+    so ``window_adaptation`` (which calls ``init`` with two positional
+    args) works unchanged. Tuning against the randomized-``L`` kernel —
+    rather than a fixed-``L`` stand-in — keeps dual-averaging's acceptance
+    target calibrated to the kernel that actually runs, since acceptance
+    is nonlinear in the trajectory length.
     """
     steps_fn = _halton_steps_fn(num_integration_steps)
 

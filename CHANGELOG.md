@@ -47,7 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Window adaptation tunes step size + mass matrix against the *same*
   randomized-`L` kernel, so dual-averaging's acceptance target is
   calibrated to the kernel that actually runs; `num_integration_steps`
-  is now the *mean*. NUTS is unaffected.
+  is now the *mean*. The drawn count is floored at 1 leapfrog step (the
+  Halton range includes 0, a no-op trajectory). NUTS is unaffected.
 - **Multi-chain BlackJAX MCMC dispatch picks `jax.pmap` when devices
   permit.** When `jax.local_device_count() >= num_chains` the per-chain
   runner is mapped with `pmap` (each chain on its own device,
