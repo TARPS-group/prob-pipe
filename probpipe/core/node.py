@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from itertools import product as cartesian_product
 from types import MappingProxyType
-from typing import Any, ClassVar, Literal, TypeAlias, get_args
+from typing import Any, ClassVar, Literal
 
 import jax
 import jax.numpy as jnp
@@ -31,10 +31,9 @@ from . import (
     _workflow_execution,
     _workflow_plan,
     _workflow_result,
+    _workflow_sweep,
 )
-from ._broadcast_distributions import _make_stack
-from ._distribution_array import DistributionArray, _make_distribution_array
-from ._record_array import RecordArray, _RecordArrayView
+from ._record_array import RecordArray
 from ._record_distribution import _RecordDistributionView
 from .distribution import (
     BroadcastDistribution,
@@ -61,17 +60,17 @@ _wrap_as_record = _workflow_result._wrap_as_record
 _coerce_output = _workflow_result._coerce_output
 
 __all__ = [
+    "AbstractModule",
     "InputFrozenError",
-    "workflow_method",
-    "abstract_workflow_method",
-    "workflow_function",
+    "Module",
     "Node",
     "WorkflowFunction",
-    "Module",
-    "AbstractModule",
+    "abstract_workflow_method",
+    "workflow_function",
+    "workflow_method",
 ]
 
-_WorkflowFunctionDispatch: TypeAlias = Literal[
+type _WorkflowFunctionDispatch = Literal[
     "auto", "jax", "sequential", "thread"
 ]
 
@@ -124,9 +123,9 @@ def workflow_function(_func=None, /, **kwargs):
     return decorator
 
 
-class Node(ABC):
+class Node(ABC):  # noqa: B024
     """
-    Base unit of the ProbPipe computational dependency graph. 
+    Base unit of the ProbPipe computational dependency graph.
 
     Keyword arguments are automatically split by type: values that are
     ``Node`` instances become *child nodes* (dependencies on other DAG
@@ -273,8 +272,11 @@ class WorkflowFunction(Node):
     """
 
     DEFAULT_N_BROADCAST_SAMPLES: int = 128
-    _VALID_DISPATCH_STRATEGIES: ClassVar[tuple[str, ...]] = get_args(
-        _WorkflowFunctionDispatch
+    _VALID_DISPATCH_STRATEGIES: ClassVar[tuple[str, ...]] = (
+        "auto",
+        "jax",
+        "sequential",
+        "thread",
     )
 
     def __init__(
@@ -405,7 +407,7 @@ class WorkflowFunction(Node):
         *,
         mode: _workflow_execution.WorkflowExecutionMode | None = None,
     ) -> _workflow_execution.WorkflowExecutionConfig:
-        """Build resolved execution metadata for sequential call dispatch."""
+        """Build resolved execution metadata for row-wise call dispatch."""
         if mode is None:
             match self.effective_workflow_kind:
                 case WorkflowKind.TASK:
@@ -646,239 +648,27 @@ class WorkflowFunction(Node):
         n_broadcast_samples: int,
         do_include_inputs: bool = False,
     ) -> Any:
-        """Dispatcher: route to the right broadcast regime (issue #130).
-
-        Three regimes:
-
-        - ``dist_args`` only — existing Monte Carlo marginalisation via
-          ``_broadcast_distributions_only``. Output: marginal
-          distribution (``_MixtureMarginal`` / ``_RecordMarginal`` / ...).
-        - ``ra_args`` only — pure parameter sweep. One inner call per
-          RecordArray row; no marginalisation. Output: stacked
-          aggregate (``NumericRecordArray`` / ``RecordArray`` /
-          ``DistributionArray``) via ``_make_stack``.
-        - **Both** — nested regime. Outer loop over ``ra_args[0]`` rows,
-          each iteration running an inner distribution-only broadcast
-          for ``dist_args``. Output always a ``DistributionArray`` of
-          per-row marginals (satisfies the
-          Record | RecordArray | Distribution output contract).
-
-        The ``include_inputs=True`` override still produces the
-        inner-path ``BroadcastDistribution`` when ``dist_args`` fire,
-        but it is **not** supported on the pure-sweep or nested paths
-        (the stack has no single joint distribution to return; the
-        inputs are known via provenance). Calling with
-        ``include_inputs=True`` and any ``ra_args`` raises.
-        """
+        """Dispatcher: route to distribution broadcast or sweep execution."""
         dist_args = list(broadcast_plan.dist_args)
         ra_args = list(broadcast_plan.array_args)
 
-        # ---- No RecordArray: delegate to the existing path -------------
         if not ra_args:
             return self._broadcast_distributions_only(
                 values, dist_args, n_broadcast_samples, do_include_inputs,
             )
 
-        if do_include_inputs:
-            raise NotImplementedError(
-                "include_inputs=True is not supported with RecordArray "
-                "broadcasting. The inputs are already available via "
-                "provenance on the stacked output."
-            )
-
-        ra_groups = broadcast_plan.array_groups
-        sweep_batch_shape = broadcast_plan.sweep_batch_shape
-        n_total = broadcast_plan.n_sweep
-
-        # ---- Pure sweep (no Distribution args) -------------------------
-        if not dist_args:
-            per_row = self._execute_sweep_rows(
-                values, ra_args, n_total, sweep_batch_shape, ra_groups,
-            )
-            aggregate = _make_stack(
-                per_row,
-                batch_shape=sweep_batch_shape,
-                name=self._name,
-                field_name=self._name,
-            )
-            provenance = self._make_sweep_provenance(
-                values, ra_args, dist_args, batch_shape=sweep_batch_shape, k=0,
-            )
-            return _coerce_output(
-                aggregate,
-                broadcast_mode=BROADCAST_STACK,
-                provenance=provenance,
-                field_name=self._name,
-            )
-
-        # ---- Nested (array + Distribution) -----------------------------
-        # Per sweep cell (in flat row-major order over the multi-d batch):
-        # run an inner distribution-only broadcast, marginalise over the
-        # k MC draws, collect the n_total per-cell marginals and stack
-        # them into a DistributionArray that presents the sweep's
-        # multi-d batch_shape.
-        per_row_marginals: list[Distribution] = []
-        for i in range(n_total):
-            row_values = self._slice_ra_args(values, i, ra_groups)
-            inner = self._broadcast_distributions_only(
-                row_values, dist_args, n_broadcast_samples,
-                do_include_inputs=True,
-            )
-            if isinstance(inner, BroadcastDistribution):
-                marginal = inner.marginalize()
-            else:
-                marginal = inner
-            per_row_marginals.append(marginal)
-
-        stacked = _make_distribution_array(
-            per_row_marginals,
-            batch_shape=sweep_batch_shape,
-            name=self._name or "sweep",
-        )
-        provenance = self._make_sweep_provenance(
-            values, ra_args, dist_args,
-            batch_shape=sweep_batch_shape, k=n_broadcast_samples,
-        )
-        return _coerce_output(
-            stacked,
-            broadcast_mode=BROADCAST_NESTED,
-            provenance=provenance,
-            field_name=self._name,
-        )
-
-    # ----- Helpers for the array-broadcast path ---------------------------
-
-    def _slice_ra_args(
-        self,
-        values: dict[str, Any],
-        i: int,
-        ra_groups: tuple[_workflow_plan.ArrayBroadcastGroup, ...],
-    ) -> dict[str, Any]:
-        """Materialise the ``i``-th sweep cell under parent-grouped sweep.
-
-        Each group's args share a flat in-group index (zip); groups
-        compose by row-major unravel of the outer flat index ``i`` over
-        the concatenated batch shapes.
-        """
-        out = dict(values)
-        rem = i
-        # Highest-index group varies fastest (row-major over the
-        # concatenated sweep shape).
-        for group in reversed(ra_groups):
-            idx = rem % group.size
-            rem = rem // group.size
-            for name in group.arg_names:
-                source = values[name]
-                if isinstance(source, DistributionArray):
-                    out[name] = source._flat_component(idx)
-                else:
-                    out[name] = source[idx]
-        return out
-
-    def _execute_sweep_rows(
-        self,
-        values: dict[str, Any],
-        ra_args: list[str],
-        n_total: int,
-        sweep_batch_shape: tuple[int, ...],
-        ra_groups: tuple[_workflow_plan.ArrayBroadcastGroup, ...],
-    ) -> Any:
-        """Execute ``n_total`` inner calls, one per sweep cell in flat
-        row-major order over the concatenated ``sweep_batch_shape``.
-
-        Returns a Python list of outputs (sequential path) or a stacked
-        pytree with leading axis ``n_total`` (vmap path). Either form
-        is a valid input for ``_make_stack``.
-        """
-        # The vmap path only handles the simple single-RecordArray
-        # case: one group, one RA arg, no DistributionArray, no views
-        # (views carry parent references that would confuse vmap's
-        # leading-axis flattening).
-        has_dist_array = any(
-            isinstance(values[name], DistributionArray) for name in ra_args
-        )
-        has_view = any(
-            isinstance(values[name], _RecordArrayView) for name in ra_args
-        )
-        jax_supported = not (
-            has_dist_array or has_view or len(ra_groups) > 1 or len(ra_args) > 1
-        )
-        if self._dispatch == "jax" and not jax_supported:
-            raise ValueError(
-                "dispatch='jax' supports only a single plain RecordArray sweep; "
-                "use dispatch='auto', 'sequential', or 'thread' for this path."
-            )
-
-        dispatch = self._resolve_dispatch(
-            values,
-            ra_args,
-            jax_supported=jax_supported,
-        )
-
-        if dispatch == "jax":
-            if self._dispatch == "jax":
-                self._require_jax_traceable(values, ra_args)
-            # Flatten the single RecordArray's batch axes to one leading
-            # dim so vmap maps over axis 0 uniformly regardless of the
-            # sweep's original batch_shape.
-            static = {k: v for k, v in values.items() if k not in ra_args}
-
-            def single_call(ra_slice_leaves):
-                kw = dict(static)
-                for name in ra_args:
-                    ra = values[name]
-                    kw[name] = ra._record_cls(ra_slice_leaves[name])
-                return self._func(**kw)
-
-            vmap_input = {}
-            for name in ra_args:
-                ra = values[name]
-                n_batch = len(ra.batch_shape)
-                vmap_input[name] = {
-                    f: ra[f].reshape((n_total,) + ra[f].shape[n_batch:])
-                    for f in ra.fields
-                }
-            return jax.vmap(single_call)(vmap_input)
-
-        # Sequential path.
-        per_row_values = [
-            self._slice_ra_args(values, i, ra_groups)
-            for i in range(n_total)
-        ]
-        return self._execute_many(per_row_values)
-
-    def _make_sweep_provenance(
-        self,
-        values: dict[str, Any],
-        ra_args: list[str],
-        dist_args: list[str],
-        *,
-        batch_shape: tuple[int, ...],
-        k: int,
-    ) -> Provenance:
-        """Build the Provenance node for a sweep output.
-
-        Parents are the RecordArray / Distribution inputs that drove
-        the broadcast. Metadata records the regime, the full sweep
-        ``batch_shape`` (for multi-d), and the MC count so downstream
-        tooling can report whether uncertainty was marginalised or
-        stacked.
-        """
-        regime = "nested" if dist_args else "stack"
-        parents = tuple(values[name] for name in ra_args) + tuple(
-            values[name] for name in dist_args
-            if isinstance(values[name], Distribution)
-        )
-        return Provenance(
-            operation=f"workflow.{regime}",
-            parents=parents,
-            metadata={
-                "func": self._name or self._func.__name__,
-                "batch_shape": tuple(batch_shape),
-                "k": k,
-                "ra_args": list(ra_args),
-                "dist_args": list(dist_args),
-            },
+        return _workflow_sweep.execute_sweep(
+            func=self._func,
+            values=values,
+            plan=broadcast_plan,
+            make_execution_config=self._make_execution_config,
+            requested_dispatch=self._dispatch,
+            resolve_dispatch=self._resolve_dispatch,
+            require_jax_traceable=self._require_jax_traceable,
+            distribution_broadcast=self._broadcast_distributions_only,
+            workflow_name=self._name,
+            n_broadcast_samples=n_broadcast_samples,
+            include_inputs=do_include_inputs,
         )
 
     def _broadcast_distributions_only(
@@ -1130,7 +920,7 @@ class WorkflowFunction(Node):
         for combo in cartesian_product(*(range(d.num_atoms) for d in emp_dists)):
             # Compute empirical product weight
             emp_weight = 1.0
-            for name, dist, i in zip(emp_names, emp_dists, combo):
+            for _name, dist, i in zip(emp_names, emp_dists, combo):
                 emp_weight *= float(dist.weights[i])
 
             for _ in range(reps_per_combo):
@@ -1371,7 +1161,7 @@ class Module(Node):
                     dot.edge(param_name, wf_name)
 
         return dot
-    
+
     def _validate_abstract_workflow_implementations(self) -> None:
         """
         Ensure that any abstract workflow interfaces in the MRO are implemented
@@ -1460,7 +1250,7 @@ class Module(Node):
                     f"Expected (abstract): {abs_sig}\n"
                     f"Got (impl):          {impl_sig}"
                 )
-            
+
 class AbstractModule(Module, ABC):
     """
     Base class for modules that declare workflow interfaces via @abstract_workflow_method.
