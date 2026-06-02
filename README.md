@@ -98,7 +98,7 @@ plt.xlabel('x'); plt.ylabel('P(y = 1 | x)'); plt.legend(fontsize=8)
 ## Key Features
 
 - **Protocol-based dispatch.** A distribution's capabilities are declared via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsMean`, ...). Operations like `condition_on` and `from_distribution` use these protocols to auto-select the best algorithm from a pluggable registry. Override with `method=` when you want control.
-- **Multiple backends.** The inference registry spans TFP (NUTS, HMC, RWMH), nutpie, CmdStan, PyMC (NUTS, ADVI), and simulation-based inference (SMC-ABC via sbijax). Swap backends without changing model code.
+- **Multiple backends.** The inference registry spans BlackJAX (NUTS by default; HMC, SGLD, SGHMC opt-in), nutpie / CmdStan / PyMC NUTS for `StanModel` / `PyMCModel` targets, gradient-free RWMH, TFP NUTS/HMC as opt-in alternates, PyMC ADVI, and simulation-based inference (SMC-ABC via sbijax). Swap backends without changing model code.
 - **Automatic distribution conversion.** A converter registry converts between distribution representations (e.g., MCMC samples to KDE) as needed, using protocol-based dispatch analogous to `condition_on`.
 - **JAX-native.** Distributions and workflow functions are compatible with JAX (`vmap`, `jit`, `grad`), with built-in support for TFP distributions.
 - **Provenance tracking.** Each distribution records how it was created (algorithm, parents, metadata), enabling full lineage tracing from any result back to its inputs.
@@ -114,7 +114,7 @@ cd prob-pipe
 pip install .
 ```
 
-Core dependencies: JAX and TensorFlow Probability. ProbPipe uses [tfp-nightly](https://pypi.org/project/tfp-nightly/), which is the [recommended approach](https://github.com/tensorflow/probability/issues/1994#issuecomment-3129033043) for TFP on JAX since stable TFP releases are tied to TensorFlow and often lag behind JAX.
+Core dependencies: JAX, [BlackJAX](https://blackjax-devs.github.io/blackjax/), and TensorFlow Probability. JAX provides arrays and autodiff; BlackJAX is the default backend for gradient MCMC (`condition_on(model, data)` auto-dispatches to `blackjax_nuts`); TFP supplies the distribution implementations the wrappers in `probpipe.Normal`, `probpipe.Gamma`, etc. delegate to. ProbPipe uses [tfp-nightly](https://pypi.org/project/tfp-nightly/), which is the [recommended approach](https://github.com/tensorflow/probability/issues/1994#issuecomment-3129033043) for TFP on JAX since stable TFP releases are tied to TensorFlow and often lag behind JAX.
 
 Optional extras:
 

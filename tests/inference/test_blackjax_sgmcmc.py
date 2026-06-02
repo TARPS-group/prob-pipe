@@ -68,17 +68,25 @@ class TestRegistry:
         assert "blackjax_sghmc" in inference_method_registry.list_methods()
 
     def test_priorities_below_full_batch(self):
-        """SGMCMC methods sit below full-batch gradient methods so they
-        only fire when explicitly requested."""
+        """SGLD sits below full-batch NUTS so it only fires when
+        explicitly requested; SGHMC is opt-in only.
+
+        SGLD is the auto-dispatchable SGMCMC method at priority 45 —
+        below ``blackjax_nuts`` (85) so a routine ``condition_on(...)``
+        doesn't accidentally pick a stochastic-gradient sampler. SGHMC
+        has the same ``check()`` as SGLD and is therefore structurally
+        unreachable in auto-dispatch; it's at the opt-in sentinel
+        ``priority=0`` and reachable only via
+        ``method="blackjax_sghmc"``.
+        """
         get = lambda n: inference_method_registry.get_method(n).priority
-        # SGLD/SGHMC below NUTS and HMC; SGHMC below SGLD.
-        assert get("blackjax_sgld") < get("tfp_nuts")
-        assert get("blackjax_sgld") < get("tfp_hmc")
-        assert get("blackjax_sghmc") < get("tfp_nuts")
-        assert get("blackjax_sghmc") < get("blackjax_sgld")
-        # And both above zero (so an opt-in `method=...` reaches them).
+        # SGLD below the auto-dispatch winner (BlackJAX NUTS) but
+        # positive so a `method="blackjax_sgld"` request still reaches
+        # it through the priority walk.
+        assert get("blackjax_sgld") < get("blackjax_nuts")
         assert get("blackjax_sgld") > 0
-        assert get("blackjax_sghmc") > 0
+        # SGHMC at the opt-in sentinel.
+        assert get("blackjax_sghmc") == 0
 
 
 # -- Gradient-estimator correctness -------------------------------------------
@@ -131,7 +139,7 @@ class TestReproducibility:
 
     def test_same_seed_produces_identical_chain(self, logistic_problem):
         kwargs = dict(
-            batch_size=20, num_steps=50, num_warmup=10,
+            batch_size=20, num_results=50, num_warmup=10,
             step_size=1e-3, random_seed=123,
         )
         post1 = BlackJAXSGLDMethod().execute(
@@ -144,7 +152,7 @@ class TestReproducibility:
 
     def test_different_seeds_produce_different_chains(self, logistic_problem):
         kwargs = dict(
-            batch_size=20, num_steps=50, num_warmup=10, step_size=1e-3,
+            batch_size=20, num_results=50, num_warmup=10, step_size=1e-3,
         )
         post1 = BlackJAXSGLDMethod().execute(
             logistic_problem["model"], logistic_problem["data"],
@@ -213,7 +221,7 @@ class TestConvergence:
     def test_sgld_recovers_logistic_coefficients(self, logistic_problem):
         post = BlackJAXSGLDMethod().execute(
             logistic_problem["model"], logistic_problem["data"],
-            batch_size=40, num_steps=5000, num_warmup=1000,
+            batch_size=40, num_results=5000, num_warmup=1000,
             step_size=1e-3, random_seed=42,
         )
         assert post.flat_samples.shape == (5000, 2)
@@ -230,7 +238,7 @@ class TestConvergence:
     def test_sghmc_recovers_logistic_coefficients(self, logistic_problem):
         post = BlackJAXSGHMCMethod().execute(
             logistic_problem["model"], logistic_problem["data"],
-            batch_size=40, num_steps=5000, num_warmup=1000,
+            batch_size=40, num_results=5000, num_warmup=1000,
             step_size=2e-3, num_integration_steps=4,
             alpha=0.05, beta=0.0, random_seed=42,
         )
@@ -253,7 +261,7 @@ class TestConditionOnDispatch:
         post = condition_on(
             logistic_problem["model"], logistic_problem["data"],
             method="blackjax_sgld", batch_size=40,
-            num_steps=1000, num_warmup=200, step_size=1e-3,
+            num_results=1000, num_warmup=200, step_size=1e-3,
             random_seed=7,
         )
         assert isinstance(post, ApproximateDistribution)
@@ -263,7 +271,7 @@ class TestConditionOnDispatch:
         """`post.flat_samples` is `(num_steps, *event_shape)` for a single chain."""
         post = BlackJAXSGLDMethod().execute(
             logistic_problem["model"], logistic_problem["data"],
-            batch_size=20, num_steps=100, num_warmup=0,
+            batch_size=20, num_results=100, num_warmup=0,
             step_size=1e-3, random_seed=1,
         )
         assert post.flat_samples.shape == (100, logistic_problem["P"])
@@ -272,7 +280,7 @@ class TestConditionOnDispatch:
         """``num_warmup=N`` drops the first N samples; ``num_steps`` retained."""
         post = BlackJAXSGLDMethod().execute(
             logistic_problem["model"], logistic_problem["data"],
-            batch_size=20, num_steps=300, num_warmup=700,
+            batch_size=20, num_results=300, num_warmup=700,
             step_size=1e-3, random_seed=3,
         )
         assert post.flat_samples.shape == (300, 2)
@@ -282,7 +290,7 @@ class TestConditionOnDispatch:
         init = jnp.array([2.5, -1.5])
         post = BlackJAXSGLDMethod().execute(
             logistic_problem["model"], logistic_problem["data"],
-            batch_size=20, num_steps=50, num_warmup=0,
+            batch_size=20, num_results=50, num_warmup=0,
             step_size=1e-4, random_seed=0, init=init,
         )
         # With a tiny step size, the very first retained sample should
@@ -295,7 +303,7 @@ class TestConditionOnDispatch:
         post = condition_on(
             logistic_problem["model"], logistic_problem["data"],
             method="blackjax_sgld",
-            batch_size=20, num_steps=100, num_warmup=0,
+            batch_size=20, num_results=100, num_warmup=0,
             step_size=1e-3, random_seed=4,
             with_replacement=True,
         )

@@ -29,7 +29,7 @@ from probpipe import (
 from probpipe.core.distribution import _RecordDistributionView
 from probpipe.inference import rwmh
 from probpipe.inference._approximate_distribution import make_posterior
-from probpipe.inference._tfp_mcmc import _build_mcmc_datatree
+from probpipe.inference._inference_utils import build_mcmc_datatree
 
 # ---------------------------------------------------------------------------
 # ApproximateDistribution
@@ -47,7 +47,7 @@ class TestApproximateDistribution:
         warmup1 = jax.random.normal(jax.random.PRNGKey(2), (10, 2))
         warmup2 = jax.random.normal(jax.random.PRNGKey(3), (10, 2))
         chains = [chain1, chain2]
-        auxiliary = _build_mcmc_datatree(chains, warmup_chains=[warmup1, warmup2])
+        auxiliary = build_mcmc_datatree(chains, warmup_chains=[warmup1, warmup2])
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         return make_posterior(
             chains, parents=(prior,), algorithm="test", auxiliary=auxiliary,
@@ -204,7 +204,7 @@ class TestApproximateDistributionValuesTemplate:
         template = RecordTemplate(a=(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
         warmup = jax.random.normal(jax.random.PRNGKey(1), (10, 2))
-        auxiliary = _build_mcmc_datatree([chain], warmup_chains=[warmup])
+        auxiliary = build_mcmc_datatree([chain], warmup_chains=[warmup])
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         post = make_posterior(
             [chain], parents=(prior,), algorithm="test",
@@ -310,7 +310,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_auxiliary_has_posterior_group(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        auxiliary = _build_mcmc_datatree([chain])
+        auxiliary = build_mcmc_datatree([chain])
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
         post = make_posterior([chain], parents=(prior,), algorithm="test",
                              auxiliary=auxiliary)

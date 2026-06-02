@@ -9,6 +9,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **Inference-method count kwargs unified under `num_*`.** Several
+  inference methods exposed `n_*`-style kwargs out of sync with the
+  rest of the registry (which uniformly used `num_results` /
+  `num_warmup` / `num_chains`). Renamed:
+  - `blackjax_sgld` / `blackjax_sghmc`: `num_steps=` → `num_results=`
+    (SGMCMC produces one chain draw per step; the kwarg matches
+    every other MCMC backend now).
+  - `sbi_learn_conditional` / `sbi_learn_likelihood`: `n_iter=` →
+    `num_iterations=`, `n_simulations=` → `num_simulations=`.
+  - `sbi_learn_conditional` posterior-sampling default
+    `n_samples=` → `num_results=`; `DirectSamplerSBIModel.__init__`
+    and `condition_on(direct_sampler_model, ...,
+    n_samples=...)` likewise.
+
+  Internal `sbijax.simulate_data(..., n_simulations=...)` /
+  `sbijax.fit(..., n_iter=...)` / `sbijax.sample_posterior(...,
+  n_samples=...)` calls keep their native sbijax kwarg names —
+  only the probpipe-facing surface changes.
+
+  Bug fix bundled with the rename: `tests/test_sbijax.py` was
+  calling `condition_on(nle_model, obs, method="tfp_nuts",
+  n_samples=500, n_warmup=500, n_chains=2, ...)` — the MCMC backend
+  silently ignored those kwargs (it expects `num_results=` /
+  `num_warmup=` / `num_chains=`) and the test passed by accident.
+  Fixed.
+
+- **`condition_on` MCMC default switched from TFP to BlackJAX NUTS,
+  plus inference-method priority re-anchoring.** Several entangled
+  changes consolidated into a single migration:
+
+  *Auto-dispatch winner switches to BlackJAX NUTS.* `blackjax_nuts`
+  (priority 85, tier 81–90) wins auto-dispatch for any
+  `SupportsLogProb` + JAX-traceable target — the canonical ProbPipe
+  model class. `tfp_nuts` / `tfp_hmc` are demoted to the opt-in-only
+  sentinel (`priority=0`); they stay registered and reachable via
+  `method="tfp_nuts"` / `method="tfp_hmc"` for bit-pattern regression
+  checks or side-by-side comparisons.
+
+  *Structurally-unreachable methods demoted to `priority=0`.* Methods
+  whose `check()` is identical to a higher-priority sibling can never
+  win auto-dispatch — they're opt-in in effect. Made that explicit:
+  `blackjax_hmc` (same `check()` as `blackjax_nuts`) and
+  `blackjax_sghmc` (same `check()` as `blackjax_sgld`, which is also
+  the simpler default — fewer tuning dials) are now opt-in only.
+
+  *VI demoted to opt-in.* `pymc_advi` (was priority 25) is now
+  `priority=0`. VI is a deliberate bias-for-speed tradeoff that users
+  should pick explicitly via `method="pymc_advi"`; silently dispatching
+  into it when (e.g.) `pymc_nuts` happens to fail would surface VI in
+  MCMC's place.
+
+  *NUTS-tier numbers retuned.* `nutpie_nuts` 85 → 88 (top of the
+  optimised-backend tier — Rust gradients are the fastest of every
+  registered NUTS backend); `pymc_nuts` 81 → 82 (ties with
+  `cmdstan_nuts` at 82; the two apply to disjoint model classes so
+  the tie is documentary).
+
+  `tfp_rwmh` (gradient-free RWMH) is unchanged at priority 55 — the
+  gradient-free-MCMC migration to BlackJAX is queued separately
+  (`~/.claude/plans/bie-rwmh-blackjax-migration.md`).
+
+  Migration: an existing `condition_on(model, data)` call that
+  previously ran TFP NUTS now runs BlackJAX NUTS. The numerical
+  posterior is asymptotically identical but the per-seed bit pattern
+  differs. Pin `method="tfp_nuts"` for bit-pattern regression. The
+  closed-form correctness gate (mean within ~3 σ_MC, variance within
+  10% on a known 2-D Gaussian target) is tested under
+  `tests/test_blackjax_mcmc.py`. Existing `condition_on(...,
+  method="pymc_advi")` / `method="blackjax_hmc"` /
+  `method="blackjax_sghmc"` calls continue to work — only the
+  auto-dispatch path changes.
+
 - **Distribution & Record hierarchy cleanup (#200).** Implements the
   integrated cleanup plan as six self-contained commits. The public-
   facing changes are:
@@ -189,7 +261,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   posterior = condition_on(
       model, data,
       method="blackjax_sgld",
-      batch_size=64, num_steps=2000, num_warmup=500, step_size=1e-3,
+      batch_size=64, num_results=2000, num_warmup=500, step_size=1e-3,
   )
   ```
 

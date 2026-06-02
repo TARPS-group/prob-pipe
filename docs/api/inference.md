@@ -44,16 +44,18 @@ when choosing a number for a new method are documented under
 
 | Name | Priority | Requires | Backend |
 |------|----------|----------|---------|
-| `nutpie_nuts` | 85 | `StanModel` or `PyMCModel` + nutpie | nutpie |
+| `nutpie_nuts` | 88 | `StanModel` or `PyMCModel` + nutpie | nutpie |
+| `blackjax_nuts` | 85 | `SupportsLogProb` + JAX-traceable | BlackJAX |
 | `cmdstan_nuts` | 82 | `StanModel` + cmdstanpy | CmdStan |
-| `pymc_nuts` | 81 | `PyMCModel` + pymc | PyMC |
-| `tfp_nuts` | 75 | `SupportsLogProb` + JAX-traceable | TFP |
-| `tfp_hmc` | 65 | `SupportsLogProb` + JAX-traceable | TFP |
-| `tfp_rwmh` | 55 | `SupportsLogProb` | TFP |
+| `pymc_nuts` | 82 | `PyMCModel` + pymc | PyMC |
+| `tfp_rwmh` | 55 | `SupportsLogProb` | hand-rolled Python |
 | `blackjax_sgld` | 45 | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX |
-| `blackjax_sghmc` | 42 | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX |
-| `pymc_advi` | 25 | `PyMCModel` + pymc | PyMC |
 | `sbijax_smcabc` | 5 | `SimpleGenerativeModel` + sbijax | sbijax |
+| `blackjax_hmc` | 0 | `SupportsLogProb` + JAX-traceable | BlackJAX (opt-in only) |
+| `blackjax_sghmc` | 0 | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX (opt-in only) |
+| `pymc_advi` | 0 | `PyMCModel` + pymc | PyMC (opt-in only) |
+| `tfp_nuts` | 0 | `SupportsLogProb` + JAX-traceable | TFP (opt-in only) |
+| `tfp_hmc` | 0 | `SupportsLogProb` + JAX-traceable | TFP (opt-in only) |
 
 ::: probpipe.ApproximateDistribution
 
