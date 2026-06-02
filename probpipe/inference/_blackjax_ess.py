@@ -70,23 +70,35 @@ def _gaussian_prior_params(prior: Distribution) -> tuple[Array, Array] | None:
 
     * :class:`~probpipe.distributions.MultivariateNormal` — ``(loc, cov)``
       directly.
+    * :class:`~probpipe.distributions.JointGaussian` — a named multi-field
+      Gaussian *with cross-covariance*. Its ``(mean_vector, covariance)``
+      are already laid out in ``record_template.fields`` order, so they
+      plug straight in; unlike a ``ProductDistribution`` of Gaussians, the
+      off-diagonal cross-field covariance is preserved.
     * :class:`~probpipe.distributions.Normal` — ``(loc, diag(scale**2))``
       with the scalar / batch promoted to a length-1 vector.
     * :class:`~probpipe.distributions.ProductDistribution` whose
       components are each themselves recognised — block-diagonal
-      assembly preserving the field order.
+      assembly preserving the field order (the independent case).
 
     Returns ``None`` for any other distribution: mixtures of Gaussians,
     conditional Gaussians whose covariance depends on other parameters,
     Gamma / Beta / Dirichlet / non-Gaussian priors, and improper
     priors (which have no ``_sample`` to draw the auxiliary from).
     """
-    from ..distributions import MultivariateNormal, Normal, ProductDistribution
+    from ..distributions import (
+        JointGaussian, MultivariateNormal, Normal, ProductDistribution,
+    )
 
     if isinstance(prior, MultivariateNormal):
         loc = jnp.atleast_1d(jnp.asarray(prior.loc))
         cov = jnp.atleast_2d(jnp.asarray(prior.cov))
         return loc, cov
+
+    if isinstance(prior, JointGaussian):
+        mean = jnp.atleast_1d(jnp.asarray(prior.mean_vector))
+        cov = jnp.atleast_2d(jnp.asarray(prior.covariance))
+        return mean, cov
 
     if isinstance(prior, Normal):
         loc = jnp.atleast_1d(jnp.asarray(prior.loc))
@@ -189,7 +201,8 @@ def elliptical_slice(
     model : SimpleModel
         Must have a Gaussian prior recognised by
         :func:`_gaussian_prior_params` (``MultivariateNormal``,
-        ``Normal``, or a ``ProductDistribution`` over those).
+        ``JointGaussian``, ``Normal``, or a ``ProductDistribution`` over
+        those).
     data
         Observed data, passed to ``model.likelihood.log_likelihood``.
     num_results, num_warmup, num_chains

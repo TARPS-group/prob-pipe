@@ -137,6 +137,17 @@ class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb
         """Per-component event shapes."""
         return {k: (v,) for k, v in self._component_shapes.items()}
 
+    @property
+    def dtypes(self) -> dict[str, jnp.dtype]:
+        """Per-field dtype, aligned with ``record_template.fields``.
+
+        Every field shares the (float) dtype of the mean / covariance
+        arrays — ``_promote_floats`` in ``__init__`` casts both to a
+        single common float dtype.
+        """
+        dt = self._mean_vec.dtype
+        return {field: dt for field in self.fields}
+
     # flatten_value / unflatten_value inherited from NumericRecordDistribution
 
     @property

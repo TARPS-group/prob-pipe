@@ -4,9 +4,10 @@ Covers:
 
 * The Gaussian-prior detection helper (``_gaussian_prior_params``)
   against the recognised shapes (``Normal``, ``MultivariateNormal``,
-  ``ProductDistribution`` over both — with field-order-sensitive mean
-  and covariance assertions) and the rejected shapes (non-Gaussian
-  families, batched-``Normal`` ``DistributionArray``).
+  ``JointGaussian`` with cross-covariance, ``ProductDistribution`` over
+  them — with field-order-sensitive mean and covariance assertions) and
+  the rejected shapes (non-Gaussian families, batched-``Normal``
+  ``DistributionArray``).
 * ``check()`` infeasibility messages for the three failure modes:
   bare ``SupportsLogProb`` (no SimpleModel decomposition), non-Gaussian
   prior, and missing observed data.
@@ -26,6 +27,7 @@ import pytest
 from probpipe import (
     Beta,
     Gamma,
+    JointGaussian,
     MultivariateNormal,
     Normal,
     ProductDistribution,
@@ -109,6 +111,33 @@ class TestGaussianPriorDetection:
         mean, cov = params
         np.testing.assert_allclose(np.asarray(mean), np.asarray(loc_in))
         np.testing.assert_allclose(np.asarray(cov), np.asarray(cov_in))
+
+    def test_joint_gaussian_preserves_cross_covariance(self):
+        """``JointGaussian`` is recognised with its *full* covariance.
+
+        Unlike a ``ProductDistribution`` of Gaussians (block-diagonal,
+        independent fields), a ``JointGaussian`` carries cross-field
+        covariance. ``_gaussian_prior_params`` must return the dense
+        covariance verbatim — the off-diagonal ``a``-``b`` terms must
+        survive, in ``record_template.fields`` order ``[a, b]``.
+        """
+        cov_in = jnp.array([
+            [2.0, 0.5, 0.1],
+            [0.5, 1.0, 0.0],
+            [0.1, 0.0, 3.0],
+        ])
+        mean_in = jnp.array([1.0, -2.0, 3.0])
+        prior = JointGaussian(mean=mean_in, cov=cov_in, a=1, b=2)
+        params = _gaussian_prior_params(prior)
+        assert params is not None
+        mean, cov = params
+        assert mean.shape == (3,)
+        assert cov.shape == (3, 3)
+        np.testing.assert_allclose(np.asarray(mean), np.asarray(mean_in))
+        np.testing.assert_allclose(np.asarray(cov), np.asarray(cov_in))
+        # The distinguishing check vs. a ProductDistribution: the
+        # cross-field (a, b) covariance is *not* zeroed.
+        np.testing.assert_allclose(np.asarray(cov[0, 1:]), [0.5, 0.1])
 
     def test_normal_scalar_promoted_to_length_one(self):
         """A scalar ``Normal`` is promoted to a length-1 vector.
@@ -273,6 +302,23 @@ class TestFeasibilityCheck:
 
         model = SimpleModel(prior, _Lik(), name="m")
         info = BlackJAXESSMethod().check(model, jnp.zeros((5, 2)))
+        assert info.feasible
+
+    def test_accepts_joint_gaussian_prior(self):
+        """A ``JointGaussian`` prior (named fields, cross-covariance) is a
+        feasible ESS target — the gap this change closes."""
+        prior = JointGaussian(
+            mean=jnp.zeros(3),
+            cov=jnp.array([[1.0, 0.3, 0.0], [0.3, 1.0, 0.0], [0.0, 0.0, 2.0]]),
+            a=1, b=2,
+        )
+
+        class _Lik(Likelihood):
+            def log_likelihood(self, params, data):
+                return jnp.asarray(0.0)
+
+        model = SimpleModel(prior, _Lik(), name="m")
+        info = BlackJAXESSMethod().check(model, jnp.zeros((5, 3)))
         assert info.feasible
 
 

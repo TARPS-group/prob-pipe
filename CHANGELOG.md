@@ -29,7 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **`blackjax_elliptical_slice`** (priority 75, tier 71-80
     self-tuning) is new — restricted to `SimpleModel` targets with a
     Gaussian prior and a JAX-traceable likelihood. Recognises
-    `Normal`, `MultivariateNormal`, and `ProductDistribution`
+    `Normal`, `MultivariateNormal`, `JointGaussian` (named multi-field
+    Gaussian with cross-covariance), and `ProductDistribution`
     compositions via the new `_gaussian_prior_params` helper.
 - New workflow function `probpipe.elliptical_slice(model, data, ...)`.
 
