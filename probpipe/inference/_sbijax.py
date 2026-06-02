@@ -197,30 +197,29 @@ class DirectSamplerSBIModel(Distribution, SupportsConditioning):
         prior: Distribution,
         *,
         algorithm: str,
-        n_samples: int = 4000,
+        num_results: int = 4000,
         random_seed: int = 0,
     ):
         self._sbijax_model = sbijax_model
         self._params = params
         self._prior = prior
         self._algorithm = algorithm
-        self._n_samples = n_samples
+        self._num_results = num_results
         self._random_seed = random_seed
-
-    @property
-    def name(self) -> str:
-        return f"DirectSamplerSBIModel({self._algorithm})"
+        # ``Distribution`` metaclass requires a non-empty name.
+        self._name = f"DirectSamplerSBIModel({algorithm})"
 
     def _condition_on(
         self, observed: Any, /, **kwargs: Any
     ) -> ApproximateDistribution:
-        n_samples = kwargs.get("n_samples", self._n_samples)
+        num_results = kwargs.get("num_results", self._num_results)
         random_seed = kwargs.get("random_seed", self._random_seed)
         key = jax.random.PRNGKey(random_seed)
 
         observable = _coerce_observable(observed)
+        # sbijax's ``sample_posterior`` uses ``n_samples=`` natively.
         posterior_idata, _ = self._sbijax_model.sample_posterior(
-            key, self._params, observable=observable, n_samples=n_samples,
+            key, self._params, observable=observable, n_samples=num_results,
         )
         chains = _extract_chains(posterior_idata)
         return make_posterior(
@@ -233,7 +232,7 @@ class DirectSamplerSBIModel(Distribution, SupportsConditioning):
     def __repr__(self) -> str:
         return (
             f"DirectSamplerSBIModel(algorithm={self._algorithm!r}, "
-            f"n_samples={self._n_samples})"
+            f"num_results={self._num_results})"
         )
 
 
@@ -340,8 +339,8 @@ def _train(
     builder: Callable[..., Any],
     default_net: Callable[..., Any],
     ndim_source: str,
-    n_simulations: int,
-    n_iter: int,
+    num_simulations: int,
+    num_iterations: int,
     batch_size: int,
     network_factory: Callable[..., Any] | None,
     random_seed: int,
@@ -367,11 +366,13 @@ def _train(
         raise ValueError(f"Unknown ndim_source: {ndim_source!r}")
     sbi_model = builder(fns, network)
 
-    data, _ = sbi_model.simulate_data(key_sim, n_simulations=n_simulations)
+    # sbijax's ``simulate_data`` / ``fit`` use ``n_simulations`` / ``n_iter``
+    # natively; translate at the boundary.
+    data, _ = sbi_model.simulate_data(key_sim, n_simulations=num_simulations)
     params, _ = sbi_model.fit(
         key_fit,
         data=data,
-        n_iter=n_iter,
+        n_iter=num_iterations,
         batch_size=batch_size,
         **fit_kwargs,
     )
@@ -384,11 +385,11 @@ def sbi_learn_conditional(
     simulator: GenerativeLikelihood,
     *,
     method: ConditionalSBIMethod = "npe",
-    n_simulations: int = 10_000,
-    n_iter: int = 1000,
+    num_simulations: int = 10_000,
+    num_iterations: int = 1000,
     batch_size: int = 128,
     network_factory: Callable[..., Any] | None = None,
-    n_samples: int = 4000,
+    num_results: int = 4000,
     random_seed: int = 0,
     **fit_kwargs: Any,
 ) -> DirectSamplerSBIModel:
@@ -405,14 +406,14 @@ def sbi_learn_conditional(
     prior : Distribution
         Prior distribution over model parameters.  Must be TFP-backed.
     simulator : GenerativeLikelihood
-        Must have ``generate_data(params, n_samples, *, key)`` method.
+        Must have ``generate_data(params, num_observations, *, key)`` method.
     method : str
         Conditional density estimator: ``"npe"`` (Neural Posterior
         Estimation), ``"fmpe"`` (Flow Matching Posterior Estimation), or
         ``"cmpe"`` (Consistency Model Posterior Estimation).
-    n_simulations : int
+    num_simulations : int
         Number of (parameter, data) pairs to simulate for training.
-    n_iter : int
+    num_iterations : int
         Number of training iterations.
     batch_size : int
         Training batch size.
@@ -420,7 +421,7 @@ def sbi_learn_conditional(
         Factory that returns an sbijax network.  Called with the
         parameter dimension for NPE/FMPE/CMPE.  If ``None``, a
         method-appropriate sbijax default is used.
-    n_samples : int
+    num_results : int
         Default number of posterior samples per ``condition_on`` call.
     random_seed : int
         Base random seed for simulation, training, and sampling.
@@ -438,7 +439,8 @@ def sbi_learn_conditional(
     sbi_model, params = _train(
         prior, simulator,
         builder=builder, default_net=default_net, ndim_source=ndim_source,
-        n_simulations=n_simulations, n_iter=n_iter, batch_size=batch_size,
+        num_simulations=num_simulations, num_iterations=num_iterations,
+        batch_size=batch_size,
         network_factory=network_factory, random_seed=random_seed,
         fit_kwargs=fit_kwargs,
     )
@@ -448,7 +450,7 @@ def sbi_learn_conditional(
         params,
         prior,
         algorithm=f"sbijax_{method_lower}",
-        n_samples=n_samples,
+        num_results=num_results,
         random_seed=random_seed,
     )
 
@@ -459,8 +461,8 @@ def sbi_learn_likelihood(
     simulator: GenerativeLikelihood,
     *,
     method: LikelihoodSBIMethod = "nle",
-    n_simulations: int = 10_000,
-    n_iter: int = 1000,
+    num_simulations: int = 10_000,
+    num_iterations: int = 1000,
     batch_size: int = 128,
     network_factory: Callable[..., Any] | None = None,
     random_seed: int = 0,
@@ -484,13 +486,13 @@ def sbi_learn_likelihood(
         ``return_likelihood_only=True``) as the prior of the returned
         :class:`SimpleModel`.
     simulator : GenerativeLikelihood
-        Must have ``generate_data(params, n_samples, *, key)`` method.
+        Must have ``generate_data(params, num_observations, *, key)`` method.
     method : str
         Likelihood estimator: ``"nle"`` (Neural Likelihood Estimation)
         or ``"nre"`` (Neural Ratio Estimation).
-    n_simulations : int
+    num_simulations : int
         Number of (parameter, data) pairs to simulate for training.
-    n_iter : int
+    num_iterations : int
         Number of training iterations.
     batch_size : int
         Training batch size.
@@ -523,7 +525,8 @@ def sbi_learn_likelihood(
     sbi_model, params = _train(
         prior, simulator,
         builder=builder, default_net=default_net, ndim_source=ndim_source,
-        n_simulations=n_simulations, n_iter=n_iter, batch_size=batch_size,
+        num_simulations=num_simulations, num_iterations=num_iterations,
+        batch_size=batch_size,
         network_factory=network_factory, random_seed=random_seed,
         fit_kwargs=fit_kwargs,
     )

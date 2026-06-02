@@ -43,10 +43,12 @@ class PyMCNutsMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        # Tier 81-90 (optimised backend; native PyMC NUTS, narrower
-        # than tfp_nuts but better tailored to PyMCModel). Below
-        # nutpie_nuts (85) and cmdstan_nuts (82).
-        return 81
+        # Tier 81-90 (optimised backend; native PyMC NUTS, tailored to
+        # PyMCModel). At 82 alongside ``cmdstan_nuts``; the two apply to
+        # disjoint model classes so the tie is documentary. Below
+        # ``nutpie_nuts`` (88; Rust gradients are faster on PyMCModel
+        # too when nutpie is installed).
+        return 82
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         if not isinstance(dist, self._model_type):
@@ -77,7 +79,7 @@ class PyMCNutsMethod(InferenceMethod):
 
         return make_posterior(
             chains, parents=(dist,), algorithm="pymc_nuts",
-            auxiliary=trace, record_template=dist.record_template,
+            auxiliary=trace, record_template=getattr(dist, "record_template", None),
             num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         )
 
@@ -98,9 +100,14 @@ class PyMCADVIMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        # Tier 21-30 (parametric variational approximation; quality
-        # bounded by the mean-field family).
-        return 25
+        # Tier 21-30 by algorithm category (parametric variational
+        # approximation; quality bounded by the mean-field family), but
+        # registered at the opt-in-only sentinel ``priority=0``. ADVI is
+        # a deliberate bias-for-speed tradeoff the user should choose
+        # explicitly; auto-dispatching into it when (e.g.) ``pymc_nuts``
+        # happens to fail would surface VI silently in MCMC's place.
+        # Callers who want ADVI pin ``method="pymc_advi"``.
+        return 0
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         if not isinstance(dist, self._model_type):
@@ -132,6 +139,6 @@ class PyMCADVIMethod(InferenceMethod):
 
         return make_posterior(
             chains, parents=(dist,), algorithm=algorithm,
-            auxiliary=trace, record_template=dist.record_template,
+            auxiliary=trace, record_template=getattr(dist, "record_template", None),
             num_iterations=num_iterations,
         )

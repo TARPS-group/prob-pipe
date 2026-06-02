@@ -66,7 +66,9 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
 
         self._stan_file = stan_file
         self._stan_data = data
-        self._name_str = name
+        # ``Distribution`` metaclass requires a non-empty name; default
+        # to the class name when the caller doesn't supply one.
+        self._name = name if name else "StanModel"
 
         # Compile the model
         self._bs_model = bridgestan.StanModel.from_stan_file(
@@ -75,10 +77,6 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
         self._num_params = self._bs_model.param_unc_num()
 
     # -- Distribution interface ---------------------------------------------
-
-    @property
-    def name(self) -> str | None:
-        return self._name_str
 
     @property
     def event_shape(self) -> tuple[int, ...]:
@@ -162,11 +160,9 @@ class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):
 
     def __init__(self, model: StanModel):
         self._model = model
-
-    @property
-    def name(self) -> str | None:
-        base = self._model.name
-        return f"{base}_unconstrained" if base else "unconstrained"
+        # ``base.name`` is guaranteed non-empty by the Distribution
+        # metaclass — wrap with an ``_unconstrained`` suffix.
+        self._name = f"{model.name}_unconstrained"
 
     @property
     def event_shape(self) -> tuple[int, ...]:

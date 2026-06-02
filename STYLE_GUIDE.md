@@ -603,6 +603,15 @@ modules (`_*.py`) whose symbols are re-exported through the package
 Distribution objects are immutable. Parameters are fixed at construction;
 operations return new distribution objects rather than mutating state.
 
+**The one carve-out is `Distribution._auxiliary`**, a `DataTree` whose
+job is to collect post-construction metadata (validation results,
+diagnostic outputs, future LOO/WAIC scores) under named groups. Ops
+like `predictive_check` mutate it in place because the alternative —
+returning a renamed clone for every diagnostic — would break the
+source/identity tracking that downstream code relies on. Treat it as
+append-only and never use it as a back-channel for mutating
+parameter-like state.
+
 ### 9.3 Error messages
 
 When a protocol check fails, raise `TypeError` with a message that names

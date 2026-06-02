@@ -72,6 +72,31 @@ class TestSimpleModel:
         with pytest.raises(TypeError, match="SupportsLogProb"):
             SimpleModel(emp, lik)
 
+    def test_requires_record_distribution_prior(self):
+        """SimpleModel rejects priors that satisfy SupportsLogProb but
+        aren't a ``RecordDistribution`` — the model uses
+        ``prior.record_template`` to merge in likelihood data fields,
+        so an unnamed prior is structurally incompatible.
+
+        The intersection of ``SupportsLogProb`` and
+        ``RecordDistribution`` can't be expressed statically, so the
+        runtime guard is the only backstop.
+        """
+        from probpipe.core.distribution import Distribution
+        from probpipe.core.protocols import SupportsLogProb
+
+        class _LogProbOnly(Distribution, SupportsLogProb):
+            """A SupportsLogProb distribution that is not a RecordDistribution."""
+
+            def __init__(self) -> None:
+                self._name = "log_prob_only"
+
+            def _log_prob(self, value):
+                return jnp.zeros(())
+
+        with pytest.raises(TypeError, match="RecordDistribution"):
+            SimpleModel(_LogProbOnly(), GaussianLikelihood())
+
     def test_always_supports_log_prob(self, model):
         """SimpleModel always satisfies SupportsLogProb."""
         assert isinstance(model, SupportsLogProb)

@@ -59,6 +59,12 @@ from ._rwmh import TFPRWMHMethod
 
 inference_method_registry.register(TFPRWMHMethod())
 
+# BlackJAX MCMC (gradient-based)
+from ._blackjax_mcmc import BlackJAXNutsMethod, BlackJAXHmcMethod
+
+inference_method_registry.register(BlackJAXNutsMethod())
+inference_method_registry.register(BlackJAXHmcMethod())
+
 # BlackJAX SGMCMC
 from ._blackjax_sgmcmc import BlackJAXSGLDMethod, BlackJAXSGHMCMethod
 

@@ -30,7 +30,7 @@ class WorkflowExecutionConfig:
     """Resolved execution settings for ordered workflow calls."""
 
     mode: WorkflowExecutionMode
-    parallel: bool | int = False
+    max_workers: int | None = None
     name: str = "workflow"
     prefect_task_runner: Any | None = None
 
@@ -67,7 +67,7 @@ def execute_many_threaded(request: WorkflowExecutionRequest) -> list[Any]:
     if not request.call_value_list:
         return []
 
-    max_workers = _resolve_max_workers(request.execution.parallel)
+    max_workers = _validate_max_workers(request.execution.max_workers)
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         return list(pool.map(lambda kwargs: request.func(**kwargs), request.call_value_list))
 
@@ -136,20 +136,19 @@ def execute_many_prefect_flow(request: WorkflowExecutionRequest) -> list[Any]:
     return mapped_flow()
 
 
-def _resolve_max_workers(parallel: bool | int) -> int | None:
-    if isinstance(parallel, int) and not isinstance(parallel, bool):
-        if parallel < 1:
-            raise ValueError(
-                f"parallel must be True, False, or a positive int; got {parallel!r}"
-            )
-        return parallel
-
-    if parallel is True:
+def _validate_max_workers(max_workers: int | None) -> int | None:
+    if max_workers is None:
         return None
 
-    raise TypeError(
-        f"parallel must be True, False, or a positive int; got {parallel!r}"
-    )
+    if not isinstance(max_workers, int):
+        raise TypeError(
+            f"max_workers must be None or a positive int; got {max_workers!r}"
+        )
+    if max_workers < 1:
+        raise ValueError(
+            f"max_workers must be None or a positive int; got {max_workers!r}"
+        )
+    return max_workers
 
 
 def _ensure_prefect_available() -> None:

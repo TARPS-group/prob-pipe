@@ -38,7 +38,7 @@ from ..core.distribution import (
     _mc_expectation,
 )
 from ..core._record_distribution import RecordDistribution, _build_record_template
-from ..core.record import Record
+from ..core.record import Record, RecordTemplate
 from ..core.provenance import Provenance
 from ..core.protocols import (
     SupportsConditioning,
@@ -145,11 +145,23 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
         super().__init__(name=name)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._components = self._build_component_dists()
-        self._record_template = (
-            _build_record_template(self._components)
-            if self._components is not None
-            else None
-        )
+        if self._components is not None:
+            self._record_template = _build_record_template(self._components)
+        else:
+            # Generic (non-numeric) path: derive a structural
+            # ``RecordTemplate`` directly from the stored samples. Each
+            # field's per-row shape becomes its spec; object-dtype leaves
+            # report ``None``. This keeps the
+            # ``RecordDistribution`` metaclass invariant
+            # (``record_template`` is non-``None``) without requiring
+            # numeric coercion.
+            specs: dict[str, Any] = {}
+            for cname, arr in stored.items():
+                if _is_numeric_array(arr):
+                    specs[cname] = tuple(arr.shape[1:])
+                else:
+                    specs[cname] = None
+            self._record_template = RecordTemplate(specs)
 
     # Hook for NumericJointEmpirical to override; base class returns None
     # because generic joint samples can't be expressed as per-component
@@ -286,13 +298,19 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
 # ---------------------------------------------------------------------------
 
 
-class NumericJointEmpirical(JointEmpirical, SupportsMean, SupportsVariance):
+class NumericJointEmpirical(
+    JointEmpirical, NumericRecordDistribution,
+    SupportsMean, SupportsVariance,
+):
     """Joint empirical where every field is a numeric array.
 
     Subclass of :class:`JointEmpirical` that additionally implements
     :class:`~probpipe.core.protocols.SupportsMean` and
-    :class:`~probpipe.core.protocols.SupportsVariance`. For a density
-    on top of empirical samples use the converter registry
+    :class:`~probpipe.core.protocols.SupportsVariance`, and mixes in
+    :class:`NumericRecordDistribution` to expose the numeric-only API
+    (``event_size``, ``flatten_value``, ``unflatten_value``,
+    ``as_flat_distribution``). For a density on top of empirical
+    samples use the converter registry
     (``from_distribution(emp, KDEDistribution, ...)``) or fit a
     parametric distribution.
 

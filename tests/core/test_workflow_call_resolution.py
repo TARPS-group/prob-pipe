@@ -65,36 +65,36 @@ class CallResolutionModule(Module):
 
 class TestArgumentBinding:
     def test_positional_and_mixed_arguments_bind_like_python_calls(self, add_func):
-        wf = WorkflowFunction(func=add_func, vectorize="loop")
+        wf = WorkflowFunction(func=add_func, dispatch="sequential")
 
         assert float(wf(jnp.asarray(1.0), jnp.asarray(2.0))) == 3.0
         assert float(wf(jnp.asarray(1.0), y=jnp.asarray(2.0))) == 3.0
 
     def test_duplicate_positional_and_keyword_argument_raises(self, add_func):
-        wf = WorkflowFunction(func=add_func, vectorize="loop")
+        wf = WorkflowFunction(func=add_func, dispatch="sequential")
 
         with pytest.raises(TypeError, match="multiple values"):
             wf(jnp.asarray(1.0), x=jnp.asarray(2.0))
 
     def test_var_keyword_expands_extra_keywords(self, kwargs_recorder):
         identity, seen = kwargs_recorder
-        wf = WorkflowFunction(func=identity, vectorize="loop")
+        wf = WorkflowFunction(func=identity, dispatch="sequential")
 
         assert float(wf(x=1.0, scale=2.0)) == 1.0
         assert seen == [{"scale": 2.0}]
 
     def test_literal_kwargs_argument_is_not_unpacked(self, kwargs_recorder):
         identity, seen = kwargs_recorder
-        wf = WorkflowFunction(func=identity, vectorize="loop")
+        wf = WorkflowFunction(func=identity, dispatch="sequential")
 
         assert float(wf(x=1.0, kwargs={"scale": 2.0})) == 1.0
         assert seen == [{"kwargs": {"scale": 2.0}}]
 
     def test_bind_values_and_function_defaults_are_resolved_before_call(self, affine_func):
-        default_wf = WorkflowFunction(func=affine_func, vectorize="loop")
+        default_wf = WorkflowFunction(func=affine_func, dispatch="sequential")
         bound_wf = WorkflowFunction(
             func=affine_func,
-            vectorize="loop",
+            dispatch="sequential",
             bind={"offset": 3.0},
             scale=2.0,
         )
@@ -104,7 +104,7 @@ class TestArgumentBinding:
         assert float(bound_wf(x=1.0, offset=4.0)) == 10.0
 
     def test_missing_required_input_raises_after_all_resolution_sources_fail(self, add_func):
-        wf = WorkflowFunction(func=add_func, vectorize="loop")
+        wf = WorkflowFunction(func=add_func, dispatch="sequential")
 
         with pytest.raises(TypeError, match="Missing required input 'y'"):
             wf(x=1.0)
@@ -129,7 +129,7 @@ class TestModuleResolution:
         def use_dep(dep: DataNode):
             return 1.0
 
-        wf = WorkflowFunction(func=use_dep, vectorize="loop")
+        wf = WorkflowFunction(func=use_dep, dispatch="sequential")
 
         with pytest.raises(TypeError, match="expects dependency 'dep:"):
             wf(dep=object())
@@ -144,7 +144,7 @@ class TestReservedOverrides:
         wf = WorkflowFunction(
             func=identity_func,
             n_broadcast_samples=20,
-            vectorize="loop",
+            dispatch="sequential",
             seed=42,
         )
 
@@ -161,7 +161,7 @@ class TestReservedOverrides:
         wf = WorkflowFunction(
             func=identity_func,
             n_broadcast_samples=8,
-            vectorize="loop",
+            dispatch="sequential",
             seed=42,
         )
 

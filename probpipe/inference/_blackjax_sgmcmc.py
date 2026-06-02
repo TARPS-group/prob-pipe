@@ -36,13 +36,11 @@ import jax.numpy as jnp
 
 from ..core._registry import MethodInfo
 from ..core._random_measures import RandomMeasure
-from ..core.protocols import SupportsLogProb
-from ..core.record import Record
-from ..custom_types import Array, PRNGKey
+from ..custom_types import PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._minibatch import MinibatchedDistribution
 from ._registry import InferenceMethod
-from ._tfp_mcmc import _get_init_state, _is_simple_model
+from ._inference_utils import as_prng_key, get_init_state, is_simple_model
 
 __all__ = ["BlackJAXSGLDMethod", "BlackJAXSGHMCMethod"]
 
@@ -111,7 +109,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         """Require SimpleModel + ConditionallyIndependentLikelihood + batch_size."""
         from ..modeling._likelihood import ConditionallyIndependentLikelihood
 
-        if not _is_simple_model(dist):
+        if not is_simple_model(dist):
             return MethodInfo(
                 feasible=False, method_name=self.name,
                 description=(
@@ -143,7 +141,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         """Run the SGMCMC kernel; return an :class:`ApproximateDistribution`."""
         batch_size: int = kwargs["batch_size"]
-        num_steps: int = kwargs.get("num_steps", 1000)
+        num_results: int = kwargs.get("num_results", 1000)
         num_warmup: int = kwargs.get("num_warmup", 0)
         step_size: float = kwargs.get("step_size", 1e-3)
         random_seed: int | PRNGKey = kwargs.get("random_seed", 0)
@@ -164,26 +162,26 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
         # Initial position from prior or user-supplied init.
         prior = dist.prior
-        init = _get_init_state(prior, kwargs.get("init"), observed)
+        init = get_init_state(
+            dist, kwargs.get("init"), random_seed=random_seed,
+        )
         state = algorithm.init(init)
 
-        # Iterate. The kernel itself jitf within run_loop's step closure.
-        key = (
-            jax.random.PRNGKey(random_seed)
-            if isinstance(random_seed, int)
-            else random_seed
-        )
+        # Iterate. The kernel itself jits within run_loop's step closure.
         positions = _run_sgmcmc_loop(
-            algorithm, state, key, step_size, num_warmup, num_steps,
+            algorithm, state, as_prng_key(random_seed),
+            step_size, num_warmup, num_results,
         )
 
-        # Stack into a chain shaped (num_steps, *event_shape) and wrap.
+        # ``check()`` rejects any non-SimpleModel target, and a
+        # SimpleModel prior is always a RecordDistribution, so
+        # ``record_template`` is guaranteed here.
         chain = jnp.stack(positions, axis=0)
         record_template = prior.record_template
         return make_posterior(
             [chain], parents=(prior,), algorithm=self._method_name,
             auxiliary=None, record_template=record_template,
-            num_results=num_steps, num_warmup=num_warmup, num_chains=1,
+            num_results=num_results, num_warmup=num_warmup, num_chains=1,
         )
 
     # -- subclass hook -------------------------------------------------------
@@ -209,16 +207,16 @@ def _run_sgmcmc_loop(
     key: PRNGKey,
     step_size: float,
     num_warmup: int,
-    num_steps: int,
+    num_results: int,
 ) -> list[Any]:
-    """Run the SGMCMC kernel for ``num_warmup + num_steps`` steps; discard warmup."""
+    """Run the SGMCMC kernel for ``num_warmup + num_results`` steps; discard warmup."""
     step = jax.jit(algorithm.step)
 
     def one_step(state, k):
         k_kernel, k_measure = jax.random.split(k)
         return step(k_kernel, state, k_measure, step_size)
 
-    total = num_warmup + num_steps
+    total = num_warmup + num_results
     keys = jax.random.split(key, total)
     positions: list[Any] = []
     for i in range(total):
@@ -255,14 +253,20 @@ class BlackJAXSGHMCMethod(_BlackJAXSGMCMCMethod):
 
     Kernel: :func:`blackjax.sghmc`. Accepts the additional kwargs
     ``num_integration_steps`` (default 10), ``alpha`` (default 0.01),
-    ``beta`` (default 0.0). Tier 41-50 (refinement-based:
-    asymptotically exact as the step-size schedule decays). Priority
-    42 — slightly below SGLD because the additional integration-step
-    tuning makes it more brittle in typical use.
+    ``beta`` (default 0.0). Tier 41-50 by algorithm category
+    (refinement-based: asymptotically exact as the step-size schedule
+    decays), but registered at the opt-in-only sentinel ``priority=0``.
+    Reasoning: SGHMC's ``check()`` is identical to ``blackjax_sgld``
+    (same ``SimpleModel`` + ``ConditionallyIndependentLikelihood`` +
+    ``batch_size=`` gate); with SGLD at 45, SGHMC is structurally
+    unreachable in auto-dispatch. SGLD is also the better default —
+    fewer dials (single ``step_size``) vs SGHMC's
+    ``num_integration_steps`` / ``alpha`` / ``beta``. Callers who
+    specifically want SGHMC pin ``method="blackjax_sghmc"``.
     """
 
     _method_name = "blackjax_sghmc"
-    _method_priority = 42
+    _method_priority = 0
 
     def _build_algorithm(self, grad_estimator, **kwargs: Any):
         num_integration_steps: int = kwargs.get("num_integration_steps", 10)

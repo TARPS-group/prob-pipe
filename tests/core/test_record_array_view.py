@@ -21,24 +21,24 @@ These tests cover:
   sweep grouping, independent axes.
 """
 
-import jax
+from __future__ import annotations
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from probpipe import (
+    DistributionArray,
     FullFactorialDesign,
     Normal,
     NumericRecord,
     NumericRecordArray,
     Record,
     RecordArray,
-    DistributionArray,
     workflow_function,
 )
 from probpipe.core._record_array import _RecordArrayView
 from probpipe.core.record import RecordTemplate
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -374,7 +374,6 @@ class TestMixedGroupingComposition:
         ``DistributionArray`` of shape (2,) products to batch (4, 2).
         Each cell sees scalar ``x`` and one component Distribution
         (``d``), so the inner body can call ``d.mean()``-style ops."""
-        from probpipe import mean
         da = DistributionArray(
             [Normal(loc=float(i), scale=1.0, name=f"n{i}") for i in range(2)],
         )
@@ -394,7 +393,7 @@ class TestMixedGroupingComposition:
         Output is a DistributionArray of (4,) per-row marginals."""
         noise = Normal(loc=0.0, scale=0.1, name="noise")
 
-        @workflow_function(n_broadcast_samples=20, vectorize="loop")
+        @workflow_function(n_broadcast_samples=20, dispatch="sequential")
         def f(x, noise: float):
             return x + noise
 

@@ -12,10 +12,16 @@ from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
 from ..core.node import workflow_function
 from ..core.protocols import SupportsUnnormalizedLogProb
-from ..custom_types import Array, ArrayLike, PRNGKey
+from ..custom_types import ArrayLike
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
-from ._tfp_mcmc import _build_mcmc_datatree, _extract_record_template, _get_init_state, _get_prior, _is_simple_model
+from ._inference_utils import (
+    build_mcmc_datatree,
+    extract_record_template,
+    get_init_state,
+    get_prior,
+    is_simple_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,14 +76,13 @@ def rwmh(
         )
 
     if log_prob_fn is not None and data is not None:
-        data_jnp = jnp.asarray(data)
         def target_log_prob(params):
-            return dist._unnormalized_log_prob(params) + log_prob_fn(params, data_jnp)
+            return dist._unnormalized_log_prob(params) + log_prob_fn(params, data)
     else:
         def target_log_prob(params):
             return dist._unnormalized_log_prob(params)
 
-    init_state = _get_init_state(dist, init, data)
+    init_state = get_init_state(dist, init, random_seed=random_seed)
 
     d = init_state.shape[0]
     key = jax.random.PRNGKey(random_seed)
@@ -122,9 +127,9 @@ def rwmh(
     accept_rate = total_accepts / total_steps
     warmup = warmup_chains if all(w is not None for w in warmup_chains) else None
 
-    auxiliary = _build_mcmc_datatree(chains, warmup_chains=warmup)
+    auxiliary = build_mcmc_datatree(chains, warmup_chains=warmup)
 
-    record_template = _extract_record_template(dist)
+    record_template = extract_record_template(dist)
     return make_posterior(
         chains, parents=(dist,), algorithm="rwmh",
         auxiliary=auxiliary, record_template=record_template,
@@ -155,7 +160,7 @@ class TFPRWMHMethod(InferenceMethod):
         return 55
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
-        prior = _get_prior(dist)
+        prior = get_prior(dist)
         if not isinstance(prior, SupportsUnnormalizedLogProb):
             return MethodInfo(feasible=False, method_name=self.name,
                               description="Requires SupportsUnnormalizedLogProb")
@@ -165,15 +170,16 @@ class TFPRWMHMethod(InferenceMethod):
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
-        prior = _get_prior(dist)
+        prior = get_prior(dist)
         log_prob_fn = None
-        if _is_simple_model(dist):
+        if is_simple_model(dist):
             lik = dist._likelihood
             log_prob_fn = lambda params, d: lik.log_likelihood(params=params, data=d)
 
+        random_seed = kwargs.get("random_seed", 0)
         init = kwargs.get("init")
         if init is None:
-            init = _get_init_state(prior, None, observed)
+            init = get_init_state(dist, None, random_seed=random_seed)
 
         return rwmh._func(
             prior, observed,
@@ -183,5 +189,5 @@ class TFPRWMHMethod(InferenceMethod):
             num_chains=kwargs.get("num_chains", 1),
             step_size=kwargs.get("step_size", 0.1),
             init=init,
-            random_seed=kwargs.get("random_seed", 0),
+            random_seed=random_seed,
         )

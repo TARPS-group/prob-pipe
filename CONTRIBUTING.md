@@ -222,7 +222,15 @@ full public API surface.
 ### Design principles
 
 1. **Distributions are immutable** — parameters fixed at construction;
-   operations return new distributions.
+   operations return new distributions. The one documented exception
+   is `Distribution._auxiliary` (a `DataTree` of post-construction
+   metadata): validators and diagnostic ops (e.g.,
+   `predictive_check`) attach their results in-place under named
+   groups (`auxiliary["predictive_check"]`, future `auxiliary["loo"]`,
+   ...). This is a deliberate carve-out — the alternative of returning
+   a renamed clone for every diagnostic would break source/identity
+   tracking that downstream code relies on. Treat `_auxiliary` as
+   append-only; never mutate other state post-construction.
 2. **Operations are standalone workflow functions** — `sample()`, `mean()`,
    `log_prob()`, `condition_on()` are `WorkflowFunction` instances in
    `probpipe/core/ops.py`.
@@ -350,16 +358,18 @@ Built-in methods:
 
 | Priority | Name | Backend | Applies to |
 |----------|------|---------|------------|
-| 85 | `nutpie_nuts` | nutpie | `StanModel`, `PyMCModel` |
+| 88 | `nutpie_nuts` | nutpie | `StanModel`, `PyMCModel` |
+| 85 | `blackjax_nuts` | BlackJAX | Any `SupportsLogProb` (JAX-traceable) |
 | 82 | `cmdstan_nuts` | CmdStanPy | `StanModel` |
-| 81 | `pymc_nuts` | PyMC | `PyMCModel` |
-| 75 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable) |
-| 65 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable) |
-| 55 | `tfp_rwmh` | TFP | Any `SupportsLogProb` |
+| 82 | `pymc_nuts` | PyMC | `PyMCModel` |
+| 55 | `tfp_rwmh` | hand-rolled Python | Any `SupportsLogProb` |
 | 45 | `blackjax_sgld` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
-| 42 | `blackjax_sghmc` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
-| 25 | `pymc_advi` | PyMC | `PyMCModel` |
 | 5 | `sbijax_smcabc` | sbijax | `SimpleGenerativeModel` |
+| 0 | `blackjax_hmc` | BlackJAX | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
+| 0 | `blackjax_sghmc` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=`; opt-in only via `method=` |
+| 0 | `pymc_advi` | PyMC | `PyMCModel`; opt-in only via `method=` |
+| 0 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
+| 0 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 
 ### Converter priority system
 

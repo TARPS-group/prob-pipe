@@ -104,8 +104,8 @@ Choose a number with these axes in mind, roughly in order of weight:
    *algorithmic* specialisation that exploits model structure for an
    asymptotic speedup (Kalman, INLA, conjugate updates), and
    *engineering* specialisation — same algorithm, faster backend
-   (nutpie's Rust-backed NUTS vs. TFP's; Stan's compiled gradients vs.
-   JAX traces).
+   (nutpie's Rust-backed NUTS vs. BlackJAX's; Stan's compiled gradients
+   vs. JAX traces).
 3. **Approximation quality** — analytical exact > controlled-error
    approximations > asymptotically-exact MCMC > intrinsic approximations.
 4. **Diagnostic richness** — methods that fail silently rank below

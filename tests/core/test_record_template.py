@@ -126,6 +126,47 @@ class TestLeafShapes:
 
 
 # ---------------------------------------------------------------------------
+# event_shapes / field_event_shape (top-level field view)
+# ---------------------------------------------------------------------------
+
+
+class TestEventShapes:
+    def test_event_shapes_flat_fields(self):
+        tpl = RecordTemplate(x=(), y=(3,))
+        assert tpl.event_shapes == {"x": (), "y": (3,)}
+
+    def test_event_shapes_opaque_leaf_collapses(self):
+        """Opaque leaves (spec ``None``) collapse to ``()`` — the
+        downstream Distribution machinery only cares about array
+        shapes, and treats opaque fields as scalar event shape.
+        """
+        tpl = RecordTemplate(label=None, x=(3,))
+        assert tpl.event_shapes == {"label": (), "x": (3,)}
+
+    def test_event_shapes_nested_collapses_to_scalar(self):
+        """Unlike ``leaf_shapes`` (which descends), ``event_shapes``
+        emits one entry per *top-level* field. Nested sub-templates
+        collapse to ``()`` — the per-leaf detail is available via
+        the nested template's own ``event_shapes``.
+        """
+        inner = RecordTemplate(a=(), b=(2,))
+        outer = RecordTemplate(inner=inner, z=(3,))
+        assert outer.event_shapes == {"inner": (), "z": (3,)}
+        assert inner.event_shapes == {"a": (), "b": (2,)}
+
+    def test_field_event_shape_lookup(self):
+        tpl = RecordTemplate(x=(), y=(3,), label=None)
+        assert tpl.field_event_shape("x") == ()
+        assert tpl.field_event_shape("y") == (3,)
+        assert tpl.field_event_shape("label") == ()
+
+    def test_field_event_shape_keyerror_on_missing(self):
+        tpl = RecordTemplate(x=())
+        with pytest.raises(KeyError):
+            tpl.field_event_shape("missing")
+
+
+# ---------------------------------------------------------------------------
 # flat_size (on NumericRecordTemplate)
 # ---------------------------------------------------------------------------
 

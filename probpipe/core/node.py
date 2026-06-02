@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from itertools import product as cartesian_product
 from types import MappingProxyType
-from typing import Any, get_type_hints
+from typing import Any, ClassVar, Literal, TypeAlias, get_args, get_type_hints
 
 import jax
 import jax.numpy as jnp
@@ -95,6 +95,11 @@ __all__ = [
     "AbstractModule",
 ]
 
+_WorkflowFunctionDispatch: TypeAlias = Literal[
+    "auto", "jax", "sequential", "thread"
+]
+
+
 class InputFrozenError(Exception):
     pass
 
@@ -147,7 +152,7 @@ def workflow_function(_func=None, /, **kwargs):
         def my_func(x, y):
             return x + y
 
-        @workflow_function(n_broadcast_samples=100, vectorize="loop")
+        @workflow_function(n_broadcast_samples=100, dispatch="sequential")
         def my_func(x, y):
             return x + y
     """
@@ -253,14 +258,15 @@ class WorkflowFunction(Node):
     sample, returning an ``EmpiricalDistribution`` over the outputs (or a
     plain list when results are not numeric).
 
-    **Vectorization and orchestration** are orthogonal concerns:
+    **Dispatch and orchestration** are orthogonal concerns:
 
-    - *Vectorization* (``vectorize``) controls **how** samples are dispatched:
-      ``jax.vmap`` for JAX-traceable functions, or a Python loop otherwise.
+    - *Dispatch* (``dispatch``) controls **how** samples are dispatched:
+      ``jax.vmap``, local sequential function calls, or local threaded
+      function calls.
     - *Orchestration* (``workflow_kind``) controls **whether** the dispatch
       is wrapped in a Prefect task or flow for compute-graph tracing.
 
-    When both are active, the JAX-vectorized computation is executed inside
+    When both are active, the JAX-dispatched computation is executed inside
     a Prefect task/flow, giving the benefits of ``vmap`` performance with
     full Prefect lineage tracking.
 
@@ -286,24 +292,32 @@ class WorkflowFunction(Node):
         Default number of samples drawn when broadcasting.  Can be overridden
         at call time by passing ``n_broadcast_samples=…`` (provided the
         wrapped function does not itself declare a parameter with that name).
-    vectorize : str
-        Vectorization strategy for broadcasting:
+    dispatch : str
+        Function-call dispatch strategy for broadcasting:
 
         - ``"auto"`` (default): probe with ``jax.make_jaxpr``; on success
-          use ``"jax"``, on failure fall back to ``"loop"``.
-        - ``"jax"``: vectorise via ``jax.vmap``.  Requires the wrapped
-          function to be JAX-traceable.
-        - ``"loop"``: Python loop (optionally threaded via *parallel*).
-    parallel : bool or int
-        Controls parallel execution during broadcasting (``"loop"``
-        vectorization only).  ``False`` → sequential, ``True`` →
-        ``ThreadPoolExecutor`` with default workers, ``int`` → explicit
-        ``max_workers``.
+          use ``"jax"``, on failure fall back to ``"sequential"``.
+        - ``"jax"``: dispatch via ``jax.vmap``. Requires the wrapped
+          function and broadcast path to be JAX-traceable.
+        - ``"sequential"``: local row-wise/function-call dispatch without
+          threads.
+        - ``"thread"``: local row-wise/function-call dispatch through
+          ``ThreadPoolExecutor``.
+    max_workers : int or None
+        Worker count for threaded sequential execution. ``None`` lets
+        ``ThreadPoolExecutor`` choose automatically; a positive integer
+        sets the worker count explicitly. Only applies when ``dispatch`` is
+        ``"thread"`` and execution resolves to local thread dispatch. JAX
+        ``vmap``, local sequential dispatch, Prefect, Ray, and Dask do not
+        use this setting.
     seed : int
         Random seed for JAX PRNG key management during broadcasting.
     """
 
     DEFAULT_N_BROADCAST_SAMPLES: int = 128
+    _VALID_DISPATCH_STRATEGIES: ClassVar[tuple[str, ...]] = get_args(
+        _WorkflowFunctionDispatch
+    )
 
     def __init__(
         self,
@@ -314,12 +328,31 @@ class WorkflowFunction(Node):
         bind: dict[str, Any] | None = None,         # construction-time bindings (defaults/config)
         module: Any | None = None,                  # typically a Module; kept as Any to avoid import cycles
         n_broadcast_samples: int | None = None,      # default number of samples for broadcasting
-        vectorize: str = "auto",                     # "auto" | "jax" | "loop"
-        parallel: bool | int = False,               # True/int for ThreadPoolExecutor, or Prefect .map()
+        dispatch: _WorkflowFunctionDispatch = "auto", # "auto" | "jax" | "sequential" | "thread"
+        max_workers: int | None = None,             # ThreadPoolExecutor worker count
         seed: int = 0,                              # JAX PRNG seed for broadcasting
         include_inputs: bool = False,                # True → return BroadcastDistribution (joint over inputs+outputs)
         **kwargs: Any,                              # convenience bindings (merged into bind)
     ):
+        removed_keywords = {"parallel", "vectorize"} & set(kwargs)
+        if removed_keywords:
+            names = ", ".join(sorted(removed_keywords))
+            raise TypeError(
+                f"WorkflowFunction no longer accepts {names}; use dispatch= instead."
+            )
+
+        if dispatch not in self._VALID_DISPATCH_STRATEGIES:
+            raise ValueError(
+                f"dispatch must be one of {self._VALID_DISPATCH_STRATEGIES}; got {dispatch!r}"
+            )
+        _workflow_execution._validate_max_workers(max_workers)
+        if dispatch != "thread" and max_workers is not None:
+            warnings.warn(
+                "max_workers configures only dispatch='thread'; ignoring it "
+                f"for dispatch={dispatch!r}.",
+                stacklevel=2,
+            )
+
         self._func = func
         self._sig = inspect.signature(func)
         self._hints = get_type_hints(func)
@@ -343,11 +376,11 @@ class WorkflowFunction(Node):
         self.__module__ = getattr(func, "__module__", None)
         self._module = module
         self._n_broadcast_samples = n_broadcast_samples if n_broadcast_samples is not None else self.DEFAULT_N_BROADCAST_SAMPLES
-        self._vectorize = vectorize
-        self._parallel = parallel
+        self._dispatch = dispatch
+        self._max_workers = max_workers
         self._key = jax.random.PRNGKey(seed)
         self._include_inputs = include_inputs
-        self._resolved_vectorize: str | None = None  # cached auto-detection result
+        self._resolved_dispatch: str | None = None  # cached auto-detection result
 
         # bind = "construction-time inputs" (defaults/config). kwargs are also treated as bind.
         b = dict(bind or {})
@@ -422,17 +455,29 @@ class WorkflowFunction(Node):
         *,
         mode: _workflow_execution.WorkflowExecutionMode | None = None,
     ) -> _workflow_execution.WorkflowExecutionConfig:
-        """Build resolved execution metadata for loop-style call dispatch."""
+        """Build resolved execution metadata for sequential call dispatch."""
         if mode is None:
             kind = self.effective_workflow_kind
             if kind is WorkflowKind.TASK:
                 mode = "prefect_task"
             elif kind is WorkflowKind.FLOW:
                 mode = "prefect_flow"
-            elif self._parallel is not False:
+            elif self._dispatch == "thread":
                 mode = "thread"
             else:
                 mode = "sequential"
+
+        max_workers = None
+        if mode == "thread":
+            max_workers = self._max_workers
+        elif mode in ("prefect_task", "prefect_flow"):
+            if self._dispatch == "thread" or self._max_workers is not None:
+                warnings.warn(
+                    "dispatch='thread' and max_workers configure only local "
+                    "ThreadPoolExecutor dispatch; they do not control Prefect "
+                    "scheduling.",
+                    stacklevel=2,
+                )
 
         prefect_task_runner = (
             prefect_config.resolve_task_runner()
@@ -441,7 +486,7 @@ class WorkflowFunction(Node):
         )
         return _workflow_execution.WorkflowExecutionConfig(
             mode=mode,
-            parallel=self._parallel,
+            max_workers=max_workers,
             name=self._name,
             prefect_task_runner=prefect_task_runner,
         )
@@ -777,22 +822,15 @@ class WorkflowFunction(Node):
         self._key, subkey = jax.random.split(self._key)
         return subkey
 
-    def _resolve_vectorize(self, values: dict[str, Any], broadcast_args: list[str]) -> str:
-        """Resolve the vectorization strategy, caching the auto-detection result.
-
-        Returns ``"jax"`` or ``"loop"``.  This is independent of orchestration
-        (``workflow_kind``), which wraps whichever strategy is chosen.
-        """
-        if self._vectorize != "auto":
-            return self._vectorize
-
-        if self._resolved_vectorize is not None:
-            return self._resolved_vectorize
-
-        # Probe JAX traceability with dummy inputs
+    def _jax_traceability_error(
+        self,
+        values: dict[str, Any],
+        broadcast_args: list[str],
+    ) -> Exception | None:
+        """Return the JAX trace-probe error for the current call, if any."""
         try:
             dummy_kw = {}
-            for name, param in self._sig.parameters.items():
+            for name in self._sig.parameters:
                 if name == "self":
                     continue
                 if name in broadcast_args:
@@ -804,7 +842,25 @@ class WorkflowFunction(Node):
                         dummy_kw[name] = v[0]
                     else:
                         dist = v
-                        es = dist.event_shape
+                        # ``event_shape`` raises on multi-field NRDs
+                        # (``NotImplementedError`` on the base or
+                        # ``TypeError`` via ``_single_field_name``) —
+                        # those distributions don't have a single
+                        # array-shaped placeholder, so the probe can't
+                        # produce a dummy. Falling out to the outer
+                        # ``except Exception`` triggers loop
+                        # vectorization, which is the right default for
+                        # multi-field record-valued inputs.
+                        try:
+                            es = dist.event_shape
+                        except (TypeError, NotImplementedError) as exc:
+                            raise NotImplementedError(
+                                f"Cannot probe JAX traceability for "
+                                f"{type(dist).__name__} broadcast arg "
+                                f"{name!r}: no single ``event_shape`` "
+                                f"(multi-field or abstract). "
+                                f"Falling back to loop vectorization."
+                            ) from exc
                         # Match the distribution's own dtype so the probe
                         # mirrors what the inner function actually sees.
                         dt = getattr(dist, "dtype", None) or jnp.zeros((), dtype=float).dtype
@@ -813,20 +869,62 @@ class WorkflowFunction(Node):
                     v = values[name]
                     if isinstance(v, jnp.ndarray):
                         dummy_kw[name] = v
-                    elif hasattr(v, '__array__'):
+                    elif hasattr(v, "__array__"):
                         dummy_kw[name] = jnp.asarray(v)
                     else:
                         dummy_kw[name] = v
             jax.make_jaxpr(lambda kw: self._func(**kw))(dummy_kw)
-            self._resolved_vectorize = "jax"
-        except Exception:
+        except Exception as exc:
+            return exc
+        return None
+
+    def _require_jax_traceable(
+        self,
+        values: dict[str, Any],
+        broadcast_args: list[str],
+    ) -> None:
+        """Raise a clear error if explicit JAX dispatch cannot trace."""
+        trace_error = self._jax_traceability_error(values, broadcast_args)
+        if trace_error is None:
+            return
+        raise ValueError(
+            "dispatch='jax' failed while tracing the wrapped function with JAX; "
+            "ensure the function is JAX-traceable, or use dispatch='auto', "
+            "'sequential', or 'thread'."
+        ) from trace_error
+
+    def _resolve_dispatch(
+        self,
+        values: dict[str, Any],
+        broadcast_args: list[str],
+        *,
+        jax_supported: bool = True,
+    ) -> str:
+        """Resolve the dispatch strategy, caching JAX traceability detection.
+
+        Returns ``"jax"``, ``"sequential"``, or ``"thread"``. This is
+        independent of orchestration (``workflow_kind``), which wraps
+        whichever strategy is chosen.
+        """
+        if self._dispatch != "auto":
+            return self._dispatch
+
+        if not jax_supported:
+            return "sequential"
+
+        if self._resolved_dispatch is not None:
+            return self._resolved_dispatch
+
+        if self._jax_traceability_error(values, broadcast_args) is None:
+            self._resolved_dispatch = "jax"
+        else:
             logger.info(
-                "Function '%s' is not JAX-traceable; using loop vectorization.",
+                "Function '%s' is not JAX-traceable; using sequential dispatch.",
                 self._name,
             )
-            self._resolved_vectorize = "loop"
+            self._resolved_dispatch = "sequential"
 
-        return self._resolved_vectorize
+        return self._resolved_dispatch
 
     def _broadcast(
         self,
@@ -1011,12 +1109,10 @@ class WorkflowFunction(Node):
         """Execute ``n_total`` inner calls, one per sweep cell in flat
         row-major order over the concatenated ``sweep_batch_shape``.
 
-        Returns a Python list of outputs (loop path) or a stacked
+        Returns a Python list of outputs (sequential path) or a stacked
         pytree with leading axis ``n_total`` (vmap path). Either form
         is a valid input for ``_make_stack``.
         """
-        vectorize = self._resolve_vectorize(values, ra_args)
-
         # The vmap path only handles the simple single-RecordArray
         # case: one group, one RA arg, no DistributionArray, no views
         # (views carry parent references that would confuse vmap's
@@ -1027,10 +1123,24 @@ class WorkflowFunction(Node):
         has_view = any(
             isinstance(values[name], _RecordArrayView) for name in ra_args
         )
-        if has_dist_array or has_view or len(ra_groups) > 1 or len(ra_args) > 1:
-            vectorize = "loop"
+        jax_supported = not (
+            has_dist_array or has_view or len(ra_groups) > 1 or len(ra_args) > 1
+        )
+        if self._dispatch == "jax" and not jax_supported:
+            raise ValueError(
+                "dispatch='jax' supports only a single plain RecordArray sweep; "
+                "use dispatch='auto', 'sequential', or 'thread' for this path."
+            )
 
-        if vectorize == "jax":
+        dispatch = self._resolve_dispatch(
+            values,
+            ra_args,
+            jax_supported=jax_supported,
+        )
+
+        if dispatch == "jax":
+            if self._dispatch == "jax":
+                self._require_jax_traceable(values, ra_args)
             # Flatten the single RecordArray's batch axes to one leading
             # dim so vmap maps over axis 0 uniformly regardless of the
             # sweep's original batch_shape.
@@ -1053,7 +1163,7 @@ class WorkflowFunction(Node):
                 }
             return jax.vmap(single_call)(vmap_input)
 
-        # Loop path.
+        # Sequential path.
         per_row_values = [
             self._slice_ra_args(values, ra_args, i, ra_groups)
             for i in range(n_total)
@@ -1108,14 +1218,16 @@ class WorkflowFunction(Node):
         calls the user's function once per sample, and wraps the n
         outputs as a single marginal distribution.
 
-        Vectorization (``"jax"`` vs ``"loop"``) and orchestration
+        Dispatch (``"jax"`` vs row-wise calls) and orchestration
         (``workflow_kind``) are resolved independently:
 
-        - **vectorize="jax"**: samples are dispatched via ``jax.vmap``.
-        - **vectorize="loop"**: samples are dispatched via a Python loop,
-          with optional empirical enumeration and threading.
-        - **workflow_kind="task"/"flow"**: whichever vectorization strategy
-          is chosen gets wrapped in a Prefect task or flow for compute-graph
+        - **dispatch="jax"**: samples are dispatched via ``jax.vmap``.
+        - **dispatch="sequential"**: samples are dispatched via local
+          row-wise calls.
+        - **dispatch="thread"**: samples are dispatched via local threaded
+          row-wise calls.
+        - **workflow_kind="task"/"flow"**: whichever dispatch strategy is
+          chosen gets wrapped in a Prefect task or flow for compute-graph
           tracing.
         """
         MIN_BROADCAST_SAMPLES = 5  # Recommended minimum samples
@@ -1128,8 +1240,6 @@ class WorkflowFunction(Node):
                 f"Recommended minimum is {MIN_BROADCAST_SAMPLES}.",
                 stacklevel=2
             )
-
-        vectorize = self._resolve_vectorize(values, broadcast_args)
 
         # Collect candidate empirical dists (small enough individually),
         # sorted smallest first. Greedily include them while the product
@@ -1154,15 +1264,28 @@ class WorkflowFunction(Node):
                 # Too large to enumerate — sample from it instead.
                 sample_args[name] = dist
 
+        dispatch = self._resolve_dispatch(
+            values,
+            broadcast_args,
+            jax_supported=not empirical_args,
+        )
+        if self._dispatch == "jax" and empirical_args:
+            raise ValueError(
+                "dispatch='jax' does not support exact empirical enumeration; "
+                "use dispatch='auto', 'sequential', or 'thread' for this path."
+            )
+
         # Enumeration preserves exact empirical weights and must run in
-        # all vectorization modes — otherwise the cartesian-product
-        # semantics change with vectorize= (issue surfaced in the
+        # all row-wise dispatch modes — otherwise the cartesian-product
+        # semantics change with dispatch= (issue surfaced in the
         # ``EmpiricalDistribution`` broadcasting example).
         if empirical_args:
             result = self._broadcast_enumerate(
                 values, empirical_args, sample_args, product_size, n_broadcast_samples,
             )
-        elif vectorize == "jax":
+        elif dispatch == "jax":
+            if self._dispatch == "jax":
+                self._require_jax_traceable(values, broadcast_args)
             result = self._broadcast_jax(values, broadcast_args, n_broadcast_samples)
         else:
             result = self._broadcast_sample(values, broadcast_args, n_broadcast_samples)
@@ -1176,7 +1299,7 @@ class WorkflowFunction(Node):
             "broadcast",
             parents=parents,
             metadata={
-                "vectorize": vectorize,
+                "dispatch": dispatch,
                 "orchestrate": self.effective_workflow_kind.value,
                 "n_samples": n_broadcast_samples,
                 "func": self._name or self._func.__name__,
@@ -1418,7 +1541,6 @@ class WorkflowFunction(Node):
             call_value_list=call_value_list,
             execution=_workflow_execution.WorkflowExecutionConfig(
                 mode="prefect_task",
-                parallel=self._parallel,
                 name=self._name,
             ),
         )

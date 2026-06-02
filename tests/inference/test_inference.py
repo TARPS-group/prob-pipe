@@ -7,6 +7,8 @@ Covers:
 - rwmh workflow function: basic sampling with SupportsLogProb
 """
 
+from __future__ import annotations
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -24,13 +26,10 @@ from probpipe import (
     sample,
     variance,
 )
-from unittest.mock import MagicMock
-
-from probpipe.inference import rwmh
 from probpipe.core.distribution import _RecordDistributionView
+from probpipe.inference import rwmh
 from probpipe.inference._approximate_distribution import make_posterior
-from probpipe.inference._tfp_mcmc import _build_mcmc_datatree
-
+from probpipe.inference._inference_utils import build_mcmc_datatree
 
 # ---------------------------------------------------------------------------
 # ApproximateDistribution
@@ -48,7 +47,7 @@ class TestApproximateDistribution:
         warmup1 = jax.random.normal(jax.random.PRNGKey(2), (10, 2))
         warmup2 = jax.random.normal(jax.random.PRNGKey(3), (10, 2))
         chains = [chain1, chain2]
-        auxiliary = _build_mcmc_datatree(chains, warmup_chains=[warmup1, warmup2])
+        auxiliary = build_mcmc_datatree(chains, warmup_chains=[warmup1, warmup2])
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         return make_posterior(
             chains, parents=(prior,), algorithm="test", auxiliary=auxiliary,
@@ -205,7 +204,7 @@ class TestApproximateDistributionValuesTemplate:
         template = RecordTemplate(a=(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
         warmup = jax.random.normal(jax.random.PRNGKey(1), (10, 2))
-        auxiliary = _build_mcmc_datatree([chain], warmup_chains=[warmup])
+        auxiliary = build_mcmc_datatree([chain], warmup_chains=[warmup])
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         post = make_posterior(
             [chain], parents=(prior,), algorithm="test",
@@ -277,7 +276,8 @@ class TestApproximateDistributionValuesTemplate:
         assert post.record_template["params"].fields == ("a", "b")
         # Moments key by the user's top-level fields, not by an
         # auto-wrap leaf.
-        from probpipe import mean as op_mean, variance as op_variance
+        from probpipe import mean as op_mean
+        from probpipe import variance as op_variance
         m = op_mean(post)
         assert m.fields == expected_fields
         assert m["params"].shape == (2,)  # flat per-component means
@@ -310,7 +310,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_auxiliary_has_posterior_group(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        auxiliary = _build_mcmc_datatree([chain])
+        auxiliary = build_mcmc_datatree([chain])
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
         post = make_posterior([chain], parents=(prior,), algorithm="test",
                              auxiliary=auxiliary)
@@ -731,7 +731,7 @@ class TestViewProtocolDuckTyping:
 
     def test_view_always_isinstance_sampling(self):
         """Every view is SupportsSampling regardless of parent type."""
-        from probpipe import SupportsSampling, ProductDistribution
+        from probpipe import ProductDistribution, SupportsSampling
         joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
         assert isinstance(joint["x"], SupportsSampling)
 
@@ -744,7 +744,7 @@ class TestViewProtocolDuckTyping:
 
     def test_view_always_isinstance_mean_variance(self):
         """Every view is SupportsMean and SupportsVariance."""
-        from probpipe import SupportsMean, SupportsVariance, ProductDistribution
+        from probpipe import ProductDistribution, SupportsMean, SupportsVariance
         joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
         view = joint["x"]
         assert isinstance(view, SupportsMean)
@@ -752,8 +752,9 @@ class TestViewProtocolDuckTyping:
 
     def test_view_log_prob_delegates_to_component(self):
         """View _log_prob delegates to the underlying component distribution."""
-        from probpipe import ProductDistribution
         import scipy.stats
+
+        from probpipe import ProductDistribution
         joint = ProductDistribution(x=Normal(loc=2.0, scale=0.5, name="x"), y=Normal(0, 1, name="y"))
         view = joint["x"]
         lp = float(view._log_prob(jnp.array(2.0)))
@@ -762,14 +763,14 @@ class TestViewProtocolDuckTyping:
 
     def test_view_no_cov_when_parent_lacks_it(self):
         """View lacks SupportsCovariance when parent doesn't have it."""
-        from probpipe import SupportsCovariance, ProductDistribution
+        from probpipe import ProductDistribution, SupportsCovariance
         joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
         view = joint["x"]
         assert not isinstance(view, SupportsCovariance)
 
     def test_dynamic_protocol_depends_on_parent(self):
         """Same _RecordDistributionView base, different isinstance results."""
-        from probpipe import SupportsLogProb, ProductDistribution
+        from probpipe import ProductDistribution, SupportsLogProb
         # ProductDistribution parent → isinstance True
         joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(3, 2, name="y"))
         view_with = joint["x"]
@@ -809,22 +810,20 @@ class TestRecordDistributionProperties:
         )
 
     def test_record_distribution_flatten_unflatten(self, posterior):
-        """RecordDistribution.flatten_value / unflatten_value round-trip."""
-        from probpipe.core._record_distribution import RecordDistribution
+        """NumericRecordDistribution.flatten_value / unflatten_value round-trip."""
         v = Record(K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
-        flat = RecordDistribution.flatten_value(posterior, v)
+        flat = posterior.flatten_value(v)
         np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])  # insertion: K, phi, r
-        v2 = RecordDistribution.unflatten_value(posterior, flat)
+        v2 = posterior.unflatten_value(flat, template=posterior.record_template)
         assert isinstance(v2, Record)
         np.testing.assert_allclose(float(v2["K"]), 1.0)
         np.testing.assert_allclose(float(v2["r"]), 3.0)
 
     def test_flatten_unflatten_roundtrip(self, posterior, template):
-        from probpipe.core._record_distribution import RecordDistribution
         v = Record(K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
-        flat = RecordDistribution.flatten_value(posterior, v)
+        flat = posterior.flatten_value(v)
         assert flat.shape == (3,)
-        v2 = RecordDistribution.unflatten_value(posterior, flat)
+        v2 = posterior.unflatten_value(flat, template=posterior.record_template)
         assert isinstance(v2, Record)
         np.testing.assert_allclose(float(v2["K"]), 1.0)
         np.testing.assert_allclose(float(v2["r"]), 3.0)
@@ -834,24 +833,22 @@ class TestRecordDistributionProperties:
         auto-wraps the chain as a single-field Record keyed by ``name=``.
         ``unflatten_value`` round-trips a flat vector through that
         single-field template (no RuntimeError)."""
-        from probpipe.core._record_distribution import RecordDistribution
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = ApproximateDistribution([chain], name="x")
-        result = RecordDistribution.unflatten_value(dist, jnp.zeros(3))
-        # Single-field auto-wrap → result has one field "x".
-        assert hasattr(result, "fields")
-        assert result.fields == ("x",)
+        # Single-field auto-wrap → ``unflatten_value`` reshapes to the
+        # lone field's event shape (raw array, ``fields == ("x",)``).
+        result = dist.unflatten_value(jnp.zeros(3), template=dist.record_template)
+        # Single-field path returns a raw array; the template carries
+        # the single field name.
+        assert dist.record_template.fields == ("x",)
 
     def test_record_distribution_event_shapes(self, posterior):
-        """RecordDistribution.event_shapes returns per-field dict."""
-        from probpipe.core._record_distribution import RecordDistribution
-        shapes = RecordDistribution.event_shapes.fget(posterior)
-        assert shapes == {"K": (), "phi": (), "r": ()}
+        """``event_shapes`` returns per-field dict."""
+        assert posterior.event_shapes == {"K": (), "phi": (), "r": ()}
 
     def test_record_distribution_event_size(self, posterior, template):
-        """RecordDistribution.event_size matches template.flat_size."""
-        from probpipe.core._record_distribution import RecordDistribution
-        assert RecordDistribution.event_size.fget(posterior) == template.flat_size
+        """``event_size`` matches template.flat_size."""
+        assert posterior.event_size == template.flat_size
 
 
 class TestValuesSelect:
@@ -979,7 +976,7 @@ class TestEndToEndValuesPipeline:
         """Broadcast predict(params, x) computes correct function of posterior."""
         from probpipe.core.node import workflow_function
 
-        @workflow_function(n_broadcast_samples=100, vectorize="loop", seed=0)
+        @workflow_function(n_broadcast_samples=100, dispatch="sequential", seed=0)
         def predict(params, x):
             return params[0] + params[1] * x
 
@@ -998,7 +995,7 @@ class TestEndToEndValuesPipeline:
         """
         from probpipe.core.node import workflow_function
 
-        @workflow_function(n_broadcast_samples=50, vectorize="loop", seed=0)
+        @workflow_function(n_broadcast_samples=50, dispatch="sequential", seed=0)
         def identity_pair(a, b):
             return a - b
 
@@ -1026,7 +1023,6 @@ class TestEndToEndValuesPipeline:
 
         # Per-field views
         view_a = post["a"]
-        view_b = post["b"]
         assert isinstance(view_a, _RecordDistributionView)
         np.testing.assert_allclose(
             float(view_a._mean()), float(draws["a"].mean()), atol=1e-5
@@ -1040,7 +1036,7 @@ class TestEndToEndValuesPipeline:
         """Workflow with both posterior views and an independent distribution."""
         from probpipe.core.node import workflow_function
 
-        @workflow_function(n_broadcast_samples=50, vectorize="loop", seed=0)
+        @workflow_function(n_broadcast_samples=50, dispatch="sequential", seed=0)
         def noisy_predict(params, noise):
             return params[0] + params[1] * 0.5 + noise
 

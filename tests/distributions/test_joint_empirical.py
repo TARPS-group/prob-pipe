@@ -1,21 +1,26 @@
 """Tests for JointEmpirical."""
 
+from __future__ import annotations
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from probpipe import (
-    JointEmpirical,
     EmpiricalDistribution,
+    JointEmpirical,
     Record,
-    RecordDistribution,
     RecordArray,
+    RecordDistribution,
+    condition_on,
+    log_prob,
+    mean,
+    sample,
+    variance,
 )
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.node import WorkflowFunction
-from probpipe import condition_on, log_prob, mean, sample, variance
-
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -274,7 +279,7 @@ class TestFlattenUnflatten:
         s = sample(je, key=key, sample_shape=(5,))
         flat = je.flatten_value(s)
         assert flat.shape == (5, 3)  # 2 + 1 = 3
-        unflat = je.unflatten_value(flat)
+        unflat = je.unflatten_value(flat, template=je.record_template)
         np.testing.assert_allclose(unflat["a"], s["a"], atol=1e-6)
         np.testing.assert_allclose(unflat["b"], s["b"], atol=1e-6)
 
@@ -390,7 +395,7 @@ class TestBroadcasting:
 
         wf = WorkflowFunction(
             func=add,
-            vectorize="loop",
+            dispatch="sequential",
             n_broadcast_samples=30,
             seed=42,
         )
