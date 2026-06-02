@@ -132,7 +132,7 @@ class TestUnhintedExternalDistribution:
 
         result = wf(external)
 
-        assert result.n == 8
+        assert result.num_atoms == 8
         assert [value.shape for value in seen_values] == [()] * 8
         # ``atol=0.0`` is deliberate: multiplication by 2.0 is bit-exact
         # under IEEE 754, so the broadcast output should match the

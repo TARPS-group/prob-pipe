@@ -81,7 +81,7 @@ class TestPrefectTaskLoop:
         )
         result = wf(x=normal_dist)
         assert hasattr(result, "samples")
-        assert result.n == 30
+        assert result.num_atoms == 30
 
     def test_output_values_correct(self, normal_dist):
         wf = WorkflowFunction(
@@ -108,7 +108,7 @@ class TestPrefectTaskLoop:
         d2 = Normal(loc=2.0, scale=0.3, name="y")
         result = wf(x=normal_dist, y=d2)
         assert hasattr(result, "samples")
-        assert result.n == 30
+        assert result.num_atoms == 30
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +128,7 @@ class TestPrefectFlowLoop:
         )
         result = wf(x=normal_dist)
         assert hasattr(result, "samples")
-        assert result.n == 25
+        assert result.num_atoms == 25
 
     def test_output_values_correct(self, normal_dist):
         wf = WorkflowFunction(
@@ -162,7 +162,7 @@ class TestPrefectTaskJax:
         )
         result = wf(x=normal_dist)
         assert hasattr(result, "samples")
-        assert result.n == 30
+        assert result.num_atoms == 30
 
     def test_output_values_correct(self, normal_dist):
         wf = WorkflowFunction(
@@ -195,7 +195,7 @@ class TestPrefectFlowJax:
         )
         result = wf(x=normal_dist)
         assert hasattr(result, "samples")
-        assert result.n == 25
+        assert result.num_atoms == 25
 
     def test_output_values_correct(self, normal_dist):
         wf = WorkflowFunction(

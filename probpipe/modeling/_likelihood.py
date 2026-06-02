@@ -121,18 +121,22 @@ class GenerativeLikelihood[P, D](Protocol):
     """Protocol for generating synthetic data given parameters.
 
     Generic in ``P`` (parameter type) and ``D`` (data type).
-    Any class that defines ``generate_data(params, n_samples, *, key) -> D``
+    Any class that defines
+    ``generate_data(params, num_observations, *, key) -> D``
     satisfies this protocol.
     """
 
-    def generate_data(self, params: P, n_samples: int, *, key: PRNGKey | None = None) -> D:
-        """Generate ``n_samples`` synthetic data points from ``params``.
+    def generate_data(
+        self, params: P, num_observations: int,
+        *, key: PRNGKey | None = None,
+    ) -> D:
+        """Generate ``num_observations`` synthetic data points from ``params``.
 
         Parameters
         ----------
         params : P
             Model parameters.
-        n_samples : int
+        num_observations : int
             Number of data points to generate.
         key : PRNGKey or None
             JAX PRNG key for reproducible generation.

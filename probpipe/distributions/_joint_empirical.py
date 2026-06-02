@@ -139,7 +139,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
             stored[cname] = arr
 
         self._joint_samples = stored
-        self._n = n
+        self._num_atoms = n
         if name is None:
             name = "joint_empirical(" + ",".join(samples.keys()) + ")"
         super().__init__(name=name)
@@ -172,9 +172,9 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
     # -- Properties ---------------------------------------------------------
 
     @property
-    def n(self) -> int:
-        """Number of joint samples."""
-        return self._n
+    def num_atoms(self) -> int:
+        """Number of stored atoms (joint samples) in this empirical measure."""
+        return self._num_atoms
 
     @property
     def is_uniform(self) -> bool:

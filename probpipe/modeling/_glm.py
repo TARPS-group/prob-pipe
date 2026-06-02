@@ -193,19 +193,19 @@ class GLMLikelihood:
     def generate_data(
         self,
         params: ArrayLike | Record,
-        n_samples: int,
+        num_observations: int,
         *,
         key: PRNGKey | None = None,
     ) -> Array:
         """Generate synthetic data from the GLM.
 
-        Uses the stored design matrix (first ``n_samples`` rows).
+        Uses the stored design matrix (first ``num_observations`` rows).
 
         Parameters
         ----------
         params : Array or Record
             Parameter vector of shape ``(p,)`` or a batch ``(*batch, p)``.
-        n_samples : int
+        num_observations : int
             Number of observations to generate (per batch element).
         key : PRNGKey, optional
             JAX PRNG key.
@@ -221,9 +221,9 @@ class GLMLikelihood:
         #   fit_intercept=True  → eta = intercept + X @ slopes
         #   fit_intercept=False → eta = X @ params (classical model-matrix form)
         # Batched params come in as ``(*batch, p_total)``; broadcast against
-        # ``X[:n_samples]`` of shape ``(n_samples, p)``.
+        # ``X[:num_observations]`` of shape ``(num_observations, p)``.
         beta = _coerce_array(params)
-        Xn = X[:n_samples]
+        Xn = X[:num_observations]
         if self._fit_intercept:
             slopes = beta[..., 1:]
             intercept = beta[..., 0:1]  # keep last axis for broadcasting
