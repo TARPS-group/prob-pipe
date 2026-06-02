@@ -62,6 +62,30 @@ class _GaussianMeanLik(Likelihood):
         return -0.5 * jnp.sum((data - mu) ** 2)
 
 
+class _ConcatGaussianLik(Likelihood):
+    """``y_i ~ N(theta, obs_var * I)`` over the full flattened parameter.
+
+    Observes noisy copies of the concatenation of all prior fields (in
+    ``record_template.fields`` order), so it is conjugate for any Gaussian
+    prior — used to exercise multi-field priors (``ProductDistribution``,
+    ``JointGaussian``). ``obs_var > 1`` weakens the likelihood so the
+    prior covariance (its cross-field structure in particular) materially
+    shapes the closed-form posterior.
+    """
+
+    def __init__(self, obs_var: float = 1.0):
+        self.obs_var = obs_var
+
+    def log_likelihood(self, params, data):
+        if hasattr(params, "fields"):
+            theta = jnp.concatenate(
+                [jnp.atleast_1d(params[f]) for f in params.fields]
+            )
+        else:
+            theta = jnp.atleast_1d(jnp.asarray(params))
+        return -0.5 / self.obs_var * jnp.sum((jnp.asarray(data) - theta) ** 2)
+
+
 @pytest.fixture(scope="module")
 def gaussian_model():
     """A 1-D ``N(0, 1)`` prior + Gaussian-mean likelihood ``SimpleModel``."""
@@ -375,7 +399,13 @@ class TestDeclinesToRWMH:
 
 
 class TestPosteriorRecovery:
-    """ESS samples must match the closed-form Gaussian conjugate posterior."""
+    """ESS samples must match the closed-form Gaussian conjugate posterior.
+
+    Exercises every supported prior shape for end-to-end correctness, not
+    just detection: scalar ``Normal``, dense ``MultivariateNormal``,
+    independent ``ProductDistribution``, and ``JointGaussian`` with
+    cross-covariance.
+    """
 
     def test_one_dim_normal_normal(self):
         """N(0, 1) prior + N(mu, 1) likelihood — posterior is N(n*y_bar/(n+1), 1/(n+1))."""
@@ -446,6 +476,89 @@ class TestPosteriorRecovery:
         sigma_post = np.linalg.inv(lam_post)
         y_bar = np.asarray(data).mean(axis=0)
         post_mean = sigma_post @ (lam_prior @ prior_mean_arr + n * y_bar)
+
+        np.testing.assert_allclose(draws.mean(0), post_mean, atol=0.1)
+        sample_cov = np.cov(draws, rowvar=False)
+        frob = np.linalg.norm(sample_cov - sigma_post, ord="fro")
+        np.testing.assert_array_less(
+            frob, 0.15 * np.linalg.norm(sigma_post, ord="fro"),
+        )
+
+    def test_product_distribution_prior(self):
+        """Independent ``ProductDistribution(N(0,1), N(0,4))`` prior.
+
+        Block-diagonal prior + per-coordinate Gaussian observations:
+        the posterior stays diagonal, so the recovered draws must have
+        the closed-form per-coordinate spread and *no* cross-correlation.
+        """
+        sigma_prior = np.diag([1.0, 4.0])
+        prior = ProductDistribution(
+            a=Normal(loc=0.0, scale=1.0, name="a"),
+            b=Normal(loc=0.0, scale=2.0, name="b"),
+        )
+        n, obs_var = 15, 3.0
+        rng = np.random.default_rng(1)
+        truth = np.array([0.8, -1.2])
+        data = jnp.asarray(np.sqrt(obs_var) * rng.standard_normal((n, 2)) + truth)
+        model = SimpleModel(prior, _ConcatGaussianLik(obs_var), name="m")
+
+        post = elliptical_slice(
+            model, data, num_results=3000, num_warmup=500,
+            num_chains=2, random_seed=7,
+        )
+        draws = np.concatenate([np.asarray(c) for c in post.chains], axis=0)
+
+        lam_prior = np.linalg.inv(sigma_prior)
+        lam_post = lam_prior + (n / obs_var) * np.eye(2)
+        sigma_post = np.linalg.inv(lam_post)
+        y_bar = np.asarray(data).mean(0)
+        post_mean = sigma_post @ ((n / obs_var) * y_bar)  # prior mean is 0
+
+        np.testing.assert_allclose(draws.mean(0), post_mean, atol=0.06)
+        np.testing.assert_allclose(
+            draws.std(0, ddof=1), np.sqrt(np.diag(sigma_post)), rtol=0.12,
+        )
+        # Independent prior + diagonal likelihood -> posterior is diagonal.
+        sample_cov = np.cov(draws, rowvar=False)
+        assert abs(sample_cov[0, 1]) < 0.04
+
+    def test_joint_gaussian_cross_covariance_prior(self):
+        """``JointGaussian`` prior with off-diagonal covariance.
+
+        The prior correlation is strong (0.8) and the likelihood weak
+        (``obs_var = 10``, ``n = 10``) so the prior's cross-covariance
+        dominates the posterior. The closed-form posterior covariance is
+        then strongly non-diagonal: a block-diagonalised prior would yield
+        a *diagonal* ``sigma_post`` differing from the true one by a
+        Frobenius distance (~0.36) far exceeding the 15%-of-norm tolerance
+        (~0.10) below, so this test genuinely checks the cross-field
+        covariance is *sampled*, not merely detected.
+        """
+        sigma_prior = np.array([[1.0, 0.8], [0.8, 1.0]])
+        prior = JointGaussian(
+            mean=jnp.zeros(2), cov=jnp.asarray(sigma_prior), a=1, b=1,
+        )
+        n, obs_var = 10, 10.0
+        rng = np.random.default_rng(2)
+        truth = np.array([0.5, -0.7])
+        data = jnp.asarray(np.sqrt(obs_var) * rng.standard_normal((n, 2)) + truth)
+        model = SimpleModel(prior, _ConcatGaussianLik(obs_var), name="m")
+
+        post = elliptical_slice(
+            model, data, num_results=4000, num_warmup=800,
+            num_chains=2, random_seed=13,
+        )
+        draws = np.concatenate([np.asarray(c) for c in post.chains], axis=0)
+
+        lam_prior = np.linalg.inv(sigma_prior)
+        lam_post = lam_prior + (n / obs_var) * np.eye(2)
+        sigma_post = np.linalg.inv(lam_post)
+        y_bar = np.asarray(data).mean(0)
+        post_mean = sigma_post @ ((n / obs_var) * y_bar)  # prior mean is 0
+
+        # The closed-form posterior must retain meaningful cross-covariance
+        # (else this test would not discriminate a diagonalised prior).
+        assert abs(sigma_post[0, 1]) > 0.1 * np.sqrt(sigma_post[0, 0] * sigma_post[1, 1])
 
         np.testing.assert_allclose(draws.mean(0), post_mean, atol=0.1)
         sample_cov = np.cov(draws, rowvar=False)
