@@ -56,6 +56,20 @@ class TestConstruction:
         assert jg.event_shapes == {"x": (1,), "yz": (3,)}
         assert jg.event_size == 4
 
+    def test_dtypes(self):
+        jg = JointGaussian(
+            mean=jnp.array([0.0, 1.0, 2.0, 3.0]),
+            cov=jnp.eye(4),
+            x=1,
+            yz=3,
+        )
+        # One entry per field, aligned with record_template.fields, all the
+        # shared (float) dtype of the promoted mean / covariance.
+        assert set(jg.dtypes) == {"x", "yz"}
+        assert all(jnp.issubdtype(dt, jnp.floating) for dt in jg.dtypes.values())
+        # `.dtype` collapses to the single shared dtype.
+        assert jg.dtype == jg._mean_vec.dtype
+
     def test_raises_on_empty(self):
         with pytest.raises(ValueError, match="at least one"):
             JointGaussian(mean=jnp.array([]), cov=jnp.zeros((0, 0)))

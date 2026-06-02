@@ -209,7 +209,7 @@ probpipe/
 
 Within subpackages that contain multiple implementation files
 (`modeling/`, `inference/`, `converters/`), implementation modules use
-a leading underscore (`_simple.py`, `_rwmh.py`).  The package
+a leading underscore (`_simple.py`, `_blackjax_rwmh.py`).  The package
 `__init__.py` re-exports the public API so users import from
 `probpipe` or from subpackage `__init__` modules, never from
 underscore modules directly.  See `probpipe/__init__.py` for the
@@ -360,7 +360,8 @@ Built-in methods:
 | 85 | `blackjax_nuts` | BlackJAX | Any `SupportsLogProb` (JAX-traceable) |
 | 82 | `cmdstan_nuts` | CmdStanPy | `StanModel` |
 | 82 | `pymc_nuts` | PyMC | `PyMCModel` |
-| 55 | `tfp_rwmh` | hand-rolled Python | Any `SupportsLogProb` |
+| 75 | `blackjax_elliptical_slice` | BlackJAX | `SimpleModel` + Gaussian prior + JAX-traceable likelihood |
+| 55 | `blackjax_rwmh` | BlackJAX | Any `SupportsLogProb` (eager fallback for non-traceable targets) |
 | 45 | `blackjax_sgld` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
 | 5 | `sbijax_smcabc` | sbijax | `SimpleGenerativeModel` |
 | 0 | `blackjax_hmc` | BlackJAX | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |

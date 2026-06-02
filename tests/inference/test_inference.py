@@ -66,7 +66,7 @@ class TestApproximateDistribution:
     def test_event_shape(self, two_chain_dist):
         assert two_chain_dist.event_shape == (2,)
 
-    def test_total_samples(self, two_chain_dist):
+    def test_num_atoms(self, two_chain_dist):
         assert two_chain_dist.num_atoms == 100  # 50 * 2 chains
 
     def test_algorithm_from_provenance(self, two_chain_dist):
@@ -344,7 +344,7 @@ class TestRWMH:
         assert result.num_draws == 100
         assert result.num_chains == 1
         assert result.event_shape == (2,)
-        assert result.algorithm == "rwmh"
+        assert result.algorithm == "blackjax_rwmh"
 
     def test_inference_data_produced(self):
         """RWMH produces auxiliary DataTree with posterior group."""
@@ -402,7 +402,7 @@ class TestRWMH:
             random_seed=42,
         )
         assert result.source is not None
-        assert result.source.operation == "rwmh"
+        assert result.source.operation == "blackjax_rwmh"
 
     def test_with_log_prob_fn_normal_normal_conjugate(self):
         """RWMH posterior must recover the analytical Normal-Normal conjugate.
@@ -446,8 +446,11 @@ class TestRWMH:
             )
         draws = np.asarray(raw_draws).reshape(-1, 2)
         # MC standard error: posterior_sd / sqrt(effective_n).
-        # RWMH on this 2D target with step_size=0.3 has heavy autocorrelation,
-        # so effective_n << 8000. Assume n_eff ~ 300 conservatively.
+        # ``adapt=True`` (the default) fits the proposal covariance from
+        # warmup, so ``step_size=0.3`` is ignored for sampling and mixing
+        # is better than a fixed-step chain would give. Assume n_eff ~ 300
+        # conservatively — the tolerance is looser than the true effective
+        # sample size warrants, which keeps the test robust.
         n_eff = 300
         mc_se_mean = 4.0 * np.sqrt(analytical_var / n_eff)
         np.testing.assert_allclose(draws.mean(0), analytical_mean, atol=mc_se_mean)
@@ -468,17 +471,60 @@ class TestRWMH:
             rwmh(dist=dist, num_results=10, num_warmup=5)
 
     def test_custom_init(self):
-        """RWMH with custom initial state."""
+        """RWMH actually starts the chain from the user-supplied ``init``.
+
+        The target is ``N(0, I)``, so a chain that ignored ``init`` would
+        sit within a few units of the origin from its very first draw. We
+        start from a far-flung ``init=[20, 20]`` with ``num_warmup=0`` and
+        ``adapt=False`` (so the proposal stays ``step_size * I`` and the
+        chain has no warmup window to drift back toward the mode), then
+        assert the first retained draw is still out near ``init`` rather
+        than at the origin. A modest RWMH step from ``[20, 20]`` cannot
+        reach the origin in one move, so this fails loudly if ``init`` is
+        silently dropped.
+
+        As a second, init-is-not-ignored guard we also confirm two
+        *different* far-flung inits produce visibly different first draws.
+        """
         dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        far_init = jnp.array([20.0, 20.0])
         result = rwmh(
             dist=dist,
             num_results=50,
-            num_warmup=20,
+            num_warmup=0,
             step_size=0.5,
-            init=jnp.array([5.0, 5.0]),
+            adapt=False,
+            init=far_init,
             random_seed=42,
         )
         assert isinstance(result, ApproximateDistribution)
+
+        first = np.asarray(result.flat_samples[0])
+        # A chain seeded at the origin (init ignored) would land within a
+        # few units of it; a step_size=0.5 RWMH move from [20, 20] stays
+        # far out. Use a conservative band well clear of both regimes.
+        assert np.linalg.norm(first - np.asarray(far_init)) < 5.0, (
+            f"First draw {first} is not near init {far_init} — init may be ignored."
+        )
+        assert np.linalg.norm(first) > 10.0, (
+            f"First draw {first} sits near the origin — init appears ignored."
+        )
+
+        # Two distinct inits must yield distinct early draws.
+        other_init = jnp.array([-20.0, -20.0])
+        result_other = rwmh(
+            dist=dist,
+            num_results=50,
+            num_warmup=0,
+            step_size=0.5,
+            adapt=False,
+            init=other_init,
+            random_seed=42,
+        )
+        first_other = np.asarray(result_other.flat_samples[0])
+        assert np.linalg.norm(first - first_other) > 1.0, (
+            "Different inits produced near-identical first draws — init may be ignored."
+        )
 
     def test_zero_warmup(self):
         """RWMH with num_warmup=0 stores no warmup samples."""

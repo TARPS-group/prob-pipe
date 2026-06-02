@@ -48,7 +48,8 @@ when choosing a number for a new method are documented under
 | `blackjax_nuts` | 85 | `SupportsLogProb` + JAX-traceable | BlackJAX |
 | `cmdstan_nuts` | 82 | `StanModel` + cmdstanpy | CmdStan |
 | `pymc_nuts` | 82 | `PyMCModel` + pymc | PyMC |
-| `tfp_rwmh` | 55 | `SupportsLogProb` | hand-rolled Python |
+| `blackjax_elliptical_slice` | 75 | `SimpleModel` + Gaussian prior + JAX-traceable likelihood | BlackJAX |
+| `blackjax_rwmh` | 55 | `SupportsLogProb` (eager fallback for non-traceable targets) | BlackJAX |
 | `blackjax_sgld` | 45 | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX |
 | `sbijax_smcabc` | 5 | `SimpleGenerativeModel` + sbijax | sbijax |
 | `blackjax_hmc` | 0 | `SupportsLogProb` + JAX-traceable | BlackJAX (opt-in only) |
@@ -60,6 +61,8 @@ when choosing a number for a new method are documented under
 ::: probpipe.ApproximateDistribution
 
 ::: probpipe.rwmh
+
+::: probpipe.elliptical_slice
 
 ::: probpipe.condition_on_nutpie
 

@@ -45,6 +45,7 @@ from ..custom_types import Array, ArrayLike
 
 __all__ = [
     "as_prng_key",
+    "build_likelihood_flat",
     "build_mcmc_datatree",
     "build_target_log_prob",
     "build_target_log_prob_flat",
@@ -53,6 +54,7 @@ __all__ = [
     "extract_record_template",
     "is_jax_traceable",
     "is_simple_model",
+    "run_chain_scan",
 ]
 
 
@@ -293,6 +295,46 @@ def build_target_log_prob_flat(
     return target_record, flat_init, None
 
 
+def build_likelihood_flat(
+    prior: Distribution,
+    likelihood: Any,
+    data: ArrayLike | Record | None,
+) -> Callable[[Array], Array]:
+    """Build a flat-vector ``loglikelihood_fn(theta_flat)`` from a prior +
+    likelihood + data.
+
+    Unlike :func:`build_target_log_prob_flat` (which builds the *joint*
+    prior + likelihood density), this returns the *likelihood alone* as
+    a function of a flat parameter vector. Elliptical slice sampling
+    folds the Gaussian prior into the proposal mechanism, so it needs
+    the likelihood by itself.
+
+    Two cases:
+
+    - **Record-shaped prior** (any ``SimpleModel`` prior): the flat
+      vector unflattens through the prior's
+      :meth:`~probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.unflatten_sample`
+      so the likelihood sees structured ``Record``-shaped params.
+    - **Bare-array prior**: the likelihood already accepts a flat
+      vector, so it is called directly.
+    """
+    flat_view = getattr(prior, "as_flat_distribution", None)
+    record_template = getattr(prior, "record_template", None)
+    if flat_view is not None and record_template is not None:
+        flat_prior = flat_view()
+
+        def loglikelihood_fn(theta_flat: Array) -> Array:
+            params = flat_prior.unflatten_sample(theta_flat)
+            return likelihood.log_likelihood(params=params, data=data)
+
+        return loglikelihood_fn
+
+    def loglikelihood_fn(theta_flat: Array) -> Array:
+        return likelihood.log_likelihood(params=theta_flat, data=data)
+
+    return loglikelihood_fn
+
+
 # ---------------------------------------------------------------------------
 # ArviZ DataTree builder (backend-agnostic)
 # ---------------------------------------------------------------------------
@@ -346,3 +388,37 @@ def build_mcmc_datatree(
         dt["warmup"] = xr.DataTree(dataset=warmup_ds)
 
     return dt
+
+
+# ---------------------------------------------------------------------------
+# Shared per-chain scan loop
+# ---------------------------------------------------------------------------
+
+
+def run_chain_scan(
+    sampler: Any,
+    init_state: Any,
+    num_results: int,
+    key: Array,
+) -> tuple[Array, Any]:
+    """Step a BlackJAX-style sampler under ``jax.lax.scan``.
+
+    Drives the standard ``state, info = sampler.step(key, state)``
+    contract for ``num_results`` iterations. Returns
+    ``(positions, infos)`` where ``positions`` has shape
+    ``(num_results, *event_shape)`` and ``infos`` is a pytree of
+    per-step info objects stacked along the leading axis. The caller
+    is responsible for packing ``infos`` into whatever output shape
+    its consumer expects (e.g. an ArviZ-flavoured ``sample_stats``
+    dict).
+
+    Used by both the NUTS / HMC and the RWMH / ESS backends; the
+    contract is identical because BlackJAX samplers share it.
+    """
+    def one_step(state, step_key):
+        state, info = sampler.step(step_key, state)
+        return state, (state.position, info)
+
+    keys = jax.random.split(key, num_results)
+    _, (positions, infos) = jax.lax.scan(one_step, init_state, keys)
+    return positions, infos
