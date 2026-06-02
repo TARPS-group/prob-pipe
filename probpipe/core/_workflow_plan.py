@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from math import prod
 from typing import Any, Literal
 
-from . import _workflow_normalize
+from . import _workflow_distribution_normalization
 from ._distribution_array import DistributionArray
 from ._record_array import RecordArray
 from .distribution import Distribution
@@ -66,7 +66,7 @@ def build_broadcast_plan(
             continue
 
         if isinstance(value, Distribution):
-            if _workflow_normalize.is_distribution_hint(expected):
+            if _workflow_distribution_normalization.is_distribution_hint(expected):
                 continue
             dist_args.append(name)
 

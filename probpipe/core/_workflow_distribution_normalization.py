@@ -1,8 +1,19 @@
-"""WorkflowFunction distribution-normalization helpers.
+"""WorkflowFunction distribution-input normalization helpers.
 
-This private module owns distribution-valued input conversion before
-broadcast planning. It centralizes the existing converter-registry use
-so the planner can stay a pure classification step.
+This private module handles only distribution-valued workflow inputs.
+It is not a general normalization layer for all values entering a
+``WorkflowFunction`` call.
+
+The normalization step runs after call resolution and before broadcast
+planning. It performs value-changing work that the planner should not
+do: converting external distribution objects through the converter
+registry, converting ProbPipe distributions to satisfy concrete
+``Distribution`` hints or distribution capability protocols, and
+unwrapping scalar ``DistributionArray`` inputs when the function expects
+a scalar distribution value.
+
+Keeping those conversions here lets broadcast planning remain a pure
+classification step over already-normalized values.
 """
 
 from __future__ import annotations
@@ -56,12 +67,19 @@ def is_distribution_hint(expected: Any) -> bool:
     return expected in DISTRIBUTION_HINT_PROTOCOLS
 
 
-def normalize_workflow_values(
+def normalize_distribution_values(
     *,
     values: dict[str, Any],
     hints: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Normalize distribution-valued workflow inputs before planning."""
+    """Normalize distribution-valued inputs before broadcast planning.
+
+    Non-distribution values are copied through unchanged. Distribution
+    values may be converted according to the function's type hints, and
+    external distribution objects in non-distribution slots are converted
+    to ProbPipe ``NumericRecordDistribution`` so the distribution-broadcast
+    path can sample them uniformly.
+    """
     out = dict(values)
 
     for name, value in values.items():

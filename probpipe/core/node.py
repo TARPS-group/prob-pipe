@@ -27,8 +27,8 @@ except ImportError:
 from ..custom_types import Array, PRNGKey
 from . import (
     _workflow_call,
+    _workflow_distribution_normalization,
     _workflow_execution,
-    _workflow_normalize,
     _workflow_plan,
     _workflow_result,
 )
@@ -478,7 +478,9 @@ class WorkflowFunction(Node):
         if call.overrides.seed is not None:
             self._key = jax.random.PRNGKey(call.overrides.seed)
 
-        values = self._convert_distributions(call.values)
+        values = _workflow_distribution_normalization.normalize_distribution_values(
+            values=call.values, hints=self._hints,
+        )
         broadcast_plan = _workflow_plan.build_broadcast_plan(
             values=values, hints=self._hints,
         )
@@ -526,12 +528,6 @@ class WorkflowFunction(Node):
             module=self._module,
             dependency_type=Node,
             workflow_name=self._name,
-        )
-
-    def _convert_distributions(self, values: dict[str, Any]) -> dict[str, Any]:
-        """Normalize distribution-valued args based on type hints."""
-        return _workflow_normalize.normalize_workflow_values(
-            values=values, hints=self._hints,
         )
 
     def _get_key(self):

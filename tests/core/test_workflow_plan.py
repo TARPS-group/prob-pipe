@@ -8,7 +8,9 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import DistributionArray, Normal, NumericRecord, NumericRecordArray
-from probpipe.core._workflow_normalize import normalize_workflow_values
+from probpipe.core._workflow_distribution_normalization import (
+    normalize_distribution_values,
+)
 from probpipe.core._workflow_plan import ArrayBroadcastGroup, build_broadcast_plan
 from probpipe.core.distribution import Distribution
 from probpipe.core.protocols import SupportsSampling
@@ -176,7 +178,7 @@ class TestPlanPurity:
         values = {"x": external}
 
         raw_plan = build_broadcast_plan(values=values, hints={})
-        normalized = normalize_workflow_values(values=values, hints={})
+        normalized = normalize_distribution_values(values=values, hints={})
         normalized_plan = build_broadcast_plan(values=normalized, hints={})
 
         assert values["x"] is external

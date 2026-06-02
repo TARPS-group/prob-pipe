@@ -17,7 +17,9 @@ from probpipe import (
     log_prob,
     mean,
 )
-from probpipe.core._workflow_normalize import normalize_workflow_values
+from probpipe.core._workflow_distribution_normalization import (
+    normalize_distribution_values,
+)
 from probpipe.core.node import WorkflowFunction
 from probpipe.core.protocols import SupportsLogProb
 
@@ -46,12 +48,12 @@ def mean_recorder():
     return mean_of_normal, seen
 
 
-class TestNormalizeWorkflowValues:
+class TestNormalizeDistributionValues:
     def test_concrete_distribution_hint_converts_external_distribution(
         self,
         normal_external,
     ):
-        normalized = normalize_workflow_values(
+        normalized = normalize_distribution_values(
             values={"dist": normal_external},
             hints={"dist": Normal},
         )
@@ -63,7 +65,7 @@ class TestNormalizeWorkflowValues:
         self,
         empirical_dist,
     ):
-        normalized = normalize_workflow_values(
+        normalized = normalize_distribution_values(
             values={"dist": empirical_dist},
             hints={"dist": SupportsLogProb},
         )
@@ -81,7 +83,7 @@ class TestNormalizeWorkflowValues:
             name="zero_d",
         )
 
-        normalized = normalize_workflow_values(
+        normalized = normalize_distribution_values(
             values={"dist": da},
             hints={"dist": Normal},
         )
@@ -98,7 +100,7 @@ class TestNormalizeWorkflowValues:
             name="one_cell",
         )
 
-        normalized = normalize_workflow_values(
+        normalized = normalize_distribution_values(
             values={"dist": da},
             hints={"dist": Normal},
         )
@@ -109,7 +111,7 @@ class TestNormalizeWorkflowValues:
         self,
         normal_external,
     ):
-        normalized = normalize_workflow_values(
+        normalized = normalize_distribution_values(
             values={"x": normal_external},
             hints={},
         )
