@@ -129,8 +129,11 @@ def _run_blackjax_chains(
         # BlackJAX NUTSInfo / HMCInfo carry no ``step_size`` field, so the
         # adapted (or, for the zero-warmup branch, user-supplied) step size
         # has to be threaded out of ``_adapt`` explicitly to land in the
-        # sample-stats dict below.
-        return positions, infos, adapted_params["step_size"]
+        # sample-stats dict below. Wrap in ``jnp.asarray``: the zero-warmup
+        # branch supplies a plain Python float, but ``parallel_chain_map``'s
+        # single-chain path maps ``a[None]`` over the returned pytree and so
+        # requires every leaf to be an array.
+        return positions, infos, jnp.asarray(adapted_params["step_size"])
 
     all_positions, all_infos, adapted_step_sizes = parallel_chain_map(
         run_one_chain, chain_keys,
