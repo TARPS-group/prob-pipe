@@ -241,17 +241,13 @@ class TestNumWarmupZeroWarning:
                 adapt=True, proposal_cov=jnp.eye(2) * 0.5, random_seed=0,
             )
 
-    def test_bad_proposal_cov_shape_raises_downstream(self, iso_gaussian):
+    def test_bad_proposal_cov_shape_raises_valueerror(self, iso_gaussian):
         """A wrong-shape ``proposal_cov`` (here ``(3, 3)`` for a 2-D target)
-        is not validated up front — ``rwmh`` does a bare ``jnp.asarray`` and
-        the mismatch surfaces as an opaque error from the BlackJAX kernel's
-        matmul downstream, not as a friendly ``ValueError``.
-
-        Documented so a maintainer can decide whether to add an upfront
-        shape check; this test only pins the *current* behavior (an
-        exception is raised), not its exact type or message.
+        is validated up front: ``rwmh`` raises a ``ValueError`` naming the
+        expected vs actual shape, rather than letting the mismatch surface
+        as an opaque error from the BlackJAX kernel's matmul downstream.
         """
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError, match=r"proposal_cov must be a square"):
             rwmh(
                 dist=iso_gaussian, num_results=50, num_warmup=20,
                 proposal_cov=jnp.eye(3), random_seed=0,

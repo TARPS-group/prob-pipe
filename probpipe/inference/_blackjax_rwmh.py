@@ -512,9 +512,11 @@ def rwmh(
         a fixed RGG-scaled identity proposal throughout. Ignored when
         ``adapt=False``.
     proposal_cov
-        Explicit ``(d, d)`` proposal Cholesky factor. Overrides both
-        the adaptive fit and ``step_size``. Useful when the user has
-        a precomputed covariance estimate from elsewhere.
+        Explicit ``(d, d)`` proposal Cholesky factor, where ``d`` is the
+        target dimension. Overrides both the adaptive fit and
+        ``step_size``. Useful when the user has a precomputed covariance
+        estimate from elsewhere. A wrong-shape matrix raises
+        ``ValueError``.
     init
         Initial chain state. Resolved by
         :func:`~probpipe.inference._inference_utils.get_init_state`
@@ -556,9 +558,16 @@ def rwmh(
             return dist._unnormalized_log_prob(params)
 
     init_state = get_init_state(dist, init, random_seed=random_seed)
-    proposal_sigma_override = (
-        jnp.asarray(proposal_cov) if proposal_cov is not None else None
-    )
+    proposal_sigma_override = None
+    if proposal_cov is not None:
+        proposal_sigma_override = jnp.asarray(proposal_cov)
+        d = init_state.shape[0]
+        if proposal_sigma_override.shape != (d, d):
+            raise ValueError(
+                f"proposal_cov must be a square ({d}, {d}) matrix matching the "
+                f"{d}-dimensional target; got shape "
+                f"{tuple(proposal_sigma_override.shape)}."
+            )
 
     chains, warmups, sample_stats, accept_rate = _run_blackjax_rwmh(
         target_log_prob,
