@@ -139,18 +139,14 @@ def _run_ess_chains(
         warmup_key, sample_key = jax.random.split(chain_key)
         state = sampler.init(init_position)
 
-        def warmup_step(state, k):
-            state, info = sampler.step(k, state)
-            return state, (state.position, info.subiter)
-
-        def sample_step(state, k):
+        def step(state, k):
             state, info = sampler.step(k, state)
             return state, (state.position, info.subiter)
 
         if num_warmup > 0:
             warmup_keys = jax.random.split(warmup_key, num_warmup)
             state, (warmup_positions, warmup_subiter) = jax.lax.scan(
-                warmup_step, state, warmup_keys,
+                step, state, warmup_keys,
             )
         else:
             warmup_positions = jnp.empty((0, init_position.shape[0]),
@@ -158,7 +154,7 @@ def _run_ess_chains(
             warmup_subiter = jnp.empty((0,), dtype=jnp.int32)
 
         sample_keys = jax.random.split(sample_key, num_results)
-        _, (positions, subiter) = jax.lax.scan(sample_step, state, sample_keys)
+        _, (positions, subiter) = jax.lax.scan(step, state, sample_keys)
         return positions, warmup_positions, subiter
 
     positions_all, warmups_all, subiter_all = jax.vmap(run_one_chain)(chain_keys)

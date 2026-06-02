@@ -298,6 +298,33 @@ def _sample_chain_eager(
 # ---------------------------------------------------------------------------
 
 
+def _fixed_sigma_warmup(
+    target_log_prob_fn: Callable[[Array], Array],
+    init_state: Array,
+    sigma: Array,
+    num_warmup: int,
+    key: Array,
+    *,
+    traceable: bool,
+) -> tuple[Array, Array | None]:
+    """Burn in under a fixed proposal ``sigma``; no adaptation.
+
+    Shared by the ``proposal_cov``-override and ``adapt=False`` branches
+    of :func:`_run_one_chain`, which both bypass adaptive warmup and
+    simply sample under a fixed sigma. Returns
+    ``(init_position, warmup_positions)`` — the last burn-in position to
+    start production from, plus the burn-in trace (``None`` when
+    ``num_warmup <= 0``, leaving production to start from ``init_state``).
+    """
+    if num_warmup <= 0:
+        return init_state, None
+    sample_fn = _sample_chain_fast if traceable else _sample_chain_eager
+    warmup_positions, _ = sample_fn(
+        target_log_prob_fn, init_state, sigma, num_warmup, key,
+    )
+    return warmup_positions[-1], warmup_positions
+
+
 def _run_one_chain(
     target_log_prob_fn: Callable[[Array], Array],
     init_state: Array,
@@ -319,22 +346,14 @@ def _run_one_chain(
     warmup_key, sample_key = jax.random.split(key)
 
     if proposal_sigma_override is not None:
+        # User-supplied sigma bypasses adaptation by design, so burn in
+        # under it with the same fixed-sigma loop the ``adapt=False``
+        # branch uses rather than running adaptive warmup.
         sigma = proposal_sigma_override
-        warmup_positions = None
-        if num_warmup > 0:
-            # Burn in under the user-supplied sigma — do NOT run adaptive
-            # warmup here, since the whole point of the override is to
-            # bypass adaptation. Use the same fixed-sigma sampling loop
-            # the ``adapt=False`` branch uses below.
-            run_warmup = (
-                _sample_chain_fast if traceable else _sample_chain_eager
-            )
-            warmup_positions, _ = run_warmup(
-                target_log_prob_fn, init_state, sigma, num_warmup, warmup_key,
-            )
-            init_position = warmup_positions[-1]
-        else:
-            init_position = init_state
+        init_position, warmup_positions = _fixed_sigma_warmup(
+            target_log_prob_fn, init_state, sigma, num_warmup, warmup_key,
+            traceable=traceable,
+        )
     elif adapt and num_warmup > 0:
         warmup_fn = _adaptive_warmup_fast if traceable else _adaptive_warmup_eager
         rw_state, cov, warmup_positions = warmup_fn(
@@ -345,17 +364,10 @@ def _run_one_chain(
         init_position = rw_state.position
     else:
         sigma = jnp.eye(d) * step_size
-        warmup_positions = None
-        if num_warmup > 0:
-            run_warmup = (
-                _sample_chain_fast if traceable else _sample_chain_eager
-            )
-            warmup_positions, _ = run_warmup(
-                target_log_prob_fn, init_state, sigma, num_warmup, warmup_key,
-            )
-            init_position = warmup_positions[-1]
-        else:
-            init_position = init_state
+        init_position, warmup_positions = _fixed_sigma_warmup(
+            target_log_prob_fn, init_state, sigma, num_warmup, warmup_key,
+            traceable=traceable,
+        )
 
     sample_fn = _sample_chain_fast if traceable else _sample_chain_eager
     chain, sample_stats = sample_fn(
