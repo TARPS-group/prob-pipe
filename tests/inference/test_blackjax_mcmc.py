@@ -170,14 +170,14 @@ class TestBlackJAXHmc:
         ``y = [1.0, 2.0, 3.0]`` ⇒ posterior ``N(1.5, 0.25)`` (precision
         ``1 + 3 = 4``; mean ``sum(y) / 4 = 1.5``).
 
-        Pinned to HMC with ``num_integration_steps=5``: with the
-        window-adapted step size this gives a trajectory length short
-        enough to keep the sampler in the well-mixed regime. Empirically
-        (8 seeds) the posterior-mean estimate has SD ≈ 0.005 and the
-        variance estimate stays within ~3% of analytic, so the bands
-        below (mean atol ``0.05`` ≈ several MC σ; variance rtol ``0.10``)
-        are conservative MC-noise tolerances — far tighter than the
-        ``O(0.5)`` error a mis-specified posterior would produce.
+        Pinned to HMC with ``num_integration_steps=5`` — now the *mean*
+        trajectory length, since production randomizes the leapfrog count
+        with a Halton sequence around this value. Empirically (8 seeds)
+        the posterior-mean estimate has SD ≈ 0.005 and the variance
+        estimate stays within ~3% of analytic, so the bands below (mean
+        atol ``0.05`` ≈ several MC σ; variance rtol ``0.10``) are
+        conservative MC-noise tolerances — far tighter than the ``O(0.5)``
+        error a mis-specified posterior would produce.
         """
         prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
         model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
@@ -193,6 +193,98 @@ class TestBlackJAXHmc:
         post_var = float(variance(posterior)["mu"].squeeze())
         np.testing.assert_allclose(post_mean, 1.5, atol=0.05)
         np.testing.assert_allclose(post_var, 0.25, rtol=0.10)
+
+    def test_trajectory_length_is_randomized(self):
+        """Production HMC draws a *random* number of leapfrog steps.
+
+        The ``num_integration_steps`` per-step diagnostic must take many
+        distinct values (not a single constant, as fixed-``L`` HMC would)
+        with mean close to the configured value. This is the direct,
+        deterministic check that the Halton trajectory-length jitter is
+        active.
+        """
+        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
+        model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
+        posterior = condition_on(
+            model, jnp.asarray([1.0, 2.0, 3.0]), method="blackjax_hmc",
+            num_results=1000, num_warmup=500, num_chains=2,
+            step_size=0.1, num_integration_steps=10, random_seed=0,
+        )
+        steps = np.asarray(
+            posterior.inference_data["sample_stats"]["num_integration_steps"]
+        )
+        # Randomized, not a single fixed L.
+        assert np.unique(steps).size >= 5
+        # Mean trajectory length tracks the configured value.
+        np.testing.assert_allclose(steps.mean(), 10, rtol=0.1)
+
+    def test_default_num_integration_steps_recovers_variance(self):
+        """The default mean ``num_integration_steps=10`` recovers the posterior.
+
+        A *fixed* 10-step trajectory at the window-adapted step size can
+        resonate on this near-Gaussian target and under-estimate the
+        posterior variance by ~30% while still showing healthy acceptance
+        and zero divergences (the fragility this change addresses).
+        Randomizing the trajectory length around the same mean recovers
+        the closed-form variance ``0.25`` to within a few percent — checked
+        here at the default ``num_integration_steps`` rather than the
+        hand-dodged value used above.
+        """
+        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
+        model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
+        posterior = condition_on(
+            model, jnp.asarray([1.0, 2.0, 3.0]), method="blackjax_hmc",
+            num_results=4000, num_warmup=2000, num_chains=2,
+            step_size=0.1, num_integration_steps=10, random_seed=0,
+        )
+        post_mean = float(mean(posterior)["mu"].squeeze())
+        post_var = float(variance(posterior)["mu"].squeeze())
+        np.testing.assert_allclose(post_mean, 1.5, atol=0.05)
+        np.testing.assert_allclose(post_var, 0.25, rtol=0.12)
+
+    def test_halton_steps_floored_at_one(self):
+        """``_halton_steps_fn`` never returns a 0-step trajectory.
+
+        BlackJAX's ``halton_trajectory_length`` spans ``[0, 2L-1]`` and
+        returns ``0`` for a handful of counter values (a no-op leapfrog).
+        The shared step-count helper floors at ``1``; checked over a wide
+        sweep of counter values that includes indices which map to ``0``
+        unfloored, so this deterministically exercises the clamp.
+        """
+        from probpipe.inference._blackjax_mcmc import _halton_steps_fn
+
+        steps_fn = _halton_steps_fn(10)
+        counts = np.asarray([int(steps_fn(jnp.asarray(i))) for i in range(5000)])
+        assert counts.min() >= 1
+        # Clamping the rare zeros leaves the mean essentially unchanged.
+        np.testing.assert_allclose(counts.mean(), 10, rtol=0.05)
+
+    def test_zero_warmup_runs_end_to_end(self):
+        """HMC with ``num_warmup=0`` re-inits the production ``dynamic_hmc``
+        from the fixed-``L`` ``HMCState`` position and runs.
+
+        The existing zero-warmup test targets NUTS; this pins the HMC
+        ``num_warmup == 0`` branch (no adapted step size / mass matrix —
+        the user-supplied ``step_size`` is used directly) against the
+        randomized-``L`` production kernel.
+        """
+        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
+        model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
+        posterior = condition_on(
+            model, jnp.asarray([1.0, 2.0, 3.0]), method="blackjax_hmc",
+            num_results=100, num_warmup=0, num_chains=1,
+            step_size=0.1, num_integration_steps=10, random_seed=0,
+        )
+        draws = np.asarray(posterior.draws()["mu"]).reshape(-1)
+        assert draws.shape[0] == 100
+        assert np.all(np.isfinite(draws))
+        # Trajectory length is still randomized (and floored) on the
+        # zero-warmup path.
+        steps = np.asarray(
+            posterior.inference_data["sample_stats"]["num_integration_steps"]
+        )
+        assert steps.min() >= 1
+        assert np.unique(steps).size >= 5
 
 
 class TestSampleStats:
