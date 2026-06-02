@@ -2,7 +2,7 @@
 
 Provides:
   - ``ProductDistribution``  -- Independent-component joint distribution
-    (inherits from :class:`RecordDistribution`).
+    (inherits from :class:`NumericRecordDistribution`).
   - ``TFPProductDistribution`` -- Subclass that exposes a combined TFP
     distribution (``_tfp_dist``) when all leaf components are TFP-backed.
   - Dynamic protocol factory for automatic protocol support.
@@ -13,6 +13,7 @@ Provides:
 from __future__ import annotations
 
 from types import MappingProxyType
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -24,6 +25,7 @@ from ..core._numeric_record_distribution import (
 )
 from ..core.provenance import Provenance
 from ..core.record import Record
+from ..core._distribution_base import Distribution
 from ..core._record_distribution import (
     RecordDistribution,
     _register_dynamic_subclass,
@@ -48,18 +50,33 @@ from ._joint_utils import (
 # Dynamic protocol factory for ProductDistribution
 # ---------------------------------------------------------------------------
 
-_PRODUCT_CLASS_CACHE: dict[tuple[frozenset[type], bool], type] = {}
+_PRODUCT_CLASS_CACHE: dict[tuple[frozenset[type], bool, bool], type] = {}
 
 
 def _product_class_for_components(components: dict) -> type:
-    """Return a ProductDistribution subclass whose protocol bases match
-    what ALL leaf components support.
+    """Return a ProductDistribution subclass whose bases match what ALL
+    leaf components support.
 
-    SupportsSampling and SupportsConditioning are always included.
-    SupportsLogProb, SupportsMean, SupportsVariance are included only
-    when every leaf component supports them.  When all leaf components
-    are TFP-backed, ``TFPProductDistribution`` is used as the base
-    to expose a combined ``_tfp_dist``.
+    The base class is always :class:`ProductDistribution` (rooted at
+    :class:`RecordDistribution`); the numeric API
+    (:class:`NumericRecordDistribution`) and per-protocol mixins are
+    added dynamically:
+
+    - ``NumericRecordDistribution`` is added when every leaf is itself
+      a :class:`NumericRecordDistribution`. The joint's content is
+      then numeric end-to-end and the numeric-only methods
+      (``event_size``, ``flatten_value`` / ``unflatten_value``,
+      ``as_flat_distribution``) become available. With mixed or
+      non-numeric leaves the joint stays on the generic
+      :class:`RecordDistribution` surface — sampling, conditioning,
+      and named-component access still work; the numeric methods are
+      simply absent.
+    - ``SupportsSampling`` and ``SupportsConditioning`` are always
+      included.
+    - ``SupportsLogProb``, ``SupportsMean``, ``SupportsVariance`` are
+      added only when every leaf supports them.
+    - When every leaf is TFP-backed, ``TFPProductDistribution``
+      replaces the generic base to expose a combined ``_tfp_dist``.
     """
     leaves = jax.tree.leaves(components)
 
@@ -67,18 +84,28 @@ def _product_class_for_components(components: dict) -> type:
         leaves, (SupportsLogProb, SupportsMean, SupportsVariance),
     )
     all_tfp = all(hasattr(l, "_tfp_dist") for l in leaves)
+    all_numeric = all(isinstance(l, NumericRecordDistribution) for l in leaves)
 
-    key = (frozenset(extra_bases), all_tfp)
+    key = (frozenset(extra_bases), all_tfp, all_numeric)
     if key in _PRODUCT_CLASS_CACHE:
         return _PRODUCT_CLASS_CACHE[key]
 
     base = TFPProductDistribution if all_tfp else ProductDistribution
 
-    if not extra_bases:
+    # Order matters: ``NumericRecordDistribution`` mixes in the numeric
+    # API on top of the generic ``ProductDistribution`` base. Listing
+    # it before the protocol mixins keeps the MRO consistent with
+    # standalone NRDs (numeric API → protocols → object).
+    numeric_mixin: tuple[type, ...] = (
+        (NumericRecordDistribution,) if all_numeric else ()
+    )
+    bases = (base, *numeric_mixin, *extra_bases)
+
+    if bases == (base,):
         _PRODUCT_CLASS_CACHE[key] = base
         return base
 
-    cls = type("ProductDistribution", (base, *extra_bases), {})
+    cls = type("ProductDistribution", bases, {})
     _register_dynamic_subclass(cls)
     _PRODUCT_CLASS_CACHE[key] = cls
     return cls
@@ -130,8 +157,26 @@ class ProductDistribution(
 ):
     """Joint distribution with **independent** leaf components.
 
-    Inherits from :class:`RecordDistribution`.  All leaf components are
-    sampled independently.  ``_sample()`` returns :class:`Record`.
+    Inherits from :class:`RecordDistribution` (the general
+    named-fields base); leaves can be any :class:`Distribution`.
+    The product is well-defined for numeric and non-numeric leaves
+    alike — sampling produces a :class:`Record` keyed by component
+    name, conditioning works on any named subset, and named-component
+    access (``dist[field]``, ``dist.fields``, ``dist.event_shapes``)
+    is always available.
+
+    **When every leaf is a :class:`NumericRecordDistribution`** the
+    dynamic class factory mixes in :class:`NumericRecordDistribution`
+    too, so the joint also exposes the numeric API (``event_size``,
+    ``flatten_value`` / ``unflatten_value``, ``as_flat_distribution``,
+    ``dtypes``, ``supports``). For mixed or non-numeric leaves those
+    methods are simply absent on the instance — the joint stays on
+    the generic :class:`RecordDistribution` surface. See
+    :func:`_product_class_for_components` for the dispatch.
+
+    All leaf components are sampled independently. ``_sample()``
+    returns :class:`NumericRecord` when all leaves are numeric, and
+    a plain :class:`Record` otherwise.
 
     **Dynamic protocol support:** ``SupportsLogProb``, ``SupportsMean``,
     and ``SupportsVariance`` are included only when ALL leaf components
@@ -189,10 +234,14 @@ class ProductDistribution(
                 resolved[key] = comp.renamed(key)
             else:
                 resolved[key] = comp
+        # Leaves can be any ``Distribution``. When every leaf is a
+        # ``NumericRecordDistribution`` the dynamic class factory
+        # additionally mixes in the numeric API; otherwise the joint
+        # stays on the generic ``RecordDistribution`` surface.
         for leaf in jax.tree.leaves(resolved):
-            if not isinstance(leaf, NumericRecordDistribution):
+            if not isinstance(leaf, Distribution):
                 raise TypeError(
-                    f"All leaf components must be NumericRecordDistribution, "
+                    f"All leaf components must be Distribution instances, "
                     f"got {type(leaf).__name__}"
                 )
         self._components = resolved
@@ -218,11 +267,13 @@ class ProductDistribution(
 
         Returns
         -------
-        Record or NumericRecordArray
-            ``Record`` when ``sample_shape == ()``,
-            ``NumericRecordArray`` with ``batch_shape == sample_shape`` otherwise.
+        Record or NumericRecordArray or RecordArray
+            ``Record`` when ``sample_shape == ()``. With a non-empty
+            ``sample_shape``: ``NumericRecordArray`` when every leaf is
+            a :class:`NumericRecordDistribution` (the dynamic mixin
+            case), otherwise a plain :class:`RecordArray`.
         """
-        from ..core._record_array import NumericRecordArray
+        from ..core._record_array import NumericRecordArray, RecordArray
         names = list(self._components.keys())
         keys = jax.random.split(key, len(names))
         fields: dict[str, jnp.ndarray | Record] = {}
@@ -233,7 +284,14 @@ class ProductDistribution(
             else:
                 fields[name] = comp._sample(subkey, sample_shape)
         if sample_shape:
-            return NumericRecordArray(
+            # NRD mixin → numeric batched container; otherwise the
+            # plain RecordArray which doesn't require numeric leaves.
+            if isinstance(self, NumericRecordDistribution):
+                return NumericRecordArray(
+                    fields, batch_shape=sample_shape,
+                    template=self.record_template,
+                )
+            return RecordArray(
                 fields, batch_shape=sample_shape,
                 template=self.record_template,
             )
@@ -241,14 +299,40 @@ class ProductDistribution(
 
     # -- Log-prob -----------------------------------------------------------
 
-    def _log_prob(self, value) -> Array:
+    def _log_prob(self, value: Any) -> Array:
         """Sum of independent leaf log-probs.
 
-        Accepts Record, dict, or flat array (auto-unflattened via template).
+        Accepts Record, dict, or — when the joint is the all-numeric
+        case (i.e., :class:`NumericRecordDistribution` is mixed in by
+        the dynamic factory) — a flat array, which is auto-unflattened
+        via the template. Flat-array input is rejected for the
+        general (non-numeric) case because ``unflatten_value`` isn't
+        available there.
         """
         from ..core._record_array import RecordArray
-        if isinstance(value, jnp.ndarray) and self._record_template is not None:
-            value = self.unflatten_value(value)
+        if isinstance(value, jnp.ndarray):
+            if not isinstance(self, NumericRecordDistribution):
+                raise TypeError(
+                    "Flat-array input to log_prob requires every leaf "
+                    "to be a NumericRecordDistribution; this joint has "
+                    "non-numeric leaves. Pass a Record / dict instead."
+                )
+            # Ensure the input has a trailing event axis ``(*batch,
+            # event_size)`` so the static ``unflatten_value`` can
+            # reshape it. Single-component RWMH / NUTS callers pass a
+            # scalar or 1-D vector (``flat.shape == (event_size,)``);
+            # ``unflatten_value`` needs that as the trailing axis.
+            flat = jnp.asarray(value)
+            if flat.ndim == 0:
+                flat = flat[None]
+            value = self.unflatten_value(flat, template=self.record_template)
+            # Single-field templates return a raw array (preserving the
+            # "single-leaf returns raw" contract on the static method);
+            # the tree-map below expects a per-field structure, so
+            # re-key it under the lone field name.
+            if isinstance(value, jnp.ndarray):
+                (field_name,) = self.record_template.fields
+                value = {field_name: value}
         if isinstance(value, RecordArray):
             value = {k: v for k, v in value.items()}
         if isinstance(value, Record):
@@ -310,9 +394,13 @@ class ProductDistribution(
         return result
 
     def __repr__(self) -> str:
+        # Nested-dict groups print as ``{...}``; concrete ``Distribution``
+        # leaves print their class name regardless of whether they're
+        # numeric (the previous ``isinstance(v, NumericRecordDistribution)``
+        # check hid non-numeric ``RecordDistribution`` leaves like
+        # ``JointEmpirical``).
         comp_str = ", ".join(
-            f"{k}={type(v).__name__}" if isinstance(v, NumericRecordDistribution)
-            else f"{k}={{...}}"
+            f"{k}={{...}}" if isinstance(v, dict) else f"{k}={type(v).__name__}"
             for k, v in self._components.items()
         )
         name_str = f", name='{self._name}'" if self._name else ""

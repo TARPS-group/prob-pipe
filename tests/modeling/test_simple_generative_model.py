@@ -36,8 +36,10 @@ def model(prior, simulator):
 class TestConstruction:
     """SimpleGenerativeModel construction and input validation."""
 
-    def test_default_name_is_none(self, model):
-        assert model.name is None
+    def test_default_name(self, model):
+        # Default name now follows the class name (Distribution metaclass
+        # requires every instance to have a non-empty name).
+        assert model.name == "SimpleGenerativeModel"
 
     def test_with_name(self, prior, simulator):
         m = SimpleGenerativeModel(prior, simulator, name="test_model")

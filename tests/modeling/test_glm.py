@@ -238,7 +238,7 @@ class TestGLMLikelihoodWithValues:
         # Prior has no record_template, so draws are raw arrays.
         # Named draws require prior._record_template to be set.
         draws = posterior.draws()
-        flat = posterior.flatten_value(draws)
+        flat = posterior.flatten_value(draws, event_shape=posterior.event_shape)
         assert flat.shape == (50, 2)
 
 

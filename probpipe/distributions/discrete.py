@@ -85,10 +85,6 @@ class Bernoulli(TFPDistribution):
     def support(self) -> Constraint:
         return boolean
 
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return boolean
-
     # -- expectation (exact over {0, 1}) ------------------------------------
 
     def _expectation(
@@ -168,10 +164,6 @@ class Binomial(TFPDistribution):
     def support(self) -> Constraint:
         return integer_interval(0, self._total_count)
 
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return non_negative_integer
-
     # -- expectation (exact over {0, ..., total_count}) ---------------------
 
     def _expectation(
@@ -231,10 +223,6 @@ class Poisson(TFPDistribution):
     def support(self) -> Constraint:
         return non_negative_integer
 
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return non_negative_integer
-
 
 
 class Categorical(TFPDistribution):
@@ -286,10 +274,6 @@ class Categorical(TFPDistribution):
     @property
     def support(self) -> Constraint:
         return integer_interval(0, int(self._tfp_dist.num_categories) - 1)
-
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return non_negative_integer
 
     # -- expectation (exact over {0, ..., k-1}) ------------------------------
 
@@ -369,9 +353,5 @@ class NegativeBinomial(TFPDistribution):
 
     @property
     def support(self) -> Constraint:
-        return non_negative_integer
-
-    @classmethod
-    def _default_support(cls) -> Constraint:
         return non_negative_integer
 

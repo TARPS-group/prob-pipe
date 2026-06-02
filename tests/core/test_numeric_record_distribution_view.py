@@ -284,17 +284,21 @@ class TestErrors:
         with pytest.raises(TypeError, match="as_flat_distribution"):
             n.as_record_distribution(template=NumericRecordTemplate(x=(1,)))
 
-    def test_no_method_on_record_distribution(self):
-        """``ProductDistribution`` inherits from ``RecordDistribution``
-        rather than ``NumericRecordDistribution``, so it doesn't expose
-        ``as_record_distribution`` at all. Documents the intended
-        class-hierarchy boundary.
+    def test_method_inherited_through_numeric_record_distribution(self):
+        """``ProductDistribution`` inherits from
+        :class:`NumericRecordDistribution`, so ``as_record_distribution``
+        is available — but it can only be called on a
+        :class:`FlatNumericRecordDistribution` instance, not on the
+        product itself. The intended usage is to flatten first via
+        ``as_flat_distribution()`` and then lift the flat view back.
         """
         joint = ProductDistribution(
             a=Normal(loc=0.0, scale=1.0, name="a"),
             b=Normal(loc=0.0, scale=1.0, name="b"),
         )
-        assert not hasattr(joint, "as_record_distribution")
+        assert hasattr(joint, "as_record_distribution")
+        with pytest.raises(TypeError, match="FlatNumericRecordDistribution"):
+            joint.as_record_distribution(template=joint.record_template)
 
 
 # -- FlatNumericRecordDistribution membership ----------------------------------

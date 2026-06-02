@@ -76,7 +76,9 @@ class PyMCModel(ProbabilisticModel):
             ) from e
 
         self._model_fn = model_fn
-        self._name_str = name
+        # ``Distribution`` metaclass requires a non-empty name; default
+        # to the class name when the caller doesn't supply one.
+        self._name = name if name else "PyMCModel"
 
         # Discover observed variable names from the model function signature.
         # Parameters with default value None are treated as observed variables
@@ -102,10 +104,6 @@ class PyMCModel(ProbabilisticModel):
         )
 
     # -- Distribution interface ---------------------------------------------
-
-    @property
-    def name(self) -> str | None:
-        return self._name_str
 
     @property
     def event_shape(self) -> tuple[int, ...]:

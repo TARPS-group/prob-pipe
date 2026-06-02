@@ -409,6 +409,37 @@ class TestAutoDispatch:
         with pytest.raises(ValueError, match="failed while tracing"):
             w(x=g)
 
+    def test_auto_falls_back_to_loop_for_multi_field_joint(self):
+        """A multi-field ``ProductDistribution`` broadcast argument
+        can't be probed with a single ``event_shape`` (the property
+        raises ``NotImplementedError`` / ``TypeError`` on multi-leaf
+        instances). The auto-detect path should catch that and
+        fall back to loop vectorization rather than crash.
+        """
+        from probpipe import ProductDistribution
+
+        def consume(joint) -> jnp.ndarray:
+            # The function works on a Record / dict; the probe never
+            # actually calls it under JAX tracing for this case.
+            return jnp.asarray(joint["x"] + joint["y"])
+
+        w = WorkflowFunction(
+            func=consume, n_broadcast_samples=10, dispatch="auto", seed=32,
+        )
+        joint = ProductDistribution(
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=0.0, scale=1.0, name="y"),
+        )
+        # Probing should fail gracefully (NotImplementedError caught
+        # inside the broad ``except Exception`` in ``_resolve_dispatch``);
+        # we don't assert on the result type since the function works
+        # on a Record, only that the resolution settles on ``"sequential"``.
+        try:
+            w(joint=joint)
+        except Exception:
+            pass
+        assert w._resolved_dispatch == "sequential"
+
 
 # ---------------------------------------------------------------------------
 # Seed / key management

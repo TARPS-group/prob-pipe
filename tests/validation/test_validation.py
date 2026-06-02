@@ -165,9 +165,10 @@ class TestPredictiveCheck:
     def test_importable_from_subpackage(self):
         assert callable(pc_direct)
 
-    def test_results_attached_to_distribution(self, prior, likelihood):
-        """predictive_check appends results to distribution.validation_results."""
-        assert len(prior.validation_results) == 0
+    def test_results_attached_to_distribution_auxiliary(self, prior, likelihood):
+        """predictive_check appends results to distribution.auxiliary."""
+        # Before any check, the distribution has no auxiliary metadata.
+        assert prior.auxiliary is None or "predictive_check" not in prior.auxiliary
 
         predictive_check(
             prior, likelihood,
@@ -175,13 +176,20 @@ class TestPredictiveCheck:
             n_samples=20, n_replications=10,
             key=jax.random.PRNGKey(10),
         )
-        assert len(prior.validation_results) == 1
-        assert "replicated_statistics" in prior.validation_results[0]
-        assert "test_fn_name" in prior.validation_results[0]
+        group = prior.auxiliary["predictive_check"]
+        assert len(list(group.children)) == 1
+        check_ds = group["check_0"].dataset
+        assert "replicated_statistics" in check_ds
+        assert check_ds.attrs["test_fn_name"]
 
-    def test_multiple_checks_accumulate(self, prior, likelihood, observed_data):
-        """Multiple predictive_check calls accumulate on the distribution."""
-        n_before = len(prior.validation_results)
+    def test_multiple_checks_accumulate_in_auxiliary(
+        self, prior, likelihood, observed_data,
+    ):
+        """Multiple predictive_check calls accumulate as ``check_N`` siblings."""
+        group = prior.auxiliary["predictive_check"] if (
+            prior.auxiliary is not None and "predictive_check" in prior.auxiliary
+        ) else None
+        n_before = len(list(group.children)) if group is not None else 0
 
         predictive_check(
             prior, likelihood,
@@ -197,8 +205,10 @@ class TestPredictiveCheck:
             n_replications=10,
             key=jax.random.PRNGKey(21),
         )
-        assert len(prior.validation_results) == n_before + 2
-        assert prior.validation_results[-1]["p_value"] is not None
+        group = prior.auxiliary["predictive_check"]
+        assert len(list(group.children)) == n_before + 2
+        last = group[f"check_{n_before + 1}"].dataset
+        assert "p_value" in last.attrs
 
     def test_test_fn_name_captured(self, prior, likelihood):
         def my_custom_stat(data):
@@ -210,7 +220,75 @@ class TestPredictiveCheck:
             n_samples=20, n_replications=10,
             key=jax.random.PRNGKey(30),
         )
-        assert prior.validation_results[-1]["test_fn_name"] == "my_custom_stat"
+        group = prior.auxiliary["predictive_check"]
+        children = sorted(group.children, key=lambda c: c)
+        last = group[children[-1]].dataset
+        assert last.attrs["test_fn_name"] == "my_custom_stat"
+
+    def test_frozen_distribution_skips_attachment_silently(
+        self, prior, likelihood,
+    ):
+        """Distributions that disallow post-construction attribute
+        writes (e.g., a custom subclass with ``__slots__`` that
+        excludes ``_auxiliary``) cause the in-place attachment to
+        fail silently. The caller still gets the result dict from
+        the public return so the validation itself isn't lost.
+
+        Exercises the ``except AttributeError`` arm of the
+        ``except (AttributeError, TypeError)`` branch in
+        ``_record_check_in_auxiliary``.
+        """
+        from probpipe.validation._predictive_check import (
+            _record_check_in_auxiliary,
+        )
+
+        class _FrozenDist:
+            """Slotted dummy: ``object.__setattr__`` for ``_auxiliary``
+            raises ``AttributeError``."""
+
+            __slots__ = ()
+
+        frozen = _FrozenDist()
+        stats = jnp.zeros(5)
+        result = {"test_fn_name": "stub", "replicated_statistics": stats}
+        _record_check_in_auxiliary(frozen, stats, result)
+        assert not hasattr(frozen, "_auxiliary")
+
+    def test_typeerror_during_attachment_skips_silently(self):
+        """Companion to the slotted-dummy test above — exercises the
+        ``except TypeError`` arm explicitly. A distribution that
+        carries an ``_auxiliary`` property whose setter raises
+        ``TypeError`` (e.g., an immutable wrapper that explicitly
+        rejects writes with ``TypeError`` rather than the more usual
+        ``AttributeError``) bypasses attachment silently.
+
+        ``object.__setattr__`` honors data-descriptor protocol, so
+        the property setter on the class runs even though the call
+        site uses ``object.__setattr__`` to bypass any custom
+        ``__setattr__``.
+        """
+        from probpipe.validation._predictive_check import (
+            _record_check_in_auxiliary,
+        )
+
+        class _AuxTypeErrorDist:
+            """``_auxiliary`` is a property whose setter raises
+            ``TypeError`` — represents an immutable wrapper rejecting
+            attachment with a typed error rather than ``AttributeError``."""
+
+            @property
+            def _auxiliary(self):
+                return None
+
+            @_auxiliary.setter
+            def _auxiliary(self, value):
+                raise TypeError("immutable: cannot set _auxiliary")
+
+        dist = _AuxTypeErrorDist()
+        stats = jnp.zeros(5)
+        result = {"test_fn_name": "stub", "replicated_statistics": stats}
+        # No raise — the ``except TypeError`` clause swallows it.
+        _record_check_in_auxiliary(dist, stats, result)
 
 
 # ---------------------------------------------------------------------------

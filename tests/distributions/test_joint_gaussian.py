@@ -426,7 +426,7 @@ class TestFlattenUnflatten:
         s = sample(jg, key=key, sample_shape=(5,))
         flat = jg.flatten_value(s)
         assert flat.shape == (5, 3)
-        unflat = jg.unflatten_value(flat)
+        unflat = jg.unflatten_value(flat, template=jg.record_template)
         np.testing.assert_allclose(unflat["a"], s["a"], atol=1e-6)
         np.testing.assert_allclose(unflat["bc"], s["bc"], atol=1e-6)
 

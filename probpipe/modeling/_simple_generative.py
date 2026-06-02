@@ -94,13 +94,11 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsSampl
             )
         self._prior = prior
         self._likelihood = likelihood
-        self._name_str = name
+        # ``Distribution`` metaclass requires a non-empty name; default
+        # to the class name when the caller doesn't supply one.
+        self._name = name if name else "SimpleGenerativeModel"
 
     # -- Distribution interface ---------------------------------------------
-
-    @property
-    def name(self) -> str | None:
-        return self._name_str
 
     @property
     def prior(self) -> SupportsSampling[P]:

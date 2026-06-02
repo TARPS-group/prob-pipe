@@ -36,8 +36,6 @@ import jax.numpy as jnp
 
 from ..core._registry import MethodInfo
 from ..core._random_measures import RandomMeasure
-from ..core.protocols import SupportsLogProb
-from ..core.record import Record
 from ..custom_types import Array, PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._minibatch import MinibatchedDistribution
@@ -179,7 +177,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
         # Stack into a chain shaped (num_steps, *event_shape) and wrap.
         chain = jnp.stack(positions, axis=0)
-        record_template = prior.record_template
+        record_template = getattr(prior, "record_template", None)
         return make_posterior(
             [chain], parents=(prior,), algorithm=self._method_name,
             auxiliary=None, record_template=record_template,

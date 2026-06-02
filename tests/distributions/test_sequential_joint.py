@@ -434,7 +434,7 @@ class TestFlattenUnflatten:
         s = sample(joint, key=key, sample_shape=(5,))
         flat = joint.flatten_value(s)
         assert flat.shape == (5, 2)
-        unflat = joint.unflatten_value(flat)
+        unflat = joint.unflatten_value(flat, template=joint.record_template)
         np.testing.assert_allclose(unflat["z"], s["z"], atol=1e-6)
         np.testing.assert_allclose(unflat["x"], s["x"], atol=1e-6)
 
@@ -467,7 +467,18 @@ class TestBroadcastingReconnection:
             np.array(result.samples), 0.0, atol=0.15
         )
 
-    def test_views_from_sequential_joint_jax(self):
+    def test_views_from_sequential_joint_reject_jax(self):
+        """Explicit ``dispatch="jax"`` is rejected for sequential-joint views.
+
+        A ``SequentialJointDistribution`` constructs each downstream
+        component from a Python callable (``x=lambda z: Normal(loc=z,
+        ...)``), building a fresh distribution object per draw — which
+        is not JAX-traceable. ``dispatch="jax"`` is strict (it does not
+        silently fall back), so it raises a clear error pointing the
+        user at the ``auto`` / ``sequential`` paths. The ``_loop``
+        companion above exercises the correct joint-sampled result via
+        ``dispatch="sequential"``.
+        """
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0, name="z"),
             x=lambda z: Normal(loc=z, scale=0.01, name="x"),
@@ -479,6 +490,31 @@ class TestBroadcastingReconnection:
         wf = WorkflowFunction(
             func=subtract,
             dispatch="jax",
+            n_broadcast_samples=30,
+            seed=55,
+        )
+        with pytest.raises(ValueError, match="dispatch='jax' failed while tracing"):
+            wf(a=joint["z"], b=joint["x"])
+
+    def test_views_from_sequential_joint_auto_falls_back(self):
+        """``dispatch="auto"`` falls back to sequential and reconnects views.
+
+        Auto-detection probes JAX-traceability, finds the lambda-based
+        sequential joint isn't traceable, and falls back to sequential
+        dispatch — producing the same correct joint-sampled result as
+        the explicit ``_loop`` test (``x ≈ z`` so ``a - b ≈ 0``).
+        """
+        joint = SequentialJointDistribution(
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.01, name="x"),
+        )
+
+        def subtract(a: float, b: float) -> float:
+            return a - b
+
+        wf = WorkflowFunction(
+            func=subtract,
+            dispatch="auto",
             n_broadcast_samples=30,
             seed=55,
         )

@@ -810,22 +810,20 @@ class TestRecordDistributionProperties:
         )
 
     def test_record_distribution_flatten_unflatten(self, posterior):
-        """RecordDistribution.flatten_value / unflatten_value round-trip."""
-        from probpipe.core._record_distribution import RecordDistribution
+        """NumericRecordDistribution.flatten_value / unflatten_value round-trip."""
         v = Record(K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
-        flat = RecordDistribution.flatten_value(posterior, v)
+        flat = posterior.flatten_value(v)
         np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])  # insertion: K, phi, r
-        v2 = RecordDistribution.unflatten_value(posterior, flat)
+        v2 = posterior.unflatten_value(flat, template=posterior.record_template)
         assert isinstance(v2, Record)
         np.testing.assert_allclose(float(v2["K"]), 1.0)
         np.testing.assert_allclose(float(v2["r"]), 3.0)
 
     def test_flatten_unflatten_roundtrip(self, posterior, template):
-        from probpipe.core._record_distribution import RecordDistribution
         v = Record(K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
-        flat = RecordDistribution.flatten_value(posterior, v)
+        flat = posterior.flatten_value(v)
         assert flat.shape == (3,)
-        v2 = RecordDistribution.unflatten_value(posterior, flat)
+        v2 = posterior.unflatten_value(flat, template=posterior.record_template)
         assert isinstance(v2, Record)
         np.testing.assert_allclose(float(v2["K"]), 1.0)
         np.testing.assert_allclose(float(v2["r"]), 3.0)
@@ -835,24 +833,22 @@ class TestRecordDistributionProperties:
         auto-wraps the chain as a single-field Record keyed by ``name=``.
         ``unflatten_value`` round-trips a flat vector through that
         single-field template (no RuntimeError)."""
-        from probpipe.core._record_distribution import RecordDistribution
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = ApproximateDistribution([chain], name="x")
-        result = RecordDistribution.unflatten_value(dist, jnp.zeros(3))
-        # Single-field auto-wrap → result has one field "x".
-        assert hasattr(result, "fields")
-        assert result.fields == ("x",)
+        # Single-field auto-wrap → ``unflatten_value`` reshapes to the
+        # lone field's event shape (raw array, ``fields == ("x",)``).
+        result = dist.unflatten_value(jnp.zeros(3), template=dist.record_template)
+        # Single-field path returns a raw array; the template carries
+        # the single field name.
+        assert dist.record_template.fields == ("x",)
 
     def test_record_distribution_event_shapes(self, posterior):
-        """RecordDistribution.event_shapes returns per-field dict."""
-        from probpipe.core._record_distribution import RecordDistribution
-        shapes = RecordDistribution.event_shapes.fget(posterior)
-        assert shapes == {"K": (), "phi": (), "r": ()}
+        """``event_shapes`` returns per-field dict."""
+        assert posterior.event_shapes == {"K": (), "phi": (), "r": ()}
 
     def test_record_distribution_event_size(self, posterior, template):
-        """RecordDistribution.event_size matches template.flat_size."""
-        from probpipe.core._record_distribution import RecordDistribution
-        assert RecordDistribution.event_size.fget(posterior) == template.flat_size
+        """``event_size`` matches template.flat_size."""
+        assert posterior.event_size == template.flat_size
 
 
 class TestValuesSelect:

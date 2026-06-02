@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+
+- **Distribution & Record hierarchy cleanup (#200).** Implements the
+  integrated cleanup plan as six self-contained commits. The public-
+  facing changes are:
+  - **`Distribution.validation_results` is removed.**
+    `predictive_check` now writes its per-invocation payload to
+    `dist.auxiliary["predictive_check/check_N"]` (a wrapped
+    `xarray.Dataset` under a numbered group). Future validation
+    functions (LOO, WAIC, …) land under their own named groups in
+    the same `DataTree`. Code that read `dist.validation_results`
+    should read `dist.auxiliary["predictive_check"]` instead.
+  - **`flatten_value` / `unflatten_value` are now `@staticmethod` with
+    explicit kwargs.** Callers pass `event_shape=` /
+    `template=` explicitly:
+    `dist.flatten_value(value, event_shape=dist.event_shape)` and
+    `dist.unflatten_value(flat, template=dist.record_template)`.
+    The previous instance-method form (no kwargs) raises at runtime.
+  - **`_default_support` classmethods are removed** from every
+    concrete distribution (`Normal`, `Gamma`, `Poisson`, …; 24 in
+    total). Support compatibility is now checked post-construction
+    via `NumericRecordDistribution._check_support_compatible(source)`;
+    downstream code that reached for the classmethod should use the
+    instance `support` / `supports` properties.
+  - **`SimpleModel.__init__` requires a `RecordDistribution` prior**
+    (in addition to the pre-existing `SupportsLogProb` check). Priors
+    that satisfy `SupportsLogProb` but aren't `RecordDistribution`
+    raise `TypeError`. The type system can't express the intersection
+    statically, so the runtime guard is the backstop.
+  - **Default model names change from `None` to the class name.**
+    `SimpleModel()`, `SimpleGenerativeModel()`, `PyMCModel()`,
+    `StanModel()`, and `DirectSamplerSBIModel()` now default to
+    `"SimpleModel"` / `"SimpleGenerativeModel"` / `"PyMCModel"` /
+    `"StanModel"` / `"DirectSamplerSBIModel(<alg>)"` when no name is
+    supplied. The metaclass invariant requires every `Distribution`
+    instance to have a non-empty name.
+  - **`NumericRecordDistribution.event_shape` is abstract** —
+    raises `NotImplementedError` on the base. Single-leaf subclasses
+    must override directly; multi-leaf subclasses (joints) set
+    `_record_template` explicitly and never trigger the auto-build.
+    Previously the default tried to derive from `event_shapes`,
+    which looped back through `record_template`.
+  - **`ProductDistribution` and `SequentialJointDistribution`
+    conditionally mix in `NumericRecordDistribution`** based on
+    their resolved leaves. Both stay rooted at the general
+    `RecordDistribution` (their content is well-defined for
+    non-numeric leaves too — sampling produces a `Record` keyed by
+    component name, conditioning and named-component access always
+    work). When *every* leaf is itself a `NumericRecordDistribution`,
+    the dynamic class factory adds `NumericRecordDistribution` to the
+    bases, so the joint also exposes the numeric API (`event_size`,
+    `flatten_value` / `unflatten_value`, `as_flat_distribution`,
+    `dtypes`, `supports`). For mixed or non-numeric leaves those
+    methods are simply absent on the instance. Leaf type constraint
+    relaxed from `NumericRecordDistribution` to `Distribution`.
+    **Caller-visible consequence:**
+    `isinstance(joint, NumericRecordDistribution)` is no longer
+    guaranteed for `ProductDistribution` / `SequentialJointDistribution`
+    instances — it returns `True` only when every resolved leaf is
+    itself an NRD (the common case). Downstream code that branched on
+    `isinstance(..., NumericRecordDistribution)` for these joints
+    should verify the new dispatch matches its expectations, or
+    switch to checking for the specific capability (e.g.,
+    `hasattr(joint, "event_size")`).
+  - **`NumericJointEmpirical` adds `NumericRecordDistribution` as a
+    mixin** (previously implicit via `JointEmpirical` only). The
+    sibling `JointEmpirical` stays on `RecordDistribution` and now
+    builds a structural template from the stored samples (object-
+    dtype leaves use `None` specs) to satisfy the metaclass
+    invariant.
+
+### Added
+
+- **`RecordTemplate.event_shapes` and `RecordTemplate.field_event_shape(name)`**
+  expose per-top-level-field event shapes (nested sub-templates and
+  opaque leaves collapse to `()`). The previous helper
+  `RecordDistribution._field_event_shape` is removed in favor of these
+  template methods.
+
+- **Metaclass-enforced invariants.** Every `Distribution` instance
+  has a non-empty `name`; every `RecordDistribution` instance has a
+  non-`None` `record_template`. The checks fire post-`__init__` via
+  the `_DistributionMeta` / `_RecordDistributionMeta` metaclasses
+  (derived from `typing._ProtocolMeta` to compose with
+  `@runtime_checkable` protocols). Subclasses that forget either
+  invariant raise `TypeError` at construction with a clear pointer.
+
 ### Changed
 
 - **`GLMLikelihood` fits an intercept by default** (``fit_intercept=True``).

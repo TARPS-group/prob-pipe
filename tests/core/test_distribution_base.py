@@ -183,3 +183,121 @@ class TestNoBatchShape:
             Normal, loc=jnp.zeros(5), scale=1.0, name="x",
         )
         assert da.batch_shape == (5,)
+
+
+class TestMetaclassEnforcement:
+    """The ``_DistributionMeta`` metaclass enforces a non-empty ``name``
+    on every Distribution subclass instance, even when the subclass
+    bypasses ``super().__init__``.
+    """
+
+    def test_subclass_without_name_raises_at_construction(self):
+        """A subclass whose ``__init__`` doesn't set ``_name`` cannot be
+        constructed — the metaclass post-init check fires before the
+        instance escapes."""
+        from probpipe.core.distribution import Distribution
+
+        class _NoNameDist(Distribution):
+            def __init__(self):
+                # Deliberately omit calling super().__init__ and
+                # setting self._name.
+                pass
+
+        with pytest.raises(TypeError, match="non-empty name"):
+            _NoNameDist()
+
+    def test_subclass_with_empty_string_name_raises(self):
+        """An empty-string ``_name`` is also rejected — the check
+        insists on a truthy string."""
+        from probpipe.core.distribution import Distribution
+
+        class _EmptyNameDist(Distribution):
+            def __init__(self):
+                self._name = ""
+
+        with pytest.raises(TypeError, match="non-empty name"):
+            _EmptyNameDist()
+
+    def test_subclass_setting_name_directly_succeeds(self):
+        """Bypassing ``super().__init__`` is fine as long as
+        ``self._name`` ends up set to a non-empty string."""
+        from probpipe.core.distribution import Distribution
+
+        class _DirectNameDist(Distribution):
+            def __init__(self):
+                # Skip super().__init__ deliberately.
+                self._name = "direct"
+
+        dist = _DirectNameDist()
+        assert dist.name == "direct"
+
+    def test_record_distribution_without_template_raises(self):
+        """The ``_RecordDistributionMeta`` adds a record-template check
+        on top of the name check. A RecordDistribution subclass whose
+        ``__init__`` neither sets ``_record_template`` nor leaves
+        ``name + event_shape`` derivable can't be constructed."""
+        from probpipe.core.distribution import RecordDistribution
+
+        class _NoTemplate(RecordDistribution):
+            def __init__(self):
+                self._name = "no_template"
+                # No _record_template; no event_shape declared.
+
+        with pytest.raises(TypeError, match="record_template"):
+            _NoTemplate()
+
+
+class TestRenamedTemplateRoundtrip:
+    """``NumericRecordDistribution.renamed`` regenerates an auto-built
+    template under the new name; explicit and multi-field templates
+    are preserved.
+    """
+
+    def test_renamed_rebuilds_single_field_auto_template(self):
+        """Single-field auto-built template: the clone's
+        ``record_template`` has the new field name (matches
+        ``new_name``)."""
+        from probpipe import Normal
+
+        original = Normal(loc=0.0, scale=1.0, name="x")
+        # Trigger the auto-build so ``_record_template`` is cached.
+        assert original.record_template.fields == ("x",)
+
+        clone = original.renamed("y")
+        assert clone.name == "y"
+        # The rebuilt template uses the new name as the field key.
+        assert clone.record_template.fields == ("y",)
+        # The original is untouched (renamed returns a copy).
+        assert original.record_template.fields == ("x",)
+
+    def test_renamed_preserves_multi_field_template(self):
+        """Multi-field joints have explicit templates whose field
+        names are independent of the distribution's name — renaming
+        must not touch the template."""
+        from probpipe import JointGaussian
+        import jax.numpy as jnp
+
+        jg = JointGaussian(
+            mean=jnp.zeros(2), cov=jnp.eye(2), x=1, y=1,
+        )
+        original_fields = jg.record_template.fields
+        clone = jg.renamed("renamed_jg")
+        assert clone.record_template.fields == original_fields
+
+    def test_renamed_preserves_non_numeric_record_template(self):
+        """``JointEmpirical`` (non-NRD ``RecordDistribution``) builds its
+        template from the stored samples, not from the distribution's
+        name — renaming must leave the template intact (otherwise the
+        metaclass invariant would be violated, since the non-numeric
+        base has no auto-rebuild path)."""
+        import numpy as np
+        from probpipe import JointEmpirical
+
+        je = JointEmpirical(
+            labels=np.array(["a", "b", "c"], dtype=object),
+            ids=np.array([0, 1, 2]),
+        )
+        original_fields = je.record_template.fields
+        clone = je.renamed("renamed_je")
+        assert clone.record_template is not None
+        assert clone.record_template.fields == original_fields

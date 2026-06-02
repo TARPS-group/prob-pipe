@@ -74,9 +74,12 @@ class TestProductDistribution:
         assert isinstance(joint, ProductDistribution)
 
     def test_isinstance_record_distribution(self, joint_xy):
+        # ``joint_xy`` has all-numeric leaves → the dynamic class
+        # factory mixes in ``NumericRecordDistribution`` too, so the
+        # joint satisfies both. For mixed/non-numeric leaves, only the
+        # RD assertion would hold.
         assert isinstance(joint_xy, RecordDistribution)
-        assert not isinstance(joint_xy, NumericRecordDistribution)
-        assert not isinstance(joint_xy, NumericRecordDistribution)
+        assert isinstance(joint_xy, NumericRecordDistribution)
 
     def test_event_shapes(self, joint_xy):
         assert joint_xy.event_shapes == {"x": (), "y": ()}
@@ -204,7 +207,9 @@ class TestFlattenUnflatten:
         assert isinstance(s, (Record, RecordArray))
         flat = joint_xy.flatten_value(s)
         assert flat.shape == (2,)
-        recovered = joint_xy.unflatten_value(flat)
+        recovered = joint_xy.unflatten_value(
+            flat, template=joint_xy.record_template,
+        )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
         np.testing.assert_allclose(recovered["y"], s["y"], atol=1e-6)
@@ -215,7 +220,9 @@ class TestFlattenUnflatten:
         assert isinstance(s, (Record, RecordArray))
         flat = joint_xz.flatten_value(s)
         assert flat.shape == (4,)
-        recovered = joint_xz.unflatten_value(flat)
+        recovered = joint_xz.unflatten_value(
+            flat, template=joint_xz.record_template,
+        )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
         np.testing.assert_allclose(recovered["z"], s["z"], atol=1e-6)
@@ -226,7 +233,9 @@ class TestFlattenUnflatten:
         assert isinstance(s, (Record, RecordArray))
         flat = joint_xy.flatten_value(s)
         assert flat.shape == (2,)
-        recovered = joint_xy.unflatten_value(flat)
+        recovered = joint_xy.unflatten_value(
+            flat, template=joint_xy.record_template,
+        )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
         np.testing.assert_allclose(recovered["y"], s["y"], atol=1e-6)
@@ -564,6 +573,73 @@ class TestProductProtocolDuckTyping:
         assert isinstance(reconstructed, ProductDistribution)
         assert reconstructed.fields == ("x", "y")
 
+    def test_all_numeric_leaves_gain_nrd_mixin(self):
+        """All-numeric leaves → the dynamic factory adds
+        :class:`NumericRecordDistribution` to the bases, so the joint
+        exposes the numeric API.
+        """
+        joint = ProductDistribution(
+            x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"),
+        )
+        assert isinstance(joint, NumericRecordDistribution)
+        # Numeric API is available.
+        assert joint.event_size == 2
+        assert hasattr(joint, "flatten_value")
+        assert hasattr(joint, "as_flat_distribution")
+
+    def test_non_numeric_leaf_drops_nrd_mixin(self):
+        """A non-numeric ``RecordDistribution`` leaf disqualifies the
+        joint from the numeric mixin. The joint remains a
+        :class:`RecordDistribution` (sampling, conditioning,
+        named-component access all work) but the numeric API is
+        absent — the product is still well-defined, just not
+        flat-representable.
+        """
+        import numpy as np
+        from probpipe import JointEmpirical, Normal
+
+        # Object-dtype JointEmpirical stays on the non-numeric base.
+        je = JointEmpirical(
+            labels=np.array(["a", "b", "c"], dtype=object),
+            ids=np.array([0, 1, 2]),
+            name="je",
+        )
+        # Combine with a numeric Normal: mixed leaves.
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), je=je)
+        assert isinstance(joint, ProductDistribution)
+        assert isinstance(joint, RecordDistribution)
+        # No numeric mixin → numeric API methods are absent.
+        assert not isinstance(joint, NumericRecordDistribution)
+        assert not hasattr(joint, "event_size")
+        # General API still works: fields, event_shapes.
+        assert set(joint.fields) == {"x", "je"}
+        # ``event_shapes`` delegates to the template; non-numeric
+        # leaves collapse to ``()`` at the top level.
+        assert joint.event_shapes == {"x": (), "je": ()}
+
+    def test_repr_shows_non_numeric_leaf_class_name(self):
+        """``__repr__`` prints the concrete class name for every
+        ``Distribution`` leaf — including non-numeric
+        ``RecordDistribution`` leaves like ``JointEmpirical``.
+        Previously the repr branched on
+        :class:`NumericRecordDistribution` membership and hid
+        non-numeric leaves behind ``{...}``.
+        """
+        import numpy as np
+        from probpipe import JointEmpirical, Normal
+
+        je = JointEmpirical(
+            labels=np.array(["a", "b", "c"], dtype=object),
+            ids=np.array([0, 1, 2]),
+            name="je",
+        )
+        joint = ProductDistribution(x=Normal(0, 1, name="x"), je=je)
+        r = repr(joint)
+        assert "x=Normal" in r
+        # Non-numeric leaf prints its class name, not ``{...}``.
+        assert "je=JointEmpirical" in r
+        assert "{...}" not in r
+
 
 # ===========================================================================
 # 12. Additional coverage
@@ -589,6 +665,42 @@ class TestSingleComponent:
         lps = log_prob(joint, s)
         expected = jnp.array([float(log_prob(n, s["a"][0])), float(log_prob(n, s["a"][1]))])
         np.testing.assert_allclose(lps, expected, atol=1e-5)
+
+    def test_single_component_log_prob_flat_array(self):
+        """RWMH / NUTS / Pathfinder pass a flat array (or scalar) as
+        the value when evaluating ``target_log_prob`` against a
+        :class:`ProductDistribution`. The single-field auto-template
+        case used to crash: the static ``unflatten_value`` returns a
+        raw array for single-field templates, and ``_log_prob``'s
+        tree-map against ``self._components`` (a dict) saw a scalar
+        instead of the expected dict-like structure.
+
+        This regression test pins all three shapes the inference
+        kernels can pass: ``(event_size,)`` (the canonical RWMH
+        path), scalar ``()`` (an over-unflattened intermediate), and
+        batched ``(B, event_size)``.
+        """
+        n = Normal(loc=0.0, scale=1.0, name="mu")
+        joint = ProductDistribution(mu=n)
+
+        # Direct log_prob of the underlying Normal at the same point
+        # is the independent reference value.
+        lp_ref = float(log_prob(n, jnp.array(0.5)))
+
+        # 1-D vector (canonical RWMH / NUTS shape: flat parameter vector).
+        np.testing.assert_allclose(
+            float(joint._log_prob(jnp.array([0.5]))), lp_ref, atol=1e-6,
+        )
+        # Scalar (defensive — some kernels pass a 0-d array).
+        np.testing.assert_allclose(
+            float(joint._log_prob(jnp.array(0.5))), lp_ref, atol=1e-6,
+        )
+        # Batched: (B, event_size). Each row's log-prob matches the
+        # reference at the corresponding scalar.
+        vals = jnp.array([[0.5], [-0.3], [1.2]])
+        lps = joint._log_prob(vals)
+        expected = jnp.array([float(log_prob(n, vals[i, 0])) for i in range(3)])
+        np.testing.assert_allclose(lps, expected, atol=1e-6)
 
 
 class TestLogProbBatchValues:
@@ -801,8 +913,7 @@ class TestNestedProductDistribution:
     def test_isinstance(self, nested_joint):
         assert isinstance(nested_joint, ProductDistribution)
         assert isinstance(nested_joint, RecordDistribution)
-        assert not isinstance(nested_joint, NumericRecordDistribution)
-        assert not isinstance(nested_joint, NumericRecordDistribution)
+        assert isinstance(nested_joint, NumericRecordDistribution)
 
     def test_event_shapes_nested(self, nested_joint):
         es = nested_joint.event_shapes
@@ -898,7 +1009,9 @@ class TestNestedProductDistribution:
         assert isinstance(s, (Record, RecordArray))
         flat = nested_joint.flatten_value(s)
         assert flat.shape == (3,)
-        recovered = nested_joint.unflatten_value(flat)
+        recovered = nested_joint.unflatten_value(
+            flat, template=nested_joint.record_template,
+        )
         assert isinstance(recovered, Record)
         # Check all leaves match
         for orig, rec in zip(jax.tree.leaves(s), jax.tree.leaves(recovered)):
@@ -1156,7 +1269,9 @@ class TestNestedWithMVN:
         flat = nested_mvn.flatten_value(s_single)
         assert flat.shape == (4,)
 
-        recovered = nested_mvn.unflatten_value(flat)
+        recovered = nested_mvn.unflatten_value(
+            flat, template=nested_mvn.record_template,
+        )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(
             recovered["group"]["position"], s_single["group"]["position"], atol=1e-6
