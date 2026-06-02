@@ -46,6 +46,7 @@ from ._inference_utils import (
     get_prior,
     is_jax_traceable,
     is_simple_model,
+    parallel_chain_map,
 )
 from ._registry import InferenceMethod
 
@@ -169,7 +170,7 @@ def _run_ess_chains(
         _, (positions, subiter) = jax.lax.scan(step, state, sample_keys)
         return positions, warmup_positions, subiter
 
-    positions_all, warmups_all, subiter_all = jax.vmap(run_one_chain)(chain_keys)
+    positions_all, warmups_all, subiter_all = parallel_chain_map(run_one_chain, chain_keys)
     chains = [positions_all[c] for c in range(num_chains)]
     warmups = (
         [warmups_all[c] for c in range(num_chains)]

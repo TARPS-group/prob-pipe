@@ -34,6 +34,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     compositions via the new `_gaussian_prior_params` helper.
 - New workflow function `probpipe.elliptical_slice(model, data, ...)`.
 
+### Changed
+
+- **Multi-chain BlackJAX MCMC dispatch picks `jax.pmap` when devices
+  permit.** When `jax.local_device_count() >= num_chains` the per-chain
+  runner is mapped with `pmap` (each chain on its own device,
+  bit-identical to a single-chain sequential run at the same seed);
+  otherwise the prior `vmap` path is used. Single-chain calls
+  (``num_chains == 1``) short-circuit both, applying the runner
+  directly. Default single-CPU-device behaviour is unchanged for
+  ``num_chains == 1``; users with
+  ``XLA_FLAGS=--xla_force_host_platform_device_count=N`` get
+  per-device parallelism and bit-identical-to-sequential draws
+  (notably for NUTS) without code changes. The three BlackJAX
+  modules (`_blackjax_mcmc.py`, `_blackjax_rwmh.py`, `_blackjax_ess.py`)
+  route their multi-chain dispatch through the new
+  `parallel_chain_map` helper in `_inference_utils.py`.
+
 ### Changed (breaking)
 
 - **`tfp_rwmh` removed.** The hand-rolled Python-loop RWMH that sat

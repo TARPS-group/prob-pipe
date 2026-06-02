@@ -45,6 +45,7 @@ from ._inference_utils import (
     get_prior,
     is_jax_traceable,
     is_simple_model,
+    parallel_chain_map,
     run_chain_scan,
 )
 from ._registry import InferenceMethod
@@ -409,7 +410,7 @@ def _run_blackjax_rwmh(
                 n_windows=n_windows,
                 traceable=True,
             )
-        chains_arr, warmups_arr, stats_arr = jax.vmap(run_one)(chain_keys)
+        chains_arr, warmups_arr, stats_arr = parallel_chain_map(run_one, chain_keys)
         chains = [chains_arr[c] for c in range(num_chains)]
         warmups = (
             [warmups_arr[c] for c in range(num_chains)]

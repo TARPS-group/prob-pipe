@@ -54,6 +54,7 @@ __all__ = [
     "extract_record_template",
     "is_jax_traceable",
     "is_simple_model",
+    "parallel_chain_map",
     "run_chain_scan",
 ]
 
@@ -422,3 +423,47 @@ def run_chain_scan(
     keys = jax.random.split(key, num_results)
     _, (positions, infos) = jax.lax.scan(one_step, init_state, keys)
     return positions, infos
+
+
+# ---------------------------------------------------------------------------
+# Multi-chain parallel dispatch
+# ---------------------------------------------------------------------------
+
+
+def parallel_chain_map(fn: Callable[[Array], Any], chain_keys: Array) -> Any:
+    """Run ``fn`` across ``chain_keys`` using the best parallelism available.
+
+    Picks between three strategies:
+
+    * **Single chain** (``num_chains == 1``): apply ``fn`` directly to
+      the lone key and add a leading axis. Skips both ``pmap`` and
+      ``vmap`` since neither earns its tracing / dispatch cost for a
+      one-element batch.
+    * ``jax.pmap`` when ``num_chains >= 2`` and
+      :func:`jax.local_device_count` >= ``num_chains``. Each chain runs
+      independently on its own device — bit-identical to a single-chain
+      sequential run at the same seed, with full per-device parallelism
+      on GPU/TPU or on a CPU configured with multiple virtual devices
+      (``XLA_FLAGS=--xla_force_host_platform_device_count=N``).
+    * ``jax.vmap`` otherwise. Cheaper SIMD-style vectorization, no
+      extra memory, but: (a) only a single core's worth of throughput
+      on CPU, and (b) for kernels with data-dependent control flow
+      like NUTS, vmap has to mask-pad divergent trajectories, so the
+      per-chain draws no longer match the sequential reference at the
+      same seed.
+
+    Intended for top-of-runner use — the ``int(chain_keys.shape[0])``
+    read requires a concrete shape and so is not safe inside ``jit``
+    or ``scan``.
+
+    Returns whatever ``fn`` returns, with a leading ``num_chains``
+    axis. Both ``pmap`` and ``vmap`` backends produce the same logical
+    output shape; pmap returns sharded arrays that downstream code can
+    index per-chain transparently.
+    """
+    num_chains = int(chain_keys.shape[0])
+    if num_chains == 1:
+        return jax.tree.map(lambda a: a[None], fn(chain_keys[0]))
+    if jax.local_device_count() >= num_chains:
+        return jax.pmap(fn)(chain_keys)
+    return jax.vmap(fn)(chain_keys)
