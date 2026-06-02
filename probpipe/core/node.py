@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from itertools import product as cartesian_product
 from types import MappingProxyType
-from typing import Any, ClassVar, Literal, TypeAlias, get_args, get_type_hints
+from typing import Any, ClassVar, Literal, TypeAlias, get_args
 
 import jax
 import jax.numpy as jnp
@@ -27,7 +27,7 @@ except ImportError:
 from .._utils import prod
 from ..converters import converter_registry
 from ..custom_types import Array, PRNGKey
-from . import _workflow_execution, _workflow_result
+from . import _workflow_call, _workflow_execution, _workflow_result
 from ._broadcast_distributions import _make_stack
 from ._distribution_array import DistributionArray, _make_distribution_array
 from ._record_array import RecordArray, _RecordArrayView
@@ -354,8 +354,9 @@ class WorkflowFunction(Node):
             )
 
         self._func = func
-        self._sig = inspect.signature(func)
-        self._hints = get_type_hints(func)
+        self._signature_info = _workflow_call.make_signature_info(func)
+        self._sig = self._signature_info.signature
+        self._hints = self._signature_info.hints
         # Convert legacy string / None values to WorkflowKind enum
         # TODO: remove this legacy conversion in follow-up issue
         if workflow_kind is None:
@@ -389,22 +390,13 @@ class WorkflowFunction(Node):
 
         super().__init__()
 
-        # Precompute parameter metadata once
-        self._param_names = [p for p in self._sig.parameters if p != "self"]
-        self._has_var_keyword = any(
-            p.kind == inspect.Parameter.VAR_KEYWORD
-            for p in self._sig.parameters.values()
-        )
+        # Compatibility attributes for callers/tests that inspect the facade.
+        self._param_names = list(self._signature_info.param_names)
+        self._has_var_keyword = self._signature_info.has_var_keyword
 
-        # Reserved names that would collide with WorkflowFunction call-time overrides
-        _RESERVED = {"n_broadcast_samples", "seed", "include_inputs"}
-        collision = _RESERVED & set(self._param_names)
-        if collision:
-            raise ValueError(
-                f"Function '{self._name}' has parameter(s) {collision} which are "
-                f"reserved by WorkflowFunction for call-time overrides. Rename them in "
-                f"your function signature."
-            )
+        _workflow_call.validate_reserved_parameter_names(
+            self._signature_info, workflow_name=self._name,
+        )
 
     @property
     def effective_workflow_kind(self) -> WorkflowKind:
@@ -457,38 +449,33 @@ class WorkflowFunction(Node):
     ) -> _workflow_execution.WorkflowExecutionConfig:
         """Build resolved execution metadata for sequential call dispatch."""
         if mode is None:
-            kind = self.effective_workflow_kind
-            if kind is WorkflowKind.TASK:
-                mode = "prefect_task"
-            elif kind is WorkflowKind.FLOW:
-                mode = "prefect_flow"
-            elif self._dispatch == "thread":
-                mode = "thread"
-            else:
-                mode = "sequential"
+            match self.effective_workflow_kind:
+                case WorkflowKind.TASK:
+                    mode = "prefect_task"
+                case WorkflowKind.FLOW:
+                    mode = "prefect_flow"
+                case _ if self._dispatch == "thread":
+                    mode = "thread"
+                case _:
+                    mode = "sequential"
 
-        max_workers = None
-        if mode == "thread":
-            max_workers = self._max_workers
-        elif mode in ("prefect_task", "prefect_flow"):
-            if self._dispatch == "thread" or self._max_workers is not None:
-                warnings.warn(
-                    "dispatch='thread' and max_workers configure only local "
-                    "ThreadPoolExecutor dispatch; they do not control Prefect "
-                    "scheduling.",
-                    stacklevel=2,
-                )
+        is_prefect = mode in ("prefect_task", "prefect_flow")
 
-        prefect_task_runner = (
-            prefect_config.resolve_task_runner()
-            if mode in ("prefect_task", "prefect_flow")
-            else None
-        )
+        if is_prefect and (self._dispatch == "thread" or self._max_workers is not None):
+            warnings.warn(
+                "dispatch='thread' and max_workers configure only local "
+                "ThreadPoolExecutor dispatch; they do not control Prefect "
+                "scheduling.",
+                stacklevel=2,
+            )
+
         return _workflow_execution.WorkflowExecutionConfig(
             mode=mode,
-            max_workers=max_workers,
+            max_workers=self._max_workers if mode == "thread" else None,
             name=self._name,
-            prefect_task_runner=prefect_task_runner,
+            prefect_task_runner=(
+                prefect_config.resolve_task_runner() if is_prefect else None
+            ),
         )
 
     def _make_execution_request(
@@ -514,42 +501,36 @@ class WorkflowFunction(Node):
 
         This matches your current architecture (deps are Nodes).
         """
-        ann = self._hints.get(name)
-        try:
-            return isinstance(ann, type) and issubclass(ann, Node)
-        except TypeError:
-            # Generic aliases (e.g. NDArray on Python 3.10) can pass
-            # isinstance(ann, type) but fail in issubclass().
-            return False
+        return _workflow_call.is_dependency_param(
+            self._signature_info, name, dependency_type=Node,
+        )
 
     def __call__(self, *args, **call_inputs):
-        # Extract reserved call-time overrides (collision already prevented in __init__)
-        n_broadcast_samples = call_inputs.pop("n_broadcast_samples", self._n_broadcast_samples)
-        do_include_inputs = call_inputs.pop("include_inputs", self._include_inputs)
+        call = _workflow_call.resolve_workflow_call(
+            self._signature_info,
+            args,
+            call_inputs,
+            bind=self._bind,
+            module=self._module,
+            dependency_type=Node,
+            workflow_name=self._name,
+            default_n_broadcast_samples=self._n_broadcast_samples,
+            default_include_inputs=self._include_inputs,
+        )
+        if call.overrides.seed is not None:
+            self._key = jax.random.PRNGKey(call.overrides.seed)
 
-        if "seed" in call_inputs:
-            self._key = jax.random.PRNGKey(call_inputs.pop("seed"))
-
-        # Bind user arguments through the wrapped function's real signature.
-        # ``bind_partial`` preserves module/default resolution below while
-        # still rejecting unexpected keywords and duplicate positional/keyword
-        # values with Python-call-compatible errors.
-        bound = self._sig.bind_partial(*args, **call_inputs)
-        call_inputs = {}
-        for name, value in bound.arguments.items():
-            param = self._sig.parameters[name]
-            if param.kind == inspect.Parameter.VAR_KEYWORD:
-                call_inputs.update(value)
-            else:
-                call_inputs[name] = value
-
-        values = self._resolve_inputs(call_inputs)
+        values = call.values
         values = self._convert_distributions(values)
 
         dist_args, ra_args = self._find_broadcast_args(values)
         if dist_args or ra_args:
             return self._broadcast(
-                values, dist_args, ra_args, n_broadcast_samples, do_include_inputs,
+                values,
+                dist_args,
+                ra_args,
+                call.overrides.n_broadcast_samples,
+                call.overrides.include_inputs,
             )
 
         # Non-broadcast call — one function invocation, then wrap.
@@ -581,76 +562,14 @@ class WorkflowFunction(Node):
           3) module.child_nodes/module.inputs (if module attached)
           4) function default values
         """
-        values: dict[str, Any] = {}
-
-        # convenience access
-        mod = self._module
-        mod_child_nodes = getattr(mod, "child_nodes", {}) if mod is not None else {}
-        mod_inputs = getattr(mod, "inputs", {}) if mod is not None else {}
-
-        for name, param in self._sig.parameters.items():
-            if name == "self":
-                continue
-
-            is_dep = self._is_dependency_param(name)
-
-            # 1) call-time inputs
-            if name in call_inputs:
-                if mod is not None and is_dep and name in mod_child_nodes:
-                    # Avoid accidental overriding of module-wired deps at call time
-                    raise TypeError(
-                        f"Dependency '{name}' for workflow '{self._name}' is provided by the module "
-                        f"and cannot be overridden at call time."
-                    )
-                values[name] = call_inputs[name]
-
-            # 2) construction-time bind
-            elif name in self._bind:
-                values[name] = self._bind[name]
-
-            # 3) resolve from module if available
-            elif mod is not None:
-                if is_dep and name in mod_child_nodes:
-                    values[name] = mod_child_nodes[name]
-                elif (not is_dep) and name in mod_inputs:
-                    values[name] = mod_inputs[name]
-                else:
-                    # fall through to default/missing
-                    pass
-
-            # 4) function defaults
-            if name not in values:
-                if param.default is not param.empty:
-                    values[name] = param.default
-
-        # Pass through extra kwargs when the function accepts **kwargs.
-        if self._has_var_keyword:
-            known_params = set(self._sig.parameters.keys())
-            for k, v in call_inputs.items():
-                if k not in known_params:
-                    values[k] = v
-
-        # validate required params exist (after resolution)
-        for name, param in self._sig.parameters.items():
-            if name == "self":
-                continue
-            if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
-                continue
-            if param.default is param.empty and name not in values:
-                raise TypeError(f"Missing required input '{name}' for workflow '{self._name}'")
-
-        # validate dependency types
-        for name in self._param_names:
-            if self._is_dependency_param(name):
-                v = values.get(name)
-                if not isinstance(v, Node):
-                    ann = self._hints.get(name)
-                    raise TypeError(
-                        f"WorkflowFunction '{self._name}' expects dependency '{name}: {ann}' to be a Node, "
-                        f"but got {type(v)}."
-                    )
-
-        return values
+        return _workflow_call.resolve_workflow_values(
+            self._signature_info,
+            call_inputs,
+            bind=self._bind,
+            module=self._module,
+            dependency_type=Node,
+            workflow_name=self._name,
+        )
 
     def _convert_distributions(self, values: dict[str, Any]) -> dict[str, Any]:
         """Convert distribution-valued args based on type hints.
