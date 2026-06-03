@@ -14,9 +14,7 @@ from collections.abc import Callable
 import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
-from .._utils import prod
 from ._distribution_base import Distribution
-
 
 # ---------------------------------------------------------------------------
 # RandomFunction[X, Y]

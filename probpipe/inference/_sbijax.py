@@ -31,13 +31,19 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import partial
+from math import prod
 from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
+
+# sbijax's ``__init__`` calls ``matplotlib.style.use`` with a stylesheet
+# that sets ``text.usetex: True``, which breaks plotting on systems
+# without LaTeX.  Snapshot and restore rcParams around the import so the
+# side effect is contained to this module-load.
+import matplotlib as _mpl
 from jax.flatten_util import ravel_pytree
 
-from .._utils import prod
 from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
 from ..core.node import workflow_function
@@ -47,12 +53,6 @@ from ..modeling._likelihood import GenerativeLikelihood, Likelihood
 from ..modeling._simple import SimpleModel
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
-
-# sbijax's ``__init__`` calls ``matplotlib.style.use`` with a stylesheet
-# that sets ``text.usetex: True``, which breaks plotting on systems
-# without LaTeX.  Snapshot and restore rcParams around the import so the
-# side effect is contained to this module-load.
-import matplotlib as _mpl
 
 _saved_rcparams = dict(_mpl.rcParams)
 import sbijax  # noqa: E402

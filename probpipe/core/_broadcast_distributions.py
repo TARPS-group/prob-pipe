@@ -11,31 +11,29 @@ Provides:
 
 from __future__ import annotations
 
+from math import prod
 from typing import Any
 
-from .._utils import prod
+import jax
+import jax.numpy as jnp
+import numpy as np
+
+from .._weights import Weights
+from ..custom_types import Array
+from ._distribution_base import Distribution
+from ._empirical import (
+    EmpiricalDistribution,
+    RecordEmpiricalDistribution,
+)
+from ._record_array import RecordArray
+from ._record_distribution import RecordDistribution
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
 )
-
-import jax
-import jax.numpy as jnp
-import numpy as np
-
-from ..custom_types import Array
-from .._weights import Weights
-from ._distribution_base import Distribution
-from ._record_distribution import RecordDistribution
-from ._empirical import (
-    EmpiricalDistribution,
-    RecordEmpiricalDistribution,
-)
-from ._record_array import RecordArray
 from .record import Record, RecordTemplate
-
 
 # ---------------------------------------------------------------------------
 # MarginalizedBroadcastDistribution — output marginal of a broadcast

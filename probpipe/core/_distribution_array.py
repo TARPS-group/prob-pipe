@@ -40,13 +40,13 @@ to pull out the i-th element of a **batch** → ``DistributionArray``.
 
 from __future__ import annotations
 
+from math import prod
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
 
 from .._array_utils import _slice_leading_axes
-from .._utils import prod
 from ._distribution_base import Distribution
 from .protocols import SupportsArrayBackend
 

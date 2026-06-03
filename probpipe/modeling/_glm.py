@@ -6,9 +6,9 @@ import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
+from .._utils import _auto_key
 from ..core.record import Record, RecordTemplate
 from ..custom_types import Array, ArrayLike, PRNGKey
-from .._utils import _auto_key
 
 __all__ = ["GLMLikelihood"]
 
@@ -19,8 +19,8 @@ def _coerce_array(x: ArrayLike | Record) -> jnp.ndarray:
     Single-field Record/RecordArray: extract the field.
     Multi-field: stack fields into a vector (preserving leading batch dims).
     """
-    from .._utils import prod
     from ..core._record_array import RecordArray
+
     if isinstance(x, jnp.ndarray):
         return x
     if isinstance(x, (Record, RecordArray)):

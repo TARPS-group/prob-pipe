@@ -33,7 +33,8 @@ unbiased estimator of the full-data log-posterior gradient.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, TYPE_CHECKING
+from math import prod
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
@@ -482,7 +483,6 @@ class _MinibatchLogProbAtPoint(Distribution[Array], SupportsSampling):
 
         if sample_shape == ():
             return _one_draw(key)
-        from .._utils import prod
         total = prod(sample_shape)
         keys = jax.random.split(key, total)
         vals = jax.vmap(_one_draw)(keys)

@@ -9,17 +9,13 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
-from .._dtype import _as_float_array, _promote_floats
-from .._utils import prod
 
-from ..custom_types import Array, ArrayLike, PRNGKey
+from .._dtype import _as_float_array, _promote_floats
+from ..core._record_distribution import RecordDistribution, _build_record_template
 from ..core.distribution import (
     NumericRecordDistribution,
     _mc_expectation,
 )
-from ..core._record_distribution import RecordDistribution, _build_record_template
-from ..core.record import Record
-from ..core.provenance import Provenance
 from ..core.protocols import (
     SupportsConditioning,
     SupportsCovariance,
@@ -28,6 +24,9 @@ from ..core.protocols import (
     SupportsSampling,
     SupportsVariance,
 )
+from ..core.provenance import Provenance
+from ..core.record import Record
+from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,

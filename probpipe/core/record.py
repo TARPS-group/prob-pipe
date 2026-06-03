@@ -106,6 +106,7 @@ and is rejected at construction.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from math import prod
 from typing import Any, Callable, TypeAlias
 
 import jax
@@ -928,7 +929,6 @@ class NumericRecordTemplate(RecordTemplate):
 
     def _compute_flat_size(self) -> int:
         """Total scalar count across all numeric leaves."""
-        from .._utils import prod
         total = 0
         for spec in self._specs.values():
             if isinstance(spec, NumericRecordTemplate):
@@ -969,7 +969,6 @@ def _spec_size(spec: _FieldSpec) -> int:
             "opaque template fields (shape=None) have no flat size; "
             "unflatten is only defined for numeric-leaf fields."
         )
-    from .._utils import prod
     return prod(spec) if spec else 1
 
 
