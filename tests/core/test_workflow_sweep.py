@@ -6,7 +6,14 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import DistributionArray, Normal, NumericRecord, NumericRecordArray
+from probpipe import (
+    BroadcastDistribution,
+    DistributionArray,
+    Normal,
+    NumericRecord,
+    NumericRecordArray,
+    mean,
+)
 from probpipe.core import _workflow_execution, _workflow_sweep
 from probpipe.core._workflow_plan import build_broadcast_plan
 
@@ -181,3 +188,75 @@ class TestExecuteSweep:
                 n_broadcast_samples=5,
                 include_inputs=True,
             )
+
+    def test_nested_sweep_calls_distribution_broadcast_and_marginalizes(self):
+        values = {
+            "p": _numeric_record_array("x", range(2)),
+            "noise": Normal(loc=0.0, scale=1.0, name="noise"),
+        }
+        plan = build_broadcast_plan(values=values, hints={})
+        execution = _workflow_execution.WorkflowExecutionConfig(
+            mode="sequential",
+            name="nested",
+        )
+        calls = []
+
+        def distribution_broadcast(
+            row_values,
+            dist_args,
+            n_broadcast_samples,
+            include_inputs,
+        ):
+            calls.append(
+                {
+                    "x": float(row_values["p"]["x"]),
+                    "dist_args": tuple(dist_args),
+                    "n": n_broadcast_samples,
+                    "include_inputs": include_inputs,
+                }
+            )
+            loc = float(row_values["p"]["x"])
+            return BroadcastDistribution(
+                input_samples={"noise": jnp.asarray([0.0])},
+                output_samples=jnp.asarray([loc]),
+                output_distributions=[
+                    Normal(loc=loc, scale=1.0, name=f"row_{int(loc)}")
+                ],
+                weights=None,
+                broadcast_args=["noise"],
+            )
+
+        result = _workflow_sweep.execute_sweep(
+            func=lambda p, noise: p["x"] + noise,
+            values=values,
+            plan=plan,
+            make_execution_config=lambda: execution,
+            requested_dispatch="sequential",
+            resolve_dispatch=lambda *args, **kwargs: "sequential",
+            require_jax_traceable=_require_not_called,
+            distribution_broadcast=distribution_broadcast,
+            workflow_name="nested",
+            n_broadcast_samples=7,
+        )
+
+        assert result.batch_shape == (2,)
+        assert [float(mean(component)) for component in result.components] == [
+            0.0,
+            1.0,
+        ]
+        assert calls == [
+            {
+                "x": 0.0,
+                "dist_args": ("noise",),
+                "n": 7,
+                "include_inputs": True,
+            },
+            {
+                "x": 1.0,
+                "dist_args": ("noise",),
+                "n": 7,
+                "include_inputs": True,
+            },
+        ]
+        assert result.source.operation == "workflow.nested"
+        assert result.source.metadata["k"] == 7

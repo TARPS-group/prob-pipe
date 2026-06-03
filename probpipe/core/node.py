@@ -563,9 +563,9 @@ class WorkflowFunction(Node):
                         # those distributions don't have a single
                         # array-shaped placeholder, so the probe can't
                         # produce a dummy. Falling out to the outer
-                        # ``except Exception`` triggers loop
-                        # vectorization, which is the right default for
-                        # multi-field record-valued inputs.
+                        # ``except Exception`` triggers row-wise dispatch,
+                        # which is the right default for multi-field
+                        # record-valued inputs.
                         try:
                             es = dist.event_shape
                         except (TypeError, NotImplementedError) as exc:
@@ -574,7 +574,7 @@ class WorkflowFunction(Node):
                                 f"{type(dist).__name__} broadcast arg "
                                 f"{name!r}: no single ``event_shape`` "
                                 f"(multi-field or abstract). "
-                                f"Falling back to loop vectorization."
+                                f"Falling back to row-wise dispatch."
                             ) from exc
                         # Match the distribution's own dtype so the probe
                         # mirrors what the inner function actually sees.
@@ -994,43 +994,6 @@ class WorkflowFunction(Node):
             return []
         request = self._make_execution_request(call_value_list)
         return _workflow_execution.execute_many(request)
-
-    # Cleanup note (#196): these mode-specific wrappers are retained for
-    # private-call compatibility during the staged execution extraction.
-    # Future cleanup can move tests/callers to ``_workflow_execution`` and
-    # remove the wrappers below.
-    def _execute_many_threaded(self, call_value_list: list[dict[str, Any]]) -> list:
-        """Compatibility wrapper around threaded workflow execution."""
-        if not call_value_list:
-            return []
-        request = self._make_execution_request(call_value_list, mode="thread")
-        return _workflow_execution.execute_many_threaded(request)
-
-    def _map_task(self, call_value_list: list[dict[str, Any]], task_name: str | None = None) -> list:
-        """Compatibility wrapper around Prefect task mapping."""
-        request = _workflow_execution.WorkflowExecutionRequest(
-            func=self._func,
-            call_value_list=call_value_list,
-            execution=_workflow_execution.WorkflowExecutionConfig(
-                mode="prefect_task",
-                name=self._name,
-            ),
-        )
-        return _workflow_execution.map_task(request, task_name=task_name)
-
-    def _execute_many_prefect_task(self, call_value_list: list[dict[str, Any]]) -> list:
-        """Compatibility wrapper around Prefect task execution."""
-        if not call_value_list:
-            return []
-        request = self._make_execution_request(call_value_list, mode="prefect_task")
-        return _workflow_execution.execute_many_prefect_task(request)
-
-    def _execute_many_prefect_flow(self, call_value_list: list[dict[str, Any]]) -> list:
-        """Compatibility wrapper around Prefect flow execution."""
-        if not call_value_list:
-            return []
-        request = self._make_execution_request(call_value_list, mode="prefect_flow")
-        return _workflow_execution.execute_many_prefect_flow(request)
 
 
 class Module(Node):

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -409,12 +411,12 @@ class TestAutoDispatch:
         with pytest.raises(ValueError, match="failed while tracing"):
             w(x=g)
 
-    def test_auto_falls_back_to_loop_for_multi_field_joint(self):
+    def test_auto_falls_back_to_row_wise_for_multi_field_joint(self):
         """A multi-field ``ProductDistribution`` broadcast argument
         can't be probed with a single ``event_shape`` (the property
         raises ``NotImplementedError`` / ``TypeError`` on multi-leaf
         instances). The auto-detect path should catch that and
-        fall back to loop vectorization rather than crash.
+        fall back to row-wise dispatch rather than crash.
         """
         from probpipe import ProductDistribution
 
@@ -434,10 +436,8 @@ class TestAutoDispatch:
         # inside the broad ``except Exception`` in ``_resolve_dispatch``);
         # we don't assert on the result type since the function works
         # on a Record, only that the resolution settles on ``"sequential"``.
-        try:
+        with suppress(Exception):
             w(joint=joint)
-        except Exception:
-            pass
         assert w._resolved_dispatch == "sequential"
 
 
@@ -651,7 +651,7 @@ class TestDispatchConsistency:
 
         for mode in self.ROWWISE_DISPATCH_MODES:
             r = self._run(mode, add_them, a=ed, b=g, n_broadcast_samples=30)
-            # 3 empirical combos × 10 reps each = 30 evaluations.
+            # 3 empirical combos x 10 reps each = 30 evaluations.
             assert r.num_atoms == 30, f"{mode}: expected n=30, got {r.num_atoms}"
             np.testing.assert_allclose(float(r.weights.sum()), 1.0, atol=1e-5)
 

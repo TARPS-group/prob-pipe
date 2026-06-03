@@ -403,8 +403,15 @@ class TestWorkflowFunctionCompatibility:
 
         assert result.num_atoms == 8
 
-    def test_private_wrappers_return_empty_before_building_request(self, monkeypatch):
-        wf = WorkflowFunction(func=add_one, workflow_kind=WorkflowKind.TASK, dispatch="sequential")
+    def test_execute_many_wrapper_returns_empty_before_building_request(
+        self,
+        monkeypatch,
+    ):
+        wf = WorkflowFunction(
+            func=add_one,
+            workflow_kind=WorkflowKind.TASK,
+            dispatch="sequential",
+        )
 
         def fail_request(*args, **kwargs):
             raise AssertionError("empty calls should not build an execution request")
@@ -412,10 +419,6 @@ class TestWorkflowFunctionCompatibility:
         monkeypatch.setattr(wf, "_make_execution_request", fail_request)
 
         assert wf._execute_many([]) == []
-        assert wf._execute_many_threaded([]) == []
-        assert wf._map_task([]) == []
-        assert wf._execute_many_prefect_task([]) == []
-        assert wf._execute_many_prefect_flow([]) == []
 
     def test_execute_many_wrapper_resolves_task_and_flow_modes(self, monkeypatch):
         seen_modes = []
@@ -441,30 +444,3 @@ class TestWorkflowFunctionCompatibility:
         assert task_wf._execute_many(calls) == ("ok", calls)
         assert flow_wf._execute_many(calls) == ("ok", calls)
         assert seen_modes == ["prefect_task", "prefect_flow"]
-
-    def test_threaded_wrapper_delegates_to_execution_module(self, monkeypatch):
-        monkeypatch.setattr(execution_mod, "ThreadPoolExecutor", RecordingExecutor)
-        wf = WorkflowFunction(func=add_one, dispatch="thread", max_workers=2)
-
-        assert wf._execute_many_threaded([{"x": 1}, {"x": 2}]) == [2, 3]
-        assert RecordingExecutor.instances[0].max_workers == 2
-
-    def test_map_task_wrapper_delegates_to_execution_module(self, monkeypatch):
-        monkeypatch.setattr(execution_mod, "task", fake_task)
-        monkeypatch.setattr(execution_mod, "flow", None)
-        wf = WorkflowFunction(func=add_one, dispatch="sequential")
-
-        assert wf._map_task([{"x": 1}, {"x": 2}], task_name="add-one") == [2, 3]
-        assert FakeMappedTask.created_names == ["add-one"]
-
-    def test_map_task_wrapper_does_not_resolve_task_runner(self, monkeypatch):
-        monkeypatch.setattr(execution_mod, "task", fake_task)
-        monkeypatch.setattr(execution_mod, "flow", None)
-
-        def fail_resolve_task_runner():
-            raise AssertionError("direct _map_task should not resolve a task runner")
-
-        monkeypatch.setattr(node_mod.prefect_config, "resolve_task_runner", fail_resolve_task_runner)
-        wf = WorkflowFunction(func=add_one, dispatch="sequential")
-
-        assert wf._map_task([{"x": 1}], task_name="add-one") == [2]
