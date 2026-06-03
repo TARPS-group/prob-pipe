@@ -1,4 +1,5 @@
 """Unit tests for BroadcastDistribution and MarginalizedBroadcastDistribution."""
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -8,19 +9,25 @@ from probpipe import (
     BroadcastDistribution,
     EmpiricalDistribution,
     Normal,
+    ProductDistribution,
     Provenance,
-    SupportsSampling,
-    SupportsMean,
-    SupportsVariance,
+    Record,
     SupportsCovariance,
     SupportsLogProb,
+    SupportsMean,
+    SupportsSampling,
+    SupportsVariance,
+    mean,
+    sample,
+    variance,
+    workflow_function,
 )
 from probpipe.core.distribution import (
-    _RecordMarginal,
     _ListMarginal,
-    _MixtureMarginal,
     _make_marginal,
     _make_mixture_marginal,
+    _MixtureMarginal,
+    _RecordMarginal,
 )
 
 
@@ -137,8 +144,7 @@ class TestBroadcastDistributionSampling:
         assert batch["_output"].shape == (5, 3)
 
     def test_joint_sample_preserves_pairing(self, key):
-        """Resampled pairs should match original input–output pairs."""
-        n = 3
+        """Resampled pairs should match original input-output pairs."""
         inputs = {"x": jnp.array([[1.0], [2.0], [3.0]])}
         outputs = jnp.array([[10.0], [20.0], [30.0]])
         bd = BroadcastDistribution(
@@ -455,7 +461,6 @@ class TestBroadcastDistributionListOutputSampling:
 
     def test_joint_sample_with_weights(self, key):
         """Weighted joint sampling selects pairs according to weights."""
-        n = 3
         inputs = {"x": jnp.array([[1.0], [2.0], [3.0]])}
         outputs = jnp.array([[10.0], [20.0], [30.0]])
         # Put all weight on the last sample
@@ -656,12 +661,6 @@ class TestMakeMarginalEdgeCases:
 # ---------------------------------------------------------------------------
 
 
-from probpipe import Record, RecordArray, ProductDistribution  # noqa: E402
-from probpipe.core._broadcast_distributions import _RecordMarginal  # noqa: E402
-from probpipe.core.node import workflow_function  # noqa: E402
-from probpipe import mean, variance, sample  # noqa: E402
-
-
 class TestRecordArrayMarginal:
     """Record-returning WorkflowFunction outputs should be RecordArrayMarginal,
     not _ListMarginal, and must support mean/variance/sample."""
@@ -760,7 +759,7 @@ class TestMakeStack:
         ``NumericRecordArray.stack``. The fallback path builds each
         field independently — numeric leaves via ``jnp.stack``,
         opaque leaves via ``np.asarray(dtype=object)``."""
-        from probpipe import Record, NumericRecordArray, RecordArray
+        from probpipe import NumericRecordArray, Record, RecordArray
         from probpipe.core._broadcast_distributions import _make_stack
         records = [Record(a=float(i), label=f"row{i}") for i in range(3)]
         out = _make_stack(records, n=3, field_name="demo")
@@ -840,7 +839,7 @@ class TestCoerceOutput:
     arithmetic / attribute access)."""
 
     def test_none_mode_passes_through(self):
-        from probpipe.core.node import _coerce_output
+        from probpipe.core._workflow_result import _coerce_output
         # Non-Record/Dist values wouldn't normally have .with_source
         # but the "none" mode short-circuits before the check anyway.
         assert _coerce_output(
@@ -854,7 +853,7 @@ class TestCoerceOutput:
 
     def test_stack_mode_attaches_to_recordarray(self):
         from probpipe import NumericRecord, NumericRecordArray
-        from probpipe.core.node import _coerce_output
+        from probpipe.core._workflow_result import _coerce_output
         ra = NumericRecordArray.stack(
             [NumericRecord(x=float(i)) for i in range(3)]
         )
@@ -867,7 +866,7 @@ class TestCoerceOutput:
     def test_attaches_to_distribution_array(self):
         from probpipe import DistributionArray, Normal
         from probpipe.core._broadcast_distributions import _make_stack
-        from probpipe.core.node import _coerce_output
+        from probpipe.core._workflow_result import _coerce_output
         da = _make_stack(
             [Normal(loc=0.0, scale=1.0, name=f"d{i}") for i in range(3)],
             n=3,
@@ -885,7 +884,7 @@ class TestCoerceOutput:
         its own provenance), ``_coerce_output`` must not crash and the
         existing source must remain."""
         from probpipe import NumericRecord
-        from probpipe.core.node import _coerce_output
+        from probpipe.core._workflow_result import _coerce_output
         nr = NumericRecord(x=1.0).with_source(Provenance("inner", parents=()))
         # Second set would normally raise RuntimeError; _coerce_output
         # swallows it.

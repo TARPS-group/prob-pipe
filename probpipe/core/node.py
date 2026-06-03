@@ -45,20 +45,6 @@ from .provenance import Provenance
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Output-type coercion for WorkflowFunction returns (issue #130)
-# ---------------------------------------------------------------------------
-
-# Compatibility aliases for tests or downstream code that imported these
-# private helpers from ``probpipe.core.node`` before the extraction.
-# Will be removed in a follow-up issue after downstream updates.
-BroadcastMode = _workflow_result.BroadcastMode
-BROADCAST_WRAP = _workflow_result.BROADCAST_WRAP
-BROADCAST_STACK = _workflow_result.BROADCAST_STACK
-BROADCAST_NESTED = _workflow_result.BROADCAST_NESTED
-_wrap_as_record = _workflow_result._wrap_as_record
-_coerce_output = _workflow_result._coerce_output
-
 __all__ = [
     "AbstractModule",
     "InputFrozenError",
@@ -162,8 +148,8 @@ def _index_sample(s: Any, i: int) -> Any:
     Parameters
     ----------
     s : Any
-        Either a bare array (single-field broadcast draws / legacy
-        callers), a :class:`Record` (multi-field auto-wrap or an
+        Either a bare array (single-field broadcast draws), a
+        :class:`Record` (multi-field auto-wrap or an
         explicit Record source), or a :class:`NumericRecord` (the
         unified ``EmpiricalDistribution`` — numeric arrays auto-wrap
         as a single-field Record — returns a ``NumericRecord`` with
@@ -315,8 +301,6 @@ class WorkflowFunction(Node):
 
         self._func = func
         self._signature_info = _workflow_call.make_signature_info(func)
-        self._sig = self._signature_info.signature
-        self._hints = self._signature_info.hints
         # Convert legacy string / None values to WorkflowKind enum
         # TODO: remove this legacy conversion in follow-up issue
         if workflow_kind is None:
@@ -333,7 +317,7 @@ class WorkflowFunction(Node):
         self.__doc__ = func.__doc__
         self.__name__ = self._name
         self.__qualname__ = getattr(func, "__qualname__", self._name)
-        self.__signature__ = self._sig
+        self.__signature__ = self._signature_info.signature
         self.__module__ = getattr(func, "__module__", None)
         self._module = module
         self._n_broadcast_samples = n_broadcast_samples if n_broadcast_samples is not None else self.DEFAULT_N_BROADCAST_SAMPLES
@@ -349,10 +333,6 @@ class WorkflowFunction(Node):
         self._bind = b
 
         super().__init__()
-
-        # Compatibility attributes for callers/tests that inspect the facade.
-        self._param_names = list(self._signature_info.param_names)
-        self._has_var_keyword = self._signature_info.has_var_keyword
 
         _workflow_call.validate_reserved_parameter_names(
             self._signature_info, workflow_name=self._name,
@@ -438,33 +418,6 @@ class WorkflowFunction(Node):
             ),
         )
 
-    def _make_execution_request(
-        self,
-        call_value_list: list[dict[str, Any]],
-        *,
-        mode: _workflow_execution.WorkflowExecutionMode | None = None,
-    ) -> _workflow_execution.WorkflowExecutionRequest:
-        """Build a backend-neutral execution request without capturing ``self``."""
-        return _workflow_execution.WorkflowExecutionRequest(
-            func=self._func,
-            call_value_list=call_value_list,
-            execution=self._make_execution_config(mode=mode),
-        )
-
-    def _is_dependency_param(self, name: str) -> bool:
-        """
-        Decide whether a parameter is a dependency (Node) vs normal input.
-
-        Rule:
-          - If annotation is a Node subclass => dependency
-          - Else => normal input
-
-        This matches your current architecture (deps are Nodes).
-        """
-        return _workflow_call.is_dependency_param(
-            self._signature_info, name, dependency_type=Node,
-        )
-
     def __call__(self, *args, **call_inputs):
         call = _workflow_call.resolve_workflow_call(
             self._signature_info,
@@ -481,10 +434,10 @@ class WorkflowFunction(Node):
             self._key = jax.random.PRNGKey(call.overrides.seed)
 
         values = _workflow_distribution_normalization.normalize_distribution_values(
-            values=call.values, hints=self._hints,
+            values=call.values, hints=self._signature_info.hints,
         )
         broadcast_plan = _workflow_plan.build_broadcast_plan(
-            values=values, hints=self._hints,
+            values=values, hints=self._signature_info.hints,
         )
         if broadcast_plan.regime != "none":
             return self._broadcast(
@@ -497,7 +450,12 @@ class WorkflowFunction(Node):
         # Non-broadcast call — one function invocation, then wrap.
         # Provenance parents are the inputs that carry their own
         # ``.source`` slot (Distribution / Record / RecordArray).
-        result = self._execute_many([values])[0]
+        request = _workflow_execution.WorkflowExecutionRequest(
+            func=self._func,
+            call_value_list=[values],
+            execution=self._make_execution_config(),
+        )
+        result = _workflow_execution.execute_many(request)[0]
         parents = tuple(
             v for v in values.values() if hasattr(v, "source")
         )
@@ -506,30 +464,11 @@ class WorkflowFunction(Node):
             parents=parents,
             metadata={"func": self._name or self._func.__name__},
         )
-        return _coerce_output(
+        return _workflow_result._coerce_output(
             result,
-            broadcast_mode=BROADCAST_WRAP,
+            broadcast_mode=_workflow_result.BROADCAST_WRAP,
             provenance=provenance,
             field_name=self._name,
-        )
-
-    def _resolve_inputs(self, call_inputs: dict[str, Any]) -> dict[str, Any]:
-        """
-        Build kwargs for calling the underlying function.
-
-        Precedence (highest -> lowest):
-          1) call_inputs
-          2) self._bind
-          3) module.child_nodes/module.inputs (if module attached)
-          4) function default values
-        """
-        return _workflow_call.resolve_workflow_values(
-            self._signature_info,
-            call_inputs,
-            bind=self._bind,
-            module=self._module,
-            dependency_type=Node,
-            workflow_name=self._name,
         )
 
     def _get_key(self):
@@ -545,7 +484,7 @@ class WorkflowFunction(Node):
         """Return the JAX trace-probe error for the current call, if any."""
         try:
             dummy_kw = {}
-            for name in self._sig.parameters:
+            for name in self._signature_info.signature.parameters:
                 if name == "self":
                     continue
                 if name in broadcast_args:
@@ -944,7 +883,12 @@ class WorkflowFunction(Node):
                 call_value_list.append(call_values)
                 sample_idx += 1
 
-        results = self._execute_many(call_value_list)
+        request = _workflow_execution.WorkflowExecutionRequest(
+            func=self._func,
+            call_value_list=call_value_list,
+            execution=self._make_execution_config(),
+        )
+        results = _workflow_execution.execute_many(request)
 
         # Assemble input samples aligned with results
         all_input_samples = {
@@ -979,7 +923,12 @@ class WorkflowFunction(Node):
                 call_values[name] = _index_sample(samples_per_arg[name], i)
             call_value_list.append(call_values)
 
-        results = self._execute_many(call_value_list)
+        request = _workflow_execution.WorkflowExecutionRequest(
+            func=self._func,
+            call_value_list=call_value_list,
+            execution=self._make_execution_config(),
+        )
+        results = _workflow_execution.execute_many(request)
 
         return BroadcastDistribution(
             input_samples=samples_per_arg,
@@ -987,13 +936,6 @@ class WorkflowFunction(Node):
             weights=None,
             broadcast_args=broadcast_args,
         )
-
-    def _execute_many(self, call_value_list: list[dict[str, Any]]) -> list:
-        """Compatibility wrapper around ``_workflow_execution.execute_many``."""
-        if not call_value_list:
-            return []
-        request = self._make_execution_request(call_value_list)
-        return _workflow_execution.execute_many(request)
 
 
 class Module(Node):
@@ -1119,8 +1061,13 @@ class Module(Node):
 
             # Infer dependencies from workflow signature
             # (WorkflowFunctions don't store child_nodes; they resolve dependencies at runtime)
-            for param_name in attr._param_names:
-                if attr._is_dependency_param(param_name) and param_name in self._child_nodes:
+            for param_name in attr._signature_info.param_names:
+                is_dependency = _workflow_call.is_dependency_param(
+                    attr._signature_info,
+                    param_name,
+                    dependency_type=Node,
+                )
+                if is_dependency and param_name in self._child_nodes:
                     dot.edge(param_name, wf_name)
 
         return dot
