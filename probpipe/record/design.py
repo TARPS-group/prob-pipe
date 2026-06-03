@@ -16,12 +16,12 @@ additional subclasses (`RandomDesign`, `LatinHypercubeDesign`,
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from math import prod
 from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
 
-from .._utils import prod
 from ..core._record_array import RecordArray
 from ..core.record import RecordTemplate
 

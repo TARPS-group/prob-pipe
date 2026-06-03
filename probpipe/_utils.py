@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import math
-from collections.abc import Iterable
-
 import jax
 import numpy as np
 
@@ -40,12 +37,3 @@ def _is_numeric_array(x: object) -> bool:
     if isinstance(x, np.ndarray):
         return x.dtype != object
     return False
-
-
-def prod(values: Iterable[int]) -> int:
-    """Return the product of integer values.
-
-    This is a compatibility wrapper around :func:`math.prod`; empty
-    iterables naturally return 1.
-    """
-    return math.prod(values)
