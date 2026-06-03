@@ -640,9 +640,15 @@ class WorkflowFunction(Node):
           tracing.
         """
         MIN_BROADCAST_SAMPLES = 5  # Recommended minimum samples
+        
+        if not isinstance(n_broadcast_samples, int):
+            raise TypeError(f"n_broadcast_samples must be an integer; got {n_broadcast_samples!r}")
+        
+        if n_broadcast_samples <= 0:
+            raise ValueError(f"n_broadcast_samples must be a positive integer; got {n_broadcast_samples!r}")
 
         # Validate n_broadcast_samples value and warn if too small
-        if not isinstance(n_broadcast_samples, int) or n_broadcast_samples < MIN_BROADCAST_SAMPLES:
+        if n_broadcast_samples < MIN_BROADCAST_SAMPLES:
             warnings.warn(
                 f"n_broadcast_samples={n_broadcast_samples} is too low; "
                 f"results may be unreliable. "
