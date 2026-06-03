@@ -838,18 +838,17 @@ class TestCoerceOutput:
     unchanged (scalars / ndarrays / callables stay usable in idiomatic
     arithmetic / attribute access)."""
 
-    def test_none_mode_passes_through(self):
-        from probpipe.core._workflow_result import _coerce_output
-        # Non-Record/Dist values wouldn't normally have .with_source
-        # but the "none" mode short-circuits before the check anyway.
-        assert _coerce_output(
-            3.14, broadcast_mode="none", provenance=None, field_name="f",
-        ) == 3.14
-        # None provenance also short-circuits.
-        prov = Provenance("x", parents=())
-        assert _coerce_output(
-            3.14, broadcast_mode="none", provenance=prov, field_name="f",
-        ) == 3.14
+    def test_wrap_mode_with_no_provenance_wraps_scalar(self):
+        from probpipe.core import _workflow_result
+        out = _workflow_result._coerce_output(
+            3.14,
+            broadcast_mode=_workflow_result.BROADCAST_WRAP,
+            provenance=None,
+            field_name="f",
+        )
+
+        np.testing.assert_allclose(float(out), 3.14)
+        assert out.source is None
 
     def test_stack_mode_attaches_to_recordarray(self):
         from probpipe import NumericRecord, NumericRecordArray

@@ -450,6 +450,9 @@ class WorkflowFunction(Node):
         # Non-broadcast call — one function invocation, then wrap.
         # Provenance parents are the inputs that carry their own
         # ``.source`` slot (Distribution / Record / RecordArray).
+        # Known harmless duplication: distribution-broadcast paths below build
+        # the same request shape. A future Distribution broadcast extraction
+        # should centralize this without reintroducing private facade wrappers.
         request = _workflow_execution.WorkflowExecutionRequest(
             func=self._func,
             call_value_list=[values],
@@ -883,6 +886,9 @@ class WorkflowFunction(Node):
                 call_value_list.append(call_values)
                 sample_idx += 1
 
+        # Known harmless duplication: this request construction also appears in
+        # the non-broadcast and ordinary sampling paths. Distribution broadcast
+        # extraction should centralize it in the module that owns these paths.
         request = _workflow_execution.WorkflowExecutionRequest(
             func=self._func,
             call_value_list=call_value_list,
@@ -923,6 +929,9 @@ class WorkflowFunction(Node):
                 call_values[name] = _index_sample(samples_per_arg[name], i)
             call_value_list.append(call_values)
 
+        # Known harmless duplication: this request construction also appears in
+        # the non-broadcast and empirical-enumeration paths. Distribution
+        # broadcast extraction should centralize it with the rest of this logic.
         request = _workflow_execution.WorkflowExecutionRequest(
             func=self._func,
             call_value_list=call_value_list,
