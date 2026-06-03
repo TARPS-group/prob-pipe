@@ -68,8 +68,8 @@ def sum_xy(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
 # workflow_kind="task" with sequential dispatch
 # ---------------------------------------------------------------------------
 
-class TestPrefectTaskLoop:
-    """Exercises _execute_many_prefect_task via sequential dispatch."""
+class TestPrefectTaskRowWise:
+    """Exercises Prefect task execution via row-wise dispatch."""
 
     def test_returns_empirical_distribution(self, normal_dist):
         wf = WorkflowFunction(
@@ -115,8 +115,8 @@ class TestPrefectTaskLoop:
 # workflow_kind="flow" with sequential dispatch
 # ---------------------------------------------------------------------------
 
-class TestPrefectFlowLoop:
-    """Exercises _execute_many_prefect_flow via sequential dispatch."""
+class TestPrefectFlowRowWise:
+    """Exercises Prefect flow execution via row-wise dispatch."""
 
     def test_returns_empirical_distribution(self, normal_dist):
         wf = WorkflowFunction(
