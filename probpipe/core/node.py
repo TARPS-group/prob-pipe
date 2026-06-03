@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from itertools import product as cartesian_product
 from types import MappingProxyType
-from typing import Any, ClassVar, Literal
+from typing import Any, Literal, get_args
 
 import jax
 import jax.numpy as jnp
@@ -56,9 +56,10 @@ __all__ = [
     "workflow_method",
 ]
 
-type _WorkflowFunctionDispatch = Literal[
+_WorkflowFunctionDispatch = Literal[
     "auto", "jax", "sequential", "thread"
 ]
+_VALID_DISPATCH_STRATEGIES: tuple[str, ...] = get_args(_WorkflowFunctionDispatch)
 
 
 class InputFrozenError(Exception):
@@ -258,13 +259,6 @@ class WorkflowFunction(Node):
     """
 
     DEFAULT_N_BROADCAST_SAMPLES: int = 128
-    _VALID_DISPATCH_STRATEGIES: ClassVar[tuple[str, ...]] = (
-        "auto",
-        "jax",
-        "sequential",
-        "thread",
-    )
-
     def __init__(
         self,
         *,
@@ -287,9 +281,9 @@ class WorkflowFunction(Node):
                 f"WorkflowFunction no longer accepts {names}; use dispatch= instead."
             )
 
-        if dispatch not in self._VALID_DISPATCH_STRATEGIES:
+        if dispatch not in _VALID_DISPATCH_STRATEGIES:
             raise ValueError(
-                f"dispatch must be one of {self._VALID_DISPATCH_STRATEGIES}; got {dispatch!r}"
+                f"dispatch must be one of {_VALID_DISPATCH_STRATEGIES}; got {dispatch!r}"
             )
         _workflow_execution._validate_max_workers(max_workers)
         if dispatch != "thread" and max_workers is not None:
@@ -640,10 +634,10 @@ class WorkflowFunction(Node):
           tracing.
         """
         MIN_BROADCAST_SAMPLES = 5  # Recommended minimum samples
-        
+
         if not isinstance(n_broadcast_samples, int):
             raise TypeError(f"n_broadcast_samples must be an integer; got {n_broadcast_samples!r}")
-        
+
         if n_broadcast_samples <= 0:
             raise ValueError(f"n_broadcast_samples must be a positive integer; got {n_broadcast_samples!r}")
 

@@ -130,6 +130,27 @@ class TestBroadcastingNSamples:
         result = w(x=g, n_broadcast_samples=10)
         assert result.num_atoms == 10
 
+    def test_call_time_override_rejects_non_integer(self):
+        def identity(x: jnp.ndarray) -> jnp.ndarray:
+            return x
+
+        w = WorkflowFunction(func=identity, dispatch="sequential", seed=6)
+        g = Normal(loc=0.0, scale=1.0, name="x")
+
+        with pytest.raises(TypeError, match="n_broadcast_samples must be an integer"):
+            w(x=g, n_broadcast_samples=2.5)
+
+    @pytest.mark.parametrize("n_broadcast_samples", [0, -1])
+    def test_call_time_override_rejects_non_positive(self, n_broadcast_samples):
+        def identity(x: jnp.ndarray) -> jnp.ndarray:
+            return x
+
+        w = WorkflowFunction(func=identity, dispatch="sequential", seed=6)
+        g = Normal(loc=0.0, scale=1.0, name="x")
+
+        with pytest.raises(ValueError, match="n_broadcast_samples must be a positive integer"):
+            w(x=g, n_broadcast_samples=n_broadcast_samples)
+
 
 class TestReservedParameterNames:
     def test_n_broadcast_samples_forbidden(self):
