@@ -86,9 +86,6 @@ def sample(
             f"{type(dist).__name__} does not support sampling "
             f"(does not implement SupportsSampling)"
         )
-    # Scalar-int sugar: ``sample_shape=100`` -> ``(100,)``. The coercion
-    # lives at the public-op boundary so internal ``_sample``
-    # implementations can continue to assume ``sample_shape: tuple``.
     if isinstance(sample_shape, int):
         sample_shape = (sample_shape,)
     if key is None:

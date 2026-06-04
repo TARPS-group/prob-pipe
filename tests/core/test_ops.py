@@ -65,7 +65,7 @@ class TestSample:
         assert s.shape == (5, 2)
 
     def test_sample_shape_scalar_int_matches_1tuple(self, normal, mvn, empirical):
-        """Scalar ``sample_shape=N`` is sugar for ``(N,)`` (issue #226).
+        """Scalar ``sample_shape=N`` is sugar for ``(N,)``.
 
         Asserts numpy / JAX / scipy / TFP-style convenience: passing an
         int where a sample-shape tuple is expected produces output of
