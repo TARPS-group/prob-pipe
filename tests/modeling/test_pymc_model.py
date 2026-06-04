@@ -159,6 +159,75 @@ class TestRecordTemplate:
         assert tpl.fields == ("mu",)
         assert "y" not in tpl.fields
 
+    def test_data_dependent_shape_reflects_conditioned_build(self):
+        """RVs whose shape depends on data size report the conditioned
+        shape after ``_pymc_model(data)`` is called (issue #224).
+
+        Pre-conditioning, the template reports the sentinel shape from
+        the unconditioned build at ``__init__`` time. Post-conditioning
+        (which the inference paths always do before reading the
+        template), the per-observation effect's shape matches the data.
+        Both ``record_template`` and ``event_shape`` follow this rule.
+        """
+        def model_fn(X=None, y=None):
+            if X is None:
+                X = np.ones(1, dtype=np.float32)  # sentinel
+            with pm.Model() as m:
+                intercept = pm.Normal("intercept", 0, 1)
+                alpha = pm.Normal("alpha", 0, 1, shape=X.shape[0])
+                pm.Normal("y", mu=intercept + alpha, sigma=1.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn)
+        # Pre-conditioning: sentinel (1,) for alpha.
+        tpl_pre = model.record_template
+        assert tpl_pre.fields == ("intercept", "alpha")
+        assert tpl_pre["intercept"] == ()
+        assert tpl_pre["alpha"] == (1,)
+        assert model.event_shape == (1 + 1,)
+
+        # After conditioning on N=50 data, alpha picks up the real shape.
+        N = 50
+        X = np.zeros(N, dtype=np.float32)
+        y = np.zeros(N, dtype=np.float32)
+        _ = model._pymc_model(data={"X": X, "y": y})
+        tpl_post = model.record_template
+        assert tpl_post.fields == ("intercept", "alpha")
+        assert tpl_post["alpha"] == (N,)
+        assert model.event_shape == (1 + N,)
+
+    def test_data_dependent_shape_inference_recovers_correct_layout(self):
+        """End-to-end: NUTS with a per-observation effect produces a
+        posterior whose ``draws()`` records match the conditioned
+        template (issue #224 — would previously shape-mismatch at
+        posterior assembly).
+        """
+        from probpipe import condition_on
+
+        def model_fn(X=None, y=None):
+            if X is None:
+                X = np.ones(1, dtype=np.float32)
+            with pm.Model() as m:
+                intercept = pm.Normal("intercept", 0, 1)
+                alpha = pm.Normal("alpha", 0, 1, shape=X.shape[0])
+                pm.Normal("y", mu=intercept + alpha, sigma=1.0, observed=y)
+            return m
+
+        N = 12
+        rng = np.random.default_rng(0)
+        X = np.arange(N, dtype=np.float32)
+        y = rng.normal(size=N).astype(np.float32)
+        model = PyMCModel(model_fn)
+        result = condition_on(
+            model, {"X": X, "y": y},
+            method="pymc_nuts",
+            num_results=20, num_warmup=10, num_chains=1, random_seed=0,
+        )
+        draws = result.draws()
+        assert draws.fields == ("intercept", "alpha")
+        assert jnp.asarray(draws["intercept"]).shape == (20,)
+        assert jnp.asarray(draws["alpha"]).shape == (20, N)
+
     def test_non_concrete_shape_rejected(self):
         """A free RV with a ``None`` dimension raises ``ValueError``.
 

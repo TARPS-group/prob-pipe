@@ -102,20 +102,40 @@ class PyMCModel(ProbabilisticModel):
             for rv in self._unconditioned_model.free_RVs
             if rv.name not in observed_set
         )
+        # Populated by ``_pymc_model(data)`` whenever data is supplied.
+        # ``event_shape`` / ``record_template`` prefer this cached build
+        # so RVs whose shape depends on data size (per-observation random
+        # effects, varying group counts, ...) report the conditioned
+        # shape rather than the sentinel-shape captured here.
+        self._last_conditioned_model: Any | None = None
 
     # -- Distribution interface ---------------------------------------------
+
+    def _introspect_model(self) -> Any:
+        """Return the model whose RV shapes drive ``event_shape`` /
+        ``record_template``.
+
+        Prefers ``_last_conditioned_model`` (populated by
+        ``_pymc_model(data)``) so RVs whose shape depends on data size
+        report the conditioned shape. Falls back to
+        ``_unconditioned_model`` only when conditioning hasn't happened
+        yet — pre-conditioning there is no data to derive a better
+        answer from.
+        """
+        return self._last_conditioned_model or self._unconditioned_model
 
     @property
     def event_shape(self) -> tuple[int, ...]:
         # Total number of scalar parameters (excluding observed)
-        observed_set = set(self._observed_names)
+        model = self._introspect_model()
+        free_rvs = {rv.name: rv for rv in model.free_RVs}
         total = 0
-        for rv in self._unconditioned_model.free_RVs:
-            if rv.name in observed_set:
+        for name in self._param_names:
+            rv = free_rvs.get(name)
+            if rv is None:
                 continue
-            shape = rv.type.shape
             size = 1
-            for s in shape:
+            for s in rv.type.shape:
                 if s is not None:
                     size *= s
             total += size
@@ -134,7 +154,12 @@ class PyMCModel(ProbabilisticModel):
         Scalar PyMC RVs (e.g. ``pm.Normal('intercept', 0, 1)``) become
         fields with event shape ``()``; shape-:math:`k` RVs (e.g.
         ``pm.Normal('beta', 0, 1, shape=k)``) become fields with event
-        shape ``(k,)``.
+        shape ``(k,)``. RVs whose shape depends on data size (e.g.
+        per-observation random effects ``pm.Normal('alpha', 0, 1,
+        shape=X.shape[0])``) report the conditioned shape once
+        ``_pymc_model(data)`` has been called — inference paths do this
+        before extracting the chain, so the template matches the
+        sampler's output.
 
         Raises
         ------
@@ -145,22 +170,24 @@ class PyMCModel(ProbabilisticModel):
             produce an under-shaped template and confusing downstream
             errors.
         """
-        observed_set = set(self._observed_names)
+        model = self._introspect_model()
+        free_rvs = {rv.name: rv for rv in model.free_RVs}
         fields: dict[str, tuple[int, ...]] = {}
-        for rv in self._unconditioned_model.free_RVs:
-            if rv.name in observed_set:
+        for name in self._param_names:
+            rv = free_rvs.get(name)
+            if rv is None:
                 continue
             raw_shape = tuple(rv.type.shape)
             if any(s is None for s in raw_shape):
                 raise ValueError(
-                    f"PyMC RV {rv.name!r} has a non-concrete shape "
+                    f"PyMC RV {name!r} has a non-concrete shape "
                     f"{raw_shape}; PyMCModel.record_template requires "
                     f"every free RV to have a fully concrete event "
                     f"shape. Specify the shape explicitly when "
                     f"declaring the RV (e.g. "
-                    f"`pm.Normal({rv.name!r}, 0, 1, shape=k)`)."
+                    f"`pm.Normal({name!r}, 0, 1, shape=k)`)."
                 )
-            fields[rv.name] = tuple(int(s) for s in raw_shape)
+            fields[name] = tuple(int(s) for s in raw_shape)
         return NumericRecordTemplate(**fields)
 
     # -- Named components interface ------------------------------------------
@@ -225,21 +252,31 @@ class PyMCModel(ProbabilisticModel):
         Array-typed values are coerced to numpy before being passed to
         the user's model function — PyMC's tensor backend doesn't
         multiply with raw JAX arrays.
+
+        Side effect: when ``data is not None``, the built model is also
+        cached on ``self._last_conditioned_model`` so
+        ``record_template`` / ``event_shape`` can introspect the
+        data-conditioned RV shapes (see ``_introspect_model``).
         """
-        import numpy as _np
         if data is None:
             return self._model_fn()
         if isinstance(data, dict):
-            return self._model_fn(**{k: _to_numpy(v) for k, v in data.items()})
-        # Local import to avoid a modeling→core cycle at module load.
-        from ..core.record import Record
-        if isinstance(data, Record):
-            return self._model_fn(**{
-                name: _to_numpy(data[name])
-                for name in self._observed_names
-                if name in data.fields
-            })
-        return self._model_fn(**{self._observed_names[0]: _to_numpy(data)})
+            model = self._model_fn(**{k: _to_numpy(v) for k, v in data.items()})
+        else:
+            # Local import to avoid a modeling→core cycle at module load.
+            from ..core.record import Record
+            if isinstance(data, Record):
+                model = self._model_fn(**{
+                    name: _to_numpy(data[name])
+                    for name in self._observed_names
+                    if name in data.fields
+                })
+            else:
+                model = self._model_fn(
+                    **{self._observed_names[0]: _to_numpy(data)}
+                )
+        self._last_conditioned_model = model
+        return model
 
     def __repr__(self) -> str:
         params = ", ".join(self._param_names)
