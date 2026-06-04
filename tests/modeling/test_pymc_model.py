@@ -235,6 +235,29 @@ class TestRecordTemplate:
         assert jnp.asarray(draws["intercept"]).shape == (20,)
         assert jnp.asarray(draws["alpha"]).shape == (20, N)
 
+    def test_dynamic_rv_set_rejected(self):
+        """A model whose free-RV *set* changes with data raises a clear
+        ``ValueError`` rather than silently dropping a field (issue #232).
+
+        Here ``ghost`` exists only in the no-data build, so it lands in
+        ``_param_names`` (frozen at construction) but is absent from the
+        data-conditioned build. ProbPipe does not support such dynamic
+        random variables; the template builder must refuse cleanly.
+        """
+        def model_fn(y=None):
+            with pm.Model() as m:
+                if y is None:                       # no-data build only
+                    pm.Normal("ghost", 0, 1)
+                mu = pm.Normal("mu", 0, 1)
+                pm.Normal("y", mu=mu, sigma=1.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn)
+        assert "ghost" in model.parameter_names
+        conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
+        with pytest.raises(ValueError, match="dynamic random variables"):
+            model.record_template_for(conditioned)
+
     def test_non_concrete_shape_rejected(self):
         """A free RV with a ``None`` dimension raises ``ValueError``.
 

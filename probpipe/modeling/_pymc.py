@@ -109,12 +109,36 @@ class PyMCModel(ProbabilisticModel):
     def _param_rvs(self, model: Any) -> Iterator[tuple[str, Any]]:
         """Yield ``(name, rv)`` for each free parameter, in
         ``_param_names`` order, looked up in *model*.
+
+        Parameters
+        ----------
+        model : pymc.Model
+            A build of this model (conditioned or not). Its free RVs
+            must include every name in ``_param_names``.
+
+        Raises
+        ------
+        ValueError
+            If a name in ``_param_names`` (frozen from the no-data build
+            at construction) is absent from *model*'s free RVs — i.e.
+            the random-variable set changed between builds. ProbPipe
+            does not support such dynamic random variables; see
+            https://github.com/TARPS-group/prob-pipe/issues/232.
         """
         free_rvs = {rv.name: rv for rv in model.free_RVs}
         for name in self._param_names:
-            rv = free_rvs.get(name)
-            if rv is not None:
-                yield name, rv
+            if name not in free_rvs:
+                raise ValueError(
+                    f"PyMC random variable {name!r} is present in the "
+                    f"model built at construction (no data) but absent "
+                    f"from this build. ProbPipe does not support models "
+                    f"whose set of free random variables changes with the "
+                    f"data (dynamic random variables); the parameter set "
+                    f"must be fixed across builds, with only per-variable "
+                    f"shapes allowed to depend on data size. See "
+                    f"https://github.com/TARPS-group/prob-pipe/issues/232."
+                )
+            yield name, free_rvs[name]
 
     @property
     def event_shape(self) -> tuple[int, ...]:
