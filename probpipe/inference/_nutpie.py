@@ -74,7 +74,7 @@ def condition_on_nutpie(
 # ---------------------------------------------------------------------------
 
 
-def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any]:
+def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any | None]:
     """Compile a model for nutpie sampling.
 
     Returns ``(compiled, pymc_build)``. ``pymc_build`` is the

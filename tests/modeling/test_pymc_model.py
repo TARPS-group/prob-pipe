@@ -25,6 +25,21 @@ def simple_model_fn(y=None):
     return m
 
 
+def per_observation_effect_model_fn(X=None, y=None):
+    """Model with a per-observation random effect (data-dependent shape).
+
+    ``alpha`` has shape ``X.shape[0]``, so its event shape is the sentinel
+    ``(1,)`` in the no-data build and ``(N,)`` once conditioned on data.
+    """
+    if X is None:
+        X = np.ones(1, dtype=np.float32)  # sentinel for the no-data build
+    with pm.Model() as m:
+        intercept = pm.Normal("intercept", 0, 1)
+        alpha = pm.Normal("alpha", 0, 1, shape=X.shape[0])
+        pm.Normal("y", mu=intercept + alpha, sigma=1.0, observed=y)
+    return m
+
+
 class TestPyMCModel:
     """Test PyMCModel construction and protocol compliance."""
 
@@ -172,16 +187,7 @@ class TestRecordTemplate:
         per-call mutable state, so concurrent inference on one instance
         can't race.
         """
-        def model_fn(X=None, y=None):
-            if X is None:
-                X = np.ones(1, dtype=np.float32)  # sentinel
-            with pm.Model() as m:
-                intercept = pm.Normal("intercept", 0, 1)
-                alpha = pm.Normal("alpha", 0, 1, shape=X.shape[0])
-                pm.Normal("y", mu=intercept + alpha, sigma=1.0, observed=y)
-            return m
-
-        model = PyMCModel(model_fn)
+        model = PyMCModel(per_observation_effect_model_fn)
         # Declared (no-data) property: sentinel (1,) for alpha.
         tpl = model.record_template
         assert tpl.fields == ("intercept", "alpha")
@@ -211,20 +217,11 @@ class TestRecordTemplate:
         """
         from probpipe import condition_on
 
-        def model_fn(X=None, y=None):
-            if X is None:
-                X = np.ones(1, dtype=np.float32)
-            with pm.Model() as m:
-                intercept = pm.Normal("intercept", 0, 1)
-                alpha = pm.Normal("alpha", 0, 1, shape=X.shape[0])
-                pm.Normal("y", mu=intercept + alpha, sigma=1.0, observed=y)
-            return m
-
         N = 12
         rng = np.random.default_rng(0)
         X = np.arange(N, dtype=np.float32)
         y = rng.normal(size=N).astype(np.float32)
-        model = PyMCModel(model_fn)
+        model = PyMCModel(per_observation_effect_model_fn)
         result = condition_on(
             model, {"X": X, "y": y},
             method="pymc_nuts",

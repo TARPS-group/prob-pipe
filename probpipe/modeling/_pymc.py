@@ -169,6 +169,19 @@ class PyMCModel(ProbabilisticModel):
         ``pm.Normal('beta', 0, 1, shape=k)``) become fields with event
         shape ``(k,)``.
 
+        Parameters
+        ----------
+        model : pymc.Model
+            A build of this model (typically the data-conditioned build
+            returned by :meth:`_pymc_model`) to introspect for free-RV
+            shapes.
+
+        Returns
+        -------
+        NumericRecordTemplate
+            One field per free parameter (observed variables excluded),
+            keyed by RV name and carrying its event shape.
+
         Raises
         ------
         ValueError
@@ -176,7 +189,9 @@ class PyMCModel(ProbabilisticModel):
             its ``type.shape``. The record-template machinery requires
             concrete shapes — silently dropping a ``None`` dim would
             produce an under-shaped template and confusing downstream
-            errors.
+            errors. Also raised if *model* is missing a free RV present
+            at construction (dynamic random variables are unsupported;
+            see :meth:`_param_rvs`).
         """
         fields: dict[str, tuple[int, ...]] = {}
         for name, rv in self._param_rvs(model):
@@ -184,10 +199,9 @@ class PyMCModel(ProbabilisticModel):
             if any(s is None for s in raw_shape):
                 raise ValueError(
                     f"PyMC RV {name!r} has a non-concrete shape "
-                    f"{raw_shape}; PyMCModel.record_template requires "
-                    f"every free RV to have a fully concrete event "
-                    f"shape. Specify the shape explicitly when "
-                    f"declaring the RV (e.g. "
+                    f"{raw_shape}; PyMCModel templates require every free "
+                    f"RV to have a fully concrete event shape. Specify the "
+                    f"shape explicitly when declaring the RV (e.g. "
                     f"`pm.Normal({name!r}, 0, 1, shape=k)`)."
                 )
             fields[name] = tuple(int(s) for s in raw_shape)
