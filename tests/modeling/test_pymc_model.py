@@ -160,14 +160,17 @@ class TestRecordTemplate:
         assert "y" not in tpl.fields
 
     def test_data_dependent_shape_reflects_conditioned_build(self):
-        """RVs whose shape depends on data size report the conditioned
-        shape after ``_pymc_model(data)`` is called (issue #224).
+        """``record_template_for(model)`` reports the data-conditioned
+        shape for an RV whose shape depends on data size, while the bare
+        ``record_template`` property reports the declared (no-data)
+        shape (issue #224).
 
-        Pre-conditioning, the template reports the sentinel shape from
-        the unconditioned build at ``__init__`` time. Post-conditioning
-        (which the inference paths always do before reading the
-        template), the per-observation effect's shape matches the data.
-        Both ``record_template`` and ``event_shape`` follow this rule.
+        The inference paths call ``record_template_for`` with the model
+        they build from data, so the template matches the chain. The
+        property cannot know the conditioned shape without data, so it
+        stays at the declared sentinel — and, crucially, holds no
+        per-call mutable state, so concurrent inference on one instance
+        can't race.
         """
         def model_fn(X=None, y=None):
             if X is None:
@@ -179,22 +182,26 @@ class TestRecordTemplate:
             return m
 
         model = PyMCModel(model_fn)
-        # Pre-conditioning: sentinel (1,) for alpha.
-        tpl_pre = model.record_template
-        assert tpl_pre.fields == ("intercept", "alpha")
-        assert tpl_pre["intercept"] == ()
-        assert tpl_pre["alpha"] == (1,)
+        # Declared (no-data) property: sentinel (1,) for alpha.
+        tpl = model.record_template
+        assert tpl.fields == ("intercept", "alpha")
+        assert tpl["intercept"] == ()
+        assert tpl["alpha"] == (1,)
         assert model.event_shape == (1 + 1,)
 
-        # After conditioning on N=50 data, alpha picks up the real shape.
+        # Template built from a data-conditioned build picks up the real
+        # shape — and the instance carries no cached state afterward.
         N = 50
-        X = np.zeros(N, dtype=np.float32)
-        y = np.zeros(N, dtype=np.float32)
-        _ = model._pymc_model(data={"X": X, "y": y})
-        tpl_post = model.record_template
-        assert tpl_post.fields == ("intercept", "alpha")
-        assert tpl_post["alpha"] == (N,)
-        assert model.event_shape == (1 + N,)
+        conditioned = model._pymc_model(data={
+            "X": np.zeros(N, dtype=np.float32),
+            "y": np.zeros(N, dtype=np.float32),
+        })
+        tpl_c = model.record_template_for(conditioned)
+        assert tpl_c.fields == ("intercept", "alpha")
+        assert tpl_c["alpha"] == (N,)
+        assert not hasattr(model, "_last_conditioned_model")
+        # Property still reports the declared shape (no hidden mutation).
+        assert model.record_template["alpha"] == (1,)
 
     def test_data_dependent_shape_inference_recovers_correct_layout(self):
         """End-to-end: NUTS with a per-observation effect produces a

@@ -47,7 +47,7 @@ def condition_on_nutpie(
             "Install it with: pip install nutpie"
         ) from e
 
-    compiled = _compile_for_nutpie(model, data)
+    compiled, pymc_build = _compile_for_nutpie(model, data)
     trace = nutpie.sample(
         compiled, draws=num_results, tune=num_warmup,
         chains=num_chains, seed=random_seed, **kwargs,
@@ -55,9 +55,16 @@ def condition_on_nutpie(
 
     chains, param_names = _extract_chains(trace, num_chains)
 
+    # Build the template from the same conditioned model nutpie sampled
+    # (PyMC only); Stan models carry their own record_template, if any.
+    if pymc_build is not None:
+        record_template = model.record_template_for(pymc_build)
+    else:
+        record_template = getattr(model, "record_template", None)
+
     return make_posterior(
         chains, parents=(model,), algorithm="nutpie_nuts",
-        auxiliary=trace, record_template=getattr(model, "record_template", None),
+        auxiliary=trace, record_template=record_template,
         num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
     )
 
@@ -67,15 +74,22 @@ def condition_on_nutpie(
 # ---------------------------------------------------------------------------
 
 
-def _compile_for_nutpie(model: Any, data: Any) -> Any:
-    """Compile a model for nutpie sampling."""
+def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any]:
+    """Compile a model for nutpie sampling.
+
+    Returns ``(compiled, pymc_build)``. ``pymc_build`` is the
+    data-conditioned ``pm.Model`` for PyMCModel targets (so the caller
+    can derive a matching ``record_template``), and ``None`` for Stan
+    targets.
+    """
     if hasattr(model, "_bridgestan_model"):
         import nutpie
-        return nutpie.compile_stan_model(model._bridgestan_model(data=data))
+        return nutpie.compile_stan_model(model._bridgestan_model(data=data)), None
 
     if hasattr(model, "_pymc_model"):
         import nutpie
-        return nutpie.compile_pymc_model(model._pymc_model(data=data))
+        pymc_build = model._pymc_model(data=data)
+        return nutpie.compile_pymc_model(pymc_build), pymc_build
 
     raise TypeError(
         f"condition_on_nutpie does not support {type(model).__name__}. "

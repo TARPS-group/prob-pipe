@@ -103,24 +103,14 @@ class PyMCModel(ProbabilisticModel):
             for rv in self._unconditioned_model.free_RVs
             if rv.name not in observed_set
         )
-        # Cached by ``_pymc_model`` when given data, so shape queries can
-        # see data-dependent RV shapes rather than the no-data build's.
-        self._last_conditioned_model: Any | None = None
 
     # -- Distribution interface ---------------------------------------------
 
-    def _introspect_model(self) -> Any:
-        """Model whose RV shapes drive ``event_shape`` /
-        ``record_template``: the data-conditioned build when available,
-        else the unconditioned one from construction.
-        """
-        return self._last_conditioned_model or self._unconditioned_model
-
-    def _param_rvs(self) -> Iterator[tuple[str, Any]]:
+    def _param_rvs(self, model: Any) -> Iterator[tuple[str, Any]]:
         """Yield ``(name, rv)`` for each free parameter, in
-        ``_param_names`` order, looked up in the introspected model.
+        ``_param_names`` order, looked up in *model*.
         """
-        free_rvs = {rv.name: rv for rv in self._introspect_model().free_RVs}
+        free_rvs = {rv.name: rv for rv in model.free_RVs}
         for name in self._param_names:
             rv = free_rvs.get(name)
             if rv is not None:
@@ -130,7 +120,7 @@ class PyMCModel(ProbabilisticModel):
     def event_shape(self) -> tuple[int, ...]:
         # Total number of scalar parameters (excluding observed)
         total = 0
-        for _name, rv in self._param_rvs():
+        for _name, rv in self._param_rvs(self._unconditioned_model):
             size = 1
             for s in rv.type.shape:
                 if s is not None:
@@ -138,23 +128,20 @@ class PyMCModel(ProbabilisticModel):
             total += size
         return (total,)
 
-    @property
-    def record_template(self) -> NumericRecordTemplate:
-        """Template that pairs each free PyMC parameter with its shape.
+    def record_template_for(self, model: Any) -> NumericRecordTemplate:
+        """Parameter template built from a specific PyMC model build.
 
-        Inference methods pass this through to :func:`make_posterior` so
-        the resulting :class:`ApproximateDistribution` carries Record
-        structure: ``mean(post)`` returns a ``NumericRecord`` keyed by
-        the PyMC RV names, matching the field layout of any other
-        ProbPipe posterior.
+        Inference paths call this with the data-conditioned model they
+        construct, so the template matches the chain even for RVs whose
+        shape depends on data size (e.g. per-observation random effects,
+        ``pm.Normal('alpha', 0, 1, shape=X.shape[0])``). The public
+        :attr:`record_template` property uses the declared (no-data)
+        build instead.
 
         Scalar PyMC RVs (e.g. ``pm.Normal('intercept', 0, 1)``) become
         fields with event shape ``()``; shape-:math:`k` RVs (e.g.
         ``pm.Normal('beta', 0, 1, shape=k)``) become fields with event
-        shape ``(k,)``. Shapes that depend on the conditioning data
-        (e.g. per-observation random effects, ``pm.Normal('alpha', 0,
-        1, shape=X.shape[0])``) are reported correctly once the model
-        has been conditioned on data.
+        shape ``(k,)``.
 
         Raises
         ------
@@ -166,7 +153,7 @@ class PyMCModel(ProbabilisticModel):
             errors.
         """
         fields: dict[str, tuple[int, ...]] = {}
-        for name, rv in self._param_rvs():
+        for name, rv in self._param_rvs(model):
             raw_shape = tuple(rv.type.shape)
             if any(s is None for s in raw_shape):
                 raise ValueError(
@@ -179,6 +166,24 @@ class PyMCModel(ProbabilisticModel):
                 )
             fields[name] = tuple(int(s) for s in raw_shape)
         return NumericRecordTemplate(**fields)
+
+    @property
+    def record_template(self) -> NumericRecordTemplate:
+        """Template that pairs each free PyMC parameter with its shape.
+
+        Inference methods pass this through to :func:`make_posterior` so
+        the resulting :class:`ApproximateDistribution` carries Record
+        structure: ``mean(post)`` returns a ``NumericRecord`` keyed by
+        the PyMC RV names, matching the field layout of any other
+        ProbPipe posterior.
+
+        Reports the declared shapes from the no-data build done at
+        construction. For RVs whose shape depends on data size, the
+        conditioned shapes are resolved at inference time via
+        :meth:`record_template_for`; this property cannot know them
+        without data.
+        """
+        return self.record_template_for(self._unconditioned_model)
 
     # -- Named components interface ------------------------------------------
 
@@ -243,29 +248,23 @@ class PyMCModel(ProbabilisticModel):
         the user's model function — PyMC's tensor backend doesn't
         multiply with raw JAX arrays.
 
-        When ``data`` is given, the built model is cached on
-        ``self._last_conditioned_model`` so later shape queries see the
-        data-conditioned RV shapes.
+        The returned model is stateless and not retained on ``self``;
+        callers that need the conditioned shapes (e.g. for
+        :meth:`record_template_for`) pass this build back explicitly.
         """
         if data is None:
             return self._model_fn()
         if isinstance(data, dict):
-            model = self._model_fn(**{k: _to_numpy(v) for k, v in data.items()})
-        else:
-            # Local import to avoid a modeling→core cycle at module load.
-            from ..core.record import Record
-            if isinstance(data, Record):
-                model = self._model_fn(**{
-                    name: _to_numpy(data[name])
-                    for name in self._observed_names
-                    if name in data.fields
-                })
-            else:
-                model = self._model_fn(
-                    **{self._observed_names[0]: _to_numpy(data)}
-                )
-        self._last_conditioned_model = model
-        return model
+            return self._model_fn(**{k: _to_numpy(v) for k, v in data.items()})
+        # Local import to avoid a modeling→core cycle at module load.
+        from ..core.record import Record
+        if isinstance(data, Record):
+            return self._model_fn(**{
+                name: _to_numpy(data[name])
+                for name in self._observed_names
+                if name in data.fields
+            })
+        return self._model_fn(**{self._observed_names[0]: _to_numpy(data)})
 
     def __repr__(self) -> str:
         params = ", ".join(self._param_names)

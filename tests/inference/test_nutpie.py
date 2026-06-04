@@ -36,21 +36,24 @@ class TestCompileForNutpie:
         model._bridgestan_model.return_value = "bs_model"
         with patch.object(nutpie, "compile_stan_model",
                           return_value="compiled") as compile_stan:
-            result = _compile_for_nutpie(model, data={"N": 10})
+            compiled, pymc_build = _compile_for_nutpie(model, data={"N": 10})
         compile_stan.assert_called_once_with("bs_model")
         model._bridgestan_model.assert_called_once_with(data={"N": 10})
-        assert result == "compiled"
+        assert compiled == "compiled"
+        assert pymc_build is None  # Stan target — no PyMC build to thread
 
     def test_pymc_path(self):
-        """Models with _pymc_model use nutpie.compile_pymc_model."""
+        """Models with _pymc_model use nutpie.compile_pymc_model and
+        return the conditioned build for record_template derivation."""
         model = MagicMock(spec=[])
         model._pymc_model = MagicMock(return_value="pm_model")
         with patch.object(nutpie, "compile_pymc_model",
                           return_value="compiled") as compile_pymc:
-            result = _compile_for_nutpie(model, data={"y": [1, 2]})
+            compiled, pymc_build = _compile_for_nutpie(model, data={"y": [1, 2]})
         compile_pymc.assert_called_once_with("pm_model")
         model._pymc_model.assert_called_once_with(data={"y": [1, 2]})
-        assert result == "compiled"
+        assert compiled == "compiled"
+        assert pymc_build == "pm_model"
 
     def test_unsupported_model_raises(self):
         model = MagicMock(spec=[])
