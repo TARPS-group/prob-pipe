@@ -102,25 +102,16 @@ class PyMCModel(ProbabilisticModel):
             for rv in self._unconditioned_model.free_RVs
             if rv.name not in observed_set
         )
-        # Populated by ``_pymc_model(data)`` whenever data is supplied.
-        # ``event_shape`` / ``record_template`` prefer this cached build
-        # so RVs whose shape depends on data size (per-observation random
-        # effects, varying group counts, ...) report the conditioned
-        # shape rather than the sentinel-shape captured here.
+        # Cached by ``_pymc_model`` when given data, so shape queries can
+        # see data-dependent RV shapes rather than the no-data build's.
         self._last_conditioned_model: Any | None = None
 
     # -- Distribution interface ---------------------------------------------
 
     def _introspect_model(self) -> Any:
-        """Return the model whose RV shapes drive ``event_shape`` /
-        ``record_template``.
-
-        Prefers ``_last_conditioned_model`` (populated by
-        ``_pymc_model(data)``) so RVs whose shape depends on data size
-        report the conditioned shape. Falls back to
-        ``_unconditioned_model`` only when conditioning hasn't happened
-        yet — pre-conditioning there is no data to derive a better
-        answer from.
+        """Model whose RV shapes drive ``event_shape`` /
+        ``record_template``: the data-conditioned build when available,
+        else the unconditioned one from construction.
         """
         return self._last_conditioned_model or self._unconditioned_model
 
@@ -154,12 +145,10 @@ class PyMCModel(ProbabilisticModel):
         Scalar PyMC RVs (e.g. ``pm.Normal('intercept', 0, 1)``) become
         fields with event shape ``()``; shape-:math:`k` RVs (e.g.
         ``pm.Normal('beta', 0, 1, shape=k)``) become fields with event
-        shape ``(k,)``. RVs whose shape depends on data size (e.g.
-        per-observation random effects ``pm.Normal('alpha', 0, 1,
-        shape=X.shape[0])``) report the conditioned shape once
-        ``_pymc_model(data)`` has been called — inference paths do this
-        before extracting the chain, so the template matches the
-        sampler's output.
+        shape ``(k,)``. Shapes that depend on the conditioning data
+        (e.g. per-observation random effects, ``pm.Normal('alpha', 0,
+        1, shape=X.shape[0])``) are reported correctly once the model
+        has been conditioned on data.
 
         Raises
         ------
@@ -253,10 +242,9 @@ class PyMCModel(ProbabilisticModel):
         the user's model function — PyMC's tensor backend doesn't
         multiply with raw JAX arrays.
 
-        Side effect: when ``data is not None``, the built model is also
-        cached on ``self._last_conditioned_model`` so
-        ``record_template`` / ``event_shape`` can introspect the
-        data-conditioned RV shapes (see ``_introspect_model``).
+        When ``data`` is given, the built model is cached on
+        ``self._last_conditioned_model`` so later shape queries see the
+        data-conditioned RV shapes.
         """
         if data is None:
             return self._model_fn()
