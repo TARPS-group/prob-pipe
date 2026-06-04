@@ -117,6 +117,40 @@ class TestExtractChains:
         with pytest.raises(TypeError, match="Cannot extract chains"):
             _extract_chains(mock_trace, num_chains=1)
 
+    def test_keep_names_filters_out_transformed_value_vars(self):
+        """``keep_names`` restricts extraction to the named RVs and
+        preserves their order.
+
+        Mirrors the nutpie + PyMC shape: ``posterior.data_vars`` carries
+        both the constrained ``sigma`` and the auto-introduced
+        unconstrained ``sigma_log__``; with ``keep_names=['mu', 'sigma']``
+        only the constrained columns make it into the chain.
+        """
+        mock_trace = MagicMock()
+        mu_vals = np.random.randn(1, 8)
+        sigma_vals = np.random.randn(1, 8)
+        sigma_log_vals = np.random.randn(1, 8)
+        mu_var = MagicMock(); mu_var.values = mu_vals
+        sigma_var = MagicMock(); sigma_var.values = sigma_vals
+        sigma_log_var = MagicMock(); sigma_log_var.values = sigma_log_vals
+
+        mock_posterior = MagicMock()
+        mock_posterior.data_vars = ["mu", "sigma", "sigma_log__"]
+        mock_posterior.__getitem__ = (
+            lambda self, k: {
+                "mu": mu_var, "sigma": sigma_var, "sigma_log__": sigma_log_var,
+            }[k]
+        )
+        mock_trace.posterior = mock_posterior
+
+        chains, param_names = _extract_chains(
+            mock_trace, num_chains=1, keep_names=["mu", "sigma"],
+        )
+        assert param_names == ["mu", "sigma"]
+        assert chains[0].shape == (8, 2)
+        np.testing.assert_allclose(chains[0][:, 0], mu_vals[0])
+        np.testing.assert_allclose(chains[0][:, 1], sigma_vals[0])
+
 
 # ---------------------------------------------------------------------------
 # Real integration: nutpie + PyMCModel
@@ -182,3 +216,37 @@ class TestNutpieIntegration:
         assert result.inference_data is not None
         # arviz-like trace exposes posterior as an xarray Dataset/DataTree
         assert hasattr(result.inference_data, "posterior")
+
+    def test_auto_transformed_rv_not_double_counted(self):
+        """A ``HalfNormal`` (auto-log-transformed) must not contribute a
+        second column to the chain (issue #225).
+
+        Nutpie's posterior carries both the constrained ``sigma`` and
+        the unconstrained ``sigma_log__`` as data_vars; extracting both
+        would shape-mismatch against ``record_template`` (template has
+        one field for ``sigma``, chain would have two columns for it).
+        We assert (i) extraction succeeds, (ii) draws expose exactly
+        the user-named RVs, and (iii) the recovered ``sigma`` samples
+        are all positive (i.e., constrained values, not log-transformed).
+        """
+        def model_fn(y=None):
+            with pm.Model() as m:
+                mu = pm.Normal("mu", 0, 1)
+                sigma = pm.HalfNormal("sigma", 1)
+                pm.Normal("obs", mu, sigma, observed=y)
+            return m
+
+        np.random.seed(0)
+        y_obs = np.random.randn(50).astype(float)
+        model = PyMCModel(model_fn, name="half_normal")
+        result = condition_on_nutpie._func(
+            model, data={"obs": y_obs},
+            num_results=200, num_warmup=200, num_chains=2, random_seed=7,
+        )
+
+        draws = result.draws()
+        assert draws.fields == ("mu", "sigma")
+        sigma_draws = jnp.asarray(draws["sigma"])
+        assert sigma_draws.shape == (400,)
+        # Constrained-positive values, not log-transformed.
+        assert float(jnp.min(sigma_draws)) > 0.0

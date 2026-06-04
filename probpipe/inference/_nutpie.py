@@ -53,7 +53,15 @@ def condition_on_nutpie(
         chains=num_chains, seed=random_seed, **kwargs,
     )
 
-    chains, param_names = _extract_chains(trace, num_chains)
+    # For PyMC models, restrict extraction to the user-named (constrained)
+    # free RVs. Nutpie's posterior also exposes auto-introduced
+    # unconstrained value vars (e.g. ``sigma_log__`` for a
+    # ``HalfNormal('sigma', ...)``); pulling them in would double-count
+    # those RVs and shape-mismatch against ``record_template``.
+    keep_names = getattr(model, "_param_names", None)
+    chains, param_names = _extract_chains(
+        trace, num_chains, keep_names=keep_names,
+    )
 
     return make_posterior(
         chains, parents=(model,), algorithm="nutpie_nuts",
@@ -83,11 +91,33 @@ def _compile_for_nutpie(model: Any, data: Any) -> Any:
     )
 
 
-def _extract_chains(trace: Any, num_chains: int) -> tuple[list, list]:
-    """Extract per-chain sample arrays from a nutpie ArviZ trace."""
+def _extract_chains(
+    trace: Any,
+    num_chains: int,
+    *,
+    keep_names: list[str] | tuple[str, ...] | None = None,
+) -> tuple[list, list]:
+    """Extract per-chain sample arrays from a nutpie ArviZ trace.
+
+    Parameters
+    ----------
+    trace
+        Nutpie trace exposing ``posterior`` as an ArviZ-like
+        ``Dataset`` / ``DataTree``.
+    num_chains
+        Number of chains in the trace.
+    keep_names
+        Restrict extraction to these data-var names, in this order. When
+        ``None`` (default), every ``posterior.data_vars`` entry is
+        extracted. Used by the PyMC path to drop nutpie's
+        auto-introduced unconstrained value vars (e.g. ``sigma_log__``).
+    """
     if hasattr(trace, "posterior"):
         posterior = trace.posterior
-        param_names = list(posterior.data_vars)
+        if keep_names is None:
+            param_names = list(posterior.data_vars)
+        else:
+            param_names = list(keep_names)
         chains = []
         for c in range(num_chains):
             chain_arrays = []
