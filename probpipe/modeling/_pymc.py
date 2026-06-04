@@ -132,11 +132,13 @@ class PyMCModel(ProbabilisticModel):
         """Parameter template built from a specific PyMC model build.
 
         Inference paths call this with the data-conditioned model they
-        construct, so the template matches the chain even for RVs whose
-        shape depends on data size (e.g. per-observation random effects,
-        ``pm.Normal('alpha', 0, 1, shape=X.shape[0])``). The public
-        :attr:`record_template` property uses the declared (no-data)
-        build instead.
+        construct and pass the result through to :func:`make_posterior`,
+        so the posterior carries Record structure (``mean(post)`` returns
+        a ``NumericRecord`` keyed by the PyMC RV names) and the template
+        matches the chain even for RVs whose shape depends on data size
+        (e.g. per-observation random effects, ``pm.Normal('alpha', 0, 1,
+        shape=X.shape[0])``). The public :attr:`record_template` property
+        uses the declared (no-data) build instead.
 
         Scalar PyMC RVs (e.g. ``pm.Normal('intercept', 0, 1)``) become
         fields with event shape ``()``; shape-:math:`k` RVs (e.g.
@@ -169,19 +171,12 @@ class PyMCModel(ProbabilisticModel):
 
     @property
     def record_template(self) -> NumericRecordTemplate:
-        """Template that pairs each free PyMC parameter with its shape.
+        """Declared parameter template from the no-data build done at
+        construction (see :meth:`record_template_for`).
 
-        Inference methods pass this through to :func:`make_posterior` so
-        the resulting :class:`ApproximateDistribution` carries Record
-        structure: ``mean(post)`` returns a ``NumericRecord`` keyed by
-        the PyMC RV names, matching the field layout of any other
-        ProbPipe posterior.
-
-        Reports the declared shapes from the no-data build done at
-        construction. For RVs whose shape depends on data size, the
-        conditioned shapes are resolved at inference time via
-        :meth:`record_template_for`; this property cannot know them
-        without data.
+        For RVs whose shape depends on data size, the conditioned shapes
+        are resolved at inference time via :meth:`record_template_for`;
+        this property cannot know them without data.
         """
         return self.record_template_for(self._unconditioned_model)
 
