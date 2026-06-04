@@ -6,6 +6,7 @@ Inference is handled by registered methods in ``probpipe.inference``.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from typing import Any, Callable
 
 import jax.numpy as jnp
@@ -115,16 +116,21 @@ class PyMCModel(ProbabilisticModel):
         """
         return self._last_conditioned_model or self._unconditioned_model
 
+    def _param_rvs(self) -> Iterator[tuple[str, Any]]:
+        """Yield ``(name, rv)`` for each free parameter, in
+        ``_param_names`` order, looked up in the introspected model.
+        """
+        free_rvs = {rv.name: rv for rv in self._introspect_model().free_RVs}
+        for name in self._param_names:
+            rv = free_rvs.get(name)
+            if rv is not None:
+                yield name, rv
+
     @property
     def event_shape(self) -> tuple[int, ...]:
         # Total number of scalar parameters (excluding observed)
-        model = self._introspect_model()
-        free_rvs = {rv.name: rv for rv in model.free_RVs}
         total = 0
-        for name in self._param_names:
-            rv = free_rvs.get(name)
-            if rv is None:
-                continue
+        for _name, rv in self._param_rvs():
             size = 1
             for s in rv.type.shape:
                 if s is not None:
@@ -159,13 +165,8 @@ class PyMCModel(ProbabilisticModel):
             produce an under-shaped template and confusing downstream
             errors.
         """
-        model = self._introspect_model()
-        free_rvs = {rv.name: rv for rv in model.free_RVs}
         fields: dict[str, tuple[int, ...]] = {}
-        for name in self._param_names:
-            rv = free_rvs.get(name)
-            if rv is None:
-                continue
+        for name, rv in self._param_rvs():
             raw_shape = tuple(rv.type.shape)
             if any(s is None for s in raw_shape):
                 raise ValueError(
