@@ -66,7 +66,7 @@ def sample(
     dist: SupportsSampling,
     *,
     key: PRNGKey | None = None,
-    sample_shape: tuple[int, ...] = (),
+    sample_shape: int | tuple[int, ...] = (),
 ) -> Any:
     """Draw samples from a distribution.
 
@@ -76,14 +76,21 @@ def sample(
         Distribution to sample from.
     key : PRNGKey, optional
         JAX PRNG key.  Auto-generated if ``None``.
-    sample_shape : tuple of int
-        Shape prefix for independent draws.
+    sample_shape : int or tuple of int
+        Shape prefix for independent draws.  A scalar ``N`` is treated
+        as sugar for ``(N,)``, matching the convention used by numpy,
+        JAX, scipy, and TFP.
     """
     if not isinstance(dist, SupportsSampling):
         raise TypeError(
             f"{type(dist).__name__} does not support sampling "
             f"(does not implement SupportsSampling)"
         )
+    # Scalar-int sugar: ``sample_shape=100`` -> ``(100,)``. The coercion
+    # lives at the public-op boundary so internal ``_sample``
+    # implementations can continue to assume ``sample_shape: tuple``.
+    if isinstance(sample_shape, int):
+        sample_shape = (sample_shape,)
     if key is None:
         key = _auto_key()
     return dist._sample(key, sample_shape)
