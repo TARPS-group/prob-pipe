@@ -64,6 +64,21 @@ class TestSample:
         s = ops.sample(empirical, key=jax.random.PRNGKey(0), sample_shape=(5,))
         assert s.shape == (5, 2)
 
+    def test_sample_shape_scalar_int_matches_1tuple(self, normal, mvn, empirical):
+        """Scalar ``sample_shape=N`` is sugar for ``(N,)``.
+
+        Asserts numpy / JAX / scipy / TFP-style convenience: passing an
+        int where a sample-shape tuple is expected produces output of
+        the same shape and the same values (under the same key) as the
+        tuple form.
+        """
+        key = jax.random.PRNGKey(0)
+        for dist, event_shape in [(normal, ()), (mvn, (3,)), (empirical, (2,))]:
+            s_int = ops.sample(dist, key=key, sample_shape=10)
+            s_tup = ops.sample(dist, key=key, sample_shape=(10,))
+            assert s_int.shape == (10, *event_shape) == s_tup.shape
+            np.testing.assert_array_equal(np.asarray(s_int), np.asarray(s_tup))
+
     def test_sample_type_error(self):
         with pytest.raises(TypeError, match="does not support sampling"):
             ops.sample("not a distribution")
