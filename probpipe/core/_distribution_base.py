@@ -115,14 +115,55 @@ class Distribution[T](ABC):
 
     @property
     def auxiliary(self) -> DataTree | None:
-        """An xarray ``DataTree`` of auxiliary information (diagnostics,
-        sample statistics, algorithm metadata), or ``None``.
+        """An xarray ``DataTree`` of auxiliary information, or ``None``.
 
-        Populated by inference methods.  Follows ArviZ group conventions
-        (``posterior``, ``sample_stats``, ``warmup``, etc.) with metadata
-        stored as DataTree attributes.
+        Structured as::
+
+            _auxiliary/
+            ├── arviz/      ← ArviZ InferenceData (posterior, sample_stats, warmup, ...)
+            └── diagnostics/ ← ProbPipe scalar summaries and run metadata
+                ├── mcmc/   ← rhat, ess_bulk, ess_tail, mcse
+                └── runs/   ← one node per on-demand diagnostic (ppc, loo, ...)
+
+        Populated by inference methods and diagnostic functions.
+        Use ``posterior.inference_data`` for the ArviZ subtree directly,
+        and ``posterior.diagnostics`` for the structured diagnostic view.
         """
         return getattr(self, "_auxiliary", None)
+
+    @property
+    def diagnostics(self) -> "DiagnosticsView | None":
+        """Structured view over diagnostic results stored in ``_auxiliary``.
+
+        Returns ``None`` if no diagnostics have been computed yet.
+        Distinct from ``inference_data``: ``diagnostics`` is a structured
+        Python accessor over the ``/diagnostics/`` subtree only;
+        ``inference_data`` is the ArviZ DataTree passed directly to ArviZ
+        functions.
+
+        Example
+        -------
+        ::
+
+            posterior = condition_on(model, data)
+            mcmc_diagnostics(posterior)
+
+            posterior.diagnostics.rhat      # {"intercept": 1.001}
+            posterior.diagnostics.warnings  # []
+            posterior.diagnostics.runs      # []
+
+            run_ppc(posterior, test_fns=[...], observed_data=y)
+            posterior.diagnostics.runs[0].result   # {"var_mean_ratio": {...}}
+            posterior.diagnostics.runs[0].plot_fn  # "az.plot_ppc"
+        """
+        aux = self.auxiliary
+        if aux is None:
+            return None
+        children = aux.children if hasattr(aux, "children") else {}
+        if "diagnostics" not in children:
+            return None
+        from ..diagnostics._datatree import DiagnosticsView
+        return DiagnosticsView(aux["diagnostics"])
 
     # -- naming & provenance ------------------------------------------------
 

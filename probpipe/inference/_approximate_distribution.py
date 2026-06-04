@@ -166,29 +166,42 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
     @property
     def inference_data(self) -> DataTree | None:
-        """The auxiliary DataTree, for ArviZ compatibility.
+        """The ArviZ DataTree stored under ``_auxiliary["arviz"]``.
 
-        Alias for ``self.auxiliary``.  Use ArviZ functions for diagnostics::
+        Use ArviZ functions for diagnostics and plots::
 
             import arviz as az
             az.summary(posterior.inference_data)
+            az.plot_trace(posterior.inference_data)
+
+        Returns ``None`` if no auxiliary data has been attached.
+        Returns ``_auxiliary`` directly (legacy fallback) if it was set
+        before the ``/arviz/`` subtree convention was adopted.
         """
-        return self.auxiliary
+        aux = self.auxiliary
+        if aux is None:
+            return None
+        # New convention: ArviZ lives under /arviz/ subtree
+        if hasattr(aux, "children") and "arviz" in aux.children:
+            return aux["arviz"]
+        # Legacy fallback: auxiliary IS the ArviZ DataTree directly
+        return aux
 
     @property
     def warmup_samples(self) -> list[Array] | None:
         """Per-chain warmup samples extracted from auxiliary data."""
-        aux = self.auxiliary
-        if aux is None:
+        # Warmup lives under /arviz/warmup/ in the new layout,
+        # or directly under _auxiliary in the legacy layout.
+        idata = self.inference_data   # already handles both layouts
+        if idata is None:
             return None
-        # arviz 1.x DataTree uses .children; arviz 0.x InferenceData uses .groups()
         has_warmup = (
-            ("warmup" in aux.children) if hasattr(aux, "children")
-            else hasattr(aux, "warmup")
+            ("warmup" in idata.children) if hasattr(idata, "children")
+            else hasattr(idata, "warmup")
         )
         if not has_warmup:
             return None
-        warmup = aux["warmup"]["params"]
+        warmup = idata["warmup"]["params"]
         n_chains = warmup.sizes.get("chain", 1)
         return [jnp.asarray(warmup.sel(chain=i).values) for i in range(n_chains)]
 
@@ -280,8 +293,10 @@ def make_posterior(
     algorithm : str
         Inference algorithm name (e.g. ``"tfp_nuts"``, ``"rwmh"``).
     auxiliary : DataTree or None
-        Pre-built auxiliary DataTree (diagnostics, sample stats, warmup).
-        Inference methods are responsible for building this.
+        ArviZ-format DataTree produced by the inference backend
+        (``posterior``, ``sample_stats``, ``warmup`` groups).
+        Stored under ``_auxiliary["arviz"]`` so that ``_auxiliary``
+        can hold other non-ArviZ subtrees (e.g. ``/diagnostics/``).
     record_template : RecordTemplate or None
         If provided, ``draws()`` returns named ``Record``.
     **meta
@@ -292,12 +307,17 @@ def make_posterior(
     ApproximateDistribution
         Posterior with chain structure, auxiliary DataTree, and provenance.
     """
+    import xarray as xr
+
     result = ApproximateDistribution(
         chains, name="posterior", record_template=record_template,
     )
 
     if auxiliary is not None:
-        result._auxiliary = auxiliary
+        # Wrap the ArviZ InferenceData under /arviz/ so _auxiliary can
+        # hold other subtrees (e.g. /diagnostics/) alongside it.
+        dicto: dict = {"arviz": auxiliary}
+        result._auxiliary = xr.DataTree.from_dict(dicto)
 
     result.with_source(
         Provenance(algorithm, parents=parents, metadata={"algorithm": algorithm, **meta})
