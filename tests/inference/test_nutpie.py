@@ -36,21 +36,24 @@ class TestCompileForNutpie:
         model._bridgestan_model.return_value = "bs_model"
         with patch.object(nutpie, "compile_stan_model",
                           return_value="compiled") as compile_stan:
-            result = _compile_for_nutpie(model, data={"N": 10})
+            compiled, pymc_build = _compile_for_nutpie(model, data={"N": 10})
         compile_stan.assert_called_once_with("bs_model")
         model._bridgestan_model.assert_called_once_with(data={"N": 10})
-        assert result == "compiled"
+        assert compiled == "compiled"
+        assert pymc_build is None  # Stan target — no PyMC build to thread
 
     def test_pymc_path(self):
-        """Models with _pymc_model use nutpie.compile_pymc_model."""
+        """Models with _pymc_model use nutpie.compile_pymc_model and
+        return the conditioned build for record_template derivation."""
         model = MagicMock(spec=[])
         model._pymc_model = MagicMock(return_value="pm_model")
         with patch.object(nutpie, "compile_pymc_model",
                           return_value="compiled") as compile_pymc:
-            result = _compile_for_nutpie(model, data={"y": [1, 2]})
+            compiled, pymc_build = _compile_for_nutpie(model, data={"y": [1, 2]})
         compile_pymc.assert_called_once_with("pm_model")
         model._pymc_model.assert_called_once_with(data={"y": [1, 2]})
-        assert result == "compiled"
+        assert compiled == "compiled"
+        assert pymc_build == "pm_model"
 
     def test_unsupported_model_raises(self):
         model = MagicMock(spec=[])
@@ -117,6 +120,33 @@ class TestExtractChains:
         with pytest.raises(TypeError, match="Cannot extract chains"):
             _extract_chains(mock_trace, num_chains=1)
 
+    def test_keep_names_overrides_data_vars_order(self):
+        """keep_names selects and orders columns explicitly, overriding
+        the alphabetical posterior.data_vars order.
+
+        nutpie sorts data_vars alphabetically; without an explicit order
+        the concatenated columns would not line up with the PyMC template
+        field order (declaration order), silently mislabeling draws.
+        """
+        mock_trace = MagicMock()
+        a = np.full((1, 4), 1.0); m = np.full((1, 4), 2.0); z = np.full((1, 4), 3.0)
+        va = MagicMock(); va.values = a
+        vm = MagicMock(); vm.values = m
+        vz = MagicMock(); vz.values = z
+        mock_posterior = MagicMock()
+        mock_posterior.data_vars = ["alpha", "mu", "zeta"]  # nutpie's sorted order
+        mock_posterior.__getitem__ = (
+            lambda self, k: {"alpha": va, "mu": vm, "zeta": vz}[k]
+        )
+        mock_trace.posterior = mock_posterior
+
+        chains, names = _extract_chains(
+            mock_trace, num_chains=1, keep_names=["zeta", "alpha", "mu"],
+        )
+        assert names == ["zeta", "alpha", "mu"]
+        # Columns concatenated in keep_names order: zeta=3, alpha=1, mu=2.
+        np.testing.assert_array_equal(chains[0][0], [3.0, 1.0, 2.0])
+
 
 # ---------------------------------------------------------------------------
 # Real integration: nutpie + PyMCModel
@@ -182,3 +212,63 @@ class TestNutpieIntegration:
         assert result.inference_data is not None
         # arviz-like trace exposes posterior as an xarray Dataset/DataTree
         assert hasattr(result.inference_data, "posterior")
+
+    def test_multiparam_draws_not_mislabeled(self):
+        """Draws are labeled by the model's parameter order, not nutpie's
+        alphabetical ``posterior.data_vars`` order.
+
+        Declares ``zeta``, ``alpha``, ``mu`` (non-alphabetical) with
+        distinct tight priors and a near-flat likelihood, so each
+        posterior stays near its prior. If chain columns were taken in
+        alphabetical order while the template uses declaration order,
+        the means would be assigned to the wrong fields.
+        """
+        def model_fn(y=None):
+            with pm.Model() as m:
+                zeta = pm.Normal("zeta", 100.0, 1.0)
+                alpha = pm.Normal("alpha", 0.0, 1.0)
+                mu = pm.Normal("mu", -100.0, 1.0)
+                pm.Normal("y", mu=zeta + alpha + mu, sigma=1000.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn, name="ordering")
+        result = condition_on_nutpie._func(
+            model, data={"y": np.zeros(4, dtype=float)},
+            num_results=300, num_warmup=300, num_chains=1, random_seed=0,
+        )
+        draws = result.draws()
+        assert draws.fields == ("zeta", "alpha", "mu")
+        for field, prior_mean in [("zeta", 100.0), ("alpha", 0.0), ("mu", -100.0)]:
+            got = float(jnp.mean(jnp.asarray(draws[field])))
+            np.testing.assert_allclose(got, prior_mean, atol=10.0)
+
+    def test_partial_conditioning_draws_not_mislabeled(self):
+        """Partial conditioning via nutpie: an unsupplied observed variable
+        is inferred and its draws are labeled correctly.
+
+        ``X`` is declared ``observed=X``; conditioning on ``y`` alone
+        leaves it free, so the posterior covers ``mu`` and ``X``. ``X``
+        sorts before ``mu`` in nutpie's alphabetical ``data_vars`` while
+        the param order is ``(mu, X)``, so distinct priors catch any
+        column mislabeling.
+        """
+        def model_fn(X=None, y=None):
+            with pm.Model() as m:
+                mu = pm.Normal("mu", 100.0, 0.5)
+                X_rv = pm.Normal("X", -100.0, 0.5, observed=X)
+                pm.Normal("y", mu=mu + X_rv, sigma=1000.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn, name="partial")
+        result = condition_on_nutpie._func(
+            model, data={"y": np.zeros(5, dtype=float)},
+            num_results=200, num_warmup=200, num_chains=1, random_seed=0,
+        )
+        draws = result.draws()
+        assert set(draws.fields) == {"mu", "X"}
+        np.testing.assert_allclose(
+            float(jnp.mean(jnp.asarray(draws["mu"]))), 100.0, atol=10.0
+        )
+        np.testing.assert_allclose(
+            float(jnp.mean(jnp.asarray(draws["X"]))), -100.0, atol=10.0
+        )

@@ -5,12 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import jax.numpy as jnp
-
 from ..core._registry import MethodInfo
 from ..core.node import workflow_function
 from ..custom_types import ArrayLike
 from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ._inference_utils import extract_chain_columns
 from ._registry import InferenceMethod
 
 logger = logging.getLogger(__name__)
@@ -47,17 +46,33 @@ def condition_on_nutpie(
             "Install it with: pip install nutpie"
         ) from e
 
-    compiled = _compile_for_nutpie(model, data)
+    compiled, pymc_build = _compile_for_nutpie(model, data)
+
+    # Resolve the PyMC inferred names + template from the conditioned
+    # build before sampling (fail fast on a dynamic-RV / non-concrete
+    # model); extraction shares the names. Stan models carry their own
+    # record_template, if any.
+    if pymc_build is not None:
+        keep_names = list(model._conditioned_param_names(pymc_build))
+        record_template = model._record_template_for(pymc_build, keep_names)
+    else:
+        keep_names = None
+        record_template = getattr(model, "record_template", None)
+
     trace = nutpie.sample(
         compiled, draws=num_results, tune=num_warmup,
         chains=num_chains, seed=random_seed, **kwargs,
     )
 
-    chains, param_names = _extract_chains(trace, num_chains)
+    # PyMC: extract chain columns in `keep_names` order so they line up
+    # with the template (nutpie sorts ``posterior.data_vars``
+    # alphabetically, which would otherwise mislabel draws). Stan: take
+    # trace order.
+    chains, param_names = _extract_chains(trace, num_chains, keep_names=keep_names)
 
     return make_posterior(
         chains, parents=(model,), algorithm="nutpie_nuts",
-        auxiliary=trace, record_template=getattr(model, "record_template", None),
+        auxiliary=trace, record_template=record_template,
         num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
     )
 
@@ -67,15 +82,22 @@ def condition_on_nutpie(
 # ---------------------------------------------------------------------------
 
 
-def _compile_for_nutpie(model: Any, data: Any) -> Any:
-    """Compile a model for nutpie sampling."""
+def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any | None]:
+    """Compile a model for nutpie sampling.
+
+    Returns ``(compiled, pymc_build)``. ``pymc_build`` is the
+    data-conditioned ``pm.Model`` for PyMCModel targets (so the caller
+    can derive a matching ``record_template``), and ``None`` for Stan
+    targets.
+    """
     if hasattr(model, "_bridgestan_model"):
         import nutpie
-        return nutpie.compile_stan_model(model._bridgestan_model(data=data))
+        return nutpie.compile_stan_model(model._bridgestan_model(data=data)), None
 
     if hasattr(model, "_pymc_model"):
         import nutpie
-        return nutpie.compile_pymc_model(model._pymc_model(data=data))
+        pymc_build = model._pymc_model(data=data)
+        return nutpie.compile_pymc_model(pymc_build), pymc_build
 
     raise TypeError(
         f"condition_on_nutpie does not support {type(model).__name__}. "
@@ -83,26 +105,38 @@ def _compile_for_nutpie(model: Any, data: Any) -> Any:
     )
 
 
-def _extract_chains(trace: Any, num_chains: int) -> tuple[list, list]:
-    """Extract per-chain sample arrays from a nutpie ArviZ trace."""
-    if hasattr(trace, "posterior"):
-        posterior = trace.posterior
-        param_names = list(posterior.data_vars)
-        chains = []
-        for c in range(num_chains):
-            chain_arrays = []
-            for name in param_names:
-                vals = posterior[name].values[c]
-                if vals.ndim == 1:
-                    vals = vals[:, None]
-                else:
-                    vals = vals.reshape(vals.shape[0], -1)
-                chain_arrays.append(vals)
-            chains.append(jnp.concatenate(chain_arrays, axis=-1))
-        return chains, param_names
-    raise TypeError(
-        f"Cannot extract chains from nutpie trace of type {type(trace).__name__}"
-    )
+def _extract_chains(
+    trace: Any, num_chains: int, *, keep_names: list[str] | None = None,
+) -> tuple[list, list]:
+    """Extract per-chain sample arrays from a nutpie ArviZ trace.
+
+    Parameters
+    ----------
+    trace : nutpie ArviZ trace
+        Trace exposing a ``posterior`` group.
+    num_chains : int
+        Number of chains to extract.
+    keep_names : list of str or None
+        If given, extract exactly these variables, in this order, instead
+        of ``posterior.data_vars`` order (which nutpie sorts
+        alphabetically). PyMC callers pass the param names so chain
+        columns align with the template; Stan callers pass ``None``.
+
+    Returns
+    -------
+    tuple[list, list]
+        Per-chain concatenated arrays, and the resolved variable-name
+        order.
+    """
+    if not hasattr(trace, "posterior"):
+        raise TypeError(
+            f"Cannot extract chains from nutpie trace of type {type(trace).__name__}"
+        )
+    if keep_names is not None:
+        param_names = list(keep_names)
+    else:
+        param_names = list(trace.posterior.data_vars)
+    return extract_chain_columns(trace, param_names, num_chains), param_names
 
 
 # ---------------------------------------------------------------------------
