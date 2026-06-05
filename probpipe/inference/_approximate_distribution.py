@@ -91,6 +91,20 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         Optional per-sample importance weights (across all chains).
     name : str or None
         Distribution name for provenance.
+    record_template : RecordTemplate or None
+        If given, names the posterior's fields: the concatenated chain is
+        split into per-field arrays (multi-field) so :meth:`draws`,
+        :meth:`_mean` / :meth:`_variance`, etc. return Records keyed by
+        the template fields. ``None`` leaves the posterior a single
+        unnamed numeric block.
+    field_order : list of str or None
+        Names the field each contiguous column-block of *chains* belongs
+        to, in the order they appear. Default (``None``) assumes the
+        columns are already in ``record_template.fields`` order. Pass this
+        when the chain's column order may differ (e.g. a backend that
+        sorts variable names) so columns are aligned to fields by name
+        rather than position. Requires *record_template*, and must be a
+        permutation of its fields.
 
     Notes
     -----
@@ -138,17 +152,17 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             # fields (raises otherwise) for any field count, so a
             # single-field typo or wrong name is also caught.
             perm = _column_permutation(record_template, field_order)
+            # Validate width for any field count, *before* the gather:
+            # ``c[..., perm]`` would otherwise silently drop extra columns
+            # (too-wide chain) or clamp out-of-bounds indices (too-narrow),
+            # then pass the post-gather total-size check.
+            for c in self._chains:
+                if c.shape[-1] != len(perm):
+                    raise ValueError(
+                        f"chain last dim ({c.shape[-1]}) doesn't match "
+                        f"the template total flat size ({len(perm)})."
+                    )
             if len(record_template.fields) > 1:
-                # Validate width *before* the gather: ``c[..., perm]``
-                # would otherwise silently drop extra columns (too-wide
-                # chain) or clamp out-of-bounds indices (too-narrow),
-                # then pass the post-gather total-size check.
-                for c in self._chains:
-                    if c.shape[-1] != len(perm):
-                        raise ValueError(
-                            f"chain last dim ({c.shape[-1]}) doesn't match "
-                            f"the template total flat size ({len(perm)})."
-                        )
                 self._chains = [c[..., perm] for c in self._chains]
                 self._concatenated = None
 

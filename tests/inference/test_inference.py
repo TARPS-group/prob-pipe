@@ -280,6 +280,18 @@ class TestApproximateDistributionValuesTemplate:
                 record_template=template, field_order=["b"],
             )
 
+    def test_field_order_single_field_width_mismatch_raises(self):
+        """With field_order, the chain width is validated for a
+        single-field template too — not only for multi-field ones."""
+        template = RecordTemplate(a=(2,))              # flat size 2
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 3))   # 3 columns
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
+        with pytest.raises(ValueError, match="doesn't match"):
+            make_posterior(
+                [chain], parents=(prior,), algorithm="test",
+                record_template=template, field_order=["a"],
+            )
+
     def test_array_shaped_fields(self):
         """Template with non-scalar fields unflattens correctly."""
         template = RecordTemplate(
