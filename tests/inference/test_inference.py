@@ -231,6 +231,55 @@ class TestApproximateDistributionValuesTemplate:
                 record_template=template, field_order=["a", "c"],
             )
 
+    def test_field_order_chain_too_wide_raises(self):
+        """With field_order, a chain wider than the template's total flat
+        size raises rather than silently dropping the extra columns in the
+        permutation gather."""
+        template = RecordTemplate(a=(), b=())          # total flat size 2
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 3))   # 3 columns
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
+        with pytest.raises(ValueError, match="doesn't match"):
+            make_posterior(
+                [chain], parents=(prior,), algorithm="test",
+                record_template=template, field_order=["a", "b"],
+            )
+
+    def test_field_order_chain_too_narrow_raises(self):
+        """With field_order, a chain narrower than the template's total
+        flat size raises clearly rather than clamping the out-of-bounds
+        gather indices."""
+        template = RecordTemplate(a=(), b=(), c=())    # total flat size 3
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))   # 2 columns
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        with pytest.raises(ValueError, match="doesn't match"):
+            make_posterior(
+                [chain], parents=(prior,), algorithm="test",
+                record_template=template, field_order=["a", "b", "c"],
+            )
+
+    def test_field_order_without_template_raises(self):
+        """field_order without a record_template is a caller error, not a
+        silent no-op."""
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        with pytest.raises(ValueError, match="requires a record_template"):
+            make_posterior(
+                [chain], parents=(prior,), algorithm="test",
+                field_order=["a", "b"],
+            )
+
+    def test_field_order_single_field_invalid_permutation_raises(self):
+        """field_order is validated even for a single-field template, so a
+        wrong name is caught rather than silently ignored."""
+        template = RecordTemplate(a=())
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 1))
+        prior = MultivariateNormal(loc=jnp.zeros(1), cov=jnp.eye(1), name="z")
+        with pytest.raises(ValueError, match="not a permutation"):
+            make_posterior(
+                [chain], parents=(prior,), algorithm="test",
+                record_template=template, field_order=["b"],
+            )
+
     def test_array_shaped_fields(self):
         """Template with non-scalar fields unflattens correctly."""
         template = RecordTemplate(

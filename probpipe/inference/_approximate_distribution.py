@@ -128,14 +128,29 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         # order. The positional split below (and ``draws()`` unflatten)
         # then map each column to the right field by name rather than by
         # position, so callers don't have to pre-sort. See issue #233.
-        if (
-            field_order is not None
-            and record_template is not None
-            and len(record_template.fields) > 1
-        ):
+        if field_order is not None:
+            if record_template is None:
+                raise ValueError(
+                    "field_order requires a record_template; it names "
+                    "template fields and is meaningless without one."
+                )
+            # Validates field_order is a permutation of the template
+            # fields (raises otherwise) for any field count, so a
+            # single-field typo or wrong name is also caught.
             perm = _column_permutation(record_template, field_order)
-            self._chains = [c[..., perm] for c in self._chains]
-            self._concatenated = None
+            if len(record_template.fields) > 1:
+                # Validate width *before* the gather: ``c[..., perm]``
+                # would otherwise silently drop extra columns (too-wide
+                # chain) or clamp out-of-bounds indices (too-narrow),
+                # then pass the post-gather total-size check.
+                for c in self._chains:
+                    if c.shape[-1] != len(perm):
+                        raise ValueError(
+                            f"chain last dim ({c.shape[-1]}) doesn't match "
+                            f"the template total flat size ({len(perm)})."
+                        )
+                self._chains = [c[..., perm] for c in self._chains]
+                self._concatenated = None
 
         flat = self._concat_chains()
         # Track whether the user explicitly supplied a template; we use
