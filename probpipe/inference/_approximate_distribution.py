@@ -175,24 +175,20 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             az.plot_trace(posterior.inference_data)
 
         Returns ``None`` if no auxiliary data has been attached.
-        Returns ``_auxiliary`` directly (legacy fallback) if it was set
-        before the ``/arviz/`` subtree convention was adopted.
+        Falls back to ``_auxiliary`` directly if set before the
+        ``/arviz/`` subtree convention was adopted (legacy).
         """
         aux = self.auxiliary
         if aux is None:
             return None
-        # New convention: ArviZ lives under /arviz/ subtree
         if hasattr(aux, "children") and "arviz" in aux.children:
             return aux["arviz"]
-        # Legacy fallback: auxiliary IS the ArviZ DataTree directly
         return aux
 
     @property
     def warmup_samples(self) -> list[Array] | None:
         """Per-chain warmup samples extracted from auxiliary data."""
-        # Warmup lives under /arviz/warmup/ in the new layout,
-        # or directly under _auxiliary in the legacy layout.
-        idata = self.inference_data   # already handles both layouts
+        idata = self.inference_data
         if idata is None:
             return None
         has_warmup = (
@@ -293,10 +289,8 @@ def make_posterior(
     algorithm : str
         Inference algorithm name (e.g. ``"tfp_nuts"``, ``"rwmh"``).
     auxiliary : DataTree or None
-        ArviZ-format DataTree produced by the inference backend
-        (``posterior``, ``sample_stats``, ``warmup`` groups).
-        Stored under ``_auxiliary["arviz"]`` so that ``_auxiliary``
-        can hold other non-ArviZ subtrees (e.g. ``/diagnostics/``).
+        Pre-built auxiliary DataTree (diagnostics, sample stats, warmup).
+        Inference methods are responsible for building this.
     record_template : RecordTemplate or None
         If provided, ``draws()`` returns named ``Record``.
     **meta
@@ -314,9 +308,15 @@ def make_posterior(
     )
 
     if auxiliary is not None:
-        # Wrap the ArviZ InferenceData under /arviz/ so _auxiliary can
-        # hold other subtrees (e.g. /diagnostics/) alongside it.
-        dicto: dict = {"arviz": auxiliary}
+        # Nest ArviZ InferenceData groups under /arviz/ so _auxiliary
+        # can hold other subtrees (e.g. /diagnostics/) alongside it.
+        dicto: dict = {}
+        for group_path, node in auxiliary.items():
+            if group_path == "/":
+                continue
+            clean = group_path.lstrip("/")
+            ds = node.to_dataset() if isinstance(node, xr.DataTree) else node
+            dicto[f"arviz/{clean}"] = ds
         result._auxiliary = xr.DataTree.from_dict(dicto)
 
     result.with_source(
