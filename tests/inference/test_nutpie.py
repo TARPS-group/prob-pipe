@@ -241,3 +241,34 @@ class TestNutpieIntegration:
         for field, prior_mean in [("zeta", 100.0), ("alpha", 0.0), ("mu", -100.0)]:
             got = float(jnp.mean(jnp.asarray(draws[field])))
             np.testing.assert_allclose(got, prior_mean, atol=10.0)
+
+    def test_partial_conditioning_draws_not_mislabeled(self):
+        """Partial conditioning via nutpie: an unsupplied observed variable
+        is inferred and its draws are labeled correctly.
+
+        ``X`` is declared ``observed=X``; conditioning on ``y`` alone
+        leaves it free, so the posterior covers ``mu`` and ``X``. ``X``
+        sorts before ``mu`` in nutpie's alphabetical ``data_vars`` while
+        the param order is ``(mu, X)``, so distinct priors catch any
+        column mislabeling.
+        """
+        def model_fn(X=None, y=None):
+            with pm.Model() as m:
+                mu = pm.Normal("mu", 100.0, 0.5)
+                X_rv = pm.Normal("X", -100.0, 0.5, observed=X)
+                pm.Normal("y", mu=mu + X_rv, sigma=1000.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn, name="partial")
+        result = condition_on_nutpie._func(
+            model, data={"y": np.zeros(5, dtype=float)},
+            num_results=200, num_warmup=200, num_chains=1, random_seed=0,
+        )
+        draws = result.draws()
+        assert set(draws.fields) == {"mu", "X"}
+        np.testing.assert_allclose(
+            float(jnp.mean(jnp.asarray(draws["mu"]))), 100.0, atol=10.0
+        )
+        np.testing.assert_allclose(
+            float(jnp.mean(jnp.asarray(draws["X"]))), -100.0, atol=10.0
+        )

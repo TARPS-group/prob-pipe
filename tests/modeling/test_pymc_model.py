@@ -326,6 +326,36 @@ class TestRecordTemplate:
         )
         assert set(result.draws().fields) == {"mu", "X"}
 
+    def test_partial_conditioning_draws_not_mislabeled(self):
+        """The inferred observed variable's draws are labeled correctly —
+        not swapped with a canonical parameter.
+
+        ``mu`` and the unsupplied ``X`` get distinct, identifiable priors
+        and a near-flat likelihood, so each marginal posterior stays near
+        its own prior. A mislabeling (X's draws under field ``mu``, or
+        vice versa) would flip the recovered means. ``X`` also sorts
+        before ``mu`` alphabetically, exercising column-order alignment.
+        """
+        from probpipe import condition_on
+
+        def model_fn(X=None, y=None):
+            with pm.Model() as m:
+                mu = pm.Normal("mu", 100.0, 0.5)
+                X_rv = pm.Normal("X", -100.0, 0.5, observed=X)
+                pm.Normal("y", mu=mu + X_rv, sigma=1000.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn)
+        result = condition_on(
+            model, {"y": np.zeros(5, dtype=np.float32)},
+            method="pymc_nuts",
+            num_results=200, num_warmup=200, num_chains=1, random_seed=0,
+        )
+        draws = result.draws()
+        assert set(draws.fields) == {"mu", "X"}
+        assert float(jnp.mean(jnp.asarray(draws["mu"]))) > 50.0    # ~ +100
+        assert float(jnp.mean(jnp.asarray(draws["X"]))) < -50.0    # ~ -100
+
     def test_dynamic_rv_set_rejected_via_inference(self):
         """The clean dynamic-RV error fires on the inference path too.
 
@@ -372,6 +402,22 @@ class TestRecordTemplate:
 
         with pytest.raises(ValueError, match="non-concrete shape"):
             _ = PyMCModel(model_fn).record_template
+
+    def test_event_shape_rejects_non_concrete_shape(self):
+        """``event_shape`` derives from ``record_template``, so it rejects
+        a non-concrete free-RV shape rather than silently under-counting.
+        """
+        import pytensor.tensor as pt
+
+        def model_fn(y=None):
+            with pm.Model() as m:
+                mu = pt.vector("mu_data")
+                pm.Normal("z", mu=mu, sigma=1.0)
+                pm.Normal("y", 0, 1, observed=y)
+            return m
+
+        with pytest.raises(ValueError, match="non-concrete shape"):
+            _ = PyMCModel(model_fn).event_shape
 
 
 class TestRecordDataUnpacking:
