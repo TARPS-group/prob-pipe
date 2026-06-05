@@ -6,8 +6,8 @@ Inference is handled by registered methods in ``probpipe.inference``.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
-from typing import Any, Callable
+from collections.abc import Callable, Iterator
+from typing import Any
 
 import jax.numpy as jnp
 

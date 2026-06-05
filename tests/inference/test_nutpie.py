@@ -120,6 +120,33 @@ class TestExtractChains:
         with pytest.raises(TypeError, match="Cannot extract chains"):
             _extract_chains(mock_trace, num_chains=1)
 
+    def test_keep_names_overrides_data_vars_order(self):
+        """keep_names selects and orders columns explicitly, overriding
+        the alphabetical posterior.data_vars order.
+
+        nutpie sorts data_vars alphabetically; without an explicit order
+        the concatenated columns would not line up with the PyMC template
+        field order (declaration order), silently mislabeling draws.
+        """
+        mock_trace = MagicMock()
+        a = np.full((1, 4), 1.0); m = np.full((1, 4), 2.0); z = np.full((1, 4), 3.0)
+        va = MagicMock(); va.values = a
+        vm = MagicMock(); vm.values = m
+        vz = MagicMock(); vz.values = z
+        mock_posterior = MagicMock()
+        mock_posterior.data_vars = ["alpha", "mu", "zeta"]  # nutpie's sorted order
+        mock_posterior.__getitem__ = (
+            lambda self, k: {"alpha": va, "mu": vm, "zeta": vz}[k]
+        )
+        mock_trace.posterior = mock_posterior
+
+        chains, names = _extract_chains(
+            mock_trace, num_chains=1, keep_names=["zeta", "alpha", "mu"],
+        )
+        assert names == ["zeta", "alpha", "mu"]
+        # Columns concatenated in keep_names order: zeta=3, alpha=1, mu=2.
+        np.testing.assert_array_equal(chains[0][0], [3.0, 1.0, 2.0])
+
 
 # ---------------------------------------------------------------------------
 # Real integration: nutpie + PyMCModel
@@ -185,3 +212,32 @@ class TestNutpieIntegration:
         assert result.inference_data is not None
         # arviz-like trace exposes posterior as an xarray Dataset/DataTree
         assert hasattr(result.inference_data, "posterior")
+
+    def test_multiparam_draws_not_mislabeled(self):
+        """Draws are labeled by the model's parameter order, not nutpie's
+        alphabetical ``posterior.data_vars`` order.
+
+        Declares ``zeta``, ``alpha``, ``mu`` (non-alphabetical) with
+        distinct tight priors and a near-flat likelihood, so each
+        posterior stays near its prior. If chain columns were taken in
+        alphabetical order while the template uses declaration order,
+        the means would be assigned to the wrong fields.
+        """
+        def model_fn(y=None):
+            with pm.Model() as m:
+                zeta = pm.Normal("zeta", 100.0, 1.0)
+                alpha = pm.Normal("alpha", 0.0, 1.0)
+                mu = pm.Normal("mu", -100.0, 1.0)
+                pm.Normal("y", mu=zeta + alpha + mu, sigma=1000.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn, name="ordering")
+        result = condition_on_nutpie._func(
+            model, data={"y": np.zeros(4, dtype=float)},
+            num_results=300, num_warmup=300, num_chains=1, random_seed=0,
+        )
+        draws = result.draws()
+        assert draws.fields == ("zeta", "alpha", "mu")
+        for field, prior_mean in [("zeta", 100.0), ("alpha", 0.0), ("mu", -100.0)]:
+            got = float(jnp.mean(jnp.asarray(draws[field])))
+            np.testing.assert_allclose(got, prior_mean, atol=10.0)

@@ -53,7 +53,12 @@ def condition_on_nutpie(
         chains=num_chains, seed=random_seed, **kwargs,
     )
 
-    chains, param_names = _extract_chains(trace, num_chains)
+    # PyMC: extract chain columns in ``_param_names`` order so they line
+    # up with ``record_template_for`` (nutpie sorts ``posterior.data_vars``
+    # alphabetically, which would otherwise mislabel draws). Stan: take
+    # trace order.
+    keep_names = list(model._param_names) if pymc_build is not None else None
+    chains, param_names = _extract_chains(trace, num_chains, keep_names=keep_names)
 
     # Build the template from the same conditioned model nutpie sampled
     # (PyMC only); Stan models carry their own record_template, if any.
@@ -97,11 +102,38 @@ def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any | None]:
     )
 
 
-def _extract_chains(trace: Any, num_chains: int) -> tuple[list, list]:
-    """Extract per-chain sample arrays from a nutpie ArviZ trace."""
+def _extract_chains(
+    trace: Any, num_chains: int, *, keep_names: list[str] | None = None,
+) -> tuple[list, list]:
+    """Extract per-chain sample arrays from a nutpie ArviZ trace.
+
+    Parameters
+    ----------
+    trace : nutpie ArviZ trace
+        Trace exposing a ``posterior`` group.
+    num_chains : int
+        Number of chains to extract.
+    keep_names : list of str or None
+        If given, extract exactly these variables, in this order, instead
+        of ``posterior.data_vars`` order. nutpie orders ``data_vars``
+        alphabetically, so PyMC callers pass the model's ``_param_names``
+        to keep chain-column order aligned with the ``record_template``
+        field order (otherwise the flat chain is split positionally and
+        draws are silently mislabeled). Stan callers pass ``None`` and
+        take trace order.
+
+    Returns
+    -------
+    tuple[list, list]
+        Per-chain concatenated arrays, and the resolved variable-name
+        order.
+    """
     if hasattr(trace, "posterior"):
         posterior = trace.posterior
-        param_names = list(posterior.data_vars)
+        if keep_names is not None:
+            param_names = list(keep_names)
+        else:
+            param_names = list(posterior.data_vars)
         chains = []
         for c in range(num_chains):
             chain_arrays = []
