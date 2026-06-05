@@ -117,9 +117,7 @@ class PyMCModel(ProbabilisticModel):
             A build of this model.
         names : sequence of str
             Free-RV names to yield, in order. Every name must be a free
-            RV of *model*; callers derive *names* from the build itself —
-            ``_param_names`` for the declared template, or
-            :meth:`_conditioned_param_names` for a conditioned build.
+            RV of *model*.
         """
         free_rvs = {rv.name: rv for rv in model.free_RVs}
         for name in names:
@@ -143,9 +141,7 @@ class PyMCModel(ProbabilisticModel):
             introduced. ProbPipe does not support models whose
             non-observed random-variable set changes with the data
             (dynamic random variables); see
-            https://github.com/TARPS-group/prob-pipe/issues/232. Observed
-            names left free are allowed — that is partial conditioning,
-            not a dynamic RV.
+            https://github.com/TARPS-group/prob-pipe/issues/232.
         """
         free = {rv.name for rv in model.free_RVs}
         missing = [n for n in self._param_names if n not in free]
@@ -172,8 +168,7 @@ class PyMCModel(ProbabilisticModel):
                 f"on data size. See "
                 f"https://github.com/TARPS-group/prob-pipe/issues/232."
             )
-        # Partial conditioning: observed names the caller left unsupplied
-        # are free in this build and are inferred, so include them.
+        # Partial conditioning: include observed names left free.
         omitted_observed = tuple(n for n in self._observed_names if n in free)
         return tuple(self._param_names) + omitted_observed
 
@@ -181,9 +176,8 @@ class PyMCModel(ProbabilisticModel):
     def event_shape(self) -> tuple[int, ...]:
         """Total number of scalar free parameters (observed excluded).
 
-        Derived from :attr:`record_template` so the flat size and the
-        per-field template can never disagree; consequently this raises
-        on a non-concrete free-RV shape, just as the template does.
+        Derived from :attr:`record_template`; raises on a non-concrete
+        free-RV shape, as the template does.
         """
         return (self.record_template.flat_size,)
 
@@ -192,20 +186,11 @@ class PyMCModel(ProbabilisticModel):
     ) -> NumericRecordTemplate:
         """Parameter template over *names*, read from a PyMC *model* build.
 
-        Inference paths call this with the data-conditioned build and the
-        names from :meth:`_conditioned_param_names`, then pass the result
-        to :func:`make_posterior`, so the posterior carries Record
-        structure (``mean(post)`` returns a ``NumericRecord`` keyed by the
-        PyMC RV names) and the template matches the chain even for RVs
-        whose shape depends on data size (e.g. per-observation random
-        effects, ``pm.Normal('alpha', 0, 1, shape=X.shape[0])``). The
-        public :attr:`record_template` property passes the declared
-        (no-data) build and ``_param_names`` instead.
-
-        Scalar PyMC RVs (e.g. ``pm.Normal('intercept', 0, 1)``) become
-        fields with event shape ``()``; shape-:math:`k` RVs (e.g.
-        ``pm.Normal('beta', 0, 1, shape=k)``) become fields with event
-        shape ``(k,)``.
+        Inference passes the data-conditioned build and the names from
+        :meth:`_conditioned_param_names`; the :attr:`record_template`
+        property passes the no-data build and ``_param_names``. Scalar
+        PyMC RVs become fields with event shape ``()``; shape-:math:`k`
+        RVs become fields with event shape ``(k,)``.
 
         Parameters
         ----------
@@ -223,10 +208,7 @@ class PyMCModel(ProbabilisticModel):
         ------
         ValueError
             If any named free RV has a non-concrete (``None``) dimension
-            in its ``type.shape``. The record-template machinery requires
-            concrete shapes — silently dropping a ``None`` dim would
-            produce an under-shaped template and confusing downstream
-            errors.
+            in its ``type.shape``.
         """
         fields: dict[str, tuple[int, ...]] = {}
         for name, rv in self._param_rvs(model, names):
@@ -244,16 +226,12 @@ class PyMCModel(ProbabilisticModel):
 
     @property
     def record_template(self) -> NumericRecordTemplate:
-        """Declared parameter template from the no-data build done at
-        construction — the canonical parameters, with observed variables
-        excluded.
+        """Declared parameter template from the no-data build (canonical
+        parameters, observed variables excluded).
 
-        For RVs whose shape depends on data size, the conditioned shapes
-        are resolved at inference time via :meth:`_record_template_for`;
-        this property cannot know them without data. The inferred set can
-        also differ under partial conditioning (an unsupplied observed
-        variable becomes a free parameter), which this property likewise
-        does not reflect.
+        Data-dependent shapes, and any observed variable left free under
+        partial conditioning, are resolved at inference time via
+        :meth:`_record_template_for`; this property reflects neither.
         """
         return self._record_template_for(
             self._unconditioned_model, self._param_names,
@@ -322,9 +300,8 @@ class PyMCModel(ProbabilisticModel):
         the user's model function — PyMC's tensor backend doesn't
         multiply with raw JAX arrays.
 
-        The returned model is stateless and not retained on ``self``;
-        callers that need the conditioned shapes (e.g. for
-        :meth:`_record_template_for`) pass this build back explicitly.
+        The returned model is not retained on ``self``; callers that need
+        the conditioned shapes pass it back explicitly.
         """
         if data is None:
             return self._model_fn()

@@ -72,9 +72,8 @@ def extract_chain_columns(
     For each chain ``c`` and each variable in *names* (in that order),
     pulls ``trace.posterior[name].values[c]``, flattens trailing axes to
     2-D ``(draws, -1)``, and concatenates across variables. Columns are
-    laid out in *names* order, so callers pass the order that matches the
-    ``record_template`` they build (the flat chain is split positionally
-    downstream).
+    laid out in *names* order, to match the ``record_template`` field
+    order.
 
     Parameters
     ----------

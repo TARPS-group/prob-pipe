@@ -48,11 +48,8 @@ class PyMCNutsMethod(InferenceMethod):
         random_seed = kwargs.get("random_seed", 0)
 
         model = dist._pymc_model(data=observed)
-        # Resolve the names to infer (canonical params plus any observed
-        # left free under partial conditioning) and the template, before
-        # sampling — so a dynamic-RV or non-concrete model fails fast with
-        # a clear error rather than an opaque KeyError during extraction.
-        # Extraction and template share `param_names`, so columns line up.
+        # Resolve the inferred names + template before sampling (fail fast
+        # on a dynamic-RV / non-concrete model); extraction shares them.
         param_names = dist._conditioned_param_names(model)
         record_template = dist._record_template_for(model, param_names)
         with model:
@@ -114,8 +111,8 @@ class PyMCADVIMethod(InferenceMethod):
         vi_method = kwargs.get("vi_method", "advi")
 
         model = dist._pymc_model(data=observed)
-        # Resolve names + template before fitting (fail fast on dynamic-RV
-        # or non-concrete models); extraction shares `param_names`.
+        # Resolve the inferred names + template before fitting; extraction
+        # shares them.
         param_names = dist._conditioned_param_names(model)
         record_template = dist._record_template_for(model, param_names)
         with model:

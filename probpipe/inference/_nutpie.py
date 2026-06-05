@@ -48,11 +48,9 @@ def condition_on_nutpie(
 
     compiled, pymc_build = _compile_for_nutpie(model, data)
 
-    # Resolve the PyMC param names + template from the same conditioned
-    # build before sampling, so a dynamic-RV or non-concrete model fails
-    # fast with a clear error rather than an opaque KeyError during chain
-    # extraction. The names cover canonical params plus any observed left
-    # free under partial conditioning. Stan models carry their own
+    # Resolve the PyMC inferred names + template from the conditioned
+    # build before sampling (fail fast on a dynamic-RV / non-concrete
+    # model); extraction shares the names. Stan models carry their own
     # record_template, if any.
     if pymc_build is not None:
         keep_names = list(model._conditioned_param_names(pymc_build))
@@ -120,12 +118,9 @@ def _extract_chains(
         Number of chains to extract.
     keep_names : list of str or None
         If given, extract exactly these variables, in this order, instead
-        of ``posterior.data_vars`` order. nutpie orders ``data_vars``
-        alphabetically, so PyMC callers pass the model's ``_param_names``
-        to keep chain-column order aligned with the ``record_template``
-        field order (otherwise the flat chain is split positionally and
-        draws are silently mislabeled). Stan callers pass ``None`` and
-        take trace order.
+        of ``posterior.data_vars`` order (which nutpie sorts
+        alphabetically). PyMC callers pass the param names so chain
+        columns align with the template; Stan callers pass ``None``.
 
     Returns
     -------
