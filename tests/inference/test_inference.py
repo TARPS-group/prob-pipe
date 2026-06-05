@@ -182,6 +182,55 @@ class TestApproximateDistributionValuesTemplate:
     def test_record_template_property(self, posterior_with_template, template):
         assert posterior_with_template.record_template is template
 
+    def test_field_order_reassembles_by_name(self):
+        """field_order maps chain column-blocks to template fields by name.
+
+        The chain's columns are laid out in a different order than the
+        template (``b`` block, then scalar ``a``). Passing ``field_order``
+        must reassemble each field from its own columns — not split the
+        flat chain positionally in template order (which would scramble
+        the draws).
+        """
+        template = RecordTemplate(a=(), b=(2,))  # sizes: a=1, b=2
+        # Columns laid out in field_order = (b, a): [b0, b1, a0].
+        b_block = jnp.array([[10.0, 11.0], [12.0, 13.0]])      # (2, 2)
+        a_block = jnp.array([[1.0], [2.0]])                    # (2, 1)
+        chain = jnp.concatenate([b_block, a_block], axis=-1)   # (2, 3)
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
+        post = make_posterior(
+            [chain], parents=(prior,), algorithm="test",
+            record_template=template, field_order=["b", "a"],
+        )
+        draws = post.draws()
+        # a is the trailing column; b is the leading 2-column block.
+        np.testing.assert_allclose(np.asarray(draws["a"]), [1.0, 2.0])
+        np.testing.assert_allclose(np.asarray(draws["b"]), b_block)
+
+    def test_field_order_none_is_positional(self):
+        """field_order=None keeps the historical positional layout."""
+        template = RecordTemplate(a=(), b=(2,))
+        chain = jnp.array([[1.0, 10.0, 11.0], [2.0, 12.0, 13.0]])  # a, then b
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
+        post = make_posterior(
+            [chain], parents=(prior,), algorithm="test", record_template=template,
+        )
+        draws = post.draws()
+        np.testing.assert_allclose(np.asarray(draws["a"]), [1.0, 2.0])
+        np.testing.assert_allclose(
+            np.asarray(draws["b"]), [[10.0, 11.0], [12.0, 13.0]]
+        )
+
+    def test_field_order_must_be_permutation(self):
+        """A field_order that isn't a permutation of template fields raises."""
+        template = RecordTemplate(a=(), b=())
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        with pytest.raises(ValueError, match="not a permutation"):
+            make_posterior(
+                [chain], parents=(prior,), algorithm="test",
+                record_template=template, field_order=["a", "c"],
+            )
+
     def test_array_shaped_fields(self):
         """Template with non-scalar fields unflattens correctly."""
         template = RecordTemplate(

@@ -20,6 +20,56 @@ __all__ = ["ApproximateDistribution", "make_posterior"]
 
 
 # ---------------------------------------------------------------------------
+# Column ordering
+# ---------------------------------------------------------------------------
+
+
+def _column_permutation(
+    record_template: RecordTemplate, field_order: list[str],
+) -> list[int]:
+    """Column-index permutation mapping a *field_order*-laid-out flat chain
+    into ``record_template.fields`` order.
+
+    *field_order* names the field each contiguous column-block of the flat
+    chain occupies. The returned ``perm`` satisfies: ``flat[..., perm]``
+    lays the columns out in template-field order, so the positional split
+    in :class:`ApproximateDistribution` maps each column to the right
+    field by name. See issue #233.
+
+    Raises
+    ------
+    ValueError
+        If *field_order* is not a permutation of the template's fields, or
+        a field has an opaque (``spec=None``) leaf with no flat size.
+    """
+    if sorted(field_order) != sorted(record_template.fields):
+        raise ValueError(
+            f"field_order {list(field_order)} is not a permutation of "
+            f"template fields {list(record_template.fields)}."
+        )
+    sizes: dict[str, int] = {}
+    for field_name in record_template.fields:
+        spec = record_template[field_name]
+        if spec is None:
+            raise ValueError(
+                f"ApproximateDistribution requires a numeric template; "
+                f"field {field_name!r} has spec=None (opaque). Opaque "
+                f"leaves don't have a flat size."
+            )
+        sizes[field_name] = _spec_size(spec)
+    bounds: dict[str, tuple[int, int]] = {}
+    offset = 0
+    for field_name in field_order:
+        bounds[field_name] = (offset, offset + sizes[field_name])
+        offset += sizes[field_name]
+    perm: list[int] = []
+    for field_name in record_template.fields:
+        lo, hi = bounds[field_name]
+        perm.extend(range(lo, hi))
+    return perm
+
+
+# ---------------------------------------------------------------------------
 # ApproximateDistribution
 # ---------------------------------------------------------------------------
 
@@ -64,12 +114,28 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         weights: ArrayLike | Weights | None = None,
         name: str | None = None,
         record_template: RecordTemplate | None = None,
+        field_order: list[str] | None = None,
     ):
         if not chains:
             raise ValueError("Must provide at least one chain")
 
         self._chains = [jnp.asarray(c) for c in chains]
         self._concatenated: Array | None = None
+
+        # When the caller's chain columns are laid out in a different
+        # field order than the template — e.g. a backend whose trace
+        # sorts variable names — permute them into ``record_template``
+        # order. The positional split below (and ``draws()`` unflatten)
+        # then map each column to the right field by name rather than by
+        # position, so callers don't have to pre-sort. See issue #233.
+        if (
+            field_order is not None
+            and record_template is not None
+            and len(record_template.fields) > 1
+        ):
+            perm = _column_permutation(record_template, field_order)
+            self._chains = [c[..., perm] for c in self._chains]
+            self._concatenated = None
 
         flat = self._concat_chains()
         # Track whether the user explicitly supplied a template; we use
@@ -273,6 +339,7 @@ def make_posterior(
     *,
     auxiliary: DataTree | None = None,
     record_template: RecordTemplate | None = None,
+    field_order: list[str] | None = None,
     **meta: Any,
 ) -> ApproximateDistribution:
     """Build an ApproximateDistribution with provenance.
@@ -290,6 +357,13 @@ def make_posterior(
         Inference methods are responsible for building this.
     record_template : RecordTemplate or None
         If provided, ``draws()`` returns named ``Record``.
+    field_order : list of str or None
+        Names the field each contiguous column-block of ``chains`` belongs
+        to. Default (``None``) assumes the columns are laid out in
+        ``record_template.fields`` order. Pass this when the chain's column
+        order may differ from the template's (e.g. a backend that sorts
+        variable names) so columns are aligned to fields by name rather
+        than position (see issue #233).
     **meta
         Additional metadata stored in provenance.
 
@@ -300,6 +374,7 @@ def make_posterior(
     """
     result = ApproximateDistribution(
         chains, name="posterior", record_template=record_template,
+        field_order=field_order,
     )
 
     if auxiliary is not None:
