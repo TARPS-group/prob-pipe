@@ -54,7 +54,7 @@ def condition_on_nutpie(
     # it from the conditioned build; Stan models carry their own
     # record_template, if any.
     if pymc_build is not None:
-        record_template = model.record_template_for(pymc_build)
+        record_template = model._record_template_for(pymc_build)
     else:
         record_template = getattr(model, "record_template", None)
 

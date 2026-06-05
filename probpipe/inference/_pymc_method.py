@@ -51,7 +51,7 @@ class PyMCNutsMethod(InferenceMethod):
         # Build the template before sampling so a non-concrete or
         # dynamic-RV model fails fast with a clear error rather than an
         # opaque KeyError during chain extraction.
-        record_template = dist.record_template_for(model)
+        record_template = dist._record_template_for(model)
         with model:
             trace = pm.sample(
                 draws=num_results,
@@ -113,7 +113,7 @@ class PyMCADVIMethod(InferenceMethod):
         model = dist._pymc_model(data=observed)
         # Build the template before fitting so a non-concrete or
         # dynamic-RV model fails fast with a clear error.
-        record_template = dist.record_template_for(model)
+        record_template = dist._record_template_for(model)
         with model:
             approx = pm.fit(n=num_iterations, method=vi_method, random_seed=random_seed)
             trace = approx.sample(num_results)

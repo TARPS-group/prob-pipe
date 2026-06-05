@@ -113,20 +113,42 @@ class PyMCModel(ProbabilisticModel):
         Parameters
         ----------
         model : pymc.Model
-            A build of this model (conditioned or not). Its free RVs
-            must include every name in ``_param_names``.
+            A build of this model (conditioned or not). Its free
+            (non-observed) random variables must be exactly the set
+            frozen as ``_param_names`` at construction.
 
         Raises
         ------
         ValueError
-            If a name in ``_param_names`` (frozen from the no-data build
-            at construction) is absent from *model*'s free RVs — i.e.
-            the random-variable set changed between builds. ProbPipe
-            does not support such dynamic random variables; see
+            If *model*'s set of free (non-observed) random variables
+            differs from ``_param_names`` (frozen from the no-data build
+            at construction) in either direction — a canonical parameter
+            missing from this build, or a new free RV introduced by it.
+            ProbPipe does not support models whose random-variable set
+            changes with the data (dynamic random variables); see
             https://github.com/TARPS-group/prob-pipe/issues/232.
         """
         free_rvs = {rv.name: rv for rv in model.free_RVs}
+        # Reject additive dynamic RVs: a free RV in this build that was
+        # not a free parameter at construction (and isn't an observed
+        # name). Without this it would be silently dropped from both the
+        # template and the chain (extraction filters to _param_names),
+        # so the user's parameter would vanish from the posterior.
+        extra = set(free_rvs) - set(self._param_names) - set(self._observed_names)
+        if extra:
+            raise ValueError(
+                f"PyMC build introduced free random variable(s) "
+                f"{sorted(extra)} not present in the model built at "
+                f"construction. ProbPipe does not support models whose "
+                f"set of free random variables changes with the data "
+                f"(dynamic random variables); the parameter set must be "
+                f"fixed across builds, with only per-variable shapes "
+                f"allowed to depend on data size. See "
+                f"https://github.com/TARPS-group/prob-pipe/issues/232."
+            )
         for name in self._param_names:
+            # Reject subtractive dynamic RVs: a canonical parameter that
+            # this build dropped.
             if name not in free_rvs:
                 raise ValueError(
                     f"PyMC random variable {name!r} is present in the "
@@ -150,7 +172,7 @@ class PyMCModel(ProbabilisticModel):
         """
         return (self.record_template.flat_size,)
 
-    def record_template_for(self, model: Any) -> NumericRecordTemplate:
+    def _record_template_for(self, model: Any) -> NumericRecordTemplate:
         """Parameter template built from a specific PyMC model build.
 
         Inference paths call this with the data-conditioned model they
@@ -187,9 +209,10 @@ class PyMCModel(ProbabilisticModel):
             its ``type.shape``. The record-template machinery requires
             concrete shapes — silently dropping a ``None`` dim would
             produce an under-shaped template and confusing downstream
-            errors. Also raised if *model* is missing a free RV present
-            at construction (dynamic random variables are unsupported;
-            see :meth:`_param_rvs`).
+            errors. Also raised if *model*'s free-RV set differs from the
+            construction-time parameter set in either direction — a
+            canonical parameter missing, or a new RV introduced (dynamic
+            random variables are unsupported; see :meth:`_param_rvs`).
         """
         fields: dict[str, tuple[int, ...]] = {}
         for name, rv in self._param_rvs(model):
@@ -208,13 +231,13 @@ class PyMCModel(ProbabilisticModel):
     @property
     def record_template(self) -> NumericRecordTemplate:
         """Declared parameter template from the no-data build done at
-        construction (see :meth:`record_template_for`).
+        construction (see :meth:`_record_template_for`).
 
         For RVs whose shape depends on data size, the conditioned shapes
-        are resolved at inference time via :meth:`record_template_for`;
+        are resolved at inference time via :meth:`_record_template_for`;
         this property cannot know them without data.
         """
-        return self.record_template_for(self._unconditioned_model)
+        return self._record_template_for(self._unconditioned_model)
 
     # -- Named components interface ------------------------------------------
 
@@ -281,7 +304,7 @@ class PyMCModel(ProbabilisticModel):
 
         The returned model is stateless and not retained on ``self``;
         callers that need the conditioned shapes (e.g. for
-        :meth:`record_template_for`) pass this build back explicitly.
+        :meth:`_record_template_for`) pass this build back explicitly.
         """
         if data is None:
             return self._model_fn()

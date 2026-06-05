@@ -175,12 +175,12 @@ class TestRecordTemplate:
         assert "y" not in tpl.fields
 
     def test_data_dependent_shape_reflects_conditioned_build(self):
-        """``record_template_for(model)`` reports the data-conditioned
+        """``_record_template_for(model)`` reports the data-conditioned
         shape for an RV whose shape depends on data size, while the bare
         ``record_template`` property reports the declared (no-data)
         shape (issue #224).
 
-        The inference paths call ``record_template_for`` with the model
+        The inference paths call ``_record_template_for`` with the model
         they build from data, so the template matches the chain. The
         property cannot know the conditioned shape without data, so it
         stays at the declared sentinel — and, crucially, holds no
@@ -202,7 +202,7 @@ class TestRecordTemplate:
             "X": np.zeros(N, dtype=np.float32),
             "y": np.zeros(N, dtype=np.float32),
         })
-        tpl_c = model.record_template_for(conditioned)
+        tpl_c = model._record_template_for(conditioned)
         assert tpl_c.fields == ("intercept", "alpha")
         assert tpl_c["alpha"] == (N,)
         assert not hasattr(model, "_last_conditioned_model")
@@ -253,7 +253,30 @@ class TestRecordTemplate:
         assert "ghost" in model.parameter_names
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         with pytest.raises(ValueError, match="dynamic random variables"):
-            model.record_template_for(conditioned)
+            model._record_template_for(conditioned)
+
+    def test_additive_dynamic_rv_set_rejected(self):
+        """An RV that exists *only* in the conditioned build is rejected
+        rather than silently dropped (issue #232, additive direction).
+
+        ``extra`` is created only when data is present, so it is absent
+        from ``_param_names`` (frozen from the no-data build). Without an
+        explicit check it would be omitted from the template and filtered
+        out of the chain, silently vanishing from the posterior.
+        """
+        def model_fn(y=None):
+            with pm.Model() as m:
+                mu = pm.Normal("mu", 0, 1)
+                if y is not None:                   # conditioned build only
+                    pm.Normal("extra", 0, 1)
+                pm.Normal("y", mu=mu, sigma=1.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn)
+        assert model.parameter_names == ("mu",)     # extra absent at construction
+        conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
+        with pytest.raises(ValueError, match="dynamic random variables"):
+            model._record_template_for(conditioned)
 
     def test_dynamic_rv_set_rejected_via_inference(self):
         """The clean dynamic-RV error fires on the inference path too.
