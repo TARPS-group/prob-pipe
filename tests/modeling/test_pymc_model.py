@@ -25,6 +25,21 @@ def simple_model_fn(y=None):
     return m
 
 
+def per_observation_effect_model_fn(X=None, y=None):
+    """Model with a per-observation random effect (data-dependent shape).
+
+    ``alpha`` has shape ``X.shape[0]``, so its event shape is the sentinel
+    ``(1,)`` in the no-data build and ``(N,)`` once conditioned on data.
+    """
+    if X is None:
+        X = np.ones(1, dtype=np.float32)  # sentinel for the no-data build
+    with pm.Model() as m:
+        intercept = pm.Normal("intercept", 0, 1)
+        alpha = pm.Normal("alpha", 0, 1, shape=X.shape[0])
+        pm.Normal("y", mu=intercept + alpha, sigma=1.0, observed=y)
+    return m
+
+
 class TestPyMCModel:
     """Test PyMCModel construction and protocol compliance."""
 
@@ -159,6 +174,213 @@ class TestRecordTemplate:
         assert tpl.fields == ("mu",)
         assert "y" not in tpl.fields
 
+    def test_data_dependent_shape_reflects_conditioned_build(self):
+        """``_record_template_for(model)`` reports the data-conditioned
+        shape for an RV whose shape depends on data size, while the bare
+        ``record_template`` property reports the declared (no-data)
+        shape (issue #224).
+
+        The inference paths call ``_record_template_for`` with the model
+        they build from data, so the template matches the chain. The
+        property cannot know the conditioned shape without data, so it
+        stays at the declared sentinel — and, crucially, holds no
+        per-call mutable state, so concurrent inference on one instance
+        can't race.
+        """
+        model = PyMCModel(per_observation_effect_model_fn)
+        # Declared (no-data) property: sentinel (1,) for alpha.
+        tpl = model.record_template
+        assert tpl.fields == ("intercept", "alpha")
+        assert tpl["intercept"] == ()
+        assert tpl["alpha"] == (1,)
+        assert model.event_shape == (1 + 1,)
+
+        # Template built from a data-conditioned build picks up the real
+        # shape — and the instance carries no cached state afterward.
+        N = 50
+        conditioned = model._pymc_model(data={
+            "X": np.zeros(N, dtype=np.float32),
+            "y": np.zeros(N, dtype=np.float32),
+        })
+        names = model._conditioned_param_names(conditioned)
+        tpl_c = model._record_template_for(conditioned, names)
+        assert tpl_c.fields == ("intercept", "alpha")
+        assert tpl_c["alpha"] == (N,)
+        assert not hasattr(model, "_last_conditioned_model")
+        # Property still reports the declared shape (no hidden mutation).
+        assert model.record_template["alpha"] == (1,)
+
+    def test_data_dependent_shape_inference_recovers_correct_layout(self):
+        """End-to-end: NUTS with a per-observation effect produces a
+        posterior whose ``draws()`` records match the conditioned
+        template (issue #224 — would previously shape-mismatch at
+        posterior assembly).
+        """
+        from probpipe import condition_on
+
+        N = 12
+        rng = np.random.default_rng(0)
+        X = np.arange(N, dtype=np.float32)
+        y = rng.normal(size=N).astype(np.float32)
+        model = PyMCModel(per_observation_effect_model_fn)
+        result = condition_on(
+            model, {"X": X, "y": y},
+            method="pymc_nuts",
+            num_results=20, num_warmup=10, num_chains=1, random_seed=0,
+        )
+        draws = result.draws()
+        assert draws.fields == ("intercept", "alpha")
+        assert jnp.asarray(draws["intercept"]).shape == (20,)
+        assert jnp.asarray(draws["alpha"]).shape == (20, N)
+
+    def test_dynamic_rv_set_rejected(self):
+        """A model whose free-RV *set* changes with data raises a clear
+        ``ValueError`` rather than silently dropping a field (issue #232).
+
+        Here ``ghost`` exists only in the no-data build, so it lands in
+        ``_param_names`` (frozen at construction) but is absent from the
+        data-conditioned build. ProbPipe does not support such dynamic
+        random variables; the template builder must refuse cleanly.
+        """
+        def model_fn(y=None):
+            with pm.Model() as m:
+                if y is None:                       # no-data build only
+                    pm.Normal("ghost", 0, 1)
+                mu = pm.Normal("mu", 0, 1)
+                pm.Normal("y", mu=mu, sigma=1.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn)
+        assert "ghost" in model.parameter_names
+        conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
+        with pytest.raises(ValueError, match="dynamic random variables"):
+            model._conditioned_param_names(conditioned)
+
+    def test_additive_dynamic_rv_set_rejected(self):
+        """An RV that exists *only* in the conditioned build is rejected
+        rather than silently dropped (issue #232, additive direction).
+
+        ``extra`` is created only when data is present, so it is absent
+        from ``_param_names`` (frozen from the no-data build). Without an
+        explicit check it would be omitted from the template and filtered
+        out of the chain, silently vanishing from the posterior.
+        """
+        def model_fn(y=None):
+            with pm.Model() as m:
+                mu = pm.Normal("mu", 0, 1)
+                if y is not None:                   # conditioned build only
+                    pm.Normal("extra", 0, 1)
+                pm.Normal("y", mu=mu, sigma=1.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn)
+        assert model.parameter_names == ("mu",)     # extra absent at construction
+        conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
+        with pytest.raises(ValueError, match="dynamic random variables"):
+            model._conditioned_param_names(conditioned)
+
+    def test_partial_conditioning_includes_unsupplied_observed(self):
+        """An observed variable left unsupplied becomes a free parameter
+        and is inferred (partial conditioning) rather than rejected or
+        silently dropped.
+
+        ``X`` is declared ``observed=X``: supplied as data it is observed,
+        omitted it is a free RV. Conditioning on ``y`` alone must yield a
+        posterior over both ``mu`` and ``X``.
+        """
+        def model_fn(X=None, y=None):
+            with pm.Model() as m:
+                mu = pm.Normal("mu", 0, 1)
+                X_rv = pm.Normal("X", 0, 1, observed=X)
+                pm.Normal("y", mu=mu + X_rv, sigma=1.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn)
+        # Declared template excludes observed names entirely.
+        assert model.record_template.fields == ("mu",)
+
+        # Condition on y only — X is left free and should be inferred.
+        conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
+        names = model._conditioned_param_names(conditioned)
+        assert set(names) == {"mu", "X"}
+        tpl = model._record_template_for(conditioned, names)
+        assert set(tpl.fields) == {"mu", "X"}
+
+    def test_partial_conditioning_via_inference(self):
+        """End-to-end: conditioning on a subset of observed variables
+        produces a posterior that includes the unsupplied one."""
+        from probpipe import condition_on
+
+        def model_fn(X=None, y=None):
+            with pm.Model() as m:
+                mu = pm.Normal("mu", 0, 1)
+                X_rv = pm.Normal("X", 0, 1, observed=X)
+                pm.Normal("y", mu=mu + X_rv, sigma=1.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn)
+        result = condition_on(
+            model, {"y": np.zeros(5, dtype=np.float32)},
+            method="pymc_nuts",
+            num_results=20, num_warmup=10, num_chains=1, random_seed=0,
+        )
+        assert set(result.draws().fields) == {"mu", "X"}
+
+    def test_partial_conditioning_draws_not_mislabeled(self):
+        """The inferred observed variable's draws are labeled correctly —
+        not swapped with a canonical parameter.
+
+        ``mu`` and the unsupplied ``X`` get distinct, identifiable priors
+        and a near-flat likelihood, so each marginal posterior stays near
+        its own prior. A mislabeling (X's draws under field ``mu``, or
+        vice versa) would flip the recovered means. ``X`` also sorts
+        before ``mu`` alphabetically, exercising column-order alignment.
+        """
+        from probpipe import condition_on
+
+        def model_fn(X=None, y=None):
+            with pm.Model() as m:
+                mu = pm.Normal("mu", 100.0, 0.5)
+                X_rv = pm.Normal("X", -100.0, 0.5, observed=X)
+                pm.Normal("y", mu=mu + X_rv, sigma=1000.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn)
+        result = condition_on(
+            model, {"y": np.zeros(5, dtype=np.float32)},
+            method="pymc_nuts",
+            num_results=200, num_warmup=200, num_chains=1, random_seed=0,
+        )
+        draws = result.draws()
+        assert set(draws.fields) == {"mu", "X"}
+        assert float(jnp.mean(jnp.asarray(draws["mu"]))) > 50.0    # ~ +100
+        assert float(jnp.mean(jnp.asarray(draws["X"]))) < -50.0    # ~ -100
+
+    def test_dynamic_rv_set_rejected_via_inference(self):
+        """The clean dynamic-RV error fires on the inference path too.
+
+        Inference builds the template before sampling, so a dynamic-RV
+        model raises the clear ValueError up front rather than an opaque
+        KeyError during chain extraction (and before any sampling runs).
+        """
+        from probpipe import condition_on
+
+        def model_fn(y=None):
+            with pm.Model() as m:
+                if y is None:
+                    pm.Normal("ghost", 0, 1)
+                mu = pm.Normal("mu", 0, 1)
+                pm.Normal("y", mu=mu, sigma=1.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn)
+        with pytest.raises(ValueError, match="dynamic random variables"):
+            condition_on(
+                model, {"y": np.zeros(5, dtype=np.float32)},
+                method="pymc_nuts",
+                num_results=5, num_warmup=5, num_chains=1, random_seed=0,
+            )
+
     def test_non_concrete_shape_rejected(self):
         """A free RV with a ``None`` dimension raises ``ValueError``.
 
@@ -180,6 +402,22 @@ class TestRecordTemplate:
 
         with pytest.raises(ValueError, match="non-concrete shape"):
             _ = PyMCModel(model_fn).record_template
+
+    def test_event_shape_rejects_non_concrete_shape(self):
+        """``event_shape`` derives from ``record_template``, so it rejects
+        a non-concrete free-RV shape rather than silently under-counting.
+        """
+        import pytensor.tensor as pt
+
+        def model_fn(y=None):
+            with pm.Model() as m:
+                mu = pt.vector("mu_data")
+                pm.Normal("z", mu=mu, sigma=1.0)
+                pm.Normal("y", 0, 1, observed=y)
+            return m
+
+        with pytest.raises(ValueError, match="non-concrete shape"):
+            _ = PyMCModel(model_fn).event_shape
 
 
 class TestRecordDataUnpacking:

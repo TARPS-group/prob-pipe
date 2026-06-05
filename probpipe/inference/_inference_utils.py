@@ -49,6 +49,7 @@ __all__ = [
     "build_mcmc_datatree",
     "build_target_log_prob",
     "build_target_log_prob_flat",
+    "extract_chain_columns",
     "get_init_state",
     "get_prior",
     "extract_record_template",
@@ -57,6 +58,49 @@ __all__ = [
     "parallel_chain_map",
     "run_chain_scan",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Chain extraction
+# ---------------------------------------------------------------------------
+
+def extract_chain_columns(
+    trace: Any, names: list[str], num_chains: int,
+) -> list[Array]:
+    """Per-chain flat sample matrices from an ArviZ-like trace.
+
+    For each chain ``c`` and each variable in *names* (in that order),
+    pulls ``trace.posterior[name].values[c]``, flattens trailing axes to
+    2-D ``(draws, -1)``, and concatenates across variables. Columns are
+    laid out in *names* order, to match the ``record_template`` field
+    order.
+
+    Parameters
+    ----------
+    trace : ArviZ-like trace
+        Object exposing a ``posterior`` group indexable by variable name.
+    names : list of str
+        Variables to extract, in the desired column order.
+    num_chains : int
+        Number of chains (leading axis of each ``values`` array).
+
+    Returns
+    -------
+    list of Array
+        One ``(draws, total_flat_dim)`` array per chain.
+    """
+    chains = []
+    for c in range(num_chains):
+        chain_arrays = []
+        for name in names:
+            vals = trace.posterior[name].values[c]
+            if vals.ndim == 1:
+                vals = vals[:, None]
+            else:
+                vals = vals.reshape(vals.shape[0], -1)
+            chain_arrays.append(jnp.asarray(vals))
+        chains.append(jnp.concatenate(chain_arrays, axis=-1))
+    return chains
 
 
 # ---------------------------------------------------------------------------
