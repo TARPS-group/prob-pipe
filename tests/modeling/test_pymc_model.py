@@ -356,6 +356,41 @@ class TestRecordTemplate:
         assert float(jnp.mean(jnp.asarray(draws["mu"]))) > 50.0    # ~ +100
         assert float(jnp.mean(jnp.asarray(draws["X"]))) < -50.0    # ~ -100
 
+    def test_pymc_nuts_multiparam_field_order_realigned(self):
+        """End-to-end check of the name-keyed wiring (issue #233): the
+        pymc_nuts path extracts in the trace's alphabetical ``data_vars``
+        order, and ``field_order`` realigns columns to the declared
+        (template) order by name.
+
+        ``zeta``, ``alpha``, ``mu`` are declared non-alphabetically with
+        distinct tight priors and a near-flat likelihood. The posterior
+        fields must come back in declaration order (not alphabetical), and
+        each must recover its own prior mean — a mislabeling would reorder
+        the fields and flip the means.
+        """
+        from probpipe import condition_on
+
+        def model_fn(y=None):
+            with pm.Model() as m:
+                zeta = pm.Normal("zeta", 100.0, 0.5)
+                alpha = pm.Normal("alpha", 0.0, 0.5)
+                mu = pm.Normal("mu", -100.0, 0.5)
+                pm.Normal("y", mu=zeta + alpha + mu, sigma=1000.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn)
+        result = condition_on(
+            model, {"y": np.zeros(5, dtype=np.float32)},
+            method="pymc_nuts",
+            num_results=200, num_warmup=200, num_chains=1, random_seed=0,
+        )
+        draws = result.draws()
+        # Declared order, not nutpie/pymc's alphabetical data_vars order.
+        assert draws.fields == ("zeta", "alpha", "mu")
+        for field, prior_mean in [("zeta", 100.0), ("alpha", 0.0), ("mu", -100.0)]:
+            got = float(jnp.mean(jnp.asarray(draws[field])))
+            np.testing.assert_allclose(got, prior_mean, atol=10.0)
+
     def test_dynamic_rv_set_rejected_via_inference(self):
         """The clean dynamic-RV error fires on the inference path too.
 
