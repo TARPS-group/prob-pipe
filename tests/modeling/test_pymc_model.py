@@ -202,7 +202,8 @@ class TestRecordTemplate:
             "X": np.zeros(N, dtype=np.float32),
             "y": np.zeros(N, dtype=np.float32),
         })
-        tpl_c = model._record_template_for(conditioned)
+        names = model._conditioned_param_names(conditioned)
+        tpl_c = model._record_template_for(conditioned, names)
         assert tpl_c.fields == ("intercept", "alpha")
         assert tpl_c["alpha"] == (N,)
         assert not hasattr(model, "_last_conditioned_model")
@@ -253,7 +254,7 @@ class TestRecordTemplate:
         assert "ghost" in model.parameter_names
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         with pytest.raises(ValueError, match="dynamic random variables"):
-            model._record_template_for(conditioned)
+            model._conditioned_param_names(conditioned)
 
     def test_additive_dynamic_rv_set_rejected(self):
         """An RV that exists *only* in the conditioned build is rejected
@@ -276,7 +277,54 @@ class TestRecordTemplate:
         assert model.parameter_names == ("mu",)     # extra absent at construction
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         with pytest.raises(ValueError, match="dynamic random variables"):
-            model._record_template_for(conditioned)
+            model._conditioned_param_names(conditioned)
+
+    def test_partial_conditioning_includes_unsupplied_observed(self):
+        """An observed variable left unsupplied becomes a free parameter
+        and is inferred (partial conditioning) rather than rejected or
+        silently dropped.
+
+        ``X`` is declared ``observed=X``: supplied as data it is observed,
+        omitted it is a free RV. Conditioning on ``y`` alone must yield a
+        posterior over both ``mu`` and ``X``.
+        """
+        def model_fn(X=None, y=None):
+            with pm.Model() as m:
+                mu = pm.Normal("mu", 0, 1)
+                X_rv = pm.Normal("X", 0, 1, observed=X)
+                pm.Normal("y", mu=mu + X_rv, sigma=1.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn)
+        # Declared template excludes observed names entirely.
+        assert model.record_template.fields == ("mu",)
+
+        # Condition on y only — X is left free and should be inferred.
+        conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
+        names = model._conditioned_param_names(conditioned)
+        assert set(names) == {"mu", "X"}
+        tpl = model._record_template_for(conditioned, names)
+        assert set(tpl.fields) == {"mu", "X"}
+
+    def test_partial_conditioning_via_inference(self):
+        """End-to-end: conditioning on a subset of observed variables
+        produces a posterior that includes the unsupplied one."""
+        from probpipe import condition_on
+
+        def model_fn(X=None, y=None):
+            with pm.Model() as m:
+                mu = pm.Normal("mu", 0, 1)
+                X_rv = pm.Normal("X", 0, 1, observed=X)
+                pm.Normal("y", mu=mu + X_rv, sigma=1.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn)
+        result = condition_on(
+            model, {"y": np.zeros(5, dtype=np.float32)},
+            method="pymc_nuts",
+            num_results=20, num_warmup=10, num_chains=1, random_seed=0,
+        )
+        assert set(result.draws().fields) == {"mu", "X"}
 
     def test_dynamic_rv_set_rejected_via_inference(self):
         """The clean dynamic-RV error fires on the inference path too.
