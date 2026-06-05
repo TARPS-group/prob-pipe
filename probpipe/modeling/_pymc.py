@@ -142,15 +142,13 @@ class PyMCModel(ProbabilisticModel):
 
     @property
     def event_shape(self) -> tuple[int, ...]:
-        # Total number of scalar parameters (excluding observed)
-        total = 0
-        for _name, rv in self._param_rvs(self._unconditioned_model):
-            size = 1
-            for s in rv.type.shape:
-                if s is not None:
-                    size *= s
-            total += size
-        return (total,)
+        """Total number of scalar free parameters (observed excluded).
+
+        Derived from :attr:`record_template` so the flat size and the
+        per-field template can never disagree; consequently this raises
+        on a non-concrete free-RV shape, just as the template does.
+        """
+        return (self.record_template.flat_size,)
 
     def record_template_for(self, model: Any) -> NumericRecordTemplate:
         """Parameter template built from a specific PyMC model build.

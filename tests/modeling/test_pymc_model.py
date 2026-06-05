@@ -255,6 +255,31 @@ class TestRecordTemplate:
         with pytest.raises(ValueError, match="dynamic random variables"):
             model.record_template_for(conditioned)
 
+    def test_dynamic_rv_set_rejected_via_inference(self):
+        """The clean dynamic-RV error fires on the inference path too.
+
+        Inference builds the template before sampling, so a dynamic-RV
+        model raises the clear ValueError up front rather than an opaque
+        KeyError during chain extraction (and before any sampling runs).
+        """
+        from probpipe import condition_on
+
+        def model_fn(y=None):
+            with pm.Model() as m:
+                if y is None:
+                    pm.Normal("ghost", 0, 1)
+                mu = pm.Normal("mu", 0, 1)
+                pm.Normal("y", mu=mu, sigma=1.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn)
+        with pytest.raises(ValueError, match="dynamic random variables"):
+            condition_on(
+                model, {"y": np.zeros(5, dtype=np.float32)},
+                method="pymc_nuts",
+                num_results=5, num_warmup=5, num_chains=1, random_seed=0,
+            )
+
     def test_non_concrete_shape_rejected(self):
         """A free RV with a ``None`` dimension raises ``ValueError``.
 

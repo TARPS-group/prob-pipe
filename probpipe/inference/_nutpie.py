@@ -5,12 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import jax.numpy as jnp
-
 from ..core._registry import MethodInfo
 from ..core.node import workflow_function
 from ..custom_types import ArrayLike
 from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ._inference_utils import extract_chain_columns
 from ._registry import InferenceMethod
 
 logger = logging.getLogger(__name__)
@@ -48,24 +47,28 @@ def condition_on_nutpie(
         ) from e
 
     compiled, pymc_build = _compile_for_nutpie(model, data)
+
+    # Build the template from the same conditioned model before sampling,
+    # so a non-concrete or dynamic-RV model fails fast with a clear error
+    # rather than an opaque KeyError during chain extraction. PyMC derives
+    # it from the conditioned build; Stan models carry their own
+    # record_template, if any.
+    if pymc_build is not None:
+        record_template = model.record_template_for(pymc_build)
+    else:
+        record_template = getattr(model, "record_template", None)
+
     trace = nutpie.sample(
         compiled, draws=num_results, tune=num_warmup,
         chains=num_chains, seed=random_seed, **kwargs,
     )
 
     # PyMC: extract chain columns in ``_param_names`` order so they line
-    # up with ``record_template_for`` (nutpie sorts ``posterior.data_vars``
+    # up with the template (nutpie sorts ``posterior.data_vars``
     # alphabetically, which would otherwise mislabel draws). Stan: take
     # trace order.
     keep_names = list(model._param_names) if pymc_build is not None else None
     chains, param_names = _extract_chains(trace, num_chains, keep_names=keep_names)
-
-    # Build the template from the same conditioned model nutpie sampled
-    # (PyMC only); Stan models carry their own record_template, if any.
-    if pymc_build is not None:
-        record_template = model.record_template_for(pymc_build)
-    else:
-        record_template = getattr(model, "record_template", None)
 
     return make_posterior(
         chains, parents=(model,), algorithm="nutpie_nuts",
@@ -128,27 +131,15 @@ def _extract_chains(
         Per-chain concatenated arrays, and the resolved variable-name
         order.
     """
-    if hasattr(trace, "posterior"):
-        posterior = trace.posterior
-        if keep_names is not None:
-            param_names = list(keep_names)
-        else:
-            param_names = list(posterior.data_vars)
-        chains = []
-        for c in range(num_chains):
-            chain_arrays = []
-            for name in param_names:
-                vals = posterior[name].values[c]
-                if vals.ndim == 1:
-                    vals = vals[:, None]
-                else:
-                    vals = vals.reshape(vals.shape[0], -1)
-                chain_arrays.append(vals)
-            chains.append(jnp.concatenate(chain_arrays, axis=-1))
-        return chains, param_names
-    raise TypeError(
-        f"Cannot extract chains from nutpie trace of type {type(trace).__name__}"
-    )
+    if not hasattr(trace, "posterior"):
+        raise TypeError(
+            f"Cannot extract chains from nutpie trace of type {type(trace).__name__}"
+        )
+    if keep_names is not None:
+        param_names = list(keep_names)
+    else:
+        param_names = list(trace.posterior.data_vars)
+    return extract_chain_columns(trace, param_names, num_chains), param_names
 
 
 # ---------------------------------------------------------------------------
