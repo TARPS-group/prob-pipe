@@ -182,6 +182,116 @@ class TestApproximateDistributionValuesTemplate:
     def test_record_template_property(self, posterior_with_template, template):
         assert posterior_with_template.record_template is template
 
+    def test_field_order_reassembles_by_name(self):
+        """field_order maps chain column-blocks to template fields by name.
+
+        The chain's columns are laid out in a different order than the
+        template (``b`` block, then scalar ``a``). Passing ``field_order``
+        must reassemble each field from its own columns — not split the
+        flat chain positionally in template order (which would scramble
+        the draws).
+        """
+        template = RecordTemplate(a=(), b=(2,))  # sizes: a=1, b=2
+        # Columns laid out in field_order = (b, a): [b0, b1, a0].
+        b_block = jnp.array([[10.0, 11.0], [12.0, 13.0]])      # (2, 2)
+        a_block = jnp.array([[1.0], [2.0]])                    # (2, 1)
+        chain = jnp.concatenate([b_block, a_block], axis=-1)   # (2, 3)
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
+        post = make_posterior(
+            [chain], parents=(prior,), algorithm="test",
+            record_template=template, field_order=["b", "a"],
+        )
+        draws = post.draws()
+        # a is the trailing column; b is the leading 2-column block.
+        np.testing.assert_allclose(np.asarray(draws["a"]), [1.0, 2.0])
+        np.testing.assert_allclose(np.asarray(draws["b"]), b_block)
+
+    def test_field_order_none_is_positional(self):
+        """field_order=None keeps the historical positional layout."""
+        template = RecordTemplate(a=(), b=(2,))
+        chain = jnp.array([[1.0, 10.0, 11.0], [2.0, 12.0, 13.0]])  # a, then b
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
+        post = make_posterior(
+            [chain], parents=(prior,), algorithm="test", record_template=template,
+        )
+        draws = post.draws()
+        np.testing.assert_allclose(np.asarray(draws["a"]), [1.0, 2.0])
+        np.testing.assert_allclose(
+            np.asarray(draws["b"]), [[10.0, 11.0], [12.0, 13.0]]
+        )
+
+    def test_field_order_must_be_permutation(self):
+        """A field_order that isn't a permutation of template fields raises."""
+        template = RecordTemplate(a=(), b=())
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        with pytest.raises(ValueError, match="not a permutation"):
+            make_posterior(
+                [chain], parents=(prior,), algorithm="test",
+                record_template=template, field_order=["a", "c"],
+            )
+
+    def test_field_order_chain_too_wide_raises(self):
+        """With field_order, a chain wider than the template's total flat
+        size raises rather than silently dropping the extra columns in the
+        permutation gather."""
+        template = RecordTemplate(a=(), b=())          # total flat size 2
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 3))   # 3 columns
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
+        with pytest.raises(ValueError, match="doesn't match"):
+            make_posterior(
+                [chain], parents=(prior,), algorithm="test",
+                record_template=template, field_order=["a", "b"],
+            )
+
+    def test_field_order_chain_too_narrow_raises(self):
+        """With field_order, a chain narrower than the template's total
+        flat size raises clearly rather than clamping the out-of-bounds
+        gather indices."""
+        template = RecordTemplate(a=(), b=(), c=())    # total flat size 3
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))   # 2 columns
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        with pytest.raises(ValueError, match="doesn't match"):
+            make_posterior(
+                [chain], parents=(prior,), algorithm="test",
+                record_template=template, field_order=["a", "b", "c"],
+            )
+
+    def test_field_order_without_template_raises(self):
+        """field_order without a record_template is a caller error, not a
+        silent no-op."""
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        with pytest.raises(ValueError, match="requires a record_template"):
+            make_posterior(
+                [chain], parents=(prior,), algorithm="test",
+                field_order=["a", "b"],
+            )
+
+    def test_field_order_single_field_invalid_permutation_raises(self):
+        """field_order is validated even for a single-field template, so a
+        wrong name is caught rather than silently ignored."""
+        template = RecordTemplate(a=())
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 1))
+        prior = MultivariateNormal(loc=jnp.zeros(1), cov=jnp.eye(1), name="z")
+        with pytest.raises(ValueError, match="not a permutation"):
+            make_posterior(
+                [chain], parents=(prior,), algorithm="test",
+                record_template=template, field_order=["b"],
+            )
+
+    def test_field_order_single_field_width_mismatch_raises(self):
+        """With field_order, the chain width is validated for a
+        single-field template too — not only for multi-field ones."""
+        template = RecordTemplate(a=(2,))              # flat size 2
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 3))   # 3 columns
+        prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
+        with pytest.raises(ValueError, match="doesn't match"):
+            make_posterior(
+                [chain], parents=(prior,), algorithm="test",
+                record_template=template, field_order=["a"],
+            )
+
     def test_array_shaped_fields(self):
         """Template with non-scalar fields unflattens correctly."""
         template = RecordTemplate(
