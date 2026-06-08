@@ -17,16 +17,13 @@ authors = [
   { name = "Jiaqiang Zhu",      email = "julian25@bu.edu" },
 ]  # See AUTHORS file for full list
 dependencies = [
-  # jax/jaxlib floor raised to >=0.9 now that sbijax (which hard-pinned
-  # jax 0.8.1) is gone; the verified stack resolves to 0.10.1. blackjax
-  # was held at >=1.3 only to spare sbijax's jax 0.8.1. The arviz <1.0
-  # ceiling is retained here and lifted in its own isolated PR (the
-  # arviz-1.x ceiling lift).
+  # arviz 0.x was only reachable while [pymc] allowed pymc 5.x (which caps
+  # arviz<1.0); [pymc] now needs pymc>=6, so the floor moves to arviz>=1.1.
   "jax>=0.9",
   "jaxlib>=0.9",
   "tfp-nightly>=0.26.0.dev20260318",
   "blackjax>=1.4",
-  "arviz>=0.13,<1.0",
+  "arviz>=1.1,<2.0",
 ]
 
 [project.optional-dependencies]
@@ -38,7 +35,9 @@ docs = [
   "mkdocs-jupyter<0.26",
 ]
 stan = ["bridgestan>=2.0", "cmdstanpy>=1.2"]
-pymc = ["pymc>=5.28"]
+# pymc 6 is the first release compatible with arviz 1.x (pymc 5.x caps
+# arviz<1.0); matplotlib is required by the pymc 6 sampler progress bar.
+pymc = ["pymc>=6", "matplotlib"]
 nutpie = ["nutpie>=0.12"]
 dev = [
   "probpipe[prefect,viz,docs]",

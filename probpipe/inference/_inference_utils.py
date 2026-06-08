@@ -429,28 +429,17 @@ def build_mcmc_datatree(
     (if provided). Backend-agnostic — consumed by both the TFP and
     BlackJAX MCMC paths.
     """
-    import arviz as az
+    import arviz_base as azb
     import xarray as xr
 
     def _stack(chain_list):
         return np.stack([np.asarray(c) for c in chain_list], axis=0)
 
-    posterior_dict = {"params": _stack(chains)}
-    # arviz 1.x ``from_dict`` takes a positional groups dict; arviz 0.x
-    # takes keyword arguments (``posterior=``, ``sample_stats=``, ...).
-    import inspect
-    sig = inspect.signature(az.from_dict)
-    first_param = next(iter(sig.parameters))
-    if first_param == "posterior":
-        kw: dict = {"posterior": posterior_dict}
-        if sample_stats:
-            kw["sample_stats"] = sample_stats
-        dt = az.from_dict(**kw)
-    else:
-        groups: dict = {"posterior": posterior_dict}
-        if sample_stats:
-            groups["sample_stats"] = sample_stats
-        dt = az.from_dict(groups)
+    # arviz 1.x: positional ``{group: {var: array}}`` -> ``xarray.DataTree``.
+    groups: dict = {"posterior": {"params": _stack(chains)}}
+    if sample_stats:
+        groups["sample_stats"] = sample_stats
+    dt = azb.from_dict(groups)
 
     if warmup_chains is not None and all(w is not None for w in warmup_chains):
         warmup_array = _stack(warmup_chains)

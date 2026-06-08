@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Ecosystem cutover to arviz 1.x and pymc 6 (breaking).** The core
+  `arviz` pin moves `>=0.13,<1.0` → `>=1.1,<2.0`, **dropping arviz 0.x
+  entirely**, and the `[pymc]` extra moves `pymc>=5.28` → `pymc>=6`
+  (pymc 5.x hard-caps `arviz<1.0`; pymc 6.0 is the first
+  arviz-1.x-compatible release). ProbPipe now binds the arviz 1.x split
+  packages **by name** — `arviz_base.from_dict` (`build_mcmc_datatree`),
+  `arviz_base.from_cmdstanpy` (the CmdStan method), and `arviz_stats.*`
+  — never bare `import arviz`; the runtime 0.x/1.x version probes are
+  removed and the auxiliary is an arviz 1.x `xarray.DataTree`
+  throughout (`ApproximateDistribution.warmup_samples` reads
+  `aux.children`). `[pymc]` additionally requires `matplotlib` (the
+  pymc 6 sampler progress bar imports it). Internal pymc-6 fix:
+  `pm.sample_prior_predictive(samples=)` → `draws=` (the `samples=`
+  kwarg was dropped in pymc 6); `pymc_nuts` keeps `cores=1` pending a
+  dedicated fork-safety review (the multicore reclaim is deferred). The
+  ArviZ 1.0 defaults — credible interval 0.94 → 0.89 and HDI → ETI —
+  are adopted as-is: no affected statistic is called in ProbPipe
+  source, so no `rcParams` pin is needed, and a frozen-fixture suite
+  (`tests/inference/test_arviz_regression.py`) locks the 0.89/ETI
+  defaults plus golden `arviz_stats` values as a tripwire against
+  future silent default drift.
+
 - **Core jax / jaxlib floor raised to `>=0.9`; blackjax to `>=1.4`.**
   With sbijax gone (see *Removed*), the `<0.9` jax / jaxlib cap that
   existed solely to keep sbijax's hard `jax==0.8.1` pin satisfiable is

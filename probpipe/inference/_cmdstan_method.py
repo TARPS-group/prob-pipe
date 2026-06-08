@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import arviz as az
+import arviz_base as azb
 import jax.numpy as jnp
 
 from ..core._registry import MethodInfo
@@ -79,7 +79,7 @@ class CmdStanNutsMethod(InferenceMethod):
             chain_draws = jnp.asarray(fit.draws(concat_chains=False)[c])
             chains.append(chain_draws)
 
-        inference_data = az.from_cmdstanpy(fit)
+        inference_data = azb.from_cmdstanpy(fit)
 
         return make_posterior(
             chains, parents=(dist,), algorithm="cmdstan_nuts",
