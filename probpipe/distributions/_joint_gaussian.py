@@ -9,17 +9,13 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
-from .._dtype import _as_float_array, _promote_floats
-from .._utils import prod
 
-from ..custom_types import Array, ArrayLike, PRNGKey
+from .._dtype import _as_float_array, _promote_floats
+from ..core._record_distribution import RecordDistribution, _build_record_template
 from ..core.distribution import (
     NumericRecordDistribution,
     _mc_expectation,
 )
-from ..core._record_distribution import RecordDistribution, _build_record_template
-from ..core.record import Record
-from ..core.provenance import Provenance
 from ..core.protocols import (
     SupportsConditioning,
     SupportsCovariance,
@@ -28,6 +24,9 @@ from ..core.protocols import (
     SupportsSampling,
     SupportsVariance,
 )
+from ..core.provenance import Provenance
+from ..core.record import Record
+from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
@@ -136,6 +135,17 @@ class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
         """Per-component event shapes."""
         return {k: (v,) for k, v in self._component_shapes.items()}
+
+    @property
+    def dtypes(self) -> dict[str, jnp.dtype]:
+        """Per-field dtype, aligned with ``record_template.fields``.
+
+        Every field shares the (float) dtype of the mean / covariance
+        arrays — ``_promote_floats`` in ``__init__`` casts both to a
+        single common float dtype.
+        """
+        dt = self._mean_vec.dtype
+        return {field: dt for field in self.fields}
 
     # flatten_value / unflatten_value inherited from NumericRecordDistribution
 

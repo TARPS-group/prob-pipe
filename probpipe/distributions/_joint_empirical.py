@@ -22,30 +22,31 @@ array, the class dispatches in ``__new__`` to ``NumericJointEmpirical``
 
 from __future__ import annotations
 
+from math import prod
 from types import MappingProxyType
 from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
-from .._dtype import _as_float_array
-from .._utils import prod, _is_numeric_array
 
-from ..custom_types import Array, ArrayLike, PRNGKey
+from .._dtype import _as_float_array
+from .._utils import _is_numeric_array
 from .._weights import Weights
+from ..core._record_distribution import RecordDistribution, _build_record_template
 from ..core.distribution import (
     NumericRecordDistribution,
     RecordEmpiricalDistribution,
     _mc_expectation,
 )
-from ..core._record_distribution import RecordDistribution, _build_record_template
-from ..core.record import Record, RecordTemplate
-from ..core.provenance import Provenance
 from ..core.protocols import (
     SupportsConditioning,
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
 )
+from ..core.provenance import Provenance
+from ..core.record import Record, RecordTemplate
+from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,

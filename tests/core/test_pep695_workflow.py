@@ -17,11 +17,10 @@ from typing import Generic, TypeVar
 
 from probpipe.core.node import WorkflowFunction, workflow_function
 
-
 _T = TypeVar("_T")
 
 
-class _Box(Generic[_T]):
+class _Box(Generic[_T]):  # noqa: UP046
     def __init__(self, value: _T):
         self.value = value
 
@@ -36,8 +35,8 @@ def test_pep695_generic_function_can_be_wrapped():
     assert isinstance(identity, WorkflowFunction)
     assert identity.__name__ == "identity"
     # The hint for ``x`` should resolve to a parameterized _Box, not raise.
-    assert "x" in identity._hints
-    assert "return" in identity._hints
+    assert "x" in identity._signature_info.hints
+    assert "return" in identity._signature_info.hints
 
 
 def test_pep695_multiple_type_params():
@@ -47,9 +46,9 @@ def test_pep695_multiple_type_params():
     def pair[T, S](a: _Box[T], b: _Box[S]) -> tuple[_Box[T], _Box[S]]:
         return (a, b)
 
-    assert "a" in pair._hints
-    assert "b" in pair._hints
-    assert "return" in pair._hints
+    assert "a" in pair._signature_info.hints
+    assert "b" in pair._signature_info.hints
+    assert "return" in pair._signature_info.hints
 
 
 def test_iterate_imports():

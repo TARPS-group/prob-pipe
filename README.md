@@ -12,20 +12,20 @@ ProbPipe is a Python framework for building scalable probabilistic pipelines wit
 
 Most workflows for probabilistic inference can be described in terms of **distributions**, **fixed values** (data, hyperparameters, covariates), and **operations** that transform distributions. But implementing these workflows is harder than describing them because math has to be translated into computation:
 
-- **Algorithmic challenges.** There are many possible algorithms for common operations, with varying trade-offs that need to be explored in a problem-specific manner. A posterior could be approximated using a variety of MCMC algorithms, variational inference methods, or sequential Monte Carlo, or might require more specialized methods such as those for amortized and simulation-based inference. 
+- **Algorithmic challenges.** There are many possible algorithms for common operations, with varying trade-offs that need to be explored in a problem-specific manner. A posterior could be approximated using a variety of MCMC algorithms, variational inference methods, or sequential Monte Carlo, or might require more specialized methods such as those for amortized and simulation-based inference.
 - **Representational challenges.** Algorithms expect (and produce) specific formats for distributions and fixed values, and those formats are not always compatible with other parts of the workflow. Fixed values may be named parameter vectors, covariate matrices, or structured observations, and different algorithms expect different representations.
 
-In practice, these issues make it hard to explore the full design space of available methods or to build more complex workflows that many algorithms for different steps. ProbPipe addresses these challenges through a single design principle: **simplification via abstraction**. There are just three core types:
+In practice, these issues make it hard to explore the full design space of available methods or to build more complex workflows that combine many algorithms for different steps. ProbPipe addresses these challenges through a single design principle: **simplification via abstraction**. There are just three core types:
 
 1. **`Distribution`**: the universal representation of random quantities (priors, posteriors, data-generating processes). A distribution's capabilities are declared via protocols (`SupportsSampling`, `SupportsLogProb`, ...), and ProbPipe converts between representations as needed.
 2. **`Record`**: the universal container for non-random structured data (observed datasets, hyperparameters, design matrices). `Record` is the deterministic counterpart of `Distribution`.
-3. **`WorkflowFunction`**: Usually construction by decorating a function with  `@workflow_function`. Pass the declared types of values, the workflow function runs normally. But pass a `Distribution` where a concrete value is expected, and ProbPipe propagates uncertainty automatically, returning a `Distribution` over the functions declared result type. Similarly, array-valued inputs (a `RecordArray`) broadcast across fixed values (e.g., for hyperparameter sweeps). To ensure composability and modularity, all returned values from a workflow function are wrapped as an appropriate `Record` / `Distribution`. 
+3. **`WorkflowFunction`**: Usually constructed by decorating a function with `@workflow_function`. Pass the declared types of values and the workflow function runs normally. But pass a `Distribution` where a concrete value is expected, and ProbPipe propagates uncertainty automatically, returning a `Distribution` over the function's declared result type. Similarly, array-valued inputs (a `RecordArray`) broadcast across fixed values (e.g., for hyperparameter sweeps). To ensure composability and modularity, all returned values from a workflow function are wrapped as an appropriate `Record` / `Distribution`.
 
-`Distribution` and `Record` share a single interface for named-field access (`fields`, `select(...)`, `select_all()`) and passing components into a `WorkflowFunction`, so they are interchangeable as arguments to workflow function. 
+`Distribution` and `Record` share a single interface for named-field access (`fields`, `select(...)`, `select_all()`) and passing components into a `WorkflowFunction`, so they are interchangeable as arguments to workflow functions.
 
 ### Built-in operations
 
-ProbPipe provides a set of built-in **ops**, which are workflow functions that can support specalized features to streamline pipeline construction:
+ProbPipe provides a set of built-in **ops**, which are workflow functions that can support specialized features to streamline pipeline construction:
 
 - **`condition_on`**: condition a model on observed data, automatically selecting the best inference algorithm (or specify one with `method=`).
 - **`mean`**, **`variance`**, **`cov`**, **`expectation`**: compute distributional summaries, with automatic Monte Carlo fallback when exact computation is unavailable.
@@ -76,7 +76,7 @@ predictive = predict_prob(**posterior.select('intercept', 'slope'),
 # posterior mean: ~0.98 at 31°F, ~0.46 at 65°F
 ```
 
-Since `predict_prob` is constructed to be a workflow function, ProbPipe samples from the posterior and evaluates the function for each draw, yielding a Monte Carlo approximation to the full predictive distribution. The two posterior fields are extracted from a single parent, so their values are sampled jointly, ensuring each `(intercept, slope)` pair stays correlated. From there, we can easily plot the full predictive curve across:
+Since `predict_prob` is constructed to be a workflow function, ProbPipe samples from the posterior and evaluates the function for each draw, yielding a Monte Carlo approximation to the full predictive distribution. The two posterior fields are extracted from a single parent, so their values are sampled jointly, ensuring each `(intercept, slope)` pair stays correlated. From there, we can easily plot the full predictive curve across temperatures:
 
 ```python
 import numpy as np, matplotlib.pyplot as plt
@@ -86,7 +86,7 @@ t_grid = jnp.linspace(30, 85, 50)  # grid of temperature values
 curves = predict_prob(**posterior.select('intercept', 'slope'), x=t_grid)
 # curves is a Distribution, so extract samples for plotting
 S = np.array(curves.samples)         # (n_draws, 50)
-# compute 90% credible intervals, then plot 
+# compute 90% credible intervals, then plot
 lo, hi = np.percentile(S, [5, 95], axis=0)
 plt.fill_between(np.array(t_grid), lo, hi, alpha=0.3, label='90% credible interval')
 plt.plot(np.array(t_grid), S.mean(axis=0), lw=2, label='Posterior mean')
@@ -100,7 +100,7 @@ plt.xlabel('Temperature (°F)'); plt.ylabel('P(O-ring damage)'); plt.legend()
 ## Key Features
 
 - **Protocol-based dispatch.** A distribution's capabilities are declared via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsMean`, ...). Operations like `condition_on` and `from_distribution` use these protocols to auto-select the best algorithm from a pluggable registry. Override with `method=` when you want control.
-- **Multiple backends.** The inference registry spans BlackJAX (NUTS by default; HMC, SGLD, SGHMC opt-in), nutpie / CmdStan / PyMC NUTS for `StanModel` / `PyMCModel` targets, gradient-free RWMH, TFP NUTS/HMC as opt-in alternates, PyMC ADVI, and simulation-based inference (SMC-ABC via sbijax). Swap backends without changing model code.
+- **Multiple backends.** The inference registry spans BlackJAX (NUTS by default; HMC, SGLD, SGHMC opt-in), nutpie / CmdStan / PyMC NUTS for `StanModel` / `PyMCModel` targets, gradient-free RWMH, TFP NUTS/HMC as opt-in alternates, and PyMC ADVI. Swap backends without changing model code.
 - **Automatic distribution conversion.** A converter registry converts between distribution representations (e.g., MCMC samples to KDE) as needed, using protocol-based dispatch analogous to `condition_on`.
 - **JAX-native.** Distributions and workflow functions are compatible with JAX (`vmap`, `jit`, `grad`), with built-in support for TFP distributions.
 - **Provenance tracking.** Each distribution records how it was created (algorithm, parents, metadata), enabling full lineage tracing from any result back to its inputs.

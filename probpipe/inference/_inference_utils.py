@@ -23,7 +23,7 @@ utilities shared across the backend modules; not re-exported through
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -45,15 +45,95 @@ from ..custom_types import Array, ArrayLike
 
 __all__ = [
     "as_prng_key",
+    "build_likelihood_flat",
     "build_mcmc_datatree",
     "build_target_log_prob",
     "build_target_log_prob_flat",
+    "extract_chain_columns",
+    "posterior_var_order",
     "get_init_state",
     "get_prior",
     "extract_record_template",
     "is_jax_traceable",
     "is_simple_model",
+    "parallel_chain_map",
+    "run_chain_scan",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Chain extraction
+# ---------------------------------------------------------------------------
+
+def extract_chain_columns(
+    trace: Any, names: list[str], num_chains: int,
+) -> list[Array]:
+    """Per-chain flat sample matrices from an ArviZ-like trace.
+
+    For each chain ``c`` and each variable in *names* (in that order),
+    pulls ``trace.posterior[name].values[c]``, flattens trailing axes to
+    2-D ``(draws, -1)``, and concatenates across variables. Columns are
+    laid out in *names* order; pass the same order as ``field_order`` to
+    :func:`make_posterior` so assembly aligns them to the template fields
+    by name.
+
+    Parameters
+    ----------
+    trace : ArviZ-like trace
+        Object exposing a ``posterior`` group indexable by variable name.
+    names : list of str
+        Variables to extract, in the desired column order.
+    num_chains : int
+        Number of chains (leading axis of each ``values`` array).
+
+    Returns
+    -------
+    list of Array
+        One ``(draws, total_flat_dim)`` array per chain.
+    """
+    chains = []
+    for c in range(num_chains):
+        chain_arrays = []
+        for name in names:
+            vals = trace.posterior[name].values[c]
+            if vals.ndim == 1:
+                vals = vals[:, None]
+            else:
+                vals = vals.reshape(vals.shape[0], -1)
+            chain_arrays.append(jnp.asarray(vals))
+        chains.append(jnp.concatenate(chain_arrays, axis=-1))
+    return chains
+
+
+def posterior_var_order(trace: Any, keep: Iterable[str]) -> list[str]:
+    """Variable names in *trace*'s ``posterior`` natural order, filtered
+    to *keep*.
+
+    Pass the result as both the extraction order
+    (:func:`extract_chain_columns`) and ``field_order``
+    (:func:`make_posterior`), so name-keyed assembly realigns columns to
+    the template regardless of the backend's variable order — nutpie, for
+    instance, sorts ``data_vars`` alphabetically.
+
+    Raises
+    ------
+    ValueError
+        If any name in *keep* is absent from ``trace.posterior``. Failing
+        here names the missing variables, rather than letting them surface
+        later as a cryptic "not a permutation" error in
+        :func:`make_posterior`'s column realignment.
+    """
+    keep = list(keep)
+    available = list(trace.posterior.data_vars)
+    missing = [name for name in keep if name not in available]
+    if missing:
+        raise ValueError(
+            f"trace posterior is missing expected variable name(s) "
+            f"{missing}; available posterior variables are {available}. "
+            f"Every parameter being assembled must be present in the trace."
+        )
+    keep_set = set(keep)
+    return [name for name in available if name in keep_set]
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +373,46 @@ def build_target_log_prob_flat(
     return target_record, flat_init, None
 
 
+def build_likelihood_flat(
+    prior: Distribution,
+    likelihood: Any,
+    data: ArrayLike | Record | None,
+) -> Callable[[Array], Array]:
+    """Build a flat-vector ``loglikelihood_fn(theta_flat)`` from a prior +
+    likelihood + data.
+
+    Unlike :func:`build_target_log_prob_flat` (which builds the *joint*
+    prior + likelihood density), this returns the *likelihood alone* as
+    a function of a flat parameter vector. Elliptical slice sampling
+    folds the Gaussian prior into the proposal mechanism, so it needs
+    the likelihood by itself.
+
+    Two cases:
+
+    - **Record-shaped prior** (any ``SimpleModel`` prior): the flat
+      vector unflattens through the prior's
+      :meth:`~probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.unflatten_sample`
+      so the likelihood sees structured ``Record``-shaped params.
+    - **Bare-array prior**: the likelihood already accepts a flat
+      vector, so it is called directly.
+    """
+    flat_view = getattr(prior, "as_flat_distribution", None)
+    record_template = getattr(prior, "record_template", None)
+    if flat_view is not None and record_template is not None:
+        flat_prior = flat_view()
+
+        def loglikelihood_fn(theta_flat: Array) -> Array:
+            params = flat_prior.unflatten_sample(theta_flat)
+            return likelihood.log_likelihood(params=params, data=data)
+
+        return loglikelihood_fn
+
+    def loglikelihood_fn(theta_flat: Array) -> Array:
+        return likelihood.log_likelihood(params=theta_flat, data=data)
+
+    return loglikelihood_fn
+
+
 # ---------------------------------------------------------------------------
 # ArviZ DataTree builder (backend-agnostic)
 # ---------------------------------------------------------------------------
@@ -346,3 +466,81 @@ def build_mcmc_datatree(
         dt["warmup"] = xr.DataTree(dataset=warmup_ds)
 
     return dt
+
+
+# ---------------------------------------------------------------------------
+# Shared per-chain scan loop
+# ---------------------------------------------------------------------------
+
+
+def run_chain_scan(
+    sampler: Any,
+    init_state: Any,
+    num_results: int,
+    key: Array,
+) -> tuple[Array, Any]:
+    """Step a BlackJAX-style sampler under ``jax.lax.scan``.
+
+    Drives the standard ``state, info = sampler.step(key, state)``
+    contract for ``num_results`` iterations. Returns
+    ``(positions, infos)`` where ``positions`` has shape
+    ``(num_results, *event_shape)`` and ``infos`` is a pytree of
+    per-step info objects stacked along the leading axis. The caller
+    is responsible for packing ``infos`` into whatever output shape
+    its consumer expects (e.g. an ArviZ-flavoured ``sample_stats``
+    dict).
+
+    Used by both the NUTS / HMC and the RWMH / ESS backends; the
+    contract is identical because BlackJAX samplers share it.
+    """
+    def one_step(state, step_key):
+        state, info = sampler.step(step_key, state)
+        return state, (state.position, info)
+
+    keys = jax.random.split(key, num_results)
+    _, (positions, infos) = jax.lax.scan(one_step, init_state, keys)
+    return positions, infos
+
+
+# ---------------------------------------------------------------------------
+# Multi-chain parallel dispatch
+# ---------------------------------------------------------------------------
+
+
+def parallel_chain_map(fn: Callable[[Array], Any], chain_keys: Array) -> Any:
+    """Run ``fn`` across ``chain_keys`` using the best parallelism available.
+
+    Picks between three strategies:
+
+    * **Single chain** (``num_chains == 1``): apply ``fn`` directly to
+      the lone key and add a leading axis. Skips both ``pmap`` and
+      ``vmap`` since neither earns its tracing / dispatch cost for a
+      one-element batch.
+    * ``jax.pmap`` when ``num_chains >= 2`` and
+      :func:`jax.local_device_count` >= ``num_chains``. Each chain runs
+      independently on its own device — bit-identical to a single-chain
+      sequential run at the same seed, with full per-device parallelism
+      on GPU/TPU or on a CPU configured with multiple virtual devices
+      (``XLA_FLAGS=--xla_force_host_platform_device_count=N``).
+    * ``jax.vmap`` otherwise. Cheaper SIMD-style vectorization, no
+      extra memory, but: (a) only a single core's worth of throughput
+      on CPU, and (b) for kernels with data-dependent control flow
+      like NUTS, vmap has to mask-pad divergent trajectories, so the
+      per-chain draws no longer match the sequential reference at the
+      same seed.
+
+    Intended for top-of-runner use — the ``int(chain_keys.shape[0])``
+    read requires a concrete shape and so is not safe inside ``jit``
+    or ``scan``.
+
+    Returns whatever ``fn`` returns, with a leading ``num_chains``
+    axis. Both ``pmap`` and ``vmap`` backends produce the same logical
+    output shape; pmap returns sharded arrays that downstream code can
+    index per-chain transparently.
+    """
+    num_chains = int(chain_keys.shape[0])
+    if num_chains == 1:
+        return jax.tree.map(lambda a: a[None], fn(chain_keys[0]))
+    if jax.local_device_count() >= num_chains:
+        return jax.pmap(fn)(chain_keys)
+    return jax.vmap(fn)(chain_keys)

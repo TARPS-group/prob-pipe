@@ -125,34 +125,6 @@ class TestGLMLikelihood:
             glm.per_datum_log_likelihood(params, jnp.array([0.0, 0.0, 1.0]))
 
 
-# -- Optional sbijax-backed likelihoods ----------------------------------------
-
-
-class TestSBIJaxLikelihoods:
-    """NLE / NRE likelihoods satisfy the Protocol via the default fallback.
-
-    Note: ``_NLELikelihood.__new__(...)`` constructs a bare instance
-    without exercising the method body. The structural-protocol check
-    confirms the class declares ``per_datum_log_likelihood``; the
-    method body itself relies on a trained sbijax model which is too
-    heavy to construct in a unit test. Integration tests in
-    ``test_inference.py``'s sbijax block exercise the call path
-    end-to-end when sbijax is installed.
-    """
-
-    def test_nle_satisfies_protocol(self):
-        pytest.importorskip("sbijax")
-        from probpipe.inference._sbijax import _NLELikelihood
-        stub = _NLELikelihood.__new__(_NLELikelihood)
-        assert isinstance(stub, ConditionallyIndependentLikelihood)
-
-    def test_nre_satisfies_protocol(self):
-        pytest.importorskip("sbijax")
-        from probpipe.inference._sbijax import _NRELikelihood
-        stub = _NRELikelihood.__new__(_NRELikelihood)
-        assert isinstance(stub, ConditionallyIndependentLikelihood)
-
-
 # -- Default per-datum fallback ------------------------------------------------
 
 

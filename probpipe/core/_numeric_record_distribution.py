@@ -39,13 +39,27 @@ express a vectorized batch of structured random variables.
 
 from __future__ import annotations
 
+from math import prod
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from .record import NumericRecordTemplate
 
+import jax
+import jax.numpy as jnp
+
 from .._dtype import _as_float_array
-from .._utils import prod
+from .._utils import _auto_key
+from .._weights import Weights, weighted_mean, weighted_variance
+from ..custom_types import Array, ArrayLike, PRNGKey
+from . import _distribution_base as _base
+from ._distribution_base import Distribution
+from ._record_distribution import RecordDistribution
+from .constraints import (
+    Constraint,
+    _supports_compatible,
+    real,
+)
 from .protocols import (
     SupportsCovariance,
     SupportsExpectation,
@@ -54,22 +68,6 @@ from .protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-
-import jax
-import jax.numpy as jnp
-
-from ..custom_types import Array, ArrayLike, PRNGKey
-from .._weights import Weights, weighted_mean, weighted_variance
-from .constraints import (
-    Constraint,
-    _supports_compatible,
-    real,
-)
-from . import _distribution_base as _base
-from .._utils import _auto_key
-from ._distribution_base import Distribution
-from ._record_distribution import RecordDistribution
-
 
 # ---------------------------------------------------------------------------
 # Sampling & expectation helpers
@@ -518,9 +516,9 @@ class NumericRecordDistribution(RecordDistribution):
         event axes; without it, the input gets a trailing singleton
         axis (matching the scalar-event default).
         """
-        from .record import Record
         from ._numeric_record import NumericRecord
         from ._record_array import NumericRecordArray
+        from .record import Record
         if isinstance(value, (NumericRecordArray, NumericRecord)):
             return value.flatten()
         if isinstance(value, Record):

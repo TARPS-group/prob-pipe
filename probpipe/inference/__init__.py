@@ -1,8 +1,9 @@
 """Inference algorithms for ProbPipe.
 
-Provides MCMC sampling (gradient-free RWMH and nutpie-backed NUTS),
-chain-structured empirical distributions, and the inference method
-registry for ``condition_on`` dispatch.
+Provides MCMC sampling (gradient-based NUTS/HMC + gradient-free RWMH and
+elliptical slice sampling — all BlackJAX-backed), chain-structured
+empirical distributions, and the inference method registry for
+``condition_on`` dispatch.
 """
 
 from __future__ import annotations
@@ -20,7 +21,8 @@ from ..core._registry import (
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
-from ._rwmh import rwmh
+from ._blackjax_rwmh import rwmh
+from ._blackjax_ess import elliptical_slice
 from ._nutpie import condition_on_nutpie
 from ._minibatch import MinibatchedDistribution
 
@@ -36,11 +38,9 @@ __all__ = [
     "InferenceMethod",
     "inference_method_registry",
     "rwmh",
+    "elliptical_slice",
     "condition_on_nutpie",
     "MinibatchedDistribution",
-    "sbi_learn_conditional",
-    "sbi_learn_likelihood",
-    "DirectSamplerSBIModel",
 ]
 
 
@@ -48,22 +48,26 @@ __all__ = [
 # Register built-in inference methods
 # ---------------------------------------------------------------------------
 
-# TFP-backed methods (always available since TFP is a core dependency)
+# TFP-backed MCMC — registered at priority 0 (opt-in only); BlackJAX
+# methods below win auto-dispatch.
 from ._tfp_mcmc import TFPNutsMethod, TFPHmcMethod
 
 inference_method_registry.register(TFPNutsMethod())
 inference_method_registry.register(TFPHmcMethod())
 
-# RWMH (always available)
-from ._rwmh import TFPRWMHMethod
-
-inference_method_registry.register(TFPRWMHMethod())
-
-# BlackJAX MCMC (gradient-based)
+# BlackJAX MCMC (gradient-based) — auto-dispatch default for any
+# JAX-traceable ``SupportsLogProb`` target.
 from ._blackjax_mcmc import BlackJAXNutsMethod, BlackJAXHmcMethod
 
 inference_method_registry.register(BlackJAXNutsMethod())
 inference_method_registry.register(BlackJAXHmcMethod())
+
+# BlackJAX gradient-free MCMC: RWMH (catch-all) and ESS (Gaussian-prior).
+from ._blackjax_rwmh import BlackJAXRWMHMethod
+from ._blackjax_ess import BlackJAXESSMethod
+
+inference_method_registry.register(BlackJAXRWMHMethod())
+inference_method_registry.register(BlackJAXESSMethod())
 
 # BlackJAX SGMCMC
 from ._blackjax_sgmcmc import BlackJAXSGLDMethod, BlackJAXSGHMCMethod
@@ -91,31 +95,3 @@ try:
     inference_method_registry.register(PyMCADVIMethod())
 except ImportError:
     pass
-
-try:
-    from ._sbijax import (
-        SbiSMCABCMethod,
-        sbi_learn_conditional,
-        sbi_learn_likelihood,
-        DirectSamplerSBIModel,
-    )
-    inference_method_registry.register(SbiSMCABCMethod())
-except ImportError:
-
-    _SBI_INSTALL_MSG = (
-        "SBI features require sbijax: pip install probpipe[sbi]"
-    )
-
-    def sbi_learn_conditional(*args, **kwargs):  # type: ignore[misc]
-        """Placeholder that raises when sbijax is not installed."""
-        raise ImportError(_SBI_INSTALL_MSG)
-
-    def sbi_learn_likelihood(*args, **kwargs):  # type: ignore[misc]
-        """Placeholder that raises when sbijax is not installed."""
-        raise ImportError(_SBI_INSTALL_MSG)
-
-    class DirectSamplerSBIModel:  # type: ignore[no-redef]
-        """Placeholder that raises when sbijax is not installed."""
-
-        def __init__(self, *args, **kwargs):
-            raise ImportError(_SBI_INSTALL_MSG)

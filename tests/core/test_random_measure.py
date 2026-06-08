@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from math import prod
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -26,8 +28,6 @@ from probpipe import (
 from probpipe.core._broadcast_distributions import _make_mixture_marginal
 from probpipe.core._distribution_array import DistributionArray
 from probpipe.core.constraints import real
-from probpipe._utils import prod
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

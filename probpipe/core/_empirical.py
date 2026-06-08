@@ -38,6 +38,7 @@ Provides:
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from math import prod
 from typing import Any
 
 import jax
@@ -45,7 +46,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from .._dtype import _as_float_array
-from .._utils import _auto_key, _is_numeric_array, prod
+from .._utils import _auto_key, _is_numeric_array
 from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from . import _distribution_base as _base
@@ -64,7 +65,6 @@ from .protocols import (
     SupportsVariance,
 )
 from .record import Record, RecordTemplate
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers

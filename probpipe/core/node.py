@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from itertools import product as cartesian_product
 from types import MappingProxyType
-from typing import Any, ClassVar, Literal, TypeAlias, get_args, get_type_hints
+from typing import Any, Literal, get_args
 
 import jax
 import jax.numpy as jnp
@@ -24,102 +24,46 @@ try:
 except ImportError:
     Digraph = None
 
-from .._utils import prod
-from ..converters import converter_registry
 from ..custom_types import Array, PRNGKey
-from . import _workflow_execution, _workflow_result
-from ._broadcast_distributions import _make_stack
-from ._distribution_array import DistributionArray, _make_distribution_array
-from ._record_array import RecordArray, _RecordArrayView
+from . import (
+    _workflow_call,
+    _workflow_distribution_normalization,
+    _workflow_execution,
+    _workflow_plan,
+    _workflow_result,
+    _workflow_sweep,
+)
+from ._record_array import RecordArray
 from ._record_distribution import _RecordDistributionView
 from .distribution import (
     BroadcastDistribution,
     Distribution,
     EmpiricalDistribution,
-    NumericRecordDistribution,
-)
-from .protocols import (
-    SupportsConditioning,
-    SupportsCovariance,
-    SupportsExpectation,
-    SupportsLogProb,
-    SupportsMean,
-    SupportsRandomLogProb,
-    SupportsRandomUnnormalizedLogProb,
-    SupportsSampling,
-    SupportsUnnormalizedLogProb,
-    SupportsVariance,
 )
 from .provenance import Provenance
-
-# Protocol types that indicate a parameter expects a distribution object.
-# Used by _find_broadcast_args to avoid broadcasting over such parameters.
-_DISTRIBUTION_PROTOCOLS: tuple[type, ...] = (
-    SupportsExpectation,
-    SupportsSampling,
-    SupportsUnnormalizedLogProb,
-    SupportsLogProb,
-    SupportsMean,
-    SupportsVariance,
-    SupportsCovariance,
-    SupportsRandomLogProb,
-    SupportsRandomUnnormalizedLogProb,
-    SupportsConditioning,
-)
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Output-type coercion for WorkflowFunction returns (issue #130)
-# ---------------------------------------------------------------------------
-
-# Compatibility aliases for tests or downstream code that imported these
-# private helpers from ``probpipe.core.node`` before the extraction.
-# Will be removed in a follow-up issue after downstream updates.
-BroadcastMode = _workflow_result.BroadcastMode
-BROADCAST_WRAP = _workflow_result.BROADCAST_WRAP
-BROADCAST_STACK = _workflow_result.BROADCAST_STACK
-BROADCAST_NESTED = _workflow_result.BROADCAST_NESTED
-_wrap_as_record = _workflow_result._wrap_as_record
-_coerce_output = _workflow_result._coerce_output
-
 __all__ = [
+    "AbstractModule",
     "InputFrozenError",
-    "workflow_method",
-    "abstract_workflow_method",
-    "workflow_function",
+    "Module",
     "Node",
     "WorkflowFunction",
-    "Module",
-    "AbstractModule",
+    "abstract_workflow_method",
+    "workflow_function",
+    "workflow_method",
 ]
 
-_WorkflowFunctionDispatch: TypeAlias = Literal[
+_WorkflowFunctionDispatch = Literal[
     "auto", "jax", "sequential", "thread"
 ]
+_VALID_DISPATCH_STRATEGIES: tuple[str, ...] = get_args(_WorkflowFunctionDispatch)
 
 
 class InputFrozenError(Exception):
     pass
-
-
-def _group_by_parent(
-    values: dict[str, Any],
-    names: list[str],
-) -> dict[int, list[str]]:
-    """Group arg names by the ``id()`` of their source parent.
-
-    Views (``_RecordArrayView`` / ``_RecordDistributionView``) expose
-    ``.parent`` and group with other views sharing it; plain container
-    args are each their own parent. First-occurrence order preserved.
-    """
-    groups: dict[int, list[str]] = {}
-    for name in names:
-        value = values[name]
-        parent = getattr(value, "parent", value)
-        groups.setdefault(id(parent), []).append(name)
-    return groups
 
 
 def workflow_method(func: Callable):
@@ -166,9 +110,9 @@ def workflow_function(_func=None, /, **kwargs):
     return decorator
 
 
-class Node(ABC):
+class Node(ABC):  # noqa: B024
     """
-    Base unit of the ProbPipe computational dependency graph. 
+    Base unit of the ProbPipe computational dependency graph.
 
     Keyword arguments are automatically split by type: values that are
     ``Node`` instances become *child nodes* (dependencies on other DAG
@@ -205,8 +149,8 @@ def _index_sample(s: Any, i: int) -> Any:
     Parameters
     ----------
     s : Any
-        Either a bare array (single-field broadcast draws / legacy
-        callers), a :class:`Record` (multi-field auto-wrap or an
+        Either a bare array (single-field broadcast draws), a
+        :class:`Record` (multi-field auto-wrap or an
         explicit Record source), or a :class:`NumericRecord` (the
         unified ``EmpiricalDistribution`` — numeric arrays auto-wrap
         as a single-field Record — returns a ``NumericRecord`` with
@@ -315,10 +259,6 @@ class WorkflowFunction(Node):
     """
 
     DEFAULT_N_BROADCAST_SAMPLES: int = 128
-    _VALID_DISPATCH_STRATEGIES: ClassVar[tuple[str, ...]] = get_args(
-        _WorkflowFunctionDispatch
-    )
-
     def __init__(
         self,
         *,
@@ -341,9 +281,9 @@ class WorkflowFunction(Node):
                 f"WorkflowFunction no longer accepts {names}; use dispatch= instead."
             )
 
-        if dispatch not in self._VALID_DISPATCH_STRATEGIES:
+        if dispatch not in _VALID_DISPATCH_STRATEGIES:
             raise ValueError(
-                f"dispatch must be one of {self._VALID_DISPATCH_STRATEGIES}; got {dispatch!r}"
+                f"dispatch must be one of {_VALID_DISPATCH_STRATEGIES}; got {dispatch!r}"
             )
         _workflow_execution._validate_max_workers(max_workers)
         if dispatch != "thread" and max_workers is not None:
@@ -354,8 +294,7 @@ class WorkflowFunction(Node):
             )
 
         self._func = func
-        self._sig = inspect.signature(func)
-        self._hints = get_type_hints(func)
+        self._signature_info = _workflow_call.make_signature_info(func)
         # Convert legacy string / None values to WorkflowKind enum
         # TODO: remove this legacy conversion in follow-up issue
         if workflow_kind is None:
@@ -372,7 +311,7 @@ class WorkflowFunction(Node):
         self.__doc__ = func.__doc__
         self.__name__ = self._name
         self.__qualname__ = getattr(func, "__qualname__", self._name)
-        self.__signature__ = self._sig
+        self.__signature__ = self._signature_info.signature
         self.__module__ = getattr(func, "__module__", None)
         self._module = module
         self._n_broadcast_samples = n_broadcast_samples if n_broadcast_samples is not None else self.DEFAULT_N_BROADCAST_SAMPLES
@@ -389,22 +328,9 @@ class WorkflowFunction(Node):
 
         super().__init__()
 
-        # Precompute parameter metadata once
-        self._param_names = [p for p in self._sig.parameters if p != "self"]
-        self._has_var_keyword = any(
-            p.kind == inspect.Parameter.VAR_KEYWORD
-            for p in self._sig.parameters.values()
+        _workflow_call.validate_reserved_parameter_names(
+            self._signature_info, workflow_name=self._name,
         )
-
-        # Reserved names that would collide with WorkflowFunction call-time overrides
-        _RESERVED = {"n_broadcast_samples", "seed", "include_inputs"}
-        collision = _RESERVED & set(self._param_names)
-        if collision:
-            raise ValueError(
-                f"Function '{self._name}' has parameter(s) {collision} which are "
-                f"reserved by WorkflowFunction for call-time overrides. Rename them in "
-                f"your function signature."
-            )
 
     @property
     def effective_workflow_kind(self) -> WorkflowKind:
@@ -455,107 +381,78 @@ class WorkflowFunction(Node):
         *,
         mode: _workflow_execution.WorkflowExecutionMode | None = None,
     ) -> _workflow_execution.WorkflowExecutionConfig:
-        """Build resolved execution metadata for sequential call dispatch."""
+        """Build resolved execution metadata for row-wise call dispatch."""
         if mode is None:
-            kind = self.effective_workflow_kind
-            if kind is WorkflowKind.TASK:
-                mode = "prefect_task"
-            elif kind is WorkflowKind.FLOW:
-                mode = "prefect_flow"
-            elif self._dispatch == "thread":
-                mode = "thread"
-            else:
-                mode = "sequential"
+            match self.effective_workflow_kind:
+                case WorkflowKind.TASK:
+                    mode = "prefect_task"
+                case WorkflowKind.FLOW:
+                    mode = "prefect_flow"
+                case _ if self._dispatch == "thread":
+                    mode = "thread"
+                case _:
+                    mode = "sequential"
 
-        max_workers = None
-        if mode == "thread":
-            max_workers = self._max_workers
-        elif mode in ("prefect_task", "prefect_flow"):
-            if self._dispatch == "thread" or self._max_workers is not None:
-                warnings.warn(
-                    "dispatch='thread' and max_workers configure only local "
-                    "ThreadPoolExecutor dispatch; they do not control Prefect "
-                    "scheduling.",
-                    stacklevel=2,
-                )
+        is_prefect = mode in ("prefect_task", "prefect_flow")
 
-        prefect_task_runner = (
-            prefect_config.resolve_task_runner()
-            if mode in ("prefect_task", "prefect_flow")
-            else None
-        )
+        if is_prefect and (self._dispatch == "thread" or self._max_workers is not None):
+            warnings.warn(
+                "dispatch='thread' and max_workers configure only local "
+                "ThreadPoolExecutor dispatch; they do not control Prefect "
+                "scheduling.",
+                stacklevel=2,
+            )
+
         return _workflow_execution.WorkflowExecutionConfig(
             mode=mode,
-            max_workers=max_workers,
+            max_workers=self._max_workers if mode == "thread" else None,
             name=self._name,
-            prefect_task_runner=prefect_task_runner,
+            prefect_task_runner=(
+                prefect_config.resolve_task_runner() if is_prefect else None
+            ),
         )
-
-    def _make_execution_request(
-        self,
-        call_value_list: list[dict[str, Any]],
-        *,
-        mode: _workflow_execution.WorkflowExecutionMode | None = None,
-    ) -> _workflow_execution.WorkflowExecutionRequest:
-        """Build a backend-neutral execution request without capturing ``self``."""
-        return _workflow_execution.WorkflowExecutionRequest(
-            func=self._func,
-            call_value_list=call_value_list,
-            execution=self._make_execution_config(mode=mode),
-        )
-
-    def _is_dependency_param(self, name: str) -> bool:
-        """
-        Decide whether a parameter is a dependency (Node) vs normal input.
-
-        Rule:
-          - If annotation is a Node subclass => dependency
-          - Else => normal input
-
-        This matches your current architecture (deps are Nodes).
-        """
-        ann = self._hints.get(name)
-        try:
-            return isinstance(ann, type) and issubclass(ann, Node)
-        except TypeError:
-            # Generic aliases (e.g. NDArray on Python 3.10) can pass
-            # isinstance(ann, type) but fail in issubclass().
-            return False
 
     def __call__(self, *args, **call_inputs):
-        # Extract reserved call-time overrides (collision already prevented in __init__)
-        n_broadcast_samples = call_inputs.pop("n_broadcast_samples", self._n_broadcast_samples)
-        do_include_inputs = call_inputs.pop("include_inputs", self._include_inputs)
+        call = _workflow_call.resolve_workflow_call(
+            self._signature_info,
+            args,
+            call_inputs,
+            bind=self._bind,
+            module=self._module,
+            dependency_type=Node,
+            workflow_name=self._name,
+            default_n_broadcast_samples=self._n_broadcast_samples,
+            default_include_inputs=self._include_inputs,
+        )
+        if call.overrides.seed is not None:
+            self._key = jax.random.PRNGKey(call.overrides.seed)
 
-        if "seed" in call_inputs:
-            self._key = jax.random.PRNGKey(call_inputs.pop("seed"))
-
-        # Bind user arguments through the wrapped function's real signature.
-        # ``bind_partial`` preserves module/default resolution below while
-        # still rejecting unexpected keywords and duplicate positional/keyword
-        # values with Python-call-compatible errors.
-        bound = self._sig.bind_partial(*args, **call_inputs)
-        call_inputs = {}
-        for name, value in bound.arguments.items():
-            param = self._sig.parameters[name]
-            if param.kind == inspect.Parameter.VAR_KEYWORD:
-                call_inputs.update(value)
-            else:
-                call_inputs[name] = value
-
-        values = self._resolve_inputs(call_inputs)
-        values = self._convert_distributions(values)
-
-        dist_args, ra_args = self._find_broadcast_args(values)
-        if dist_args or ra_args:
+        values = _workflow_distribution_normalization.normalize_distribution_values(
+            values=call.values, hints=self._signature_info.hints,
+        )
+        broadcast_plan = _workflow_plan.build_broadcast_plan(
+            values=values, hints=self._signature_info.hints,
+        )
+        if broadcast_plan.regime != "none":
             return self._broadcast(
-                values, dist_args, ra_args, n_broadcast_samples, do_include_inputs,
+                values,
+                broadcast_plan,
+                call.overrides.n_broadcast_samples,
+                call.overrides.include_inputs,
             )
 
         # Non-broadcast call — one function invocation, then wrap.
         # Provenance parents are the inputs that carry their own
         # ``.source`` slot (Distribution / Record / RecordArray).
-        result = self._execute_many([values])[0]
+        # Known harmless duplication: distribution-broadcast paths below build
+        # the same request shape. A future Distribution broadcast extraction
+        # should centralize this without reintroducing private facade wrappers.
+        request = _workflow_execution.WorkflowExecutionRequest(
+            func=self._func,
+            call_value_list=[values],
+            execution=self._make_execution_config(),
+        )
+        result = _workflow_execution.execute_many(request)[0]
         parents = tuple(
             v for v in values.values() if hasattr(v, "source")
         )
@@ -564,258 +461,12 @@ class WorkflowFunction(Node):
             parents=parents,
             metadata={"func": self._name or self._func.__name__},
         )
-        return _coerce_output(
+        return _workflow_result._coerce_output(
             result,
-            broadcast_mode=BROADCAST_WRAP,
+            broadcast_mode=_workflow_result.BROADCAST_WRAP,
             provenance=provenance,
             field_name=self._name,
         )
-
-    def _resolve_inputs(self, call_inputs: dict[str, Any]) -> dict[str, Any]:
-        """
-        Build kwargs for calling the underlying function.
-
-        Precedence (highest -> lowest):
-          1) call_inputs
-          2) self._bind
-          3) module.child_nodes/module.inputs (if module attached)
-          4) function default values
-        """
-        values: dict[str, Any] = {}
-
-        # convenience access
-        mod = self._module
-        mod_child_nodes = getattr(mod, "child_nodes", {}) if mod is not None else {}
-        mod_inputs = getattr(mod, "inputs", {}) if mod is not None else {}
-
-        for name, param in self._sig.parameters.items():
-            if name == "self":
-                continue
-
-            is_dep = self._is_dependency_param(name)
-
-            # 1) call-time inputs
-            if name in call_inputs:
-                if mod is not None and is_dep and name in mod_child_nodes:
-                    # Avoid accidental overriding of module-wired deps at call time
-                    raise TypeError(
-                        f"Dependency '{name}' for workflow '{self._name}' is provided by the module "
-                        f"and cannot be overridden at call time."
-                    )
-                values[name] = call_inputs[name]
-
-            # 2) construction-time bind
-            elif name in self._bind:
-                values[name] = self._bind[name]
-
-            # 3) resolve from module if available
-            elif mod is not None:
-                if is_dep and name in mod_child_nodes:
-                    values[name] = mod_child_nodes[name]
-                elif (not is_dep) and name in mod_inputs:
-                    values[name] = mod_inputs[name]
-                else:
-                    # fall through to default/missing
-                    pass
-
-            # 4) function defaults
-            if name not in values:
-                if param.default is not param.empty:
-                    values[name] = param.default
-
-        # Pass through extra kwargs when the function accepts **kwargs.
-        if self._has_var_keyword:
-            known_params = set(self._sig.parameters.keys())
-            for k, v in call_inputs.items():
-                if k not in known_params:
-                    values[k] = v
-
-        # validate required params exist (after resolution)
-        for name, param in self._sig.parameters.items():
-            if name == "self":
-                continue
-            if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
-                continue
-            if param.default is param.empty and name not in values:
-                raise TypeError(f"Missing required input '{name}' for workflow '{self._name}'")
-
-        # validate dependency types
-        for name in self._param_names:
-            if self._is_dependency_param(name):
-                v = values.get(name)
-                if not isinstance(v, Node):
-                    ann = self._hints.get(name)
-                    raise TypeError(
-                        f"WorkflowFunction '{self._name}' expects dependency '{name}: {ann}' to be a Node, "
-                        f"but got {type(v)}."
-                    )
-
-        return values
-
-    def _convert_distributions(self, values: dict[str, Any]) -> dict[str, Any]:
-        """Convert distribution-valued args based on type hints.
-
-        Handles two conversion cases and one skip:
-
-        1. **Concrete type hints** – if the hint is a ``Distribution``
-           subclass and the value is a recognised distribution that is
-           not already an instance, convert via the registry.
-        2. **Protocol type hints** – if the hint is a
-           ``@runtime_checkable`` protocol (e.g., ``SupportsLogProb``)
-           and the value is a ``Distribution`` that does not satisfy the
-           protocol, convert via protocol-based resolution.
-        3. **``DistributionArray`` skip** – ``Array[Distribution]``
-           values are handled by the sweep path in
-           ``_find_broadcast_args`` (cell-by-cell); they never go
-           through the scalar-distribution conversion.
-        """
-        out = dict(values)
-
-        for name, value in values.items():
-            expected = self._hints.get(name)
-            # DistributionArray is ``Array[Distribution]`` — handled by
-            # the sweep path, not the scalar-distribution conversion.
-            # A 0-d DA (``batch_shape == ()``) has zero axes to sweep
-            # over, so the sweep path would skip it and the op would
-            # see a raw ``DistributionArray`` in a scalar-Distribution
-            # slot. Unwrap it here unless the hint explicitly asks for
-            # a DA (or ``Any``), so the cell flows through dispatch as
-            # any scalar Distribution would — the natural extension of
-            # the sweep convention "no batch cells to iterate → one
-            # call with the cell". Size-1 DAs (``batch_shape == (1,)``)
-            # are *not* collapsed here: their sweep is well-defined
-            # (one cell → ``batch_shape=(1,)`` output), and treating
-            # them as scalars would silently change the result shape
-            # of ``mean(da)`` / ``sample(da)`` for any deliberately
-            # one-element batch.
-            if isinstance(value, DistributionArray):
-                if value.batch_shape == ():
-                    try:
-                        wants_da = (
-                            isinstance(expected, type)
-                            and issubclass(expected, DistributionArray)
-                        )
-                    except TypeError:
-                        wants_da = False
-                    if not wants_da and expected is not Any:
-                        out[name] = value._flat_component(0)
-                continue
-            if expected is None:
-                continue
-
-            try:
-                is_dist_subclass = isinstance(expected, type) and issubclass(
-                    expected, Distribution
-                )
-            except TypeError:
-                is_dist_subclass = False
-
-            if (
-                is_dist_subclass
-                and converter_registry.is_distribution_type(value)
-                and not isinstance(value, expected)
-            ):
-                out[name] = converter_registry.convert(value, expected)
-            elif (
-                not is_dist_subclass
-                and expected in _DISTRIBUTION_PROTOCOLS
-                and isinstance(value, Distribution)
-                and not isinstance(value, expected)
-            ):
-                try:
-                    out[name] = converter_registry.convert(value, expected)
-                except (TypeError, AttributeError):
-                    pass  # Let the impl function's own check raise
-
-        return out
-
-    def _find_broadcast_args(
-        self, values: dict[str, Any]
-    ) -> tuple[list[str], list[str]]:
-        """Classify argument values into distribution-broadcast and
-        array-broadcast groups.
-
-        Returns
-        -------
-        (dist_args, ra_args) : tuple of list
-            - ``dist_args``: scalar Distribution args passed to a slot
-              whose type hint is *not* a Distribution; sampled from
-              and Monte-Carlo-marginalised.
-            - ``ra_args``: array-valued args (``RecordArray`` or
-              ``DistributionArray`` with nonempty ``batch_shape``)
-              passed to a slot whose type hint is *not* that same array
-              type. Multiple ``ra_args`` combine by the **product
-              rule**: one call per cell of the Cartesian product across
-              all array inputs' batch shapes.
-
-        A ``DistributionArray`` is treated as ``Array[Distribution]``:
-        always a sweep arg (not marginalised), even when the hint is a
-        distribution protocol like ``SupportsSampling``. Each cell's
-        component becomes the scalar Distribution seen by the inner
-        call.
-
-        The two groups are disjoint — a value is either an array or a
-        (scalar) Distribution or neither. Both groups firing on the
-        same call triggers the nested regime in ``_broadcast``: outer
-        stack over the array product, inner marginalise over the
-        Distribution MC draws.
-        """
-        dist_broadcast: list[str] = []
-        ra_broadcast: list[str] = []
-        for name, value in values.items():
-            expected = self._hints.get(name)
-
-            # --- Array-valued branch (RecordArray + DistributionArray) ---
-            is_record_array = isinstance(value, RecordArray)
-            is_dist_array = isinstance(value, DistributionArray)
-            if (is_record_array or is_dist_array) and len(value.batch_shape) > 0:
-                # Hint matches the batched type exactly → caller wants
-                # the batched object as-is.
-                # ``typing.Any`` → caller opted out of broadcasting.
-                # Anything else (scalar Record / Distribution / protocol
-                # / no hint) → per-cell sweep.
-                try:
-                    is_same_array_hint = (
-                        isinstance(expected, type) and (
-                            (is_record_array and issubclass(expected, RecordArray))
-                            or (is_dist_array and issubclass(expected, DistributionArray))
-                        )
-                    )
-                except TypeError:
-                    is_same_array_hint = False
-                is_any_hint = expected is Any
-                if is_same_array_hint or is_any_hint:
-                    continue
-                ra_broadcast.append(name)
-                continue
-
-            # --- Scalar-Distribution branch -------------------------------
-            if not converter_registry.is_distribution_type(value):
-                continue
-            # Unwrap parameterized generics (e.g. Distribution[T]).
-            origin = getattr(expected, "__origin__", None)
-            expected_type = origin if isinstance(origin, type) else expected
-            try:
-                is_dist_hint = (
-                    expected_type is not None
-                    and isinstance(expected_type, type)
-                    and issubclass(expected_type, Distribution)
-                )
-            except TypeError:
-                is_dist_hint = False
-            if not is_dist_hint and expected in _DISTRIBUTION_PROTOCOLS:
-                is_dist_hint = True
-            if is_dist_hint:
-                continue
-            # Auto-convert external distribution types to ProbPipe
-            if not isinstance(value, Distribution):
-                values[name] = converter_registry.convert(
-                    value, NumericRecordDistribution,
-                )
-                value = values[name]
-            dist_broadcast.append(name)
-
-        return dist_broadcast, ra_broadcast
 
     def _get_key(self):
         """Split and advance the internal PRNG key."""
@@ -830,7 +481,7 @@ class WorkflowFunction(Node):
         """Return the JAX trace-probe error for the current call, if any."""
         try:
             dummy_kw = {}
-            for name in self._sig.parameters:
+            for name in self._signature_info.signature.parameters:
                 if name == "self":
                     continue
                 if name in broadcast_args:
@@ -848,9 +499,9 @@ class WorkflowFunction(Node):
                         # those distributions don't have a single
                         # array-shaped placeholder, so the probe can't
                         # produce a dummy. Falling out to the outer
-                        # ``except Exception`` triggers loop
-                        # vectorization, which is the right default for
-                        # multi-field record-valued inputs.
+                        # ``except Exception`` triggers row-wise dispatch,
+                        # which is the right default for multi-field
+                        # record-valued inputs.
                         try:
                             es = dist.event_shape
                         except (TypeError, NotImplementedError) as exc:
@@ -859,7 +510,7 @@ class WorkflowFunction(Node):
                                 f"{type(dist).__name__} broadcast arg "
                                 f"{name!r}: no single ``event_shape`` "
                                 f"(multi-field or abstract). "
-                                f"Falling back to loop vectorization."
+                                f"Falling back to row-wise dispatch."
                             ) from exc
                         # Match the distribution's own dtype so the probe
                         # mirrors what the inner function actually sees.
@@ -929,279 +580,31 @@ class WorkflowFunction(Node):
     def _broadcast(
         self,
         values: dict[str, Any],
-        dist_args: list[str],
-        ra_args: list[str],
+        broadcast_plan: _workflow_plan.BroadcastPlan,
         n_broadcast_samples: int,
         do_include_inputs: bool = False,
     ) -> Any:
-        """Dispatcher: route to the right broadcast regime (issue #130).
+        """Dispatcher: route to distribution broadcast or sweep execution."""
+        dist_args = list(broadcast_plan.dist_args)
+        ra_args = list(broadcast_plan.array_args)
 
-        Three regimes:
-
-        - ``dist_args`` only — existing Monte Carlo marginalisation via
-          ``_broadcast_distributions_only``. Output: marginal
-          distribution (``_MixtureMarginal`` / ``_RecordMarginal`` / ...).
-        - ``ra_args`` only — pure parameter sweep. One inner call per
-          RecordArray row; no marginalisation. Output: stacked
-          aggregate (``NumericRecordArray`` / ``RecordArray`` /
-          ``DistributionArray``) via ``_make_stack``.
-        - **Both** — nested regime. Outer loop over ``ra_args[0]`` rows,
-          each iteration running an inner distribution-only broadcast
-          for ``dist_args``. Output always a ``DistributionArray`` of
-          per-row marginals (satisfies the
-          Record | RecordArray | Distribution output contract).
-
-        The ``include_inputs=True`` override still produces the
-        inner-path ``BroadcastDistribution`` when ``dist_args`` fire,
-        but it is **not** supported on the pure-sweep or nested paths
-        (the stack has no single joint distribution to return; the
-        inputs are known via provenance). Calling with
-        ``include_inputs=True`` and any ``ra_args`` raises.
-        """
-        # ---- No RecordArray: delegate to the existing path -------------
         if not ra_args:
             return self._broadcast_distributions_only(
                 values, dist_args, n_broadcast_samples, do_include_inputs,
             )
 
-        if do_include_inputs:
-            raise NotImplementedError(
-                "include_inputs=True is not supported with RecordArray "
-                "broadcasting. The inputs are already available via "
-                "provenance on the stacked output."
-            )
-
-        # Group ``ra_args`` by parent identity. Views from the same
-        # ``RecordArray`` (e.g. ``Design.select_all()`` outputs) zip —
-        # they contribute a single axis block to the sweep. Plain
-        # ``RecordArray`` / ``DistributionArray`` args and views from
-        # different parents each form their own group and product
-        # across the sweep. Insertion order of first occurrence
-        # preserves axis ordering in the output.
-        ra_groups = self._group_ra_args_by_parent(values, ra_args)
-        sweep_batch_shape = tuple(
-            ax for _, bshape, _ in ra_groups for ax in bshape
-        )
-        n_total = prod(sweep_batch_shape) if sweep_batch_shape else 1
-
-        # ---- Pure sweep (no Distribution args) -------------------------
-        if not dist_args:
-            per_row = self._execute_sweep_rows(
-                values, ra_args, n_total, sweep_batch_shape, ra_groups,
-            )
-            aggregate = _make_stack(
-                per_row,
-                batch_shape=sweep_batch_shape,
-                name=self._name,
-                field_name=self._name,
-            )
-            provenance = self._make_sweep_provenance(
-                values, ra_args, dist_args, batch_shape=sweep_batch_shape, k=0,
-            )
-            return _coerce_output(
-                aggregate,
-                broadcast_mode=BROADCAST_STACK,
-                provenance=provenance,
-                field_name=self._name,
-            )
-
-        # ---- Nested (array + Distribution) -----------------------------
-        # Per sweep cell (in flat row-major order over the multi-d batch):
-        # run an inner distribution-only broadcast, marginalise over the
-        # k MC draws, collect the n_total per-cell marginals and stack
-        # them into a DistributionArray that presents the sweep's
-        # multi-d batch_shape.
-        per_row_marginals: list[Distribution] = []
-        for i in range(n_total):
-            row_values = self._slice_ra_args(values, ra_args, i, ra_groups)
-            inner = self._broadcast_distributions_only(
-                row_values, dist_args, n_broadcast_samples,
-                do_include_inputs=True,
-            )
-            if isinstance(inner, BroadcastDistribution):
-                marginal = inner.marginalize()
-            else:
-                marginal = inner
-            per_row_marginals.append(marginal)
-
-        stacked = _make_distribution_array(
-            per_row_marginals,
-            batch_shape=sweep_batch_shape,
-            name=self._name or "sweep",
-        )
-        provenance = self._make_sweep_provenance(
-            values, ra_args, dist_args,
-            batch_shape=sweep_batch_shape, k=n_broadcast_samples,
-        )
-        return _coerce_output(
-            stacked,
-            broadcast_mode=BROADCAST_NESTED,
-            provenance=provenance,
-            field_name=self._name,
-        )
-
-    # ----- Helpers for the array-broadcast path ---------------------------
-
-    def _group_ra_args_by_parent(
-        self,
-        values: dict[str, Any],
-        ra_args: list[str],
-    ) -> list[tuple[list[str], tuple[int, ...], int]]:
-        """Group array-valued sweep args by parent identity.
-
-        Views (``_RecordArrayView``) from the same parent
-        ``RecordArray`` — e.g. the output dict of
-        ``Design.select_all()`` — belong to one group and iterate in
-        lockstep (zip). Plain ``RecordArray`` / ``DistributionArray``
-        args and views from distinct parents each form their own group
-        and product across the sweep.
-
-        Returns a list of tuples ``(arg_names, batch_shape, size)``
-        in first-occurrence order; each tuple is one axis block of the
-        sweep. ``size`` is ``prod(batch_shape)``.
-        """
-        groups: list[tuple[list[str], tuple[int, ...], int]] = []
-        for arg_names in _group_by_parent(values, ra_args).values():
-            # Sibling views share their parent's batch_shape by
-            # construction, so the first arg's batch_shape stands for
-            # the group.
-            bshape = tuple(values[arg_names[0]].batch_shape)
-            groups.append((arg_names, bshape, prod(bshape) if bshape else 1))
-        return groups
-
-    def _slice_ra_args(
-        self,
-        values: dict[str, Any],
-        ra_args: list[str],
-        i: int,
-        ra_groups: list[tuple[list[str], tuple[int, ...], int]],
-    ) -> dict[str, Any]:
-        """Materialise the ``i``-th sweep cell under parent-grouped sweep.
-
-        ``ra_groups`` is the per-parent grouping from
-        :meth:`_group_ra_args_by_parent`. Each group's args share a flat
-        in-group index (zip); groups compose by row-major unravel of
-        the outer flat index ``i`` over the concatenated batch shapes.
-        """
-        out = dict(values)
-        rem = i
-        # Highest-index group varies fastest (row-major over the
-        # concatenated sweep shape).
-        for arg_names, _, size in reversed(ra_groups):
-            idx = rem % size
-            rem = rem // size
-            for name in arg_names:
-                source = values[name]
-                if isinstance(source, DistributionArray):
-                    out[name] = source._flat_component(idx)
-                else:
-                    out[name] = source[idx]
-        return out
-
-    def _execute_sweep_rows(
-        self,
-        values: dict[str, Any],
-        ra_args: list[str],
-        n_total: int,
-        sweep_batch_shape: tuple[int, ...],
-        ra_groups: list[tuple[list[str], tuple[int, ...], int]],
-    ) -> Any:
-        """Execute ``n_total`` inner calls, one per sweep cell in flat
-        row-major order over the concatenated ``sweep_batch_shape``.
-
-        Returns a Python list of outputs (sequential path) or a stacked
-        pytree with leading axis ``n_total`` (vmap path). Either form
-        is a valid input for ``_make_stack``.
-        """
-        # The vmap path only handles the simple single-RecordArray
-        # case: one group, one RA arg, no DistributionArray, no views
-        # (views carry parent references that would confuse vmap's
-        # leading-axis flattening).
-        has_dist_array = any(
-            isinstance(values[name], DistributionArray) for name in ra_args
-        )
-        has_view = any(
-            isinstance(values[name], _RecordArrayView) for name in ra_args
-        )
-        jax_supported = not (
-            has_dist_array or has_view or len(ra_groups) > 1 or len(ra_args) > 1
-        )
-        if self._dispatch == "jax" and not jax_supported:
-            raise ValueError(
-                "dispatch='jax' supports only a single plain RecordArray sweep; "
-                "use dispatch='auto', 'sequential', or 'thread' for this path."
-            )
-
-        dispatch = self._resolve_dispatch(
-            values,
-            ra_args,
-            jax_supported=jax_supported,
-        )
-
-        if dispatch == "jax":
-            if self._dispatch == "jax":
-                self._require_jax_traceable(values, ra_args)
-            # Flatten the single RecordArray's batch axes to one leading
-            # dim so vmap maps over axis 0 uniformly regardless of the
-            # sweep's original batch_shape.
-            static = {k: v for k, v in values.items() if k not in ra_args}
-
-            def single_call(ra_slice_leaves):
-                kw = dict(static)
-                for name in ra_args:
-                    ra = values[name]
-                    kw[name] = ra._record_cls(ra_slice_leaves[name])
-                return self._func(**kw)
-
-            vmap_input = {}
-            for name in ra_args:
-                ra = values[name]
-                n_batch = len(ra.batch_shape)
-                vmap_input[name] = {
-                    f: ra[f].reshape((n_total,) + ra[f].shape[n_batch:])
-                    for f in ra.fields
-                }
-            return jax.vmap(single_call)(vmap_input)
-
-        # Sequential path.
-        per_row_values = [
-            self._slice_ra_args(values, ra_args, i, ra_groups)
-            for i in range(n_total)
-        ]
-        return self._execute_many(per_row_values)
-
-    def _make_sweep_provenance(
-        self,
-        values: dict[str, Any],
-        ra_args: list[str],
-        dist_args: list[str],
-        *,
-        batch_shape: tuple[int, ...],
-        k: int,
-    ) -> Provenance:
-        """Build the Provenance node for a sweep output.
-
-        Parents are the RecordArray / Distribution inputs that drove
-        the broadcast. Metadata records the regime, the full sweep
-        ``batch_shape`` (for multi-d), and the MC count so downstream
-        tooling can report whether uncertainty was marginalised or
-        stacked.
-        """
-        regime = "nested" if dist_args else "stack"
-        parents = tuple(values[name] for name in ra_args) + tuple(
-            values[name] for name in dist_args
-            if isinstance(values[name], Distribution)
-        )
-        return Provenance(
-            operation=f"workflow.{regime}",
-            parents=parents,
-            metadata={
-                "func": self._name or self._func.__name__,
-                "batch_shape": tuple(batch_shape),
-                "k": k,
-                "ra_args": list(ra_args),
-                "dist_args": list(dist_args),
-            },
+        return _workflow_sweep.execute_sweep(
+            func=self._func,
+            values=values,
+            plan=broadcast_plan,
+            make_execution_config=self._make_execution_config,
+            requested_dispatch=self._dispatch,
+            resolve_dispatch=self._resolve_dispatch,
+            require_jax_traceable=self._require_jax_traceable,
+            distribution_broadcast=self._broadcast_distributions_only,
+            workflow_name=self._name,
+            n_broadcast_samples=n_broadcast_samples,
+            include_inputs=do_include_inputs,
         )
 
     def _broadcast_distributions_only(
@@ -1214,7 +617,7 @@ class WorkflowFunction(Node):
         """Distribution-only broadcast path (Monte Carlo marginalisation).
 
         Samples from each ``broadcast_args`` entry (all of which are
-        ``Distribution`` instances after ``_find_broadcast_args``),
+        ``Distribution`` instances after workflow normalization),
         calls the user's function once per sample, and wraps the n
         outputs as a single marginal distribution.
 
@@ -1232,8 +635,14 @@ class WorkflowFunction(Node):
         """
         MIN_BROADCAST_SAMPLES = 5  # Recommended minimum samples
 
+        if not isinstance(n_broadcast_samples, int):
+            raise TypeError(f"n_broadcast_samples must be an integer; got {n_broadcast_samples!r}")
+
+        if n_broadcast_samples <= 0:
+            raise ValueError(f"n_broadcast_samples must be a positive integer; got {n_broadcast_samples!r}")
+
         # Validate n_broadcast_samples value and warn if too small
-        if not isinstance(n_broadcast_samples, int) or n_broadcast_samples < MIN_BROADCAST_SAMPLES:
+        if n_broadcast_samples < MIN_BROADCAST_SAMPLES:
             warnings.warn(
                 f"n_broadcast_samples={n_broadcast_samples} is too low; "
                 f"results may be unreliable. "
@@ -1338,7 +747,9 @@ class WorkflowFunction(Node):
         even if the same object is passed under multiple names.
         """
         sampled: dict[str, Array] = {}
-        for arg_names in _group_by_parent(values, broadcast_args).values():
+        for arg_names in _workflow_plan.group_by_parent(
+            values=values, names=broadcast_args,
+        ).values():
             first = values[arg_names[0]]
             if not isinstance(first, _RecordDistributionView):
                 for arg_name in arg_names:
@@ -1451,7 +862,7 @@ class WorkflowFunction(Node):
         for combo in cartesian_product(*(range(d.num_atoms) for d in emp_dists)):
             # Compute empirical product weight
             emp_weight = 1.0
-            for name, dist, i in zip(emp_names, emp_dists, combo):
+            for _name, dist, i in zip(emp_names, emp_dists, combo):
                 emp_weight *= float(dist.weights[i])
 
             for _ in range(reps_per_combo):
@@ -1475,7 +886,15 @@ class WorkflowFunction(Node):
                 call_value_list.append(call_values)
                 sample_idx += 1
 
-        results = self._execute_many(call_value_list)
+        # Known harmless duplication: this request construction also appears in
+        # the non-broadcast and ordinary sampling paths. Distribution broadcast
+        # extraction should centralize it in the module that owns these paths.
+        request = _workflow_execution.WorkflowExecutionRequest(
+            func=self._func,
+            call_value_list=call_value_list,
+            execution=self._make_execution_config(),
+        )
+        results = _workflow_execution.execute_many(request)
 
         # Assemble input samples aligned with results
         all_input_samples = {
@@ -1510,7 +929,15 @@ class WorkflowFunction(Node):
                 call_values[name] = _index_sample(samples_per_arg[name], i)
             call_value_list.append(call_values)
 
-        results = self._execute_many(call_value_list)
+        # Known harmless duplication: this request construction also appears in
+        # the non-broadcast and empirical-enumeration paths. Distribution
+        # broadcast extraction should centralize it with the rest of this logic.
+        request = _workflow_execution.WorkflowExecutionRequest(
+            func=self._func,
+            call_value_list=call_value_list,
+            execution=self._make_execution_config(),
+        )
+        results = _workflow_execution.execute_many(request)
 
         return BroadcastDistribution(
             input_samples=samples_per_arg,
@@ -1518,50 +945,6 @@ class WorkflowFunction(Node):
             weights=None,
             broadcast_args=broadcast_args,
         )
-
-    def _execute_many(self, call_value_list: list[dict[str, Any]]) -> list:
-        """Compatibility wrapper around ``_workflow_execution.execute_many``."""
-        if not call_value_list:
-            return []
-        request = self._make_execution_request(call_value_list)
-        return _workflow_execution.execute_many(request)
-
-    # Cleanup note (#196): these mode-specific wrappers are retained for
-    # private-call compatibility during the staged execution extraction.
-    # Future cleanup can move tests/callers to ``_workflow_execution`` and
-    # remove the wrappers below.
-    def _execute_many_threaded(self, call_value_list: list[dict[str, Any]]) -> list:
-        """Compatibility wrapper around threaded workflow execution."""
-        if not call_value_list:
-            return []
-        request = self._make_execution_request(call_value_list, mode="thread")
-        return _workflow_execution.execute_many_threaded(request)
-
-    def _map_task(self, call_value_list: list[dict[str, Any]], task_name: str | None = None) -> list:
-        """Compatibility wrapper around Prefect task mapping."""
-        request = _workflow_execution.WorkflowExecutionRequest(
-            func=self._func,
-            call_value_list=call_value_list,
-            execution=_workflow_execution.WorkflowExecutionConfig(
-                mode="prefect_task",
-                name=self._name,
-            ),
-        )
-        return _workflow_execution.map_task(request, task_name=task_name)
-
-    def _execute_many_prefect_task(self, call_value_list: list[dict[str, Any]]) -> list:
-        """Compatibility wrapper around Prefect task execution."""
-        if not call_value_list:
-            return []
-        request = self._make_execution_request(call_value_list, mode="prefect_task")
-        return _workflow_execution.execute_many_prefect_task(request)
-
-    def _execute_many_prefect_flow(self, call_value_list: list[dict[str, Any]]) -> list:
-        """Compatibility wrapper around Prefect flow execution."""
-        if not call_value_list:
-            return []
-        request = self._make_execution_request(call_value_list, mode="prefect_flow")
-        return _workflow_execution.execute_many_prefect_flow(request)
 
 
 class Module(Node):
@@ -1687,12 +1070,17 @@ class Module(Node):
 
             # Infer dependencies from workflow signature
             # (WorkflowFunctions don't store child_nodes; they resolve dependencies at runtime)
-            for param_name in attr._param_names:
-                if attr._is_dependency_param(param_name) and param_name in self._child_nodes:
+            for param_name in attr._signature_info.param_names:
+                is_dependency = _workflow_call.is_dependency_param(
+                    attr._signature_info,
+                    param_name,
+                    dependency_type=Node,
+                )
+                if is_dependency and param_name in self._child_nodes:
                     dot.edge(param_name, wf_name)
 
         return dot
-    
+
     def _validate_abstract_workflow_implementations(self) -> None:
         """
         Ensure that any abstract workflow interfaces in the MRO are implemented
@@ -1781,7 +1169,7 @@ class Module(Node):
                     f"Expected (abstract): {abs_sig}\n"
                     f"Got (impl):          {impl_sig}"
                 )
-            
+
 class AbstractModule(Module, ABC):
     """
     Base class for modules that declare workflow interfaces via @abstract_workflow_method.

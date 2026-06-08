@@ -185,7 +185,7 @@ full rationale.
 GitHub Actions (`.github/workflows/ci.yml`):
 
 - Tests on Python 3.12 and 3.13
-- Installs `.[dev,nutpie,sbi]` (bridgestan and pymc are not included)
+- Installs `.[dev,nutpie]` (bridgestan and pymc are not included)
 - Coverage uploaded to Codecov
 
 Docs build (`.github/workflows/docs.yml`) with `mkdocs build --strict`.
@@ -200,7 +200,7 @@ probpipe/
 ├── distributions/  # Concrete distributions (continuous, discrete, multivariate, ...)
 ├── record/         # Record-adjacent constructions: parameter-sweep Designs
 ├── modeling/       # Model wrappers (SimpleModel, StanModel, PyMCModel, likelihoods)
-├── inference/      # Inference methods + registry (TFP, nutpie, RWMH, sbijax)
+├── inference/      # Inference methods + registry (BlackJAX, TFP, nutpie, RWMH)
 ├── converters/     # Distribution conversion registry
 ├── linalg/         # Linear algebra for random functions
 ├── custom_types.py # Array, PRNGKey, ArrayLike type aliases
@@ -209,7 +209,7 @@ probpipe/
 
 Within subpackages that contain multiple implementation files
 (`modeling/`, `inference/`, `converters/`), implementation modules use
-a leading underscore (`_simple.py`, `_rwmh.py`).  The package
+a leading underscore (`_simple.py`, `_blackjax_rwmh.py`).  The package
 `__init__.py` re-exports the public API so users import from
 `probpipe` or from subpackage `__init__` modules, never from
 underscore modules directly.  See `probpipe/__init__.py` for the
@@ -331,7 +331,6 @@ full public API surface.
 | `SimpleGenerativeModel` | Simulator-only model wrapper for SBI/ABC (prior + `GenerativeLikelihood`) |
 | `IncrementalConditioner` | Stateful `Module` for sequential Bayesian updating via `update()` / `update_all()` |
 | `iterate` / combinators | Iterative distribution transformation; `with_conversion`, `with_resampling` |
-| `sbi_learn_conditional` / `sbi_learn_likelihood` | SBI workflow functions; return `DirectSamplerSBIModel` or `SimpleModel` with neural likelihood |
 | `Design` / `FullFactorialDesign` (`probpipe.record`) | `RecordArray` subclass carrying per-field marginals; `FullFactorialDesign(**marginals)` materialises the Cartesian product as a sweep-ready `RecordArray`. Pipe into a `WorkflowFunction` as a single `Record`-typed arg to trigger the WF sweep path. |
 
 ### Inference method registry
@@ -362,9 +361,9 @@ Built-in methods:
 | 85 | `blackjax_nuts` | BlackJAX | Any `SupportsLogProb` (JAX-traceable) |
 | 82 | `cmdstan_nuts` | CmdStanPy | `StanModel` |
 | 82 | `pymc_nuts` | PyMC | `PyMCModel` |
-| 55 | `tfp_rwmh` | hand-rolled Python | Any `SupportsLogProb` |
+| 75 | `blackjax_elliptical_slice` | BlackJAX | `SimpleModel` + Gaussian prior + JAX-traceable likelihood |
+| 55 | `blackjax_rwmh` | BlackJAX | Any `SupportsLogProb` (eager fallback for non-traceable targets) |
 | 45 | `blackjax_sgld` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
-| 5 | `sbijax_smcabc` | sbijax | `SimpleGenerativeModel` |
 | 0 | `blackjax_hmc` | BlackJAX | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 | 0 | `blackjax_sghmc` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=`; opt-in only via `method=` |
 | 0 | `pymc_advi` | PyMC | `PyMCModel`; opt-in only via `method=` |

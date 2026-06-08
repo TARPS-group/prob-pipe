@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    MultivariateNormal, Normal, SimpleModel, GLMLikelihood,
+    MultivariateNormal, Normal, ProductDistribution, SimpleModel, GLMLikelihood,
     condition_on, mean,
 )
 from probpipe.core._registry import (
@@ -17,6 +17,7 @@ from probpipe.core._registry import (
     UnaryDispatchRegistry,
 )
 from probpipe.inference import inference_method_registry
+from probpipe.modeling._likelihood import Likelihood
 
 
 # ---------------------------------------------------------------------------
@@ -133,22 +134,22 @@ class TestInferenceMethodRegistry:
         methods = inference_method_registry.list_methods()
         assert "tfp_nuts" in methods
         assert "tfp_hmc" in methods
-        assert "tfp_rwmh" in methods
+        assert "blackjax_rwmh" in methods
 
     def test_priority_order(self):
-        """RWMH stays above the opt-in-only TFP gradient methods.
+        """BlackJAX RWMH stays above the opt-in-only TFP gradient methods.
 
-        After the BlackJAX migration, ``tfp_nuts`` and ``tfp_hmc`` are at
-        priority 0 (opt-in only) and so don't participate in the order
-        ``list_methods()`` exposes for auto-dispatch. ``tfp_rwmh``
-        remains at priority 55 — gradient-free with no BlackJAX
-        replacement in this PR.
+        After the BlackJAX migration, ``tfp_nuts`` and ``tfp_hmc`` are
+        at priority 0 (opt-in only) and so don't participate in the
+        order ``list_methods()`` exposes for auto-dispatch.
+        ``blackjax_rwmh`` (priority 55) is the gradient-free
+        auto-dispatch entry point.
         """
         methods = inference_method_registry.list_methods()
         # All three remain registered.
-        assert {"tfp_nuts", "tfp_hmc", "tfp_rwmh"}.issubset(methods)
-        # blackjax_nuts (85) outranks tfp_rwmh (55) outranks the opt-in TFP pair.
-        assert methods.index("blackjax_nuts") < methods.index("tfp_rwmh")
+        assert {"tfp_nuts", "tfp_hmc", "blackjax_rwmh"}.issubset(methods)
+        # blackjax_nuts (85) outranks blackjax_rwmh (55) outranks the opt-in TFP pair.
+        assert methods.index("blackjax_nuts") < methods.index("blackjax_rwmh")
 
     def test_auto_select_nuts(self, simple_model, data):
         """BlackJAX NUTS is the auto-dispatch winner for any JAX-traceable model."""
@@ -159,10 +160,10 @@ class TestInferenceMethodRegistry:
     def test_method_override(self, simple_model, data):
         """method= should override auto-selection."""
         posterior = condition_on(
-            simple_model, data, method="tfp_rwmh",
+            simple_model, data, method="blackjax_rwmh",
             num_results=50, num_warmup=20, random_seed=0,
         )
-        assert posterior.algorithm == "rwmh"
+        assert posterior.algorithm == "blackjax_rwmh"
 
     def test_condition_on_default(self, simple_model, data):
         """Default condition_on should work through the registry."""
@@ -200,13 +201,13 @@ class TestInferenceMethodRegistry:
 
     def test_set_priorities_changes_selection(self, simple_model, data):
         """set_priorities should change which method is auto-selected."""
-        original = inference_method_registry.get_method("tfp_rwmh").priority
-        inference_method_registry.set_priorities(tfp_rwmh=200)
+        original = inference_method_registry.get_method("blackjax_rwmh").priority
+        inference_method_registry.set_priorities(blackjax_rwmh=200)
         try:
             info = inference_method_registry.check(simple_model, data)
-            assert info.method_name == "tfp_rwmh"
+            assert info.method_name == "blackjax_rwmh"
         finally:
-            inference_method_registry.set_priorities(tfp_rwmh=original)
+            inference_method_registry.set_priorities(blackjax_rwmh=original)
 
 
 # ---------------------------------------------------------------------------
@@ -322,9 +323,9 @@ class TestBuiltInPriorityAnchors:
         "blackjax_nuts": 85,
         "cmdstan_nuts": 82,
         "pymc_nuts": 82,
-        "tfp_rwmh": 55,
+        "blackjax_elliptical_slice": 75,
+        "blackjax_rwmh": 55,
         "blackjax_sgld": 45,
-        "sbijax_smcabc": 5,
         # Opt-in only — registered but excluded from auto-dispatch.
         "blackjax_hmc": 0,
         "blackjax_sghmc": 0,
@@ -466,7 +467,7 @@ class TestUnnormalizedLogProbInference:
 
         dist = _make_unnormalized_distribution()
         posterior = condition_on(
-            dist, method="tfp_rwmh",
+            dist, method="blackjax_rwmh",
             num_results=200, num_warmup=100, step_size=0.5, random_seed=0,
         )
         assert isinstance(posterior, ApproximateDistribution)
@@ -491,7 +492,7 @@ class TestUnnormalizedLogProbInference:
 
         dist = _make_normalized_distribution()
         posterior = condition_on(
-            dist, method="tfp_rwmh",
+            dist, method="blackjax_rwmh",
             num_results=100, num_warmup=50, step_size=0.5, random_seed=0,
         )
         assert isinstance(posterior, ApproximateDistribution)
@@ -507,7 +508,7 @@ class TestUnnormalizedLogProbInference:
                 super().__init__(name="no_density")
 
         dist = NoDensityDist()
-        for method in ("tfp_nuts", "tfp_hmc", "tfp_rwmh"):
+        for method in ("tfp_nuts", "tfp_hmc", "blackjax_rwmh"):
             m = inference_method_registry.get_method(method)
             info = m.check(dist, None)
             assert not info.feasible
@@ -515,3 +516,75 @@ class TestUnnormalizedLogProbInference:
                 f"{method}: description {info.description!r} should mention "
                 f"SupportsUnnormalizedLogProb"
             )
+
+
+# ---------------------------------------------------------------------------
+# Auto-dispatch correctness: NUTS vs ESS tier ordering
+# ---------------------------------------------------------------------------
+
+
+class _GaussianMeanLikelihood(Likelihood):
+    """JAX-traceable Gaussian likelihood: ``mu`` is the flat parameter."""
+
+    def log_likelihood(self, params, data):
+        mu = jnp.reshape(jnp.asarray(params), ())
+        return jnp.sum(-0.5 * (jnp.asarray(data) - mu) ** 2)
+
+
+@pytest.fixture
+def gaussian_model():
+    """Gaussian-prior, JAX-traceable SimpleModel.
+
+    Both ``blackjax_nuts`` (needs a traceable joint) and
+    ``blackjax_elliptical_slice`` (needs a Gaussian prior + traceable
+    likelihood + data) pass ``check()`` on this target — so it is the
+    canonical case for testing the 85-vs-75 tier ordering.
+    """
+    prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
+    return SimpleModel(prior, _GaussianMeanLikelihood(), name="gauss")
+
+
+@pytest.fixture
+def gaussian_data():
+    return jnp.array([1.0, -1.0, 0.5])
+
+
+class TestNutsEssDispatch:
+    """NUTS (85) outranks ESS (75) on a target where both are feasible."""
+
+    def test_both_methods_feasible(self, gaussian_model, gaussian_data):
+        # Sanity: the scenario is only meaningful if ESS *would* fire
+        # were NUTS absent. Confirm both pass check() in isolation.
+        nuts = inference_method_registry.get_method("blackjax_nuts")
+        ess = inference_method_registry.get_method("blackjax_elliptical_slice")
+        assert nuts.check(gaussian_model, gaussian_data).feasible
+        assert ess.check(gaussian_model, gaussian_data).feasible
+
+    def test_nuts_wins_auto_dispatch(self, gaussian_model, gaussian_data):
+        # Task 6: NUTS@85 outranks ESS@75 for a Gaussian-prior traceable
+        # model. No Stan/PyMC NUTS variant (88/82) is feasible here —
+        # they require StanModel / PyMCModel — so blackjax_nuts is the
+        # highest-priority feasible method.
+        info = inference_method_registry.check(gaussian_model, gaussian_data)
+        assert info.feasible
+        assert info.method_name == "blackjax_nuts"
+
+    def test_ess_wins_when_nuts_demoted(self, gaussian_model, gaussian_data):
+        # Task 7: a natural "gradient methods decline, ESS feasible"
+        # scenario cannot be constructed cleanly here. ESS requires a
+        # *JAX-traceable likelihood*, while NUTS requires a *traceable
+        # joint* = (Gaussian prior log-prob, always traceable) +
+        # likelihood. Any likelihood that makes NUTS' joint non-traceable
+        # makes ESS' likelihood non-traceable too, so ESS would decline
+        # alongside NUTS. We therefore use set_priorities to demote NUTS
+        # below ESS (mirroring test_set_priorities_changes_selection),
+        # with try/finally restore. Demoting 85 -> 70 stays positive, so
+        # no opt-in-only zero-crossing warning fires.
+        original = inference_method_registry.get_method("blackjax_nuts").priority
+        inference_method_registry.set_priorities(blackjax_nuts=70)
+        try:
+            info = inference_method_registry.check(gaussian_model, gaussian_data)
+            assert info.feasible
+            assert info.method_name == "blackjax_elliptical_slice"
+        finally:
+            inference_method_registry.set_priorities(blackjax_nuts=original)

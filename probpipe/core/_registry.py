@@ -246,7 +246,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         ----------
         **name_to_priority
             Keyword arguments mapping method names to new priorities.
-            e.g., ``set_priorities(tfp_rwmh=200, tfp_nuts=50)``
+            e.g., ``set_priorities(blackjax_rwmh=200, tfp_nuts=50)``
 
         Raises
         ------

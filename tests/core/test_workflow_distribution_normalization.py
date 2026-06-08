@@ -8,13 +8,18 @@ import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
+    Distribution,
     DistributionArray,
     EmpiricalDistribution,
     KDEDistribution,
     Normal,
     NumericRecordArray,
+    NumericRecordDistribution,
     log_prob,
     mean,
+)
+from probpipe.core._workflow_distribution_normalization import (
+    normalize_distribution_values,
 )
 from probpipe.core.node import WorkflowFunction
 from probpipe.core.protocols import SupportsLogProb
@@ -44,6 +49,96 @@ def mean_recorder():
     return mean_of_normal, seen
 
 
+class TestNormalizeDistributionValues:
+    """Direct helper coverage mirrors facade cases for clearer failure locality."""
+
+    def test_concrete_distribution_hint_converts_external_distribution(
+        self,
+        normal_external,
+    ):
+        normalized = normalize_distribution_values(
+            values={"dist": normal_external},
+            hints={"dist": Normal},
+        )
+
+        assert isinstance(normalized["dist"], Normal)
+        assert normalized["dist"] is not normal_external
+
+    def test_concrete_distribution_hint_without_converter_raises(self):
+        class UnsupportedDistribution(Distribution):
+            pass
+
+        source = Normal(loc=0.0, scale=1.0, name="source")
+
+        with pytest.raises(
+            TypeError,
+            match=r"No converter registered for Normal -> UnsupportedDistribution",
+        ):
+            normalize_distribution_values(
+                values={"dist": source},
+                hints={"dist": UnsupportedDistribution},
+            )
+
+    def test_protocol_hint_converts_distribution_that_lacks_protocol(
+        self,
+        empirical_dist,
+    ):
+        normalized = normalize_distribution_values(
+            values={"dist": empirical_dist},
+            hints={"dist": SupportsLogProb},
+        )
+
+        assert normalized["dist"] is not empirical_dist
+        assert isinstance(normalized["dist"], KDEDistribution)
+        assert isinstance(normalized["dist"], SupportsLogProb)
+
+    def test_zero_dimensional_distribution_array_unwraps_to_scalar_component(self):
+        da = DistributionArray.from_batched_params(
+            Normal,
+            batch_shape=(),
+            loc=jnp.asarray(3.0),
+            scale=jnp.asarray(1.0),
+            name="zero_d",
+        )
+
+        normalized = normalize_distribution_values(
+            values={"dist": da},
+            hints={"dist": Normal},
+        )
+
+        assert isinstance(normalized["dist"], Normal)
+        assert float(normalized["dist"].loc) == 3.0
+
+    def test_size_one_distribution_array_remains_a_sweep(self):
+        da = DistributionArray.from_batched_params(
+            Normal,
+            batch_shape=(1,),
+            loc=jnp.asarray([3.0]),
+            scale=jnp.asarray([1.0]),
+            name="one_cell",
+        )
+
+        normalized = normalize_distribution_values(
+            values={"dist": da},
+            hints={"dist": Normal},
+        )
+
+        assert normalized["dist"] is da
+
+    def test_unhinted_external_distribution_converts_for_broadcast(
+        self,
+        normal_external,
+    ):
+        normalized = normalize_distribution_values(
+            values={"x": normal_external},
+            hints={},
+        )
+
+        assert isinstance(normalized["x"], NumericRecordDistribution)
+        assert normalized["x"] is not normal_external
+
+
+# Facade checks below are retained to verify WorkflowFunction wiring.
 class TestHintedDistributionConversion:
     def test_concrete_distribution_hint_converts_external_distribution(
         self,

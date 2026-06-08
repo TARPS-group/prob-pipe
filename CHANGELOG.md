@@ -7,8 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **sbijax dropped (breaking).** The `sbijax`-backed simulation-based
+  inference (SBI) layer is removed in full, ahead of the PyMC 6 /
+  ArviZ 1.0 ecosystem upgrade — `sbijax` constrains the jax / jaxlib
+  floor and blocks the rest of the stack from moving forward. No
+  replacement ships in this release; the SBI capability is being
+  re-platformed onto **pyabc** (SMC-ABC), **BayesFlow** (amortized
+  NPE / FMPE / CMPE), and **sbi** (NLE / NRE) in subsequent releases.
+  Removed surface:
+  - The **`[sbi]` extra** (`pip install probpipe[sbi]`) and its
+    `sbijax>=0.3.6` dependency.
+  - The public workflow functions **`sbi_learn_conditional`** and
+    **`sbi_learn_likelihood`** (exported from both `probpipe` and
+    `probpipe.inference`), the **`DirectSamplerSBIModel`** they
+    returned (exported from `probpipe.inference`), their `method=`
+    selectors (`npe` / `fmpe` / `cmpe` for the direct sampler,
+    `nle` / `nre` for the emulated-likelihood path), and the
+    `network_factory=` hook. `from probpipe import
+    sbi_learn_conditional` now raises `ImportError` rather than
+    returning an install-prompt stub.
+  - The **`sbijax_smcabc`** inference method (`SbiSMCABCMethod`,
+    priority 5) and its registration; `condition_on(generative_model,
+    data, method="sbijax_smcabc", ...)` no longer resolves.
+  - The internal `probpipe/inference/_sbijax.py` module, the `sbi`
+    pytest marker, the `tests/inference/test_sbijax.py` suite, and the
+    CI `--no-deps sbijax` install shims. The contract invariants those
+    tests covered — posterior recovery, amortization, and SMC-ABC
+    dispatch — are re-homed per backend as the replacements land,
+    rather than in this removal.
+
+  The jax / jaxlib `<0.9` and arviz `<1.0` version caps that `sbijax`
+  forced are *retained* here and lifted in their own isolated PRs (the
+  jax-0.10 floor bump and the arviz-1.x ceiling lift); this PR changes
+  no runtime version pins. The `docs/tutorials/flexible_inference.ipynb`
+  tutorial's SBI sections are flagged out of date until a replacement
+  backend ships — its `condition_on` dispatch and NUTS material remain
+  accurate.
+
+### Added
+
+- **BlackJAX-backed gradient-free MCMC.** Two new inference methods
+  bundled with the BlackJAX MCMC migration:
+  - **`blackjax_rwmh`** (priority 55) replaces the hand-rolled
+    Python-loop RWMH. Two execution paths share the same BlackJAX
+    kernel: a fast path (`jax.lax.scan` + `jax.vmap` across chains)
+    when the target log-density is JAX-traceable, and an eager
+    Python-loop fallback when it isn't (BridgeStan / scipy /
+    external-simulator likelihoods — the case the hand-rolled loop
+    existed to support). The default warmup is a Stan-style window
+    adaptation: ``n_windows`` (default 4) geometrically-growing
+    windows, each sampling with the current proposal Cholesky and
+    accumulating Welford statistics on positions, refreshing the
+    proposal at window boundaries. Production sigma is
+    ``chol(Sigma_hat) * 2.38 / sqrt(d)`` per Roberts-Gelman-Gilks.
+    Short warmups (``< 50`` steps) collapse to a single phase
+    automatically. ``adapt=False`` falls back to the legacy
+    ``step_size * I`` for parity with the prior behavior.
+  - **`blackjax_elliptical_slice`** (priority 75, tier 71-80
+    self-tuning) is new — restricted to `SimpleModel` targets with a
+    Gaussian prior and a JAX-traceable likelihood. Recognises
+    `Normal`, `MultivariateNormal`, `JointGaussian` (named multi-field
+    Gaussian with cross-covariance), and `ProductDistribution`
+    compositions via the new `_gaussian_prior_params` helper.
+- New workflow function `probpipe.elliptical_slice(model, data, ...)`.
+
+### Changed
+
+- **`blackjax_hmc` randomizes its trajectory length.** Production now
+  draws the number of leapfrog steps from a low-discrepancy Halton
+  sequence (`blackjax.dynamic_hmc`) with mean `num_integration_steps`
+  (default 10, unchanged), instead of a fixed count. A fixed trajectory
+  length can resonate on near-Gaussian targets — the proposal returns
+  near its start, giving high acceptance and zero divergences yet poor
+  mixing and up to ~30% posterior-variance under-estimation. Jittering
+  `L` around the same mean breaks the resonance (Neal 2011, sec. 4.2).
+  Window adaptation tunes step size + mass matrix against the *same*
+  randomized-`L` kernel, so dual-averaging's acceptance target is
+  calibrated to the kernel that actually runs; `num_integration_steps`
+  is now the *mean*. The drawn count is floored at 1 leapfrog step (the
+  Halton range includes 0, a no-op trajectory). NUTS is unaffected.
+- **Multi-chain BlackJAX MCMC dispatch picks `jax.pmap` when devices
+  permit.** When `jax.local_device_count() >= num_chains` the per-chain
+  runner is mapped with `pmap` (each chain on its own device,
+  bit-identical to a single-chain sequential run at the same seed);
+  otherwise the prior `vmap` path is used. Single-chain calls
+  (``num_chains == 1``) short-circuit both, applying the runner
+  directly. Default single-CPU-device behaviour is unchanged for
+  ``num_chains == 1``; users with
+  ``XLA_FLAGS=--xla_force_host_platform_device_count=N`` get
+  per-device parallelism and bit-identical-to-sequential draws
+  (notably for NUTS) without code changes. The three BlackJAX
+  modules (`_blackjax_mcmc.py`, `_blackjax_rwmh.py`, `_blackjax_ess.py`)
+  route their multi-chain dispatch through the new
+  `parallel_chain_map` helper in `_inference_utils.py`.
+
 ### Changed (breaking)
 
+- **`tfp_rwmh` removed.** The hand-rolled Python-loop RWMH that sat
+  behind ``method="tfp_rwmh"`` is gone; ``blackjax_rwmh`` is the only
+  RWMH backend. Callers must rename ``method="tfp_rwmh"`` →
+  ``method="blackjax_rwmh"``.
 - **Sample-count / observation-count terminology unified
   across the codebase.** Several adjacent concepts had drifted into
   different naming styles (`.n`, `num_draws`, `n_samples`, `n_iter`,

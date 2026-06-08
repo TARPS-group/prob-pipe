@@ -130,10 +130,9 @@ from probpipe.inference import (
     ApproximateDistribution,
     inference_method_registry,
     rwmh,
+    elliptical_slice,
     condition_on_nutpie,
     MinibatchedDistribution,
-    sbi_learn_conditional,
-    sbi_learn_likelihood,
 )
 from probpipe.modeling import ProbabilisticModel, SimpleModel, SimpleGenerativeModel
 from probpipe.validation import predictive_check
@@ -292,10 +291,9 @@ __all__ = [
     "ApproximateDistribution",
     "inference_method_registry",
     "rwmh",
+    "elliptical_slice",
     "condition_on_nutpie",
     "MinibatchedDistribution",
-    "sbi_learn_conditional",
-    "sbi_learn_likelihood",
     # Validation
     "predictive_check",
     # Converters

@@ -145,7 +145,9 @@ class TestExecutionRequestShape:
         monkeypatch.setattr(execution_mod, "execute_many", fake_execute_many)
         wf = WorkflowFunction(func=add_one, dispatch="sequential")
 
-        assert wf._execute_many([{"x": 1}]) == [2]
+        result = wf(x=1)
+
+        assert float(result["add_one"]) == 2.0
         assert seen["request"].func is add_one
         assert not isinstance(seen["request"].func, WorkflowFunction)
         assert seen["request"].execution.mode == "sequential"
@@ -267,12 +269,7 @@ class TestPrefectMapping:
         assert FakeMappedTask.created_names == ["plus_one_run"]
 
 
-class TestWorkflowFunctionCompatibility:
-    def test_execute_many_wrapper_preserves_private_call_behavior(self):
-        wf = WorkflowFunction(func=add_one, dispatch="sequential")
-
-        assert wf._execute_many([{"x": 1}, {"x": 2}]) == [2, 3]
-
+class TestWorkflowFunctionExecutionConfig:
     def test_make_execution_config_resolves_thread_dispatch_to_thread_mode(self):
         wf = WorkflowFunction(
             func=add_one,
@@ -403,26 +400,12 @@ class TestWorkflowFunctionCompatibility:
 
         assert result.num_atoms == 8
 
-    def test_private_wrappers_return_empty_before_building_request(self, monkeypatch):
-        wf = WorkflowFunction(func=add_one, workflow_kind=WorkflowKind.TASK, dispatch="sequential")
-
-        def fail_request(*args, **kwargs):
-            raise AssertionError("empty calls should not build an execution request")
-
-        monkeypatch.setattr(wf, "_make_execution_request", fail_request)
-
-        assert wf._execute_many([]) == []
-        assert wf._execute_many_threaded([]) == []
-        assert wf._map_task([]) == []
-        assert wf._execute_many_prefect_task([]) == []
-        assert wf._execute_many_prefect_flow([]) == []
-
-    def test_execute_many_wrapper_resolves_task_and_flow_modes(self, monkeypatch):
+    def test_public_call_resolves_task_and_flow_modes(self, monkeypatch):
         seen_modes = []
 
         def fake_execute_many(request):
             seen_modes.append(request.execution.mode)
-            return ("ok", request.call_value_list)
+            return [request.func(**request.call_value_list[0])]
 
         monkeypatch.setattr(node_mod, "task", object())
         monkeypatch.setattr(execution_mod, "execute_many", fake_execute_many)
@@ -437,34 +420,6 @@ class TestWorkflowFunctionCompatibility:
             dispatch="sequential",
         )
 
-        calls = [{"x": 1}]
-        assert task_wf._execute_many(calls) == ("ok", calls)
-        assert flow_wf._execute_many(calls) == ("ok", calls)
+        assert float(task_wf(x=1)["add_one"]) == 2.0
+        assert float(flow_wf(x=1)["add_one"]) == 2.0
         assert seen_modes == ["prefect_task", "prefect_flow"]
-
-    def test_threaded_wrapper_delegates_to_execution_module(self, monkeypatch):
-        monkeypatch.setattr(execution_mod, "ThreadPoolExecutor", RecordingExecutor)
-        wf = WorkflowFunction(func=add_one, dispatch="thread", max_workers=2)
-
-        assert wf._execute_many_threaded([{"x": 1}, {"x": 2}]) == [2, 3]
-        assert RecordingExecutor.instances[0].max_workers == 2
-
-    def test_map_task_wrapper_delegates_to_execution_module(self, monkeypatch):
-        monkeypatch.setattr(execution_mod, "task", fake_task)
-        monkeypatch.setattr(execution_mod, "flow", None)
-        wf = WorkflowFunction(func=add_one, dispatch="sequential")
-
-        assert wf._map_task([{"x": 1}, {"x": 2}], task_name="add-one") == [2, 3]
-        assert FakeMappedTask.created_names == ["add-one"]
-
-    def test_map_task_wrapper_does_not_resolve_task_runner(self, monkeypatch):
-        monkeypatch.setattr(execution_mod, "task", fake_task)
-        monkeypatch.setattr(execution_mod, "flow", None)
-
-        def fail_resolve_task_runner():
-            raise AssertionError("direct _map_task should not resolve a task runner")
-
-        monkeypatch.setattr(node_mod.prefect_config, "resolve_task_runner", fail_resolve_task_runner)
-        wf = WorkflowFunction(func=add_one, dispatch="sequential")
-
-        assert wf._map_task([{"x": 1}], task_name="add-one") == [2]

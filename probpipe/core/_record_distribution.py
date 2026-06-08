@@ -14,11 +14,12 @@ whose ``record_template`` is set.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
 
+from ..custom_types import Array, PRNGKey
 from ._distribution_base import Distribution, _DistributionMeta
 from .protocols import (
     SupportsCovariance,
@@ -28,8 +29,6 @@ from .protocols import (
     SupportsVariance,
 )
 from .record import Record, RecordTemplate
-from .._utils import prod
-from ..custom_types import Array, PRNGKey
 
 if TYPE_CHECKING:
     from ._numeric_record_distribution import FlattenedDistributionView
@@ -282,7 +281,7 @@ class _RecordDistributionView(Distribution):
         practice are ``ApproximateDistribution`` subclasses that do
         expose ``draws()``.
         """
-        from ._record_array import RecordArray, NumericRecordArray
+        from ._record_array import NumericRecordArray, RecordArray
         draws = self._parent.draws()
         if isinstance(draws, (Record, RecordArray)):
             return jnp.asarray(draws[self._key])

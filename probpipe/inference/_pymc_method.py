@@ -4,27 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import jax.numpy as jnp
-
 from ..core._registry import MethodInfo
 from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ._inference_utils import extract_chain_columns, posterior_var_order
 from ._registry import InferenceMethod
-
-
-def _extract_pymc_chains(trace: Any, param_names: list[str], num_chains: int) -> list:
-    """Extract per-chain sample arrays from a PyMC ArviZ trace."""
-    chains = []
-    for c in range(num_chains):
-        chain_arrays = []
-        for name in param_names:
-            vals = trace.posterior[name].values[c]
-            if vals.ndim == 1:
-                vals = vals[:, None]
-            else:
-                vals = vals.reshape(vals.shape[0], -1)
-            chain_arrays.append(jnp.asarray(vals))
-        chains.append(jnp.concatenate(chain_arrays, axis=-1))
-    return chains
 
 
 class PyMCNutsMethod(InferenceMethod):
@@ -65,6 +48,10 @@ class PyMCNutsMethod(InferenceMethod):
         random_seed = kwargs.get("random_seed", 0)
 
         model = dist._pymc_model(data=observed)
+        # Build the template in canonical field order before sampling
+        # (fail fast on a dynamic-RV / non-concrete model).
+        param_names = dist._conditioned_param_names(model)
+        record_template = dist._record_template_for(model, param_names)
         with model:
             trace = pm.sample(
                 draws=num_results,
@@ -75,11 +62,14 @@ class PyMCNutsMethod(InferenceMethod):
                 return_inferencedata=True,
             )
 
-        chains = _extract_pymc_chains(trace, dist._param_names, num_chains)
+        # Extract in the trace's natural order; field_order lets
+        # make_posterior realign columns to the template by name.
+        order = posterior_var_order(trace, param_names)
+        chains = extract_chain_columns(trace, order, num_chains)
 
         return make_posterior(
             chains, parents=(dist,), algorithm="pymc_nuts",
-            auxiliary=trace, record_template=getattr(dist, "record_template", None),
+            auxiliary=trace, record_template=record_template, field_order=order,
             num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         )
 
@@ -117,7 +107,6 @@ class PyMCADVIMethod(InferenceMethod):
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         import pymc as pm
-        import numpy as np
 
         num_iterations = kwargs.get("num_iterations", 30000)
         num_results = kwargs.get("num_results", 1000)
@@ -125,20 +114,22 @@ class PyMCADVIMethod(InferenceMethod):
         vi_method = kwargs.get("vi_method", "advi")
 
         model = dist._pymc_model(data=observed)
+        # Build the template in canonical field order before fitting (fail
+        # fast on a dynamic-RV / non-concrete model).
+        param_names = dist._conditioned_param_names(model)
+        record_template = dist._record_template_for(model, param_names)
         with model:
             approx = pm.fit(n=num_iterations, method=vi_method, random_seed=random_seed)
             trace = approx.sample(num_results)
 
-        chain_draws = [trace.posterior[n].values[0] for n in dist._param_names]
-        samples = np.concatenate(
-            [np.atleast_2d(d).reshape(num_results, -1) for d in chain_draws],
-            axis=1,
-        )
-        chains = [jnp.asarray(samples)]
+        # ADVI's approx.sample yields a single chain of `num_results`
+        # draws; extract in natural order and realign by name.
+        order = posterior_var_order(trace, param_names)
+        chains = extract_chain_columns(trace, order, num_chains=1)
         algorithm = f"pymc_{vi_method}"
 
         return make_posterior(
             chains, parents=(dist,), algorithm=algorithm,
-            auxiliary=trace, record_template=getattr(dist, "record_template", None),
+            auxiliary=trace, record_template=record_template, field_order=order,
             num_iterations=num_iterations,
         )

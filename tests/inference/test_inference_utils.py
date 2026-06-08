@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
+import jax.tree_util as jtu
 import numpy as np
 import pytest
 
@@ -13,11 +15,19 @@ from probpipe import (
     ProductDistribution,
     SimpleModel,
 )
+from probpipe.core._distribution_base import Distribution
 from probpipe.core._numeric_record import NumericRecord
+from probpipe.core.protocols import SupportsSampling
 from probpipe.inference._inference_utils import (
+    as_prng_key,
+    build_likelihood_flat,
     build_target_log_prob,
     build_target_log_prob_flat,
+    get_init_state,
     get_prior,
+    is_jax_traceable,
+    posterior_var_order,
+    run_chain_scan,
 )
 from probpipe.modeling._likelihood import Likelihood
 
@@ -27,6 +37,26 @@ class _IdentityLikelihood(Likelihood):
 
     def log_likelihood(self, params, data) -> float:
         return jnp.asarray(0.0)
+
+
+class _GaussianMeanLikelihood(Likelihood):
+    """Gaussian likelihood with known scale, mean = flat parameter vector.
+
+    ``log p(y | theta) = sum_i log N(y_i; mu, scale^2)`` with ``mu`` the
+    (scalar) flat parameter. Used to check ``build_likelihood_flat``
+    against an independently computed value.
+    """
+
+    def __init__(self, scale: float = 2.0):
+        self.scale = scale
+
+    def log_likelihood(self, params, data):
+        mu = jnp.reshape(jnp.asarray(params), ())
+        s = self.scale
+        return jnp.sum(
+            -0.5 * ((jnp.asarray(data) - mu) / s) ** 2
+            - jnp.log(s) - 0.5 * jnp.log(2 * jnp.pi)
+        )
 
 
 @pytest.fixture
@@ -104,3 +134,366 @@ class TestGetPrior:
     def test_bare_distribution_returns_self(self):
         d = Normal(loc=0.0, scale=1.0, name="x")
         assert get_prior(d) is d
+
+
+# ---------------------------------------------------------------------------
+# Stub pytree nodes for run_chain_scan (mimic the BlackJAX state/info contract)
+# ---------------------------------------------------------------------------
+
+
+@jtu.register_pytree_node_class
+class _FakeState:
+    """Minimal BlackJAX-style sampler state: carries a ``position``."""
+
+    def __init__(self, position):
+        self.position = position
+
+    def tree_flatten(self):
+        return (self.position,), None
+
+    @classmethod
+    def tree_unflatten(cls, aux, children):
+        return cls(*children)
+
+
+@jtu.register_pytree_node_class
+class _FakeInfo:
+    """Minimal BlackJAX-style per-step info object with one field."""
+
+    def __init__(self, accept):
+        self.accept = accept
+
+    def tree_flatten(self):
+        return (self.accept,), None
+
+    @classmethod
+    def tree_unflatten(cls, aux, children):
+        return cls(*children)
+
+
+class _FakeSampler:
+    """Fake BlackJAX sampler: each ``step`` advances the position by one
+    and reports a constant ``accept`` rate, so the stacked outputs are
+    trivially predictable.
+    """
+
+    def step(self, key, state):
+        return _FakeState(state.position + 1.0), _FakeInfo(jnp.asarray(0.5))
+
+
+class TestAsPRNGKey:
+    """``as_prng_key`` upgrades int seeds and passes keys through."""
+
+    def test_int_seed_becomes_prng_key(self):
+        key = as_prng_key(0)
+        ref = jax.random.PRNGKey(0)
+        assert key.shape == ref.shape
+        assert key.dtype == ref.dtype
+        np.testing.assert_array_equal(np.asarray(key), np.asarray(ref))
+
+    def test_existing_key_passes_through(self):
+        ref = jax.random.PRNGKey(7)
+        # Passthrough is by identity: no copy, no re-derivation.
+        assert as_prng_key(ref) is ref
+
+
+class TestRunChainScan:
+    """``run_chain_scan`` drives a sampler under ``lax.scan`` and stacks
+    positions / infos along the leading axis.
+    """
+
+    def test_positions_and_infos_shapes(self):
+        event_shape = (2,)
+        num_results = 5
+        init = _FakeState(jnp.zeros(event_shape))
+        positions, infos = run_chain_scan(
+            _FakeSampler(), init, num_results, jax.random.PRNGKey(0),
+        )
+        # Positions: (num_results, *event_shape).
+        assert positions.shape == (num_results, *event_shape)
+        # Infos: pytree stacked along axis 0, length num_results.
+        assert infos.accept.shape == (num_results,)
+
+    def test_positions_track_the_sampler_recurrence(self):
+        # Each step adds one, starting from zeros, so row i == i + 1.
+        init = _FakeState(jnp.zeros((2,)))
+        positions, _ = run_chain_scan(
+            _FakeSampler(), init, 4, jax.random.PRNGKey(0),
+        )
+        expected = np.arange(1, 5)[:, None] * np.ones((1, 2))
+        np.testing.assert_allclose(np.asarray(positions), expected)
+
+
+class TestIsJaxTraceable:
+    """``is_jax_traceable`` probes whether a fn traces at an init state."""
+
+    def test_traceable_fn(self):
+        init = jnp.array([1.0, 2.0])
+        assert is_jax_traceable(lambda x: jnp.sum(x ** 2), init) is True
+
+    def test_non_traceable_fn(self):
+        # ``float(np.asarray(x))`` forces concretisation of a traced value,
+        # which raises during ``make_jaxpr``.
+        def host_side(x):
+            return jnp.asarray(float(np.asarray(x).sum()))
+
+        init = jnp.array([1.0, 2.0])
+        assert is_jax_traceable(host_side, init) is False
+
+
+class TestBuildLikelihoodFlat:
+    """``build_likelihood_flat`` returns the *likelihood alone* as a flat-
+    vector callable (the ESS entry point).
+    """
+
+    @pytest.fixture
+    def gaussian_model(self):
+        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
+        return SimpleModel(prior, _GaussianMeanLikelihood(scale=2.0), name="g")
+
+    def test_returns_scalar_log_likelihood(self, gaussian_model):
+        data = jnp.array([1.0, -1.0, 0.5])
+        llf = build_likelihood_flat(
+            gaussian_model._prior, gaussian_model._likelihood, data,
+        )
+        assert callable(llf)
+        out = llf(jnp.array([0.3]))
+        # Scalar (rank-0) log-likelihood.
+        assert jnp.ndim(out) == 0
+
+    def test_matches_independent_gaussian(self, gaussian_model):
+        data = jnp.array([1.0, -1.0, 0.5])
+        llf = build_likelihood_flat(
+            gaussian_model._prior, gaussian_model._likelihood, data,
+        )
+        mu, scale = 0.3, 2.0
+        expected = np.sum(
+            -0.5 * ((np.asarray(data) - mu) / scale) ** 2
+            - np.log(scale) - 0.5 * np.log(2 * np.pi)
+        )
+        np.testing.assert_allclose(
+            float(llf(jnp.array([mu]))), expected, rtol=0, atol=1e-5,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Stub distributions for get_init_state branch coverage
+# ---------------------------------------------------------------------------
+
+
+class _EventShapeOnlyDist(Distribution):
+    """Distribution with ``event_shape`` but no ``_sample`` (not
+    ``SupportsSampling``) — exercises the Stan ``Uniform(-2, 2)`` fallback.
+    """
+
+    event_shape = (3,)
+
+    def __init__(self):
+        super().__init__(name="event_shape_only")
+
+    def _unnormalized_log_prob(self, value):
+        return -0.5 * jnp.sum(jnp.asarray(value) ** 2)
+
+
+class _NoInitHeuristicDist(Distribution):
+    """Distribution with neither sampling nor ``event_shape`` — exercises
+    the ``get_init_state`` raise branch.
+    """
+
+    def __init__(self):
+        super().__init__(name="no_init_heuristic")
+
+    def _unnormalized_log_prob(self, value):
+        return jnp.asarray(0.0)
+
+
+class TestGetInitState:
+    """Cover every documented branch of ``get_init_state``."""
+
+    def test_explicit_init_passthrough(self):
+        # Branch 1: explicit init returned verbatim (cast to prior dtype).
+        prior = Normal(loc=0.0, scale=1.0, name="x")
+        out = get_init_state(prior, init=jnp.array([3.0, 4.0]))
+        np.testing.assert_array_equal(np.asarray(out), np.array([3.0, 4.0]))
+        # Cast to the prior dtype: a default-float Normal yields a float
+        # array (not, e.g., int) regardless of the input dtype.
+        assert jnp.issubdtype(out.dtype, jnp.floating)
+
+    def test_explicit_init_casts_dtype(self):
+        # An integer-valued init is cast to the prior's float dtype.
+        prior = Normal(loc=0.0, scale=1.0, name="x")
+        out = get_init_state(prior, init=np.array([1, 2], dtype=np.int32))
+        assert jnp.issubdtype(out.dtype, jnp.floating)
+        np.testing.assert_allclose(np.asarray(out), np.array([1.0, 2.0]))
+
+    def test_prior_sample_path(self):
+        # Branch 2: prior implements SupportsSampling -> draw a sample.
+        prior = Normal(loc=0.0, scale=1.0, name="x")
+        assert isinstance(prior, SupportsSampling)
+        out = get_init_state(prior, init=None, random_seed=0)
+        assert out.shape == (1,)            # scalar Normal -> length-1 vector
+        assert bool(jnp.all(jnp.isfinite(out)))
+
+    def test_stan_uniform_fallback(self):
+        # Branch 3: no sampling path, but event_shape exposed -> Uniform(-2, 2).
+        dist = _EventShapeOnlyDist()
+        assert not isinstance(dist, SupportsSampling)
+        out = get_init_state(dist, init=None, random_seed=0)
+        assert out.shape == dist.event_shape
+        assert bool(jnp.all((out >= -2.0) & (out <= 2.0)))
+
+    def test_raises_without_sampling_or_event_shape(self):
+        # Branch 4: neither heuristic applies -> ValueError.
+        with pytest.raises(ValueError, match="Cannot determine initial state"):
+            get_init_state(_NoInitHeuristicDist(), init=None)
+
+    def test_data_not_consulted_so_seed_determines_init(self):
+        # By design get_init_state takes no observed-data argument: the
+        # init depends only on (dist, init, random_seed). Same seed ->
+        # identical init across calls; different seed -> (generally)
+        # different init.
+        dist = _EventShapeOnlyDist()
+        a = get_init_state(dist, init=None, random_seed=7)
+        b = get_init_state(dist, init=None, random_seed=7)
+        np.testing.assert_array_equal(np.asarray(a), np.asarray(b))
+        c = get_init_state(dist, init=None, random_seed=8)
+        assert not bool(jnp.all(a == c))
+
+
+# ---------------------------------------------------------------------------
+# parallel_chain_map
+# ---------------------------------------------------------------------------
+
+
+class TestParallelChainMap:
+    """``parallel_chain_map`` picks pmap when enough devices, vmap otherwise.
+
+    The pmap-when-available path matters for two reasons:
+
+    1. **NUTS bit-identicalness.** ``jax.vmap`` of NUTS masks data-dependent
+       trajectory length, so vmap'd draws don't match sequential at the same
+       seed. ``jax.pmap`` runs each chain on its own device and is
+       bit-identical. The pmap path is exercised in a subprocess test below.
+    2. **CPU multi-device parallelism.** Users who set
+       ``XLA_FLAGS=--xla_force_host_platform_device_count=N`` get linear
+       chain scaling on CPU without code changes.
+    """
+
+    def test_uses_vmap_when_single_device(self, monkeypatch):
+        """With ``local_device_count() == 1``, multi-chain calls hit ``jax.vmap``.
+
+        Patches both ``jax.pmap`` and ``jax.vmap`` so we can witness
+        the dispatch directly (a runtime ``Array`` doesn't distinguish
+        the two on a single device).
+        """
+        import jax
+        from probpipe.inference import _inference_utils as iu
+
+        if jax.local_device_count() != 1:
+            import pytest as _pytest
+            _pytest.skip(
+                "test requires the default 1-device CPU; got "
+                f"{jax.local_device_count()} — set XLA_FLAGS in your shell?"
+            )
+
+        called = {"pmap": 0, "vmap": 0}
+        real_vmap = jax.vmap
+
+        def _spy_pmap(fn):
+            called["pmap"] += 1
+            raise AssertionError("pmap path should not fire on single device")
+
+        def _spy_vmap(fn):
+            called["vmap"] += 1
+            return real_vmap(fn)
+
+        monkeypatch.setattr(iu.jax, "pmap", _spy_pmap)
+        monkeypatch.setattr(iu.jax, "vmap", _spy_vmap)
+
+        keys = jax.random.split(jax.random.PRNGKey(0), 4)
+        out = iu.parallel_chain_map(lambda k: jax.random.normal(k, (3,)), keys)
+        assert out.shape == (4, 3)
+        assert called == {"pmap": 0, "vmap": 1}
+
+    def test_pmap_path_via_subprocess(self):
+        """Subprocess with virtual devices exercises the pmap branch.
+
+        Done as a subprocess because ``XLA_FLAGS`` is read once at JAX
+        import time — setting it inside this process has no effect.
+        """
+        import os
+        import subprocess
+        import sys
+        import textwrap
+
+        script = textwrap.dedent("""
+            import jax, jax.numpy as jnp
+            from probpipe.inference._inference_utils import parallel_chain_map
+
+            assert jax.local_device_count() == 4, f"expected 4 devices, got {jax.local_device_count()}"
+            keys = jax.random.split(jax.random.PRNGKey(0), 4)
+            out = parallel_chain_map(lambda k: jax.random.normal(k, (3,)), keys)
+            assert out.shape == (4, 3), f"shape {out.shape}"
+
+            # Bit-identical to sequential single-chain runs at the same per-key seed.
+            expected = jnp.stack([jax.random.normal(k, (3,)) for k in keys])
+            assert jnp.allclose(out, expected, atol=1e-6), "pmap result diverges from sequential"
+            print("OK")
+        """)
+        env = os.environ.copy()
+        env["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            env=env, capture_output=True, text=True, timeout=120,
+        )
+        assert result.returncode == 0, (
+            f"subprocess failed: stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+        assert "OK" in result.stdout
+
+
+class _StubPosterior:
+    def __init__(self, var_names):
+        # dict preserves insertion order, mimicking a trace's data_vars.
+        self.data_vars = dict.fromkeys(var_names)
+
+
+class _StubTrace:
+    """Minimal stand-in: ``posterior_var_order`` reads only
+    ``trace.posterior.data_vars`` (ordered)."""
+
+    def __init__(self, var_names):
+        self.posterior = _StubPosterior(var_names)
+
+
+class TestPosteriorVarOrder:
+    """``posterior_var_order`` returns a trace's posterior variables in the
+    backend's natural order filtered to *keep*, and fails loudly when a
+    kept name is missing (PR #236 / #233)."""
+
+    def test_preserves_trace_order_not_keep_order(self):
+        trace = _StubTrace(["slope", "intercept", "lp__"])
+        # The trace's data_vars order wins; the keep argument's order does not.
+        assert posterior_var_order(trace, ["intercept", "slope"]) == ["slope", "intercept"]
+
+    def test_alphabetical_backend_order_returned_for_realignment(self):
+        # nutpie, e.g., sorts data_vars alphabetically; the helper returns
+        # that order so field_order can realign columns by name.
+        trace = _StubTrace(["a", "b", "c"])
+        assert posterior_var_order(trace, ["c", "a", "b"]) == ["a", "b", "c"]
+
+    def test_ignores_unkept_trace_vars(self):
+        trace = _StubTrace(["mu", "sigma", "lp__", "diverging"])
+        assert posterior_var_order(trace, ["mu", "sigma"]) == ["mu", "sigma"]
+
+    def test_missing_expected_var_raises_valueerror(self):
+        """A kept name absent from the trace raises a clear ValueError here,
+        not a cryptic 'not a permutation' error later in make_posterior."""
+        trace = _StubTrace(["mu"])
+        with pytest.raises(ValueError, match="missing expected variable"):
+            posterior_var_order(trace, ["mu", "sigma"])
+
+    def test_error_message_names_the_missing_vars(self):
+        trace = _StubTrace(["mu"])
+        with pytest.raises(ValueError, match="sigma"):
+            posterior_var_order(trace, ["mu", "sigma"])
