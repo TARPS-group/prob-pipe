@@ -39,6 +39,10 @@ stan = ["bridgestan>=2.0", "cmdstanpy>=1.2"]
 # arviz<1.0); matplotlib is required by the pymc 6 sampler progress bar.
 pymc = ["pymc>=6", "matplotlib"]
 nutpie = ["nutpie>=0.12"]
+# Amortized neural SBI (NPE/FMPE/CMPE), jax-native via keras (KERAS_BACKEND=jax).
+# BayesFlow 2.x requires Python <3.14 and numpy>=2.2.6, so this extra is
+# Python 3.12-3.13 only; bare core stays 3.14-capable.
+bayesflow = ["bayesflow>=2.0,<3"]
 dev = [
   "probpipe[prefect,viz,docs]",
   "pytest>=7",

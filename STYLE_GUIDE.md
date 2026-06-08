@@ -536,9 +536,16 @@ class SupportsFoo(Protocol):
 ### 7.2 Protocol hierarchy
 
 - `SupportsLogProb` extends `SupportsUnnormalizedLogProb`.
-- All other protocols (`SupportsSampling`, `SupportsMean`,
+- All other capability protocols (`SupportsSampling`, `SupportsMean`,
   `SupportsVariance`, `SupportsCovariance`, `SupportsExpectation`,
   `SupportsConditioning`) are standalone.
+- The likelihood / simulator protocols `Likelihood`,
+  `ConditionallyIndependentLikelihood` (extends `Likelihood`), and
+  `GenerativeLikelihood` also live in `core/protocols.py`. They type model
+  components — log-density, per-datum log-density, and data generation —
+  rather than distribution capabilities, so they are *not* named `Supports*`
+  (they describe what a likelihood/simulator *is*, not a capability a
+  distribution *supports*).
 
 ### 7.3 Implementing protocols
 

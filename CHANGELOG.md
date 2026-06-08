@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **BayesFlow amortized-SBI backend (`[bayesflow]` extra).** New
+  `learn_amortized_posterior(prior, simulator, method="npe"|"fmpe"|"cmpe",
+  ...)` trains a jax-native (keras-on-JAX) amortized neural posterior
+  estimator — NPE (coupling flow), FMPE (flow matching), or CMPE
+  (consistency model) — and returns a `SupportsConditioning` distribution, so
+  `condition_on(model, observed)` draws from `p(theta | observed)` in a single
+  forward pass (no MCMC). This restores the amortized half of the SBI layer
+  dropped with sbijax.
+  - Training simulates `(theta, y)` offline (`prior` drawn via the `sample`
+    op, `simulator.generate_data` for the data); the prior is used only to
+    draw `theta` and needs no TFP translation. The trained estimator is
+    amortized — the same instance conditions on any observation with no
+    retraining — and its draws are named via the prior's `record_template`.
+  - The `[bayesflow]` extra is **Python 3.12–3.13 only** (BayesFlow 2.x caps
+    `<3.14`); keras runs on the JAX backend (`KERAS_BACKEND=jax`) — no
+    TensorFlow or PyTorch. The backend is imported lazily, so `import
+    probpipe` does not load keras.
+
 ### Changed
 
 - **Dev tooling: migrated to [uv](https://docs.astral.sh/uv/) for

@@ -95,7 +95,8 @@ uv sync --extra dev --extra nutpie --extra pymc   # + pymc backend
 
 The `pip install -e ".[dev]"` path still works for contributors with an
 existing pip-based setup, but uv is the recommended path. Optional backends
-not required for tests: `bridgestan`, `pymc`.
+not required for tests: `bridgestan`, `pymc`, `bayesflow` (amortized SBI;
+Python 3.12–3.13 only).
 
 ### Running Tests
 
@@ -221,6 +222,8 @@ GitHub Actions (`.github/workflows/ci.yml`):
   for pinned dependency versions, shared between local dev and CI)
 - Test job uses extras `dev,nutpie,pymc`; the notebooks job uses
   `dev,nutpie` only (`bridgestan` is not included anywhere by default)
+- A separate `bayesflow` leg (Python 3.12 and 3.13 only — BayesFlow caps
+  `<3.14`) syncs `dev,nutpie,bayesflow` and runs the amortized-SBI tests
 - Coverage uploaded to Codecov
 
 Docs build (`.github/workflows/docs.yml`) with `uv run mkdocs build --strict`.
@@ -414,6 +417,13 @@ Built-in methods:
 | 0 | `pymc_advi` | PyMC | `PyMCModel`; opt-in only via `method=` |
 | 0 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 | 0 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
+
+**Amortized SBI bypasses the registry.** Trained amortized posterior estimators
+(`learn_amortized_posterior` → `BayesFlowPosterior`, the `[bayesflow]` extra)
+implement `SupportsConditioning` directly, so `condition_on(model, observed)` is
+a single forward pass through the trained network. Because `condition_on` checks
+`SupportsConditioning` *before* the inference-method registry, these estimators
+short-circuit it and register no method.
 
 ### Converter priority system
 

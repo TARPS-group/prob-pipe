@@ -17,6 +17,12 @@ from ._blackjax_rwmh import rwmh
 from ._blackjax_ess import elliptical_slice
 from ._nutpie import condition_on_nutpie
 from ._minibatch import MinibatchedDistribution
+# Amortized SBI (optional ``[bayesflow]`` extra). The module imports cheaply —
+# keras / bayesflow load lazily inside the workflow function on first call (the
+# nutpie pattern) — so this eager import does not pull keras into ``import
+# probpipe``. The trained estimator is a ``SupportsConditioning`` distribution
+# and needs no inference-registry method.
+from ._bayesflow import BayesFlowPosterior, learn_amortized_posterior
 
 __all__ = [
     "ApproximateDistribution",
@@ -29,6 +35,8 @@ __all__ = [
     "elliptical_slice",
     "condition_on_nutpie",
     "MinibatchedDistribution",
+    "learn_amortized_posterior",
+    "BayesFlowPosterior",
 ]
 
 
