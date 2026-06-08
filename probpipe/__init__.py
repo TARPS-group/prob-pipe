@@ -98,7 +98,8 @@ from probpipe.core._array_backend import (
     aux_for,
     register_aux,
 )
-from probpipe.core.config import WorkflowKind, prefect_config
+from probpipe.core.config import WorkflowKind, prefect_config, provenance_config
+from probpipe.core.provenance import ProvenanceMode, ParentInfo
 from probpipe.core.node import WorkflowFunction, Module, workflow_function, workflow_method, abstract_workflow_method
 from probpipe.core.provenance import Provenance, provenance_ancestors, provenance_dag
 from probpipe.core.constraints import (

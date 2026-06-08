@@ -6,12 +6,14 @@ import jax.numpy as jnp
 import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
+import probpipe
 from probpipe import (
     Beta,
     JointGaussian,
     Normal,
     ProductDistribution,
     Provenance,
+    ProvenanceMode,
     RecordEmpiricalDistribution,
     SequentialJointDistribution,
     TransformedDistribution,
@@ -21,6 +23,15 @@ from probpipe import (
     provenance_dag,
 )
 from probpipe.core.node import WorkflowFunction
+from probpipe.core.provenance import ParentInfo
+
+
+@pytest.fixture
+def full_provenance_mode():
+    """Switch to FULL provenance mode and restore the default after the test."""
+    probpipe.provenance_config.mode = ProvenanceMode.FULL
+    yield
+    probpipe.provenance_config.reset()
 
 # ===========================================================================
 # 1. Provenance basics (dataclass, with_source, write-once)
@@ -143,7 +154,7 @@ class TestConditioningProvenance:
 
 class TestBroadcastingProvenance:
 
-    def test_broadcast_loop_provenance(self):
+    def test_broadcast_loop_provenance(self, full_provenance_mode):
         n = Normal(loc=0.0, scale=1.0, name="input_normal")
 
         def identity(x: float) -> float:
@@ -225,7 +236,7 @@ class TestProvenanceChains:
         assert converted.source.operation == "from_distribution"
         assert converted.source.parents[0] is src
 
-    def test_transform_then_broadcast(self):
+    def test_transform_then_broadcast(self, full_provenance_mode):
         """transform → broadcast creates a 2-step chain."""
         base = Normal(loc=0.0, scale=1.0, name="base")
         td = TransformedDistribution(base, tfb.Exp(), name="positive")
@@ -325,7 +336,7 @@ class TestProvenanceAncestors:
         assert len(ancestors) == 1
         assert ancestors[0] is base
 
-    def test_chain_of_ancestors(self):
+    def test_chain_of_ancestors(self, full_provenance_mode):
         """base → transform → broadcast gives 2 ancestors for broadcast result."""
         base = Normal(loc=0.0, scale=1.0, name="base")
         td = TransformedDistribution(base, tfb.Exp(), name="positive")
@@ -342,7 +353,7 @@ class TestProvenanceAncestors:
         assert td in ancestors
         assert base in ancestors
 
-    def test_no_duplicates(self):
+    def test_no_duplicates(self, full_provenance_mode):
         """Same parent appearing in multiple roles doesn't duplicate."""
         n = Normal(loc=0.0, scale=1.0, name="shared")
 
@@ -392,7 +403,7 @@ class TestProvenanceDag:
         assert num_edges == 0
         assert provenance_ancestors(n) == []
 
-    def test_multi_step_dag_structure(self):
+    def test_multi_step_dag_structure(self, full_provenance_mode):
         base = Normal(loc=0.0, scale=1.0, name="prior")
         td = TransformedDistribution(base, tfb.Exp(), name="positive")
 
@@ -411,3 +422,95 @@ class TestProvenanceDag:
         ancestors = provenance_ancestors(result)
         assert base in ancestors
         assert td in ancestors
+
+
+# ===========================================================================
+# 10. ProvenanceMode behaviour
+# ===========================================================================
+
+class TestProvenanceModes:
+
+    def test_lightweight_is_default(self):
+        assert probpipe.provenance_config.mode is ProvenanceMode.LIGHTWEIGHT
+
+    def test_lightweight_stores_parent_info(self):
+        """LIGHTWEIGHT mode stores ParentInfo descriptors, not live refs."""
+        n = Normal(loc=0.0, scale=1.0, name="input")
+
+        def identity(x: float) -> float:
+            return x
+
+        wf = WorkflowFunction(func=identity, dispatch="sequential",
+                      n_broadcast_samples=10, seed=42)
+        result = wf(x=n)
+        assert result.source is not None
+        assert len(result.source.parents) == 1
+        parent = result.source.parents[0]
+        assert isinstance(parent, ParentInfo)
+        assert parent.type_name == "Normal"
+        assert parent.name == "input"
+
+    def test_lightweight_parent_info_not_live_ref(self):
+        """In LIGHTWEIGHT mode, parents are not live Distribution references."""
+        n = Normal(loc=0.0, scale=1.0, name="input")
+
+        def identity(x: float) -> float:
+            return x
+
+        wf = WorkflowFunction(func=identity, dispatch="sequential",
+                      n_broadcast_samples=10, seed=42)
+        result = wf(x=n)
+        parent = result.source.parents[0]
+        assert parent is not n
+
+    def test_lightweight_ancestors_returns_empty(self):
+        """provenance_ancestors() returns empty list in LIGHTWEIGHT mode."""
+        n = Normal(loc=0.0, scale=1.0, name="input")
+
+        def identity(x: float) -> float:
+            return x
+
+        wf = WorkflowFunction(func=identity, dispatch="sequential",
+                      n_broadcast_samples=10, seed=42)
+        result = wf(x=n)
+        assert provenance_ancestors(result) == []
+
+    def test_lightweight_dag_single_node(self):
+        """provenance_dag() shows only the leaf node in LIGHTWEIGHT mode."""
+        n = Normal(loc=0.0, scale=1.0, name="input")
+
+        def identity(x: float) -> float:
+            return x
+
+        wf = WorkflowFunction(func=identity, dispatch="sequential",
+                      n_broadcast_samples=10, seed=42)
+        result = wf(x=n)
+        dag = provenance_dag(result)
+        num_nodes, num_edges = _count_dag_entries(dag)
+        assert num_nodes == 1
+        assert num_edges == 0
+
+    def test_off_mode_no_provenance(self):
+        """OFF mode attaches no provenance to workflow results."""
+        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        try:
+            n = Normal(loc=0.0, scale=1.0, name="input")
+
+            def identity(x: float) -> float:
+                return x
+
+            wf = WorkflowFunction(func=identity, dispatch="sequential",
+                          n_broadcast_samples=10, seed=42)
+            result = wf(x=n)
+            assert result.source is None
+        finally:
+            probpipe.provenance_config.reset()
+
+    def test_mode_setter_rejects_non_enum(self):
+        with pytest.raises(TypeError, match="ProvenanceMode"):
+            probpipe.provenance_config.mode = "full"
+
+    def test_reset_restores_lightweight(self):
+        probpipe.provenance_config.mode = ProvenanceMode.FULL
+        probpipe.provenance_config.reset()
+        assert probpipe.provenance_config.mode is ProvenanceMode.LIGHTWEIGHT

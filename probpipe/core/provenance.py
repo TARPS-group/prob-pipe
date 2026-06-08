@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -12,7 +13,70 @@ if TYPE_CHECKING:
 
     ProvenanceNode = Distribution | Record | RecordArray
 
-__all__ = ["Provenance", "provenance_ancestors", "provenance_dag"]
+__all__ = [
+    "ParentInfo",
+    "Provenance",
+    "ProvenanceMode",
+    "provenance_ancestors",
+    "provenance_dag",
+]
+
+
+# ---------------------------------------------------------------------------
+# ProvenanceMode enum
+# ---------------------------------------------------------------------------
+
+class ProvenanceMode(Enum):
+    """Controls how much history is retained in provenance chains.
+
+    Members
+    -------
+    FULL
+        Store live references to parent Distribution / Record /
+        RecordArray objects.  The entire ancestry chain stays in memory
+        as long as the final result is alive.  Good for debugging and
+        small test workflows where full graph traversal is useful.
+    LIGHTWEIGHT
+        Store only lightweight :class:`ParentInfo` descriptors — type
+        name, distribution name, and an optional fingerprint.  Parent
+        objects are free to be garbage-collected once a workflow step
+        completes.  This is the default and scales to larger workflows.
+    OFF
+        Attach no provenance at all.  Minimises overhead when lineage
+        tracking is not needed.
+    """
+
+    FULL = "full"
+    LIGHTWEIGHT = "lightweight"
+    OFF = "off"
+
+
+# ---------------------------------------------------------------------------
+# ParentInfo descriptor
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ParentInfo:
+    """Lightweight descriptor for a provenance parent.
+
+    Used by :attr:`ProvenanceMode.LIGHTWEIGHT` in place of a live object
+    reference.  Stores just enough information to describe lineage without
+    keeping the parent's data alive.
+
+    Attributes
+    ----------
+    type_name : str
+        Class name of the parent (e.g. ``"EmpiricalDistribution"``).
+    name : str
+        Distribution or record name of the parent.
+    fingerprint : str or None
+        Optional stable hash of the parent's inputs.  Reserved for future
+        use by the Prefect caching layer (PR 2).
+    """
+
+    type_name: str
+    name: str
+    fingerprint: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -24,12 +88,13 @@ class Provenance:
     """Tracks how a distribution was created."""
 
     operation: str
-    parents: tuple[Distribution, ...] = ()
+    parents: tuple[Any, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __repr__(self) -> str:
         parent_names = ", ".join(
-            p.name or type(p).__name__ for p in self.parents
+            p.name if isinstance(p, ParentInfo) else (p.name or type(p).__name__)
+            for p in self.parents
         )
         return f"Provenance({self.operation!r}, parents=[{parent_names}])"
 
@@ -42,19 +107,27 @@ class Provenance:
         ----------
         recurse : bool
             If True, recursively serialize parent provenance chains.
-            If False, only include parent type/name references.
+            Only applies to live-reference parents (FULL mode); ParentInfo
+            descriptors are always serialized shallowly.
         """
         parent_dicts = []
         for p in self.parents:
-            entry: dict[str, Any] = {
-                "type": type(p).__name__,
-                "name": p.name,
-            }
-            if recurse and p.source is not None:
-                entry["source"] = p.source.to_dict(recurse=True)
+            if isinstance(p, ParentInfo):
+                entry: dict[str, Any] = {
+                    "type": p.type_name,
+                    "name": p.name,
+                }
+                if p.fingerprint is not None:
+                    entry["fingerprint"] = p.fingerprint
+            else:
+                entry = {
+                    "type": type(p).__name__,
+                    "name": p.name,
+                }
+                if recurse and p.source is not None:
+                    entry["source"] = p.source.to_dict(recurse=True)
             parent_dicts.append(entry)
 
-        # Filter metadata to JSON-serializable values
         safe_metadata = {}
         for k, v in self.metadata.items():
             if isinstance(v, (str, int, float, bool, list, dict, type(None))):
@@ -94,11 +167,9 @@ def provenance_ancestors(node: "ProvenanceNode") -> list["ProvenanceNode"]:
     returns a flat list of unique ancestors, ordered by discovery.
     The input *node* is **not** included in the result.
 
-    Parameters
-    ----------
-    node : Distribution | Record | RecordArray
-        Any object exposing a ``.source`` attribute. The three ProbPipe
-        types that carry provenance satisfy this uniformly.
+    Only works in :attr:`ProvenanceMode.FULL` mode where live object
+    references are stored.  Returns an empty list when parents are
+    :class:`ParentInfo` descriptors (LIGHTWEIGHT mode).
     """
     visited: set[int] = {id(node)}
     ancestors: list = []
@@ -106,6 +177,8 @@ def provenance_ancestors(node: "ProvenanceNode") -> list["ProvenanceNode"]:
 
     if node.source is not None:
         for p in node.source.parents:
+            if isinstance(p, ParentInfo):
+                continue
             if id(p) not in visited:
                 visited.add(id(p))
                 queue.append(p)
@@ -115,6 +188,8 @@ def provenance_ancestors(node: "ProvenanceNode") -> list["ProvenanceNode"]:
         current = queue.pop(0)
         if current.source is not None:
             for p in current.source.parents:
+                if isinstance(p, ParentInfo):
+                    continue
                 if id(p) not in visited:
                     visited.add(id(p))
                     queue.append(p)
@@ -123,15 +198,16 @@ def provenance_ancestors(node: "ProvenanceNode") -> list["ProvenanceNode"]:
     return ancestors
 
 
-def provenance_dag(dist: Distribution):
+def provenance_dag(dist: "Distribution"):
     """Build a Graphviz ``Digraph`` of the provenance chain rooted at *dist*.
 
     Each node is a distribution (labelled with type and name).  Edges point
     from parent to child and are labelled with the operation that produced
     the child.
 
-    Requires the ``graphviz`` package.  Returns a ``graphviz.Digraph``
-    instance that can be rendered or displayed in a notebook.
+    Only works in :attr:`ProvenanceMode.FULL` mode.  Requires the
+    ``graphviz`` package.  Returns a ``graphviz.Digraph`` instance that can
+    be rendered or displayed in a notebook.
     """
     try:
         from graphviz import Digraph
@@ -146,14 +222,14 @@ def provenance_dag(dist: Distribution):
 
     visited: set[int] = set()
 
-    def _label(d: Distribution) -> str:
+    def _label(d: "Distribution") -> str:
         name = d.name or ""
         typename = type(d).__name__
         if name:
             return f"{typename}\n'{name}'"
         return typename
 
-    def _visit(d: Distribution) -> str:
+    def _visit(d: "Distribution") -> str:
         nid = str(id(d))
         if id(d) in visited:
             return nid
@@ -162,6 +238,8 @@ def provenance_dag(dist: Distribution):
 
         if d.source is not None:
             for p in d.source.parents:
+                if isinstance(p, ParentInfo):
+                    continue
                 pid = _visit(p)
                 dot.edge(pid, nid, label=d.source.operation)
 

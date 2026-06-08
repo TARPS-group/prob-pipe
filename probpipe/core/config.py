@@ -1,13 +1,18 @@
-"""Global Prefect orchestration configuration for ProbPipe.
+"""Global configuration for ProbPipe orchestration and provenance.
 
-Provides a ``WorkflowKind`` enum and a ``PrefectConfig`` singleton
-(``prefect_config``) that controls how ``WorkflowFunction`` instances
-dispatch work.  Users import from the top-level package::
+Provides:
+- ``WorkflowKind`` enum and ``PrefectConfig`` singleton (``prefect_config``)
+  controlling how ``WorkflowFunction`` instances dispatch work.
+- ``ProvenanceMode`` enum and ``ProvenanceConfig`` singleton
+  (``provenance_config``) controlling how much lineage history is retained.
+
+Users import from the top-level package::
 
     import probpipe
-    from probpipe import WorkflowKind
+    from probpipe import WorkflowKind, ProvenanceMode
 
     probpipe.prefect_config.workflow_kind = WorkflowKind.TASK
+    probpipe.provenance_config.mode = ProvenanceMode.FULL
 """
 
 from __future__ import annotations
@@ -15,6 +20,8 @@ from __future__ import annotations
 import os
 from enum import Enum
 from typing import Any
+
+from .provenance import ProvenanceMode
 
 
 # ---------------------------------------------------------------------------
@@ -173,3 +180,45 @@ class PrefectConfig:
 
 # Module-level singleton
 prefect_config = PrefectConfig()
+
+
+# ---------------------------------------------------------------------------
+# ProvenanceConfig singleton
+# ---------------------------------------------------------------------------
+
+class ProvenanceConfig:
+    """Global provenance tracking settings.
+
+    Controls how much lineage history ``WorkflowFunction`` retains when
+    assembling provenance for each result.  Set once at application startup::
+
+        import probpipe
+        from probpipe import ProvenanceMode
+
+        probpipe.provenance_config.mode = ProvenanceMode.FULL  # for debugging
+    """
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        """Restore all settings to defaults."""
+        self._mode: ProvenanceMode = ProvenanceMode.LIGHTWEIGHT
+
+    @property
+    def mode(self) -> ProvenanceMode:
+        """Current global provenance tracking mode."""
+        return self._mode
+
+    @mode.setter
+    def mode(self, value: ProvenanceMode) -> None:
+        if not isinstance(value, ProvenanceMode):
+            raise TypeError(
+                f"mode must be a ProvenanceMode enum member, "
+                f"got {type(value).__name__}"
+            )
+        self._mode = value
+
+
+# Module-level singleton
+provenance_config = ProvenanceConfig()
