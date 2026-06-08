@@ -23,7 +23,7 @@ utilities shared across the backend modules; not re-exported through
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -50,6 +50,7 @@ __all__ = [
     "build_target_log_prob",
     "build_target_log_prob_flat",
     "extract_chain_columns",
+    "posterior_var_order",
     "get_init_state",
     "get_prior",
     "extract_record_template",
@@ -72,8 +73,9 @@ def extract_chain_columns(
     For each chain ``c`` and each variable in *names* (in that order),
     pulls ``trace.posterior[name].values[c]``, flattens trailing axes to
     2-D ``(draws, -1)``, and concatenates across variables. Columns are
-    laid out in *names* order, to match the ``record_template`` field
-    order.
+    laid out in *names* order; pass the same order as ``field_order`` to
+    :func:`make_posterior` so assembly aligns them to the template fields
+    by name.
 
     Parameters
     ----------
@@ -101,6 +103,37 @@ def extract_chain_columns(
             chain_arrays.append(jnp.asarray(vals))
         chains.append(jnp.concatenate(chain_arrays, axis=-1))
     return chains
+
+
+def posterior_var_order(trace: Any, keep: Iterable[str]) -> list[str]:
+    """Variable names in *trace*'s ``posterior`` natural order, filtered
+    to *keep*.
+
+    Pass the result as both the extraction order
+    (:func:`extract_chain_columns`) and ``field_order``
+    (:func:`make_posterior`), so name-keyed assembly realigns columns to
+    the template regardless of the backend's variable order — nutpie, for
+    instance, sorts ``data_vars`` alphabetically.
+
+    Raises
+    ------
+    ValueError
+        If any name in *keep* is absent from ``trace.posterior``. Failing
+        here names the missing variables, rather than letting them surface
+        later as a cryptic "not a permutation" error in
+        :func:`make_posterior`'s column realignment.
+    """
+    keep = list(keep)
+    available = list(trace.posterior.data_vars)
+    missing = [name for name in keep if name not in available]
+    if missing:
+        raise ValueError(
+            f"trace posterior is missing expected variable name(s) "
+            f"{missing}; available posterior variables are {available}. "
+            f"Every parameter being assembled must be present in the trace."
+        )
+    keep_set = set(keep)
+    return [name for name in available if name in keep_set]
 
 
 # ---------------------------------------------------------------------------
