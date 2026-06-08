@@ -17,18 +17,15 @@ authors = [
   { name = "Jiaqiang Zhu",      email = "julian25@bu.edu" },
 ]  # See AUTHORS file for full list
 dependencies = [
-  # sbijax 0.3.6 (latest) pins jaxlib==0.8.1, so we cap below 0.9 to keep
-  # the [sbi] extra installable.  Bump back to >=0.9 once sbijax catches up.
+  # The jax/jaxlib <0.9 cap and the arviz <1.0 ceiling are no longer
+  # gated on sbijax (dropped here). They are lifted in their own
+  # isolated PRs — jax/jaxlib floor in the jax-0.10 bump, the arviz
+  # ceiling in the arviz-1.x ceiling lift — so this sbijax-removal PR
+  # changes no runtime version pins.
   "jax>=0.8.1,<0.9",
   "jaxlib>=0.8.1,<0.9",
   "tfp-nightly>=0.26.0.dev20260318",
   "blackjax>=1.3",
-  # sbijax 0.3.6 hard-pins arviz==1.0.0, but no released pymc yet accepts
-  # arviz 1.0 (the switch landed on pymc's v6 branch in pymc-devs/pymc#8019
-  # but 6.0 is unreleased as of 2026-04-16), and nutpie has not caught up
-  # either. We stay on arviz<1.0 for the [pymc] / [nutpie] extras; CI
-  # installs sbijax with --no-deps to bypass its strict pin. Revisit when
-  # pymc 6.0 ships.
   "arviz>=0.13,<1.0",
 ]
 
@@ -43,7 +40,6 @@ docs = [
 stan = ["bridgestan>=2.0", "cmdstanpy>=1.2"]
 pymc = ["pymc>=5.28"]
 nutpie = ["nutpie>=0.12"]
-sbi = ["sbijax>=0.3.6"]
 dev = [
   "probpipe[prefect,viz,docs]",
   "pytest>=7",
@@ -70,7 +66,6 @@ testpaths = ["tests"]
 addopts = "-n auto --dist worksteal -v --cov=probpipe --cov-report=term-missing --cov-fail-under=0"
 markers = [
     "prefect: marks tests requiring prefect (deselect with '-m \"not prefect\"')",
-    "sbi: marks tests requiring sbijax (deselect with '-m \"not sbi\"')",
 ]
 
 [tool.ruff]
