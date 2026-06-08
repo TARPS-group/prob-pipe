@@ -284,7 +284,7 @@ class TestDispatch:
 
 
 class TestProvenanceChain:
-    def test_pure_sweep_provenance(self):
+    def test_pure_sweep_provenance(self, full_provenance_mode):
         @workflow_function
         def f(p: NumericRecord) -> float:
             return p["x"]
@@ -300,7 +300,7 @@ class TestProvenanceChain:
         assert out.source.metadata["k"] == 0
         assert out.source.metadata["func"] == "f"
 
-    def test_nested_provenance_includes_both(self):
+    def test_nested_provenance_includes_both(self, full_provenance_mode):
         @workflow_function(n_broadcast_samples=10, dispatch="sequential")
         def f(p: NumericRecord, noise: float) -> float:
             return p["x"] + noise

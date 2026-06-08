@@ -25,14 +25,6 @@ from probpipe import (
 from probpipe.core.node import WorkflowFunction
 from probpipe.core.provenance import ParentInfo
 
-
-@pytest.fixture
-def full_provenance_mode():
-    """Switch to FULL provenance mode and restore the default after the test."""
-    probpipe.provenance_config.mode = ProvenanceMode.FULL
-    yield
-    probpipe.provenance_config.reset()
-
 # ===========================================================================
 # 1. Provenance basics (dataclass, with_source, write-once)
 # ===========================================================================

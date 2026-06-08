@@ -3,7 +3,16 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from probpipe import EmpiricalDistribution
+import probpipe
+from probpipe import EmpiricalDistribution, ProvenanceMode
+
+
+@pytest.fixture
+def full_provenance_mode():
+    """Switch to FULL provenance mode and restore the default after the test."""
+    probpipe.provenance_config.mode = ProvenanceMode.FULL
+    yield
+    probpipe.provenance_config.reset()
 
 
 @pytest.fixture
