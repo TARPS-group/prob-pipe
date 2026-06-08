@@ -233,6 +233,39 @@ class TestRecordTemplate:
         assert jnp.asarray(draws["intercept"]).shape == (20,)
         assert jnp.asarray(draws["alpha"]).shape == (20, N)
 
+    def test_advi_field_order_realignment(self):
+        """End-to-end: ``pymc_advi`` realigns posterior columns to the
+        template by name, like the NUTS/nutpie paths (PR #236).
+
+        ADVI's trace comes from ``approx.sample`` rather than a NUTS run,
+        so it exercises ``posterior_var_order`` on a distinct trace source.
+        The names are chosen so the backend's alphabetical column order
+        (``alpha`` before ``intercept``) differs from the template order
+        (``intercept`` defined first), and the shapes differ (scalar vs.
+        ``(3,)``) — a positional split would shape-scramble instead of
+        realigning by name.
+        """
+        from probpipe import condition_on
+
+        def model_fn(y=None):
+            with pm.Model() as m:
+                intercept = pm.Normal("intercept", 0, 1)      # scalar, defined first
+                pm.Normal("alpha", 0, 1, shape=3)             # shape (3,), sorts first
+                pm.Normal("y", mu=intercept, sigma=1.0, observed=y)
+            return m
+
+        y = np.zeros(8, dtype=np.float32)
+        result = condition_on(
+            PyMCModel(model_fn), {"y": y},
+            method="pymc_advi",
+            num_iterations=200, num_results=25, random_seed=0,
+        )
+        assert result.algorithm == "pymc_advi"
+        draws = result.draws()
+        assert draws.fields == ("intercept", "alpha")
+        assert jnp.asarray(draws["intercept"]).shape == (25,)
+        assert jnp.asarray(draws["alpha"]).shape == (25, 3)
+
     def test_dynamic_rv_set_rejected(self):
         """A model whose free-RV *set* changes with data raises a clear
         ``ValueError`` rather than silently dropping a field (issue #232).

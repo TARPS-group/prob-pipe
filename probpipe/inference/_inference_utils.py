@@ -114,9 +114,26 @@ def posterior_var_order(trace: Any, keep: Iterable[str]) -> list[str]:
     (:func:`make_posterior`), so name-keyed assembly realigns columns to
     the template regardless of the backend's variable order — nutpie, for
     instance, sorts ``data_vars`` alphabetically.
+
+    Raises
+    ------
+    ValueError
+        If any name in *keep* is absent from ``trace.posterior``. Failing
+        here names the missing variables, rather than letting them surface
+        later as a cryptic "not a permutation" error in
+        :func:`make_posterior`'s column realignment.
     """
-    keep = set(keep)
-    return [name for name in trace.posterior.data_vars if name in keep]
+    keep = list(keep)
+    available = list(trace.posterior.data_vars)
+    missing = [name for name in keep if name not in available]
+    if missing:
+        raise ValueError(
+            f"trace posterior is missing expected variable name(s) "
+            f"{missing}; available posterior variables are {available}. "
+            f"Every parameter being assembled must be present in the trace."
+        )
+    keep_set = set(keep)
+    return [name for name in available if name in keep_set]
 
 
 # ---------------------------------------------------------------------------
