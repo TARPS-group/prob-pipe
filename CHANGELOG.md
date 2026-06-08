@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **sbijax dropped (breaking).** The `sbijax`-backed simulation-based
+  inference (SBI) layer is removed in full, ahead of the PyMC 6 /
+  ArviZ 1.0 ecosystem upgrade — `sbijax` constrains the jax / jaxlib
+  floor and blocks the rest of the stack from moving forward. No
+  replacement ships in this release; the SBI capability is being
+  re-platformed onto **pyabc** (SMC-ABC), **BayesFlow** (amortized
+  NPE / FMPE / CMPE), and **sbi** (NLE / NRE) in subsequent releases.
+  Removed surface:
+  - The **`[sbi]` extra** (`pip install probpipe[sbi]`) and its
+    `sbijax>=0.3.6` dependency.
+  - The public workflow functions **`sbi_learn_conditional`** and
+    **`sbi_learn_likelihood`** (exported from both `probpipe` and
+    `probpipe.inference`), the **`DirectSamplerSBIModel`** they
+    returned (exported from `probpipe.inference`), their `method=`
+    selectors (`npe` / `fmpe` / `cmpe` for the direct sampler,
+    `nle` / `nre` for the emulated-likelihood path), and the
+    `network_factory=` hook. `from probpipe import
+    sbi_learn_conditional` now raises `ImportError` rather than
+    returning an install-prompt stub.
+  - The **`sbijax_smcabc`** inference method (`SbiSMCABCMethod`,
+    priority 5) and its registration; `condition_on(generative_model,
+    data, method="sbijax_smcabc", ...)` no longer resolves.
+  - The internal `probpipe/inference/_sbijax.py` module, the `sbi`
+    pytest marker, the `tests/inference/test_sbijax.py` suite, and the
+    CI `--no-deps sbijax` install shims. The contract invariants those
+    tests covered — posterior recovery, amortization, and SMC-ABC
+    dispatch — are re-homed per backend as the replacements land,
+    rather than in this removal.
+
+  The jax / jaxlib `<0.9` and arviz `<1.0` version caps that `sbijax`
+  forced are *retained* here and lifted in their own isolated PRs (the
+  jax-0.10 floor bump and the arviz-1.x ceiling lift); this PR changes
+  no runtime version pins. The `docs/tutorials/flexible_inference.ipynb`
+  tutorial's SBI sections are flagged out of date until a replacement
+  backend ships — its `condition_on` dispatch and NUTS material remain
+  accurate.
+
 ### Added
 
 - **BlackJAX-backed gradient-free MCMC.** Two new inference methods
