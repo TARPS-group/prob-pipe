@@ -142,6 +142,31 @@ class TestPyMCModel:
         assert result.source is not None
         assert result.source.operation == "pymc_nuts"
 
+    def test_condition_on_multicore_spawn(self, model):
+        """Multi-core sampling (``cores=2``) runs under the spawn start method
+        -- not the POSIX fork default -- so it does not deadlock against this
+        process's live JAX worker threads, and all chains are returned.
+
+        This exercises the reclaimed multi-core path: ``cores`` defaults to one
+        worker per chain (capped at the CPU count) and ``mp_ctx="spawn"`` is
+        forced whenever ``cores > 1``.
+        """
+        from probpipe import condition_on
+
+        # Spin up JAX's worker threads first, so the POSIX fork start method
+        # would be exposed to the deadlock this path avoids.
+        _ = jnp.ones(1000).sum().block_until_ready()
+
+        data = np.random.randn(50)
+        result = condition_on(
+            model, {"y": data}, method="pymc_nuts",
+            num_results=50, num_warmup=50, num_chains=2, cores=2, random_seed=0,
+        )
+        assert isinstance(result, ApproximateDistribution)
+        assert result.num_chains == 2
+        assert result.num_draws == 50
+        assert result.algorithm == "pymc_nuts"
+
 
 class TestRecordTemplate:
     """``PyMCModel.record_template`` exposes the free-RV layout that
