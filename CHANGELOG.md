@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Core jax / jaxlib floor raised to `>=0.9`; blackjax to `>=1.4`.**
+  With sbijax gone (see *Removed*), the `<0.9` jax / jaxlib cap that
+  existed solely to keep sbijax's hard `jax==0.8.1` pin satisfiable is
+  lifted, and the floor moves up to `>=0.9` — the verified stack
+  resolves to jax 0.10.1. `blackjax` moves `>=1.3` → `>=1.4` (held at
+  `1.3` only to spare sbijax's jax 0.8.1 environment). Users pinned to
+  jax 0.8.x must upgrade to `>=0.9`. Isolated as its own PR for
+  bisectability given the broad RNG / numerics blast radius across
+  every JAX backend. The arviz `<1.0` ceiling and the `pymc>=6` bump
+  are intentionally *not* changed here — each lands in its own isolated
+  PR (the arviz-1.x ceiling lift and the pymc 6 upgrade).
+
 ### Removed
 
 - **sbijax dropped (breaking).** The `sbijax`-backed simulation-based
