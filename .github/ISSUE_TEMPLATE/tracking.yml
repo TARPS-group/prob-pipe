@@ -1,0 +1,82 @@
+name: Tracking issue
+description: Coordinate a multi-PR effort (refactors, migrations, feature programs)
+labels: ["kind:tracking"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Tracking issues coordinate work that spans multiple PRs. See
+        [#239](https://github.com/TARPS-group/prob-pipe/issues/239) (docs
+        overhaul) and [#235](https://github.com/TARPS-group/prob-pipe/issues/235)
+        (hierarchy redesign) as models.
+
+        The aim is that anyone reading the issue can see *what's left* and
+        *what unblocks each step* without reading the design doc.
+
+  - type: input
+    id: summary
+    attributes:
+      label: One-line summary
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What outcome does completing this enable? Why this scope?
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies / blockers
+      description: |
+        Other issues, PRs, or external work that gates parts of this.
+        Be specific about *which* phases depend on each blocker.
+    validations:
+      required: false
+
+  - type: textarea
+    id: phases
+    attributes:
+      label: Phases / sub-tasks
+      description: |
+        Checklist of sub-PRs or sub-tasks. Each item should include a "done when"
+        criterion so completion is unambiguous.
+      value: |
+        - [ ] Phase 1: ...  *(done when: ...)*
+        - [ ] Phase 2: ...  *(done when: ...)*
+        - [ ] Phase 3: ...  *(done when: ...)*
+    validations:
+      required: true
+
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Explicitly out of scope
+      description: |
+        Things this issue is NOT doing. Link to follow-up issues if known, so
+        readers don't propose those changes here.
+    validations:
+      required: false
+
+  - type: input
+    id: owner
+    attributes:
+      label: Primary owner
+      description: GitHub handle of the person leading this (optional).
+    validations:
+      required: false
+
+  - type: textarea
+    id: design-doc
+    attributes:
+      label: Design doc / rationale link
+      description: |
+        If the rationale lives in a separate document (e.g., a plan in `.claude/plans/`
+        or a GitHub gist), link it here. The tracking issue body should stay focused
+        on *what to build*; the *why* can live in the linked doc.
+    validations:
+      required: false
