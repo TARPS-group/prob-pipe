@@ -185,7 +185,7 @@ full rationale.
 GitHub Actions (`.github/workflows/ci.yml`):
 
 - Tests on Python 3.12 and 3.13
-- Installs `.[dev,nutpie,sbi]` (bridgestan and pymc are not included)
+- Installs `.[dev,nutpie]` (bridgestan and pymc are not included)
 - Coverage uploaded to Codecov
 
 Docs build (`.github/workflows/docs.yml`) with `mkdocs build --strict`.
