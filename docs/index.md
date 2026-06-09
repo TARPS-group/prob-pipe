@@ -35,6 +35,8 @@ cd prob-pipe
 pip install .
 ```
 
+ProbPipe also installs cleanly with [uv](https://docs.astral.sh/uv/) — substitute `uv pip install .` for any `pip install` example below, or use `uv sync` for a lockfile-managed dev env (see [CONTRIBUTING.md](https://github.com/TARPS-group/prob-pipe/blob/main/CONTRIBUTING.md#installation)).
+
 Core dependencies: JAX and TensorFlow Probability. ProbPipe uses [tfp-nightly](https://pypi.org/project/tfp-nightly/), which is the [recommended approach](https://github.com/tensorflow/probability/issues/1994#issuecomment-3129033043) for TFP on JAX since stable TFP releases are tied to TensorFlow and often lag behind JAX.
 
 Optional extras:
