@@ -192,7 +192,8 @@ jobs:
           # tracks jax's internal API, and a fresh nightly can lag the current
           # jax release (DeprecationWarnings, occasionally hard errors) under
           # jax 0.10+. Refresh this pair when the nightly is purged from PyPI.
-          pip install -e ".[dev,nutpie]" \
+          # [pymc] is installed so pymc 6 is exercised on both matrix legs.
+          pip install -e ".[dev,nutpie,pymc]" \
             "jax==0.10.1" "jaxlib==0.10.1" "tfp-nightly==0.26.0.dev20260608"
 
       - name: Run tests (changed files only)
