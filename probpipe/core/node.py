@@ -5,7 +5,6 @@ import logging
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
-from itertools import product as cartesian_product
 from types import MappingProxyType
 from typing import Any, Literal, get_args
 
@@ -24,9 +23,9 @@ try:
 except ImportError:
     Digraph = None
 
-from ..custom_types import Array, PRNGKey
 from . import (
     _workflow_call,
+    _workflow_distribution_broadcast,
     _workflow_distribution_normalization,
     _workflow_execution,
     _workflow_plan,
@@ -34,12 +33,6 @@ from . import (
     _workflow_sweep,
 )
 from ._record_array import RecordArray
-from ._record_distribution import _RecordDistributionView
-from .distribution import (
-    BroadcastDistribution,
-    Distribution,
-    EmpiricalDistribution,
-)
 from .provenance import Provenance
 
 logger = logging.getLogger(__name__)
@@ -141,52 +134,6 @@ class Node(ABC):  # noqa: B024
     @property
     def inputs(self) -> Mapping[str, Any]:
         return self._inputs
-
-
-def _index_sample(s: Any, i: int) -> Any:
-    """Index row ``i`` of a per-arg sample batch.
-
-    Parameters
-    ----------
-    s : Any
-        Either a bare array (single-field broadcast draws), a
-        :class:`Record` (multi-field auto-wrap or an
-        explicit Record source), or a :class:`NumericRecord` (the
-        unified ``EmpiricalDistribution`` — numeric arrays auto-wrap
-        as a single-field Record — returns a ``NumericRecord`` with
-        per-field axes stacked along the leading axis).
-    i : int
-        Row index along the leading axis.
-
-    Returns
-    -------
-    Any
-        Same shape the inner call would see from a single
-        ``sample(dist)`` draw:
-
-        * Single-field ``Record`` → the underlying field array's row
-          ``i`` (unwrapped).
-        * Multi-field ``Record`` → a per-row :class:`NumericRecord`.
-        * Bare array → ``s[i]``.
-
-    Notes
-    -----
-    Used by both ``_broadcast_enumerate_then_sample`` (for empirical-
-    enumerated rows and for the mixed sampled-rows path) and
-    ``_broadcast_sample`` (for plain MC sampling). Keeping the
-    implementation in one place avoids drift between the three
-    callsites.
-    """
-    # Local imports to avoid module-load circularity with
-    # ``record`` / ``_numeric_record``.
-    from ._numeric_record import NumericRecord
-    from .record import Record
-
-    if isinstance(s, Record):
-        if len(s.fields) == 1:
-            return s[s.fields[0]][i]
-        return NumericRecord({f: s[f][i] for f in s.fields})
-    return s[i]
 
 
 class WorkflowFunction(Node):
@@ -332,46 +279,37 @@ class WorkflowFunction(Node):
             self._signature_info, workflow_name=self._name,
         )
 
+    _PREFECT_KINDS = {WorkflowKind.TASK, WorkflowKind.FLOW}
+
     @property
     def effective_workflow_kind(self) -> WorkflowKind:
-        """Resolve the orchestration mode for this instance.
+        """Resolve the effective orchestration mode for this instance.
 
-        Resolution order:
+        Per-instance ``workflow_kind`` takes precedence over the global config.
+        ``DEFAULT`` means "defer"; if both levels are ``DEFAULT``, orchestration is
+        disabled. Prefect orchestration is opt-in.
 
-        1. Per-instance override (anything other than ``DEFAULT``).
-        2. Global ``prefect_config.workflow_kind``.
-        3. If global is also ``DEFAULT``, fall back to ``OFF``. Prefect
-           orchestration is opt-in: set the global or per-instance
-           ``workflow_kind`` to ``TASK`` / ``FLOW``, or export
-           ``PROBPIPE_WORKFLOW_KIND=task`` in the environment.
-
-        If Prefect is not installed but ``TASK`` or ``FLOW`` is requested
-        (either per-instance or globally), a warning is emitted and the
-        mode falls back to ``OFF``.
+        If ``TASK`` or ``FLOW`` is requested but Prefect is unavailable, the mode
+        falls back to ``OFF``.
         """
         raw = self._workflow_kind_raw
 
-        # 1. Per-instance explicit (non-DEFAULT) override
-        if raw is not WorkflowKind.DEFAULT:
-            if raw in (WorkflowKind.TASK, WorkflowKind.FLOW) and task is None:
-                warnings.warn(
-                    f"workflow_kind={raw!r} requested but Prefect is not installed. "
-                    f"Falling back to OFF. Install with: pip install probpipe[prefect]",
-                    stacklevel=2,
-                )
-                return WorkflowKind.OFF
-            return raw
+        kind = (
+            raw
+            if raw is not WorkflowKind.DEFAULT
+            else prefect_config.workflow_kind
+        )
 
-        # 2. Resolve global config
-        global_kind = prefect_config.workflow_kind
-        if global_kind is not WorkflowKind.DEFAULT:
-            kind = global_kind
-        else:
-            # 3. DEFAULT at global level = OFF (Prefect is opt-in)
+        if kind is WorkflowKind.DEFAULT:
             kind = WorkflowKind.OFF
 
-        # Graceful fallback: global TASK/FLOW but Prefect missing
-        if kind in (WorkflowKind.TASK, WorkflowKind.FLOW) and task is None:
+        prefect_missing = task is None or flow is None
+        if kind in _PREFECT_KINDS and prefect_missing:
+            warnings.warn(
+                f"workflow_kind={kind!r} requested but Prefect is not installed. "
+                "Falling back to OFF. Install with: pip install probpipe[prefect]",
+                stacklevel=2,
+            )
             return WorkflowKind.OFF
 
         return kind
@@ -433,20 +371,63 @@ class WorkflowFunction(Node):
         broadcast_plan = _workflow_plan.build_broadcast_plan(
             values=values, hints=self._signature_info.hints,
         )
-        if broadcast_plan.regime != "none":
-            return self._broadcast(
-                values,
-                broadcast_plan,
-                call.overrides.n_broadcast_samples,
-                call.overrides.include_inputs,
+        if broadcast_plan.regime == "distribution":
+            return _workflow_distribution_broadcast.execute_distribution_broadcast(
+                func=self._func,
+                values=values,
+                broadcast_args=broadcast_plan.dist_args,
+                n_broadcast_samples=call.overrides.n_broadcast_samples,
+                include_inputs=call.overrides.include_inputs,
+                get_key=self._get_key,
+                make_execution_config=self._make_execution_config,
+                requested_dispatch=self._dispatch,
+                resolve_dispatch=self._resolve_dispatch,
+                require_jax_traceable=self._require_jax_traceable,
+                workflow_name=self._name,
+                workflow_kind=self.effective_workflow_kind,
+            )
+        if broadcast_plan.regime in ("sweep", "nested"):
+            def distribution_broadcast(
+                row_values: dict[str, Any],
+                dist_args: list[str],
+                n_broadcast_samples: int,
+                include_inputs: bool,
+            ):
+                return _workflow_distribution_broadcast.execute_distribution_broadcast(
+                    func=self._func,
+                    values=row_values,
+                    broadcast_args=dist_args,
+                    n_broadcast_samples=n_broadcast_samples,
+                    include_inputs=include_inputs,
+                    get_key=self._get_key,
+                    make_execution_config=self._make_execution_config,
+                    requested_dispatch=self._dispatch,
+                    resolve_dispatch=self._resolve_dispatch,
+                    require_jax_traceable=self._require_jax_traceable,
+                    workflow_name=self._name,
+                    workflow_kind=self.effective_workflow_kind,
+                )
+
+            return _workflow_sweep.execute_sweep(
+                func=self._func,
+                values=values,
+                plan=broadcast_plan,
+                make_execution_config=self._make_execution_config,
+                requested_dispatch=self._dispatch,
+                resolve_dispatch=self._resolve_dispatch,
+                require_jax_traceable=self._require_jax_traceable,
+                distribution_broadcast=distribution_broadcast,
+                workflow_name=self._name,
+                n_broadcast_samples=call.overrides.n_broadcast_samples,
+                include_inputs=call.overrides.include_inputs,
             )
 
         # Non-broadcast call — one function invocation, then wrap.
         # Provenance parents are the inputs that carry their own
         # ``.source`` slot (Distribution / Record / RecordArray).
-        # Known harmless duplication: distribution-broadcast paths below build
-        # the same request shape. A future Distribution broadcast extraction
-        # should centralize this without reintroducing private facade wrappers.
+        # Known harmless duplication: the distribution-broadcast module builds
+        # the same request shape. A later execution cleanup can centralize this
+        # without reintroducing private facade wrappers.
         request = _workflow_execution.WorkflowExecutionRequest(
             func=self._func,
             call_value_list=[values],
@@ -576,375 +557,6 @@ class WorkflowFunction(Node):
             self._resolved_dispatch = "sequential"
 
         return self._resolved_dispatch
-
-    def _broadcast(
-        self,
-        values: dict[str, Any],
-        broadcast_plan: _workflow_plan.BroadcastPlan,
-        n_broadcast_samples: int,
-        do_include_inputs: bool = False,
-    ) -> Any:
-        """Dispatcher: route to distribution broadcast or sweep execution."""
-        dist_args = list(broadcast_plan.dist_args)
-        ra_args = list(broadcast_plan.array_args)
-
-        if not ra_args:
-            return self._broadcast_distributions_only(
-                values, dist_args, n_broadcast_samples, do_include_inputs,
-            )
-
-        return _workflow_sweep.execute_sweep(
-            func=self._func,
-            values=values,
-            plan=broadcast_plan,
-            make_execution_config=self._make_execution_config,
-            requested_dispatch=self._dispatch,
-            resolve_dispatch=self._resolve_dispatch,
-            require_jax_traceable=self._require_jax_traceable,
-            distribution_broadcast=self._broadcast_distributions_only,
-            workflow_name=self._name,
-            n_broadcast_samples=n_broadcast_samples,
-            include_inputs=do_include_inputs,
-        )
-
-    def _broadcast_distributions_only(
-        self,
-        values: dict[str, Any],
-        broadcast_args: list[str],
-        n_broadcast_samples: int,
-        do_include_inputs: bool = False,
-    ) -> BroadcastDistribution | Distribution:
-        """Distribution-only broadcast path (Monte Carlo marginalisation).
-
-        Samples from each ``broadcast_args`` entry (all of which are
-        ``Distribution`` instances after workflow normalization),
-        calls the user's function once per sample, and wraps the n
-        outputs as a single marginal distribution.
-
-        Dispatch (``"jax"`` vs row-wise calls) and orchestration
-        (``workflow_kind``) are resolved independently:
-
-        - **dispatch="jax"**: samples are dispatched via ``jax.vmap``.
-        - **dispatch="sequential"**: samples are dispatched via local
-          row-wise calls.
-        - **dispatch="thread"**: samples are dispatched via local threaded
-          row-wise calls.
-        - **workflow_kind="task"/"flow"**: whichever dispatch strategy is
-          chosen gets wrapped in a Prefect task or flow for compute-graph
-          tracing.
-        """
-        MIN_BROADCAST_SAMPLES = 5  # Recommended minimum samples
-
-        if not isinstance(n_broadcast_samples, int):
-            raise TypeError(f"n_broadcast_samples must be an integer; got {n_broadcast_samples!r}")
-
-        if n_broadcast_samples <= 0:
-            raise ValueError(f"n_broadcast_samples must be a positive integer; got {n_broadcast_samples!r}")
-
-        # Validate n_broadcast_samples value and warn if too small
-        if n_broadcast_samples < MIN_BROADCAST_SAMPLES:
-            warnings.warn(
-                f"n_broadcast_samples={n_broadcast_samples} is too low; "
-                f"results may be unreliable. "
-                f"Recommended minimum is {MIN_BROADCAST_SAMPLES}.",
-                stacklevel=2
-            )
-
-        # Collect candidate empirical dists (small enough individually),
-        # sorted smallest first. Greedily include them while the product
-        # stays within budget.
-        candidates = []
-        sample_args: dict[str, Distribution] = {}
-        for name in broadcast_args:
-            dist = values[name]
-            if (
-                isinstance(dist, EmpiricalDistribution)
-                and dist.num_atoms <= n_broadcast_samples
-            ):
-                candidates.append((name, dist))
-            else:
-                sample_args[name] = dist
-        candidates.sort(key=lambda pair: pair[1].num_atoms)
-
-        empirical_args: dict[str, EmpiricalDistribution] = {}
-        product_size = 1
-        for name, dist in candidates:
-            if product_size * dist.num_atoms <= n_broadcast_samples:
-                empirical_args[name] = dist
-                product_size *= dist.num_atoms
-            else:
-                # Too large to enumerate — sample from it instead.
-                sample_args[name] = dist
-
-        dispatch = self._resolve_dispatch(
-            values,
-            broadcast_args,
-            jax_supported=not empirical_args,
-        )
-        if self._dispatch == "jax" and empirical_args:
-            raise ValueError(
-                "dispatch='jax' does not support exact empirical enumeration; "
-                "use dispatch='auto', 'sequential', or 'thread' for this path."
-            )
-
-        # Enumeration preserves exact empirical weights and must run in
-        # all row-wise dispatch modes — otherwise the cartesian-product
-        # semantics change with dispatch= (issue surfaced in the
-        # ``EmpiricalDistribution`` broadcasting example).
-        if empirical_args:
-            result = self._broadcast_enumerate(
-                values, empirical_args, sample_args, product_size, n_broadcast_samples,
-            )
-        elif dispatch == "jax":
-            if self._dispatch == "jax":
-                self._require_jax_traceable(values, broadcast_args)
-            result = self._broadcast_jax(values, broadcast_args, n_broadcast_samples)
-        else:
-            result = self._broadcast_sample(values, broadcast_args, n_broadcast_samples)
-
-        # Attach provenance
-        parents = tuple(
-            values[name] for name in broadcast_args
-            if isinstance(values[name], Distribution)
-        )
-        provenance = Provenance(
-            "broadcast",
-            parents=parents,
-            metadata={
-                "dispatch": dispatch,
-                "orchestrate": self.effective_workflow_kind.value,
-                "n_samples": n_broadcast_samples,
-                "func": self._name or self._func.__name__,
-                "broadcast_args": broadcast_args,
-            },
-        )
-
-        if isinstance(result, Distribution):
-            result.with_source(provenance)
-
-        if do_include_inputs:
-            return result
-
-        # Default: return the output marginal only.
-        # Provenance is propagated automatically by marginalize().
-        if isinstance(result, BroadcastDistribution):
-            return result.marginalize()
-
-        return result
-
-    def _sample_broadcast_args(
-        self,
-        values: dict[str, Any],
-        broadcast_args: list[str],
-        n: int,
-        key: PRNGKey,
-    ) -> dict[str, Array]:
-        """Sample all broadcast arguments, handling view reconnection.
-
-        Sibling views from the same parent distribution share one
-        parent draw, preserving cross-field correlation. Plain
-        (non-view) distributions are sampled independently per kwarg,
-        even if the same object is passed under multiple names.
-        """
-        sampled: dict[str, Array] = {}
-        for arg_names in _workflow_plan.group_by_parent(
-            values=values, names=broadcast_args,
-        ).values():
-            first = values[arg_names[0]]
-            if not isinstance(first, _RecordDistributionView):
-                for arg_name in arg_names:
-                    key, subkey = jax.random.split(key)
-                    sampled[arg_name] = values[arg_name]._sample(subkey, (n,))
-                continue
-            key, subkey = jax.random.split(key)
-            structured = first.parent._sample(subkey, (n,))
-            for arg_name in arg_names:
-                view = values[arg_name]
-                if hasattr(view, "_extract"):
-                    sampled[arg_name] = view._extract(structured)
-                else:
-                    val = structured
-                    for k in getattr(view, "_key_path", (view.field,)):
-                        val = val[k]
-                    sampled[arg_name] = val
-        return sampled
-
-    def _broadcast_jax(
-        self,
-        values: dict[str, Any],
-        broadcast_args: list[str],
-        n_broadcast_samples: int,
-    ) -> BroadcastDistribution:
-        """
-        Vectorised broadcasting via ``jax.vmap``.
-
-        Samples all broadcast distributions at once (with joint reconnection),
-        then calls the wrapped function over the batch dimension using
-        ``jax.vmap``.  Requires the wrapped function to be JAX-traceable.
-
-        If ``workflow_kind`` is set, the entire vmap computation is wrapped
-        in a Prefect task or flow for orchestration tracing.
-        """
-        key = self._get_key()
-        sampled = self._sample_broadcast_args(values, broadcast_args, n_broadcast_samples, key)
-
-        static = {k: v for k, v in values.items() if k not in broadcast_args}
-
-        func = self._func
-
-        def single_call(broadcast_slice):
-            kw = dict(static)
-            kw.update(broadcast_slice)
-            return func(**kw)
-
-        # vmap over the dict of batched arrays (axis 0 for each)
-        batch = {name: sampled[name] for name in broadcast_args}
-
-        def run_vmap():
-            return jax.vmap(single_call)(batch)
-
-        # Wrap in Prefect task/flow if orchestration is requested
-        kind = self.effective_workflow_kind
-        if kind in (WorkflowKind.TASK, WorkflowKind.FLOW):
-            if kind == WorkflowKind.TASK:
-                run_vmap = task(name=f"{self._name}_vmap")(run_vmap)
-            else:
-                runner = prefect_config.resolve_task_runner()
-                run_vmap = flow(
-                    name=f"{self._name}_vmap",
-                    **({"task_runner": runner} if runner is not None else {}),
-                )(run_vmap)
-
-        results = run_vmap()
-        return BroadcastDistribution(
-            input_samples=sampled,
-            output_samples=results,
-            weights=None,
-            broadcast_args=broadcast_args,
-        )
-
-    def _broadcast_enumerate(
-        self,
-        values: dict[str, Any],
-        empirical_args: dict[str, EmpiricalDistribution],
-        sample_args: dict[str, Distribution],
-        product_size: int,
-        n_broadcast_samples: int,
-    ) -> BroadcastDistribution:
-        """
-        Enumerate the cartesian product of EmpiricalDistribution samples,
-        propagating their weights. When non-empirical distributions are also
-        present, draws as many samples as the budget allows per combination
-        (n_broadcast_samples // product_size), each receiving equal weight scaled by
-        the empirical product weight.
-        """
-        key = self._get_key()
-        emp_names = list(empirical_args.keys())
-        emp_dists = [empirical_args[name] for name in emp_names]
-
-        # Use as many non-empirical samples per combo as budget allows
-        reps_per_combo = max(1, n_broadcast_samples // product_size) if sample_args else 1
-        total = product_size * reps_per_combo
-
-        # Pre-sample non-empirical distributions (with DistributionView reconnection)
-        sample_arg_names = list(sample_args.keys())
-        if sample_arg_names:
-            sampled = self._sample_broadcast_args(values, sample_arg_names, total, key)
-        else:
-            sampled = {}
-
-        call_value_list = []
-        weights = []
-        sample_idx = 0
-
-        all_broadcast_args = emp_names + sample_arg_names
-
-        for combo in cartesian_product(*(range(d.num_atoms) for d in emp_dists)):
-            # Compute empirical product weight
-            emp_weight = 1.0
-            for _name, dist, i in zip(emp_names, emp_dists, combo):
-                emp_weight *= float(dist.weights[i])
-
-            for _ in range(reps_per_combo):
-                call_values = dict(values)
-
-                # Set empirical samples. ``dist.samples`` is a Record
-                # of per-field stacked arrays; pull row ``i`` per field
-                # so the inner call sees the same shape it would from a
-                # single ``sample(dist)`` draw.
-                for name, dist, i in zip(emp_names, emp_dists, combo):
-                    call_values[name] = _index_sample(dist.samples, i)
-
-                # Set sampled values for non-empirical distributions.
-                # ``sampled[name]`` may be a Record (auto-wrapped); use
-                # the same per-row indexing helper.
-                for name in sample_args:
-                    call_values[name] = _index_sample(sampled[name], sample_idx)
-
-                # Weight: empirical product weight divided evenly across reps
-                weights.append(emp_weight / reps_per_combo)
-                call_value_list.append(call_values)
-                sample_idx += 1
-
-        # Known harmless duplication: this request construction also appears in
-        # the non-broadcast and ordinary sampling paths. Distribution broadcast
-        # extraction should centralize it in the module that owns these paths.
-        request = _workflow_execution.WorkflowExecutionRequest(
-            func=self._func,
-            call_value_list=call_value_list,
-            execution=self._make_execution_config(),
-        )
-        results = _workflow_execution.execute_many(request)
-
-        # Assemble input samples aligned with results
-        all_input_samples = {
-            name: jnp.stack([cv[name] for cv in call_value_list])
-            for name in all_broadcast_args
-        }
-
-        return BroadcastDistribution(
-            input_samples=all_input_samples,
-            output_samples=results,
-            weights=jnp.array(weights),
-            broadcast_args=all_broadcast_args,
-        )
-
-    def _broadcast_sample(
-        self,
-        values: dict[str, Any],
-        broadcast_args: list[str],
-        n_broadcast_samples: int,
-    ) -> BroadcastDistribution:
-        """
-        Sample n_broadcast_samples from each Distribution argument and call the function
-        once per sample (uniform weights).  Handles DistributionView reconnection.
-        """
-        key = self._get_key()
-        samples_per_arg = self._sample_broadcast_args(values, broadcast_args, n_broadcast_samples, key)
-
-        call_value_list = []
-        for i in range(n_broadcast_samples):
-            call_values = dict(values)
-            for name in broadcast_args:
-                call_values[name] = _index_sample(samples_per_arg[name], i)
-            call_value_list.append(call_values)
-
-        # Known harmless duplication: this request construction also appears in
-        # the non-broadcast and empirical-enumeration paths. Distribution
-        # broadcast extraction should centralize it with the rest of this logic.
-        request = _workflow_execution.WorkflowExecutionRequest(
-            func=self._func,
-            call_value_list=call_value_list,
-            execution=self._make_execution_config(),
-        )
-        results = _workflow_execution.execute_many(request)
-
-        return BroadcastDistribution(
-            input_samples=samples_per_arg,
-            output_samples=results,
-            weights=None,
-            broadcast_args=broadcast_args,
-        )
 
 
 class Module(Node):
