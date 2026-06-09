@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`pymc_nuts` reclaims multi-core sampling.** The method previously
+  forced `cores=1` to avoid an `os.fork()` deadlock against JAX's worker
+  threads. It now samples one worker per chain (capped at the CPU count,
+  overridable via a `cores=` kwarg) using the **`spawn`** multiprocessing
+  start method — clean worker processes with no inherited threads, so it
+  is deadlock-free on every platform (POSIX `fork`, the deadlock-prone
+  default on Linux, is never used). Empirically `cores=2` spawn is no
+  slower than the old single-core path; a new test exercises the
+  multi-core path after spinning up JAX's threads to reproduce the
+  hazard.
+
 - **Ecosystem cutover to arviz 1.x and pymc 6 (breaking).** The core
   `arviz` pin moves `>=0.13,<1.0` → `>=1.1,<2.0`, **dropping arviz 0.x
   entirely**, and the `[pymc]` extra moves `pymc>=5.28` → `pymc>=6`
@@ -22,8 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aux.children`). `[pymc]` additionally requires `matplotlib` (the
   pymc 6 sampler progress bar imports it). Internal pymc-6 fix:
   `pm.sample_prior_predictive(samples=)` → `draws=` (the `samples=`
-  kwarg was dropped in pymc 6); `pymc_nuts` keeps `cores=1` pending a
-  dedicated fork-safety review (the multicore reclaim is deferred). The
+  kwarg was dropped in pymc 6). The
   ArviZ 1.0 defaults — credible interval 0.94 → 0.89 and HDI → ETI —
   are adopted as-is: no affected statistic is called in ProbPipe
   source, so no `rcParams` pin is needed, and a frozen-fixture suite

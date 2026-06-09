@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from ..core._registry import MethodInfo
@@ -45,6 +46,13 @@ class PyMCNutsMethod(InferenceMethod):
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 500)
         num_chains = kwargs.get("num_chains", 4)
+        # Multi-core sampling forces the "spawn" start method: this process
+        # holds live JAX threads, and pymc's POSIX-"fork" default deadlocks
+        # when a forked worker inherits a held thread lock. spawn pickles the
+        # model to each worker; if the model is not picklable, pymc logs a
+        # warning and falls back to single-process sampling — so multi-core
+        # is the default without making serializability a hard requirement.
+        cores = kwargs.get("cores", min(num_chains, os.cpu_count() or 1))
         random_seed = kwargs.get("random_seed", 0)
 
         model = dist._pymc_model(data=observed)
@@ -57,7 +65,8 @@ class PyMCNutsMethod(InferenceMethod):
                 draws=num_results,
                 tune=num_warmup,
                 chains=num_chains,
-                cores=1,  # avoid os.fork() which deadlocks with JAX threads
+                cores=cores,
+                mp_ctx="spawn" if cores > 1 else None,
                 random_seed=random_seed,
                 return_inferencedata=True,
             )
