@@ -42,4 +42,4 @@ Tick what applies; leave blank if not relevant.
 
 - [ ] PR title follows `<type>(<scope>): <subject>` (e.g. `refactor(core): ...`, `feat(inference): ...`)
 - [ ] At least one `area:*` label applied
-- [ ] Linked to an issue (or to a tracking issue) above
+- [ ] Linked to an issue above — or N/A for a small standalone fix (see CONTRIBUTING.md)
