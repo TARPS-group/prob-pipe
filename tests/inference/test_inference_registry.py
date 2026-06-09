@@ -322,7 +322,6 @@ class TestBuiltInPriorityAnchors:
         "blackjax_elliptical_slice": 75,
         "blackjax_rwmh": 55,
         "blackjax_sgld": 45,
-        "sbijax_smcabc": 5,
         # Opt-in only — registered but excluded from auto-dispatch.
         "blackjax_hmc": 0,
         "blackjax_sghmc": 0,

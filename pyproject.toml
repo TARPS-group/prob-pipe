@@ -17,19 +17,13 @@ authors = [
   { name = "Jiaqiang Zhu",      email = "julian25@bu.edu" },
 ]  # See AUTHORS file for full list
 dependencies = [
-  # sbijax 0.3.6 (latest) pins jaxlib==0.8.1, so we cap below 0.9 to keep
-  # the [sbi] extra installable.  Bump back to >=0.9 once sbijax catches up.
-  "jax>=0.8.1,<0.9",
-  "jaxlib>=0.8.1,<0.9",
+  # arviz 0.x was only reachable while [pymc] allowed pymc 5.x (which caps
+  # arviz<1.0); [pymc] now needs pymc>=6, so the floor moves to arviz>=1.1.
+  "jax>=0.9",
+  "jaxlib>=0.9",
   "tfp-nightly>=0.26.0.dev20260318",
-  "blackjax>=1.3",
-  # sbijax 0.3.6 hard-pins arviz==1.0.0, but no released pymc yet accepts
-  # arviz 1.0 (the switch landed on pymc's v6 branch in pymc-devs/pymc#8019
-  # but 6.0 is unreleased as of 2026-04-16), and nutpie has not caught up
-  # either. We stay on arviz<1.0 for the [pymc] / [nutpie] extras; CI
-  # installs sbijax with --no-deps to bypass its strict pin. Revisit when
-  # pymc 6.0 ships.
-  "arviz>=0.13,<1.0",
+  "blackjax>=1.4",
+  "arviz>=1.1,<2.0",
 ]
 
 [project.optional-dependencies]
@@ -41,9 +35,10 @@ docs = [
   "mkdocs-jupyter<0.26",
 ]
 stan = ["bridgestan>=2.0", "cmdstanpy>=1.2"]
-pymc = ["pymc>=5.28"]
+# pymc 6 is the first release compatible with arviz 1.x (pymc 5.x caps
+# arviz<1.0); matplotlib is required by the pymc 6 sampler progress bar.
+pymc = ["pymc>=6", "matplotlib"]
 nutpie = ["nutpie>=0.12"]
-sbi = ["sbijax>=0.3.6"]
 dev = [
   "probpipe[prefect,viz,docs]",
   "pytest>=7",
@@ -70,7 +65,6 @@ testpaths = ["tests"]
 addopts = "-n auto --dist worksteal -v --cov=probpipe --cov-report=term-missing --cov-fail-under=0"
 markers = [
     "prefect: marks tests requiring prefect (deselect with '-m \"not prefect\"')",
-    "sbi: marks tests requiring sbijax (deselect with '-m \"not sbi\"')",
 ]
 
 [tool.ruff]
