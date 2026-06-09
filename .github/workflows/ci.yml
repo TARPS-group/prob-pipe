@@ -31,17 +31,20 @@ jobs:
           fi
 
           CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD -- '*.py' || true)
+          CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
           echo "Changed .py files:"
           echo "$CHANGED"
 
-          # If foundational files changed, run the full suite.
+          # If foundational files changed, run the full suite. Scan ALL
+          # changed files (not just .py): a dependency bump in pyproject.toml
+          # touches no .py file but must still trigger the suite.
           # Also force the full suite on direct pushes to main (post-merge
           # safety net — targeted tests are for PRs only).
           if [ "${{ github.event_name }}" = "push" ]; then
             RUN_ALL=true
           else
             RUN_ALL=false
-            for f in $CHANGED; do
+            for f in $CHANGED_ALL; do
               case "$f" in
                 pyproject.toml|setup.cfg|setup.py|tests/conftest.py|probpipe/__init__.py)
                   RUN_ALL=true ;;
@@ -49,14 +52,17 @@ jobs:
             done
           fi
 
-          if [ -z "$CHANGED" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "run_all=false" >> "$GITHUB_OUTPUT"
-            echo "No .py files changed — skipping tests."
-          elif [ "$RUN_ALL" = "true" ]; then
+          # Check RUN_ALL before the empty-CHANGED skip, so a foundational
+          # change with no .py edits (e.g. a pyproject.toml-only PR) still
+          # runs the full suite instead of being skipped.
+          if [ "$RUN_ALL" = "true" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "run_all=true" >> "$GITHUB_OUTPUT"
             echo "Will run ALL tests (foundational change detected)."
+          elif [ -z "$CHANGED" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "run_all=false" >> "$GITHUB_OUTPUT"
+            echo "No .py files changed — skipping tests."
           else
             # Write an import-graph expander: given changed source files, it
             # uses AST parsing to find all probpipe modules that *transitively*
@@ -178,7 +184,17 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,nutpie]"
+          # Install the project together with the verified jax / tfp-nightly
+          # pins in a single resolver transaction. Installing the project
+          # first and re-pinning afterwards resolves the tree twice — the
+          # first time against unpinned metadata — which can leave the rest
+          # of the dependency set resolved against a different jax. tfp-nightly
+          # tracks jax's internal API, and a fresh nightly can lag the current
+          # jax release (DeprecationWarnings, occasionally hard errors) under
+          # jax 0.10+. Refresh this pair when the nightly is purged from PyPI.
+          # [pymc] is installed so pymc 6 is exercised on both matrix legs.
+          pip install -e ".[dev,nutpie,pymc]" \
+            "jax==0.10.1" "jaxlib==0.10.1" "tfp-nightly==0.26.0.dev20260608"
 
       - name: Run tests (changed files only)
         if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'false'
@@ -226,7 +242,37 @@ jobs:
           fi
           CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
             -- 'docs/examples/*.ipynb' 'probpipe/' || true)
-          if [ -z "$CHANGED" ]; then
+          CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
+
+          # A dependency bump in pyproject.toml touches no notebook or source
+          # file but can still break every notebook, so foundational changes
+          # force the full notebook set (mirrors the test job's RUN_ALL). Also
+          # force it on direct pushes to main (post-merge safety net).
+          if [ "${{ github.event_name }}" = "push" ]; then
+            RUN_ALL_NB=true
+          else
+            RUN_ALL_NB=false
+            for f in $CHANGED_ALL; do
+              case "$f" in
+                pyproject.toml|setup.cfg|setup.py) RUN_ALL_NB=true ;;
+              esac
+            done
+          fi
+
+          # Check RUN_ALL_NB before the empty-CHANGED skip, so a foundational
+          # change with no notebook/source edits still runs every notebook.
+          if [ "$RUN_ALL_NB" = "true" ]; then
+            NOTEBOOKS=$(find docs/examples -maxdepth 1 -name '*.ipynb' | sort | tr '\n' ' ' | xargs)
+            if [ -z "$NOTEBOOKS" ]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "No example notebooks found — skipping notebook CI."
+            else
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              echo "notebooks=$NOTEBOOKS" >> "$GITHUB_OUTPUT"
+              echo "Foundational change detected — executing ALL notebooks:"
+              echo "$NOTEBOOKS"
+            fi
+          elif [ -z "$CHANGED" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "No docs/examples notebook or probpipe source changes — skipping notebook CI."
           else
@@ -386,7 +432,16 @@ jobs:
         if: steps.nb_check.outputs.skip != 'true'
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,nutpie]"
+          # Install the project together with the verified jax / tfp-nightly
+          # pins in a single resolver transaction. Installing the project
+          # first and re-pinning afterwards resolves the tree twice — the
+          # first time against unpinned metadata — which can leave the rest
+          # of the dependency set resolved against a different jax. tfp-nightly
+          # tracks jax's internal API, and a fresh nightly can lag the current
+          # jax release (DeprecationWarnings, occasionally hard errors) under
+          # jax 0.10+. Refresh this pair when the nightly is purged from PyPI.
+          pip install -e ".[dev,nutpie]" \
+            "jax==0.10.1" "jaxlib==0.10.1" "tfp-nightly==0.26.0.dev20260608"
 
       - name: Execute affected docs/examples notebooks
         if: steps.nb_check.outputs.skip != 'true'
