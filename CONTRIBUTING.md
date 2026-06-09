@@ -79,25 +79,40 @@ example). If you must rename after a PR is open, use the web UI.
 
 ### Installation
 
+ProbPipe uses [uv](https://docs.astral.sh/uv/) for environment + dependency
+management. The dependency tree is locked in `uv.lock` — CI installs from
+the same lockfile so a contributor's local env and CI agree.
+
 ```bash
-pip install -e ".[dev]"          # core + test deps
-pip install -e ".[dev,nutpie]"   # + nutpie for MCMC
+# One-time: install uv (see https://docs.astral.sh/uv/getting-started/installation/).
+# On macOS/Linux:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create the dev environment (.venv at the project root):
+uv sync --extra dev --extra nutpie            # core + test + nutpie
+uv sync --extra dev --extra nutpie --extra pymc   # + pymc backend
 ```
 
-Optional backends (not required for tests): `bridgestan`, `pymc`.
+The `pip install -e ".[dev]"` path still works for contributors with an
+existing pip-based setup, but uv is the recommended path. Optional backends
+not required for tests: `bridgestan`, `pymc`.
 
 ### Running Tests
 
 ```bash
-pytest                           # parallel via xdist (configured in pyproject.toml)
-pytest -p no:xdist -o "addopts=" # disable parallel for debugging
-pytest tests/test_foo.py -x -v   # single file, stop on first failure
+uv run pytest                              # parallel via xdist
+uv run pytest -p no:xdist -o "addopts="    # disable parallel for debugging
+uv run pytest tests/test_foo.py -x -v      # single file, stop on first failure
 ```
+
+`uv run` executes inside the synced `.venv` without manual activation; you
+can also `source .venv/bin/activate` once per shell and then just type
+`pytest`.
 
 ### Coverage
 
 ```bash
-pytest --cov=probpipe --cov-report=term-missing
+uv run pytest --cov=probpipe --cov-report=term-missing
 ```
 
 Target: >90% on all modules.
@@ -159,8 +174,8 @@ This applies equally to source files and notebook code cells.
 ### Documentation
 
 ```bash
-mkdocs build --strict   # build docs, fail on warnings
-mkdocs serve            # local preview
+uv run mkdocs build --strict   # build docs, fail on warnings
+uv run mkdocs serve            # local preview
 ```
 
 API docs use `mkdocstrings` directives in `docs/api/*.md` referencing
@@ -202,10 +217,25 @@ full rationale.
 GitHub Actions (`.github/workflows/ci.yml`):
 
 - Tests on Python 3.12 and 3.13
-- Installs `.[dev,nutpie]` (bridgestan and pymc are not included)
+- Installs via `uv sync --frozen` from `uv.lock` (single source of truth
+  for pinned dependency versions, shared between local dev and CI)
+- Test job uses extras `dev,nutpie,pymc`; the notebooks job uses
+  `dev,nutpie` only (`bridgestan` is not included anywhere by default)
 - Coverage uploaded to Codecov
 
-Docs build (`.github/workflows/docs.yml`) with `mkdocs build --strict`.
+Docs build (`.github/workflows/docs.yml`) with `uv run mkdocs build --strict`.
+
+### Updating dependencies
+
+`uv.lock` is committed and CI uses `--frozen`, so a dependency bump needs an
+explicit lockfile update:
+
+```bash
+uv lock --upgrade-package <name>    # bump one package within pyproject.toml constraints
+uv lock --upgrade                   # refresh the whole lock
+```
+
+Commit the resulting `uv.lock` change alongside the `pyproject.toml` change.
 
 ---
 
