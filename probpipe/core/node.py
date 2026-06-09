@@ -279,7 +279,6 @@ class WorkflowFunction(Node):
             self._signature_info, workflow_name=self._name,
         )
 
-    _PREFECT_KINDS = {WorkflowKind.TASK, WorkflowKind.FLOW}
 
     @property
     def effective_workflow_kind(self) -> WorkflowKind:
@@ -303,6 +302,7 @@ class WorkflowFunction(Node):
         if kind is WorkflowKind.DEFAULT:
             kind = WorkflowKind.OFF
 
+        _PREFECT_KINDS = {WorkflowKind.TASK, WorkflowKind.FLOW}
         prefect_missing = task is None or flow is None
         if kind in _PREFECT_KINDS and prefect_missing:
             warnings.warn(
