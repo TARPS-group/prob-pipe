@@ -33,8 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aux.children`). `[pymc]` additionally requires `matplotlib` (the
   pymc 6 sampler progress bar imports it). Internal pymc-6 fix:
   `pm.sample_prior_predictive(samples=)` → `draws=` (the `samples=`
-  kwarg was dropped in pymc 6); `pymc_nuts` keeps `cores=1` pending a
-  dedicated fork-safety review (the multicore reclaim is deferred). The
+  kwarg was dropped in pymc 6). The
   ArviZ 1.0 defaults — credible interval 0.94 → 0.89 and HDI → ETI —
   are adopted as-is: no affected statistic is called in ProbPipe
   source, so no `rcParams` pin is needed, and a frozen-fixture suite
