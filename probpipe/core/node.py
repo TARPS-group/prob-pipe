@@ -4,7 +4,7 @@ import inspect
 import logging
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any, Literal, get_args
 
@@ -371,13 +371,20 @@ class WorkflowFunction(Node):
         broadcast_plan = _workflow_plan.build_broadcast_plan(
             values=values, hints=self._signature_info.hints,
         )
-        if broadcast_plan.regime == "distribution":
+
+        def execute_distribution_broadcast(
+            *,
+            row_values: dict[str, Any],
+            dist_args: Sequence[str],
+            n_broadcast_samples: int = call.overrides.n_broadcast_samples,
+            include_inputs: bool = call.overrides.include_inputs,
+        ):
             return _workflow_distribution_broadcast.execute_distribution_broadcast(
                 func=self._func,
-                values=values,
-                broadcast_args=broadcast_plan.dist_args,
-                n_broadcast_samples=call.overrides.n_broadcast_samples,
-                include_inputs=call.overrides.include_inputs,
+                values=row_values,
+                broadcast_args=dist_args,
+                n_broadcast_samples=n_broadcast_samples,
+                include_inputs=include_inputs,
                 get_key=self._get_key,
                 make_execution_config=self._make_execution_config,
                 requested_dispatch=self._dispatch,
@@ -386,6 +393,12 @@ class WorkflowFunction(Node):
                 workflow_name=self._name,
                 workflow_kind=self.effective_workflow_kind,
             )
+
+        if broadcast_plan.regime == "distribution":
+            return execute_distribution_broadcast(
+                row_values=values,
+                dist_args=broadcast_plan.dist_args,
+            )
         if broadcast_plan.regime in ("sweep", "nested"):
             def distribution_broadcast(
                 row_values: dict[str, Any],
@@ -393,19 +406,11 @@ class WorkflowFunction(Node):
                 n_broadcast_samples: int,
                 include_inputs: bool,
             ):
-                return _workflow_distribution_broadcast.execute_distribution_broadcast(
-                    func=self._func,
-                    values=row_values,
-                    broadcast_args=dist_args,
+                return execute_distribution_broadcast(
+                    row_values=row_values,
+                    dist_args=dist_args,
                     n_broadcast_samples=n_broadcast_samples,
                     include_inputs=include_inputs,
-                    get_key=self._get_key,
-                    make_execution_config=self._make_execution_config,
-                    requested_dispatch=self._dispatch,
-                    resolve_dispatch=self._resolve_dispatch,
-                    require_jax_traceable=self._require_jax_traceable,
-                    workflow_name=self._name,
-                    workflow_kind=self.effective_workflow_kind,
                 )
 
             return _workflow_sweep.execute_sweep(

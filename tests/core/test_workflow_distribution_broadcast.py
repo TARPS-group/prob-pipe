@@ -256,6 +256,26 @@ class TestExecuteDistributionBroadcast:
                 workflow_kind=WorkflowKind.OFF,
             )
 
+    def test_low_n_broadcast_samples_warns(self):
+        with pytest.warns(UserWarning, match="n_broadcast_samples=3 is too low"):
+            result = _workflow_distribution_broadcast.execute_distribution_broadcast(
+                func=lambda x: x,
+                values={"x": Normal(loc=0.0, scale=1.0, name="x")},
+                broadcast_args=["x"],
+                n_broadcast_samples=3,
+                include_inputs=True,
+                get_key=_key_source(5),
+                make_execution_config=lambda: _execution_config(name="identity"),
+                requested_dispatch="sequential",
+                resolve_dispatch=_resolve_to("sequential"),
+                require_jax_traceable=_require_not_called,
+                workflow_name="identity",
+                workflow_kind=WorkflowKind.OFF,
+            )
+
+        assert isinstance(result, BroadcastDistribution)
+        assert result.num_atoms == 3
+
 
 class TestIndexSampleHelper:
     """Direct unit tests for the module-level ``_index_sample`` helper."""

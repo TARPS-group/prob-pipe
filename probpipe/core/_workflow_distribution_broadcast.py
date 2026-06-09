@@ -50,7 +50,58 @@ def execute_distribution_broadcast(
     workflow_name: str,
     workflow_kind: WorkflowKind,
 ) -> BroadcastDistribution | Distribution:
-    """Execute distribution-only workflow broadcasting."""
+    """Execute one distribution-only broadcasted workflow call.
+
+    The caller has already resolved function arguments, normalized any
+    distribution-valued inputs, and built a broadcast plan whose regime is
+    ``"distribution"``. This function samples or enumerates the named
+    distribution inputs, executes ``func`` over the resulting call rows, and
+    returns a ``BroadcastDistribution`` or its output marginal.
+
+    Parameters
+    ----------
+    func : callable
+        Wrapped user function to execute for each sampled or enumerated call.
+    values : dict[str, Any]
+        Resolved workflow inputs. Entries named in ``broadcast_args`` must be
+        scalar ``Distribution`` values; all other entries are passed through to
+        every call row.
+    broadcast_args : sequence of str
+        Names of distribution-valued inputs to broadcast over.
+    n_broadcast_samples : int
+        Number of Monte Carlo rows to draw. Small positive values are accepted
+        with a warning; non-integers and non-positive values raise.
+    include_inputs : bool
+        If ``True``, return the full ``BroadcastDistribution`` containing both
+        sampled inputs and outputs. If ``False``, return the marginalized output
+        distribution.
+    get_key : callable
+        Zero-argument callback that returns the next PRNG key for sampling.
+    make_execution_config : callable
+        Zero-argument callback returning row-wise execution settings for
+        sequential, threaded, or Prefect dispatch.
+    requested_dispatch : str
+        User-requested dispatch strategy, used to preserve explicit
+        ``dispatch="jax"`` error behavior.
+    resolve_dispatch : callable
+        Callback that maps the current values and broadcast arguments to the
+        effective dispatch strategy.
+    require_jax_traceable : callable
+        Callback used only for explicit JAX dispatch to raise a clear tracing
+        error before executing.
+    workflow_name : str
+        Human-readable workflow name recorded in provenance metadata.
+    workflow_kind : WorkflowKind
+        Effective orchestration mode for this call. The value is recorded in
+        provenance and passed to the JAX path so Prefect task/flow requests can
+        fail clearly when Prefect is unavailable.
+
+    Returns
+    -------
+    BroadcastDistribution or Distribution
+        The full broadcast distribution when ``include_inputs`` is true;
+        otherwise the output marginal distribution.
+    """
     broadcast_args = list(broadcast_args)
     _validate_n_broadcast_samples(n_broadcast_samples)
 
