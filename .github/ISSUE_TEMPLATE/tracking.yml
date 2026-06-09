@@ -75,8 +75,8 @@ body:
     attributes:
       label: Design doc / rationale link
       description: |
-        If the rationale lives in a separate document (e.g., a plan in `.claude/plans/`
-        or a GitHub gist), link it here. The tracking issue body should stay focused
-        on *what to build*; the *why* can live in the linked doc.
+        If the rationale lives in a separate document (e.g., a GitHub issue,
+        Discussion, or gist), link it here. The tracking issue body should stay
+        focused on *what to build*; the *why* can live in the linked doc.
     validations:
       required: false
