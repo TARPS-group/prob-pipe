@@ -10,10 +10,30 @@ pm = pytest.importorskip("pymc")
 import jax
 import jax.numpy as jnp
 import numpy as np
-from unittest.mock import MagicMock, patch
+from contextlib import contextmanager
+from unittest.mock import patch
 
 from probpipe import ApproximateDistribution
 from probpipe.modeling import PyMCModel
+
+
+@contextmanager
+def _captured_pm_sample_kwargs():
+    """Patch ``pm.sample`` to record its kwargs, then delegate to the real
+    sampler forced to ``cores=1, mp_ctx=None`` -- so the downstream
+    chain-extraction / posterior-assembly pipeline runs against a genuine
+    ``InferenceData`` without spawn overhead or a fork-deadlock hazard.
+    Yields the dict that receives the recorded kwargs.
+    """
+    real_sample = pm.sample  # capture before patching to avoid recursion
+    captured = {}
+
+    def record_then_sample(*args, **kw):
+        captured.update(kw)
+        return real_sample(*args, **{**kw, "cores": 1, "mp_ctx": None})
+
+    with patch("pymc.sample", side_effect=record_then_sample):
+        yield captured
 
 
 def simple_model_fn(y=None):
@@ -141,6 +161,102 @@ class TestPyMCModel:
         assert hasattr(result.inference_data, "sample_stats")
         assert result.source is not None
         assert result.source.operation == "pymc_nuts"
+
+    def test_condition_on_multicore_spawn(self, model):
+        """Multi-core sampling (``cores=2``) runs under the spawn start method
+        -- not the POSIX fork default -- so it does not deadlock against this
+        process's live JAX worker threads, and all chains are returned.
+
+        This exercises the reclaimed multi-core path: ``cores`` defaults to one
+        worker per chain (capped at the CPU count) and ``mp_ctx="spawn"`` is
+        forced whenever ``cores > 1``.
+        """
+        from probpipe import condition_on
+
+        # Spin up JAX's worker threads first, so the POSIX fork start method
+        # would be exposed to the deadlock this path avoids.
+        _ = jnp.ones(1000).sum().block_until_ready()
+
+        data = np.random.randn(50)
+        result = condition_on(
+            model, {"y": data}, method="pymc_nuts",
+            num_results=50, num_warmup=50, num_chains=2, cores=2, random_seed=0,
+        )
+        assert isinstance(result, ApproximateDistribution)
+        assert result.num_chains == 2
+        assert result.num_draws == 50
+        assert result.algorithm == "pymc_nuts"
+
+    def test_multicore_passes_spawn_to_pm_sample(self, model):
+        """Deterministically prove production calls ``pm.sample`` with
+        ``mp_ctx="spawn"`` and ``cores >= 2`` on the multi-core path.
+
+        Reverting to the POSIX ``fork`` default (dropping ``mp_ctx="spawn"``)
+        must fail this test regardless of whether a real fork run happens to
+        deadlock -- fork deadlocks are intermittent and cannot be relied on
+        to catch the regression.
+        """
+        from probpipe import condition_on
+
+        data = np.random.randn(50)
+        with _captured_pm_sample_kwargs() as captured:
+            result = condition_on(
+                model, {"y": data}, method="pymc_nuts",
+                num_results=20, num_warmup=10, num_chains=2, cores=2,
+                random_seed=0,
+            )
+
+        assert captured["mp_ctx"] == "spawn"
+        assert captured["cores"] >= 2
+        assert captured["chains"] == 2
+        assert isinstance(result, ApproximateDistribution)
+        assert result.algorithm == "pymc_nuts"
+
+    def test_default_chains_pass_spawn_to_pm_sample(self, model):
+        """The default path (no ``cores`` kwarg, ``num_chains`` defaults to 4)
+        also forces ``mp_ctx="spawn"``: ``cores`` defaults to
+        ``min(num_chains, os.cpu_count())``, so spawn is selected without the
+        caller asking for it. ``os.cpu_count`` is pinned to 4 so the assertion
+        is deterministic -- on a genuinely single-core runner the live default
+        is ``cores=1`` / ``mp_ctx=None`` (correct, not a regression; see
+        ``test_single_core_default_skips_spawn``).
+        """
+        from probpipe import condition_on
+
+        data = np.random.randn(50)
+        with (
+            patch("probpipe.inference._pymc_method.os.cpu_count", return_value=4),
+            _captured_pm_sample_kwargs() as captured,
+        ):
+            _ = condition_on(
+                model, {"y": data}, method="pymc_nuts",
+                num_results=20, num_warmup=10, random_seed=0,
+            )
+
+        assert captured["chains"] == 4               # the documented default
+        assert captured["cores"] == 4                # min(num_chains=4, cpu_count=4)
+        assert captured["mp_ctx"] == "spawn"
+
+    def test_single_core_default_skips_spawn(self, model):
+        """On a single-core host the default ``cores = min(num_chains,
+        os.cpu_count())`` collapses to 1, so ``mp_ctx`` stays ``None`` -- spawn
+        is forced only when it buys parallelism. Pinning ``os.cpu_count`` to 1
+        exercises the ``cores == 1`` branch deterministically.
+        """
+        from probpipe import condition_on
+
+        data = np.random.randn(50)
+        with (
+            patch("probpipe.inference._pymc_method.os.cpu_count", return_value=1),
+            _captured_pm_sample_kwargs() as captured,
+        ):
+            _ = condition_on(
+                model, {"y": data}, method="pymc_nuts",
+                num_results=20, num_warmup=10, random_seed=0,
+            )
+
+        assert captured["cores"] == 1
+        assert captured["mp_ctx"] is None
 
 
 class TestRecordTemplate:
