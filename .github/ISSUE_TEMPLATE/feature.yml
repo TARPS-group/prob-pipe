@@ -1,0 +1,63 @@
+name: Feature request
+description: Propose a new capability or an improvement to an existing one
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For substantial proposals (multi-PR efforts, breaking changes, new
+        architectural pieces), please open a **Tracking issue** instead — it
+        provides the right structure for coordinating multi-step work.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: One-line description of the proposed feature.
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What problem does this solve? Who benefits? Cite any concrete use case.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API or behavior
+      description: |
+        If applicable, sketch the user-facing API (function signatures, return types,
+        example call sites). Pseudocode is fine.
+      render: python
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Estimated scope
+      options:
+        - Small — single PR, under a day
+        - Medium — single PR, multi-day
+        - Large — multi-PR; this should be a Tracking issue instead
+        - Unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+
+  - type: textarea
+    id: related
+    attributes:
+      label: Related issues, PRs, or design docs
+    validations:
+      required: false

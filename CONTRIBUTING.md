@@ -41,6 +41,23 @@ last task is done.
 For small fixes (typos, bug fixes, test additions), skip the plan step and
 go straight to an implementation PR.
 
+### Opening the PR
+
+A few conventions keep PRs consistent; the PR template
+(`.github/PULL_REQUEST_TEMPLATE.md`) is the checklist for them:
+
+- **Title** follows `<type>(<scope>): <subject>` — e.g.
+  `feat(inference): add BayesFlow backend`, `fix(core): guard empty record`,
+  `docs(contributing): document PR conventions`. Common types are `feat`,
+  `fix`, `refactor`, `perf`, `test`, `docs`, `chore`, and `ci`; the scope is
+  the affected subpackage or area.
+- **Labels** — apply at least one `area:*` label for the affected subsystem,
+  plus `kind:breaking-change` if the PR changes a user-visible API.
+- **Linked issue** — reference the plan/tracking issue (`Refs #N` on stage
+  PRs, `Closes #N` on the final one). A small standalone fix that skipped the
+  plan step (above) has no issue to link; leave that section and its checklist
+  item as N/A.
+
 ### Branch naming
 
 Use `dev/<short-kebab-case-description>` for branches. Examples:
