@@ -181,13 +181,23 @@ Run it locally in the synced environment:
 uv run --with 'pyright[nodejs]' pyright
 ```
 
+CI pins a specific pyright version for a reproducible baseline, so a
+local run on a newer pyright may report a slightly different count — pin
+to match CI (`pyright[nodejs]==<version from ci.yml>`) if you need exact
+parity.
+
 Like ruff, **pyright is advisory in CI for now** — the `typecheck
-(advisory)` job reports type issues but does not gate merges. The source
-carries a type-debt baseline (much of it noise from JAX/TFP untyped
-attributes), so enforcing immediately would block unrelated work. The
-plan is to burn the baseline down, then tighten `typeCheckingMode` in
-`pyrightconfig.json` and make the gate blocking. New code should be
-clean under the current `basic` mode where practical.
+(advisory)` job reports type issues (and surfaces the count in the run's
+job summary) but does not gate merges. The source carries a type-debt
+baseline (much of it noise from JAX/TFP untyped attributes), so enforcing
+immediately would block unrelated work. The plan is to burn the baseline
+down, then tighten `typeCheckingMode` in `pyrightconfig.json` and make the
+gate blocking. New code should be clean under the current `basic` mode
+where practical.
+
+ProbPipe ships a `py.typed` marker, so the package's annotations are
+consumed by downstream users' type checkers — keeping the public surface
+well-typed is user-facing quality, not just an internal nicety.
 
 ### Documentation
 

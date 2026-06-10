@@ -13,9 +13,14 @@ jobs:
   # unrelated work; advisory surfaces it without forcing a cleanup. Syncs
   # the full dependency env first so imports resolve against the real
   # jax/tfp/pymc. Config + scope live in pyrightconfig.json. To enforce
-  # later: drop continue-on-error and tighten typeCheckingMode. Pyright is
-  # pinned for a reproducible baseline; `[nodejs]` bundles the Node runtime
-  # so CI doesn't depend on a runtime download.
+  # later: drop continue-on-error and tighten typeCheckingMode.
+  #
+  # Pyright runs as an ephemeral `uv run --with` tool rather than a locked
+  # [dev] dependency: that keeps its per-platform Node binaries out of
+  # uv.lock. The version is pinned here (and referenced in CONTRIBUTING.md)
+  # for a reproducible baseline; `[nodejs]` bundles the Node runtime so CI
+  # doesn't depend on a runtime download. The final summary line is lifted
+  # into the job summary so the count is visible without opening the log.
   typecheck:
     name: typecheck (advisory)
     runs-on: ubuntu-latest
@@ -33,7 +38,20 @@ jobs:
 
       - name: Pyright (advisory — does not gate merges)
         continue-on-error: true
-        run: uv run --with 'pyright[nodejs]==1.1.410' pyright
+        run: |
+          set -o pipefail
+          uv run --frozen --with 'pyright[nodejs]==1.1.410' pyright | tee pyright-output.txt
+
+      - name: Surface pyright summary
+        if: always()
+        run: |
+          {
+            echo "### Pyright (advisory — does not gate merges)"
+            echo '```'
+            grep -E '[0-9]+ error' pyright-output.txt | tail -n 1 || echo "no summary line found"
+            echo '```'
+            echo "_Full report in the \"Pyright\" step log above. Type checking is advisory; see CONTRIBUTING.md § Type checking._"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   test:
     runs-on: ubuntu-latest
