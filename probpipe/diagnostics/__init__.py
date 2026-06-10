@@ -1,70 +1,93 @@
 """Diagnostic functions for ProbPipe.
 
-MCMC diagnostics (mutate posterior in place, return None)::
+MCMC diagnostics mutate posterior in place and return None::
 
     from probpipe.diagnostics import (
-        mcmc_diagnostics,   # convenience: rhat + ess + mcse in one call
+        mcmc_diagnostics,
         compute_rhat,
         compute_ess,
         compute_mcse,
     )
 
-    posterior = condition_on(model, data)
-    mcmc_diagnostics(posterior)
-
-    posterior.diagnostics.rhat      # {"intercept": 1.001}
-    posterior.diagnostics.warnings  # []
-    posterior.diagnostics.runs      # []
-
-Predictive checks (mutate posterior in place, return None)::
+Predictive checks mutate posterior in place and return None::
 
     from probpipe.diagnostics import run_ppc, run_spc
 
-LOO-PSIS (mutate posterior in place, return None)::
+LOO-PSIS mutates posterior in place and returns None::
 
-    from probpipe.diagnostics import loo, compare_loo
+    from probpipe.diagnostics import loo, run_loo
 
-Sensitivity analysis::
+Diagnostic accessors::
 
-    from probpipe.diagnostics import (
+    from probpipe.diagnostics import DiagnosticsView, DiagnosticRunView, NotComputed
+
+ArviZ plots use posterior.inference_data directly::
+
+    import arviz as az
+    az.plot_trace(posterior.inference_data)
+    az.plot_ppc(posterior.inference_data)
+    az.plot_loo_pit(posterior.inference_data)
+"""
+from __future__ import annotations
+
+__all__ = []
+
+
+# ── MCMC diagnostics ──────────────────────────────────────────────────────
+try:
+    from ._mcmc import (
+        mcmc_diagnostics,
+        compute_rhat,
+        compute_ess,
+        compute_mcse,
+    )
+
+    __all__ += [
+        "mcmc_diagnostics",
+        "compute_rhat",
+        "compute_ess",
+        "compute_mcse",
+    ]
+except ImportError:
+    pass
+
+
+# ── Predictive checks ────────────────────────────────────────────────────
+from ._ppc_spc import run_ppc, run_spc
+
+__all__ += [
+    "run_ppc",
+    "run_spc",
+]
+
+
+# ── LOO-PSIS ─────────────────────────────────────────────────────────────
+from ._loo import loo, run_loo
+
+__all__ += [
+    "loo",
+    "run_loo",
+]
+
+
+# ── Sensitivity analysis ─────────────────────────────────────────────────
+# Optional for now because _sensitivity may depend on helpers that are still
+# being refactored during the diagnostics workflow work.
+try:
+    from ._sensitivity import (
         prior_sensitivity,
         data_sensitivity,
         power_scale_sensitivity,
     )
 
-Diagnostic accessors (returned by posterior.diagnostics)::
+    __all__ += [
+        "prior_sensitivity",
+        "data_sensitivity",
+        "power_scale_sensitivity",
+    ]
+except ImportError:
+    pass
 
-    from probpipe.diagnostics import DiagnosticsView, DiagnosticRunView, NotComputed
-
-ArviZ plots — use posterior.inference_data directly::
-
-    import arviz as az
-    az.plot_trace(posterior.inference_data)    # always available
-    az.plot_ppc(posterior.inference_data)      # after run_ppc
-    az.plot_loo_pit(posterior.inference_data)  # after loo + run_ppc
-"""
-from __future__ import annotations
-
-# ── MCMC diagnostics ──────────────────────────────────────────────────────
-from ._mcmc import (
-    mcmc_diagnostics,
-    compute_rhat,
-    compute_ess,
-    compute_mcse,
-)
-
-# ── Predictive checks ────────────────────────────────────────────────────
-from ._ppc_spc import run_ppc, run_spc
-
-# ── LOO-PSIS ─────────────────────────────────────────────────────────────
-from ._loo import loo, compare_loo
-
-# ── Sensitivity analysis ─────────────────────────────────────────────────
-from ._sensitivity import (
-    prior_sensitivity,
-    data_sensitivity,
-    power_scale_sensitivity,
-)
 
 # ── Accessor classes ──────────────────────────────────────────────────────
 from ._datatree import (
@@ -73,23 +96,7 @@ from ._datatree import (
     NotComputed,
 )
 
-__all__ = [
-    # MCMC diagnostics
-    "mcmc_diagnostics",
-    "compute_rhat",
-    "compute_ess",
-    "compute_mcse",
-    # Predictive checks
-    "run_ppc",
-    "run_spc",
-    # LOO-PSIS
-    "loo",
-    "compare_loo",
-    # Sensitivity analysis
-    "prior_sensitivity",
-    "data_sensitivity",
-    "power_scale_sensitivity",
-    # Accessor classes
+__all__ += [
     "DiagnosticsView",
     "DiagnosticRunView",
     "NotComputed",

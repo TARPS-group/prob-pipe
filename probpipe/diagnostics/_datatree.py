@@ -90,8 +90,19 @@ def _add_group(
     import xarray as xr
 
     aux = getattr(posterior, "_auxiliary", None)
-    dicto: dict[str, Any] = {k: v for k, v in aux.items()} if aux is not None else {}
-    dicto[group_name] = dataset
+    # Flatten the existing DataTree to a path→dataset dict,
+    # then insert/replace the target group and rebuild.
+    # This avoids the KeyError raised when a node already exists.
+    dicto: dict[str, Any] = {}
+    if aux is not None:
+        for path, node in aux.items():
+            if path == "/":
+                continue
+            clean = path.lstrip("/")
+            ds = node.to_dataset() if isinstance(node, xr.DataTree) else node
+            dicto[clean] = ds
+    # Insert or replace the target group (strip leading slash if any)
+    dicto[group_name.lstrip("/")] = dataset
     object.__setattr__(posterior, "_auxiliary", xr.DataTree.from_dict(dicto))
 
 
@@ -273,7 +284,7 @@ def _read_param_dict(
     if field not in ds.data_vars:
         return {}
     da = ds[field]
-    params = list(da.coords["param"].values)
+    params = [str(p) for p in da.coords["param"].values]
     return {p: _read_scalar(da.sel(param=p), param=p) for p in params}
 
 
