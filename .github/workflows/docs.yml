@@ -13,8 +13,12 @@ permissions:
   deployments: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  # For pushes to main: keep the 'pages' group + no cancellation so back-to-back
+  # deploys serialize cleanly (gh-pages allows only one in-flight deploy).
+  # For PRs: scope by ref and cancel superseded builds — they only need to
+  # verify `mkdocs build --strict`, not race for a deploy slot.
+  group: ${{ github.event_name == 'pull_request' && format('docs-pr-{0}', github.ref) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:

@@ -216,7 +216,7 @@ full rationale.
 
 GitHub Actions (`.github/workflows/ci.yml`):
 
-- Tests on Python 3.12 and 3.13
+- Tests on Python 3.12, 3.13, and 3.14
 - Installs via `uv sync --frozen` from `uv.lock` (single source of truth
   for pinned dependency versions, shared between local dev and CI)
 - Test job uses extras `dev,nutpie,pymc`; the notebooks job uses

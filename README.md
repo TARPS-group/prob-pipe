@@ -108,7 +108,7 @@ plt.xlabel('Temperature (°F)'); plt.ylabel('P(O-ring damage)'); plt.legend()
 
 ## Installation
 
-Requires Python >= 3.12 (tested on 3.12 and 3.13).
+Requires Python >= 3.12 (tested on 3.12, 3.13, and 3.14).
 
 ```bash
 git clone https://github.com/TARPS-group/prob-pipe.git

@@ -62,7 +62,7 @@ exclude = ["tests*", "docs*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-n auto --dist worksteal -v --cov=probpipe --cov-report=term-missing --cov-fail-under=0"
+addopts = "-n auto --dist worksteal -v --cov=probpipe --cov-report=term-missing --cov-fail-under=88"
 markers = [
     "prefect: marks tests requiring prefect (deselect with '-m \"not prefect\"')",
 ]
