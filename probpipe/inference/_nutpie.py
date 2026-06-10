@@ -9,7 +9,7 @@ from ..core._registry import MethodInfo
 from ..core.node import workflow_function
 from ..custom_types import ArrayLike
 from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._inference_utils import extract_chain_columns
+from ._inference_utils import extract_chain_columns, posterior_var_order
 from ._registry import InferenceMethod
 
 logger = logging.getLogger(__name__)
@@ -48,15 +48,14 @@ def condition_on_nutpie(
 
     compiled, pymc_build = _compile_for_nutpie(model, data)
 
-    # Resolve the PyMC inferred names + template from the conditioned
+    # Build the template in canonical field order from the conditioned
     # build before sampling (fail fast on a dynamic-RV / non-concrete
-    # model); extraction shares the names. Stan models carry their own
-    # record_template, if any.
+    # model). Stan models carry their own record_template, if any.
     if pymc_build is not None:
-        keep_names = list(model._conditioned_param_names(pymc_build))
-        record_template = model._record_template_for(pymc_build, keep_names)
+        param_names = list(model._conditioned_param_names(pymc_build))
+        record_template = model._record_template_for(pymc_build, param_names)
     else:
-        keep_names = None
+        param_names = None
         record_template = getattr(model, "record_template", None)
 
     trace = nutpie.sample(
@@ -64,15 +63,19 @@ def condition_on_nutpie(
         chains=num_chains, seed=random_seed, **kwargs,
     )
 
-    # PyMC: extract chain columns in `keep_names` order so they line up
-    # with the template (nutpie sorts ``posterior.data_vars``
-    # alphabetically, which would otherwise mislabel draws). Stan: take
-    # trace order.
-    chains, param_names = _extract_chains(trace, num_chains, keep_names=keep_names)
+    # Extract in nutpie's natural ``data_vars`` order (it sorts
+    # alphabetically); ``field_order`` lets make_posterior realign columns
+    # to the template by name, so we don't depend on the orders matching.
+    if param_names is not None:
+        field_order = posterior_var_order(trace, param_names)
+        chains, _ = _extract_chains(trace, num_chains, keep_names=field_order)
+    else:
+        field_order = None
+        chains, _ = _extract_chains(trace, num_chains)
 
     return make_posterior(
         chains, parents=(model,), algorithm="nutpie_nuts",
-        auxiliary=trace, record_template=record_template,
+        auxiliary=trace, record_template=record_template, field_order=field_order,
         num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
     )
 

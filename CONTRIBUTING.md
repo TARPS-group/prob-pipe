@@ -41,6 +41,23 @@ last task is done.
 For small fixes (typos, bug fixes, test additions), skip the plan step and
 go straight to an implementation PR.
 
+### Opening the PR
+
+A few conventions keep PRs consistent; the PR template
+(`.github/PULL_REQUEST_TEMPLATE.md`) is the checklist for them:
+
+- **Title** follows `<type>(<scope>): <subject>` — e.g.
+  `feat(inference): add BayesFlow backend`, `fix(core): guard empty record`,
+  `docs(contributing): document PR conventions`. Common types are `feat`,
+  `fix`, `refactor`, `perf`, `test`, `docs`, `chore`, and `ci`; the scope is
+  the affected subpackage or area.
+- **Labels** — apply at least one `area:*` label for the affected subsystem,
+  plus `kind:breaking-change` if the PR changes a user-visible API.
+- **Linked issue** — reference the plan/tracking issue (`Refs #N` on stage
+  PRs, `Closes #N` on the final one). A small standalone fix that skipped the
+  plan step (above) has no issue to link; leave that section and its checklist
+  item as N/A.
+
 ### Branch naming
 
 Use `dev/<short-kebab-case-description>` for branches. Examples:
@@ -62,25 +79,40 @@ example). If you must rename after a PR is open, use the web UI.
 
 ### Installation
 
+ProbPipe uses [uv](https://docs.astral.sh/uv/) for environment + dependency
+management. The dependency tree is locked in `uv.lock` — CI installs from
+the same lockfile so a contributor's local env and CI agree.
+
 ```bash
-pip install -e ".[dev]"          # core + test deps
-pip install -e ".[dev,nutpie]"   # + nutpie for MCMC
+# One-time: install uv (see https://docs.astral.sh/uv/getting-started/installation/).
+# On macOS/Linux:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create the dev environment (.venv at the project root):
+uv sync --extra dev --extra nutpie            # core + test + nutpie
+uv sync --extra dev --extra nutpie --extra pymc   # + pymc backend
 ```
 
-Optional backends (not required for tests): `bridgestan`, `pymc`.
+The `pip install -e ".[dev]"` path still works for contributors with an
+existing pip-based setup, but uv is the recommended path. Optional backends
+not required for tests: `bridgestan`, `pymc`.
 
 ### Running Tests
 
 ```bash
-pytest                           # parallel via xdist (configured in pyproject.toml)
-pytest -p no:xdist -o "addopts=" # disable parallel for debugging
-pytest tests/test_foo.py -x -v   # single file, stop on first failure
+uv run pytest                              # parallel via xdist
+uv run pytest -p no:xdist -o "addopts="    # disable parallel for debugging
+uv run pytest tests/test_foo.py -x -v      # single file, stop on first failure
 ```
+
+`uv run` executes inside the synced `.venv` without manual activation; you
+can also `source .venv/bin/activate` once per shell and then just type
+`pytest`.
 
 ### Coverage
 
 ```bash
-pytest --cov=probpipe --cov-report=term-missing
+uv run pytest --cov=probpipe --cov-report=term-missing
 ```
 
 Target: >90% on all modules.
@@ -142,8 +174,8 @@ This applies equally to source files and notebook code cells.
 ### Documentation
 
 ```bash
-mkdocs build --strict   # build docs, fail on warnings
-mkdocs serve            # local preview
+uv run mkdocs build --strict   # build docs, fail on warnings
+uv run mkdocs serve            # local preview
 ```
 
 API docs use `mkdocstrings` directives in `docs/api/*.md` referencing
@@ -185,10 +217,25 @@ full rationale.
 GitHub Actions (`.github/workflows/ci.yml`):
 
 - Tests on Python 3.12 and 3.13
-- Installs `.[dev,nutpie,sbi]` (bridgestan and pymc are not included)
+- Installs via `uv sync --frozen` from `uv.lock` (single source of truth
+  for pinned dependency versions, shared between local dev and CI)
+- Test job uses extras `dev,nutpie,pymc`; the notebooks job uses
+  `dev,nutpie` only (`bridgestan` is not included anywhere by default)
 - Coverage uploaded to Codecov
 
-Docs build (`.github/workflows/docs.yml`) with `mkdocs build --strict`.
+Docs build (`.github/workflows/docs.yml`) with `uv run mkdocs build --strict`.
+
+### Updating dependencies
+
+`uv.lock` is committed and CI uses `--frozen`, so a dependency bump needs an
+explicit lockfile update:
+
+```bash
+uv lock --upgrade-package <name>    # bump one package within pyproject.toml constraints
+uv lock --upgrade                   # refresh the whole lock
+```
+
+Commit the resulting `uv.lock` change alongside the `pyproject.toml` change.
 
 ---
 
@@ -200,7 +247,7 @@ probpipe/
 ├── distributions/  # Concrete distributions (continuous, discrete, multivariate, ...)
 ├── record/         # Record-adjacent constructions: parameter-sweep Designs
 ├── modeling/       # Model wrappers (SimpleModel, StanModel, PyMCModel, likelihoods)
-├── inference/      # Inference methods + registry (TFP, nutpie, RWMH, sbijax)
+├── inference/      # Inference methods + registry (BlackJAX, TFP, nutpie, RWMH)
 ├── converters/     # Distribution conversion registry
 ├── linalg/         # Linear algebra for random functions
 ├── custom_types.py # Array, PRNGKey, ArrayLike type aliases
@@ -329,7 +376,6 @@ full public API surface.
 | `SimpleGenerativeModel` | Simulator-only model wrapper for SBI/ABC (prior + `GenerativeLikelihood`) |
 | `IncrementalConditioner` | Stateful `Module` for sequential Bayesian updating via `update()` / `update_all()` |
 | `iterate` / combinators | Iterative distribution transformation; `with_conversion`, `with_resampling` |
-| `sbi_learn_conditional` / `sbi_learn_likelihood` | SBI workflow functions; return `DirectSamplerSBIModel` or `SimpleModel` with neural likelihood |
 | `Design` / `FullFactorialDesign` (`probpipe.record`) | `RecordArray` subclass carrying per-field marginals; `FullFactorialDesign(**marginals)` materialises the Cartesian product as a sweep-ready `RecordArray`. Pipe into a `WorkflowFunction` as a single `Record`-typed arg to trigger the WF sweep path. |
 
 ### Inference method registry
@@ -363,7 +409,6 @@ Built-in methods:
 | 75 | `blackjax_elliptical_slice` | BlackJAX | `SimpleModel` + Gaussian prior + JAX-traceable likelihood |
 | 55 | `blackjax_rwmh` | BlackJAX | Any `SupportsLogProb` (eager fallback for non-traceable targets) |
 | 45 | `blackjax_sgld` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
-| 5 | `sbijax_smcabc` | sbijax | `SimpleGenerativeModel` |
 | 0 | `blackjax_hmc` | BlackJAX | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 | 0 | `blackjax_sghmc` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=`; opt-in only via `method=` |
 | 0 | `pymc_advi` | PyMC | `PyMCModel`; opt-in only via `method=` |

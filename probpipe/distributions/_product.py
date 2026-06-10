@@ -439,8 +439,8 @@ class TFPProductDistribution(ProductDistribution):
         Collects component TFP distributions in field-insertion order
         (matching the ``Record`` layout).  For the common case of
         same-family scalar distributions, stacks parameters into a
-        single ``tfd.Independent`` (bijector-compatible with sbijax).
-        Falls back to ``tfd.Blockwise`` for mixed or vector components.
+        single ``tfd.Independent``.  Falls back to ``tfd.Blockwise``
+        for mixed or vector components.
         """
         from tensorflow_probability.substrates.jax import distributions as tfd
 

@@ -150,7 +150,7 @@ class TestPrefectFlowRowWise:
 # ---------------------------------------------------------------------------
 
 class TestPrefectTaskJax:
-    """Exercises Prefect-wrapped jax.vmap path in _broadcast_jax."""
+    """Exercises the Prefect-wrapped distribution-broadcast JAX path."""
 
     def test_returns_empirical_distribution(self, normal_dist):
         wf = WorkflowFunction(

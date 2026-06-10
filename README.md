@@ -100,7 +100,7 @@ plt.xlabel('Temperature (°F)'); plt.ylabel('P(O-ring damage)'); plt.legend()
 ## Key Features
 
 - **Protocol-based dispatch.** A distribution's capabilities are declared via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsMean`, ...). Operations like `condition_on` and `from_distribution` use these protocols to auto-select the best algorithm from a pluggable registry. Override with `method=` when you want control.
-- **Multiple backends.** The inference registry spans BlackJAX (NUTS by default; HMC, SGLD, SGHMC opt-in), nutpie / CmdStan / PyMC NUTS for `StanModel` / `PyMCModel` targets, gradient-free RWMH, TFP NUTS/HMC as opt-in alternates, PyMC ADVI, and simulation-based inference (SMC-ABC via sbijax). Swap backends without changing model code.
+- **Multiple backends.** The inference registry spans BlackJAX (NUTS by default; HMC, SGLD, SGHMC opt-in), nutpie / CmdStan / PyMC NUTS for `StanModel` / `PyMCModel` targets, gradient-free RWMH, TFP NUTS/HMC as opt-in alternates, and PyMC ADVI. Swap backends without changing model code.
 - **Automatic distribution conversion.** A converter registry converts between distribution representations (e.g., MCMC samples to KDE) as needed, using protocol-based dispatch analogous to `condition_on`.
 - **JAX-native.** Distributions and workflow functions are compatible with JAX (`vmap`, `jit`, `grad`), with built-in support for TFP distributions.
 - **Provenance tracking.** Each distribution records how it was created (algorithm, parents, metadata), enabling full lineage tracing from any result back to its inputs.
@@ -115,6 +115,8 @@ git clone https://github.com/TARPS-group/prob-pipe.git
 cd prob-pipe
 pip install .
 ```
+
+ProbPipe also installs cleanly with [uv](https://docs.astral.sh/uv/). For a lockfile-managed dev environment, run `uv sync` (see [CONTRIBUTING.md](CONTRIBUTING.md#installation)). To use `uv pip install` in place of the `pip install` examples below, first create and activate an environment with `uv venv && source .venv/bin/activate` — `uv pip` installs into the active (or an explicitly targeted) environment, not a global one.
 
 Core dependencies: JAX, [BlackJAX](https://blackjax-devs.github.io/blackjax/), and TensorFlow Probability. JAX provides arrays and autodiff; BlackJAX is the default backend for gradient MCMC (`condition_on(model, data)` auto-dispatches to `blackjax_nuts`); TFP supplies the distribution implementations the wrappers in `probpipe.Normal`, `probpipe.Gamma`, etc. delegate to. ProbPipe uses [tfp-nightly](https://pypi.org/project/tfp-nightly/), which is the [recommended approach](https://github.com/tensorflow/probability/issues/1994#issuecomment-3129033043) for TFP on JAX since stable TFP releases are tied to TensorFlow and often lag behind JAX.
 

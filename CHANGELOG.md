@@ -7,6 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Dev tooling: migrated to [uv](https://docs.astral.sh/uv/) for
+  environment + dependency management.** `uv.lock` is committed and used
+  by CI (`uv sync --frozen`), making the install reproducible and lifting
+  the duplicated inline jax/jaxlib/tfp-nightly pins out of the workflow
+  files. Local dev: `uv sync --extra dev --extra nutpie [--extra pymc]`,
+  then `uv run pytest`. The pip path (`pip install -e ".[dev]"`) still
+  works for contributors with an existing pip setup. See
+  [CONTRIBUTING.md](CONTRIBUTING.md#installation).
+
+- **`pymc_nuts` reclaims multi-core sampling.** The method previously
+  forced `cores=1` to avoid an `os.fork()` deadlock against JAX's worker
+  threads. It now samples one worker per chain (capped at the CPU count,
+  overridable via a `cores=` kwarg) using the **`spawn`** multiprocessing
+  start method — clean worker processes with no inherited threads, so it
+  is deadlock-free on every platform (POSIX `fork`, the deadlock-prone
+  default on Linux, is never used). Empirically `cores=2` spawn is no
+  slower than the old single-core path; a new test exercises the
+  multi-core path after spinning up JAX's threads to reproduce the
+  hazard.
+
+- **Ecosystem cutover to arviz 1.x and pymc 6 (breaking).** The core
+  `arviz` pin moves `>=0.13,<1.0` → `>=1.1,<2.0`, **dropping arviz 0.x
+  entirely**, and the `[pymc]` extra moves `pymc>=5.28` → `pymc>=6`
+  (pymc 5.x hard-caps `arviz<1.0`; pymc 6.0 is the first
+  arviz-1.x-compatible release). ProbPipe now binds the arviz 1.x split
+  packages **by name** — `arviz_base.from_dict` (`build_mcmc_datatree`),
+  `arviz_base.from_cmdstanpy` (the CmdStan method), and `arviz_stats.*`
+  — never bare `import arviz`; the runtime 0.x/1.x version probes are
+  removed and the auxiliary is an arviz 1.x `xarray.DataTree`
+  throughout (`ApproximateDistribution.warmup_samples` reads
+  `aux.children`). `[pymc]` additionally requires `matplotlib` (the
+  pymc 6 sampler progress bar imports it). Internal pymc-6 fix:
+  `pm.sample_prior_predictive(samples=)` → `draws=` (the `samples=`
+  kwarg was dropped in pymc 6). The
+  ArviZ 1.0 defaults — credible interval 0.94 → 0.89 and HDI → ETI —
+  are adopted as-is: no affected statistic is called in ProbPipe
+  source, so no `rcParams` pin is needed, and a frozen-fixture suite
+  (`tests/inference/test_arviz_regression.py`) locks the 0.89/ETI
+  defaults plus golden `arviz_stats` values as a tripwire against
+  future silent default drift.
+
+- **Core jax / jaxlib floor raised to `>=0.9`; blackjax to `>=1.4`.**
+  With sbijax gone (see *Removed*), the `<0.9` jax / jaxlib cap that
+  existed solely to keep sbijax's hard `jax==0.8.1` pin satisfiable is
+  lifted, and the floor moves up to `>=0.9` — the verified stack
+  resolves to jax 0.10.1. `blackjax` moves `>=1.3` → `>=1.4` (held at
+  `1.3` only to spare sbijax's jax 0.8.1 environment). Users pinned to
+  jax 0.8.x must upgrade to `>=0.9`. Isolated as its own PR for
+  bisectability given the broad RNG / numerics blast radius across
+  every JAX backend. The arviz `<1.0` ceiling and the `pymc>=6` bump
+  are intentionally *not* changed here — each lands in its own isolated
+  PR (the arviz-1.x ceiling lift and the pymc 6 upgrade).
+
+### Removed
+
+- **sbijax dropped (breaking).** The `sbijax`-backed simulation-based
+  inference (SBI) layer is removed in full, ahead of the PyMC 6 /
+  ArviZ 1.0 ecosystem upgrade — `sbijax` constrains the jax / jaxlib
+  floor and blocks the rest of the stack from moving forward. No
+  replacement ships in this release; the SBI capability is being
+  re-platformed onto **pyabc** (SMC-ABC), **BayesFlow** (amortized
+  NPE / FMPE / CMPE), and **sbi** (NLE / NRE) in subsequent releases.
+  Removed surface:
+  - The **`[sbi]` extra** (`pip install probpipe[sbi]`) and its
+    `sbijax>=0.3.6` dependency.
+  - The public workflow functions **`sbi_learn_conditional`** and
+    **`sbi_learn_likelihood`** (exported from both `probpipe` and
+    `probpipe.inference`), the **`DirectSamplerSBIModel`** they
+    returned (exported from `probpipe.inference`), their `method=`
+    selectors (`npe` / `fmpe` / `cmpe` for the direct sampler,
+    `nle` / `nre` for the emulated-likelihood path), and the
+    `network_factory=` hook. `from probpipe import
+    sbi_learn_conditional` now raises `ImportError` rather than
+    returning an install-prompt stub.
+  - The **`sbijax_smcabc`** inference method (`SbiSMCABCMethod`,
+    priority 5) and its registration; `condition_on(generative_model,
+    data, method="sbijax_smcabc", ...)` no longer resolves.
+  - The internal `probpipe/inference/_sbijax.py` module, the `sbi`
+    pytest marker, the `tests/inference/test_sbijax.py` suite, and the
+    CI `--no-deps sbijax` install shims. The contract invariants those
+    tests covered — posterior recovery, amortization, and SMC-ABC
+    dispatch — are re-homed per backend as the replacements land,
+    rather than in this removal.
+
+  The jax / jaxlib `<0.9` and arviz `<1.0` version caps that `sbijax`
+  forced are *retained* here and lifted in their own isolated PRs (the
+  jax-0.10 floor bump and the arviz-1.x ceiling lift); this PR changes
+  no runtime version pins. The `docs/tutorials/flexible_inference.ipynb`
+  tutorial's SBI sections are flagged out of date until a replacement
+  backend ships — its `condition_on` dispatch and NUTS material remain
+  accurate.
+
 ### Added
 
 - **BlackJAX-backed gradient-free MCMC.** Two new inference methods

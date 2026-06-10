@@ -266,7 +266,7 @@ class PyMCModel(ProbabilisticModel):
 
         model = self._model_fn()
         with model:
-            prior = pm.sample_prior_predictive(samples=max(n, 1))
+            prior = pm.sample_prior_predictive(draws=max(n, 1))
 
         # Concatenate parameter values into a single array
         arrays = []

@@ -10,10 +10,30 @@ pm = pytest.importorskip("pymc")
 import jax
 import jax.numpy as jnp
 import numpy as np
-from unittest.mock import MagicMock, patch
+from contextlib import contextmanager
+from unittest.mock import patch
 
 from probpipe import ApproximateDistribution
 from probpipe.modeling import PyMCModel
+
+
+@contextmanager
+def _captured_pm_sample_kwargs():
+    """Patch ``pm.sample`` to record its kwargs, then delegate to the real
+    sampler forced to ``cores=1, mp_ctx=None`` -- so the downstream
+    chain-extraction / posterior-assembly pipeline runs against a genuine
+    ``InferenceData`` without spawn overhead or a fork-deadlock hazard.
+    Yields the dict that receives the recorded kwargs.
+    """
+    real_sample = pm.sample  # capture before patching to avoid recursion
+    captured = {}
+
+    def record_then_sample(*args, **kw):
+        captured.update(kw)
+        return real_sample(*args, **{**kw, "cores": 1, "mp_ctx": None})
+
+    with patch("pymc.sample", side_effect=record_then_sample):
+        yield captured
 
 
 def simple_model_fn(y=None):
@@ -142,6 +162,102 @@ class TestPyMCModel:
         assert result.source is not None
         assert result.source.operation == "pymc_nuts"
 
+    def test_condition_on_multicore_spawn(self, model):
+        """Multi-core sampling (``cores=2``) runs under the spawn start method
+        -- not the POSIX fork default -- so it does not deadlock against this
+        process's live JAX worker threads, and all chains are returned.
+
+        This exercises the reclaimed multi-core path: ``cores`` defaults to one
+        worker per chain (capped at the CPU count) and ``mp_ctx="spawn"`` is
+        forced whenever ``cores > 1``.
+        """
+        from probpipe import condition_on
+
+        # Spin up JAX's worker threads first, so the POSIX fork start method
+        # would be exposed to the deadlock this path avoids.
+        _ = jnp.ones(1000).sum().block_until_ready()
+
+        data = np.random.randn(50)
+        result = condition_on(
+            model, {"y": data}, method="pymc_nuts",
+            num_results=50, num_warmup=50, num_chains=2, cores=2, random_seed=0,
+        )
+        assert isinstance(result, ApproximateDistribution)
+        assert result.num_chains == 2
+        assert result.num_draws == 50
+        assert result.algorithm == "pymc_nuts"
+
+    def test_multicore_passes_spawn_to_pm_sample(self, model):
+        """Deterministically prove production calls ``pm.sample`` with
+        ``mp_ctx="spawn"`` and ``cores >= 2`` on the multi-core path.
+
+        Reverting to the POSIX ``fork`` default (dropping ``mp_ctx="spawn"``)
+        must fail this test regardless of whether a real fork run happens to
+        deadlock -- fork deadlocks are intermittent and cannot be relied on
+        to catch the regression.
+        """
+        from probpipe import condition_on
+
+        data = np.random.randn(50)
+        with _captured_pm_sample_kwargs() as captured:
+            result = condition_on(
+                model, {"y": data}, method="pymc_nuts",
+                num_results=20, num_warmup=10, num_chains=2, cores=2,
+                random_seed=0,
+            )
+
+        assert captured["mp_ctx"] == "spawn"
+        assert captured["cores"] >= 2
+        assert captured["chains"] == 2
+        assert isinstance(result, ApproximateDistribution)
+        assert result.algorithm == "pymc_nuts"
+
+    def test_default_chains_pass_spawn_to_pm_sample(self, model):
+        """The default path (no ``cores`` kwarg, ``num_chains`` defaults to 4)
+        also forces ``mp_ctx="spawn"``: ``cores`` defaults to
+        ``min(num_chains, os.cpu_count())``, so spawn is selected without the
+        caller asking for it. ``os.cpu_count`` is pinned to 4 so the assertion
+        is deterministic -- on a genuinely single-core runner the live default
+        is ``cores=1`` / ``mp_ctx=None`` (correct, not a regression; see
+        ``test_single_core_default_skips_spawn``).
+        """
+        from probpipe import condition_on
+
+        data = np.random.randn(50)
+        with (
+            patch("probpipe.inference._pymc_method.os.cpu_count", return_value=4),
+            _captured_pm_sample_kwargs() as captured,
+        ):
+            _ = condition_on(
+                model, {"y": data}, method="pymc_nuts",
+                num_results=20, num_warmup=10, random_seed=0,
+            )
+
+        assert captured["chains"] == 4               # the documented default
+        assert captured["cores"] == 4                # min(num_chains=4, cpu_count=4)
+        assert captured["mp_ctx"] == "spawn"
+
+    def test_single_core_default_skips_spawn(self, model):
+        """On a single-core host the default ``cores = min(num_chains,
+        os.cpu_count())`` collapses to 1, so ``mp_ctx`` stays ``None`` -- spawn
+        is forced only when it buys parallelism. Pinning ``os.cpu_count`` to 1
+        exercises the ``cores == 1`` branch deterministically.
+        """
+        from probpipe import condition_on
+
+        data = np.random.randn(50)
+        with (
+            patch("probpipe.inference._pymc_method.os.cpu_count", return_value=1),
+            _captured_pm_sample_kwargs() as captured,
+        ):
+            _ = condition_on(
+                model, {"y": data}, method="pymc_nuts",
+                num_results=20, num_warmup=10, random_seed=0,
+            )
+
+        assert captured["cores"] == 1
+        assert captured["mp_ctx"] is None
+
 
 class TestRecordTemplate:
     """``PyMCModel.record_template`` exposes the free-RV layout that
@@ -232,6 +348,39 @@ class TestRecordTemplate:
         assert draws.fields == ("intercept", "alpha")
         assert jnp.asarray(draws["intercept"]).shape == (20,)
         assert jnp.asarray(draws["alpha"]).shape == (20, N)
+
+    def test_advi_field_order_realignment(self):
+        """End-to-end: ``pymc_advi`` realigns posterior columns to the
+        template by name, like the NUTS/nutpie paths (PR #236).
+
+        ADVI's trace comes from ``approx.sample`` rather than a NUTS run,
+        so it exercises ``posterior_var_order`` on a distinct trace source.
+        The names are chosen so the backend's alphabetical column order
+        (``alpha`` before ``intercept``) differs from the template order
+        (``intercept`` defined first), and the shapes differ (scalar vs.
+        ``(3,)``) — a positional split would shape-scramble instead of
+        realigning by name.
+        """
+        from probpipe import condition_on
+
+        def model_fn(y=None):
+            with pm.Model() as m:
+                intercept = pm.Normal("intercept", 0, 1)      # scalar, defined first
+                pm.Normal("alpha", 0, 1, shape=3)             # shape (3,), sorts first
+                pm.Normal("y", mu=intercept, sigma=1.0, observed=y)
+            return m
+
+        y = np.zeros(8, dtype=np.float32)
+        result = condition_on(
+            PyMCModel(model_fn), {"y": y},
+            method="pymc_advi",
+            num_iterations=200, num_results=25, random_seed=0,
+        )
+        assert result.algorithm == "pymc_advi"
+        draws = result.draws()
+        assert draws.fields == ("intercept", "alpha")
+        assert jnp.asarray(draws["intercept"]).shape == (25,)
+        assert jnp.asarray(draws["alpha"]).shape == (25, 3)
 
     def test_dynamic_rv_set_rejected(self):
         """A model whose free-RV *set* changes with data raises a clear
@@ -355,6 +504,41 @@ class TestRecordTemplate:
         assert set(draws.fields) == {"mu", "X"}
         assert float(jnp.mean(jnp.asarray(draws["mu"]))) > 50.0    # ~ +100
         assert float(jnp.mean(jnp.asarray(draws["X"]))) < -50.0    # ~ -100
+
+    def test_pymc_nuts_multiparam_field_order_realigned(self):
+        """End-to-end check of the name-keyed wiring (issue #233): the
+        pymc_nuts path extracts in the trace's alphabetical ``data_vars``
+        order, and ``field_order`` realigns columns to the declared
+        (template) order by name.
+
+        ``zeta``, ``alpha``, ``mu`` are declared non-alphabetically with
+        distinct tight priors and a near-flat likelihood. The posterior
+        fields must come back in declaration order (not alphabetical), and
+        each must recover its own prior mean — a mislabeling would reorder
+        the fields and flip the means.
+        """
+        from probpipe import condition_on
+
+        def model_fn(y=None):
+            with pm.Model() as m:
+                zeta = pm.Normal("zeta", 100.0, 0.5)
+                alpha = pm.Normal("alpha", 0.0, 0.5)
+                mu = pm.Normal("mu", -100.0, 0.5)
+                pm.Normal("y", mu=zeta + alpha + mu, sigma=1000.0, observed=y)
+            return m
+
+        model = PyMCModel(model_fn)
+        result = condition_on(
+            model, {"y": np.zeros(5, dtype=np.float32)},
+            method="pymc_nuts",
+            num_results=200, num_warmup=200, num_chains=1, random_seed=0,
+        )
+        draws = result.draws()
+        # Declared order, not nutpie/pymc's alphabetical data_vars order.
+        assert draws.fields == ("zeta", "alpha", "mu")
+        for field, prior_mean in [("zeta", 100.0), ("alpha", 0.0), ("mu", -100.0)]:
+            got = float(jnp.mean(jnp.asarray(draws[field])))
+            np.testing.assert_allclose(got, prior_mean, atol=10.0)
 
     def test_dynamic_rv_set_rejected_via_inference(self):
         """The clean dynamic-RV error fires on the inference path too.

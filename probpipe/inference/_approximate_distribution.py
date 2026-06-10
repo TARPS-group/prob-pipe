@@ -79,9 +79,8 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
     Stores per-chain sample arrays for chain-structured access via
     :meth:`draws`.  Algorithm metadata, sample statistics, warmup
-    samples, and the ArviZ ``InferenceData`` object live in
-    ``dist.auxiliary`` (a DataTree on the Distribution base class),
-    not as attributes of this class.
+    samples, and the ArviZ ``DataTree`` live in ``dist.auxiliary``
+    (on the Distribution base class), not as attributes of this class.
 
     Parameters
     ----------
@@ -271,8 +270,8 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
         Alias for ``self.auxiliary``.  Use ArviZ functions for diagnostics::
 
-            import arviz as az
-            az.summary(posterior.inference_data)
+            import arviz_stats
+            arviz_stats.summary(posterior.inference_data)
         """
         return self.auxiliary
 
@@ -282,12 +281,8 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         aux = self.auxiliary
         if aux is None:
             return None
-        # arviz 1.x DataTree uses .children; arviz 0.x InferenceData uses .groups()
-        has_warmup = (
-            ("warmup" in aux.children) if hasattr(aux, "children")
-            else hasattr(aux, "warmup")
-        )
-        if not has_warmup:
+        # auxiliary is an arviz 1.x ``xarray.DataTree``; groups are children
+        if "warmup" not in aux.children:
             return None
         warmup = aux["warmup"]["params"]
         n_chains = warmup.sizes.get("chain", 1)

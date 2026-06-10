@@ -26,6 +26,7 @@ from probpipe.inference._inference_utils import (
     get_init_state,
     get_prior,
     is_jax_traceable,
+    posterior_var_order,
     run_chain_scan,
 )
 from probpipe.modeling._likelihood import Likelihood
@@ -449,3 +450,50 @@ class TestParallelChainMap:
             f"subprocess failed: stdout={result.stdout!r} stderr={result.stderr!r}"
         )
         assert "OK" in result.stdout
+
+
+class _StubPosterior:
+    def __init__(self, var_names):
+        # dict preserves insertion order, mimicking a trace's data_vars.
+        self.data_vars = dict.fromkeys(var_names)
+
+
+class _StubTrace:
+    """Minimal stand-in: ``posterior_var_order`` reads only
+    ``trace.posterior.data_vars`` (ordered)."""
+
+    def __init__(self, var_names):
+        self.posterior = _StubPosterior(var_names)
+
+
+class TestPosteriorVarOrder:
+    """``posterior_var_order`` returns a trace's posterior variables in the
+    backend's natural order filtered to *keep*, and fails loudly when a
+    kept name is missing (PR #236 / #233)."""
+
+    def test_preserves_trace_order_not_keep_order(self):
+        trace = _StubTrace(["slope", "intercept", "lp__"])
+        # The trace's data_vars order wins; the keep argument's order does not.
+        assert posterior_var_order(trace, ["intercept", "slope"]) == ["slope", "intercept"]
+
+    def test_alphabetical_backend_order_returned_for_realignment(self):
+        # nutpie, e.g., sorts data_vars alphabetically; the helper returns
+        # that order so field_order can realign columns by name.
+        trace = _StubTrace(["a", "b", "c"])
+        assert posterior_var_order(trace, ["c", "a", "b"]) == ["a", "b", "c"]
+
+    def test_ignores_unkept_trace_vars(self):
+        trace = _StubTrace(["mu", "sigma", "lp__", "diverging"])
+        assert posterior_var_order(trace, ["mu", "sigma"]) == ["mu", "sigma"]
+
+    def test_missing_expected_var_raises_valueerror(self):
+        """A kept name absent from the trace raises a clear ValueError here,
+        not a cryptic 'not a permutation' error later in make_posterior."""
+        trace = _StubTrace(["mu"])
+        with pytest.raises(ValueError, match="missing expected variable"):
+            posterior_var_order(trace, ["mu", "sigma"])
+
+    def test_error_message_names_the_missing_vars(self):
+        trace = _StubTrace(["mu"])
+        with pytest.raises(ValueError, match="sigma"):
+            posterior_var_order(trace, ["mu", "sigma"])
