@@ -30,8 +30,9 @@ ArviZ plots use posterior.inference_data directly::
 """
 from __future__ import annotations
 
-__all__ = []
+from .diagnostics_workflow import DiagnosticsModule
 
+__all__ = ["DiagnosticsModule"]
 
 # ── MCMC diagnostics ──────────────────────────────────────────────────────
 try:
