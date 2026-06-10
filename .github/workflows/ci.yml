@@ -37,16 +37,19 @@ jobs:
 
           # If foundational files changed, run the full suite. Scan ALL
           # changed files (not just .py): a dependency bump in pyproject.toml
-          # touches no .py file but must still trigger the suite.
-          # Also force the full suite on direct pushes to main (post-merge
-          # safety net — targeted tests are for PRs only).
+          # or uv.lock touches no .py file but must still trigger the suite —
+          # this is what makes a lockfile-only dependency change actually
+          # verified by CI rather than silently skipped. A change to this
+          # workflow itself (ci.yml) also forces the suite so CI edits are
+          # self-tested. Also force the full suite on direct pushes to main
+          # (post-merge safety net — targeted tests are for PRs only).
           if [ "${{ github.event_name }}" = "push" ]; then
             RUN_ALL=true
           else
             RUN_ALL=false
             for f in $CHANGED_ALL; do
               case "$f" in
-                pyproject.toml|setup.cfg|setup.py|tests/conftest.py|probpipe/__init__.py)
+                pyproject.toml|uv.lock|setup.cfg|setup.py|tests/conftest.py|probpipe/__init__.py|.github/workflows/ci.yml)
                   RUN_ALL=true ;;
               esac
             done
@@ -176,35 +179,31 @@ jobs:
             fi
           fi
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          enable-cache: true
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          # Install the project together with the verified jax / tfp-nightly
-          # pins in a single resolver transaction. Installing the project
-          # first and re-pinning afterwards resolves the tree twice — the
-          # first time against unpinned metadata — which can leave the rest
-          # of the dependency set resolved against a different jax. tfp-nightly
-          # tracks jax's internal API, and a fresh nightly can lag the current
-          # jax release (DeprecationWarnings, occasionally hard errors) under
-          # jax 0.10+. Refresh this pair when the nightly is purged from PyPI.
-          # [pymc] is installed so pymc 6 is exercised on both matrix legs.
-          pip install -e ".[dev,nutpie,pymc]" \
-            "jax==0.10.1" "jaxlib==0.10.1" "tfp-nightly==0.26.0.dev20260608"
+        # Dependency versions (including jax/jaxlib/tfp-nightly) are pinned
+        # in uv.lock. --frozen makes the resolver fail if the lockfile is
+        # out of sync, so CI never silently drifts from the committed pins.
+        # --python pins the interpreter to the matrix leg: uv fetches a managed
+        # CPython when the runner lacks it, so the "3.13" leg genuinely runs
+        # 3.13. (setup-uv's python-version input was silently ignored on @v3,
+        # which let both legs fall back to the system 3.12.) [pymc] is included
+        # so pymc 6 is exercised on both matrix legs.
+        run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra nutpie --extra pymc
 
       - name: Run tests (changed files only)
         if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'false'
         run: |
-          pytest ${{ steps.changed.outputs.test_files }} --cov-report=xml --cov-report=html
+          uv run pytest ${{ steps.changed.outputs.test_files }} --cov-report=xml --cov-report=html
 
       - name: Run tests (full suite)
         if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'true'
         run: |
-          pytest --cov-report=xml --cov-report=html
+          uv run pytest --cov-report=xml --cov-report=html
 
       - name: Upload coverage reports to Codecov
         if: matrix.python-version == '3.12' && steps.changed.outputs.run_all == 'true'
@@ -244,17 +243,18 @@ jobs:
             -- 'docs/examples/*.ipynb' 'probpipe/' || true)
           CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
 
-          # A dependency bump in pyproject.toml touches no notebook or source
-          # file but can still break every notebook, so foundational changes
-          # force the full notebook set (mirrors the test job's RUN_ALL). Also
-          # force it on direct pushes to main (post-merge safety net).
+          # A dependency bump in pyproject.toml or uv.lock touches no notebook
+          # or source file but can still break every notebook, so foundational
+          # changes force the full notebook set (mirrors the test job's
+          # RUN_ALL); a change to ci.yml does too. Also force it on direct
+          # pushes to main (post-merge safety net).
           if [ "${{ github.event_name }}" = "push" ]; then
             RUN_ALL_NB=true
           else
             RUN_ALL_NB=false
             for f in $CHANGED_ALL; do
               case "$f" in
-                pyproject.toml|setup.cfg|setup.py) RUN_ALL_NB=true ;;
+                pyproject.toml|uv.lock|setup.cfg|setup.py|.github/workflows/ci.yml) RUN_ALL_NB=true ;;
               esac
             done
           fi
@@ -422,26 +422,20 @@ jobs:
             fi
           fi
 
-      - name: Set up Python
+      - name: Install uv
         if: steps.nb_check.outputs.skip != 'true'
-        uses: actions/setup-python@v5
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
+          enable-cache: true
 
       - name: Install dependencies
         if: steps.nb_check.outputs.skip != 'true'
-        run: |
-          python -m pip install --upgrade pip
-          # Install the project together with the verified jax / tfp-nightly
-          # pins in a single resolver transaction. Installing the project
-          # first and re-pinning afterwards resolves the tree twice — the
-          # first time against unpinned metadata — which can leave the rest
-          # of the dependency set resolved against a different jax. tfp-nightly
-          # tracks jax's internal API, and a fresh nightly can lag the current
-          # jax release (DeprecationWarnings, occasionally hard errors) under
-          # jax 0.10+. Refresh this pair when the nightly is purged from PyPI.
-          pip install -e ".[dev,nutpie]" \
-            "jax==0.10.1" "jaxlib==0.10.1" "tfp-nightly==0.26.0.dev20260608"
+        # Dependency versions are pinned in uv.lock. --frozen fails if the
+        # lockfile is out of sync, so CI never silently drifts. --python pins
+        # the interpreter (setup-uv's python-version input was ignored on @v3).
+        # [pymc] is intentionally not installed for the notebook job (matches
+        # the previous pip-based setup).
+        run: uv sync --frozen --python 3.12 --extra dev --extra nutpie
 
       - name: Execute affected docs/examples notebooks
         if: steps.nb_check.outputs.skip != 'true'
@@ -449,6 +443,6 @@ jobs:
           set -euo pipefail
           for nb in ${{ steps.nb_check.outputs.notebooks }}; do
             echo "--- executing $nb ---"
-            python -m nbconvert --to notebook --execute \
+            uv run python -m nbconvert --to notebook --execute \
               --ExecutePreprocessor.timeout=900 --output /tmp/out.ipynb "$nb"
           done

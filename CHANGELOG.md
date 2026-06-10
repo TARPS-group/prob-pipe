@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Dev tooling: migrated to [uv](https://docs.astral.sh/uv/) for
+  environment + dependency management.** `uv.lock` is committed and used
+  by CI (`uv sync --frozen`), making the install reproducible and lifting
+  the duplicated inline jax/jaxlib/tfp-nightly pins out of the workflow
+  files. Local dev: `uv sync --extra dev --extra nutpie [--extra pymc]`,
+  then `uv run pytest`. The pip path (`pip install -e ".[dev]"`) still
+  works for contributors with an existing pip setup. See
+  [CONTRIBUTING.md](CONTRIBUTING.md#installation).
+
 - **`pymc_nuts` reclaims multi-core sampling.** The method previously
   forced `cores=1` to avoid an `os.fork()` deadlock against JAX's worker
   threads. It now samples one worker per chain (capped at the CPU count,
