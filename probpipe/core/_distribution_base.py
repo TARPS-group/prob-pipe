@@ -10,7 +10,14 @@ from __future__ import annotations
 
 import copy as _copy
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+# ``_ProtocolMeta`` is technically private (leading underscore in
+# ``typing``), but it's the only way to compose a custom metaclass with
+# ``@runtime_checkable`` protocols without a metaclass conflict.  The
+# name has been stable since Python 3.7 and is widely used in the
+# ecosystem (Pydantic, attrs, etc.). If a future Python release renames
+# it, the metaclass would need to switch to whatever new base ``typing``
+# exposes; the conflict-avoidance constraint itself doesn't change.
+from typing import TYPE_CHECKING, Any, _ProtocolMeta  # noqa: PLC2701
 
 if TYPE_CHECKING:
     from xarray import DataTree
@@ -54,7 +61,38 @@ def set_return_approx_dist(value: bool) -> None:
 # Distribution[T] — generic base class
 # ---------------------------------------------------------------------------
 
-class Distribution[T](ABC):
+
+class _DistributionMeta(_ProtocolMeta):
+    """Metaclass enforcing that every Distribution instance has a
+    non-empty ``name`` set by the time construction returns.
+
+    The check runs after ``__init__`` so it catches both subclasses
+    that call ``super().__init__(name=...)`` and subclasses that
+    bypass it and set ``self._name`` directly. The only failure case
+    is a subclass that finishes ``__init__`` without setting
+    ``_name`` to a non-empty string — then construction raises
+    ``TypeError``.
+
+    Extends ``typing._ProtocolMeta`` (rather than the more obvious
+    ``ABCMeta``) so subclasses can still mix in ``@runtime_checkable``
+    protocols (``SupportsSampling``, ``SupportsLogProb``, …) without
+    a metaclass conflict. ``_ProtocolMeta`` is itself an
+    ``ABCMeta`` subclass.
+    """
+
+    def __call__(cls, *args: Any, **kwargs: Any) -> Any:
+        instance = super().__call__(*args, **kwargs)
+        name = getattr(instance, "_name", None)
+        if not isinstance(name, str) or not name:
+            raise TypeError(
+                f"{cls.__name__}.__init__ must set a non-empty name "
+                f"(via super().__init__(name=...) or by assigning "
+                f"self._name to a non-empty string) before returning."
+            )
+        return instance
+
+
+class Distribution[T](ABC, metaclass=_DistributionMeta):
     """
     Abstract base for all ProbPipe distributions, parameterized by
     value type ``T``.
@@ -83,51 +121,43 @@ class Distribution[T](ABC):
         """Whether this distribution is an approximation (e.g., from sampling or MCMC)."""
         return getattr(self, "_approximate", False)
 
-    # -- validation results ---------------------------------------------------
-
-    @property
-    def validation_results(self) -> list[dict]:
-        """Results from :func:`~probpipe.validation.predictive_check` runs.
-
-        Each entry is a dict with at least ``"replicated_statistics"``
-        and ``"test_fn_name"``.  Posterior checks also include
-        ``"observed_statistic"`` and ``"p_value"``.
-        """
-        if not hasattr(self, "_validation_results"):
-            self._validation_results: list[dict] = []
-        return self._validation_results
-
-    # -- values template (deprecated on base; now lives on RecordDistribution)
-    # Kept here temporarily for backward compatibility during migration.
-
-    @property
-    def record_template(self) -> RecordTemplate | None:
-        """Structural template for this distribution's samples, or ``None``.
-
-        .. deprecated::
-            This property is migrating to
-            :class:`~probpipe.core._record_distribution.RecordDistribution`.
-            Non-Record distributions should not rely on this.
-        """
-        return getattr(self, "_record_template", None)
-
     # -- auxiliary information ----------------------------------------------
 
     @property
     def auxiliary(self) -> DataTree | None:
         """An xarray ``DataTree`` of auxiliary information, or ``None``.
 
-        Structured as::
+        Populated by inference methods, validators, and diagnostic
+        functions. The tree may follow ArviZ group conventions
+        (``posterior``, ``sample_stats``, ``warmup``, etc.) and may also
+        contain ProbPipe-specific diagnostic summaries and metadata.
+
+        Typical structure::
 
             _auxiliary/
-            ├── arviz/      ← ArviZ InferenceData (posterior, sample_stats, warmup, ...)
-            └── diagnostics/ ← ProbPipe scalar summaries and run metadata
-                ├── mcmc/   ← rhat, ess_bulk, ess_tail, mcse
-                └── runs/   ← one node per on-demand diagnostic (ppc, loo, ...)
+            ├── arviz/        ← ArviZ-compatible inference data
+            │   ├── posterior
+            │   ├── sample_stats
+            │   └── warmup
+            ├── diagnostics/  ← ProbPipe scalar summaries and run metadata
+            │   ├── mcmc      ← rhat, ess_bulk, ess_tail, mcse, ...
+            │   └── runs      ← on-demand diagnostics such as ppc, loo, ...
+            └── ...           ← other append-only diagnostic/metadata groups
 
-        Populated by inference methods and diagnostic functions.
-        Use ``posterior.inference_data`` for the ArviZ subtree directly,
-        and ``posterior.diagnostics`` for the structured diagnostic view.
+        ``diagnostics`` is a structured Python accessor over the
+        ``/diagnostics/`` subtree. ArviZ-compatible information should
+        remain available separately for functions that need to pass data
+        directly to ArviZ.
+
+        **Documented exception to distribution immutability.** Unlike
+        parameter-like state on a :class:`Distribution`, ``_auxiliary`` is
+        designed to be mutated in place by validators, inference methods,
+        and diagnostic operations after construction. The alternative
+        would be returning a renamed clone for every diagnostic, which
+        would break the source/identity tracking downstream code depends
+        on. Treat this channel as append-only: new diagnostic operations
+        should write under their own named group and should not overwrite
+        or mutate parameter-like state.
         """
         return getattr(self, "_auxiliary", None)
 
@@ -190,13 +220,14 @@ class Distribution[T](ABC):
 
         The copy shares all internal state but has a new ``name``.
         Provenance is tracked: the copy's ``source`` records the rename
-        operation and points to the original as parent.  Any cached
-        ``record_template`` is cleared so it regenerates with the new
-        name (relevant for ``TFPDistribution``).
+        operation and points to the original as parent.
+
+        ``RecordDistribution`` overrides this to also reset its cached
+        ``_record_template`` so the auto-build path regenerates with
+        the new name.
         """
         clone = _copy.copy(self)
         object.__setattr__(clone, "_name", new_name)
-        object.__setattr__(clone, "_record_template", None)
         # Bypass write-once guard so rename provenance can be attached
         object.__setattr__(clone, "_source", None)
         clone.with_source(

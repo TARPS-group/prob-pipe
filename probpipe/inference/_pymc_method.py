@@ -2,29 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
-
-import jax.numpy as jnp
 
 from ..core._registry import MethodInfo
 from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ._inference_utils import extract_chain_columns, posterior_var_order
 from ._registry import InferenceMethod
-
-
-def _extract_pymc_chains(trace: Any, param_names: list[str], num_chains: int) -> list:
-    """Extract per-chain sample arrays from a PyMC ArviZ trace."""
-    chains = []
-    for c in range(num_chains):
-        chain_arrays = []
-        for name in param_names:
-            vals = trace.posterior[name].values[c]
-            if vals.ndim == 1:
-                vals = vals[:, None]
-            else:
-                vals = vals.reshape(vals.shape[0], -1)
-            chain_arrays.append(jnp.asarray(vals))
-        chains.append(jnp.concatenate(chain_arrays, axis=-1))
-    return chains
 
 
 class PyMCNutsMethod(InferenceMethod):
@@ -43,7 +27,12 @@ class PyMCNutsMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        return 60
+        # Tier 81-90 (optimised backend; native PyMC NUTS, tailored to
+        # PyMCModel). At 82 alongside ``cmdstan_nuts``; the two apply to
+        # disjoint model classes so the tie is documentary. Below
+        # ``nutpie_nuts`` (88; Rust gradients are faster on PyMCModel
+        # too when nutpie is installed).
+        return 82
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         if not isinstance(dist, self._model_type):
@@ -57,24 +46,39 @@ class PyMCNutsMethod(InferenceMethod):
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 500)
         num_chains = kwargs.get("num_chains", 4)
+        # Multi-core sampling forces the "spawn" start method: this process
+        # holds live JAX threads, and pymc's POSIX-"fork" default deadlocks
+        # when a forked worker inherits a held thread lock. spawn pickles the
+        # model to each worker; if the model is not picklable, pymc logs a
+        # warning and falls back to single-process sampling — so multi-core
+        # is the default without making serializability a hard requirement.
+        cores = kwargs.get("cores", min(num_chains, os.cpu_count() or 1))
         random_seed = kwargs.get("random_seed", 0)
 
         model = dist._pymc_model(data=observed)
+        # Build the template in canonical field order before sampling
+        # (fail fast on a dynamic-RV / non-concrete model).
+        param_names = dist._conditioned_param_names(model)
+        record_template = dist._record_template_for(model, param_names)
         with model:
             trace = pm.sample(
                 draws=num_results,
                 tune=num_warmup,
                 chains=num_chains,
-                cores=1,  # avoid os.fork() which deadlocks with JAX threads
+                cores=cores,
+                mp_ctx="spawn" if cores > 1 else None,
                 random_seed=random_seed,
                 return_inferencedata=True,
             )
 
-        chains = _extract_pymc_chains(trace, dist._param_names, num_chains)
+        # Extract in the trace's natural order; field_order lets
+        # make_posterior realign columns to the template by name.
+        order = posterior_var_order(trace, param_names)
+        chains = extract_chain_columns(trace, order, num_chains)
 
         return make_posterior(
             chains, parents=(dist,), algorithm="pymc_nuts",
-            auxiliary=trace,
+            auxiliary=trace, record_template=record_template, field_order=order,
             num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         )
 
@@ -95,7 +99,14 @@ class PyMCADVIMethod(InferenceMethod):
 
     @property
     def priority(self) -> int:
-        return 35
+        # Tier 21-30 by algorithm category (parametric variational
+        # approximation; quality bounded by the mean-field family), but
+        # registered at the opt-in-only sentinel ``priority=0``. ADVI is
+        # a deliberate bias-for-speed tradeoff the user should choose
+        # explicitly; auto-dispatching into it when (e.g.) ``pymc_nuts``
+        # happens to fail would surface VI silently in MCMC's place.
+        # Callers who want ADVI pin ``method="pymc_advi"``.
+        return 0
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         if not isinstance(dist, self._model_type):
@@ -105,7 +116,6 @@ class PyMCADVIMethod(InferenceMethod):
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         import pymc as pm
-        import numpy as np
 
         num_iterations = kwargs.get("num_iterations", 30000)
         num_results = kwargs.get("num_results", 1000)
@@ -113,20 +123,22 @@ class PyMCADVIMethod(InferenceMethod):
         vi_method = kwargs.get("vi_method", "advi")
 
         model = dist._pymc_model(data=observed)
+        # Build the template in canonical field order before fitting (fail
+        # fast on a dynamic-RV / non-concrete model).
+        param_names = dist._conditioned_param_names(model)
+        record_template = dist._record_template_for(model, param_names)
         with model:
             approx = pm.fit(n=num_iterations, method=vi_method, random_seed=random_seed)
             trace = approx.sample(num_results)
 
-        chain_draws = [trace.posterior[n].values[0] for n in dist._param_names]
-        samples = np.concatenate(
-            [np.atleast_2d(d).reshape(num_results, -1) for d in chain_draws],
-            axis=1,
-        )
-        chains = [jnp.asarray(samples)]
+        # ADVI's approx.sample yields a single chain of `num_results`
+        # draws; extract in natural order and realign by name.
+        order = posterior_var_order(trace, param_names)
+        chains = extract_chain_columns(trace, order, num_chains=1)
         algorithm = f"pymc_{vi_method}"
 
         return make_posterior(
             chains, parents=(dist,), algorithm=algorithm,
-            auxiliary=trace,
+            auxiliary=trace, record_template=record_template, field_order=order,
             num_iterations=num_iterations,
         )

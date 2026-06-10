@@ -11,31 +11,29 @@ Provides:
 
 from __future__ import annotations
 
+from math import prod
 from typing import Any
 
-from .._utils import prod
+import jax
+import jax.numpy as jnp
+import numpy as np
+
+from .._weights import Weights
+from ..custom_types import Array
+from ._distribution_base import Distribution
+from ._empirical import (
+    EmpiricalDistribution,
+    RecordEmpiricalDistribution,
+)
+from ._record_array import RecordArray
+from ._record_distribution import RecordDistribution
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
 )
-
-import jax
-import jax.numpy as jnp
-import numpy as np
-
-from ..custom_types import Array
-from .._weights import Weights
-from ._distribution_base import Distribution
-from ._record_distribution import RecordDistribution
-from ._empirical import (
-    EmpiricalDistribution,
-    RecordEmpiricalDistribution,
-)
-from ._record_array import RecordArray
 from .record import Record, RecordTemplate
-
 
 # ---------------------------------------------------------------------------
 # MarginalizedBroadcastDistribution — output marginal of a broadcast
@@ -83,7 +81,7 @@ class _RecordMarginal(RecordEmpiricalDistribution):
 
     def __repr__(self):
         return (
-            f"MarginalizedBroadcastDistribution(n={self.n}, "
+            f"MarginalizedBroadcastDistribution(num_atoms={self.num_atoms}, "
             f"fields=({', '.join(self._record_data.fields)}))"
         )
 
@@ -116,7 +114,7 @@ class _MixtureMarginal[T](Distribution[T]):
         self._approximate = True
 
     @property
-    def n(self) -> int:
+    def num_atoms(self) -> int:
         return len(self._components)
 
     @property
@@ -128,7 +126,7 @@ class _MixtureMarginal[T](Distribution[T]):
         return self._w.normalized
 
     def __repr__(self):
-        return f"MarginalizedBroadcastDistribution(mixture, n={self.n})"
+        return f"MarginalizedBroadcastDistribution(mixture, num_atoms={self.num_atoms})"
 
 
 # -- Mixture protocol mixins (combined dynamically) -------------------------
@@ -295,7 +293,7 @@ class _ListMarginal[T](Distribution[T]):
         super().__init__(name=name)
 
     @property
-    def n(self) -> int:
+    def num_atoms(self) -> int:
         return len(self._items)
 
     @property
@@ -307,7 +305,7 @@ class _ListMarginal[T](Distribution[T]):
         return self._w.normalized
 
     def __repr__(self):
-        return f"MarginalizedBroadcastDistribution(list, n={self.n})"
+        return f"MarginalizedBroadcastDistribution(list, num_atoms={self.num_atoms})"
 
 
 # Public alias for type checking / isinstance
@@ -744,7 +742,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
     # -- basic properties ---------------------------------------------------
 
     @property
-    def n(self) -> int:
+    def num_atoms(self) -> int:
         """Number of input–output pairs."""
         return self._w.n
 
@@ -829,6 +827,6 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
 
     def __repr__(self):
         return (
-            f"BroadcastDistribution(n={self.n}, "
+            f"BroadcastDistribution(num_atoms={self.num_atoms}, "
             f"broadcast_args={self._broadcast_args})"
         )

@@ -20,6 +20,56 @@ __all__ = ["ApproximateDistribution", "make_posterior"]
 
 
 # ---------------------------------------------------------------------------
+# Column ordering
+# ---------------------------------------------------------------------------
+
+
+def _column_permutation(
+    record_template: RecordTemplate, field_order: list[str],
+) -> list[int]:
+    """Column-index permutation mapping a *field_order*-laid-out flat chain
+    into ``record_template.fields`` order.
+
+    *field_order* names the field each contiguous column-block of the flat
+    chain occupies. The returned ``perm`` satisfies: ``flat[..., perm]``
+    lays the columns out in template-field order, so the positional split
+    in :class:`ApproximateDistribution` maps each column to the right
+    field by name. See issue #233.
+
+    Raises
+    ------
+    ValueError
+        If *field_order* is not a permutation of the template's fields, or
+        a field has an opaque (``spec=None``) leaf with no flat size.
+    """
+    if sorted(field_order) != sorted(record_template.fields):
+        raise ValueError(
+            f"field_order {list(field_order)} is not a permutation of "
+            f"template fields {list(record_template.fields)}."
+        )
+    sizes: dict[str, int] = {}
+    for field_name in record_template.fields:
+        spec = record_template[field_name]
+        if spec is None:
+            raise ValueError(
+                f"ApproximateDistribution requires a numeric template; "
+                f"field {field_name!r} has spec=None (opaque). Opaque "
+                f"leaves don't have a flat size."
+            )
+        sizes[field_name] = _spec_size(spec)
+    bounds: dict[str, tuple[int, int]] = {}
+    offset = 0
+    for field_name in field_order:
+        bounds[field_name] = (offset, offset + sizes[field_name])
+        offset += sizes[field_name]
+    perm: list[int] = []
+    for field_name in record_template.fields:
+        lo, hi = bounds[field_name]
+        perm.extend(range(lo, hi))
+    return perm
+
+
+# ---------------------------------------------------------------------------
 # ApproximateDistribution
 # ---------------------------------------------------------------------------
 
@@ -29,9 +79,8 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
     Stores per-chain sample arrays for chain-structured access via
     :meth:`draws`.  Algorithm metadata, sample statistics, warmup
-    samples, and the ArviZ ``InferenceData`` object live in
-    ``dist.auxiliary`` (a DataTree on the Distribution base class),
-    not as attributes of this class.
+    samples, and the ArviZ ``DataTree`` live in ``dist.auxiliary``
+    (on the Distribution base class), not as attributes of this class.
 
     Parameters
     ----------
@@ -41,6 +90,20 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         Optional per-sample importance weights (across all chains).
     name : str or None
         Distribution name for provenance.
+    record_template : RecordTemplate or None
+        If given, names the posterior's fields: the concatenated chain is
+        split into per-field arrays (multi-field) so :meth:`draws`,
+        :meth:`_mean` / :meth:`_variance`, etc. return Records keyed by
+        the template fields. ``None`` leaves the posterior a single
+        unnamed numeric block.
+    field_order : list of str or None
+        Names the field each contiguous column-block of *chains* belongs
+        to, in the order they appear. Default (``None``) assumes the
+        columns are already in ``record_template.fields`` order. Pass this
+        when the chain's column order may differ (e.g. a backend that
+        sorts variable names) so columns are aligned to fields by name
+        rather than position. Requires *record_template*, and must be a
+        permutation of its fields.
 
     Notes
     -----
@@ -64,12 +127,43 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         weights: ArrayLike | Weights | None = None,
         name: str | None = None,
         record_template: RecordTemplate | None = None,
+        field_order: list[str] | None = None,
     ):
         if not chains:
             raise ValueError("Must provide at least one chain")
 
         self._chains = [jnp.asarray(c) for c in chains]
         self._concatenated: Array | None = None
+
+        # When the caller's chain columns are laid out in a different
+        # field order than the template — e.g. a backend whose trace
+        # sorts variable names — permute them into ``record_template``
+        # order. The positional split below (and ``draws()`` unflatten)
+        # then map each column to the right field by name rather than by
+        # position, so callers don't have to pre-sort. See issue #233.
+        if field_order is not None:
+            if record_template is None:
+                raise ValueError(
+                    "field_order requires a record_template; it names "
+                    "template fields and is meaningless without one."
+                )
+            # Validates field_order is a permutation of the template
+            # fields (raises otherwise) for any field count, so a
+            # single-field typo or wrong name is also caught.
+            perm = _column_permutation(record_template, field_order)
+            # Validate width for any field count, *before* the gather:
+            # ``c[..., perm]`` would otherwise silently drop extra columns
+            # (too-wide chain) or clamp out-of-bounds indices (too-narrow),
+            # then pass the post-gather total-size check.
+            for c in self._chains:
+                if c.shape[-1] != len(perm):
+                    raise ValueError(
+                        f"chain last dim ({c.shape[-1]}) doesn't match "
+                        f"the template total flat size ({len(perm)})."
+                    )
+            if len(record_template.fields) > 1:
+                self._chains = [c[..., perm] for c in self._chains]
+                self._concatenated = None
 
         flat = self._concat_chains()
         # Track whether the user explicitly supplied a template; we use
@@ -153,7 +247,13 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
     @property
     def num_draws(self) -> int:
-        """Number of draws per chain (assumes equal-length chains)."""
+        """Number of draws *per chain* (assumes equal-length chains).
+
+        Distinct from ``num_atoms`` (inherited from
+        :class:`~probpipe.core._empirical.RecordEmpiricalDistribution`),
+        which counts the total atoms across all chains —
+        ``num_atoms == num_chains * num_draws``.
+        """
         return self._chains[0].shape[0]
 
     @property
@@ -166,17 +266,18 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
     @property
     def inference_data(self) -> DataTree | None:
-        """The ArviZ DataTree stored under ``_auxiliary["arviz"]``.
+        """The ArviZ-compatible DataTree stored under ``_auxiliary["arviz"]``.
 
-        Use ArviZ functions for diagnostics and plots::
+        Use ArviZ/ArviZ-stats functions for diagnostics and plots::
 
-            import arviz as az
-            az.summary(posterior.inference_data)
-            az.plot_trace(posterior.inference_data)
+            import arviz_stats
+            arviz_stats.summary(posterior.inference_data)
 
-        Returns ``None`` if no auxiliary data has been attached.
-        Falls back to ``_auxiliary`` directly if set before the
-        ``/arviz/`` subtree convention was adopted (legacy).
+        Plotting utilities may also consume this tree where supported.
+
+        Returns ``None`` if no auxiliary data has been attached. Falls
+        back to ``_auxiliary`` directly if set before the ``/arviz/``
+        subtree convention was adopted.
         """
         aux = self.auxiliary
         if aux is None:
@@ -191,16 +292,18 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         idata = self.inference_data
         if idata is None:
             return None
-        has_warmup = (
-            ("warmup" in idata.children) if hasattr(idata, "children")
-            else hasattr(idata, "warmup")
-        )
-        if not has_warmup:
+
+        # ``inference_data`` is expected to be an ArviZ-compatible
+        # xarray DataTree. Warmup samples, when present, live under
+        # the ``warmup`` group.
+        children = idata.children if hasattr(idata, "children") else {}
+        if "warmup" not in children:
             return None
+
         warmup = idata["warmup"]["params"]
         n_chains = warmup.sizes.get("chain", 1)
         return [jnp.asarray(warmup.sel(chain=i).values) for i in range(n_chains)]
-
+      
     def draws(
         self,
         chain: int | None = None,
@@ -276,6 +379,7 @@ def make_posterior(
     *,
     auxiliary: DataTree | None = None,
     record_template: RecordTemplate | None = None,
+    field_order: list[str] | None = None,
     **meta: Any,
 ) -> ApproximateDistribution:
     """Build an ApproximateDistribution with provenance.
@@ -287,12 +391,19 @@ def make_posterior(
     parents : tuple of Distribution
         Parent distributions for provenance tracking.
     algorithm : str
-        Inference algorithm name (e.g. ``"tfp_nuts"``, ``"rwmh"``).
+        Inference algorithm name (e.g. ``"tfp_nuts"``, ``"blackjax_rwmh"``).
     auxiliary : DataTree or None
         Pre-built auxiliary DataTree (diagnostics, sample stats, warmup).
         Inference methods are responsible for building this.
     record_template : RecordTemplate or None
         If provided, ``draws()`` returns named ``Record``.
+    field_order : list of str or None
+        Names the field each contiguous column-block of ``chains`` belongs
+        to. Default (``None``) assumes the columns are laid out in
+        ``record_template.fields`` order. Pass this when the chain's column
+        order may differ from the template's (e.g. a backend that sorts
+        variable names) so columns are aligned to fields by name rather
+        than position (see issue #233).
     **meta
         Additional metadata stored in provenance.
 
@@ -305,6 +416,7 @@ def make_posterior(
 
     result = ApproximateDistribution(
         chains, name="posterior", record_template=record_template,
+        field_order=field_order,
     )
 
     if auxiliary is not None:

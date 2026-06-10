@@ -110,8 +110,8 @@ class KDEDistribution(TFPDistribution):
         return self._name
 
     @property
-    def n(self) -> int:
-        """Number of kernel centres (samples)."""
+    def num_atoms(self) -> int:
+        """Number of kernel centres (atoms) backing the KDE."""
         return self._samples.shape[0]
 
     @property
@@ -120,6 +120,6 @@ class KDEDistribution(TFPDistribution):
 
     def __repr__(self) -> str:
         return (
-            f"KDEDistribution(n={self.n}, "
+            f"KDEDistribution(num_atoms={self.num_atoms}, "
             f"event_shape={self.event_shape})"
         )

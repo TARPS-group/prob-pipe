@@ -9,15 +9,15 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
+from math import prod
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .._utils import prod
 from ..custom_types import ArrayLike
-from ._numeric_record import NumericRecord, _NUMERIC_DTYPE_KINDS
+from ._numeric_record import _NUMERIC_DTYPE_KINDS, NumericRecord
 from .provenance import Provenance
 from .record import Record, RecordTemplate, _spec_size
 

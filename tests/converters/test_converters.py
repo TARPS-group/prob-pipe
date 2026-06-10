@@ -1,0 +1,913 @@
+"""Tests for the converter registry and built-in converters."""
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
+import tensorflow_probability.substrates.jax.distributions as tfd
+
+from probpipe import (
+    Normal, Beta, Gamma, Exponential, MultivariateNormal,
+    Bernoulli, Poisson, Categorical,
+    RecordEmpiricalDistribution, EmpiricalDistribution, NumericRecordDistribution,
+    converter_registry, ConversionInfo, ConversionMethod, Converter,
+    from_distribution,
+)
+from probpipe.distributions.continuous import (
+    InverseGamma, LogNormal, StudentT, Uniform, Cauchy, Laplace,
+    HalfNormal, HalfCauchy, Pareto, TruncatedNormal,
+)
+from probpipe.distributions.discrete import Binomial, NegativeBinomial
+from probpipe.distributions.multivariate import Dirichlet, Multinomial, Wishart, VonMisesFisher
+
+
+# ---------------------------------------------------------------------------
+# Registry basics
+# ---------------------------------------------------------------------------
+
+class TestConverterRegistry:
+
+    def test_check_returns_conversioninfo(self):
+        info = converter_registry.check(Normal(0, 1, name="x"), Normal)
+        assert isinstance(info, ConversionInfo)
+        assert info.feasible
+
+    def test_check_infeasible_for_unknown_target(self):
+        info = converter_registry.check(Normal(0, 1, name="x"), int)
+        assert not info.feasible
+
+    def test_convert_raises_for_unknown(self):
+        with pytest.raises(TypeError):
+            converter_registry.convert(42, Normal)
+
+    def test_is_distribution_type_probpipe(self):
+        assert converter_registry.is_distribution_type(Normal(0, 1, name="x"))
+        assert converter_registry.is_distribution_type(EmpiricalDistribution(jnp.ones((5, 1)), name="x"))
+
+    def test_is_distribution_type_tfp(self):
+        assert converter_registry.is_distribution_type(tfd.Normal(0, 1))
+
+    def test_is_distribution_type_non_dist(self):
+        assert not converter_registry.is_distribution_type(42)
+        assert not converter_registry.is_distribution_type("hello")
+
+
+# ---------------------------------------------------------------------------
+# ProbPipe ↔ ProbPipe
+# ---------------------------------------------------------------------------
+
+class TestProbPipeConverter:
+
+    def test_same_class_exact(self):
+        n = Normal(loc=2.0, scale=0.5, name="x")
+        info = converter_registry.check(n, Normal)
+        assert info.method == ConversionMethod.EXACT
+        assert info.estimated_time == 0.0
+
+        result = converter_registry.convert(n, Normal)
+        assert isinstance(result, Normal)
+        np.testing.assert_allclose(float(result._loc), 2.0)
+        np.testing.assert_allclose(float(result._scale), 0.5)
+
+    def test_cross_family_moment_match(self):
+        g = Gamma(concentration=9.0, rate=1.0, name="g")
+        info = converter_registry.check(g, Normal)
+        assert info.method == ConversionMethod.MOMENT_MATCH
+
+        result = converter_registry.convert(g, Normal, num_samples=5000)
+        assert isinstance(result, Normal)
+        np.testing.assert_allclose(float(result._loc), 9.0, atol=0.5)
+
+    def test_support_mismatch_raises_by_default(self):
+        n = Normal(loc=0.5, scale=0.1, name="x")
+        with pytest.raises(ValueError, match="support"):
+            converter_registry.convert(n, Beta)
+
+    def test_support_mismatch_override(self):
+        n = Normal(loc=0.5, scale=0.1, name="x")
+        result = converter_registry.convert(n, Beta, check_support=False)
+        assert isinstance(result, Beta)
+
+    def test_to_empirical(self):
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        emp = converter_registry.convert(n, RecordEmpiricalDistribution, num_samples=100)
+        assert isinstance(emp, RecordEmpiricalDistribution)
+        assert emp.num_atoms == 100
+
+    def test_provenance_attached(self):
+        g = Gamma(concentration=3.0, rate=1.0, name="prior")
+        result = converter_registry.convert(g, Normal)
+        assert result.source is not None
+        assert result.source.operation == "from_distribution"
+        assert g in result.source.parents
+
+    def test_approximate_flag(self):
+        g = Gamma(concentration=3.0, rate=1.0, name="g")
+        result = converter_registry.convert(g, Normal)
+        assert result.is_approximate
+
+    def test_same_class_not_approximate(self):
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        result = converter_registry.convert(n, Normal)
+        assert not result.is_approximate
+
+    def test_same_class_returns_source(self):
+        """Same-class conversion returns the source object itself."""
+        n = Normal(loc=1.0, scale=2.0, name="x")
+        result = converter_registry.convert(n, Normal)
+        assert result is n
+
+
+# ---------------------------------------------------------------------------
+# Cross-family moment-matching (exercises all _convert_to_* functions)
+# ---------------------------------------------------------------------------
+
+class TestAllCrossFamilyConversions:
+    """Exercise every _convert_to_* path with a cross-family source."""
+
+    key = jax.random.PRNGKey(42)
+
+    @pytest.mark.parametrize("target_cls", [
+        Normal, Beta, InverseGamma, Exponential, LogNormal,
+        Uniform, Cauchy, Laplace, HalfNormal, HalfCauchy, Pareto,
+        TruncatedNormal, StudentT,
+    ])
+    def test_continuous_from_gamma(self, target_cls):
+        """Convert Gamma(9,1) to each continuous type (skip support issues)."""
+        g = Gamma(concentration=9.0, rate=1.0, name="g")
+        result = converter_registry.convert(g, target_cls, check_support=False, num_samples=500)
+        assert isinstance(result, target_cls)
+        assert result.source is not None  # cross-family: provenance attached
+
+    def test_bernoulli_from_poisson(self):
+        p = Poisson(rate=0.5, name="p")
+        result = converter_registry.convert(p, Bernoulli, check_support=False)
+        assert isinstance(result, Bernoulli)
+
+    def test_binomial_from_poisson(self):
+        p = Poisson(rate=3.0, name="p")
+        result = converter_registry.convert(p, Binomial, check_support=False, total_count=10)
+        assert isinstance(result, Binomial)
+
+    def test_binomial_requires_total_count(self):
+        p = Poisson(rate=3.0, name="p")
+        with pytest.raises(ValueError, match="total_count"):
+            converter_registry.convert(p, Binomial, check_support=False)
+
+    def test_poisson_from_bernoulli(self):
+        b = Bernoulli(probs=0.3, name="b")
+        result = converter_registry.convert(b, Poisson, check_support=False)
+        assert isinstance(result, Poisson)
+
+    def test_categorical_from_bernoulli(self):
+        b = Bernoulli(probs=0.7, name="b")
+        result = converter_registry.convert(b, Categorical, check_support=False, num_samples=500)
+        assert isinstance(result, Categorical)
+
+    def test_negativebinomial_from_poisson(self):
+        p = Poisson(rate=3.0, name="p")
+        result = converter_registry.convert(p, NegativeBinomial, check_support=False, total_count=5)
+        assert isinstance(result, NegativeBinomial)
+
+    def test_negativebinomial_requires_total_count(self):
+        p = Poisson(rate=3.0, name="p")
+        with pytest.raises(ValueError, match="total_count"):
+            converter_registry.convert(p, NegativeBinomial, check_support=False)
+
+    def test_dirichlet_from_mvn(self):
+        mvn = MultivariateNormal(loc=jnp.array([0.3, 0.5, 0.2]),
+                                  cov=0.01 * jnp.eye(3), name="z")
+        result = converter_registry.convert(mvn, Dirichlet, check_support=False, num_samples=500)
+        assert isinstance(result, Dirichlet)
+
+    def test_multinomial_from_mvn(self):
+        mvn = MultivariateNormal(loc=jnp.array([3.0, 5.0, 2.0]),
+                                  cov=jnp.eye(3), name="z")
+        result = converter_registry.convert(mvn, Multinomial, check_support=False,
+                                             total_count=10, num_samples=500)
+        assert isinstance(result, Multinomial)
+
+    def test_multinomial_requires_total_count(self):
+        mvn = MultivariateNormal(loc=jnp.array([3.0, 5.0]),
+                                  cov=jnp.eye(2), name="z")
+        with pytest.raises(ValueError, match="total_count"):
+            converter_registry.convert(mvn, Multinomial, check_support=False)
+
+    def test_wishart_from_mvn(self):
+        mvn = MultivariateNormal(loc=jnp.array([1.0, 0.0]),
+                                  cov=jnp.eye(2), name="z")
+        # Wishart samples are matrices; use Wishart as source for itself
+        w = Wishart(df=5.0, scale_tril=jnp.eye(2), name="w")
+        result = converter_registry.convert(w, Wishart)
+        assert result is w  # same-class
+
+    def test_wishart_to_empirical(self):
+        w = Wishart(df=5.0, scale_tril=jnp.eye(2), name="w")
+        result = converter_registry.convert(w, RecordEmpiricalDistribution, num_samples=50)
+        assert isinstance(result, RecordEmpiricalDistribution)
+        assert result.num_atoms == 50
+
+    def test_vonmisesfisher_same_class(self):
+        vmf = VonMisesFisher(mean_direction=jnp.array([1.0, 0.0, 0.0]),
+                              concentration=5.0, name="vmf")
+        result = converter_registry.convert(vmf, VonMisesFisher)
+        assert result is vmf
+
+    def test_mvn_from_empirical(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
+        emp = RecordEmpiricalDistribution(samples, name="x")
+        result = converter_registry.convert(emp, MultivariateNormal)
+        assert isinstance(result, MultivariateNormal)
+        assert result.loc.shape == (3,)
+
+    def test_mvn_from_mvn(self):
+        mvn = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        result = converter_registry.convert(mvn, MultivariateNormal)
+        assert result is mvn
+
+
+# ---------------------------------------------------------------------------
+# TFP ↔ ProbPipe
+# ---------------------------------------------------------------------------
+
+class TestTFPConverter:
+
+    def test_tfp_normal_to_probpipe(self):
+        tfp_n = tfd.Normal(loc=2.0, scale=0.5)
+        info = converter_registry.check(tfp_n, Normal)
+        assert info.feasible
+        assert info.method == ConversionMethod.EXACT
+
+        result = converter_registry.convert(tfp_n, Normal)
+        assert isinstance(result, Normal)
+        np.testing.assert_allclose(float(result._loc), 2.0)
+        np.testing.assert_allclose(float(result._scale), 0.5)
+
+    def test_tfp_beta_to_probpipe(self):
+        tfp_b = tfd.Beta(concentration1=2.0, concentration0=5.0)
+        result = converter_registry.convert(tfp_b, Beta)
+        assert isinstance(result, Beta)
+        np.testing.assert_allclose(float(result._alpha), 2.0)
+        np.testing.assert_allclose(float(result._beta), 5.0)
+
+    def test_tfp_mvn_to_probpipe(self):
+        loc = jnp.array([1.0, 2.0])
+        tril = jnp.array([[1.0, 0.0], [0.3, 0.9]])
+        tfp_mvn = tfd.MultivariateNormalTriL(loc=loc, scale_tril=tril)
+        result = converter_registry.convert(tfp_mvn, MultivariateNormal)
+        assert isinstance(result, MultivariateNormal)
+        np.testing.assert_allclose(result.loc, loc, atol=1e-5)
+
+    def test_probpipe_to_tfp(self):
+        n = Normal(loc=3.0, scale=1.0, name="x")
+        result = converter_registry.convert(n, tfd.Normal)
+        assert isinstance(result, tfd.Normal)
+        np.testing.assert_allclose(float(result.loc), 3.0)
+        np.testing.assert_allclose(float(result.scale), 1.0)
+
+    def test_probpipe_to_tfp_beta(self):
+        b = Beta(alpha=2.0, beta=5.0, name="b")
+        result = converter_registry.convert(b, tfd.Beta)
+        assert isinstance(result, tfd.Beta)
+        np.testing.assert_allclose(float(result.concentration1), 2.0)
+        np.testing.assert_allclose(float(result.concentration0), 5.0)
+
+    def test_tfp_to_probpipe_provenance(self):
+        result = converter_registry.convert(tfd.Normal(0, 1), Normal)
+        assert result.source is not None
+        assert result.source.operation == "convert_from_tfp"
+
+    def test_unknown_tfp_to_empirical(self):
+        """Unknown TFP types fall back to sampling → RecordEmpiricalDistribution."""
+        # Use a TFP distribution we haven't mapped
+        tfp_dist = tfd.VonMises(loc=0.0, concentration=1.0)
+        result = converter_registry.convert(tfp_dist, RecordEmpiricalDistribution, num_samples=50)
+        assert isinstance(result, RecordEmpiricalDistribution)
+        assert result.num_atoms == 50
+
+    def test_probpipe_mvn_to_tfp(self):
+        loc = jnp.array([1.0, 2.0])
+        cov = jnp.array([[1.0, 0.3], [0.3, 2.0]])
+        mvn = MultivariateNormal(loc=loc, cov=cov, name="z")
+        result = converter_registry.convert(mvn, tfd.MultivariateNormalTriL)
+        assert isinstance(result, tfd.MultivariateNormalTriL)
+        np.testing.assert_allclose(result.loc, loc, atol=1e-5)
+
+    def test_probpipe_to_tfp_round_trip(self):
+        n = Normal(loc=5.0, scale=2.0, name="x")
+        tfp_n = converter_registry.convert(n, tfd.Normal)
+        n2 = converter_registry.convert(tfp_n, Normal)
+        np.testing.assert_allclose(float(n2._loc), 5.0)
+        np.testing.assert_allclose(float(n2._scale), 2.0)
+
+    def test_tfp_cross_family_chain(self):
+        """TFP Gamma → ProbPipe Normal via chained conversion."""
+        tfp_g = tfd.Gamma(concentration=9.0, rate=1.0)
+        result = converter_registry.convert(tfp_g, Normal, num_samples=5000)
+        assert isinstance(result, Normal)
+        np.testing.assert_allclose(float(result._loc), 9.0, atol=0.5)
+
+    def test_probpipe_gamma_to_tfp(self):
+        g = Gamma(concentration=3.0, rate=1.0, name="g")
+        result = converter_registry.convert(g, tfd.Gamma)
+        assert isinstance(result, tfd.Gamma)
+        np.testing.assert_allclose(float(result.concentration), 3.0)
+
+    def test_probpipe_exponential_to_tfp(self):
+        e = Exponential(rate=2.0, name="e")
+        result = converter_registry.convert(e, tfd.Exponential)
+        assert isinstance(result, tfd.Exponential)
+        np.testing.assert_allclose(float(result.rate), 2.0)
+
+    def test_probpipe_bernoulli_to_tfp(self):
+        b = Bernoulli(probs=0.3, name="b")
+        result = converter_registry.convert(b, tfd.Bernoulli)
+        assert isinstance(result, tfd.Bernoulli)
+
+    def test_probpipe_dirichlet_to_tfp(self):
+        d = Dirichlet(concentration=jnp.array([2.0, 3.0, 1.0]), name="d")
+        result = converter_registry.convert(d, tfd.Dirichlet)
+        assert isinstance(result, tfd.Dirichlet)
+
+    def test_tfp_poisson_to_probpipe(self):
+        result = converter_registry.convert(tfd.Poisson(rate=3.0), Poisson)
+        assert isinstance(result, Poisson)
+        np.testing.assert_allclose(float(result._rate), 3.0)
+
+    def test_tfp_categorical_to_probpipe(self):
+        probs = jnp.array([0.2, 0.3, 0.5])
+        result = converter_registry.convert(tfd.Categorical(probs=probs), Categorical)
+        assert isinstance(result, Categorical)
+        np.testing.assert_allclose(result._probs, probs, atol=1e-5)
+
+    def test_tfp_dirichlet_to_probpipe(self):
+        conc = jnp.array([2.0, 3.0])
+        result = converter_registry.convert(tfd.Dirichlet(concentration=conc), Dirichlet)
+        assert isinstance(result, Dirichlet)
+
+    def test_tfp_mvn_diag_to_probpipe(self):
+        result = converter_registry.convert(
+            tfd.MultivariateNormalDiag(loc=jnp.zeros(2), scale_diag=jnp.ones(2)),
+            MultivariateNormal,
+        )
+        assert isinstance(result, MultivariateNormal)
+
+    def test_is_distribution_type_for_tfp(self):
+        assert converter_registry.is_distribution_type(tfd.Gamma(1.0, 1.0))
+
+
+# ---------------------------------------------------------------------------
+# Scipy ↔ ProbPipe (optional)
+# ---------------------------------------------------------------------------
+
+class TestScipyConverter:
+
+    @pytest.fixture(autouse=True)
+    def _check_scipy(self):
+        pytest.importorskip("scipy")
+
+    def test_scipy_norm_to_probpipe(self):
+        import scipy.stats as ss
+        result = converter_registry.convert(ss.norm(loc=1.0, scale=2.0), Normal)
+        assert isinstance(result, Normal)
+        np.testing.assert_allclose(float(result._loc), 1.0)
+        np.testing.assert_allclose(float(result._scale), 2.0)
+
+    def test_scipy_beta_to_probpipe(self):
+        import scipy.stats as ss
+        result = converter_registry.convert(ss.beta(2.0, 5.0), Beta)
+        assert isinstance(result, Beta)
+        np.testing.assert_allclose(float(result._alpha), 2.0)
+        np.testing.assert_allclose(float(result._beta), 5.0)
+
+    def test_scipy_gamma_to_probpipe(self):
+        import scipy.stats as ss
+        result = converter_registry.convert(ss.gamma(3.0, scale=2.0), Gamma)
+        assert isinstance(result, Gamma)
+        np.testing.assert_allclose(float(result._concentration), 3.0)
+        np.testing.assert_allclose(float(result._rate), 0.5)  # rate = 1/scale
+
+    def test_probpipe_to_scipy(self):
+        import scipy.stats as ss
+        from scipy.stats._distn_infrastructure import rv_frozen
+        n = Normal(loc=3.0, scale=1.0, name="x")
+        result = converter_registry.convert(n, rv_frozen)
+        assert isinstance(result, rv_frozen)
+        np.testing.assert_allclose(result.mean(), 3.0)
+        np.testing.assert_allclose(result.std(), 1.0)
+
+    def test_scipy_provenance(self):
+        import scipy.stats as ss
+        result = converter_registry.convert(ss.norm(0, 1), Normal)
+        assert result.source is not None
+        assert result.source.operation == "convert_from_scipy"
+
+    def test_scipy_norm_positional_args(self):
+        """Scipy norm created with positional args should still extract correctly."""
+        import scipy.stats as ss
+        result = converter_registry.convert(ss.norm(1.0, 2.0), Normal)
+        assert isinstance(result, Normal)
+        np.testing.assert_allclose(float(result._loc), 1.0)
+        np.testing.assert_allclose(float(result._scale), 2.0)
+
+    def test_scipy_beta_keyword_args(self):
+        """Scipy beta created with keyword args should extract correctly."""
+        import scipy.stats as ss
+        result = converter_registry.convert(ss.beta(a=2.0, b=5.0), Beta)
+        assert isinstance(result, Beta)
+        np.testing.assert_allclose(float(result._alpha), 2.0)
+        np.testing.assert_allclose(float(result._beta), 5.0)
+
+    def test_scipy_expon_to_probpipe(self):
+        import scipy.stats as ss
+        result = converter_registry.convert(ss.expon(scale=2.0), Exponential)
+        assert isinstance(result, Exponential)
+        np.testing.assert_allclose(float(result._rate), 0.5)
+
+    def test_scipy_uniform_to_probpipe(self):
+        import scipy.stats as ss
+        result = converter_registry.convert(ss.uniform(loc=1.0, scale=3.0), Uniform)
+        assert isinstance(result, Uniform)
+        np.testing.assert_allclose(float(result._low), 1.0)
+        np.testing.assert_allclose(float(result._high), 4.0)
+
+    def test_scipy_laplace_to_probpipe(self):
+        import scipy.stats as ss
+        result = converter_registry.convert(ss.laplace(loc=2.0, scale=0.5), Laplace)
+        assert isinstance(result, Laplace)
+        np.testing.assert_allclose(float(result._loc), 2.0)
+        np.testing.assert_allclose(float(result._scale), 0.5)
+
+    def test_probpipe_gamma_to_scipy(self):
+        from scipy.stats._distn_infrastructure import rv_frozen
+        g = Gamma(concentration=3.0, rate=0.5, name="g")
+        result = converter_registry.convert(g, rv_frozen)
+        assert isinstance(result, rv_frozen)
+        np.testing.assert_allclose(result.mean(), 6.0, atol=0.01)
+
+    def test_probpipe_exponential_to_scipy(self):
+        from scipy.stats._distn_infrastructure import rv_frozen
+        e = Exponential(rate=2.0, name="e")
+        result = converter_registry.convert(e, rv_frozen)
+        assert isinstance(result, rv_frozen)
+        np.testing.assert_allclose(result.mean(), 0.5, atol=0.01)
+
+    def test_probpipe_beta_to_scipy(self):
+        from scipy.stats._distn_infrastructure import rv_frozen
+        b = Beta(alpha=2.0, beta=5.0, name="b")
+        result = converter_registry.convert(b, rv_frozen)
+        assert isinstance(result, rv_frozen)
+        np.testing.assert_allclose(result.mean(), 2.0 / 7.0, atol=0.01)
+
+    def test_unknown_scipy_fallback_to_sampling(self):
+        """Unknown scipy distribution type falls back to sampling."""
+        import scipy.stats as ss
+        # Use a scipy distribution we haven't mapped (e.g., chi2)
+        result = converter_registry.convert(ss.chi2(df=3), RecordEmpiricalDistribution, num_samples=100)
+        assert isinstance(result, RecordEmpiricalDistribution)
+        assert result.num_atoms == 100
+
+    def test_scipy_check_unknown_type(self):
+        import scipy.stats as ss
+        info = converter_registry.check(ss.chi2(df=3), Normal)
+        assert info.feasible
+        assert info.method == ConversionMethod.SAMPLE
+
+    def test_is_distribution_type_scipy(self):
+        import scipy.stats as ss
+        assert converter_registry.is_distribution_type(ss.norm(0, 1))
+
+
+# ---------------------------------------------------------------------------
+# Custom converter registration
+# ---------------------------------------------------------------------------
+
+class TestCustomConverter:
+
+    def test_register_custom_converter(self):
+        class DummyDist:
+            def __init__(self, val):
+                self.val = val
+
+        class DummyConverter(Converter):
+            def source_types(self):
+                return (DummyDist,)
+            def target_types(self):
+                return (Normal,)
+            def check(self, source, target_type):
+                if isinstance(source, DummyDist) and target_type is Normal:
+                    return ConversionInfo(feasible=True, method=ConversionMethod.EXACT)
+                return ConversionInfo(feasible=False)
+            def convert(self, source, target_type, *, key=None, **kwargs):
+                return Normal(loc=source.val, scale=1.0, name="x")
+            @property
+            def priority(self):
+                return 10
+
+        converter_registry.register(DummyConverter())
+        try:
+            d = DummyDist(42.0)
+            assert converter_registry.is_distribution_type(d)
+            result = converter_registry.convert(d, Normal)
+            assert isinstance(result, Normal)
+            np.testing.assert_allclose(float(result._loc), 42.0)
+        finally:
+            # Clean up: remove the dummy converter
+            converter_registry._converters = [
+                c for c in converter_registry._converters
+                if not isinstance(c, DummyConverter)
+            ]
+            converter_registry._type_cache.clear()
+
+
+# ---------------------------------------------------------------------------
+# from_distribution() backward compatibility
+# ---------------------------------------------------------------------------
+
+class TestFromDistributionDelegation:
+    """Verify from_distribution() delegates to the registry."""
+
+    def test_from_distribution_same_class(self):
+        n = Normal(loc=2.0, scale=0.5, name="x")
+        result = from_distribution(n, Normal)
+        assert isinstance(result, Normal)
+        np.testing.assert_allclose(float(result._loc), 2.0)
+
+    def test_from_distribution_cross_family(self):
+        g = Gamma(concentration=9.0, rate=1.0, name="g")
+        result = from_distribution(g, Normal, num_samples=5000)
+        assert isinstance(result, Normal)
+        np.testing.assert_allclose(float(result._loc), 9.0, atol=0.5)
+
+    def test_from_distribution_support_check(self):
+        n = Normal(loc=0.5, scale=0.1, name="x")
+        with pytest.raises(ValueError, match="support"):
+            from_distribution(n, Beta)
+
+    def test_from_distribution_check_support_false(self):
+        n = Normal(loc=0.5, scale=0.1, name="x")
+        result = from_distribution(n, Beta, check_support=False)
+        assert isinstance(result, Beta)
+
+    def test_from_distribution_to_empirical(self):
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        emp = from_distribution(n, RecordEmpiricalDistribution, num_samples=50)
+        assert isinstance(emp, RecordEmpiricalDistribution)
+        assert emp.num_atoms == 50
+
+    def test_empirical_to_empirical_returns_source(self):
+        samples = jnp.array([[1.0], [2.0], [3.0]])
+        emp = RecordEmpiricalDistribution(samples, name="orig")
+        emp2 = from_distribution(emp, RecordEmpiricalDistribution)
+        # Same-class: returns source directly
+        assert emp2 is emp
+
+
+# ---------------------------------------------------------------------------
+# Edge cases
+# ---------------------------------------------------------------------------
+
+class TestBootstrapMetadata:
+    """Verify bootstrap distributions are stored in provenance metadata
+    when the source distribution uses MC fallback for mean/variance."""
+
+    def test_analytical_moments_no_bootstrap(self):
+        """TFP distributions have exact mean/var, so no bootstrap in metadata."""
+        g = Gamma(concentration=9.0, rate=1.0, name="g")
+        result = converter_registry.convert(g, Normal, num_samples=500)
+        assert result.source is not None
+        meta = result.source.metadata
+        # Gamma has analytical mean/variance → no BootstrapDistribution stored
+        assert "mean_bootstrap" not in meta
+        assert "var_bootstrap" not in meta
+
+    def test_empirical_moments_have_bootstrap(self):
+        """RecordEmpiricalDistribution uses MC for mean/var, producing bootstrap metadata."""
+        samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
+        emp = RecordEmpiricalDistribution(samples[:, None], name="x")
+        result = converter_registry.convert(emp, Normal)
+        assert result.source is not None
+        # EmpiricalDistribution._mean()/_variance() return plain arrays;
+        # at minimum, provenance should be attached
+        assert result.source.operation == "from_distribution"
+
+    def test_same_class_no_bootstrap_metadata(self):
+        """Same-class conversion returns source directly, no provenance."""
+        n = Normal(loc=2.0, scale=0.5, name="x")
+        result = converter_registry.convert(n, Normal)
+        assert result is n  # same object, no conversion
+
+    def test_cross_family_provenance_attached(self):
+        """Cross-family conversion attaches provenance with source as parent."""
+        g = Gamma(concentration=9.0, rate=1.0, name="g")
+        result = converter_registry.convert(g, Normal)
+        assert result.source is not None
+        assert result.source.operation == "from_distribution"
+        assert g in result.source.parents
+
+
+class TestEdgeCases:
+
+    def test_convert_none_raises(self):
+        with pytest.raises(TypeError):
+            converter_registry.convert(None, Normal)
+
+    def test_convert_non_type_target_raises(self):
+        with pytest.raises(TypeError, match="No converter"):
+            converter_registry.convert(Normal(0, 1, name="x"), str)
+
+    def test_check_infeasible_non_type_target(self):
+        info = converter_registry.check(Normal(0, 1, name="x"), "not a type")
+        assert not info.feasible
+
+
+# ---------------------------------------------------------------------------
+# Protocol-based conversion
+# ---------------------------------------------------------------------------
+
+from probpipe.core.protocols import (
+    SupportsLogProb,
+    SupportsSampling,
+    SupportsMean,
+    SupportsVariance,
+    SupportsCovariance,
+)
+from probpipe.distributions.kde import KDEDistribution
+
+
+class TestProtocolConversion:
+    """Tests for converting distributions to satisfy a protocol."""
+
+    def test_already_satisfies_returns_same(self):
+        """Distribution that already satisfies the protocol is returned unchanged."""
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        result = converter_registry.convert(n, SupportsLogProb)
+        assert result is n
+
+    def test_scalar_empirical_to_supports_log_prob(self):
+        """Scalar RecordEmpiricalDistribution converts to KDE via SupportsLogProb."""
+        from probpipe.distributions.kde import KDEDistribution
+
+        samples = jax.random.normal(jax.random.PRNGKey(0), (300,))
+        emp = RecordEmpiricalDistribution(samples, name="x")
+        result = converter_registry.convert(emp, SupportsLogProb)
+        assert isinstance(result, SupportsLogProb)
+        assert isinstance(result, KDEDistribution)
+        np.testing.assert_allclose(float(result._mean()), float(emp._mean()), atol=0.01)
+        np.testing.assert_allclose(
+            float(result._variance()), float(emp._variance()), atol=0.3,
+        )
+
+    def test_multivariate_empirical_to_supports_log_prob(self):
+        """Multivariate (single-field with d-dim event) RecordEmpirical → KDE."""
+        from probpipe.distributions.kde import KDEDistribution
+
+        samples = jax.random.normal(jax.random.PRNGKey(1), (300, 4))
+        emp = RecordEmpiricalDistribution(samples, name="x")
+        result = converter_registry.convert(emp, SupportsLogProb)
+        assert isinstance(result, SupportsLogProb)
+        assert isinstance(result, KDEDistribution)
+        np.testing.assert_allclose(
+            np.array(result._mean()), np.array(emp._mean()), atol=0.2,
+        )
+
+    def test_multi_field_record_empirical_to_kde(self):
+        """Multi-field RecordEmpirical → KDE via flat_samples (n, total_dim).
+
+        Pre-fix this raised because ``_convert_to_kde`` fell through to
+        ``source._sample(key, (n,))`` which returned a NumericRecord;
+        ``KDEDistribution(NumericRecord)`` then tripped the multi-field
+        shape shim. The fix routes multi-field empiricals through
+        ``source.flat_samples`` (KDE accepts a flat (n, dim) matrix).
+        """
+        from probpipe import Record
+        from probpipe.distributions.kde import KDEDistribution
+
+        n = 200
+        rec = Record(
+            mu=jax.random.normal(jax.random.PRNGKey(2), (n,)),
+            log_sigma=jax.random.normal(jax.random.PRNGKey(3), (n,)),
+        )
+        emp = RecordEmpiricalDistribution(rec)
+        result = converter_registry.convert(emp, SupportsLogProb)
+        assert isinstance(result, KDEDistribution)
+        # KDE got the flat (n, 2) matrix.
+        assert result.num_atoms == n
+        # log_prob over a single 2-vector returns a scalar.
+        lp = result._log_prob(jnp.array([0.0, 0.0]))
+        assert lp.shape == ()
+
+    def test_single_field_record_empirical_to_kde_unchanged(self):
+        """Single-field path stays on the fast path (passes the field
+        array straight to KDE rather than going via ``flat_samples``).
+
+        Pinned so a future ``flat_samples``-everywhere refactor doesn't
+        silently change the single-field behaviour. The (n,) auto-wrap
+        case keeps its 0-D KDE event shape.
+        """
+        from probpipe.distributions.kde import KDEDistribution
+
+        samples = jax.random.normal(jax.random.PRNGKey(4), (150,))
+        emp = RecordEmpiricalDistribution(samples, name="theta")
+        result = converter_registry.convert(emp, SupportsLogProb)
+        assert isinstance(result, KDEDistribution)
+        # Scalar event — direct field passthrough, not flattened.
+        assert result.event_shape == ()
+
+    def test_weighted_single_field_empirical_to_kde_preserves_weights(self):
+        """Single-field empirical with non-uniform weights → KDE with
+        the same weights (gap A in the review)."""
+        from probpipe.distributions.kde import KDEDistribution
+
+        n = 80
+        samples = jax.random.normal(jax.random.PRNGKey(5), (n,))
+        weights = jnp.linspace(0.1, 1.0, n)
+        emp = RecordEmpiricalDistribution(samples, weights=weights, name="x")
+        result = converter_registry.convert(emp, SupportsLogProb)
+        assert isinstance(result, KDEDistribution)
+        # KDE preserves the source's normalised weights (the converter
+        # passes ``weights=source._w``; KDE may rebuild a Weights
+        # internally, but the normalised values must match).
+        np.testing.assert_allclose(
+            np.asarray(result._w.normalized),
+            np.asarray(emp._w.normalized),
+            atol=1e-6,
+        )
+        assert not result._w.is_uniform
+
+    def test_object_array_empirical_to_kde_rejected(self):
+        """Generic (object-array) EmpiricalDistribution → KDE raises
+        a clear TypeError (gap B in the review).
+
+        Without the explicit raise, KDE construction would fail
+        somewhere deep with a confusing dtype error.
+        """
+        emp = EmpiricalDistribution(["a", "b", "c"])
+        with pytest.raises(
+            TypeError, match="generic .object-array. EmpiricalDistribution",
+        ):
+            converter_registry.convert(emp, SupportsLogProb)
+
+    def test_check_protocol_already_satisfied(self):
+        """check() returns EXACT when protocol is already satisfied."""
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        info = converter_registry.check(n, SupportsLogProb)
+        assert info.feasible
+        assert info.method == ConversionMethod.EXACT
+
+    def test_check_protocol_needs_conversion(self):
+        """check() returns feasible when conversion is possible."""
+        samples = jax.random.normal(jax.random.PRNGKey(2), (100,))
+        emp = RecordEmpiricalDistribution(samples, name="x")
+        info = converter_registry.check(emp, SupportsLogProb)
+        assert info.feasible
+        assert info.method == ConversionMethod.MOMENT_MATCH
+
+    def test_unregistered_protocol_raises(self):
+        """Unregistered protocol raises TypeError when source doesn't satisfy it."""
+        from probpipe.core.protocols import SupportsConditioning
+
+        samples = jax.random.normal(jax.random.PRNGKey(3), (50,))
+        emp = RecordEmpiricalDistribution(samples, name="x")
+        # SupportsConditioning is not registered as a protocol target
+        # and EmpiricalDistribution does not satisfy it
+        with pytest.raises(TypeError):
+            converter_registry.convert(emp, SupportsConditioning)
+
+    def test_from_distribution_with_protocol(self):
+        """from_distribution() works with protocol targets."""
+        samples = jax.random.normal(jax.random.PRNGKey(4), (200,))
+        emp = RecordEmpiricalDistribution(samples, name="x")
+        result = from_distribution(emp, SupportsLogProb)
+        assert isinstance(result, SupportsLogProb)
+
+    def test_protocol_conversion_preserves_provenance(self):
+        """Protocol-based conversion attaches provenance."""
+        samples = jax.random.normal(jax.random.PRNGKey(5), (200,))
+        emp = RecordEmpiricalDistribution(samples, name="posterior")
+        result = converter_registry.convert(emp, SupportsLogProb)
+        assert result.source is not None
+        assert emp in result.source.parents
+
+
+# ---------------------------------------------------------------------------
+# KDEDistribution
+# ---------------------------------------------------------------------------
+
+
+class TestKDEDistribution:
+    """Tests for KDEDistribution."""
+
+    def test_scalar_construction(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (100,))
+        kde = KDEDistribution(samples)
+        assert kde.event_shape == ()
+        assert not hasattr(kde, "batch_shape")
+        assert kde.num_atoms == 100
+
+    def test_multivariate_construction(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
+        kde = KDEDistribution(samples)
+        assert kde.event_shape == (3,)
+        assert kde.num_atoms == 100
+
+    def test_log_prob_finite(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
+        kde = KDEDistribution(samples)
+        lp = kde._log_prob(0.0)
+        assert jnp.isfinite(lp)
+
+    def test_log_prob_multivariate(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (200, 2))
+        kde = KDEDistribution(samples)
+        lp = kde._log_prob(jnp.zeros(2))
+        assert jnp.isfinite(lp)
+
+    def test_sample_shape_scalar(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (100,))
+        kde = KDEDistribution(samples)
+        s = kde._sample(jax.random.PRNGKey(1), (5,))
+        assert s.shape == (5,)
+
+    def test_sample_shape_multivariate(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
+        kde = KDEDistribution(samples)
+        s = kde._sample(jax.random.PRNGKey(1), (5,))
+        assert s.shape == (5, 3)
+
+    def test_mean_close_to_sample_mean(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (500,))
+        kde = KDEDistribution(samples)
+        np.testing.assert_allclose(
+            float(kde._mean()), float(jnp.mean(samples)), atol=0.01,
+        )
+
+    def test_variance_larger_than_sample_variance(self):
+        """KDE variance = sample variance + bandwidth^2, so should be larger."""
+        samples = jax.random.normal(jax.random.PRNGKey(0), (500,))
+        kde = KDEDistribution(samples)
+        sample_var = float(jnp.var(samples))
+        kde_var = float(kde._variance())
+        assert kde_var > sample_var
+
+    def test_weighted_construction(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (100,))
+        weights = jnp.ones(100)
+        weights = weights.at[0].set(10.0)
+        kde = KDEDistribution(samples, weights=weights)
+        assert kde.num_atoms == 100
+        lp = kde._log_prob(0.0)
+        assert jnp.isfinite(lp)
+
+    def test_custom_bandwidth(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (100,))
+        kde = KDEDistribution(samples, bandwidth=0.5)
+        lp = kde._log_prob(0.0)
+        assert jnp.isfinite(lp)
+
+    def test_supports_protocols(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (100,))
+        kde = KDEDistribution(samples)
+        assert isinstance(kde, SupportsLogProb)
+        assert isinstance(kde, SupportsSampling)
+        assert isinstance(kde, SupportsMean)
+        assert isinstance(kde, SupportsVariance)
+        assert isinstance(kde, SupportsCovariance)
+
+    def test_convert_empirical_to_kde(self):
+        """from_distribution(empirical, KDEDistribution) works."""
+        samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
+        emp = RecordEmpiricalDistribution(samples, name="x")
+        kde = converter_registry.convert(emp, KDEDistribution)
+        assert isinstance(kde, KDEDistribution)
+        assert kde.num_atoms == 200
+        np.testing.assert_allclose(
+            float(kde._mean()), float(emp._mean()), atol=0.01,
+        )
+
+    def test_convert_normal_to_kde(self):
+        """Converting a parametric distribution to KDE works via sampling."""
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        kde = converter_registry.convert(n, KDEDistribution, num_samples=500)
+        assert isinstance(kde, KDEDistribution)
+        assert kde.num_atoms == 500
+
+    def test_cov_scalar(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
+        kde = KDEDistribution(samples)
+        cov = kde._cov()
+        assert cov.shape == ()
+
+    def test_cov_multivariate(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (200, 3))
+        kde = KDEDistribution(samples)
+        cov = kde._cov()
+        assert cov.shape == (3, 3)
+
+    def test_repr(self):
+        samples = jax.random.normal(jax.random.PRNGKey(0), (50,))
+        kde = KDEDistribution(samples, name="test_kde")
+        r = repr(kde)
+        assert "KDEDistribution" in r
+        assert "num_atoms=50" in r

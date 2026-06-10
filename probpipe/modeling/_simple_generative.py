@@ -38,7 +38,7 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsSampl
     prior : SupportsSampling[P]
         Prior distribution over model parameters.  Must support sampling.
     likelihood : GenerativeLikelihood[P, D]
-        Must have a ``generate_data(params, n_samples, *, key)`` method.
+        Must have a ``generate_data(params, num_observations, *, key)`` method.
     name : str or None
         Model name for provenance.
     """
@@ -78,6 +78,10 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsSampl
         *,
         name: str | None = None,
     ):
+        # Type-annotated as ``SupportsSampling[P]`` so static type
+        # checkers catch a wrong-type prior at the call site. The
+        # isinstance check remains as a backstop for callers who
+        # bypass the type system.
         if not isinstance(prior, SupportsSampling):
             raise TypeError(
                 f"SimpleGenerativeModel requires a prior that supports SupportsSampling, "
@@ -90,13 +94,21 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsSampl
             )
         self._prior = prior
         self._likelihood = likelihood
-        self._name_str = name
+        # ``Distribution`` metaclass requires a non-empty name; default
+        # to the class name when the caller doesn't supply one.
+        self._name = name if name else "SimpleGenerativeModel"
 
     # -- Distribution interface ---------------------------------------------
 
     @property
-    def name(self) -> str | None:
-        return self._name_str
+    def prior(self) -> SupportsSampling[P]:
+        """The prior distribution over parameters."""
+        return self._prior
+
+    @property
+    def likelihood(self) -> GenerativeLikelihood[P, D]:
+        """The generative likelihood (provides ``generate_data``)."""
+        return self._likelihood
 
     # -- Named components interface ------------------------------------------
 

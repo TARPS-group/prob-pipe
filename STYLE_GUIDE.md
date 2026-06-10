@@ -98,13 +98,18 @@ condition_on_nutpie = WorkflowFunction(
 - **Distribution classes:** CamelCase, descriptive — `Normal`, `MultivariateNormal`,
   `EmpiricalDistribution`, `BootstrapReplicateDistribution`.
 - **Base / mixin classes:** `Distribution`, `RecordDistribution`,
-  `NumericRecordDistribution`, `TFPDistribution`, `ProbabilisticModel`.
+  `NumericRecordDistribution`, `FlatNumericRecordDistribution`,
+  `TFPDistribution`, `ProbabilisticModel`.
+- **View classes:** end in `DistributionView` — `FlattenedDistributionView`
+  (a `FlatNumericRecordDistribution` produced by `as_flat_distribution`),
+  `NumericRecordDistributionView` (a Record-keyed view produced by
+  `FlatNumericRecordDistribution.as_record_distribution`).
 - **Private helper classes:** Leading underscore — `_LinearMapGRF`, `_ShiftedGRF`.
 
 ### 1.6 Modules
 
 - **Private implementation modules:** Leading underscore — `_simple.py`,
-  `_stan.py`, `_rwmh.py`, `_nutpie.py`.
+  `_stan.py`, `_blackjax_rwmh.py`, `_nutpie.py`.
 - **Public modules:** Descriptive names — `continuous.py`, `discrete.py`,
   `protocols.py`, `ops.py`.
 - **Package `__init__.py`** files re-export the public API. Users should
@@ -117,7 +122,8 @@ Inference methods registered with the ``MethodRegistry`` follow
 ``{backend}_{algorithm}`` naming in ``snake_case``:
 
 ```
-tfp_nuts, tfp_hmc, tfp_rwmh, nutpie_nuts, cmdstan_nuts, pymc_nuts, pymc_advi
+blackjax_nuts, blackjax_hmc, blackjax_rwmh, blackjax_elliptical_slice,
+nutpie_nuts, cmdstan_nuts, pymc_nuts, pymc_advi
 ```
 
 Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
@@ -130,26 +136,36 @@ Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
 and `include_inputs` internally. Use `random_seed` instead when defining
 functions that accept a PRNG seed.
 
-### 1.9 The `.n` property convention
+### 1.9 The `num_atoms` / `replicate_size` property convention
 
-Finite-sample distribution classes expose an `.n` property (read-only
-`int`) giving the number of stored samples, components, or observations.
-The meaning depends on the class but always answers "how many items does
-this distribution hold?"
+Finite-sample distribution classes expose a read-only `int` property
+naming the size of the finite collection they hold. The name reflects
+*what is being counted*:
 
-| Class | `.n` meaning |
-|-------|-------------|
-| `EmpiricalDistribution` | Number of samples |
-| `JointEmpirical` | Number of joint samples |
-| `BootstrapDistribution` | Number of function evaluations |
-| `BootstrapReplicateDistribution` | Number of observations per bootstrap dataset |
-| `BroadcastDistribution` | Number of input–output pairs |
-| `_RecordMarginal` | Number of output samples |
-| `_MixtureMarginal` | Number of mixture components |
-| `_ListMarginal` | Number of output items |
+- **`num_atoms`** — items in an empirical *measure* (atoms / point
+  masses in `\sum_i w_i \delta_{x_i}`). Use for any class whose
+  ``_sample`` returns *one of N stored realisations*.
+- **`replicate_size`** — items in a single bootstrap *replicate*. Use
+  for any class whose ``_sample`` returns a *whole resampled dataset*
+  whose size is the named count. (`*_size` rather than `num_*` because
+  a generative resampler holds no finite atom set — the count is a
+  parameter of the resample, like `batch_size` / `event_size`.)
 
-When adding a new class that wraps a finite collection of samples or
-components, define `.n` as a `@property` returning `int`.
+| Class | Property | Meaning |
+|-------|----------|---------|
+| `EmpiricalDistribution` | `num_atoms` | Stored samples |
+| `RecordEmpiricalDistribution` | `num_atoms` | Stored samples |
+| `JointEmpirical`, `NumericJointEmpirical` | `num_atoms` | Stored joint samples |
+| `BootstrapDistribution` | `num_atoms` | Stored function evaluations |
+| `KDEDistribution` | `num_atoms` | Kernel centres |
+| `BroadcastDistribution`, `_RecordMarginal`, `_MixtureMarginal`, `_ListMarginal` | `num_atoms` | Output samples / components |
+| `ApproximateDistribution` | `num_atoms` (inherited) + `num_draws` (per chain) | total chain × draw / per-chain |
+| `BootstrapReplicateDistribution`, `RecordBootstrapReplicateDistribution` | `replicate_size` (+ `source_size`) | Items per bootstrap replicate, plus optional source-pool size |
+
+When adding a new class that wraps a finite collection, define the
+property as a `@property` returning `int`. Pick the name based on
+what each `_sample` call produces — a single atom (use `num_atoms`)
+or a whole resampled replicate (use `replicate_size`).
 
 ### 1.10 Record field iteration and path access
 
@@ -183,8 +199,9 @@ collection. Every concrete `Distribution` subclass —
 `Normal`, `EmpiricalDistribution`, `BootstrapReplicateDistribution`,
 joint distributions, marginals — is **non-iterable**. For the
 finite-sample subclasses listed in §1.9, stored samples are
-accessed via `.samples` / `.draws()` and `.n` reports the count.
-Parametric distributions do not have `.n`.
+accessed via `.samples` / `.draws()` and the size property
+(`num_atoms` or `replicate_size` per §1.9) reports the count.
+Parametric distributions do not have either property.
 
 Iteration is reserved for the `Record` family — `Record`,
 `NumericRecord`, `RecordArray`, `NumericRecordArray` — which iterate
@@ -241,7 +258,7 @@ positive vs bounded).
 ### 2.3 Private vs public modules
 
 Implementation modules use a leading underscore (`_simple.py`,
-`_rwmh.py`, `_array_backend.py`); the package `__init__.py`
+`_blackjax_rwmh.py`, `_array_backend.py`); the package `__init__.py`
 re-exports their public symbols so users never need to import from
 underscore modules directly.
 
@@ -495,7 +512,7 @@ inference/    (imports core/, custom_types)
 > **Exceptions** (intentional reverse edges):
 >
 > - `inference/` → `modeling/` (lazy imports for model-type dispatch in
->   `_sbijax`, `_tfp_mcmc`, `_nutpie`, `_cmdstan_method`, `_pymc_method`)
+>   `_tfp_mcmc`, `_nutpie`, `_cmdstan_method`, `_pymc_method`)
 >
 > These use lazy (in-function) imports to avoid circular imports at
 > module load time.  Do not add new reverse edges without discussion.
@@ -597,6 +614,15 @@ modules (`_*.py`) whose symbols are re-exported through the package
 
 Distribution objects are immutable. Parameters are fixed at construction;
 operations return new distribution objects rather than mutating state.
+
+**The one carve-out is `Distribution._auxiliary`**, a `DataTree` whose
+job is to collect post-construction metadata (validation results,
+diagnostic outputs, future LOO/WAIC scores) under named groups. Ops
+like `predictive_check` mutate it in place because the alternative —
+returning a renamed clone for every diagnostic — would break the
+source/identity tracking that downstream code relies on. Treat it as
+append-only and never use it as a back-channel for mutating
+parameter-like state.
 
 ### 9.3 Error messages
 

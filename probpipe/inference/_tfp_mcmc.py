@@ -14,114 +14,19 @@ import tensorflow_probability.substrates.jax.mcmc as tfp_mcmc
 
 from ..core._registry import MethodInfo
 from ..core.distribution import Distribution
-from ..core.protocols import SupportsMean, SupportsUnnormalizedLogProb
-from ..custom_types import Array, ArrayLike
-from ..core.record import Record, RecordTemplate
+from ..core.protocols import SupportsUnnormalizedLogProb
+from ..custom_types import Array
 from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ._inference_utils import (
+    as_prng_key,
+    build_mcmc_datatree,
+    build_target_log_prob,
+    extract_record_template,
+    get_init_state,
+    get_prior,
+    is_jax_traceable,
+)
 from ._registry import InferenceMethod
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _is_jax_traceable(fn: Callable, init_state: jnp.ndarray) -> bool:
-    """Probe whether *fn* can be traced by JAX."""
-    try:
-        jax.make_jaxpr(fn)(init_state)
-        return True
-    except Exception:
-        return False
-
-
-def _get_init_state(
-    dist: Distribution, init: ArrayLike | None, data: ArrayLike | None,
-) -> jnp.ndarray:
-    """Determine an initial chain state from the distribution or data."""
-    # Inherit dtype from the target distribution when available, so that
-    # log_prob/sample stay self-consistent under JAX x64.
-    target_dtype = getattr(dist, "dtype", None)
-    if not isinstance(target_dtype, jnp.dtype):
-        from .._dtype import _default_float_dtype
-        target_dtype = _default_float_dtype()
-
-    if init is not None:
-        return jnp.atleast_1d(jnp.asarray(init, dtype=target_dtype))
-
-    if isinstance(dist, SupportsMean):
-        try:
-            m = dist._mean()
-            if isinstance(m, Record):
-                from ..core._numeric_record import NumericRecord
-                if not isinstance(m, NumericRecord):
-                    m = NumericRecord.from_record(m)
-                m = m.flatten()
-            return jnp.atleast_1d(jnp.asarray(m, dtype=target_dtype))
-        except Exception:
-            pass
-
-    if data is not None:
-        return jnp.atleast_1d(jnp.mean(jnp.asarray(data), axis=0))
-
-    if hasattr(dist, "event_shape"):
-        return jnp.zeros(dist.event_shape, dtype=target_dtype)
-
-    raise ValueError(
-        "Cannot determine initial state: provide init=, "
-        "a distribution with SupportsMean, or observed data."
-    )
-
-
-def _is_simple_model(dist: Distribution) -> bool:
-    """Check if *dist* is a SimpleModel (lazy import to avoid circularity)."""
-    from ..modeling._simple import SimpleModel
-    return isinstance(dist, SimpleModel)
-
-
-def _build_target_log_prob(dist: Distribution, observed: ArrayLike | Record | None) -> Callable[[jnp.ndarray], Array]:
-    """Build a target_log_prob_fn(params) from *dist* and *observed*.
-
-    Handles three cases:
-
-    1. **SimpleModel** (has prior + likelihood):
-       ``prior._log_prob(params) + likelihood.log_likelihood(params, data)``
-    2. **Bare SupportsUnnormalizedLogProb with data**:
-       ``dist._unnormalized_log_prob(params)`` (data is assumed already
-       folded in, e.g., via closure).
-    3. **Joint over (params, data)**: ``dist._unnormalized_log_prob((params, data))``
-
-    The unnormalized accessor is used for cases 2 and 3 because MCMC
-    samplers do not require a normalized density. Distributions that
-    only implement ``_log_prob`` are unaffected: the ``SupportsLogProb``
-    protocol provides a default ``_unnormalized_log_prob`` that
-    delegates to ``_log_prob``.
-
-    Observed data is passed through to the likelihood as-is (may be a
-    raw array, a ``Record`` object, or a dict — the likelihood handles
-    its own input types).
-    """
-    if _is_simple_model(dist):
-        data = observed
-        # Records now store values verbatim (no lazy conversion), so we
-        # no longer have to pre-resolve to avoid tracer leaks. Left as a
-        # no-op Record rebuild for backwards-compatible safety under JIT
-        # if callers pass in non-JAX array leaves (e.g. numpy).
-        from ..core.record import Record
-        if isinstance(data, Record):
-            data = Record({f: jnp.asarray(data[f]) for f in data.fields})
-
-        def target_log_prob_fn(params):
-            lp = dist._prior._log_prob(params)
-            if data is not None:
-                lp = lp + dist._likelihood.log_likelihood(params=params, data=data)
-            return lp
-
-        return target_log_prob_fn
-
-    if observed is not None:
-        return lambda params: dist._unnormalized_log_prob((params, observed))
-
-    return dist._unnormalized_log_prob
 
 
 def _run_tfp_chains(
@@ -164,8 +69,7 @@ def _run_tfp_chains(
     else:
         kernel = inner_kernel
 
-    key = jax.random.PRNGKey(random_seed)
-    chain_keys = jax.random.split(key, num_chains)
+    chain_keys = jax.random.split(as_prng_key(random_seed), num_chains)
 
     def _run_one_chain(chain_key):
         return tfp_mcmc.sample_chain(
@@ -212,77 +116,6 @@ def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, np.ndarray]
 
 
 # ---------------------------------------------------------------------------
-# Auxiliary DataTree builder (MCMC-specific)
-# ---------------------------------------------------------------------------
-
-
-def _build_mcmc_datatree(
-    chains: list[Array],
-    sample_stats: dict[str, np.ndarray] | None = None,
-    warmup_chains: list[Array] | None = None,
-) -> DataTree:
-    """Build an arviz-convention DataTree from MCMC chains + diagnostics.
-
-    Groups: ``posterior``, ``sample_stats`` (if provided), ``warmup``
-    (if provided).
-    """
-    import arviz as az
-    import xarray as xr
-
-    def _stack(chain_list):
-        return np.stack([np.asarray(c) for c in chain_list], axis=0)
-
-    posterior_dict = {"params": _stack(chains)}
-    # arviz 1.x from_dict takes a positional groups dict;
-    # arviz 0.x takes keyword arguments (posterior=, sample_stats=, ...).
-    import inspect
-    sig = inspect.signature(az.from_dict)
-    first_param = next(iter(sig.parameters))
-    if first_param == "posterior":
-        # arviz 0.x keyword-style API
-        kw: dict = {"posterior": posterior_dict}
-        if sample_stats:
-            kw["sample_stats"] = sample_stats
-        dt = az.from_dict(**kw)
-    else:
-        # arviz 1.x groups-dict API
-        groups: dict = {"posterior": posterior_dict}
-        if sample_stats:
-            groups["sample_stats"] = sample_stats
-        dt = az.from_dict(groups)
-
-    if warmup_chains is not None and all(w is not None for w in warmup_chains):
-        warmup_array = _stack(warmup_chains)
-        n_chains, n_warmup = warmup_array.shape[:2]
-        event_dims = [f"params_dim_{i}" for i in range(warmup_array.ndim - 2)]
-        dims = ["chain", "draw"] + event_dims
-        warmup_ds = xr.Dataset({
-            "params": xr.DataArray(
-                warmup_array, dims=dims,
-                coords={"chain": np.arange(n_chains), "draw": np.arange(n_warmup)},
-            ),
-        })
-        dt["warmup"] = xr.DataTree(dataset=warmup_ds)
-
-    return dt
-
-
-# ---------------------------------------------------------------------------
-# Helpers for prior extraction
-# ---------------------------------------------------------------------------
-
-def _get_prior(dist: Distribution) -> Distribution:
-    """Extract the prior from a model, or return dist itself."""
-    return dist._prior if _is_simple_model(dist) else dist
-
-
-def _extract_record_template(dist: Distribution) -> RecordTemplate | None:
-    """Return the RecordTemplate from *dist*'s prior, or ``None``."""
-    prior = _get_prior(dist)
-    return prior.record_template
-
-
-# ---------------------------------------------------------------------------
 # Inference methods
 # ---------------------------------------------------------------------------
 
@@ -314,9 +147,12 @@ class _TFPGradientMethod(InferenceMethod):
             return MethodInfo(feasible=False, method_name=self.name,
                               description="Requires SupportsUnnormalizedLogProb")
         try:
-            target = _build_target_log_prob(dist, observed)
-            init = _get_init_state(_get_prior(dist), kwargs.get("init"), observed)
-            if not _is_jax_traceable(target, init):
+            target = build_target_log_prob(dist, observed)
+            init = get_init_state(
+                dist, kwargs.get("init"),
+                random_seed=kwargs.get("random_seed", 0),
+            )
+            if not is_jax_traceable(target, init):
                 return MethodInfo(feasible=False, method_name=self.name,
                                   description="Log-prob is not JAX-traceable")
         except Exception as e:
@@ -325,10 +161,13 @@ class _TFPGradientMethod(InferenceMethod):
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
-        target = _build_target_log_prob(dist, observed)
-        prior = _get_prior(dist)
-        init = _get_init_state(prior, kwargs.get("init"), observed)
-        record_template = _extract_record_template(dist)
+        random_seed = kwargs.get("random_seed", 0)
+        target = build_target_log_prob(dist, observed)
+        prior = get_prior(dist)
+        init = get_init_state(
+            dist, kwargs.get("init"), random_seed=random_seed,
+        )
+        record_template = extract_record_template(dist)
 
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 500)
@@ -341,9 +180,9 @@ class _TFPGradientMethod(InferenceMethod):
             num_warmup=num_warmup,
             num_chains=num_chains,
             step_size=kwargs.get("step_size", 0.1),
-            random_seed=kwargs.get("random_seed", 0),
+            random_seed=random_seed,
         )
-        auxiliary = _build_mcmc_datatree(chains, sample_stats)
+        auxiliary = build_mcmc_datatree(chains, sample_stats)
         return make_posterior(
             chains, parents=(prior,), algorithm=self._method_name,
             auxiliary=auxiliary, record_template=record_template,
@@ -352,10 +191,23 @@ class _TFPGradientMethod(InferenceMethod):
 
 
 def TFPNutsMethod() -> _TFPGradientMethod:
-    """TFP No-U-Turn Sampler (gradient-based MCMC)."""
-    return _TFPGradientMethod("nuts", "tfp_nuts", 100)
+    """TFP No-U-Turn Sampler (gradient-based MCMC).
+
+    Opt-in only (``priority=0``); reach via ``method="tfp_nuts"``.
+    ``blackjax_nuts`` is the auto-dispatch default for any
+    ``SupportsLogProb`` + JAX-traceable target. This method stays
+    available for bit-pattern regression or side-by-side backend
+    comparison.
+    """
+    return _TFPGradientMethod("nuts", "tfp_nuts", 0)
 
 
 def TFPHmcMethod() -> _TFPGradientMethod:
-    """TFP Hamiltonian Monte Carlo."""
-    return _TFPGradientMethod("hmc", "tfp_hmc", 90)
+    """TFP Hamiltonian Monte Carlo.
+
+    Opt-in only (``priority=0``); reach via ``method="tfp_hmc"``.
+    Both HMC kernels (``tfp_hmc`` and ``blackjax_hmc``) sit at
+    ``priority=0`` — they share their respective NUTS sibling's
+    ``check()`` and so are structurally unreachable in auto-dispatch.
+    """
+    return _TFPGradientMethod("hmc", "tfp_hmc", 0)

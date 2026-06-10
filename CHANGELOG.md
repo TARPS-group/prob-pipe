@@ -7,7 +7,569 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`pymc_nuts` reclaims multi-core sampling.** The method previously
+  forced `cores=1` to avoid an `os.fork()` deadlock against JAX's worker
+  threads. It now samples one worker per chain (capped at the CPU count,
+  overridable via a `cores=` kwarg) using the **`spawn`** multiprocessing
+  start method — clean worker processes with no inherited threads, so it
+  is deadlock-free on every platform (POSIX `fork`, the deadlock-prone
+  default on Linux, is never used). Empirically `cores=2` spawn is no
+  slower than the old single-core path; a new test exercises the
+  multi-core path after spinning up JAX's threads to reproduce the
+  hazard.
+
+- **Ecosystem cutover to arviz 1.x and pymc 6 (breaking).** The core
+  `arviz` pin moves `>=0.13,<1.0` → `>=1.1,<2.0`, **dropping arviz 0.x
+  entirely**, and the `[pymc]` extra moves `pymc>=5.28` → `pymc>=6`
+  (pymc 5.x hard-caps `arviz<1.0`; pymc 6.0 is the first
+  arviz-1.x-compatible release). ProbPipe now binds the arviz 1.x split
+  packages **by name** — `arviz_base.from_dict` (`build_mcmc_datatree`),
+  `arviz_base.from_cmdstanpy` (the CmdStan method), and `arviz_stats.*`
+  — never bare `import arviz`; the runtime 0.x/1.x version probes are
+  removed and the auxiliary is an arviz 1.x `xarray.DataTree`
+  throughout (`ApproximateDistribution.warmup_samples` reads
+  `aux.children`). `[pymc]` additionally requires `matplotlib` (the
+  pymc 6 sampler progress bar imports it). Internal pymc-6 fix:
+  `pm.sample_prior_predictive(samples=)` → `draws=` (the `samples=`
+  kwarg was dropped in pymc 6). The
+  ArviZ 1.0 defaults — credible interval 0.94 → 0.89 and HDI → ETI —
+  are adopted as-is: no affected statistic is called in ProbPipe
+  source, so no `rcParams` pin is needed, and a frozen-fixture suite
+  (`tests/inference/test_arviz_regression.py`) locks the 0.89/ETI
+  defaults plus golden `arviz_stats` values as a tripwire against
+  future silent default drift.
+
+- **Core jax / jaxlib floor raised to `>=0.9`; blackjax to `>=1.4`.**
+  With sbijax gone (see *Removed*), the `<0.9` jax / jaxlib cap that
+  existed solely to keep sbijax's hard `jax==0.8.1` pin satisfiable is
+  lifted, and the floor moves up to `>=0.9` — the verified stack
+  resolves to jax 0.10.1. `blackjax` moves `>=1.3` → `>=1.4` (held at
+  `1.3` only to spare sbijax's jax 0.8.1 environment). Users pinned to
+  jax 0.8.x must upgrade to `>=0.9`. Isolated as its own PR for
+  bisectability given the broad RNG / numerics blast radius across
+  every JAX backend. The arviz `<1.0` ceiling and the `pymc>=6` bump
+  are intentionally *not* changed here — each lands in its own isolated
+  PR (the arviz-1.x ceiling lift and the pymc 6 upgrade).
+
+### Removed
+
+- **sbijax dropped (breaking).** The `sbijax`-backed simulation-based
+  inference (SBI) layer is removed in full, ahead of the PyMC 6 /
+  ArviZ 1.0 ecosystem upgrade — `sbijax` constrains the jax / jaxlib
+  floor and blocks the rest of the stack from moving forward. No
+  replacement ships in this release; the SBI capability is being
+  re-platformed onto **pyabc** (SMC-ABC), **BayesFlow** (amortized
+  NPE / FMPE / CMPE), and **sbi** (NLE / NRE) in subsequent releases.
+  Removed surface:
+  - The **`[sbi]` extra** (`pip install probpipe[sbi]`) and its
+    `sbijax>=0.3.6` dependency.
+  - The public workflow functions **`sbi_learn_conditional`** and
+    **`sbi_learn_likelihood`** (exported from both `probpipe` and
+    `probpipe.inference`), the **`DirectSamplerSBIModel`** they
+    returned (exported from `probpipe.inference`), their `method=`
+    selectors (`npe` / `fmpe` / `cmpe` for the direct sampler,
+    `nle` / `nre` for the emulated-likelihood path), and the
+    `network_factory=` hook. `from probpipe import
+    sbi_learn_conditional` now raises `ImportError` rather than
+    returning an install-prompt stub.
+  - The **`sbijax_smcabc`** inference method (`SbiSMCABCMethod`,
+    priority 5) and its registration; `condition_on(generative_model,
+    data, method="sbijax_smcabc", ...)` no longer resolves.
+  - The internal `probpipe/inference/_sbijax.py` module, the `sbi`
+    pytest marker, the `tests/inference/test_sbijax.py` suite, and the
+    CI `--no-deps sbijax` install shims. The contract invariants those
+    tests covered — posterior recovery, amortization, and SMC-ABC
+    dispatch — are re-homed per backend as the replacements land,
+    rather than in this removal.
+
+  The jax / jaxlib `<0.9` and arviz `<1.0` version caps that `sbijax`
+  forced are *retained* here and lifted in their own isolated PRs (the
+  jax-0.10 floor bump and the arviz-1.x ceiling lift); this PR changes
+  no runtime version pins. The `docs/tutorials/flexible_inference.ipynb`
+  tutorial's SBI sections are flagged out of date until a replacement
+  backend ships — its `condition_on` dispatch and NUTS material remain
+  accurate.
+
 ### Added
+
+- **BlackJAX-backed gradient-free MCMC.** Two new inference methods
+  bundled with the BlackJAX MCMC migration:
+  - **`blackjax_rwmh`** (priority 55) replaces the hand-rolled
+    Python-loop RWMH. Two execution paths share the same BlackJAX
+    kernel: a fast path (`jax.lax.scan` + `jax.vmap` across chains)
+    when the target log-density is JAX-traceable, and an eager
+    Python-loop fallback when it isn't (BridgeStan / scipy /
+    external-simulator likelihoods — the case the hand-rolled loop
+    existed to support). The default warmup is a Stan-style window
+    adaptation: ``n_windows`` (default 4) geometrically-growing
+    windows, each sampling with the current proposal Cholesky and
+    accumulating Welford statistics on positions, refreshing the
+    proposal at window boundaries. Production sigma is
+    ``chol(Sigma_hat) * 2.38 / sqrt(d)`` per Roberts-Gelman-Gilks.
+    Short warmups (``< 50`` steps) collapse to a single phase
+    automatically. ``adapt=False`` falls back to the legacy
+    ``step_size * I`` for parity with the prior behavior.
+  - **`blackjax_elliptical_slice`** (priority 75, tier 71-80
+    self-tuning) is new — restricted to `SimpleModel` targets with a
+    Gaussian prior and a JAX-traceable likelihood. Recognises
+    `Normal`, `MultivariateNormal`, `JointGaussian` (named multi-field
+    Gaussian with cross-covariance), and `ProductDistribution`
+    compositions via the new `_gaussian_prior_params` helper.
+- New workflow function `probpipe.elliptical_slice(model, data, ...)`.
+
+### Changed
+
+- **`blackjax_hmc` randomizes its trajectory length.** Production now
+  draws the number of leapfrog steps from a low-discrepancy Halton
+  sequence (`blackjax.dynamic_hmc`) with mean `num_integration_steps`
+  (default 10, unchanged), instead of a fixed count. A fixed trajectory
+  length can resonate on near-Gaussian targets — the proposal returns
+  near its start, giving high acceptance and zero divergences yet poor
+  mixing and up to ~30% posterior-variance under-estimation. Jittering
+  `L` around the same mean breaks the resonance (Neal 2011, sec. 4.2).
+  Window adaptation tunes step size + mass matrix against the *same*
+  randomized-`L` kernel, so dual-averaging's acceptance target is
+  calibrated to the kernel that actually runs; `num_integration_steps`
+  is now the *mean*. The drawn count is floored at 1 leapfrog step (the
+  Halton range includes 0, a no-op trajectory). NUTS is unaffected.
+- **Multi-chain BlackJAX MCMC dispatch picks `jax.pmap` when devices
+  permit.** When `jax.local_device_count() >= num_chains` the per-chain
+  runner is mapped with `pmap` (each chain on its own device,
+  bit-identical to a single-chain sequential run at the same seed);
+  otherwise the prior `vmap` path is used. Single-chain calls
+  (``num_chains == 1``) short-circuit both, applying the runner
+  directly. Default single-CPU-device behaviour is unchanged for
+  ``num_chains == 1``; users with
+  ``XLA_FLAGS=--xla_force_host_platform_device_count=N`` get
+  per-device parallelism and bit-identical-to-sequential draws
+  (notably for NUTS) without code changes. The three BlackJAX
+  modules (`_blackjax_mcmc.py`, `_blackjax_rwmh.py`, `_blackjax_ess.py`)
+  route their multi-chain dispatch through the new
+  `parallel_chain_map` helper in `_inference_utils.py`.
+
+### Changed (breaking)
+
+- **`tfp_rwmh` removed.** The hand-rolled Python-loop RWMH that sat
+  behind ``method="tfp_rwmh"`` is gone; ``blackjax_rwmh`` is the only
+  RWMH backend. Callers must rename ``method="tfp_rwmh"`` →
+  ``method="blackjax_rwmh"``.
+- **Sample-count / observation-count terminology unified
+  across the codebase.** Several adjacent concepts had drifted into
+  different naming styles (`.n`, `num_draws`, `n_samples`, `n_iter`,
+  `n_simulations`, `n_replications`, `num_steps`). Audited and
+  consolidated under three canonical names per concept:
+
+  *Finite-sample distribution size.* `.n` is gone. Use
+  **`num_atoms`** for any empirical-measure size (one atom = one
+  stored realisation): `EmpiricalDistribution.num_atoms`,
+  `RecordEmpiricalDistribution.num_atoms`,
+  `JointEmpirical.num_atoms`, `BootstrapDistribution.num_atoms`,
+  `KDEDistribution.num_atoms`, `BroadcastDistribution` family +
+  marginals — all expose `num_atoms`. `ApproximateDistribution`
+  inherits `num_atoms` (total chain×draw count) and additionally
+  exposes `num_draws` (draws *per chain*).
+
+  *Bootstrap replicate size.* Use **`replicate_size`** for the number
+  of items in each bootstrap replicate:
+  `BootstrapReplicateDistribution.replicate_size`,
+  `RecordBootstrapReplicateDistribution.replicate_size`. The
+  constructor kwarg changes from ``n=`` to ``replicate_size=``; the
+  related ``source_n`` property becomes ``source_size``. Callers that
+  previously wrote ``BootstrapReplicateDistribution(data, n=N)`` will
+  now get a ``TypeError`` and must rename to ``replicate_size=N``.
+  (`replicate_size`, not `num_observations`: the resampled items come
+  from an arbitrary source — parameter samples, function values, etc. —
+  so "observations" would overclaim.)
+
+  *Generative-likelihood observation count.*
+  ``generate_data(params, n_samples, ...)`` is now
+  ``generate_data(params, num_observations, ...)`` across the
+  `GenerativeLikelihood` protocol, `GLMLikelihood`,
+  `SimpleGenerativeModel`, and `predictive_check` (the latter's
+  `n_replications` kwarg also becomes `num_replications`).
+
+- **Inference-method count kwargs unified under `num_*`.** Several
+  inference methods exposed `n_*`-style kwargs out of sync with the
+  rest of the registry (which uniformly used `num_results` /
+  `num_warmup` / `num_chains`). Renamed:
+  - `blackjax_sgld` / `blackjax_sghmc`: `num_steps=` → `num_results=`
+    (SGMCMC produces one chain draw per step; the kwarg matches
+    every other MCMC backend now).
+  - `sbi_learn_conditional` / `sbi_learn_likelihood`: `n_iter=` →
+    `num_iterations=`, `n_simulations=` → `num_simulations=`.
+  - `sbi_learn_conditional` posterior-sampling default
+    `n_samples=` → `num_results=`; `DirectSamplerSBIModel.__init__`
+    and `condition_on(direct_sampler_model, ...,
+    n_samples=...)` likewise.
+
+  Internal `sbijax.simulate_data(..., n_simulations=...)` /
+  `sbijax.fit(..., n_iter=...)` / `sbijax.sample_posterior(...,
+  n_samples=...)` calls keep their native sbijax kwarg names —
+  only the probpipe-facing surface changes.
+
+  Bug fix bundled with the rename: `tests/test_sbijax.py` was
+  calling `condition_on(nle_model, obs, method="tfp_nuts",
+  n_samples=500, n_warmup=500, n_chains=2, ...)` — the MCMC backend
+  silently ignored those kwargs (it expects `num_results=` /
+  `num_warmup=` / `num_chains=`) and the test passed by accident.
+  Fixed.
+
+- **`condition_on` MCMC default switched from TFP to BlackJAX NUTS,
+  plus inference-method priority re-anchoring.** Several entangled
+  changes consolidated into a single migration:
+
+  *Auto-dispatch winner switches to BlackJAX NUTS.* `blackjax_nuts`
+  (priority 85, tier 81–90) wins auto-dispatch for any
+  `SupportsLogProb` + JAX-traceable target — the canonical ProbPipe
+  model class. `tfp_nuts` / `tfp_hmc` are demoted to the opt-in-only
+  sentinel (`priority=0`); they stay registered and reachable via
+  `method="tfp_nuts"` / `method="tfp_hmc"` for bit-pattern regression
+  checks or side-by-side comparisons.
+
+  *Structurally-unreachable methods demoted to `priority=0`.* Methods
+  whose `check()` is identical to a higher-priority sibling can never
+  win auto-dispatch — they're opt-in in effect. Made that explicit:
+  `blackjax_hmc` (same `check()` as `blackjax_nuts`) and
+  `blackjax_sghmc` (same `check()` as `blackjax_sgld`, which is also
+  the simpler default — fewer tuning dials) are now opt-in only.
+
+  *VI demoted to opt-in.* `pymc_advi` (was priority 25) is now
+  `priority=0`. VI is a deliberate bias-for-speed tradeoff that users
+  should pick explicitly via `method="pymc_advi"`; silently dispatching
+  into it when (e.g.) `pymc_nuts` happens to fail would surface VI in
+  MCMC's place.
+
+  *NUTS-tier numbers retuned.* `nutpie_nuts` 85 → 88 (top of the
+  optimised-backend tier — Rust gradients are the fastest of every
+  registered NUTS backend); `pymc_nuts` 81 → 82 (ties with
+  `cmdstan_nuts` at 82; the two apply to disjoint model classes so
+  the tie is documentary).
+
+  `tfp_rwmh` (gradient-free RWMH) is unchanged at priority 55 — the
+  gradient-free-MCMC migration to BlackJAX is queued separately
+  (`~/.claude/plans/bie-rwmh-blackjax-migration.md`).
+
+  Migration: an existing `condition_on(model, data)` call that
+  previously ran TFP NUTS now runs BlackJAX NUTS. The numerical
+  posterior is asymptotically identical but the per-seed bit pattern
+  differs. Pin `method="tfp_nuts"` for bit-pattern regression. The
+  closed-form correctness gate (mean within ~3 σ_MC, variance within
+  10% on a known 2-D Gaussian target) is tested under
+  `tests/test_blackjax_mcmc.py`. Existing `condition_on(...,
+  method="pymc_advi")` / `method="blackjax_hmc"` /
+  `method="blackjax_sghmc"` calls continue to work — only the
+  auto-dispatch path changes.
+
+- **Distribution & Record hierarchy cleanup (#200).** Implements the
+  integrated cleanup plan as six self-contained commits. The public-
+  facing changes are:
+  - **`Distribution.validation_results` is removed.**
+    `predictive_check` now writes its per-invocation payload to
+    `dist.auxiliary["predictive_check/check_N"]` (a wrapped
+    `xarray.Dataset` under a numbered group). Future validation
+    functions (LOO, WAIC, …) land under their own named groups in
+    the same `DataTree`. Code that read `dist.validation_results`
+    should read `dist.auxiliary["predictive_check"]` instead.
+  - **`flatten_value` / `unflatten_value` are now `@staticmethod` with
+    explicit kwargs.** Callers pass `event_shape=` /
+    `template=` explicitly:
+    `dist.flatten_value(value, event_shape=dist.event_shape)` and
+    `dist.unflatten_value(flat, template=dist.record_template)`.
+    The previous instance-method form (no kwargs) raises at runtime.
+  - **`_default_support` classmethods are removed** from every
+    concrete distribution (`Normal`, `Gamma`, `Poisson`, …; 24 in
+    total). Support compatibility is now checked post-construction
+    via `NumericRecordDistribution._check_support_compatible(source)`;
+    downstream code that reached for the classmethod should use the
+    instance `support` / `supports` properties.
+  - **`SimpleModel.__init__` requires a `RecordDistribution` prior**
+    (in addition to the pre-existing `SupportsLogProb` check). Priors
+    that satisfy `SupportsLogProb` but aren't `RecordDistribution`
+    raise `TypeError`. The type system can't express the intersection
+    statically, so the runtime guard is the backstop.
+  - **Default model names change from `None` to the class name.**
+    `SimpleModel()`, `SimpleGenerativeModel()`, `PyMCModel()`,
+    `StanModel()`, and `DirectSamplerSBIModel()` now default to
+    `"SimpleModel"` / `"SimpleGenerativeModel"` / `"PyMCModel"` /
+    `"StanModel"` / `"DirectSamplerSBIModel(<alg>)"` when no name is
+    supplied. The metaclass invariant requires every `Distribution`
+    instance to have a non-empty name.
+  - **`NumericRecordDistribution.event_shape` is abstract** —
+    raises `NotImplementedError` on the base. Single-leaf subclasses
+    must override directly; multi-leaf subclasses (joints) set
+    `_record_template` explicitly and never trigger the auto-build.
+    Previously the default tried to derive from `event_shapes`,
+    which looped back through `record_template`.
+  - **`ProductDistribution` and `SequentialJointDistribution`
+    conditionally mix in `NumericRecordDistribution`** based on
+    their resolved leaves. Both stay rooted at the general
+    `RecordDistribution` (their content is well-defined for
+    non-numeric leaves too — sampling produces a `Record` keyed by
+    component name, conditioning and named-component access always
+    work). When *every* leaf is itself a `NumericRecordDistribution`,
+    the dynamic class factory adds `NumericRecordDistribution` to the
+    bases, so the joint also exposes the numeric API (`event_size`,
+    `flatten_value` / `unflatten_value`, `as_flat_distribution`,
+    `dtypes`, `supports`). For mixed or non-numeric leaves those
+    methods are simply absent on the instance. Leaf type constraint
+    relaxed from `NumericRecordDistribution` to `Distribution`.
+    **Caller-visible consequence:**
+    `isinstance(joint, NumericRecordDistribution)` is no longer
+    guaranteed for `ProductDistribution` / `SequentialJointDistribution`
+    instances — it returns `True` only when every resolved leaf is
+    itself an NRD (the common case). Downstream code that branched on
+    `isinstance(..., NumericRecordDistribution)` for these joints
+    should verify the new dispatch matches its expectations, or
+    switch to checking for the specific capability (e.g.,
+    `hasattr(joint, "event_size")`).
+  - **`NumericJointEmpirical` adds `NumericRecordDistribution` as a
+    mixin** (previously implicit via `JointEmpirical` only). The
+    sibling `JointEmpirical` stays on `RecordDistribution` and now
+    builds a structural template from the stored samples (object-
+    dtype leaves use `None` specs) to satisfy the metaclass
+    invariant.
+
+### Added
+
+- **`RecordTemplate.event_shapes` and `RecordTemplate.field_event_shape(name)`**
+  expose per-top-level-field event shapes (nested sub-templates and
+  opaque leaves collapse to `()`). The previous helper
+  `RecordDistribution._field_event_shape` is removed in favor of these
+  template methods.
+
+- **Metaclass-enforced invariants.** Every `Distribution` instance
+  has a non-empty `name`; every `RecordDistribution` instance has a
+  non-`None` `record_template`. The checks fire post-`__init__` via
+  the `_DistributionMeta` / `_RecordDistributionMeta` metaclasses
+  (derived from `typing._ProtocolMeta` to compose with
+  `@runtime_checkable` protocols). Subclasses that forget either
+  invariant raise `TypeError` at construction with a clear pointer.
+
+### Changed
+
+- **`GLMLikelihood` fits an intercept by default** (``fit_intercept=True``).
+  The covariate matrix ``X`` carries only the covariates — no leading
+  column of 1s. ``params`` flattens to ``(intercept, *slopes)`` and the
+  likelihood computes ``eta = intercept + X @ slopes``. Pass
+  ``fit_intercept=False`` for the classical "model matrix" convention
+  where the user prepends the constant column to ``X`` themselves.
+  Avoids the axis-position ambiguity of stacking the intercept slot
+  into ``X``; matches the pattern in sklearn / statsmodels GLM APIs.
+
+- **Inference-method registry priorities re-anchored with a semantic
+  convention (issue #189).**
+  - `priority > 50` marks *exact* methods; `0 < priority <= 50` marks
+    *inexact* methods; `priority == 0` is the opt-in-only sentinel
+    (selectable by name via `method="..."` but skipped during
+    auto-dispatch). This is the new default value inherited from
+    `Method.priority`.
+  - Built-in priorities re-anchored: `nutpie_nuts` 80→85,
+    `cmdstan_nuts` 70→82, `pymc_nuts` 60→81, `tfp_nuts` 100→75,
+    `tfp_hmc` 90→65, `tfp_rwmh` 50→55, `blackjax_sgld` 30→45,
+    `blackjax_sghmc` 25→42, `pymc_advi` 35→25, `sbijax_smcabc` 40→5.
+    The relative ordering among exact methods is corrected so that
+    optimised backends (`nutpie_nuts`, `cmdstan_nuts`, `pymc_nuts`)
+    sit above the general-purpose `tfp_nuts`.
+  - `MethodRegistry._find_methods()` now skips priority-0 methods
+    during auto-dispatch. `MethodRegistry.set_priorities()` emits a
+    `UserWarning` when an override crosses into or out of `0`;
+    crossings of the documentary `50` break do not warn.
+  - The `OPT_IN_ONLY_PRIORITY` sentinel is exported from
+    `probpipe.core._registry` for use in `Method` subclasses that
+    want to opt out of auto-dispatch by name.
+  - The contributor-facing selection criteria and tier ranges for
+    setting a new method's priority are documented under
+    [Extending ProbPipe → Setting priority for a new method](docs/api/extending.md#setting-priority-for-a-new-method).
+  - Migration: a `Method` subclass that previously relied on
+    inheriting `priority = 0` from the base class while expecting
+    auto-dispatch must now set a positive priority explicitly.
+    `set_priorities` calls that stay within positive priorities are
+    unaffected; calls that move a method to or from `0` emit a
+    warning explaining the auto-dispatch participation change.
+
+- **PyMC-backed posteriors now carry RV-keyed Record structure.**
+  ``PyMCModel`` exposes a ``record_template`` property that pairs each
+  free RV with its event shape (scalar RVs → ``()``; shape-`k` RVs →
+  ``(k,)``). The PyMC NUTS, PyMC ADVI, and nutpie inference paths all
+  thread this through to ``make_posterior``, so ``mean(post)`` returns
+  a ``NumericRecord`` keyed by RV name and ``draws()`` returns a
+  ``NumericRecordArray``. Previously, PyMC posteriors had no field
+  structure and ``draws()`` returned a flat ``(n_draws, n_params)``
+  array. Models declared with multiple scalar RVs (e.g. separate
+  ``intercept`` and ``slope`` ``pm.Normal`` calls) now produce a
+  field-per-RV posterior matching the ``ProductDistribution``-prior
+  workflow.
+
+  Free RVs whose ``type.shape`` contains a ``None`` dimension are
+  rejected with ``ValueError`` — silently dropping unknown dims would
+  produce an under-shaped template.
+
+- **`GLMLikelihood` no longer accepts stacked ``(X, y)`` arrays.** Both
+  ``log_likelihood`` and ``per_datum_log_likelihood`` now require either
+  ``data = Record(X=..., y=...)`` (canonical) or, for ``log_likelihood``
+  only, a bare response array when ``X`` was supplied at construction
+  time. Passing a single matrix whose last column was interpreted as
+  the response is intentionally rejected — ProbPipe uses named Records
+  to avoid axis-position ambiguity. Existing call sites that used a
+  ``Record`` are unaffected.
+
+- **`SimpleModel.prior` / `SimpleGenerativeModel.prior` type
+  annotations tightened** from ``Distribution[P]`` /
+  ``SupportsSampling[P]`` to the specific capability protocol
+  (``SupportsLogProb[P]`` / ``SupportsSampling[P]``). Static type
+  checkers now catch wrong-type priors at the call site; the
+  construction-time ``isinstance`` check stays as a backstop. The two
+  model wrappers are now parallel in both the input typing and the
+  ``.prior`` property return type.
+
+### Added
+
+- **BlackJAX-backed SGMCMC methods** registered with
+  ``inference_method_registry``:
+  - ``blackjax_sgld`` — Stochastic Gradient Langevin Dynamics. Priority 45.
+  - ``blackjax_sghmc`` — Stochastic Gradient Hamiltonian Monte Carlo. Priority 42.
+
+  Both consume a `SimpleModel` whose `likelihood` satisfies
+  `ConditionallyIndependentLikelihood`, plus a required `batch_size=`
+  kwarg. Internally they wrap the model+data in a
+  `MinibatchedDistribution` and feed BlackJAX's gradient estimator
+  via the per-step random-measure draw — the kernel stays oblivious
+  to the minibatching convention.
+
+  ```python
+  posterior = condition_on(
+      model, data,
+      method="blackjax_sgld",
+      batch_size=64, num_results=2000, num_warmup=500, step_size=1e-3,
+  )
+  ```
+
+  Priorities sit in the refinement-based MC tier (1–50), below every
+  exact full-batch gradient method (`tfp_nuts=75`, `tfp_hmc=65`,
+  `tfp_rwmh=55`). SGMCMC's `check()` also requires `batch_size=`, so
+  it does not fire on a routine `condition_on(model, observed)` call —
+  the user opts in by passing `batch_size=` (and typically the
+  matching `method=`).
+
+- **`MinibatchedDistribution`** (`probpipe.MinibatchedDistribution`)
+  — a `RandomMeasure[Record]` over fixed-minibatch stochastic
+  surrogates of the full-data unnormalized log-posterior. A draw is a
+  `Distribution[Record]` with unnormalized log-density
+  `log p(theta) + (N/b) * sum_{d in B} log p(d|theta)`, an unbiased
+  stochastic surrogate (in expectation over the minibatch `B`) of the
+  full-data target; the `N/b` rescaling makes the gradient an unbiased
+  estimator.
+
+  The constructor takes a prior and a conditionally-independent
+  likelihood directly, mirroring `SimpleModel(prior, likelihood)` on
+  the first two args. Consume the measure via
+  `SupportsRandomUnnormalizedLogProb` to get the per-minibatch
+  log-density callable that SGMCMC kernels feed `jax.grad`:
+
+  ```python
+  from probpipe import MinibatchedDistribution, Record, random_unnormalized_log_prob
+
+  m = MinibatchedDistribution(prior, likelihood, Record(X=X, y=y), batch_size=64)
+
+  rf = random_unnormalized_log_prob(m)
+  target = rf._sample(k)                     # callable: theta -> log~D_B(theta)
+  grad = jax.grad(target)(theta)             # unbiased gradient estimate
+  ```
+
+  This is the path stochastic-gradient MCMC kernels use under the
+  hood; the BlackJAX SGLD / SGHMC dispatch builds a `MinibatchedDistribution`
+  internally and threads `target` into the BlackJAX gradient
+  estimator. Tempered SMC (future work) is expected to consume the
+  same surface.
+
+- **`ConditionallyIndependentLikelihood`** (`probpipe.ConditionallyIndependentLikelihood`)
+  — a `Likelihood` subclass / Protocol whose observations factorise as
+  `log p(D | theta) = sum_i log p(d_i | theta)`. Adds a
+  `per_datum_log_likelihood(params, datum)` method on top of the base
+  `Likelihood`'s `log_likelihood(params, data)`. Required by
+  stochastic-gradient inference (the upcoming `MinibatchedDistribution`)
+  and independently useful for held-out predictive log-likelihoods,
+  leave-one-out cross-validation, and PSIS-LOO. The existing concrete
+  likelihoods (`GLMLikelihood`, `_NLELikelihood`, `_NRELikelihood`) all
+  satisfy the Protocol — `GLMLikelihood` via a direct family
+  `log_prob` evaluation that skips the per-batch tile, the two
+  sbijax-backed classes via a length-1-batch fallback.
+
+  A standalone helper `_default_per_datum_log_likelihood(likelihood,
+  params, datum)` provides the length-1-batch implementation for
+  subclasses that want a default rather than an efficient override.
+
+- **`SimpleModel.prior` / `SimpleModel.likelihood`** and
+  **`SimpleGenerativeModel.prior` / `SimpleGenerativeModel.likelihood`**
+  — public read-only properties that expose the underlying components
+  without poking at private state. The two model wrappers stay
+  symmetric: `SimpleModel.likelihood` is typed `Likelihood`,
+  `SimpleGenerativeModel.likelihood` is typed `GenerativeLikelihood`.
+
+- **`FlatNumericRecordDistribution`** (`probpipe.FlatNumericRecordDistribution`)
+  — a `NumericRecordDistribution` subclass that enforces the flat
+  contract (single field, `event_shape == (N,)`). Algorithms that
+  operate on a flat parameter vector (MCMC kernels, optimisers,
+  Hessian / curvature builders, variational families, Pathfinder /
+  Laplace surrogates) can require this type rather than runtime
+  shape probes. Carries the `flat_size: int` shortcut (=
+  `event_shape[0]`) and the `as_record_distribution(template=...)`
+  method.
+
+  The natively-multivariate parametrics
+  (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `VonMisesFisher`)
+  now inherit from `FlatNumericRecordDistribution` in addition to
+  `TFPDistribution`. `FlattenedDistributionView` also implements the
+  contract by construction. Scalar parametrics (`Normal`, `Beta`,
+  `Bernoulli`, …) have `event_shape == ()` and do not satisfy the
+  contract directly; call `.as_flat_distribution()` to obtain a
+  `FlattenedDistributionView` with `event_shape == (1,)`.
+
+- **`FlatNumericRecordDistribution.as_record_distribution(template=...)`**
+  — inverse of `as_flat_distribution()`. Lifts a flat distribution to
+  a Record-keyed view under a user-supplied `NumericRecordTemplate`.
+  Sampling, log-prob, and moments delegate to the source and reshape
+  via the template; capability protocols (`SupportsX`) match the
+  source via dynamic isinstance dispatch. The view is a thin wrapper —
+  no value copying.
+
+  ```python
+  from probpipe import MultivariateNormal, NumericRecordTemplate
+
+  mvn = MultivariateNormal(                     # already a FlatNRD
+      loc=jnp.array([1.0, 2.0, 3.0, 4.0]),
+      cov=jnp.diag(jnp.array([0.5, 1.0, 1.5, 2.0])),
+      name="theta",
+  )
+  template = NumericRecordTemplate(intercept=(), slope=(3,))
+  posterior = mvn.as_record_distribution(template=template)
+  draw = sample(posterior, key=k)         # NumericRecord(intercept, slope)
+  mean(posterior)["slope"]                # vector mean of the slope block
+  ```
+
+### Changed
+
+- **`FlattenedView` renamed to `FlattenedDistributionView`** and now
+  inherits from `FlatNumericRecordDistribution` (formerly
+  `NumericRecordDistribution`). The view's flat contract was always
+  satisfied structurally; the new base class makes it explicit and
+  enables receiver-type-driven dispatch for `as_record_distribution`.
+- **`_RecordLiftedView` renamed to `NumericRecordDistributionView`** and
+  made public. Constructed via
+  `FlatNumericRecordDistribution.as_record_distribution(template=...)`.
+
+### Migration
+
+- Code that imports `FlattenedView`: rename to `FlattenedDistributionView`.
+- Code that imports `_RecordLiftedView`: rename to
+  `NumericRecordDistributionView`.
+- Code that calls `as_record_distribution` on a non-flat distribution
+  (e.g., a scalar `Normal`): chain via `.as_flat_distribution()` first.
+  Calling it directly on a non-flat `NumericRecordDistribution` now
+  raises `TypeError` instead of `ValueError` and points at the
+  `as_flat_distribution()` chain.
 
 - **`SupportsArrayBackend` capability protocol** (`probpipe.SupportsArrayBackend`)
   declares that a `Distribution` subclass can produce a fused storage

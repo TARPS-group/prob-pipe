@@ -1,20 +1,18 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import Any, Callable, Literal, Mapping, get_type_hints
 import inspect
 import logging
-from concurrent.futures import ThreadPoolExecutor
-from itertools import product as cartesian_product
-from types import MappingProxyType
 import warnings
+from abc import ABC, abstractmethod
+from collections.abc import Callable, Mapping, Sequence
+from types import MappingProxyType
+from typing import Any, Literal, get_args
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 try:
-    from prefect import task, flow
+    from prefect import flow, task
 except ImportError:
     task = flow = None
 
@@ -25,195 +23,40 @@ try:
 except ImportError:
     Digraph = None
 
-from .._utils import prod
-from ..custom_types import PRNGKey, Array
-from .distribution import (
-    NumericRecordDistribution,
-    BroadcastDistribution,
-    Distribution,
-    EmpiricalDistribution,
-    _make_marginal,
+from . import (
+    _workflow_call,
+    _workflow_distribution_broadcast,
+    _workflow_distribution_normalization,
+    _workflow_execution,
+    _workflow_plan,
+    _workflow_result,
+    _workflow_sweep,
 )
-from ._broadcast_distributions import _make_stack
-from ._distribution_array import DistributionArray, _make_distribution_array
-from ._numeric_record import NumericRecord, _is_numeric_leaf
-from ._record_array import RecordArray, _RecordArrayView
-from ._record_distribution import _RecordDistributionView
+from ._record_array import RecordArray
 from .provenance import Provenance
-from .record import Record
-from .protocols import (
-    SupportsConditioning,
-    SupportsCovariance,
-    SupportsExpectation,
-    SupportsLogProb,
-    SupportsMean,
-    SupportsRandomLogProb,
-    SupportsRandomUnnormalizedLogProb,
-    SupportsSampling,
-    SupportsUnnormalizedLogProb,
-    SupportsVariance,
-)
-
-# Protocol types that indicate a parameter expects a distribution object.
-# Used by _find_broadcast_args to avoid broadcasting over such parameters.
-_DISTRIBUTION_PROTOCOLS: tuple[type, ...] = (
-    SupportsExpectation,
-    SupportsSampling,
-    SupportsUnnormalizedLogProb,
-    SupportsLogProb,
-    SupportsMean,
-    SupportsVariance,
-    SupportsCovariance,
-    SupportsRandomLogProb,
-    SupportsRandomUnnormalizedLogProb,
-    SupportsConditioning,
-)
-from ..converters import converter_registry
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Output-type coercion for WorkflowFunction returns (issue #130)
-# ---------------------------------------------------------------------------
-
-# Broadcast modes: how a value reached ``_coerce_output``. Named
-# constants so callsites use the same spelling and typos fail loudly.
-# ``BROADCAST_MARGINALISE`` is intentionally absent — the
-# Distribution-only path goes through
-# ``_broadcast_distributions_only`` and doesn't call
-# ``_coerce_output`` at all; its marginal already carries provenance.
-BroadcastMode = Literal["wrap", "stack", "nested"]
-BROADCAST_WRAP: BroadcastMode = "wrap"
-BROADCAST_STACK: BroadcastMode = "stack"
-BROADCAST_NESTED: BroadcastMode = "nested"
-
-
-def _wrap_as_record(value: Any, field_name: str) -> Any:
-    """Coerce a raw return into the Record | RecordArray | Distribution contract.
-
-    Uniform rule applied at the WorkflowFunction boundary:
-
-    - Already-structured values (``Record`` / ``RecordArray`` /
-      ``Distribution``) pass through unchanged — their domain field
-      names are preserved.
-    - ``dict`` (non-empty) → ``Record(dict(value))``: caller's keys
-      stay addressable as field names.
-    - Non-empty ``list`` / ``tuple`` → ``_make_stack``: assembles a
-      ``DistributionArray`` / ``RecordArray`` / ``NumericRecordArray``
-      matching the inner element type.
-    - Scalar numeric / ``jnp.ndarray`` → ``NumericRecord({field_name: value})``
-      with the function's own name as the single field name. Raw
-      numeric access round-trips via the single-field shim:
-      ``float(x)``, ``jnp.array(x)``, and (for callable-valued fields)
-      ``x(args)`` call-forwarding.
-    - Anything else (opaque Python object) → ``Record({field_name: value})``.
-    """
-    if isinstance(value, (Distribution, Record)):
-        return value
-    if isinstance(value, dict) and value:
-        return Record(dict(value))
-    if isinstance(value, (list, tuple)) and value:
-        try:
-            return _make_stack(list(value), n=len(value), field_name=field_name)
-        except (TypeError, ValueError):
-            pass
-    # Numeric scalar / array → NumericRecord with the function's
-    # name as the single field; the wrap adds no batch_shape of its
-    # own (batching comes from sweeps). ``_is_numeric_leaf`` excludes
-    # opaque duck-typed objects (``unittest.mock.MagicMock`` etc.)
-    # whose attribute probing would recurse inside ``jnp.asarray``.
-    if _is_numeric_leaf(value):
-        return NumericRecord({field_name: jnp.asarray(value)})
-    return Record({field_name: value})
-
-
-def _coerce_output(
-    value: Any,
-    *,
-    broadcast_mode: BroadcastMode,
-    provenance: Provenance | None,
-    field_name: str,
-) -> Any:
-    """Enforce the Record | RecordArray | Distribution output contract.
-
-    Parameters
-    ----------
-    value
-        The raw output produced by the function body or a broadcast
-        aggregator. For ``broadcast_mode != "wrap"`` this is always
-        already one of the three contract types.
-    broadcast_mode : {"wrap", "stack", "nested"}
-        How the value was produced:
-
-        * ``"wrap"`` — non-broadcast call; ``value`` is whatever the
-          user's function returned. Scalars / arrays become
-          ``NumericRecord({field_name: value})``; dict / list / tuple
-          promote via ``_wrap_as_record``; existing Record /
-          RecordArray / Distribution values pass through.
-        * ``"stack"`` — array-valued broadcast; ``value`` is a stacked
-          aggregate from ``_make_stack`` (``NumericRecordArray`` /
-          ``RecordArray`` / ``DistributionArray``).
-        * ``"nested"`` — array + Distribution broadcast; ``value`` is
-          a ``DistributionArray`` of per-row marginals.
-    provenance : Provenance or None
-        Provenance node to attach. ``None`` skips the attachment step.
-    field_name : str
-        Name used when wrapping bare scalar / array returns — always
-        the WorkflowFunction's own name so the single-field record
-        maps back to the op that produced it.
-
-    Returns
-    -------
-    Record | RecordArray | Distribution
-        The value, possibly wrapped, with ``.source`` attached when it
-        was empty. An already-sourced value keeps its existing source
-        (inner marginals produced by the broadcast layer carry their
-        own provenance; ``_coerce_output`` doesn't overwrite).
-    """
-    if broadcast_mode == BROADCAST_WRAP:
-        value = _wrap_as_record(value, field_name)
-    if provenance is not None and hasattr(value, "with_source"):
-        try:
-            value.with_source(provenance)
-        except RuntimeError:
-            # Value already has a source (e.g., an inner marginal that
-            # the broadcasting layer built with its own provenance).
-            # Leave the existing source in place.
-            pass
-    return value
-
 __all__ = [
+    "AbstractModule",
     "InputFrozenError",
-    "workflow_method",
-    "abstract_workflow_method",
-    "workflow_function",
+    "Module",
     "Node",
     "WorkflowFunction",
-    "Module",
-    "AbstractModule",
+    "abstract_workflow_method",
+    "workflow_function",
+    "workflow_method",
 ]
+
+_WorkflowFunctionDispatch = Literal[
+    "auto", "jax", "sequential", "thread"
+]
+_VALID_DISPATCH_STRATEGIES: tuple[str, ...] = get_args(_WorkflowFunctionDispatch)
+
 
 class InputFrozenError(Exception):
     pass
-
-
-def _group_by_parent(
-    values: dict[str, Any],
-    names: list[str],
-) -> dict[int, list[str]]:
-    """Group arg names by the ``id()`` of their source parent.
-
-    Views (``_RecordArrayView`` / ``_RecordDistributionView``) expose
-    ``.parent`` and group with other views sharing it; plain container
-    args are each their own parent. First-occurrence order preserved.
-    """
-    groups: dict[int, list[str]] = {}
-    for name in names:
-        value = values[name]
-        parent = getattr(value, "parent", value)
-        groups.setdefault(id(parent), []).append(name)
-    return groups
 
 
 def workflow_method(func: Callable):
@@ -246,7 +89,7 @@ def workflow_function(_func=None, /, **kwargs):
         def my_func(x, y):
             return x + y
 
-        @workflow_function(n_broadcast_samples=100, vectorize="loop")
+        @workflow_function(n_broadcast_samples=100, dispatch="sequential")
         def my_func(x, y):
             return x + y
     """
@@ -260,9 +103,9 @@ def workflow_function(_func=None, /, **kwargs):
     return decorator
 
 
-class Node(ABC):
+class Node(ABC):  # noqa: B024
     """
-    Base unit of the ProbPipe computational dependency graph. 
+    Base unit of the ProbPipe computational dependency graph.
 
     Keyword arguments are automatically split by type: values that are
     ``Node`` instances become *child nodes* (dependencies on other DAG
@@ -285,58 +128,12 @@ class Node(ABC):
         self._inputs = MappingProxyType(inputs)
 
     @property
-    def child_nodes(self) -> Mapping[str, "Node"]:
+    def child_nodes(self) -> Mapping[str, Node]:
         return self._child_nodes
 
     @property
     def inputs(self) -> Mapping[str, Any]:
         return self._inputs
-
-
-def _index_sample(s: Any, i: int) -> Any:
-    """Index row ``i`` of a per-arg sample batch.
-
-    Parameters
-    ----------
-    s : Any
-        Either a bare array (single-field broadcast draws / legacy
-        callers), a :class:`Record` (multi-field auto-wrap or an
-        explicit Record source), or a :class:`NumericRecord` (the
-        unified ``EmpiricalDistribution`` — numeric arrays auto-wrap
-        as a single-field Record — returns a ``NumericRecord`` with
-        per-field axes stacked along the leading axis).
-    i : int
-        Row index along the leading axis.
-
-    Returns
-    -------
-    Any
-        Same shape the inner call would see from a single
-        ``sample(dist)`` draw:
-
-        * Single-field ``Record`` → the underlying field array's row
-          ``i`` (unwrapped).
-        * Multi-field ``Record`` → a per-row :class:`NumericRecord`.
-        * Bare array → ``s[i]``.
-
-    Notes
-    -----
-    Used by both ``_broadcast_enumerate_then_sample`` (for empirical-
-    enumerated rows and for the mixed sampled-rows path) and
-    ``_broadcast_sample`` (for plain MC sampling). Keeping the
-    implementation in one place avoids drift between the three
-    callsites.
-    """
-    # Local imports to avoid module-load circularity with
-    # ``record`` / ``_numeric_record``.
-    from .record import Record
-    from ._numeric_record import NumericRecord
-
-    if isinstance(s, Record):
-        if len(s.fields) == 1:
-            return s[s.fields[0]][i]
-        return NumericRecord({f: s[f][i] for f in s.fields})
-    return s[i]
 
 
 class WorkflowFunction(Node):
@@ -352,14 +149,15 @@ class WorkflowFunction(Node):
     sample, returning an ``EmpiricalDistribution`` over the outputs (or a
     plain list when results are not numeric).
 
-    **Vectorization and orchestration** are orthogonal concerns:
+    **Dispatch and orchestration** are orthogonal concerns:
 
-    - *Vectorization* (``vectorize``) controls **how** samples are dispatched:
-      ``jax.vmap`` for JAX-traceable functions, or a Python loop otherwise.
+    - *Dispatch* (``dispatch``) controls **how** samples are dispatched:
+      ``jax.vmap``, local sequential function calls, or local threaded
+      function calls.
     - *Orchestration* (``workflow_kind``) controls **whether** the dispatch
       is wrapped in a Prefect task or flow for compute-graph tracing.
 
-    When both are active, the JAX-vectorized computation is executed inside
+    When both are active, the JAX-dispatched computation is executed inside
     a Prefect task/flow, giving the benefits of ``vmap`` performance with
     full Prefect lineage tracking.
 
@@ -385,25 +183,29 @@ class WorkflowFunction(Node):
         Default number of samples drawn when broadcasting.  Can be overridden
         at call time by passing ``n_broadcast_samples=…`` (provided the
         wrapped function does not itself declare a parameter with that name).
-    vectorize : str
-        Vectorization strategy for broadcasting:
+    dispatch : str
+        Function-call dispatch strategy for broadcasting:
 
         - ``"auto"`` (default): probe with ``jax.make_jaxpr``; on success
-          use ``"jax"``, on failure fall back to ``"loop"``.
-        - ``"jax"``: vectorise via ``jax.vmap``.  Requires the wrapped
-          function to be JAX-traceable.
-        - ``"loop"``: Python loop (optionally threaded via *parallel*).
-    parallel : bool or int
-        Controls parallel execution during broadcasting (``"loop"``
-        vectorization only).  ``False`` → sequential, ``True`` →
-        ``ThreadPoolExecutor`` with default workers, ``int`` → explicit
-        ``max_workers``.
+          use ``"jax"``, on failure fall back to ``"sequential"``.
+        - ``"jax"``: dispatch via ``jax.vmap``. Requires the wrapped
+          function and broadcast path to be JAX-traceable.
+        - ``"sequential"``: local row-wise/function-call dispatch without
+          threads.
+        - ``"thread"``: local row-wise/function-call dispatch through
+          ``ThreadPoolExecutor``.
+    max_workers : int or None
+        Worker count for threaded sequential execution. ``None`` lets
+        ``ThreadPoolExecutor`` choose automatically; a positive integer
+        sets the worker count explicitly. Only applies when ``dispatch`` is
+        ``"thread"`` and execution resolves to local thread dispatch. JAX
+        ``vmap``, local sequential dispatch, Prefect, Ray, and Dask do not
+        use this setting.
     seed : int
         Random seed for JAX PRNG key management during broadcasting.
     """
 
     DEFAULT_N_BROADCAST_SAMPLES: int = 128
-
     def __init__(
         self,
         *,
@@ -413,15 +215,33 @@ class WorkflowFunction(Node):
         bind: dict[str, Any] | None = None,         # construction-time bindings (defaults/config)
         module: Any | None = None,                  # typically a Module; kept as Any to avoid import cycles
         n_broadcast_samples: int | None = None,      # default number of samples for broadcasting
-        vectorize: str = "auto",                     # "auto" | "jax" | "loop"
-        parallel: bool | int = False,               # True/int for ThreadPoolExecutor, or Prefect .map()
+        dispatch: _WorkflowFunctionDispatch = "auto", # "auto" | "jax" | "sequential" | "thread"
+        max_workers: int | None = None,             # ThreadPoolExecutor worker count
         seed: int = 0,                              # JAX PRNG seed for broadcasting
         include_inputs: bool = False,                # True → return BroadcastDistribution (joint over inputs+outputs)
         **kwargs: Any,                              # convenience bindings (merged into bind)
     ):
+        removed_keywords = {"parallel", "vectorize"} & set(kwargs)
+        if removed_keywords:
+            names = ", ".join(sorted(removed_keywords))
+            raise TypeError(
+                f"WorkflowFunction no longer accepts {names}; use dispatch= instead."
+            )
+
+        if dispatch not in _VALID_DISPATCH_STRATEGIES:
+            raise ValueError(
+                f"dispatch must be one of {_VALID_DISPATCH_STRATEGIES}; got {dispatch!r}"
+            )
+        _workflow_execution._validate_max_workers(max_workers)
+        if dispatch != "thread" and max_workers is not None:
+            warnings.warn(
+                "max_workers configures only dispatch='thread'; ignoring it "
+                f"for dispatch={dispatch!r}.",
+                stacklevel=2,
+            )
+
         self._func = func
-        self._sig = inspect.signature(func)
-        self._hints = get_type_hints(func)
+        self._signature_info = _workflow_call.make_signature_info(func)
         # Convert legacy string / None values to WorkflowKind enum
         # TODO: remove this legacy conversion in follow-up issue
         if workflow_kind is None:
@@ -438,15 +258,15 @@ class WorkflowFunction(Node):
         self.__doc__ = func.__doc__
         self.__name__ = self._name
         self.__qualname__ = getattr(func, "__qualname__", self._name)
-        self.__signature__ = self._sig
+        self.__signature__ = self._signature_info.signature
         self.__module__ = getattr(func, "__module__", None)
         self._module = module
         self._n_broadcast_samples = n_broadcast_samples if n_broadcast_samples is not None else self.DEFAULT_N_BROADCAST_SAMPLES
-        self._vectorize = vectorize
-        self._parallel = parallel
+        self._dispatch = dispatch
+        self._max_workers = max_workers
         self._key = jax.random.PRNGKey(seed)
         self._include_inputs = include_inputs
-        self._resolved_vectorize: str | None = None  # cached auto-detection result
+        self._resolved_dispatch: str | None = None  # cached auto-detection result
 
         # bind = "construction-time inputs" (defaults/config). kwargs are also treated as bind.
         b = dict(bind or {})
@@ -455,126 +275,170 @@ class WorkflowFunction(Node):
 
         super().__init__()
 
-        # Precompute parameter metadata once
-        self._param_names = [p for p in self._sig.parameters if p != "self"]
-        self._has_var_keyword = any(
-            p.kind == inspect.Parameter.VAR_KEYWORD
-            for p in self._sig.parameters.values()
+        _workflow_call.validate_reserved_parameter_names(
+            self._signature_info, workflow_name=self._name,
         )
 
-        # Reserved names that would collide with WorkflowFunction call-time overrides
-        _RESERVED = {"n_broadcast_samples", "seed", "include_inputs"}
-        collision = _RESERVED & set(self._param_names)
-        if collision:
-            raise ValueError(
-                f"Function '{self._name}' has parameter(s) {collision} which are "
-                f"reserved by WorkflowFunction for call-time overrides. Rename them in "
-                f"your function signature."
-            )
 
     @property
     def effective_workflow_kind(self) -> WorkflowKind:
-        """Resolve the orchestration mode for this instance.
+        """Resolve the effective orchestration mode for this instance.
 
-        Resolution order:
+        Per-instance ``workflow_kind`` takes precedence over the global config.
+        ``DEFAULT`` means "defer"; if both levels are ``DEFAULT``, orchestration is
+        disabled. Prefect orchestration is opt-in.
 
-        1. Per-instance override (anything other than ``DEFAULT``).
-        2. Global ``prefect_config.workflow_kind``.
-        3. If global is also ``DEFAULT``, fall back to ``OFF``. Prefect
-           orchestration is opt-in: set the global or per-instance
-           ``workflow_kind`` to ``TASK`` / ``FLOW``, or export
-           ``PROBPIPE_WORKFLOW_KIND=task`` in the environment.
-
-        If Prefect is not installed but ``TASK`` or ``FLOW`` is requested
-        (either per-instance or globally), a warning is emitted and the
-        mode falls back to ``OFF``.
+        If ``TASK`` or ``FLOW`` is requested but Prefect is unavailable, the mode
+        falls back to ``OFF``.
         """
         raw = self._workflow_kind_raw
 
-        # 1. Per-instance explicit (non-DEFAULT) override
-        if raw is not WorkflowKind.DEFAULT:
-            if raw in (WorkflowKind.TASK, WorkflowKind.FLOW) and task is None:
-                warnings.warn(
-                    f"workflow_kind={raw!r} requested but Prefect is not installed. "
-                    f"Falling back to OFF. Install with: pip install probpipe[prefect]",
-                    stacklevel=2,
-                )
-                return WorkflowKind.OFF
-            return raw
+        kind = (
+            raw
+            if raw is not WorkflowKind.DEFAULT
+            else prefect_config.workflow_kind
+        )
 
-        # 2. Resolve global config
-        global_kind = prefect_config.workflow_kind
-        if global_kind is not WorkflowKind.DEFAULT:
-            kind = global_kind
-        else:
-            # 3. DEFAULT at global level = OFF (Prefect is opt-in)
+        if kind is WorkflowKind.DEFAULT:
             kind = WorkflowKind.OFF
 
-        # Graceful fallback: global TASK/FLOW but Prefect missing
-        if kind in (WorkflowKind.TASK, WorkflowKind.FLOW) and task is None:
+        _PREFECT_KINDS = {WorkflowKind.TASK, WorkflowKind.FLOW}
+        prefect_missing = task is None or flow is None
+        if kind in _PREFECT_KINDS and prefect_missing:
+            warnings.warn(
+                f"workflow_kind={kind!r} requested but Prefect is not installed. "
+                "Falling back to OFF. Install with: pip install probpipe[prefect]",
+                stacklevel=2,
+            )
             return WorkflowKind.OFF
 
         return kind
 
-    def _is_dependency_param(self, name: str) -> bool:
-        """
-        Decide whether a parameter is a dependency (Node) vs normal input.
+    def _make_execution_config(
+        self,
+        *,
+        mode: _workflow_execution.WorkflowExecutionMode | None = None,
+    ) -> _workflow_execution.WorkflowExecutionConfig:
+        """Build resolved execution metadata for row-wise call dispatch."""
+        if mode is None:
+            match self.effective_workflow_kind:
+                case WorkflowKind.TASK:
+                    mode = "prefect_task"
+                case WorkflowKind.FLOW:
+                    mode = "prefect_flow"
+                case _ if self._dispatch == "thread":
+                    mode = "thread"
+                case _:
+                    mode = "sequential"
 
-        Rule:
-          - If annotation is a Node subclass => dependency
-          - Else => normal input
+        is_prefect = mode in ("prefect_task", "prefect_flow")
 
-        This matches your current architecture (deps are Nodes).
-        """
-        ann = self._hints.get(name)
-        try:
-            return isinstance(ann, type) and issubclass(ann, Node)
-        except TypeError:
-            # Generic aliases (e.g. NDArray on Python 3.10) can pass
-            # isinstance(ann, type) but fail in issubclass().
-            return False
+        if is_prefect and (self._dispatch == "thread" or self._max_workers is not None):
+            warnings.warn(
+                "dispatch='thread' and max_workers configure only local "
+                "ThreadPoolExecutor dispatch; they do not control Prefect "
+                "scheduling.",
+                stacklevel=2,
+            )
+
+        return _workflow_execution.WorkflowExecutionConfig(
+            mode=mode,
+            max_workers=self._max_workers if mode == "thread" else None,
+            name=self._name,
+            prefect_task_runner=(
+                prefect_config.resolve_task_runner() if is_prefect else None
+            ),
+        )
 
     def __call__(self, *args, **call_inputs):
-        # Bind positional args to parameter names using the wrapped function's
-        # signature so callers can use positional arguments naturally.
-        if args:
-            bound = self._sig.bind_partial(*args)
-            for name, value in bound.arguments.items():
-                if name in call_inputs:
-                    raise TypeError(
-                        f"{self._name}() got multiple values for argument '{name}'"
-                    )
-                call_inputs[name] = value
+        call = _workflow_call.resolve_workflow_call(
+            self._signature_info,
+            args,
+            call_inputs,
+            bind=self._bind,
+            module=self._module,
+            dependency_type=Node,
+            workflow_name=self._name,
+            default_n_broadcast_samples=self._n_broadcast_samples,
+            default_include_inputs=self._include_inputs,
+        )
+        if call.overrides.seed is not None:
+            self._key = jax.random.PRNGKey(call.overrides.seed)
 
-        # If the wrapped function has a **kwargs parameter, sig.bind nests
-        # the extra keyword args under the parameter name.  Unpack them so
-        # they reach the function as top-level keyword arguments.
-        if self._has_var_keyword:
-            for p in self._sig.parameters.values():
-                if p.kind == inspect.Parameter.VAR_KEYWORD and p.name in call_inputs:
-                    extra = call_inputs.pop(p.name)
-                    call_inputs.update(extra)
+        values = _workflow_distribution_normalization.normalize_distribution_values(
+            values=call.values, hints=self._signature_info.hints,
+        )
+        broadcast_plan = _workflow_plan.build_broadcast_plan(
+            values=values, hints=self._signature_info.hints,
+        )
 
-        # Extract reserved call-time overrides (collision already prevented in __init__)
-        n_broadcast_samples = call_inputs.pop("n_broadcast_samples", self._n_broadcast_samples)
-        do_include_inputs = call_inputs.pop("include_inputs", self._include_inputs)
+        def execute_distribution_broadcast(
+            *,
+            row_values: dict[str, Any],
+            dist_args: Sequence[str],
+            n_broadcast_samples: int = call.overrides.n_broadcast_samples,
+            include_inputs: bool = call.overrides.include_inputs,
+        ):
+            return _workflow_distribution_broadcast.execute_distribution_broadcast(
+                func=self._func,
+                values=row_values,
+                broadcast_args=dist_args,
+                n_broadcast_samples=n_broadcast_samples,
+                include_inputs=include_inputs,
+                get_key=self._get_key,
+                make_execution_config=self._make_execution_config,
+                requested_dispatch=self._dispatch,
+                resolve_dispatch=self._resolve_dispatch,
+                require_jax_traceable=self._require_jax_traceable,
+                workflow_name=self._name,
+                workflow_kind=self.effective_workflow_kind,
+            )
 
-        if "seed" in call_inputs:
-            self._key = jax.random.PRNGKey(call_inputs.pop("seed"))
+        if broadcast_plan.regime == "distribution":
+            return execute_distribution_broadcast(
+                row_values=values,
+                dist_args=broadcast_plan.dist_args,
+            )
+        if broadcast_plan.regime in ("sweep", "nested"):
+            def distribution_broadcast(
+                row_values: dict[str, Any],
+                dist_args: list[str],
+                n_broadcast_samples: int,
+                include_inputs: bool,
+            ):
+                return execute_distribution_broadcast(
+                    row_values=row_values,
+                    dist_args=dist_args,
+                    n_broadcast_samples=n_broadcast_samples,
+                    include_inputs=include_inputs,
+                )
 
-        values = self._resolve_inputs(call_inputs)
-        values = self._convert_distributions(values)
-
-        dist_args, ra_args = self._find_broadcast_args(values)
-        if dist_args or ra_args:
-            return self._broadcast(
-                values, dist_args, ra_args, n_broadcast_samples, do_include_inputs,
+            return _workflow_sweep.execute_sweep(
+                func=self._func,
+                values=values,
+                plan=broadcast_plan,
+                make_execution_config=self._make_execution_config,
+                requested_dispatch=self._dispatch,
+                resolve_dispatch=self._resolve_dispatch,
+                require_jax_traceable=self._require_jax_traceable,
+                distribution_broadcast=distribution_broadcast,
+                workflow_name=self._name,
+                n_broadcast_samples=call.overrides.n_broadcast_samples,
+                include_inputs=call.overrides.include_inputs,
             )
 
         # Non-broadcast call — one function invocation, then wrap.
         # Provenance parents are the inputs that carry their own
         # ``.source`` slot (Distribution / Record / RecordArray).
-        result = self._execute_many([values])[0]
+        # Known harmless duplication: the distribution-broadcast module builds
+        # the same request shape. A later execution cleanup can centralize this
+        # without reintroducing private facade wrappers.
+        request = _workflow_execution.WorkflowExecutionRequest(
+            func=self._func,
+            call_value_list=[values],
+            execution=self._make_execution_config(),
+        )
+        result = _workflow_execution.execute_many(request)[0]
         parents = tuple(
             v for v in values.values() if hasattr(v, "source")
         )
@@ -583,280 +447,27 @@ class WorkflowFunction(Node):
             parents=parents,
             metadata={"func": self._name or self._func.__name__},
         )
-        return _coerce_output(
+        return _workflow_result._coerce_output(
             result,
-            broadcast_mode=BROADCAST_WRAP,
+            broadcast_mode=_workflow_result.BROADCAST_WRAP,
             provenance=provenance,
             field_name=self._name,
         )
-
-    def _resolve_inputs(self, call_inputs: dict[str, Any]) -> dict[str, Any]:
-        """
-        Build kwargs for calling the underlying function.
-
-        Precedence (highest -> lowest):
-          1) call_inputs
-          2) self._bind
-          3) module.child_nodes/module.inputs (if module attached)
-          4) function default values
-        """
-        values: dict[str, Any] = {}
-
-        # convenience access
-        mod = self._module
-        mod_child_nodes = getattr(mod, "child_nodes", {}) if mod is not None else {}
-        mod_inputs = getattr(mod, "inputs", {}) if mod is not None else {}
-
-        for name, param in self._sig.parameters.items():
-            if name == "self":
-                continue
-
-            is_dep = self._is_dependency_param(name)
-
-            # 1) call-time inputs
-            if name in call_inputs:
-                if mod is not None and is_dep and name in mod_child_nodes:
-                    # Avoid accidental overriding of module-wired deps at call time
-                    raise TypeError(
-                        f"Dependency '{name}' for workflow '{self._name}' is provided by the module "
-                        f"and cannot be overridden at call time."
-                    )
-                values[name] = call_inputs[name]
-
-            # 2) construction-time bind
-            elif name in self._bind:
-                values[name] = self._bind[name]
-
-            # 3) resolve from module if available
-            elif mod is not None:
-                if is_dep and name in mod_child_nodes:
-                    values[name] = mod_child_nodes[name]
-                elif (not is_dep) and name in mod_inputs:
-                    values[name] = mod_inputs[name]
-                else:
-                    # fall through to default/missing
-                    pass
-
-            # 4) function defaults
-            if name not in values:
-                if param.default is not param.empty:
-                    values[name] = param.default
-
-        # Pass through extra kwargs when the function accepts **kwargs.
-        if self._has_var_keyword:
-            known_params = set(self._sig.parameters.keys())
-            for k, v in call_inputs.items():
-                if k not in known_params:
-                    values[k] = v
-
-        # validate required params exist (after resolution)
-        for name, param in self._sig.parameters.items():
-            if name == "self":
-                continue
-            if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
-                continue
-            if param.default is param.empty and name not in values:
-                raise TypeError(f"Missing required input '{name}' for workflow '{self._name}'")
-
-        # validate dependency types
-        for name in self._param_names:
-            if self._is_dependency_param(name):
-                v = values.get(name)
-                if not isinstance(v, Node):
-                    ann = self._hints.get(name)
-                    raise TypeError(
-                        f"WorkflowFunction '{self._name}' expects dependency '{name}: {ann}' to be a Node, "
-                        f"but got {type(v)}."
-                    )
-
-        return values
-
-    def _convert_distributions(self, values: dict[str, Any]) -> dict[str, Any]:
-        """Convert distribution-valued args based on type hints.
-
-        Handles two conversion cases and one skip:
-
-        1. **Concrete type hints** – if the hint is a ``Distribution``
-           subclass and the value is a recognised distribution that is
-           not already an instance, convert via the registry.
-        2. **Protocol type hints** – if the hint is a
-           ``@runtime_checkable`` protocol (e.g., ``SupportsLogProb``)
-           and the value is a ``Distribution`` that does not satisfy the
-           protocol, convert via protocol-based resolution.
-        3. **``DistributionArray`` skip** – ``Array[Distribution]``
-           values are handled by the sweep path in
-           ``_find_broadcast_args`` (cell-by-cell); they never go
-           through the scalar-distribution conversion.
-        """
-        out = dict(values)
-
-        for name, value in values.items():
-            expected = self._hints.get(name)
-            # DistributionArray is ``Array[Distribution]`` — handled by
-            # the sweep path, not the scalar-distribution conversion.
-            # A 0-d DA (``batch_shape == ()``) has zero axes to sweep
-            # over, so the sweep path would skip it and the op would
-            # see a raw ``DistributionArray`` in a scalar-Distribution
-            # slot. Unwrap it here unless the hint explicitly asks for
-            # a DA (or ``Any``), so the cell flows through dispatch as
-            # any scalar Distribution would — the natural extension of
-            # the sweep convention "no batch cells to iterate → one
-            # call with the cell". Size-1 DAs (``batch_shape == (1,)``)
-            # are *not* collapsed here: their sweep is well-defined
-            # (one cell → ``batch_shape=(1,)`` output), and treating
-            # them as scalars would silently change the result shape
-            # of ``mean(da)`` / ``sample(da)`` for any deliberately
-            # one-element batch.
-            if isinstance(value, DistributionArray):
-                if value.batch_shape == ():
-                    try:
-                        wants_da = (
-                            isinstance(expected, type)
-                            and issubclass(expected, DistributionArray)
-                        )
-                    except TypeError:
-                        wants_da = False
-                    if not wants_da and expected is not Any:
-                        out[name] = value._flat_component(0)
-                continue
-            if expected is None:
-                continue
-
-            try:
-                is_dist_subclass = isinstance(expected, type) and issubclass(
-                    expected, Distribution
-                )
-            except TypeError:
-                is_dist_subclass = False
-
-            if (
-                is_dist_subclass
-                and converter_registry.is_distribution_type(value)
-                and not isinstance(value, expected)
-            ):
-                out[name] = converter_registry.convert(value, expected)
-            elif (
-                not is_dist_subclass
-                and expected in _DISTRIBUTION_PROTOCOLS
-                and isinstance(value, Distribution)
-                and not isinstance(value, expected)
-            ):
-                try:
-                    out[name] = converter_registry.convert(value, expected)
-                except (TypeError, AttributeError):
-                    pass  # Let the impl function's own check raise
-
-        return out
-
-    def _find_broadcast_args(
-        self, values: dict[str, Any]
-    ) -> tuple[list[str], list[str]]:
-        """Classify argument values into distribution-broadcast and
-        array-broadcast groups.
-
-        Returns
-        -------
-        (dist_args, ra_args) : tuple of list
-            - ``dist_args``: scalar Distribution args passed to a slot
-              whose type hint is *not* a Distribution; sampled from
-              and Monte-Carlo-marginalised.
-            - ``ra_args``: array-valued args (``RecordArray`` or
-              ``DistributionArray`` with nonempty ``batch_shape``)
-              passed to a slot whose type hint is *not* that same array
-              type. Multiple ``ra_args`` combine by the **product
-              rule**: one call per cell of the Cartesian product across
-              all array inputs' batch shapes.
-
-        A ``DistributionArray`` is treated as ``Array[Distribution]``:
-        always a sweep arg (not marginalised), even when the hint is a
-        distribution protocol like ``SupportsSampling``. Each cell's
-        component becomes the scalar Distribution seen by the inner
-        call.
-
-        The two groups are disjoint — a value is either an array or a
-        (scalar) Distribution or neither. Both groups firing on the
-        same call triggers the nested regime in ``_broadcast``: outer
-        stack over the array product, inner marginalise over the
-        Distribution MC draws.
-        """
-        dist_broadcast: list[str] = []
-        ra_broadcast: list[str] = []
-        for name, value in values.items():
-            expected = self._hints.get(name)
-
-            # --- Array-valued branch (RecordArray + DistributionArray) ---
-            is_record_array = isinstance(value, RecordArray)
-            is_dist_array = isinstance(value, DistributionArray)
-            if (is_record_array or is_dist_array) and len(value.batch_shape) > 0:
-                # Hint matches the batched type exactly → caller wants
-                # the batched object as-is.
-                # ``typing.Any`` → caller opted out of broadcasting.
-                # Anything else (scalar Record / Distribution / protocol
-                # / no hint) → per-cell sweep.
-                try:
-                    is_same_array_hint = (
-                        isinstance(expected, type) and (
-                            (is_record_array and issubclass(expected, RecordArray))
-                            or (is_dist_array and issubclass(expected, DistributionArray))
-                        )
-                    )
-                except TypeError:
-                    is_same_array_hint = False
-                is_any_hint = expected is Any
-                if is_same_array_hint or is_any_hint:
-                    continue
-                ra_broadcast.append(name)
-                continue
-
-            # --- Scalar-Distribution branch -------------------------------
-            if not converter_registry.is_distribution_type(value):
-                continue
-            # Unwrap parameterized generics (e.g. Distribution[T]).
-            origin = getattr(expected, "__origin__", None)
-            expected_type = origin if isinstance(origin, type) else expected
-            try:
-                is_dist_hint = (
-                    expected_type is not None
-                    and isinstance(expected_type, type)
-                    and issubclass(expected_type, Distribution)
-                )
-            except TypeError:
-                is_dist_hint = False
-            if not is_dist_hint and expected in _DISTRIBUTION_PROTOCOLS:
-                is_dist_hint = True
-            if is_dist_hint:
-                continue
-            # Auto-convert external distribution types to ProbPipe
-            if not isinstance(value, Distribution):
-                values[name] = converter_registry.convert(
-                    value, NumericRecordDistribution,
-                )
-                value = values[name]
-            dist_broadcast.append(name)
-
-        return dist_broadcast, ra_broadcast
 
     def _get_key(self):
         """Split and advance the internal PRNG key."""
         self._key, subkey = jax.random.split(self._key)
         return subkey
 
-    def _resolve_vectorize(self, values: dict[str, Any], broadcast_args: list[str]) -> str:
-        """Resolve the vectorization strategy, caching the auto-detection result.
-
-        Returns ``"jax"`` or ``"loop"``.  This is independent of orchestration
-        (``workflow_kind``), which wraps whichever strategy is chosen.
-        """
-        if self._vectorize != "auto":
-            return self._vectorize
-
-        if self._resolved_vectorize is not None:
-            return self._resolved_vectorize
-
-        # Probe JAX traceability with dummy inputs
+    def _jax_traceability_error(
+        self,
+        values: dict[str, Any],
+        broadcast_args: list[str],
+    ) -> Exception | None:
+        """Return the JAX trace-probe error for the current call, if any."""
         try:
             dummy_kw = {}
-            for name, param in self._sig.parameters.items():
+            for name in self._signature_info.signature.parameters:
                 if name == "self":
                     continue
                 if name in broadcast_args:
@@ -868,7 +479,25 @@ class WorkflowFunction(Node):
                         dummy_kw[name] = v[0]
                     else:
                         dist = v
-                        es = dist.event_shape
+                        # ``event_shape`` raises on multi-field NRDs
+                        # (``NotImplementedError`` on the base or
+                        # ``TypeError`` via ``_single_field_name``) —
+                        # those distributions don't have a single
+                        # array-shaped placeholder, so the probe can't
+                        # produce a dummy. Falling out to the outer
+                        # ``except Exception`` triggers row-wise dispatch,
+                        # which is the right default for multi-field
+                        # record-valued inputs.
+                        try:
+                            es = dist.event_shape
+                        except (TypeError, NotImplementedError) as exc:
+                            raise NotImplementedError(
+                                f"Cannot probe JAX traceability for "
+                                f"{type(dist).__name__} broadcast arg "
+                                f"{name!r}: no single ``event_shape`` "
+                                f"(multi-field or abstract). "
+                                f"Falling back to row-wise dispatch."
+                            ) from exc
                         # Match the distribution's own dtype so the probe
                         # mirrors what the inner function actually sees.
                         dt = getattr(dist, "dtype", None) or jnp.zeros((), dtype=float).dtype
@@ -877,681 +506,63 @@ class WorkflowFunction(Node):
                     v = values[name]
                     if isinstance(v, jnp.ndarray):
                         dummy_kw[name] = v
-                    elif hasattr(v, '__array__'):
+                    elif hasattr(v, "__array__"):
                         dummy_kw[name] = jnp.asarray(v)
                     else:
                         dummy_kw[name] = v
             jax.make_jaxpr(lambda kw: self._func(**kw))(dummy_kw)
-            self._resolved_vectorize = "jax"
-        except Exception:
+        except Exception as exc:
+            return exc
+        return None
+
+    def _require_jax_traceable(
+        self,
+        values: dict[str, Any],
+        broadcast_args: list[str],
+    ) -> None:
+        """Raise a clear error if explicit JAX dispatch cannot trace."""
+        trace_error = self._jax_traceability_error(values, broadcast_args)
+        if trace_error is None:
+            return
+        raise ValueError(
+            "dispatch='jax' failed while tracing the wrapped function with JAX; "
+            "ensure the function is JAX-traceable, or use dispatch='auto', "
+            "'sequential', or 'thread'."
+        ) from trace_error
+
+    def _resolve_dispatch(
+        self,
+        values: dict[str, Any],
+        broadcast_args: list[str],
+        *,
+        jax_supported: bool = True,
+    ) -> str:
+        """Resolve the dispatch strategy, caching JAX traceability detection.
+
+        Returns ``"jax"``, ``"sequential"``, or ``"thread"``. This is
+        independent of orchestration (``workflow_kind``), which wraps
+        whichever strategy is chosen.
+        """
+        if self._dispatch != "auto":
+            return self._dispatch
+
+        if not jax_supported:
+            return "sequential"
+
+        if self._resolved_dispatch is not None:
+            return self._resolved_dispatch
+
+        if self._jax_traceability_error(values, broadcast_args) is None:
+            self._resolved_dispatch = "jax"
+        else:
             logger.info(
-                "Function '%s' is not JAX-traceable; using loop vectorization.",
+                "Function '%s' is not JAX-traceable; using sequential dispatch.",
                 self._name,
             )
-            self._resolved_vectorize = "loop"
+            self._resolved_dispatch = "sequential"
 
-        return self._resolved_vectorize
+        return self._resolved_dispatch
 
-    def _broadcast(
-        self,
-        values: dict[str, Any],
-        dist_args: list[str],
-        ra_args: list[str],
-        n_broadcast_samples: int,
-        do_include_inputs: bool = False,
-    ) -> Any:
-        """Dispatcher: route to the right broadcast regime (issue #130).
-
-        Three regimes:
-
-        - ``dist_args`` only — existing Monte Carlo marginalisation via
-          ``_broadcast_distributions_only``. Output: marginal
-          distribution (``_MixtureMarginal`` / ``_RecordMarginal`` / ...).
-        - ``ra_args`` only — pure parameter sweep. One inner call per
-          RecordArray row; no marginalisation. Output: stacked
-          aggregate (``NumericRecordArray`` / ``RecordArray`` /
-          ``DistributionArray``) via ``_make_stack``.
-        - **Both** — nested regime. Outer loop over ``ra_args[0]`` rows,
-          each iteration running an inner distribution-only broadcast
-          for ``dist_args``. Output always a ``DistributionArray`` of
-          per-row marginals (satisfies the
-          Record | RecordArray | Distribution output contract).
-
-        The ``include_inputs=True`` override still produces the
-        inner-path ``BroadcastDistribution`` when ``dist_args`` fire,
-        but it is **not** supported on the pure-sweep or nested paths
-        (the stack has no single joint distribution to return; the
-        inputs are known via provenance). Calling with
-        ``include_inputs=True`` and any ``ra_args`` raises.
-        """
-        # ---- No RecordArray: delegate to the existing path -------------
-        if not ra_args:
-            return self._broadcast_distributions_only(
-                values, dist_args, n_broadcast_samples, do_include_inputs,
-            )
-
-        if do_include_inputs:
-            raise NotImplementedError(
-                "include_inputs=True is not supported with RecordArray "
-                "broadcasting. The inputs are already available via "
-                "provenance on the stacked output."
-            )
-
-        # Group ``ra_args`` by parent identity. Views from the same
-        # ``RecordArray`` (e.g. ``Design.select_all()`` outputs) zip —
-        # they contribute a single axis block to the sweep. Plain
-        # ``RecordArray`` / ``DistributionArray`` args and views from
-        # different parents each form their own group and product
-        # across the sweep. Insertion order of first occurrence
-        # preserves axis ordering in the output.
-        ra_groups = self._group_ra_args_by_parent(values, ra_args)
-        sweep_batch_shape = tuple(
-            ax for _, bshape, _ in ra_groups for ax in bshape
-        )
-        n_total = prod(sweep_batch_shape) if sweep_batch_shape else 1
-
-        # ---- Pure sweep (no Distribution args) -------------------------
-        if not dist_args:
-            per_row = self._execute_sweep_rows(
-                values, ra_args, n_total, sweep_batch_shape, ra_groups,
-            )
-            aggregate = _make_stack(
-                per_row,
-                batch_shape=sweep_batch_shape,
-                name=self._name,
-                field_name=self._name,
-            )
-            provenance = self._make_sweep_provenance(
-                values, ra_args, dist_args, batch_shape=sweep_batch_shape, k=0,
-            )
-            return _coerce_output(
-                aggregate,
-                broadcast_mode=BROADCAST_STACK,
-                provenance=provenance,
-                field_name=self._name,
-            )
-
-        # ---- Nested (array + Distribution) -----------------------------
-        # Per sweep cell (in flat row-major order over the multi-d batch):
-        # run an inner distribution-only broadcast, marginalise over the
-        # k MC draws, collect the n_total per-cell marginals and stack
-        # them into a DistributionArray that presents the sweep's
-        # multi-d batch_shape.
-        per_row_marginals: list[Distribution] = []
-        for i in range(n_total):
-            row_values = self._slice_ra_args(values, ra_args, i, ra_groups)
-            inner = self._broadcast_distributions_only(
-                row_values, dist_args, n_broadcast_samples,
-                do_include_inputs=True,
-            )
-            if isinstance(inner, BroadcastDistribution):
-                marginal = inner.marginalize()
-            else:
-                marginal = inner
-            per_row_marginals.append(marginal)
-
-        stacked = _make_distribution_array(
-            per_row_marginals,
-            batch_shape=sweep_batch_shape,
-            name=self._name or "sweep",
-        )
-        provenance = self._make_sweep_provenance(
-            values, ra_args, dist_args,
-            batch_shape=sweep_batch_shape, k=n_broadcast_samples,
-        )
-        return _coerce_output(
-            stacked,
-            broadcast_mode=BROADCAST_NESTED,
-            provenance=provenance,
-            field_name=self._name,
-        )
-
-    # ----- Helpers for the array-broadcast path ---------------------------
-
-    def _group_ra_args_by_parent(
-        self,
-        values: dict[str, Any],
-        ra_args: list[str],
-    ) -> list[tuple[list[str], tuple[int, ...], int]]:
-        """Group array-valued sweep args by parent identity.
-
-        Views (``_RecordArrayView``) from the same parent
-        ``RecordArray`` — e.g. the output dict of
-        ``Design.select_all()`` — belong to one group and iterate in
-        lockstep (zip). Plain ``RecordArray`` / ``DistributionArray``
-        args and views from distinct parents each form their own group
-        and product across the sweep.
-
-        Returns a list of tuples ``(arg_names, batch_shape, size)``
-        in first-occurrence order; each tuple is one axis block of the
-        sweep. ``size`` is ``prod(batch_shape)``.
-        """
-        groups: list[tuple[list[str], tuple[int, ...], int]] = []
-        for arg_names in _group_by_parent(values, ra_args).values():
-            # Sibling views share their parent's batch_shape by
-            # construction, so the first arg's batch_shape stands for
-            # the group.
-            bshape = tuple(values[arg_names[0]].batch_shape)
-            groups.append((arg_names, bshape, prod(bshape) if bshape else 1))
-        return groups
-
-    def _slice_ra_args(
-        self,
-        values: dict[str, Any],
-        ra_args: list[str],
-        i: int,
-        ra_groups: list[tuple[list[str], tuple[int, ...], int]],
-    ) -> dict[str, Any]:
-        """Materialise the ``i``-th sweep cell under parent-grouped sweep.
-
-        ``ra_groups`` is the per-parent grouping from
-        :meth:`_group_ra_args_by_parent`. Each group's args share a flat
-        in-group index (zip); groups compose by row-major unravel of
-        the outer flat index ``i`` over the concatenated batch shapes.
-        """
-        out = dict(values)
-        rem = i
-        # Highest-index group varies fastest (row-major over the
-        # concatenated sweep shape).
-        for arg_names, _, size in reversed(ra_groups):
-            idx = rem % size
-            rem = rem // size
-            for name in arg_names:
-                source = values[name]
-                if isinstance(source, DistributionArray):
-                    out[name] = source._flat_component(idx)
-                else:
-                    out[name] = source[idx]
-        return out
-
-    def _execute_sweep_rows(
-        self,
-        values: dict[str, Any],
-        ra_args: list[str],
-        n_total: int,
-        sweep_batch_shape: tuple[int, ...],
-        ra_groups: list[tuple[list[str], tuple[int, ...], int]],
-    ) -> Any:
-        """Execute ``n_total`` inner calls, one per sweep cell in flat
-        row-major order over the concatenated ``sweep_batch_shape``.
-
-        Returns a Python list of outputs (loop path) or a stacked
-        pytree with leading axis ``n_total`` (vmap path). Either form
-        is a valid input for ``_make_stack``.
-        """
-        vectorize = self._resolve_vectorize(values, ra_args)
-
-        # The vmap path only handles the simple single-RecordArray
-        # case: one group, one RA arg, no DistributionArray, no views
-        # (views carry parent references that would confuse vmap's
-        # leading-axis flattening).
-        has_dist_array = any(
-            isinstance(values[name], DistributionArray) for name in ra_args
-        )
-        has_view = any(
-            isinstance(values[name], _RecordArrayView) for name in ra_args
-        )
-        if has_dist_array or has_view or len(ra_groups) > 1 or len(ra_args) > 1:
-            vectorize = "loop"
-
-        if vectorize == "jax":
-            # Flatten the single RecordArray's batch axes to one leading
-            # dim so vmap maps over axis 0 uniformly regardless of the
-            # sweep's original batch_shape.
-            static = {k: v for k, v in values.items() if k not in ra_args}
-
-            def single_call(ra_slice_leaves):
-                kw = dict(static)
-                for name in ra_args:
-                    ra = values[name]
-                    kw[name] = ra._record_cls(ra_slice_leaves[name])
-                return self._func(**kw)
-
-            vmap_input = {}
-            for name in ra_args:
-                ra = values[name]
-                n_batch = len(ra.batch_shape)
-                vmap_input[name] = {
-                    f: ra[f].reshape((n_total,) + ra[f].shape[n_batch:])
-                    for f in ra.fields
-                }
-            return jax.vmap(single_call)(vmap_input)
-
-        # Loop path.
-        per_row_values = [
-            self._slice_ra_args(values, ra_args, i, ra_groups)
-            for i in range(n_total)
-        ]
-        return self._execute_many(per_row_values)
-
-    def _make_sweep_provenance(
-        self,
-        values: dict[str, Any],
-        ra_args: list[str],
-        dist_args: list[str],
-        *,
-        batch_shape: tuple[int, ...],
-        k: int,
-    ) -> Provenance:
-        """Build the Provenance node for a sweep output.
-
-        Parents are the RecordArray / Distribution inputs that drove
-        the broadcast. Metadata records the regime, the full sweep
-        ``batch_shape`` (for multi-d), and the MC count so downstream
-        tooling can report whether uncertainty was marginalised or
-        stacked.
-        """
-        regime = "nested" if dist_args else "stack"
-        parents = tuple(values[name] for name in ra_args) + tuple(
-            values[name] for name in dist_args
-            if isinstance(values[name], Distribution)
-        )
-        return Provenance(
-            operation=f"workflow.{regime}",
-            parents=parents,
-            metadata={
-                "func": self._name or self._func.__name__,
-                "batch_shape": tuple(batch_shape),
-                "k": k,
-                "ra_args": list(ra_args),
-                "dist_args": list(dist_args),
-            },
-        )
-
-    def _broadcast_distributions_only(
-        self,
-        values: dict[str, Any],
-        broadcast_args: list[str],
-        n_broadcast_samples: int,
-        do_include_inputs: bool = False,
-    ) -> BroadcastDistribution | Distribution:
-        """Distribution-only broadcast path (Monte Carlo marginalisation).
-
-        Samples from each ``broadcast_args`` entry (all of which are
-        ``Distribution`` instances after ``_find_broadcast_args``),
-        calls the user's function once per sample, and wraps the n
-        outputs as a single marginal distribution.
-
-        Vectorization (``"jax"`` vs ``"loop"``) and orchestration
-        (``workflow_kind``) are resolved independently:
-
-        - **vectorize="jax"**: samples are dispatched via ``jax.vmap``.
-        - **vectorize="loop"**: samples are dispatched via a Python loop,
-          with optional empirical enumeration and threading.
-        - **workflow_kind="task"/"flow"**: whichever vectorization strategy
-          is chosen gets wrapped in a Prefect task or flow for compute-graph
-          tracing.
-        """
-        MIN_BROADCAST_SAMPLES = 5  # Recommended minimum samples
-
-        # Validate n_broadcast_samples value and warn if too small
-        if not isinstance(n_broadcast_samples, int) or n_broadcast_samples < MIN_BROADCAST_SAMPLES:
-            warnings.warn(
-                f"n_broadcast_samples={n_broadcast_samples} is too low; "
-                f"results may be unreliable. "
-                f"Recommended minimum is {MIN_BROADCAST_SAMPLES}.",
-                stacklevel=2
-            )
-
-        vectorize = self._resolve_vectorize(values, broadcast_args)
-
-        # Collect candidate empirical dists (small enough individually),
-        # sorted smallest first. Greedily include them while the product
-        # stays within budget.
-        candidates = []
-        sample_args: dict[str, Distribution] = {}
-        for name in broadcast_args:
-            dist = values[name]
-            if isinstance(dist, EmpiricalDistribution) and dist.n <= n_broadcast_samples:
-                candidates.append((name, dist))
-            else:
-                sample_args[name] = dist
-        candidates.sort(key=lambda pair: pair[1].n)
-
-        empirical_args: dict[str, EmpiricalDistribution] = {}
-        product_size = 1
-        for name, dist in candidates:
-            if product_size * dist.n <= n_broadcast_samples:
-                empirical_args[name] = dist
-                product_size *= dist.n
-            else:
-                # Too large to enumerate — sample from it instead.
-                sample_args[name] = dist
-
-        # Enumeration preserves exact empirical weights and must run in
-        # all vectorization modes — otherwise the cartesian-product
-        # semantics change with vectorize= (issue surfaced in the
-        # ``EmpiricalDistribution`` broadcasting example).
-        if empirical_args:
-            result = self._broadcast_enumerate(
-                values, empirical_args, sample_args, product_size, n_broadcast_samples,
-            )
-        elif vectorize == "jax":
-            result = self._broadcast_jax(values, broadcast_args, n_broadcast_samples)
-        else:
-            result = self._broadcast_sample(values, broadcast_args, n_broadcast_samples)
-
-        # Attach provenance
-        parents = tuple(
-            values[name] for name in broadcast_args
-            if isinstance(values[name], Distribution)
-        )
-        provenance = Provenance(
-            "broadcast",
-            parents=parents,
-            metadata={
-                "vectorize": vectorize,
-                "orchestrate": self.effective_workflow_kind.value,
-                "n_samples": n_broadcast_samples,
-                "func": self._name or self._func.__name__,
-                "broadcast_args": broadcast_args,
-            },
-        )
-
-        if isinstance(result, Distribution):
-            result.with_source(provenance)
-
-        if do_include_inputs:
-            return result
-
-        # Default: return the output marginal only.
-        # Provenance is propagated automatically by marginalize().
-        if isinstance(result, BroadcastDistribution):
-            return result.marginalize()
-
-        return result
-
-    def _sample_broadcast_args(
-        self,
-        values: dict[str, Any],
-        broadcast_args: list[str],
-        n: int,
-        key: PRNGKey,
-    ) -> dict[str, Array]:
-        """Sample all broadcast arguments, handling view reconnection.
-
-        Sibling views from the same parent distribution share one
-        parent draw, preserving cross-field correlation. Plain
-        (non-view) distributions are sampled independently per kwarg,
-        even if the same object is passed under multiple names.
-        """
-        sampled: dict[str, Array] = {}
-        for arg_names in _group_by_parent(values, broadcast_args).values():
-            first = values[arg_names[0]]
-            if not isinstance(first, _RecordDistributionView):
-                for arg_name in arg_names:
-                    key, subkey = jax.random.split(key)
-                    sampled[arg_name] = values[arg_name]._sample(subkey, (n,))
-                continue
-            key, subkey = jax.random.split(key)
-            structured = first.parent._sample(subkey, (n,))
-            for arg_name in arg_names:
-                view = values[arg_name]
-                if hasattr(view, "_extract"):
-                    sampled[arg_name] = view._extract(structured)
-                else:
-                    val = structured
-                    for k in getattr(view, "_key_path", (view.field,)):
-                        val = val[k]
-                    sampled[arg_name] = val
-        return sampled
-
-    def _broadcast_jax(
-        self,
-        values: dict[str, Any],
-        broadcast_args: list[str],
-        n_broadcast_samples: int,
-    ) -> BroadcastDistribution:
-        """
-        Vectorised broadcasting via ``jax.vmap``.
-
-        Samples all broadcast distributions at once (with joint reconnection),
-        then calls the wrapped function over the batch dimension using
-        ``jax.vmap``.  Requires the wrapped function to be JAX-traceable.
-
-        If ``workflow_kind`` is set, the entire vmap computation is wrapped
-        in a Prefect task or flow for orchestration tracing.
-        """
-        key = self._get_key()
-        sampled = self._sample_broadcast_args(values, broadcast_args, n_broadcast_samples, key)
-
-        static = {k: v for k, v in values.items() if k not in broadcast_args}
-
-        func = self._func
-
-        def single_call(broadcast_slice):
-            kw = dict(static)
-            kw.update(broadcast_slice)
-            return func(**kw)
-
-        # vmap over the dict of batched arrays (axis 0 for each)
-        batch = {name: sampled[name] for name in broadcast_args}
-
-        def run_vmap():
-            return jax.vmap(single_call)(batch)
-
-        # Wrap in Prefect task/flow if orchestration is requested
-        kind = self.effective_workflow_kind
-        if kind in (WorkflowKind.TASK, WorkflowKind.FLOW):
-            if kind == WorkflowKind.TASK:
-                run_vmap = task(name=f"{self._name}_vmap")(run_vmap)
-            else:
-                runner = prefect_config.resolve_task_runner()
-                run_vmap = flow(
-                    name=f"{self._name}_vmap",
-                    **({"task_runner": runner} if runner is not None else {}),
-                )(run_vmap)
-
-        results = run_vmap()
-        return BroadcastDistribution(
-            input_samples=sampled,
-            output_samples=results,
-            weights=None,
-            broadcast_args=broadcast_args,
-        )
-
-    def _broadcast_enumerate(
-        self,
-        values: dict[str, Any],
-        empirical_args: dict[str, EmpiricalDistribution],
-        sample_args: dict[str, Distribution],
-        product_size: int,
-        n_broadcast_samples: int,
-    ) -> BroadcastDistribution:
-        """
-        Enumerate the cartesian product of EmpiricalDistribution samples,
-        propagating their weights. When non-empirical distributions are also
-        present, draws as many samples as the budget allows per combination
-        (n_broadcast_samples // product_size), each receiving equal weight scaled by
-        the empirical product weight.
-        """
-        key = self._get_key()
-        emp_names = list(empirical_args.keys())
-        emp_dists = [empirical_args[name] for name in emp_names]
-
-        # Use as many non-empirical samples per combo as budget allows
-        reps_per_combo = max(1, n_broadcast_samples // product_size) if sample_args else 1
-        total = product_size * reps_per_combo
-
-        # Pre-sample non-empirical distributions (with DistributionView reconnection)
-        sample_arg_names = list(sample_args.keys())
-        if sample_arg_names:
-            sampled = self._sample_broadcast_args(values, sample_arg_names, total, key)
-        else:
-            sampled = {}
-
-        call_value_list = []
-        weights = []
-        sample_idx = 0
-
-        all_broadcast_args = emp_names + sample_arg_names
-
-        for combo in cartesian_product(*(range(d.n) for d in emp_dists)):
-            # Compute empirical product weight
-            emp_weight = 1.0
-            for name, dist, i in zip(emp_names, emp_dists, combo):
-                emp_weight *= float(dist.weights[i])
-
-            for _ in range(reps_per_combo):
-                call_values = dict(values)
-
-                # Set empirical samples. ``dist.samples`` is a Record
-                # of per-field stacked arrays; pull row ``i`` per field
-                # so the inner call sees the same shape it would from a
-                # single ``sample(dist)`` draw.
-                for name, dist, i in zip(emp_names, emp_dists, combo):
-                    call_values[name] = _index_sample(dist.samples, i)
-
-                # Set sampled values for non-empirical distributions.
-                # ``sampled[name]`` may be a Record (auto-wrapped); use
-                # the same per-row indexing helper.
-                for name in sample_args:
-                    call_values[name] = _index_sample(sampled[name], sample_idx)
-
-                # Weight: empirical product weight divided evenly across reps
-                weights.append(emp_weight / reps_per_combo)
-                call_value_list.append(call_values)
-                sample_idx += 1
-
-        results = self._execute_many(call_value_list)
-
-        # Assemble input samples aligned with results
-        all_input_samples = {
-            name: jnp.stack([cv[name] for cv in call_value_list])
-            for name in all_broadcast_args
-        }
-
-        return BroadcastDistribution(
-            input_samples=all_input_samples,
-            output_samples=results,
-            weights=jnp.array(weights),
-            broadcast_args=all_broadcast_args,
-        )
-
-    def _broadcast_sample(
-        self,
-        values: dict[str, Any],
-        broadcast_args: list[str],
-        n_broadcast_samples: int,
-    ) -> BroadcastDistribution:
-        """
-        Sample n_broadcast_samples from each Distribution argument and call the function
-        once per sample (uniform weights).  Handles DistributionView reconnection.
-        """
-        key = self._get_key()
-        samples_per_arg = self._sample_broadcast_args(values, broadcast_args, n_broadcast_samples, key)
-
-        call_value_list = []
-        for i in range(n_broadcast_samples):
-            call_values = dict(values)
-            for name in broadcast_args:
-                call_values[name] = _index_sample(samples_per_arg[name], i)
-            call_value_list.append(call_values)
-
-        results = self._execute_many(call_value_list)
-
-        return BroadcastDistribution(
-            input_samples=samples_per_arg,
-            output_samples=results,
-            weights=None,
-            broadcast_args=broadcast_args,
-        )
-
-    def _execute_many(self, call_value_list: list[dict[str, Any]]) -> list:
-        """
-        Execute the wrapped function for every dict in *call_value_list* and
-        return the results in the same order.
-
-        Dispatch strategy:
-          - workflow_kind="task"  → Prefect task.map() (single mapped task)
-          - workflow_kind="flow"  → Prefect: one wrapping flow with task.map()
-          - parallel=True/int    → concurrent.futures.ThreadPoolExecutor
-          - otherwise            → sequential list comprehension
-        """
-        if not call_value_list:
-            return []
-
-        kind = self.effective_workflow_kind
-        if kind is WorkflowKind.TASK:
-            return self._execute_many_prefect_task(call_value_list)
-
-        if kind is WorkflowKind.FLOW:
-            return self._execute_many_prefect_flow(call_value_list)
-
-        if self._parallel is not False:
-            return self._execute_many_threaded(call_value_list)
-
-        return [self._func(**v) for v in call_value_list]
-
-    def _execute_many_threaded(self, call_value_list: list[dict[str, Any]]) -> list:
-        max_workers = None  # ThreadPoolExecutor default for parallel=True
-
-        if isinstance(self._parallel, int) and not isinstance(self._parallel, bool):
-            if self._parallel < 1:
-                raise ValueError(
-                    f"self._parallel must be True, False, or a positive int; got {self._parallel!r}"
-                )
-            max_workers = self._parallel
-
-        elif self._parallel is not True:
-            raise TypeError(
-                f"parallel must be True, False, or a positive int; got {self._parallel!r}"
-            )
-
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            return list(pool.map(lambda kwargs: self._func(**kwargs), call_value_list))
-
-    def _map_task(self, call_value_list: list[dict[str, Any]], task_name: str | None = None) -> list:
-        """Create a Prefect task wrapping self._func, .map() over all calls, and resolve."""
-        if not call_value_list:
-            return []
-
-        if task is None:
-            raise RuntimeError(
-                "Prefect task execution was requested, but Prefect is not installed. "
-                "Install with: pip install probpipe[prefect]"
-            )
-
-        func = self._func
-
-        @task(name=task_name or self._name)
-        def run_func(**kwargs):
-            return func(**kwargs)
-
-        keys = call_value_list[0].keys()
-        kwargs_by_param = {k: [d[k] for d in call_value_list] for k in keys}
-        futures = run_func.map(**kwargs_by_param)
-        return [future.result() for future in futures]
-
-    def _execute_many_prefect_task(self, call_value_list: list[dict[str, Any]]) -> list:
-        """Use Prefect task.map() inside a lightweight flow.
-
-        Prefect 3.x requires ``task.map()`` to be called within a flow
-        context.  This mode creates a minimal wrapper flow so the mapped
-        task runs are tracked but not grouped under a named flow.
-        """
-        outer = self
-        runner = prefect_config.resolve_task_runner()
-
-        @flow(name=f"{self._name}_map",
-              **({"task_runner": runner} if runner is not None else {}))
-        def _task_map_flow():
-            return outer._map_task(call_value_list)
-
-        return _task_map_flow()
-
-    def _execute_many_prefect_flow(self, call_value_list: list[dict[str, Any]]) -> list:
-        """Wrap a mapped task inside a named Prefect flow."""
-        outer = self
-        runner = prefect_config.resolve_task_runner()
-
-        @flow(name=self._name,
-              **({"task_runner": runner} if runner is not None else {}))
-        def mapped_flow():
-            return outer._map_task(call_value_list, task_name=f"{outer._name}_run")
-
-        return mapped_flow()
- 
 
 class Module(Node):
     """
@@ -1676,12 +687,17 @@ class Module(Node):
 
             # Infer dependencies from workflow signature
             # (WorkflowFunctions don't store child_nodes; they resolve dependencies at runtime)
-            for param_name in attr._param_names:
-                if attr._is_dependency_param(param_name) and param_name in self._child_nodes:
+            for param_name in attr._signature_info.param_names:
+                is_dependency = _workflow_call.is_dependency_param(
+                    attr._signature_info,
+                    param_name,
+                    dependency_type=Node,
+                )
+                if is_dependency and param_name in self._child_nodes:
                     dot.edge(param_name, wf_name)
 
         return dot
-    
+
     def _validate_abstract_workflow_implementations(self) -> None:
         """
         Ensure that any abstract workflow interfaces in the MRO are implemented
@@ -1770,7 +786,7 @@ class Module(Node):
                     f"Expected (abstract): {abs_sig}\n"
                     f"Got (impl):          {impl_sig}"
                 )
-            
+
 class AbstractModule(Module, ABC):
     """
     Base class for modules that declare workflow interfaces via @abstract_workflow_method.

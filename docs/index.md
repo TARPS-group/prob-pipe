@@ -1,92 +1,75 @@
-ProbPipe is a Python framework for building probabilistic pipelines with automated uncertainty quantification. Its core organizing principle is **distributions in, distributions out**: every node in a pipeline can consume and emit probability distributions, enabling principled uncertainty propagation across the entire workflow.
+ProbPipe is a Python framework for building probabilistic pipelines with automated uncertainty quantification. Its core design principle is **simplification via abstraction** — making probabilistic inference feel more mathematical via a functional, registry-based system built around just three main types you need to know about.
 
 ## Why ProbPipe?
 
-### The challenge
+Most workflows for probabilistic inference can be described in terms of **distributions**, **fixed values** (data, hyperparameters, covariates), and **operations** that transform distributions. But implementing these workflows is harder than describing them because math has to be translated into computation:
 
-Most workflows for probabilistic inference -- including validation procedures -- can be described in terms of four **abstract components**:
+- **Algorithmic challenges.** There are many possible algorithms for common operations, with varying trade-offs that need to be explored in a problem-specific manner. A posterior could be approximated using a variety of MCMC algorithms, variational inference methods, or sequential Monte Carlo, or might require more specialized methods such as those for amortized and simulation-based inference. 
+- **Representational challenges.** Algorithms expect (and produce) specific formats for distributions and fixed values, and those formats are not always compatible with other parts of the workflow. Fixed values may be named parameter vectors, covariate matrices, or structured observations, and different algorithms expect different representations.
 
-1. **Distributions** -- priors, posteriors, data products ($\pi, p, q, \nu, \mu, \dots$)
-2. **Fixed values** -- data and hyperparameters ($\boldsymbol{X}, \boldsymbol{Y}, \alpha_0, \beta_0, \dots$)
-3. **Operations** that transform distributions, possibly depending on fixed values -- conditioning, pushforwards through functions, taking expectations
-4. **Differentiation** with respect to fixed values
+In practice, these issues make it hard to explore the full design space of available methods or to build more complex workflows that many algorithms for different steps. ProbPipe addresses these challenges through the **simplification via abstraction** design principle. For example, there are just three core types:
 
-Using these abstractions, even complex workflows can be written down succinctly. However, *implementing* them requires concrete representations of both distributions and fixed values, plus algorithms for operations -- each creating its own challenge:
+1. **`Distribution`**: the universal representation of random quantities (priors, posteriors, data-generating processes). A distribution's capabilities are declared via protocols (`SupportsSampling`, `SupportsLogProb`, ...), and ProbPipe converts between representations as needed.
+2. **`Record`**: the universal container for non-random structured data (observed datasets, hyperparameters, design matrices). `Record` is the deterministic counterpart of `Distribution`.
+3. **`WorkflowFunction`**: Usually construction by decorating a function with  `@workflow_function`. Pass the declared types of values, the workflow function runs normally. But pass a `Distribution` where a concrete value is expected, and ProbPipe propagates uncertainty automatically, returning a `Distribution` over the functions declared result type. Similarly, array-valued inputs (a `RecordArray`) broadcast across fixed values (e.g., for hyperparameter sweeps). To ensure composability and modularity, all returned values from a workflow function are wrapped as an appropriate `Record` / `Distribution`. 
 
-- **Algorithmic challenges.** There are usually many possible algorithms for a given operation. A posterior could be approximated using different Markov chain Monte Carlo (MCMC) algorithms, variational inference methods, or sequential Monte Carlo. These are implemented across many packages and often not designed to be directly compatible.
-- **Representational challenges.** Algorithms often require or output specific representations for both distributions and fixed values that are not compatible with other parts of the workflow. For example, MCMC outputs a discrete approximation to a distribution, but many MCMC algorithms require continuous representations of prior distributions. Similarly, fixed values may need to be structured as named parameter vectors, flat arrays, or covariate matrices depending on the algorithm — and downstream analysis requires named access to specific components of the result.
+`Distribution` and `Record` share a single interface for named-field access (`fields`, `select(...)`, `select_all()`) and passing components into a `WorkflowFunction`, so they are interchangeable as arguments to workflow function. 
 
-### ProbPipe's approach
+## Built-in operations
 
-ProbPipe manages representations and algorithms automatically by default, while giving you control over these choices when you want it:
+ProbPipe provides a set of built-in **ops**, which are workflow functions that can support specalized features to streamline pipeline construction:
 
-- **`Record`** is the universal container for named, structured non-random data. `Distribution` is the universal container for random quantities. Both support named fields and `select()` for workflow function splatting.  Together they ensure the full pipeline — from prior specification through inference to posterior predictive checks — produces named, provenance-tracked objects at every step.
-- **`Distribution`s** are generic and support subsets of capabilities via `@runtime_checkable` protocols (`SupportsSampling`, `SupportsLogProb`, `SupportsConditioning`, ...). This means external distribution types (TensorFlow Probability (TFP), scipy) can participate without inheriting from ProbPipe base classes.
-- **`WorkflowFunction`s** natively handle conversion between distribution representations and automatically compute **pushforward distributions** when functions defined on fixed inputs receive distributions as arguments.  Use `dist.select("x", "y")` to pass named components while preserving correlation.
-- **`Module`s** wrap multiple workflow functions with shared state, enabling reusable inferential components.
+- **`condition_on`**: condition a model on observed data, automatically selecting the best inference algorithm (or specify one with `method=`).
+- **`mean`**, **`variance`**, **`cov`**, **`expectation`**: compute distributional summaries, with automatic Monte Carlo fallback when exact computation is unavailable.
+- **`sample`**, **`log_prob`**: draw samples or evaluate densities through a uniform interface.
+- **`from_distribution`**: convert between distribution representations via a customizable converter registry.
+- **`predictive_check`**: built-in prior and posterior predictive model checking.
 
-## Quick Example
+## Installation
 
-Fit a Bayesian model with named parameters, then propagate posterior uncertainty through a prediction function:
+ProbPipe requires Python ≥ 3.12 (tested on 3.12 and 3.13).
 
-```python
-import jax
-import jax.numpy as jnp
-import numpy as np
-from probpipe import (
-    Normal, ProductDistribution, SimpleModel, workflow_function,
-    condition_on, mean, variance,
-)
-from probpipe.modeling import Likelihood
-
-# 1. Define a model with a named prior. ``params`` arrives flattened
-#    in insertion order (here ``intercept`` then ``slope``).
-class LinearLikelihood(Likelihood):
-    def log_likelihood(self, params, data):
-        x, y = data[:, 0], data[:, 1]
-        intercept, slope = params
-        return jnp.sum(-0.5 * (y - (intercept + slope * x)) ** 2)
-
-prior = ProductDistribution(
-    intercept=Normal(loc=0.0, scale=3.0, name="intercept"),
-    slope=Normal(loc=0.0, scale=3.0, name="slope"),
-)
-model = SimpleModel(prior, LinearLikelihood())
-
-# Simulated data for the snippet
-key = jax.random.PRNGKey(0)
-x = jax.random.normal(key, (50,))
-y = 0.7 + 1.3 * x + 0.2 * jax.random.normal(key, (50,))
-data = jnp.column_stack([x, y])
-
-# 2. Fit the posterior — named prior produces named draws
-posterior = condition_on(model, data)
-draws = posterior.draws()                   # NumericRecordArray(intercept, slope)
-draws["intercept"].mean()                   # posterior mean of intercept
-draws["slope"].mean()                       # posterior mean of slope
-
-# 3. Propagate uncertainty — select() preserves posterior correlation
-@workflow_function
-def predict(intercept, slope, x):
-    return intercept + slope * x
-
-predictive = predict(**posterior.select("intercept", "slope"), x=0.5)
-float(mean(predictive))                     # posterior predictive mean
-float(jnp.sqrt(variance(predictive)))       # posterior predictive std
+```bash
+git clone https://github.com/TARPS-group/prob-pipe.git
+cd prob-pipe
+pip install .
 ```
 
-A `WorkflowFunction`'s broadcasting rule is simple and uniform: array-valued inputs
-(a `RecordArray` or `DistributionArray`) drive a cell-by-cell sweep, multiple array
-inputs combine by the product rule, and scalar `Distribution` inputs marginalise via
-Monte Carlo. Every return is wrapped at the decorator boundary into the
-`Record | RecordArray | Distribution` contract with the function's name as the
-single field name — so `mean(d)` returns `NumericRecord(mean=...)`, and numeric
-access stays terse via `float(...)`, `jnp.array(...)`, and `.shape` / `.dtype` shims.
-Using `select()` ensures that correlated parameters from the same posterior are
-sampled jointly.
+Core dependencies: JAX and TensorFlow Probability. ProbPipe uses [tfp-nightly](https://pypi.org/project/tfp-nightly/), which is the [recommended approach](https://github.com/tensorflow/probability/issues/1994#issuecomment-3129033043) for TFP on JAX since stable TFP releases are tied to TensorFlow and often lag behind JAX.
+
+Optional extras:
+
+```bash
+pip install .[dev]       # pytest, jupyter, matplotlib, graphviz
+pip install .[prefect]   # Prefect orchestration backend
+pip install .[stan]      # Stan models via BridgeStan + CmdStanPy
+pip install .[pymc]      # PyMC model integration
+pip install .[nutpie]    # nutpie Markov chain Monte Carlo (MCMC) sampler
+```
+
+### Ray via Prefect
+
+ProbPipe can dispatch Prefect-orchestrated `WorkflowFunction` tasks to Ray via Prefect-Ray:
+
+```bash
+pip install "probpipe[prefect]"
+pip install "prefect[ray]"
+```
+
+The local demo uses a persistent Ray head:
+
+```bash
+prefect server start
+ray start --head
+python example_scripts/run_ray_demo.py
+```
+
+See the [Ray via Prefect guide](orchestration/ray.md) for setup details, deployment notes, and current support boundaries.
 
 ## Next Steps
 
-- [Getting Started tutorial](tutorials/getting_started.ipynb) -- iterative Bayesian model building following the Bayesian Workflow (Gelman et al., 2020)
-- [Reference Notebooks](reference_notebooks.md) -- in-depth coverage of specific ProbPipe features
-- [API Reference](api/index.md) -- full class and function documentation
+Once you've installed ProbPipe, check out the **[Getting Started Tutorial](tutorials/getting_started.ipynb)**. You can also check out:
+
+- **[User Guide](user_guide.md)**
+- **[API Reference](api/index.md)**
+- **[Contributing Guide](https://github.com/TARPS-group/prob-pipe/blob/main/CONTRIBUTING.md)**

@@ -17,6 +17,164 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need full history for git diff
+
+      - name: Detect changed files and resolve test targets
+        id: changed
+        run: |
+          # On PRs, diff against the base branch; on pushes, diff against the previous commit.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+
+          CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD -- '*.py' || true)
+          CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
+          echo "Changed .py files:"
+          echo "$CHANGED"
+
+          # If foundational files changed, run the full suite. Scan ALL
+          # changed files (not just .py): a dependency bump in pyproject.toml
+          # touches no .py file but must still trigger the suite.
+          # Also force the full suite on direct pushes to main (post-merge
+          # safety net — targeted tests are for PRs only).
+          if [ "${{ github.event_name }}" = "push" ]; then
+            RUN_ALL=true
+          else
+            RUN_ALL=false
+            for f in $CHANGED_ALL; do
+              case "$f" in
+                pyproject.toml|setup.cfg|setup.py|tests/conftest.py|probpipe/__init__.py)
+                  RUN_ALL=true ;;
+              esac
+            done
+          fi
+
+          # Check RUN_ALL before the empty-CHANGED skip, so a foundational
+          # change with no .py edits (e.g. a pyproject.toml-only PR) still
+          # runs the full suite instead of being skipped.
+          if [ "$RUN_ALL" = "true" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "run_all=true" >> "$GITHUB_OUTPUT"
+            echo "Will run ALL tests (foundational change detected)."
+          elif [ -z "$CHANGED" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "run_all=false" >> "$GITHUB_OUTPUT"
+            echo "No .py files changed — skipping tests."
+          else
+            # Write an import-graph expander: given changed source files, it
+            # uses AST parsing to find all probpipe modules that *transitively*
+            # depend on them, so a change to provenance.py also runs
+            # tests/test_record.py (because record.py imports provenance.py).
+            cat > /tmp/expand_deps.py << 'PYEOF'
+          import ast, sys
+          from pathlib import Path
+          from collections import defaultdict
+
+          def file_to_module(p):
+              return str(Path(p).with_suffix('')).replace('/', '.')
+
+          def module_to_file(m):
+              path = m.replace('.', '/')
+              for candidate in [path + '.py', path + '/__init__.py']:
+                  if Path(candidate).exists():
+                      return candidate
+              return None
+
+          # Build reverse import graph: module -> {modules that directly import it}
+          rdeps = defaultdict(set)
+          for fpath in Path('probpipe').rglob('*.py'):
+              importer = file_to_module(str(fpath))
+              try:
+                  tree = ast.parse(fpath.read_text())
+              except Exception:
+                  continue
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.ImportFrom):
+                      lvl = node.level or 0
+                      if lvl == 0:
+                          if not node.module or not node.module.startswith('probpipe'):
+                              continue
+                          imported = node.module
+                      else:
+                          parts = importer.split('.')
+                          base = parts[:-lvl] if lvl < len(parts) else []
+                          imported = '.'.join(base + node.module.split('.')) if node.module else '.'.join(base)
+                      rdeps[imported].add(importer)
+                  elif isinstance(node, ast.Import):
+                      for alias in node.names:
+                          if alias.name.startswith('probpipe'):
+                              rdeps[alias.name].add(importer)
+
+          # BFS: expand changed source files to all transitively dependent modules
+          changed_sources = [f for f in sys.argv[1:] if f.startswith('probpipe')]
+          seen = set(file_to_module(f) for f in changed_sources)
+          queue = list(seen)
+          while queue:
+              m = queue.pop(0)
+              for dep in rdeps.get(m, []):
+                  if dep not in seen:
+                      seen.add(dep)
+                      queue.append(dep)
+
+          for m in sorted(seen):
+              f = module_to_file(m)
+              if f:
+                  print(f)
+          PYEOF
+
+            # Split CHANGED into test files (include directly) and source
+            # files (expand via import graph before mapping to test folders).
+            CHANGED_SOURCE=""
+            TEST_TARGETS=""
+            for f in $CHANGED; do
+              if echo "$f" | grep -qE '^tests/.*\.py$'; then
+                [ -f "$f" ] && TEST_TARGETS="$TEST_TARGETS $f"
+              else
+                CHANGED_SOURCE="$CHANGED_SOURCE $f"
+              fi
+            done
+
+            # Expand source files transitively and map each to its test folder.
+            # Subpackage modules (probpipe/core/node.py) map to tests/core/.
+            # Root-level modules (probpipe/_utils.py) map to test files at
+            # tests/ root only (not descending into subfolders).
+            if [ -n "$CHANGED_SOURCE" ]; then
+              EXPANDED=$(python3 /tmp/expand_deps.py $CHANGED_SOURCE)
+              echo "Expanded source files (via import graph):"
+              echo "$EXPANDED"
+              HAS_ROOT_CHANGE=false
+              for f in $EXPANDED; do
+                rel="${f#probpipe/}"
+                if echo "$rel" | grep -q '/'; then
+                  subpkg=$(echo "$rel" | cut -d'/' -f1)
+                  [ -d "tests/$subpkg" ] && TEST_TARGETS="$TEST_TARGETS tests/$subpkg"
+                else
+                  HAS_ROOT_CHANGE=true
+                fi
+              done
+              if [ "$HAS_ROOT_CHANGE" = "true" ]; then
+                ROOT_FILES=$(find tests -maxdepth 1 -name "test_*.py" | tr '\n' ' ')
+                TEST_TARGETS="$TEST_TARGETS $ROOT_FILES"
+              fi
+            fi
+
+            # Deduplicate (works for both file paths and directory paths)
+            TEST_TARGETS=$(echo "$TEST_TARGETS" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
+
+            if [ -z "$TEST_TARGETS" ]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "run_all=false" >> "$GITHUB_OUTPUT"
+              echo "No matching test targets found — skipping tests."
+            else
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              echo "run_all=false" >> "$GITHUB_OUTPUT"
+              echo "test_files=$TEST_TARGETS" >> "$GITHUB_OUTPUT"
+              echo "Will run: $TEST_TARGETS"
+            fi
+          fi
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -26,29 +184,37 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # sbijax 0.3.6 hard-pins arviz==1.0.0, but pymc (no released version
-          # yet supports arviz 1.0 — the switch landed on the v6 branch in
-          # pymc-devs/pymc#8019 but pymc 6.0 isn't out) and nutpie require
-          # arviz<1.0. Install the sbi extra's runtime deps by hand and use
-          # --no-deps for sbijax itself so pip doesn't try to resolve its
-          # strict arviz pin. Revisit once pymc 6.0 ships.
-          pip install -e ".[dev,nutpie]"
-          pip install --no-deps sbijax
-          pip install blackjax diffrax dm-haiku einops grain jrnmm optax seaborn surjectors tqdm
+          # Install the project together with the verified jax / tfp-nightly
+          # pins in a single resolver transaction. Installing the project
+          # first and re-pinning afterwards resolves the tree twice — the
+          # first time against unpinned metadata — which can leave the rest
+          # of the dependency set resolved against a different jax. tfp-nightly
+          # tracks jax's internal API, and a fresh nightly can lag the current
+          # jax release (DeprecationWarnings, occasionally hard errors) under
+          # jax 0.10+. Refresh this pair when the nightly is purged from PyPI.
+          # [pymc] is installed so pymc 6 is exercised on both matrix legs.
+          pip install -e ".[dev,nutpie,pymc]" \
+            "jax==0.10.1" "jaxlib==0.10.1" "tfp-nightly==0.26.0.dev20260608"
 
-      - name: Run tests with coverage
+      - name: Run tests (changed files only)
+        if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'false'
+        run: |
+          pytest ${{ steps.changed.outputs.test_files }} --cov-report=xml --cov-report=html
+
+      - name: Run tests (full suite)
+        if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'true'
         run: |
           pytest --cov-report=xml --cov-report=html
 
       - name: Upload coverage reports to Codecov
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.12' && steps.changed.outputs.run_all == 'true'
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: TARPS-group/prob-pipe
 
       - name: Upload coverage HTML report
-        if: always() && matrix.python-version == '3.12'
+        if: always() && matrix.python-version == '3.12' && steps.changed.outputs.run_all == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-html
@@ -58,27 +224,230 @@ jobs:
     # Execute every docs/examples notebook to keep the reference set
     # honest against the current codebase. Separate job so the
     # ~10-15 min notebook pass does not gate the unit-test matrix.
+    # Skipped when neither example notebooks nor probpipe source files change.
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need full history for git diff
+
+      - name: Check if notebooks or source files changed
+        id: nb_check
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
+            -- 'docs/examples/*.ipynb' 'probpipe/' || true)
+          CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
+
+          # A dependency bump in pyproject.toml touches no notebook or source
+          # file but can still break every notebook, so foundational changes
+          # force the full notebook set (mirrors the test job's RUN_ALL). Also
+          # force it on direct pushes to main (post-merge safety net).
+          if [ "${{ github.event_name }}" = "push" ]; then
+            RUN_ALL_NB=true
+          else
+            RUN_ALL_NB=false
+            for f in $CHANGED_ALL; do
+              case "$f" in
+                pyproject.toml|setup.cfg|setup.py) RUN_ALL_NB=true ;;
+              esac
+            done
+          fi
+
+          # Check RUN_ALL_NB before the empty-CHANGED skip, so a foundational
+          # change with no notebook/source edits still runs every notebook.
+          if [ "$RUN_ALL_NB" = "true" ]; then
+            NOTEBOOKS=$(find docs/examples -maxdepth 1 -name '*.ipynb' | sort | tr '\n' ' ' | xargs)
+            if [ -z "$NOTEBOOKS" ]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "No example notebooks found — skipping notebook CI."
+            else
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              echo "notebooks=$NOTEBOOKS" >> "$GITHUB_OUTPUT"
+              echo "Foundational change detected — executing ALL notebooks:"
+              echo "$NOTEBOOKS"
+            fi
+          elif [ -z "$CHANGED" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No docs/examples notebook or probpipe source changes — skipping notebook CI."
+          else
+            echo "Changes detected:"
+            echo "$CHANGED"
+
+            cat > /tmp/affected_notebooks.py << 'PYEOF'
+          import ast, json, sys
+          from pathlib import Path
+          from collections import defaultdict
+
+          def file_to_module(p):
+              return str(Path(p).with_suffix('')).replace('/', '.')
+
+          def module_to_file(m):
+              path = m.replace('.', '/')
+              for candidate in [path + '.py', path + '/__init__.py']:
+                  if Path(candidate).exists():
+                      return candidate
+              return None
+
+          rdeps = defaultdict(set)
+          for fpath in Path('probpipe').rglob('*.py'):
+              importer = file_to_module(str(fpath))
+              try:
+                  tree = ast.parse(fpath.read_text())
+              except Exception:
+                  continue
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.ImportFrom):
+                      lvl = node.level or 0
+                      if lvl == 0:
+                          if not node.module or not node.module.startswith('probpipe'):
+                              continue
+                          imported = node.module
+                      else:
+                          parts = importer.split('.')
+                          base = parts[:-lvl] if lvl < len(parts) else []
+                          imported = '.'.join(base + node.module.split('.')) if node.module else '.'.join(base)
+                      rdeps[imported].add(importer)
+                  elif isinstance(node, ast.Import):
+                      for alias in node.names:
+                          if alias.name.startswith('probpipe'):
+                              rdeps[alias.name].add(importer)
+
+          # Build symbol definition map: name -> module where it is actually
+          # defined. Non-__init__ files take priority (they are the true
+          # definition sites); __init__ files are a fallback for anything
+          # defined directly inside a package init.
+          sym_defs = {}
+          for fpath in Path('probpipe').rglob('*.py'):
+              if fpath.name == '__init__.py':
+                  continue
+              mod = file_to_module(str(fpath))
+              try:
+                  tree = ast.parse(fpath.read_text())
+              except Exception:
+                  continue
+              for node in ast.walk(tree):
+                  if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                      sym_defs.setdefault(node.name, mod)
+                  elif isinstance(node, ast.Assign):
+                      for target in node.targets:
+                          if isinstance(target, ast.Name):
+                              sym_defs.setdefault(target.id, mod)
+
+          changed_nbs = [f for f in sys.argv[1:] if f.startswith('docs/examples/') and f.endswith('.ipynb') and Path(f).exists()]
+          changed_sources = [f for f in sys.argv[1:] if f.startswith('probpipe/')]
+
+          seen = set(file_to_module(f) for f in changed_sources)
+          queue = list(seen)
+          while queue:
+              m = queue.pop(0)
+              for dep in rdeps.get(m, []):
+                  if dep not in seen and dep.split('.')[-1] != '__init__':
+                      seen.add(dep)
+                      queue.append(dep)
+          affected_mods = seen
+
+          def notebook_affected(nb_path):
+              nb = json.loads(Path(nb_path).read_text())
+              nb_resolved = set()
+              for cell in nb.get('cells', []):
+                  if cell.get('cell_type') != 'code':
+                      continue
+                  source = ''.join(cell.get('source', []))
+                  try:
+                      tree = ast.parse(source)
+                  except SyntaxError:
+                      continue
+                  for node in ast.walk(tree):
+                      if isinstance(node, ast.ImportFrom):
+                          if node.level != 0 or not node.module or not node.module.startswith('probpipe'):
+                              continue
+                          src_mod = node.module
+                          src_file = module_to_file(src_mod)
+                          if src_file and src_file.endswith('__init__.py'):
+                              # e.g. "from probpipe import WorkflowFunction, Normal"
+                              # Resolve each name to where it is actually defined.
+                              for alias in node.names:
+                                  if alias.name == '*':
+                                      nb_resolved.add(src_mod)
+                                  elif alias.name in sym_defs:
+                                      nb_resolved.add(sym_defs[alias.name])
+                                  else:
+                                      nb_resolved.add(src_mod)
+                          else:
+                              # e.g. "from probpipe.core.node import WorkflowFunction"
+                              # Module is already the definition site.
+                              nb_resolved.add(src_mod)
+                      elif isinstance(node, ast.Import):
+                          for alias in node.names:
+                              if alias.name.startswith('probpipe'):
+                                  # "import probpipe" — bare module import,
+                                  # can't resolve symbols statically; treat as
+                                  # matching anything under that prefix.
+                                  nb_resolved.add(alias.name)
+              for nb_mod in nb_resolved:
+                  for af_mod in affected_mods:
+                      if af_mod == nb_mod or af_mod.startswith(nb_mod + '.'):
+                          return True
+              return False
+
+          to_run = set(changed_nbs)
+          if affected_mods:
+              for nb_path in sorted(Path('docs/examples').glob('*.ipynb')):
+                  nb_str = str(nb_path)
+                  if nb_str not in to_run and notebook_affected(nb_str):
+                      to_run.add(nb_str)
+
+          for nb in sorted(to_run):
+              print(nb)
+          PYEOF
+
+            NOTEBOOKS=$(python3 /tmp/affected_notebooks.py $CHANGED)
+            echo "Notebooks to run:"
+            echo "$NOTEBOOKS"
+
+            if [ -z "$NOTEBOOKS" ]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "No affected notebooks — skipping notebook CI."
+            else
+              NOTEBOOKS_SPACE=$(echo "$NOTEBOOKS" | tr '\n' ' ' | xargs)
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              echo "notebooks=$NOTEBOOKS_SPACE" >> "$GITHUB_OUTPUT"
+              echo "Will execute: $NOTEBOOKS_SPACE"
+            fi
+          fi
 
       - name: Set up Python
+        if: steps.nb_check.outputs.skip != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
+        if: steps.nb_check.outputs.skip != 'true'
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,nutpie]"
-          pip install --no-deps sbijax
-          pip install blackjax diffrax dm-haiku einops grain jrnmm optax seaborn surjectors tqdm
+          # Install the project together with the verified jax / tfp-nightly
+          # pins in a single resolver transaction. Installing the project
+          # first and re-pinning afterwards resolves the tree twice — the
+          # first time against unpinned metadata — which can leave the rest
+          # of the dependency set resolved against a different jax. tfp-nightly
+          # tracks jax's internal API, and a fresh nightly can lag the current
+          # jax release (DeprecationWarnings, occasionally hard errors) under
+          # jax 0.10+. Refresh this pair when the nightly is purged from PyPI.
+          pip install -e ".[dev,nutpie]" \
+            "jax==0.10.1" "jaxlib==0.10.1" "tfp-nightly==0.26.0.dev20260608"
 
-      - name: Execute every docs/examples notebook
+      - name: Execute affected docs/examples notebooks
+        if: steps.nb_check.outputs.skip != 'true'
         run: |
           set -euo pipefail
-          for nb in docs/examples/*.ipynb; do
+          for nb in ${{ steps.nb_check.outputs.notebooks }}; do
             echo "--- executing $nb ---"
             python -m nbconvert --to notebook --execute \
               --ExecutePreprocessor.timeout=900 --output /tmp/out.ipynb "$nb"

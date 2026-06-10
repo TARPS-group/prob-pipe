@@ -1,0 +1,78 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. A minimal reproducer is the single
+        most useful thing you can include.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: One-line description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: A minimal code snippet that triggers the bug.
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior (include the traceback if any)
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: probpipe-version
+    attributes:
+      label: ProbPipe version
+      description: |
+        Output of `pip show probpipe | grep -E '^Version'`, or commit SHA
+        if installed from source.
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      description: Output of `python --version`.
+    validations:
+      required: true
+
+  - type: input
+    id: jax-version
+    attributes:
+      label: JAX version
+      description: |
+        Output of `python -c "import jax; print(jax.__version__)"`. Leave blank
+        if the bug is unrelated to JAX.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: |
+        Anything else (e.g., OS / platform, related issues, workarounds you've tried).
+    validations:
+      required: false

@@ -80,10 +80,10 @@ nav:
     - Flexible Inference with condition_on: tutorials/flexible_inference.ipynb
   - Orchestration:
     - Ray via Prefect: orchestration/ray.md
-  - Reference Notebooks:
-    - Overview: reference_notebooks.md
+  - User Guide:
+    - Overview: user_guide.md
     - Distribution basics: examples/01_distributions.ipynb
-    - Records and the Record family: examples/02_records.ipynb
+    - Records and Record Distributions: examples/02_records.ipynb
     - Broadcasting and workflow functions: examples/03_broadcasting.ipynb
     - Joint distributions: examples/04_joint_distributions.ipynb
     - External backends: examples/05_external_backends.ipynb

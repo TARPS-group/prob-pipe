@@ -9,17 +9,13 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
-from .._dtype import _as_float_array, _promote_floats
-from .._utils import prod
 
-from ..custom_types import Array, ArrayLike, PRNGKey
+from .._dtype import _as_float_array, _promote_floats
+from ..core._record_distribution import RecordDistribution, _build_record_template
 from ..core.distribution import (
     NumericRecordDistribution,
     _mc_expectation,
 )
-from ..core._record_distribution import RecordDistribution, _build_record_template
-from ..core.record import Record
-from ..core.provenance import Provenance
 from ..core.protocols import (
     SupportsConditioning,
     SupportsCovariance,
@@ -28,13 +24,16 @@ from ..core.protocols import (
     SupportsSampling,
     SupportsVariance,
 )
+from ..core.provenance import Provenance
+from ..core.record import Record
+from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
 )
 
 
-class JointGaussian(RecordDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsCovariance, SupportsConditioning):
+class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsCovariance, SupportsConditioning):
     """
     Joint Gaussian distribution with named components and cross-covariance.
 
@@ -137,7 +136,18 @@ class JointGaussian(RecordDistribution, SupportsSampling, SupportsLogProb, Suppo
         """Per-component event shapes."""
         return {k: (v,) for k, v in self._component_shapes.items()}
 
-    # flatten_value / unflatten_value inherited from RecordDistribution
+    @property
+    def dtypes(self) -> dict[str, jnp.dtype]:
+        """Per-field dtype, aligned with ``record_template.fields``.
+
+        Every field shares the (float) dtype of the mean / covariance
+        arrays — ``_promote_floats`` in ``__init__`` casts both to a
+        single common float dtype.
+        """
+        dt = self._mean_vec.dtype
+        return {field: dt for field in self.fields}
+
+    # flatten_value / unflatten_value inherited from NumericRecordDistribution
 
     @property
     def components(self):
@@ -174,6 +184,10 @@ class JointGaussian(RecordDistribution, SupportsSampling, SupportsLogProb, Suppo
             value = Record(value)
         from .multivariate import MultivariateNormal as MVN
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")
+        # ``Record``/``RecordArray`` carry their own structure, so the
+        # static ``flatten_value`` ignores ``event_shape`` for these
+        # inputs — don't ask ``self.event_shape`` (it raises on a
+        # multi-field joint).
         flat = self.flatten_value(value)
         return full_mvn._log_prob(flat)
 

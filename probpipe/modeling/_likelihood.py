@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "Likelihood",
+    "ConditionallyIndependentLikelihood",
     "GenerativeLikelihood",
     "IncrementalConditioner",
 ]
@@ -42,22 +43,100 @@ class Likelihood[P, D](Protocol):
 
 
 @runtime_checkable
-class GenerativeLikelihood[P, D](Protocol):
-    """Protocol for generating synthetic data given parameters.
+class ConditionallyIndependentLikelihood[P, D](Likelihood[P, D], Protocol):
+    """Likelihood whose observations are conditionally independent given
+    the parameters.
 
-    Generic in ``P`` (parameter type) and ``D`` (data type).
-    Any class that defines ``generate_data(params, n_samples, *, key) -> D``
-    satisfies this protocol.
+    Formally, for observations ``y_1, ..., y_N`` the joint log-density
+    factorises into a sum of per-observation log-densities:
+
+    .. math::
+
+        \\log p(y_1, \\ldots, y_N \\mid \\theta)
+            = \\sum_{i=1}^N \\log p(y_i \\mid \\theta).
+
+    The "conditionally" refers to the conditioning on the parameters
+    ``θ``: the ``y_i`` are independent *given* ``θ``, not marginally.
+    For regression-style likelihoods each datum carries a covariate
+    ``x_i`` that the per-observation density depends on; the
+    factorisation then reads ``Σ_i log p(y_i | x_i, θ)``, with the
+    covariates treated as fixed inputs rather than random variables.
+    This is the "conditionally independent" case rather than the
+    stricter "i.i.d." (where every ``p(y_i | θ)`` is the same density).
+
+    Required by :class:`~probpipe.MinibatchedDistribution` for
+    stochastic-gradient inference, and useful independently for
+    held-out predictive log-likelihoods, leave-one-out
+    cross-validation, and PSIS-LOO.
+
+    Implementations expose :meth:`per_datum_log_likelihood`; the helper
+    :func:`_default_per_datum_log_likelihood` provides a length-1-batch
+    fallback for likelihoods that want a default rather than an
+    efficient override.
     """
 
-    def generate_data(self, params: P, n_samples: int, *, key: PRNGKey | None = None) -> D:
-        """Generate ``n_samples`` synthetic data points from ``params``.
+    def per_datum_log_likelihood(self, params: P, datum: Any) -> Any:
+        """Log-density of a single datum given parameters.
 
         Parameters
         ----------
         params : P
             Model parameters.
-        n_samples : int
+        datum : Any
+            One observation. The exact shape depends on the data format
+            the likelihood was constructed against — for a regression
+            model that's a single row ``(x_i, y_i)``; for a scalar
+            response, it's a single value. Subclasses define the shape.
+
+        Returns
+        -------
+        Array
+            Scalar log-density of the datum under ``params``.
+        """
+        ...
+
+
+def _default_per_datum_log_likelihood(
+    likelihood: "Likelihood",
+    params: Any,
+    datum: Any,
+) -> Any:
+    """Default per-datum log-likelihood — evaluate ``log_likelihood`` on a length-1 batch.
+
+    Fallback for :class:`ConditionallyIndependentLikelihood`
+    implementations that don't have a row-specific shortcut. Adds a
+    leading axis to ``datum`` via ``jax.tree.map(lambda x: x[None, ...], datum)``
+    and calls ``likelihood.log_likelihood(params, batch)``. Less
+    efficient than an override that evaluates the family directly on
+    the un-reshaped datum (no length-1-batch wrap, no associated
+    broadcasting overhead inside ``log_likelihood``).
+    """
+    import jax
+    batch = jax.tree.map(lambda x: x[None, ...], datum)
+    return likelihood.log_likelihood(params, batch)
+
+
+@runtime_checkable
+class GenerativeLikelihood[P, D](Protocol):
+    """Protocol for generating synthetic data given parameters.
+
+    Generic in ``P`` (parameter type) and ``D`` (data type).
+    Any class that defines
+    ``generate_data(params, num_observations, *, key) -> D``
+    satisfies this protocol.
+    """
+
+    def generate_data(
+        self, params: P, num_observations: int,
+        *, key: PRNGKey | None = None,
+    ) -> D:
+        """Generate ``num_observations`` synthetic data points from ``params``.
+
+        Parameters
+        ----------
+        params : P
+            Model parameters.
+        num_observations : int
             Number of data points to generate.
         key : PRNGKey or None
             JAX PRNG key for reproducible generation.

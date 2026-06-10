@@ -16,6 +16,8 @@ predictive checks. Registering a new inference method is documented under
 
 ::: probpipe.Likelihood
 
+::: probpipe.ConditionallyIndependentLikelihood
+
 ::: probpipe.GenerativeLikelihood
 
 ::: probpipe.GLMLikelihood
@@ -31,28 +33,39 @@ and the first whose `check()` returns `feasible=True` runs. Pass
 `inference_method_registry.set_priorities(...)` reorders the table at
 runtime.
 
+Priorities follow a single-axis convention: values above `50` mark *exact*
+methods, values in `(0, 50]` mark *inexact* methods, and `0` means
+opt-in only (selectable by name but skipped during auto-dispatch). The
+five-axis selection criteria and the tier ranges contributors should use
+when choosing a number for a new method are documented under
+[Extending ProbPipe → Setting priority for a new method](extending.md#setting-priority-for-a-new-method).
+
 **Built-in methods:**
 
 | Name | Priority | Requires | Backend |
 |------|----------|----------|---------|
-| `tfp_nuts` | 100 | `SupportsLogProb` + JAX-traceable | TFP |
-| `tfp_hmc` | 90 | `SupportsLogProb` + JAX-traceable | TFP |
-| `nutpie_nuts` | 80 | `StanModel` or `PyMCModel` + nutpie | nutpie |
-| `cmdstan_nuts` | 70 | `StanModel` + cmdstanpy | CmdStan |
-| `pymc_nuts` | 60 | `PyMCModel` + pymc | PyMC |
-| `tfp_rwmh` | 50 | `SupportsLogProb` | TFP |
-| `sbijax_smcabc` | 40 | `SimpleGenerativeModel` + sbijax | sbijax |
-| `pymc_advi` | 35 | `PyMCModel` + pymc | PyMC |
+| `nutpie_nuts` | 88 | `StanModel` or `PyMCModel` + nutpie | nutpie |
+| `blackjax_nuts` | 85 | `SupportsLogProb` + JAX-traceable | BlackJAX |
+| `cmdstan_nuts` | 82 | `StanModel` + cmdstanpy | CmdStan |
+| `pymc_nuts` | 82 | `PyMCModel` + pymc | PyMC |
+| `blackjax_elliptical_slice` | 75 | `SimpleModel` + Gaussian prior + JAX-traceable likelihood | BlackJAX |
+| `blackjax_rwmh` | 55 | `SupportsLogProb` (eager fallback for non-traceable targets) | BlackJAX |
+| `blackjax_sgld` | 45 | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX |
+| `blackjax_hmc` | 0 | `SupportsLogProb` + JAX-traceable | BlackJAX (opt-in only) |
+| `blackjax_sghmc` | 0 | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX (opt-in only) |
+| `pymc_advi` | 0 | `PyMCModel` + pymc | PyMC (opt-in only) |
+| `tfp_nuts` | 0 | `SupportsLogProb` + JAX-traceable | TFP (opt-in only) |
+| `tfp_hmc` | 0 | `SupportsLogProb` + JAX-traceable | TFP (opt-in only) |
 
 ::: probpipe.ApproximateDistribution
 
 ::: probpipe.rwmh
 
+::: probpipe.elliptical_slice
+
 ::: probpipe.condition_on_nutpie
 
-::: probpipe.sbi_learn_conditional
-
-::: probpipe.sbi_learn_likelihood
+::: probpipe.MinibatchedDistribution
 
 ::: probpipe.inference_method_registry
     options:

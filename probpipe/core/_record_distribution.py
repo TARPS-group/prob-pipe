@@ -14,12 +14,13 @@ whose ``record_template`` is set.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
 
-from ._distribution_base import Distribution
+from ..custom_types import Array, PRNGKey
+from ._distribution_base import Distribution, _DistributionMeta
 from .protocols import (
     SupportsCovariance,
     SupportsLogProb,
@@ -28,11 +29,9 @@ from .protocols import (
     SupportsVariance,
 )
 from .record import Record, RecordTemplate
-from .._utils import prod
-from ..custom_types import Array, PRNGKey
 
 if TYPE_CHECKING:
-    from ._numeric_record_distribution import FlattenedView
+    from ._numeric_record_distribution import FlattenedDistributionView
 
 
 __all__ = ["RecordDistribution", "_RecordDistributionView"]
@@ -175,16 +174,18 @@ class _RecordDistributionView(Distribution):
     _sampling_cost = "low"
     _preferred_orchestration = None
 
-    def __new__(cls, parent: Distribution, key: str):
+    def __new__(cls, parent: "RecordDistribution", key: str) -> "_RecordDistributionView":
         actual_cls = _view_class_for_parent(parent)
         return object.__new__(actual_cls)
 
-    def __init__(self, parent: Distribution, key: str):
+    def __init__(self, parent: "RecordDistribution", key: str) -> None:
+        # ``parent.record_template`` is contractually non-``None``
+        # (metaclass-enforced on every ``RecordDistribution`` instance).
         template = parent.record_template
-        if template is None or key not in template:
+        if key not in template:
             raise KeyError(
                 f"No field {key!r} in record_template "
-                f"(available: {template.fields if template is not None else ()})"
+                f"(available: {template.fields})"
             )
         # Bypass Distribution.__init__ validation (view name comes from
         # the field key, not a user-supplied argument).
@@ -247,13 +248,24 @@ class _RecordDistributionView(Distribution):
 
     # -- Internals ----------------------------------------------------------
 
-    def _extract(self, structured) -> Array:
+    def _extract(self, structured: Any) -> Array:
         """Extract this field from a parent sample (Record, NumericRecordArray, or flat array)."""
         from ._record_array import RecordArray
         if isinstance(structured, (Record, RecordArray)):
             return structured[self._key]
-        # Flat array — unflatten via parent's unflatten_value
-        result = self._parent.unflatten_value(jnp.asarray(structured))
+        # Flat array — unflatten via the parent's static unflatten_value.
+        # Only numeric parents define unflatten_value; non-numeric Record
+        # parents never reach this branch (their samples are Records).
+        unflatten = getattr(type(self._parent), "unflatten_value", None)
+        if unflatten is None:
+            raise TypeError(
+                f"Cannot extract field {self._key!r} from a flat array "
+                f"on {type(self._parent).__name__}: parent does not "
+                f"implement unflatten_value."
+            )
+        result = unflatten(
+            jnp.asarray(structured), template=self._parent.record_template,
+        )
         if isinstance(result, (Record, RecordArray)):
             return result[self._key]
         return result
@@ -269,7 +281,7 @@ class _RecordDistributionView(Distribution):
         practice are ``ApproximateDistribution`` subclasses that do
         expose ``draws()``.
         """
-        from ._record_array import RecordArray, NumericRecordArray
+        from ._record_array import NumericRecordArray, RecordArray
         draws = self._parent.draws()
         if isinstance(draws, (Record, RecordArray)):
             return jnp.asarray(draws[self._key])
@@ -290,20 +302,34 @@ class _RecordDistributionView(Distribution):
 # ---------------------------------------------------------------------------
 
 
-def _build_record_template(components: dict) -> RecordTemplate:
+def _build_record_template(
+    components: dict[str, Any],
+) -> RecordTemplate:
     """Build a RecordTemplate from a component pytree.
 
-    Each ``NumericRecordDistribution`` leaf contributes its ``event_shape``.
-    Nested dicts become nested ``RecordTemplate``.
+    Each leaf contributes a spec for the parent template:
+
+    - Nested ``dict`` → recursively built nested ``RecordTemplate``.
+    - :class:`NumericRecordDistribution` → the leaf's ``event_shape``
+      (numeric shape tuple).
+    - Any other :class:`RecordDistribution` → the leaf's
+      ``record_template`` (embedded as a nested structural template).
+    - Any other :class:`Distribution` → ``None`` (opaque leaf — the
+      template records the field name but not a shape).
     """
+    from ._distribution_base import Distribution
     from ._numeric_record_distribution import NumericRecordDistribution
 
-    specs: dict[str, tuple[int, ...] | RecordTemplate] = {}
+    specs: dict[str, Any] = {}
     for name, comp in components.items():
         if isinstance(comp, dict):
             specs[name] = _build_record_template(comp)
         elif isinstance(comp, NumericRecordDistribution):
             specs[name] = comp.event_shape
+        elif isinstance(comp, RecordDistribution):
+            specs[name] = comp.record_template
+        elif isinstance(comp, Distribution):
+            specs[name] = None
         else:
             raise TypeError(f"Unexpected component type: {type(comp).__name__}")
     return RecordTemplate(specs)
@@ -314,7 +340,38 @@ def _build_record_template(components: dict) -> RecordTemplate:
 # ---------------------------------------------------------------------------
 
 
-class RecordDistribution(Distribution[Record]):
+class _RecordDistributionMeta(_DistributionMeta):
+    """Metaclass adding the ``record_template`` set-or-derivable check
+    on top of the base ``name`` check.
+
+    After ``__init__`` returns, accesses ``instance.record_template``
+    once. Either path is fine: ``_record_template`` was set directly
+    (multi-leaf joints), or the auto-build path on
+    :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`
+    derives a single-field template from ``name`` + ``event_shape``.
+    Both paths must yield a non-``None`` ``RecordTemplate``.
+    """
+
+    def __call__(cls, *args: Any, **kwargs: Any) -> Any:
+        instance = super().__call__(*args, **kwargs)
+        try:
+            tpl = instance.record_template
+        except (TypeError, NotImplementedError) as exc:
+            raise TypeError(
+                f"{cls.__name__}.__init__ left record_template "
+                f"unresolved: {exc}"
+            ) from exc
+        if tpl is None:
+            raise TypeError(
+                f"{cls.__name__}.__init__ must leave record_template "
+                f"set — either assign self._record_template = ..., "
+                f"or declare event_shape so the auto-build path can "
+                f"derive a single-field template."
+            )
+        return instance
+
+
+class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta):
     """Generic Record-based distribution.
 
     Provides named component access (``fields``, ``__getitem__``,
@@ -344,9 +401,13 @@ class RecordDistribution(Distribution[Record]):
 
     @property
     def fields(self) -> tuple[str, ...]:
-        """Field names from the record_template, or empty tuple."""
-        tpl = self.record_template
-        return tpl.fields if tpl is not None else ()
+        """Field names from the record_template.
+
+        The metaclass guarantees ``record_template`` is non-``None`` on
+        every :class:`RecordDistribution` instance, so this is a direct
+        delegate (no ``None`` fallback).
+        """
+        return self.record_template.fields
 
     def __getitem__(self, key: str) -> _RecordDistributionView:
         return _RecordDistributionView(self, key)
@@ -403,92 +464,15 @@ class RecordDistribution(Distribution[Record]):
         for name in self.fields:
             yield name, self[name]
 
-    # -- Flatten / unflatten ------------------------------------------------
-
-    def flatten_value(self, value) -> Array:
-        """Flatten a NumericRecord or NumericRecordArray sample to a flat array.
-
-        The flatten operation is numeric-only, so ``Record`` inputs must
-        be convertible to ``NumericRecord`` (all leaves numeric). Raw
-        arrays are returned unchanged.
-        """
-        from ._numeric_record import NumericRecord
-        from ._record_array import NumericRecordArray
-        if isinstance(value, NumericRecordArray):
-            return value.flatten()
-        if isinstance(value, NumericRecord):
-            return value.flatten()
-        if isinstance(value, Record):
-            return NumericRecord.from_record(value).flatten()
-        return value
-
-    def unflatten_value(self, flat: Array):
-        """Reconstruct a NumericRecord or NumericRecordArray from a flat array."""
-        from ._numeric_record import NumericRecord
-        from ._record_array import NumericRecordArray
-        tpl = self.record_template
-        if tpl is None:
-            raise RuntimeError("Cannot unflatten without record_template")
-        flat = jnp.asarray(flat)
-        if flat.ndim < 2:
-            return NumericRecord.unflatten(flat, template=tpl)
-        return NumericRecordArray.unflatten(flat, template=tpl)
-
-    def as_flat_distribution(self) -> FlattenedView:
-        """View this distribution as a flat ``NumericRecordDistribution``.
-
-        Returns a :class:`~probpipe.core._numeric_record_distribution.FlattenedView`
-        with ``event_shape = (event_size,)`` for algorithms expecting
-        flat vectors (MCMC, optimizers, VI methods).
-        """
-        from ._numeric_record_distribution import FlattenedView
-        return FlattenedView(self)
-
-    @property
-    def event_size(self) -> int:
-        """Total number of scalar elements in one sample.
-
-        Sums the sizes of every numeric leaf described by the template;
-        opaque leaves contribute zero. A ``NumericRecordTemplate`` has
-        ``flat_size`` already cached — reuse it when available.
-        """
-        tpl = self.record_template
-        if tpl is None:
-            return 0
-        from .record import NumericRecordTemplate
-        if isinstance(tpl, NumericRecordTemplate):
-            return tpl.flat_size
-        return sum(
-            prod(shape) if shape else 1
-            for shape in tpl.leaf_shapes.values()
-            if shape is not None
-        )
-
     @property
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-field event shapes.
+        """Per-field event shapes (top-level fields only).
 
-        For untemplated distributions (no ``record_template``) returns
-        ``{}``; use :attr:`event_shape` for the scalar shape of a
-        single unnamed field. Nested sub-templates collapse to ``()``
-        at the top level.
+        Thin delegate to :attr:`RecordTemplate.event_shapes`. Nested
+        sub-templates and opaque leaves collapse to ``()``. The
+        metaclass guarantees ``record_template`` is non-``None``.
         """
-        tpl = self.record_template
-        if tpl is None:
-            return {}
-        return {name: self._field_event_shape(tpl[name]) for name in tpl.fields}
-
-    @staticmethod
-    def _field_event_shape(spec) -> tuple[int, ...]:
-        """Event shape for one field spec (nested template → ``()``)."""
-        if isinstance(spec, RecordTemplate):
-            return ()
-        if spec is None:
-            return ()
-        if isinstance(spec, tuple):
-            return spec
-        # Record-valued template fallback.
-        return spec.shape if not isinstance(spec, Record) else ()
+        return self.record_template.event_shapes
 
     # -- Single-field array-like shims --------------------------------------
     # On a single-field distribution, ``.shape`` / ``.ndim`` delegate to
@@ -508,10 +492,13 @@ class RecordDistribution(Distribution[Record]):
 
     @property
     def shape(self) -> tuple[int, ...]:
-        """Shape of one draw (equals the sole field's event_shape)."""
+        """Shape of one draw (equals the sole field's event_shape).
+
+        Raises ``TypeError`` via :meth:`_single_field_name` on
+        multi-field distributions.
+        """
         name = self._single_field_name()
-        tpl = self.record_template
-        return self._field_event_shape(tpl[name]) if tpl is not None else ()
+        return self.record_template.field_event_shape(name)
 
     @property
     def ndim(self) -> int:
@@ -529,24 +516,20 @@ def _register_dynamic_subclass(cls: type) -> type:
     """Register a dynamically-created RecordDistribution subclass as a JAX
     pytree node, reusing the flatten/unflatten from the existing
     ``ProductDistribution`` registration in ``distributions/joint.py``.
-    """
-    # Avoid double-registration (the base ProductDistribution is
-    # already registered in distributions/joint.py).
-    try:
-        jax.tree_util.tree_flatten(cls)  # probe
-    except Exception:
-        pass
 
-    # Dynamic subclasses of ProductDistribution share the same
-    # flatten/unflatten logic.  Delegate to _components + _name, and
-    # capture the top-level key order explicitly so insertion order
-    # survives the round-trip (JAX's dict treedef is sorted).
-    def _flatten(dist):
+    Dynamic subclasses of ``ProductDistribution`` share the same
+    flatten/unflatten logic. Delegate to ``_components`` + ``_name``,
+    capturing the top-level key order explicitly so insertion order
+    survives the round-trip (JAX's dict treedef is sorted).
+    """
+    def _flatten(dist: Any) -> tuple[list[Any], tuple[Any, str, tuple[str, ...]]]:
         leaves = jax.tree.leaves(dist._components)
         treedef = jax.tree.structure(dist._components)
         return leaves, (treedef, dist._name, tuple(dist._components.keys()))
 
-    def _unflatten(aux, children):
+    def _unflatten(
+        aux: tuple[Any, str, tuple[str, ...]], children: list[Any],
+    ) -> Any:
         treedef, name, key_order = aux
         components = jax.tree.unflatten(treedef, children)
         ordered = {k: components[k] for k in key_order}

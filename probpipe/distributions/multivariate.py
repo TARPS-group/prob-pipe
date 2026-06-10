@@ -9,6 +9,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ._tfp_base import TFPDistribution
 from .._dtype import _as_float_array, _promote_floats
+from ..core.distribution import FlatNumericRecordDistribution
 from ..core.constraints import (
     Constraint,
     real,
@@ -33,7 +34,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-class MultivariateNormal(TFPDistribution):
+class MultivariateNormal(TFPDistribution, FlatNumericRecordDistribution):
     """
     Multivariate normal (Gaussian) distribution.
 
@@ -106,10 +107,6 @@ class MultivariateNormal(TFPDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return real
-
     @property
     def support(self) -> Constraint:
         return real
@@ -120,7 +117,7 @@ class MultivariateNormal(TFPDistribution):
 # ---------------------------------------------------------------------------
 
 
-class Dirichlet(TFPDistribution):
+class Dirichlet(TFPDistribution, FlatNumericRecordDistribution):
     """
     Dirichlet distribution over the probability simplex.
 
@@ -158,10 +155,6 @@ class Dirichlet(TFPDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return simplex
-
     @property
     def support(self) -> Constraint:
         return simplex
@@ -172,7 +165,7 @@ class Dirichlet(TFPDistribution):
 # ---------------------------------------------------------------------------
 
 
-class Multinomial(TFPDistribution):
+class Multinomial(TFPDistribution, FlatNumericRecordDistribution):
     """
     Multinomial distribution over count vectors.
 
@@ -234,10 +227,6 @@ class Multinomial(TFPDistribution):
         return self._logits
 
     # -- support ------------------------------------------------------------
-
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return non_negative_integer
 
     @property
     def support(self) -> Constraint:
@@ -314,10 +303,6 @@ class Wishart(TFPDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return positive_definite
-
     @property
     def support(self) -> Constraint:
         return positive_definite
@@ -328,7 +313,7 @@ class Wishart(TFPDistribution):
 # ---------------------------------------------------------------------------
 
 
-class VonMisesFisher(TFPDistribution):
+class VonMisesFisher(TFPDistribution, FlatNumericRecordDistribution):
     """
     Von Mises-Fisher distribution on the unit hypersphere.
 
@@ -375,10 +360,6 @@ class VonMisesFisher(TFPDistribution):
         return self._mean_direction.shape[-1]
 
     # -- support ------------------------------------------------------------
-
-    @classmethod
-    def _default_support(cls) -> Constraint:
-        return sphere
 
     @property
     def support(self) -> Constraint:

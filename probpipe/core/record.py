@@ -106,6 +106,7 @@ and is rejected at construction.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from math import prod
 from typing import Any, Callable, TypeAlias
 
 import jax
@@ -723,6 +724,36 @@ class RecordTemplate:
                 result[name] = spec
         return result
 
+    @property
+    def event_shapes(self) -> dict[str, tuple[int, ...]]:
+        """Per-top-level-field event shapes.
+
+        Unlike :attr:`leaf_shapes` (which descends into nested
+        sub-templates and emits one entry per leaf), ``event_shapes``
+        emits one entry per top-level field. Nested sub-templates and
+        opaque leaves (``None`` specs) collapse to ``()``. This is the
+        view that downstream Distribution code wants when answering
+        "what is the per-field event shape of one draw?".
+        """
+        return {name: self.field_event_shape(name) for name in self._specs}
+
+    def field_event_shape(self, name: str) -> tuple[int, ...]:
+        """Event shape for one top-level field.
+
+        Numeric leaf specs (tuples) pass through verbatim; opaque leaves
+        and nested ``RecordTemplate`` sub-structures collapse to ``()``.
+        Raises ``KeyError`` if ``name`` is not a top-level field.
+        """
+        spec = self._specs[name]
+        if isinstance(spec, RecordTemplate):
+            return ()
+        if spec is None:
+            return ()
+        if isinstance(spec, tuple):
+            return spec
+        # Record-valued fallback (legacy templates).
+        return spec.shape if not isinstance(spec, Record) else ()
+
     def __contains__(self, name: str) -> bool:
         return name in self._specs
 
@@ -898,7 +929,6 @@ class NumericRecordTemplate(RecordTemplate):
 
     def _compute_flat_size(self) -> int:
         """Total scalar count across all numeric leaves."""
-        from .._utils import prod
         total = 0
         for spec in self._specs.values():
             if isinstance(spec, NumericRecordTemplate):
@@ -939,7 +969,6 @@ def _spec_size(spec: _FieldSpec) -> int:
             "opaque template fields (shape=None) have no flat size; "
             "unflatten is only defined for numeric-leaf fields."
         )
-    from .._utils import prod
     return prod(spec) if spec else 1
 
 

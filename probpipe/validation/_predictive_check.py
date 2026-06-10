@@ -28,8 +28,8 @@ def predictive_check[P, D](
     test_fn: Callable[[D], float],
     observed_data: D | None = None,
     *,
-    n_samples: int | None = None,
-    n_replications: int = 500,
+    num_observations: int | None = None,
+    num_replications: int = 500,
     key: PRNGKey | None = None,
 ) -> dict:
     """Predictive check — works as both prior and posterior check.
@@ -55,18 +55,18 @@ def predictive_check[P, D](
     distribution : Distribution[P]
         Prior or posterior to sample parameters from.
     generative_likelihood : GenerativeLikelihood[P, D]
-        Must have ``generate_data(params: P, n_samples: int, *, key: PRNGKey | None = None) -> D``.
-        If ``generate_data`` also accepts a ``key`` keyword, the
-        vectorized fast path is used.
+        Must have ``generate_data(params: P, num_observations: int, *,
+        key: PRNGKey | None = None) -> D``. If ``generate_data`` also
+        accepts a ``key`` keyword, the vectorized fast path is used.
     test_fn : Callable[[D], float]
         Test statistic mapping data to a scalar.
     observed_data : D or None, optional
         If provided, compute the observed test statistic and p-value.
-    n_samples : int, optional
+    num_observations : int, optional
         Number of observations per replicated dataset.  Required if
         *observed_data* is not provided; otherwise defaults to
         ``len(observed_data)``.
-    n_replications : int
+    num_replications : int
         Number of replicated datasets to generate.
     key : PRNGKey, optional
         JAX PRNG key.  Auto-generated if ``None``.
@@ -85,12 +85,12 @@ def predictive_check[P, D](
         - ``"p_value"`` — fraction of replicates where the test
           statistic is at least as extreme as the observed value.
     """
-    if n_samples is None:
+    if num_observations is None:
         if observed_data is None:
             raise ValueError(
-                "n_samples is required when observed_data is not provided"
+                "num_observations is required when observed_data is not provided"
             )
-        n_samples = len(observed_data)
+        num_observations = len(observed_data)
 
     if key is None:
         key = _auto_key()
@@ -106,12 +106,12 @@ def predictive_check[P, D](
     if _supports_key_arg(generative_likelihood):
         stats_array = _predictive_check_batched(
             distribution, generative_likelihood, test_fn,
-            n_samples, n_replications, key,
+            num_observations, num_replications, key,
         )
     else:
         stats_array = _predictive_check_loop(
             distribution, generative_likelihood, test_fn,
-            n_samples, n_replications, key,
+            num_observations, num_replications, key,
         )
 
     replicated_dist = RecordEmpiricalDistribution(
@@ -130,11 +130,75 @@ def predictive_check[P, D](
         result["observed_statistic"] = obs_stat
         result["p_value"] = p_value
 
-    # Attach to the distribution for easy access
-    if hasattr(distribution, "validation_results"):
-        distribution.validation_results.append(result)
+    # Attach to the distribution's ``auxiliary`` DataTree under a
+    # ``predictive_check`` group; each invocation appends a numbered
+    # child Dataset (``check_0``, ``check_1``, …). This keeps the
+    # validation history alongside the distribution without crowding
+    # the public API surface with a separate ``validation_results``
+    # property — and future validation functions (LOO, WAIC, …)
+    # land under their own named groups in the same DataTree.
+    _record_check_in_auxiliary(distribution, stats_array, result)
 
     return result
+
+
+def _record_check_in_auxiliary(
+    distribution: Any,
+    stats_array: Any,
+    result: dict[str, Any],
+) -> None:
+    """Append a per-invocation result Dataset under
+    ``distribution.auxiliary["predictive_check/check_N"]``.
+
+    Mutates ``distribution._auxiliary`` in place. This is the
+    documented exception to ``Distribution`` immutability (see
+    :attr:`Distribution.auxiliary` and ``CONTRIBUTING.md`` §"Design
+    principles" §1) — diagnostic ops attach results under named
+    groups rather than returning renamed clones, which would break
+    source/identity tracking.
+
+    Encoding:
+
+    - ``replicated_statistics`` becomes a ``DataArray`` of dims
+      ``("replication",)``.
+    - ``test_fn_name`` + optional ``observed_statistic`` /
+      ``p_value`` become Dataset attrs.
+
+    Frozen/slotted distributions (where ``_auxiliary`` can't be set
+    via ``object.__setattr__``) skip the attachment silently — the
+    caller still gets the ``result`` dict via the public return.
+    """
+    try:
+        import xarray as xr
+        from xarray import DataTree
+    except ImportError:
+        # xarray isn't available — skip the attachment silently. The
+        # caller still gets the ``result`` dict via the return value.
+        return
+
+    attrs = {"test_fn_name": result["test_fn_name"]}
+    if "observed_statistic" in result:
+        attrs["observed_statistic"] = result["observed_statistic"]
+        attrs["p_value"] = result["p_value"]
+    ds = xr.Dataset(
+        {"replicated_statistics": (("replication",), np.asarray(stats_array))},
+        attrs=attrs,
+    )
+
+    aux = getattr(distribution, "_auxiliary", None)
+    if aux is None:
+        aux = DataTree()
+        try:
+            object.__setattr__(distribution, "_auxiliary", aux)
+        except (AttributeError, TypeError):
+            # Frozen/immutable distribution — give up silently.
+            return
+    group = aux.get("predictive_check")
+    if group is None:
+        aux["predictive_check"] = DataTree()
+        group = aux["predictive_check"]
+    n_existing = len(list(group.children))
+    aux[f"predictive_check/check_{n_existing}"] = DataTree(dataset=ds)
 
 
 def _supports_key_arg(generative_likelihood: Any) -> bool:
@@ -152,19 +216,19 @@ def _predictive_check_batched(
     distribution: SupportsSampling,
     generative_likelihood: Any,
     test_fn: Callable,
-    n_samples: int,
-    n_replications: int,
+    num_observations: int,
+    num_replications: int,
     key: PRNGKey,
 ) -> np.ndarray:
     """Vectorized predictive check using batched data generation."""
     key_params, key_data = jax.random.split(key)
 
-    # Draw all parameter samples at once: (n_replications, *event_shape)
-    params_batch = distribution._sample(key_params, (n_replications,))
+    # Draw all parameter samples at once: (num_replications, *event_shape)
+    params_batch = distribution._sample(key_params, (num_replications,))
 
     # Generate all replicated datasets in one call
     y_rep_batch = generative_likelihood.generate_data(
-        params_batch, n_samples, key=key_data,
+        params_batch, num_observations, key=key_data,
     )
 
     # Apply test_fn to each replicate — try vmap, fall back to loop
@@ -174,7 +238,7 @@ def _predictive_check_batched(
     except Exception:
         # test_fn may not be JAX-traceable (e.g., uses Python control flow)
         return np.array(
-            [float(test_fn(y_rep_batch[i])) for i in range(n_replications)],
+            [float(test_fn(y_rep_batch[i])) for i in range(num_replications)],
             dtype=np.float64,
         )
 
@@ -183,15 +247,15 @@ def _predictive_check_loop(
     distribution: SupportsSampling,
     generative_likelihood: Any,
     test_fn: Callable,
-    n_samples: int,
-    n_replications: int,
+    num_observations: int,
+    num_replications: int,
     key: PRNGKey,
 ) -> np.ndarray:
     """Fallback: sequential predictive check in a Python loop."""
     stats = []
-    for i in range(n_replications):
+    for i in range(num_replications):
         key, subkey = jax.random.split(key)
         params_i = distribution._sample(subkey, ())
-        y_rep = generative_likelihood.generate_data(params_i, n_samples)
+        y_rep = generative_likelihood.generate_data(params_i, num_observations)
         stats.append(float(test_fn(y_rep)))
     return np.array(stats, dtype=np.float64)
