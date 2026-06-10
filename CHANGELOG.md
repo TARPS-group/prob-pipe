@@ -18,6 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   works for contributors with an existing pip setup. See
   [CONTRIBUTING.md](CONTRIBUTING.md#installation).
 
+- **Ruff linting + pre-commit hooks.** A `lint (advisory)` CI job runs
+  `ruff check` and annotates PRs with violations; it is **advisory for
+  now** (does not gate merges) while the pre-existing lint backlog is
+  burned down and large refactors are in flight. A new
+  `.pre-commit-config.yaml` (install with `uvx pre-commit install`) runs
+  ruff plus file-hygiene hooks on staged files. The ruff config gains
+  ignores for ambiguous-unicode rules (`RUF001/2/3` — false positives on
+  mathematical notation) and per-file ignores for notebook
+  import/semicolon idioms (`E402`/`E702`). `ruff format` is intentionally
+  not adopted; its style conflicts with the documented formatting
+  conventions. See [CONTRIBUTING.md](CONTRIBUTING.md#linting--pre-commit).
+
 - **`pymc_nuts` reclaims multi-core sampling.** The method previously
   forced `cores=1` to avoid an `os.fork()` deadlock against JAX's worker
   threads. It now samples one worker per chain (capped at the CPU count,

@@ -171,6 +171,38 @@ line.
 
 This applies equally to source files and notebook code cells.
 
+### Linting & pre-commit
+
+Linting uses [ruff](https://docs.astral.sh/ruff/) (configured in
+`pyproject.toml`). Install the pre-commit hooks once:
+
+```bash
+uvx pre-commit install      # or: pre-commit install
+```
+
+Thereafter `ruff` (lint) plus a few file-hygiene hooks run on your staged
+files at commit time. The hooks see only the files you're changing, so the
+codebase cleans up file-by-file rather than in one sweep. To run manually:
+
+```bash
+uvx ruff check .            # lint the whole tree
+uvx pre-commit run --all-files   # run every hook over everything
+```
+
+Two deliberate choices:
+
+- **`ruff check` is advisory in CI for now.** ProbPipe carries a lint
+  backlog from a period when ruff wasn't enforced, and several large
+  refactors are in flight. The CI `lint (advisory)` job annotates PRs with
+  violations but does not yet gate merges; it will become blocking once the
+  backlog is burned down. Locally, the pre-commit hook flags issues on the
+  files you touch — fix them when practical; `git commit --no-verify`
+  bypasses it for a pre-existing-violation file you'd rather not clean in
+  an unrelated change.
+- **`ruff format` is not used.** Its output conflicts with the horizontal
+  packing conventions in *Code formatting* above, so formatting stays
+  manual. Only `ruff check` runs.
+
 ### Documentation
 
 ```bash
@@ -222,6 +254,8 @@ GitHub Actions (`.github/workflows/ci.yml`):
 - Test job uses extras `dev,nutpie,pymc`; the notebooks job uses
   `dev,nutpie` only (`bridgestan` is not included anywhere by default)
 - Coverage uploaded to Codecov
+- A `lint (advisory)` job runs `ruff check` and annotates PRs with
+  violations but does **not** gate merges yet (see *Linting & pre-commit*)
 
 Docs build (`.github/workflows/docs.yml`) with `uv run mkdocs build --strict`.
 

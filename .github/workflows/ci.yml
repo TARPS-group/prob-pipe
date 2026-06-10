@@ -7,6 +7,31 @@ on:
     branches: [main]
 
 jobs:
+  # Advisory ruff lint. Annotates PRs with violations but does NOT gate
+  # merges (continue-on-error). ProbPipe carries a backlog from a
+  # previously-unenforced linter, and several large refactors are in
+  # flight; advisory mode surfaces issues without blocking that work or
+  # forcing a repo-wide cleanup sweep. To enforce later: drop
+  # continue-on-error and scope to changed files. The ruff version is
+  # pinned to match uv.lock and .pre-commit-config.yaml — keep all three
+  # in sync. `ruff format` is intentionally not run (its style conflicts
+  # with the conventions in CONTRIBUTING.md).
+  lint:
+    name: lint (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Ruff check (advisory — does not gate merges)
+        continue-on-error: true
+        run: uvx ruff@0.15.16 check . --output-format=github
+
   test:
     runs-on: ubuntu-latest
     strategy:

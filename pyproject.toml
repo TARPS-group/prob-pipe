@@ -86,7 +86,21 @@ ignore = [
   "E501",   # line too long (handled by formatter)
   "B905",   # zip without strict= (not always needed)
   "SIM108", # ternary operator (readability preference)
+  # Ambiguous-unicode rules fire constantly on legitimate mathematical
+  # notation in a Bayesian-stats codebase — Greek letters, en-dashes,
+  # →, ×, ≤, etc. in docstrings/comments/strings are intentional, not
+  # homoglyph mistakes. The homoglyph-attack surface these rules guard
+  # is negligible here, so the rules are pure noise.
+  "RUF001", # ambiguous character in a string
+  "RUF002", # ambiguous character in a docstring
+  "RUF003", # ambiguous character in a comment
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Notebooks legitimately import after narrative/setup cells (E402) and use
+# semicolons to group plotting calls on one line (E702) — both idiomatic in
+# example notebooks, not errors.
+"*.ipynb" = ["E402", "E702"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["probpipe"]
