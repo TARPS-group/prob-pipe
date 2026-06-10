@@ -13,9 +13,11 @@ jobs:
   # flight; advisory mode surfaces issues without blocking that work or
   # forcing a repo-wide cleanup sweep. To enforce later: drop
   # continue-on-error and scope to changed files. The ruff version is
-  # pinned to match uv.lock and .pre-commit-config.yaml — keep all three
-  # in sync. `ruff format` is intentionally not run (its style conflicts
-  # with the conventions in CONTRIBUTING.md).
+  # read from .pre-commit-config.yaml (single source of truth) so this job
+  # can't drift from the pre-commit pin that `pre-commit autoupdate` bumps;
+  # keep uv.lock's ruff in sync too for local `uv run ruff`. `ruff format`
+  # is intentionally not run (its style conflicts with the conventions in
+  # CONTRIBUTING.md).
   lint:
     name: lint (advisory)
     runs-on: ubuntu-latest
@@ -24,13 +26,24 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
 
+      - name: Resolve ruff version from .pre-commit-config.yaml
+        id: ruffver
+        run: |
+          set -euo pipefail
+          # Single source of truth for the pin lives in the pre-commit config.
+          ver=$(grep -A2 'astral-sh/ruff-pre-commit' .pre-commit-config.yaml \
+                  | sed -nE 's/^[[:space:]]*rev:[[:space:]]*v?([0-9][0-9.]*).*/\1/p' | head -1)
+          test -n "$ver"   # fail loudly if the rev can't be parsed
+          echo "ruff=$ver" >> "$GITHUB_OUTPUT"
+          echo "Resolved ruff $ver from .pre-commit-config.yaml"
+
       - name: Ruff check (advisory — does not gate merges)
         continue-on-error: true
-        run: uvx ruff@0.15.16 check . --output-format=github
+        run: uvx "ruff@${{ steps.ruffver.outputs.ruff }}" check . --output-format=github
 
   test:
     runs-on: ubuntu-latest

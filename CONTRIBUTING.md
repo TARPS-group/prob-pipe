@@ -189,6 +189,11 @@ uvx ruff check .            # lint the whole tree
 uvx pre-commit run --all-files   # run every hook over everything
 ```
 
+A full `--all-files` run is **not** expected to be clean yet: the repo carries a
+lint and file-hygiene backlog that the hooks burn down file-by-file (see below),
+so it will report — and the fixer hooks will modify — pre-existing issues in
+files you did not touch. That is expected for now, not a regression.
+
 Two deliberate choices:
 
 - **`ruff check` is advisory in CI for now.** ProbPipe carries a lint

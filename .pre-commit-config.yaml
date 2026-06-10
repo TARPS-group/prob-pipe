@@ -9,8 +9,9 @@
 # with the hand-tuned horizontal-packing conventions documented in
 # CONTRIBUTING.md (§ Code formatting), so formatting stays manual for now.
 #
-# The ruff rev is pinned to match the version in uv.lock (0.15.16) and the CI
-# lint job — keep all three in sync when bumping.
+# This ruff rev is the single source of truth for the version: the CI lint job
+# reads it from here, and `pre-commit autoupdate` bumps it. Keep uv.lock's ruff
+# in sync too, so local `uv run ruff` matches.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.16
