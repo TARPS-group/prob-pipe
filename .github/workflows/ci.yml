@@ -195,21 +195,29 @@ jobs:
         # in uv.lock. --frozen makes the resolver fail if the lockfile is
         # out of sync, so CI never silently drifts from the committed pins.
         # --python pins the interpreter to the matrix leg: uv fetches a managed
-        # CPython when the runner lacks it, so the "3.13" leg genuinely runs
-        # 3.13. (setup-uv's python-version input was silently ignored on @v3,
-        # which let both legs fall back to the system 3.12.) [pymc] is included
-        # so pymc 6 is exercised on both matrix legs.
+        # CPython when the runner lacks it, so the "3.13" and "3.14" legs
+        # genuinely run those versions. (setup-uv's python-version input was
+        # silently ignored on @v3, which let every leg fall back to the system
+        # 3.12.) [pymc] is included so pymc 6 is exercised on all matrix legs.
         run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra nutpie --extra pymc
 
       - name: Run tests (changed files only)
         if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'false'
+        # A targeted run executes a subset of tests but still measures
+        # --cov=probpipe (the whole package), so a global coverage floor
+        # would always fail here. The floor is enforced on the full-suite
+        # run below; keep partial runs exempt with --cov-fail-under=0.
         run: |
-          uv run pytest ${{ steps.changed.outputs.test_files }} --cov-report=xml --cov-report=html
+          uv run pytest ${{ steps.changed.outputs.test_files }} --cov-fail-under=0 --cov-report=xml --cov-report=html
 
       - name: Run tests (full suite)
         if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'true'
+        # The 88% coverage floor is enforced here (full suite only): a
+        # foundational change or any push to main runs every test, so the
+        # whole-package measurement is meaningful. This overrides the
+        # --cov-fail-under=0 in pyproject's addopts.
         run: |
-          uv run pytest --cov-report=xml --cov-report=html
+          uv run pytest --cov-fail-under=88 --cov-report=xml --cov-report=html
 
       - name: Upload coverage reports to Codecov
         if: matrix.python-version == '3.12' && steps.changed.outputs.run_all == 'true'

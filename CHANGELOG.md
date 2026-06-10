@@ -11,10 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Python 3.14 to the CI test matrix.** The matrix is now
   `[3.12, 3.13, 3.14]`. `requires-python = ">=3.12"` is unchanged.
-- **Coverage floor enforced at 88%** (`--cov-fail-under=88`). Current
-  measured coverage on `main` is ~91%; the floor is set conservatively
-  within the beta plan's ≥85–90% commitment to leave headroom for normal
-  fluctuation.
+- **Coverage floor enforced at 88%** on the full-suite CI run
+  (`--cov-fail-under=88`). The changed-files-only PR path and local
+  single-file runs are exempt (`--cov-fail-under=0`), since a global floor
+  is only meaningful when the whole suite executes. Current measured
+  coverage on `main` is ~91%; the floor is set conservatively within the
+  beta plan's ≥85–90% commitment to leave headroom for normal fluctuation.
 - **Concurrency cancellation on CI for PR pushes.** A new push to a PR
   branch cancels the prior in-progress CI run. Pushes to `main` are
   unaffected (no cancellation — the merge-history gate stays solid).

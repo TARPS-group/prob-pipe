@@ -96,3 +96,13 @@
           - "codecov.yml"
           - ".gitignore"
           - "STYLE_GUIDE.md"
+
+"area:core":
+  - changed-files:
+      - any-glob-to-any-file:
+          # Root-level foundational modules + root tests that no subpackage
+          # area glob matches: type aliases (custom_types.py), Weights,
+          # dtype/array helpers, and the package surface (__init__.py).
+          # `*` does not cross `/`, so these match only top-level files.
+          - "probpipe/*.py"
+          - "tests/*.py"

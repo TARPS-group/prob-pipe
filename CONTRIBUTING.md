@@ -51,8 +51,9 @@ A few conventions keep PRs consistent; the PR template
   `docs(contributing): document PR conventions`. Common types are `feat`,
   `fix`, `refactor`, `perf`, `test`, `docs`, `chore`, and `ci`; the scope is
   the affected subpackage or area.
-- **Labels** — apply at least one `area:*` label for the affected subsystem,
-  plus `kind:breaking-change` if the PR changes a user-visible API.
+- **Labels** — `area:*` labels are auto-applied from the changed paths (see
+  [Labels](#labels) below); set `kind:*` / `status:*` by hand, and always add
+  `kind:breaking-change` if the PR changes a user-visible API.
 - **Linked issue** — reference the plan/tracking issue (`Refs #N` on stage
   PRs, `Closes #N` on the final one). A small standalone fix that skipped the
   plan step (above) has no issue to link; leave that section and its checklist
@@ -72,6 +73,26 @@ Claude Code auto-generates branch names like
 open PRs to the new branch — it silently closes them
 (see [#157](https://github.com/TARPS-group/prob-pipe/pull/157) for an
 example). If you must rename after a PR is open, use the web UI.
+
+### Labels
+
+ProbPipe uses three label families:
+
+- **`area:*`** — the affected subsystem (`area:core`, `area:distributions`,
+  `area:records`, `area:inference`, `area:workflow`, `area:orchestration`,
+  `area:diagnostics`, `area:provenance`, `area:docs`,
+  `area:infrastructure`). On PRs these are **applied automatically** by
+  `.github/workflows/labeler.yml` from the changed file paths (mapping in
+  `.github/labeler.yml`), so a PR that touches several areas gets several
+  `area:*` labels. On *issues*, apply them by hand — the auto-labeler runs
+  on PRs only.
+- **`kind:*`** — the nature of the change (`kind:refactor`,
+  `kind:breaking-change`, `kind:deprecation`, `kind:tracking`). Always
+  human-set; paths cannot infer intent.
+- **`status:*`** — workflow state (`status:blocked`, `status:needs-design`,
+  `status:needs-review`). Human-set.
+
+`enhancement` and `documentation` remain the catch-all tags for issues.
 
 ---
 
