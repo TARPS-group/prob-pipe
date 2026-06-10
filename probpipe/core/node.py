@@ -17,7 +17,7 @@ try:
 except ImportError:
     task = flow = None
 
-from .config import WorkflowKind, prefect_config, provenance_config
+from .config import WorkflowKind, prefect_config
 
 try:
     from graphviz import Digraph
@@ -40,7 +40,7 @@ from .distribution import (
     Distribution,
     EmpiricalDistribution,
 )
-from .provenance import ParentInfo, Provenance, ProvenanceMode
+from .provenance import Provenance
 
 logger = logging.getLogger(__name__)
 
@@ -453,24 +453,18 @@ class WorkflowFunction(Node):
             execution=self._make_execution_config(),
         )
         result = _workflow_execution.execute_many(request)[0]
-        _prov_mode = provenance_config.mode
-        if _prov_mode is ProvenanceMode.OFF:
-            provenance = None
-        else:
-            _candidates = [v for v in values.values() if hasattr(v, "source")]
-            _parents = (
-                tuple(
-                    ParentInfo(type_name=type(v).__name__, name=v.name)
-                    for v in _candidates
-                )
-                if _prov_mode is ProvenanceMode.LIGHTWEIGHT
-                else tuple(_candidates)
-            )
-            provenance = Provenance(
-                operation=f"workflow.{self._name or self._func.__name__}",
-                parents=_parents,
-                metadata={"func": self._name or self._func.__name__},
-            )
+        seen: set[int] = set()
+        candidates = []
+        for v in values.values():
+            if hasattr(v, "source") and id(v) not in seen:
+                seen.add(id(v))
+                candidates.append(v)
+        name = self._name or self._func.__name__
+        provenance = Provenance.create(
+            f"workflow.{name}",
+            parents=candidates,
+            metadata={"func": name},
+        )
         return _workflow_result._coerce_output(
             result,
             broadcast_mode=_workflow_result.BROADCAST_WRAP,
@@ -713,33 +707,26 @@ class WorkflowFunction(Node):
             result = self._broadcast_sample(values, broadcast_args, n_broadcast_samples)
 
         # Attach provenance
-        _prov_mode = provenance_config.mode
-        if _prov_mode is not ProvenanceMode.OFF:
-            _candidates = [
-                values[name] for name in broadcast_args
-                if isinstance(values[name], Distribution)
-            ]
-            _parents = (
-                tuple(
-                    ParentInfo(type_name=type(v).__name__, name=v.name)
-                    for v in _candidates
-                )
-                if _prov_mode is ProvenanceMode.LIGHTWEIGHT
-                else tuple(_candidates)
-            )
-            provenance = Provenance(
-                "broadcast",
-                parents=_parents,
-                metadata={
-                    "dispatch": dispatch,
-                    "orchestrate": self.effective_workflow_kind.value,
-                    "n_samples": n_broadcast_samples,
-                    "func": self._name or self._func.__name__,
-                    "broadcast_args": broadcast_args,
-                },
-            )
-            if isinstance(result, Distribution):
-                result.with_source(provenance)
+        seen: set[int] = set()
+        candidates = []
+        for name in broadcast_args:
+            v = values[name]
+            if isinstance(v, Distribution) and id(v) not in seen:
+                seen.add(id(v))
+                candidates.append(v)
+        provenance = Provenance.create(
+            "broadcast",
+            parents=candidates,
+            metadata={
+                "dispatch": dispatch,
+                "orchestrate": self.effective_workflow_kind.value,
+                "n_samples": n_broadcast_samples,
+                "func": self._name or self._func.__name__,
+                "broadcast_args": broadcast_args,
+            },
+        )
+        if isinstance(result, Distribution):
+            result.with_source(provenance)
 
         if do_include_inputs:
             return result

@@ -158,7 +158,9 @@ class TestBroadcastingProvenance:
         assert hasattr(result, "samples")
         assert result.source is not None
         assert result.source.operation == "broadcast"
-        assert result.source.parents == (n,)
+        assert len(result.source.parents) == 1
+        assert isinstance(result.source.parents[0], ParentInfo)
+        assert result.source.parents[0].obj is n
         assert result.source.metadata["dispatch"] == "sequential"
         assert result.source.metadata["n_samples"] == 20
         assert result.source.metadata["func"] == "identity"
@@ -242,7 +244,8 @@ class TestProvenanceChains:
         # result → broadcast → td → transform → base
         assert result.source.operation == "broadcast"
         parent_td = result.source.parents[0]
-        assert parent_td is td
+        assert isinstance(parent_td, ParentInfo)
+        assert parent_td.obj is td
         assert parent_td.source.operation == "transform"
         assert parent_td.source.parents[0] is base
 
@@ -341,9 +344,12 @@ class TestProvenanceAncestors:
         result = wf(x=td)
         ancestors = provenance_ancestors(result)
         # result → td → base
+        # ancestors[0] is a ParentInfo(obj=td) from the workflow site;
+        # ancestors[1] is the live base object (from TransformedDistribution).
         assert len(ancestors) == 2
-        assert td in ancestors
-        assert base in ancestors
+        assert isinstance(ancestors[0], ParentInfo)
+        assert ancestors[0].obj is td
+        assert ancestors[1] is base
 
     def test_no_duplicates(self, full_provenance_mode):
         """Same parent appearing in multiple roles doesn't duplicate."""
@@ -356,8 +362,10 @@ class TestProvenanceAncestors:
                       n_broadcast_samples=10, seed=42)
         result = wf(x=n, y=n)
         ancestors = provenance_ancestors(result)
-        # n appears as both parents but should only be listed once
-        assert ancestors.count(n) == 1
+        # n appears as both args but dedup keeps only one ParentInfo for it
+        assert len(ancestors) == 1
+        assert isinstance(ancestors[0], ParentInfo)
+        assert ancestors[0].obj is n
 
 
 # ===========================================================================
@@ -412,8 +420,10 @@ class TestProvenanceDag:
         assert num_edges == 2
         # Ancestor chain must contain base (root).
         ancestors = provenance_ancestors(result)
-        assert base in ancestors
-        assert td in ancestors
+        # ancestors[0] is ParentInfo(obj=td) from the workflow site;
+        # ancestors[1] is the live base object from TransformedDistribution.
+        assert any(getattr(a, "obj", a) is td for a in ancestors)
+        assert any(getattr(a, "obj", a) is base for a in ancestors)
 
 
 # ===========================================================================
@@ -455,8 +465,12 @@ class TestProvenanceModes:
         parent = result.source.parents[0]
         assert parent is not n
 
-    def test_lightweight_ancestors_returns_empty(self):
-        """provenance_ancestors() returns empty list in LIGHTWEIGHT mode."""
+    def test_lightweight_ancestors_returns_parentinfo(self):
+        """In LIGHTWEIGHT mode provenance_ancestors returns ParentInfo descriptors.
+
+        The DAG is preserved via ParentInfo.source, but live objects are not
+        held — ParentInfo.obj is None.
+        """
         n = Normal(loc=0.0, scale=1.0, name="input")
 
         def identity(x: float) -> float:
@@ -465,10 +479,18 @@ class TestProvenanceModes:
         wf = WorkflowFunction(func=identity, dispatch="sequential",
                       n_broadcast_samples=10, seed=42)
         result = wf(x=n)
-        assert provenance_ancestors(result) == []
+        ancestors = provenance_ancestors(result)
+        assert len(ancestors) == 1
+        assert isinstance(ancestors[0], ParentInfo)
+        assert ancestors[0].name == "input"
+        assert ancestors[0].obj is None
 
-    def test_lightweight_dag_single_node(self):
-        """provenance_dag() shows only the leaf node in LIGHTWEIGHT mode."""
+    def test_lightweight_dag_two_nodes(self):
+        """provenance_dag() shows leaf + parent node in LIGHTWEIGHT mode.
+
+        The parent node is a ParentInfo descriptor (no live object), so the
+        DAG has 2 nodes and 1 edge even though no live Distribution ref is held.
+        """
         n = Normal(loc=0.0, scale=1.0, name="input")
 
         def identity(x: float) -> float:
@@ -479,8 +501,8 @@ class TestProvenanceModes:
         result = wf(x=n)
         dag = provenance_dag(result)
         num_nodes, num_edges = _count_dag_entries(dag)
-        assert num_nodes == 1
-        assert num_edges == 0
+        assert num_nodes == 2
+        assert num_edges == 1
 
     def test_off_mode_no_provenance(self):
         """OFF mode attaches no provenance to workflow results."""

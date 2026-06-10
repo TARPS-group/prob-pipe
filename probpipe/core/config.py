@@ -21,8 +21,6 @@ import os
 from enum import Enum
 from typing import Any
 
-from .provenance import ProvenanceMode
-
 
 # ---------------------------------------------------------------------------
 # WorkflowKind enum
@@ -180,6 +178,36 @@ class PrefectConfig:
 
 # Module-level singleton
 prefect_config = PrefectConfig()
+
+
+# ---------------------------------------------------------------------------
+# ProvenanceMode enum
+# ---------------------------------------------------------------------------
+
+class ProvenanceMode(Enum):
+    """Controls how much history is retained in provenance chains.
+
+    Members
+    -------
+    FULL
+        Store live references to parent Distribution / Record /
+        RecordArray objects.  The entire ancestry chain stays in memory
+        as long as the final result is alive.  Good for debugging and
+        small test workflows where full graph traversal is useful.
+    LIGHTWEIGHT
+        Store only lightweight :class:`~probpipe.core.provenance.ParentInfo`
+        descriptors — type name, distribution name, and an optional
+        fingerprint.  Parent objects are free to be garbage-collected once
+        a workflow step completes.  This is the default and scales to
+        larger workflows.
+    OFF
+        Attach no provenance at all.  Minimises overhead when lineage
+        tracking is not needed.
+    """
+
+    FULL = "full"
+    LIGHTWEIGHT = "lightweight"
+    OFF = "off"
 
 
 # ---------------------------------------------------------------------------

@@ -157,8 +157,14 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
     def source(self) -> Provenance | None:
         return getattr(self, "_source", None)
 
-    def with_source(self, source: Provenance) -> Distribution:
-        """Attach provenance to this distribution (write-once)."""
+    def with_source(self, source: Provenance | None) -> Distribution:
+        """Attach provenance to this distribution (write-once).
+
+        Passing ``None`` (e.g. the result of ``Provenance.create()`` under
+        :attr:`ProvenanceMode.OFF`) is a no-op.
+        """
+        if source is None:
+            return self
         if getattr(self, "_source", None) is not None:
             raise RuntimeError(
                 f"Source already set on {self!r}. "

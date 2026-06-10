@@ -18,8 +18,7 @@ from ._broadcast_distributions import _make_stack
 from ._distribution_array import DistributionArray, _make_distribution_array
 from ._record_array import _RecordArrayView
 from .distribution import BroadcastDistribution, Distribution
-from .config import provenance_config
-from .provenance import ParentInfo, Provenance, ProvenanceMode
+from .provenance import Provenance
 
 
 def execute_sweep(
@@ -259,27 +258,15 @@ def make_sweep_provenance(
 
     Returns ``None`` when :attr:`ProvenanceMode.OFF` is active.
     """
-    mode = provenance_config.mode
-    if mode is ProvenanceMode.OFF:
-        return None
-
     regime = "nested" if dist_args else "stack"
-    _array_candidates = [values[name] for name in array_args]
-    _dist_candidates = [
+    array_candidates = [values[name] for name in array_args]
+    dist_candidates = [
         values[name] for name in dist_args
         if isinstance(values[name], Distribution)
     ]
-    if mode is ProvenanceMode.LIGHTWEIGHT:
-        parents = tuple(
-            ParentInfo(type_name=type(v).__name__, name=v.name)
-            for v in _array_candidates + _dist_candidates
-        )
-    else:
-        parents = tuple(_array_candidates) + tuple(_dist_candidates)
-
-    return Provenance(
-        operation=f"workflow.{regime}",
-        parents=parents,
+    return Provenance.create(
+        f"workflow.{regime}",
+        parents=array_candidates + dist_candidates,
         metadata={
             "func": workflow_name,
             "batch_shape": tuple(batch_shape),
