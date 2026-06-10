@@ -304,6 +304,10 @@ def _replicated_statistics_summary(
 # ---------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------
+# PPC
+# ---------------------------------------------------------------------
+
 def run_ppc(
     posterior: Distribution,
     test_fns: Callable | Sequence[Callable],
@@ -314,40 +318,12 @@ def run_ppc(
     n_replications: int = 500,
     key: PRNGKey | None = None,
 ) -> None:
-    """Run one or more posterior/prior predictive checks.
+    """Run one or more predictive checks and store summaries."""
 
-    This function mutates ``posterior._auxiliary`` in place and returns ``None``.
-
-    Parameters
-    ----------
-    posterior : Distribution
-        Prior or posterior to sample parameters from.
-
-    test_fns : callable or sequence of callables
-        One or more test statistics mapping data to a scalar.
-
-    observed_data : optional
-        If provided, this performs posterior predictive checking. If ``None``,
-        this behaves like prior predictive checking.
-
-    generative_likelihood : optional
-        Generative likelihood. If not provided, this is resolved from the
-        posterior when possible.
-
-    n_samples : int or None
-        Number of observations per replicated dataset.
-
-    n_replications : int
-        Number of replicated datasets.
-
-    key : PRNGKey or None
-        JAX PRNG key.
-
-    Returns
-    -------
-    None
-    """
-    gl = _resolve_generative_likelihood(posterior, generative_likelihood)
+    gl = _resolve_generative_likelihood(
+        posterior,
+        generative_likelihood,
+    )
 
     if callable(test_fns):
         test_fns = [test_fns]
@@ -357,9 +333,6 @@ def run_ppc(
     results: dict[str, dict[str, Any]] = {}
     replicated_stats_by_fn: dict[str, np.ndarray | None] = {}
 
-    # Actual replicated observations, if predictive_check returns them.
-    y_rep_data: np.ndarray | None = None
-
     for fn in test_fns:
         name = getattr(fn, "__name__", repr(fn))
 
@@ -368,48 +341,41 @@ def run_ppc(
             generative_likelihood=gl,
             test_fn=fn,
             observed_data=observed_data,
-            n_samples=n_samples,
-            n_replications=n_replications,
+            num_observations=n_samples,
+            num_replications=n_replications,
             key=key,
         )
 
-        p_val = _record_get(check_result, "p_value")
-        obs_val = _record_get(check_result, "observed_statistic")
-
         results[name] = {
-            "p_value": p_val,
-            "observed": obs_val,
+            "p_value": _record_get(check_result, "p_value"),
+            "observed": _record_get(check_result, "observed_statistic"),
         }
 
-        replicated_stats_by_fn[name] = _extract_replicated_statistics(check_result)
+        replicated_stats_by_fn[name] = _extract_replicated_statistics(
+            check_result
+        )
 
-        if y_rep_data is None:
-            candidate = _extract_actual_replicated_data(check_result)
-            if candidate is not None:
-                y_rep_data = candidate
+    # ------------------------------------------------------------
+    # Optional ArviZ observed data group
+    # ------------------------------------------------------------
 
-    # ------------------------------------------------------------------
-    # Write ArviZ-compatible groups when available
-    # ------------------------------------------------------------------
-
-    wrote_posterior_predictive = False
     wrote_observed_data = False
 
-    if y_rep_data is not None:
-        pp_ds = _replicated_data_to_dataset(y_rep_data, var_name="y")
-        _add_group(posterior, "arviz/posterior_predictive", pp_ds)
-        wrote_posterior_predictive = True
-
     if observed_data is not None:
-        obs_ds = _observed_data_to_dataset(observed_data, var_name="y")
-        _add_group(posterior, "arviz/observed_data", obs_ds)
+        obs_ds = _observed_data_to_dataset(
+            observed_data,
+            var_name="y",
+        )
+        _add_group(
+            posterior,
+            "arviz/observed_data",
+            obs_ds,
+        )
         wrote_observed_data = True
 
-    plot_ready = bool(wrote_posterior_predictive and wrote_observed_data)
-
-    # ------------------------------------------------------------------
-    # Write ProbPipe diagnostic run node
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------
+    # Summary dataset
+    # ------------------------------------------------------------
 
     fn_names = list(results.keys())
 
@@ -423,7 +389,7 @@ def run_ppc(
         for name in fn_names
     ]
 
-    data_vars: dict[str, xr.DataArray] = {
+    data_vars = {
         "p_value": xr.DataArray(
             p_values,
             dims=["test_fn"],
@@ -436,32 +402,42 @@ def run_ppc(
         ),
     }
 
-    rep_stat_summary = _replicated_statistics_summary(replicated_stats_by_fn)
+    rep_summary = _replicated_statistics_summary(
+        replicated_stats_by_fn
+    )
 
-    if rep_stat_summary is not None:
-        for key, values in rep_stat_summary.items():
-            data_vars[key] = xr.DataArray(
+    if rep_summary is not None:
+        for name, values in rep_summary.items():
+            data_vars[name] = xr.DataArray(
                 values,
                 dims=["test_fn"],
                 coords={"test_fn": fn_names},
             )
+
     run_ds = xr.Dataset(data_vars)
 
     run_ds.attrs = {
         "kind": "ppc",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "n_replications": int(n_replications),
-        "n_samples": -1 if n_samples is None else int(n_samples),
+        "n_samples": (
+            -1
+            if n_samples is None
+            else int(n_samples)
+        ),
         "has_observed_data": observed_data is not None,
-        "wrote_arviz_posterior_predictive": wrote_posterior_predictive,
         "wrote_arviz_observed_data": wrote_observed_data,
-        "plot_fn": "az.plot_ppc",
-        "plot_groups": json.dumps(["posterior_predictive", "observed_data"]),
-        "plot_ready": plot_ready,
+        "plot_ready": False,
+        "plot_fn": "",
+        "plot_groups": json.dumps([]),
         "results_json": _json_dumps_safe(results),
     }
 
-    _add_group(posterior, "diagnostics/runs/ppc", run_ds)
+    _add_group(
+        posterior,
+        "diagnostics/runs/ppc",
+        run_ds,
+    )
 
     return None
 
@@ -469,7 +445,6 @@ def run_ppc(
 # ---------------------------------------------------------------------
 # SPC
 # ---------------------------------------------------------------------
-
 
 def run_spc(
     distributions: Sequence[Distribution],
@@ -481,68 +456,43 @@ def run_spc(
     n_replications: int = 500,
     key: PRNGKey | None = None,
 ) -> None:
-    """Run sequential predictive checks across a sequence of distributions.
+    """Run sequential predictive checks."""
 
-    Each distribution is mutated in place. This function returns ``None``.
-
-    The function calls ``run_ppc`` for each pair::
-
-        distributions[t], observed_data_sequence[t]
-
-    It also writes a simple SPC summary to the final distribution under::
-
-        diagnostics/runs/spc
-
-    Parameters
-    ----------
-    distributions : sequence of Distribution
-        Posteriors at each time step.
-
-    test_fns : callable or sequence of callables
-        One or more test statistics.
-
-    observed_data_sequence : sequence
-        Observed data at each time step.
-
-    generative_likelihood : optional
-        Generative likelihood. If not provided, this is resolved from the first
-        distribution.
-
-    n_samples : int or None
-        Number of observations per replicated dataset.
-
-    n_replications : int
-        Number of replicated datasets per time step.
-
-    key : PRNGKey or None
-        JAX PRNG key.
-
-    Returns
-    -------
-    None
-    """
     distributions = list(distributions)
     observed_data_sequence = list(observed_data_sequence)
 
     if len(distributions) != len(observed_data_sequence):
         raise ValueError(
-            "distributions and observed_data_sequence must have the same length: "
-            f"got {len(distributions)} and {len(observed_data_sequence)}."
+            "distributions and observed_data_sequence "
+            "must have the same length."
         )
 
     if len(distributions) == 0:
-        raise ValueError("distributions must contain at least one distribution.")
+        raise ValueError(
+            "distributions must not be empty."
+        )
 
-    gl = _resolve_generative_likelihood(distributions[0], generative_likelihood)
+    gl = _resolve_generative_likelihood(
+        distributions[0],
+        generative_likelihood,
+    )
 
     if callable(test_fns):
         test_fns = [test_fns]
     else:
         test_fns = list(test_fns)
 
-    fn_names = [getattr(fn, "__name__", repr(fn)) for fn in test_fns]
+    fn_names = [
+        getattr(fn, "__name__", repr(fn))
+        for fn in test_fns
+    ]
 
-    for dist, obs in zip(distributions, observed_data_sequence):
+    # Run PPC for each time point
+
+    for dist, obs in zip(
+        distributions,
+        observed_data_sequence,
+    ):
         run_ppc(
             posterior=dist,
             test_fns=test_fns,
@@ -553,37 +503,59 @@ def run_spc(
             key=key,
         )
 
-    p_values_by_fn: dict[str, list[float]] = {name: [] for name in fn_names}
+    # Collect p-values
+
+    p_values_by_fn = {
+        name: [] for name in fn_names
+    }
 
     for dist in distributions:
         ppc_ds = _latest_ppc_dataset(dist)
 
         for name in fn_names:
-            if ppc_ds is None or "p_value" not in ppc_ds:
-                p_values_by_fn[name].append(float("nan"))
+            if (
+                ppc_ds is None
+                or "p_value" not in ppc_ds
+            ):
+                p_values_by_fn[name].append(
+                    float("nan")
+                )
                 continue
 
             try:
-                val = ppc_ds["p_value"].sel(test_fn=name).item()
-                p_values_by_fn[name].append(_safe_float(val))
+                value = (
+                    ppc_ds["p_value"]
+                    .sel(test_fn=name)
+                    .item()
+                )
+                p_values_by_fn[name].append(
+                    _safe_float(value)
+                )
             except Exception:
-                p_values_by_fn[name].append(float("nan"))
+                p_values_by_fn[name].append(
+                    float("nan")
+                )
 
     final_dist = distributions[-1]
 
-    p_value_matrix = np.asarray(
-        [p_values_by_fn[name] for name in fn_names],
+    p_matrix = np.asarray(
+        [
+            p_values_by_fn[name]
+            for name in fn_names
+        ],
         dtype=float,
     )
 
     spc_ds = xr.Dataset(
         {
             "p_value": xr.DataArray(
-                p_value_matrix,
+                p_matrix,
                 dims=["test_fn", "time"],
                 coords={
                     "test_fn": fn_names,
-                    "time": np.arange(len(distributions)),
+                    "time": np.arange(
+                        len(distributions)
+                    ),
                 },
             )
         }
@@ -591,16 +563,28 @@ def run_spc(
 
     spc_ds.attrs = {
         "kind": "spc",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(
+            timezone.utc
+        ).isoformat(),
         "n_steps": len(distributions),
-        "n_replications": int(n_replications),
-        "n_samples": -1 if n_samples is None else int(n_samples),
+        "n_replications": int(
+            n_replications
+        ),
+        "n_samples": (
+            -1
+            if n_samples is None
+            else int(n_samples)
+        ),
         "test_fns": json.dumps(fn_names),
         "plot_ready": False,
         "plot_fn": "",
         "plot_groups": json.dumps([]),
     }
 
-    _add_group(final_dist, "diagnostics/runs/spc", spc_ds)
+    _add_group(
+        final_dist,
+        "diagnostics/runs/spc",
+        spc_ds,
+    )
 
     return None
