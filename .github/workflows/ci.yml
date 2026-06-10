@@ -7,6 +7,34 @@ on:
     branches: [main]
 
 jobs:
+  # Advisory pyright type check. Reports but does NOT gate merges
+  # (continue-on-error). The source carries a type-debt baseline (much of
+  # it JAX/TFP untyped-attribute noise), so enforcing now would block
+  # unrelated work; advisory surfaces it without forcing a cleanup. Syncs
+  # the full dependency env first so imports resolve against the real
+  # jax/tfp/pymc. Config + scope live in pyrightconfig.json. To enforce
+  # later: drop continue-on-error and tighten typeCheckingMode. Pyright is
+  # pinned for a reproducible baseline; `[nodejs]` bundles the Node runtime
+  # so CI doesn't depend on a runtime download.
+  typecheck:
+    name: typecheck (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev --extra nutpie --extra pymc
+
+      - name: Pyright (advisory — does not gate merges)
+        continue-on-error: true
+        run: uv run --with 'pyright[nodejs]==1.1.410' pyright
+
   test:
     runs-on: ubuntu-latest
     strategy:

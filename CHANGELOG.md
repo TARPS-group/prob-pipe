@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Pyright type checking (advisory).** A `typecheck (advisory)` CI job
+  runs [pyright](https://microsoft.github.io/pyright/) over the `probpipe`
+  package and reports type issues; it is **advisory for now** (does not
+  gate merges) while the type-debt baseline — largely JAX/TFP
+  untyped-attribute noise — is burned down. Config lives in
+  `pyrightconfig.json` (`basic` mode, `reportMissingTypeStubs` off). Run
+  locally with `uv run --with 'pyright[nodejs]' pyright`. To enforce
+  later: drop the job's `continue-on-error` and tighten
+  `typeCheckingMode`. See [CONTRIBUTING.md](CONTRIBUTING.md#type-checking).
+
 - **Dev tooling: migrated to [uv](https://docs.astral.sh/uv/) for
   environment + dependency management.** `uv.lock` is committed and used
   by CI (`uv sync --frozen`), making the install reproducible and lifting

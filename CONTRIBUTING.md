@@ -171,6 +171,24 @@ line.
 
 This applies equally to source files and notebook code cells.
 
+### Type checking
+
+Type checking uses [pyright](https://microsoft.github.io/pyright/)
+(configured in `pyrightconfig.json`, scoped to the `probpipe` package).
+Run it locally in the synced environment:
+
+```bash
+uv run --with 'pyright[nodejs]' pyright
+```
+
+Like ruff, **pyright is advisory in CI for now** — the `typecheck
+(advisory)` job reports type issues but does not gate merges. The source
+carries a type-debt baseline (much of it noise from JAX/TFP untyped
+attributes), so enforcing immediately would block unrelated work. The
+plan is to burn the baseline down, then tighten `typeCheckingMode` in
+`pyrightconfig.json` and make the gate blocking. New code should be
+clean under the current `basic` mode where practical.
+
 ### Documentation
 
 ```bash
