@@ -171,8 +171,7 @@ class WorkflowFunction(Node):
         set via the ``PROBPIPE_WORKFLOW_KIND`` environment variable
         or explicit assignment).  ``TASK`` / ``FLOW`` explicitly
         request Prefect orchestration.  ``OFF`` disables
-        orchestration.  Legacy strings (``"task"``, ``"flow"``) and
-        ``None`` are auto-converted.
+        orchestration.
     name : str or None
         Display name; defaults to ``func.__name__``.
     bind : dict or None
@@ -210,7 +209,7 @@ class WorkflowFunction(Node):
         self,
         *,
         func: Callable,
-        workflow_kind: WorkflowKind | str | None = WorkflowKind.DEFAULT,  # TODO: remove str | None in follow-up issue
+        workflow_kind: WorkflowKind = WorkflowKind.DEFAULT,
         name: str | None = None,
         bind: dict[str, Any] | None = None,         # construction-time bindings (defaults/config)
         module: Any | None = None,                  # typically a Module; kept as Any to avoid import cycles
@@ -221,13 +220,7 @@ class WorkflowFunction(Node):
         include_inputs: bool = False,                # True → return BroadcastDistribution (joint over inputs+outputs)
         **kwargs: Any,                              # convenience bindings (merged into bind)
     ):
-        removed_keywords = {"parallel", "vectorize"} & set(kwargs)
-        if removed_keywords:
-            names = ", ".join(sorted(removed_keywords))
-            raise TypeError(
-                f"WorkflowFunction no longer accepts {names}; use dispatch= instead."
-            )
-
+        # Validate arguments before setting any instance state.
         if dispatch not in _VALID_DISPATCH_STRATEGIES:
             raise ValueError(
                 f"dispatch must be one of {_VALID_DISPATCH_STRATEGIES}; got {dispatch!r}"
@@ -240,16 +233,15 @@ class WorkflowFunction(Node):
                 stacklevel=2,
             )
 
+        if not isinstance(workflow_kind, WorkflowKind):
+            raise TypeError(
+                f"workflow_kind must be a WorkflowKind enum member, "
+                f"got {type(workflow_kind).__name__}"
+            )
+
         self._func = func
         self._signature_info = _workflow_call.make_signature_info(func)
-        # Convert legacy string / None values to WorkflowKind enum
-        # TODO: remove this legacy conversion in follow-up issue
-        if workflow_kind is None:
-            self._workflow_kind_raw = WorkflowKind.OFF
-        elif isinstance(workflow_kind, str) and not isinstance(workflow_kind, WorkflowKind):
-            self._workflow_kind_raw = WorkflowKind(workflow_kind)
-        else:
-            self._workflow_kind_raw = workflow_kind
+        self._workflow_kind_raw = workflow_kind
         self._name = name or getattr(func, "__name__", self.__class__.__name__)
 
         # Expose wrapped function's metadata for introspection (help(),
@@ -576,14 +568,18 @@ class Module(Node):
         - everything else becomes inputs
     """
 
-    def __init__(self, *, workflow_kind: WorkflowKind | str | None = WorkflowKind.DEFAULT, **kwargs: Any):
-        # Convert legacy string / None values to WorkflowKind enum
-        if workflow_kind is None:
-            self._workflow_kind = WorkflowKind.OFF
-        elif isinstance(workflow_kind, str) and not isinstance(workflow_kind, WorkflowKind):
-            self._workflow_kind = WorkflowKind(workflow_kind)
-        else:
-            self._workflow_kind = workflow_kind
+    def __init__(
+        self,
+        *,
+        workflow_kind: WorkflowKind = WorkflowKind.DEFAULT,
+        **kwargs: Any,
+    ):
+        if not isinstance(workflow_kind, WorkflowKind):
+            raise TypeError(
+                f"workflow_kind must be a WorkflowKind enum member, "
+                f"got {type(workflow_kind).__name__}"
+            )
+        self._workflow_kind = workflow_kind
         super().__init__(**kwargs)
         # validate abstract workflow implementations before wrapping
         self._validate_abstract_workflow_implementations()
