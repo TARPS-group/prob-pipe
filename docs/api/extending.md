@@ -187,7 +187,7 @@ new array-like type. See
 `DistributionArray` is the shape-indexed container produced by
 parameter-sweep workflow functions whose inner call returns a
 `Distribution`. `BroadcastDistribution` is the joint container produced
-by `@workflow_function` when `include_inputs=True`.
+by `WorkflowFunction` when called with `workflow.with_options(include_inputs=True)(...)`.
 
 ::: probpipe.DistributionArray
 

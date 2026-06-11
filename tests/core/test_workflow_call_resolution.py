@@ -112,7 +112,7 @@ class TestWorkflowCallHelpers:
 
         assert call.values == {"x": 1.0, "kwargs": {"scale": 2.0}}
 
-    def test_reserved_overrides_are_not_function_inputs(self, identity_func):
+    def test_legacy_options_are_not_function_inputs_when_unbindable(self, identity_func):
         call = _resolve_call(
             identity_func,
             "value",
@@ -125,6 +125,28 @@ class TestWorkflowCallHelpers:
         assert call.overrides.n_broadcast_samples == 6
         assert call.overrides.include_inputs is True
         assert call.overrides.seed == 123
+
+    def test_workflow_option_names_bind_when_declared(self):
+        def identity(x, n_broadcast_samples, include_inputs, seed):
+            return x
+
+        call = _resolve_call(
+            identity,
+            "value",
+            n_broadcast_samples=6,
+            include_inputs=True,
+            seed=123,
+        )
+
+        assert call.values == {
+            "x": "value",
+            "n_broadcast_samples": 6,
+            "include_inputs": True,
+            "seed": 123,
+        }
+        assert call.overrides.n_broadcast_samples == 20
+        assert call.overrides.include_inputs is False
+        assert call.overrides.seed is None
 
     def test_bind_module_and_function_defaults_resolve_in_precedence_order(self):
         dep = DataNode()
@@ -228,8 +250,8 @@ class TestModuleResolution:
             wf(dep=object())
 
 
-class TestReservedOverrides:
-    def test_reserved_call_time_overrides_control_broadcast_execution(
+class TestCallOptions:
+    def test_with_options_controls_broadcast_execution(
         self,
         identity_func,
         normal_dist,
@@ -241,7 +263,11 @@ class TestReservedOverrides:
             seed=42,
         )
 
-        result = wf(normal_dist, n_broadcast_samples=6, include_inputs=True, seed=42)
+        result = wf.with_options(
+            n_broadcast_samples=6,
+            include_inputs=True,
+            seed=42,
+        )(normal_dist)
 
         assert isinstance(result, BroadcastDistribution)
         assert result.num_atoms == 6
@@ -258,7 +284,7 @@ class TestReservedOverrides:
             seed=42,
         )
 
-        first = wf(normal_dist, seed=42)
-        second = wf(normal_dist, seed=42)
+        first = wf.with_options(seed=42)(normal_dist)
+        second = wf.with_options(seed=42)(normal_dist)
 
         assert jnp.allclose(first.samples, second.samples)

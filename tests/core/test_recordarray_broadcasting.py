@@ -176,7 +176,7 @@ class TestPureSweepParityMatrix:
 
 class TestDistributionOnlyPath:
     def test_scalar_output_still_marginal(self):
-        @workflow_function(n_broadcast_samples=50, dispatch="sequential")
+        @workflow_function.options(n_broadcast_samples=50, dispatch="sequential")
         def f(x: float) -> float:
             return x * 2
 
@@ -206,7 +206,7 @@ class TestNestedSweepPlusDistribution:
         )
 
     def test_scalar_inner_gives_distribution_array(self, sweep):
-        @workflow_function(n_broadcast_samples=50, dispatch="sequential")
+        @workflow_function.options(n_broadcast_samples=50, dispatch="sequential")
         def f(p: NumericRecord, noise: float) -> float:
             return p["bias"] + noise
 
@@ -219,7 +219,7 @@ class TestNestedSweepPlusDistribution:
         np.testing.assert_allclose(means, [0.0, 1.0, 2.0], atol=0.2)
 
     def test_record_inner_gives_distribution_array(self, sweep):
-        @workflow_function(n_broadcast_samples=30, dispatch="sequential")
+        @workflow_function.options(n_broadcast_samples=30, dispatch="sequential")
         def f(p: NumericRecord, noise: float) -> NumericRecord:
             return NumericRecord(x=p["bias"] + noise, y=p["bias"] - noise)
 
@@ -228,7 +228,7 @@ class TestNestedSweepPlusDistribution:
         assert out.batch_shape == (3,)
 
     def test_distribution_inner_gives_distribution_array(self, sweep):
-        @workflow_function(n_broadcast_samples=20, dispatch="sequential")
+        @workflow_function.options(n_broadcast_samples=20, dispatch="sequential")
         def f(p: NumericRecord, noise: float) -> Distribution:
             return Normal(loc=p["bias"] + noise, scale=1.0, name="out")
 
@@ -247,11 +247,11 @@ class TestDispatch:
     same stacked output (modulo numerical noise) when both are feasible."""
 
     def test_vmap_and_sequential_agree_on_scalar_output(self):
-        @workflow_function(dispatch="sequential")
+        @workflow_function.options(dispatch="sequential")
         def f_loop(p: NumericRecord) -> float:
             return p["r"] * p["k"]
 
-        @workflow_function(dispatch="jax")
+        @workflow_function.options(dispatch="jax")
         def f_jax(p: NumericRecord) -> float:
             return p["r"] * p["k"]
 
@@ -263,7 +263,7 @@ class TestDispatch:
         np.testing.assert_allclose(out_loop["f_loop"], out_jax["f_jax"])
 
     def test_explicit_jax_rejects_unsupported_sweep_shape(self):
-        @workflow_function(dispatch="jax")
+        @workflow_function.options(dispatch="jax")
         def f(a: NumericRecord, b: NumericRecord) -> float:
             return a["x"] + b["y"]
 
@@ -301,7 +301,7 @@ class TestProvenanceChain:
         assert out.source.metadata["func"] == "f"
 
     def test_nested_provenance_includes_both(self):
-        @workflow_function(n_broadcast_samples=10, dispatch="sequential")
+        @workflow_function.options(n_broadcast_samples=10, dispatch="sequential")
         def f(p: NumericRecord, noise: float) -> float:
             return p["x"] + noise
 
@@ -400,7 +400,7 @@ class TestMultiDimensionalBatch:
         """Nested regime: each sweep cell marginalises over the MC
         draws; output is a DistributionArray matching the sweep's
         batch_shape."""
-        @workflow_function(n_broadcast_samples=10, dispatch="sequential")
+        @workflow_function.options(n_broadcast_samples=10, dispatch="sequential")
         def f(p: NumericRecord, noise: float) -> float:
             return p["r"] * p["k"] + noise
 

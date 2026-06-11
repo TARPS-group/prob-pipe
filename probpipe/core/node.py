@@ -83,24 +83,90 @@ def abstract_workflow_method(func: Callable):
 def workflow_function(_func=None, /, **kwargs):
     """Decorator to create a :class:`WorkflowFunction` from a plain function.
 
-    Can be used with or without arguments::
+    Bare usage keeps the wrapped function's namespace untouched::
 
         @workflow_function
         def my_func(x, y):
             return x + y
 
-        @workflow_function(n_broadcast_samples=100, dispatch="sequential")
+    Use ``@workflow_function.options(...)`` for ProbPipe construction
+    controls::
+
+        @workflow_function.options(n_broadcast_samples=100, dispatch="sequential")
         def my_func(x, y):
             return x + y
+
+    Passing options directly to ``@workflow_function(...)`` is deprecated;
+    use ``@workflow_function.options(...)`` instead.
+
+    Parameters
+    ----------
+    _func : Callable or None
+        Function being decorated for bare ``@workflow_function`` usage.
+        Users should not pass this argument by keyword.
+    **kwargs : Any
+        Deprecated construction-time ``WorkflowFunction`` options. Use
+        ``@workflow_function.options(...)`` instead.
+
+    Returns
+    -------
+    WorkflowFunction or Callable
+        Wrapped workflow function for bare usage, or a decorator when called
+        with parentheses.
+
+    Warns
+    -----
+    DeprecationWarning
+        If construction-time options are passed directly to
+        ``@workflow_function(...)``.
     """
-    def decorator(func):
+    if _func is not None:
+        if kwargs:
+            warnings.warn(
+                "Passing WorkflowFunction options directly to "
+                "@workflow_function(...) is deprecated; use "
+                "@workflow_function.options(...) instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return _workflow_function_options(**kwargs)(_func)
+        # Bare @workflow_function (no parentheses)
+        return _workflow_function_options()(_func)
+    if kwargs:
+        warnings.warn(
+            "Passing WorkflowFunction options directly to "
+            "@workflow_function(...) is deprecated; use "
+            "@workflow_function.options(...) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    return _workflow_function_options(**kwargs)
+
+
+def _workflow_function_options(
+    **kwargs: Any,
+) -> Callable[[Callable[..., Any]], WorkflowFunction]:
+    """Create a decorator with explicit WorkflowFunction construction options.
+
+    Parameters
+    ----------
+    **kwargs : Any
+        Construction-time ``WorkflowFunction`` options such as ``dispatch``,
+        ``seed``, ``n_broadcast_samples``, ``include_inputs``, and
+        ``workflow_kind``.
+
+    Returns
+    -------
+    Callable
+        Decorator that wraps a user function in ``WorkflowFunction``.
+    """
+    def decorator(func: Callable[..., Any]) -> WorkflowFunction:
         return WorkflowFunction(func=func, name=func.__name__, **kwargs)
 
-    if _func is not None:
-        # Bare @workflow_function (no parentheses)
-        return decorator(_func)
-    # @workflow_function(...) with arguments
     return decorator
+
+
+workflow_function.options = _workflow_function_options
 
 
 class Node(ABC):  # noqa: B024
@@ -179,9 +245,8 @@ class WorkflowFunction(Node):
     module : Module or None
         Parent module for input / dependency resolution.
     n_broadcast_samples : int
-        Default number of samples drawn when broadcasting.  Can be overridden
-        at call time by passing ``n_broadcast_samples=…`` (provided the
-        wrapped function does not itself declare a parameter with that name).
+        Default number of samples drawn when broadcasting.  Override it for
+        one call with ``workflow.with_options(n_broadcast_samples=...)(...)``.
     dispatch : str
         Function-call dispatch strategy for broadcasting:
 
@@ -203,6 +268,13 @@ class WorkflowFunction(Node):
     seed : int
         Random seed for JAX PRNG key management during broadcasting.
 
+    Notes
+    -----
+    Keyword arguments passed to a workflow call belong to the wrapped user
+    function whenever they can bind to that function. Use
+    ``with_options(...)`` for call-time ProbPipe controls such as
+    ``seed``, ``n_broadcast_samples``, and ``include_inputs``.
+
     Raises
     ------
     TypeError
@@ -210,6 +282,7 @@ class WorkflowFunction(Node):
     """
 
     DEFAULT_N_BROADCAST_SAMPLES: int = 128
+
     def __init__(
         self,
         *,
@@ -271,11 +344,6 @@ class WorkflowFunction(Node):
         self._bind = b
 
         super().__init__()
-
-        _workflow_call.validate_reserved_parameter_names(
-            self._signature_info, workflow_name=self._name,
-        )
-
 
     @property
     def effective_workflow_kind(self) -> WorkflowKind:
@@ -347,7 +415,56 @@ class WorkflowFunction(Node):
             ),
         )
 
-    def __call__(self, *args, **call_inputs):
+    def with_options(
+        self,
+        *,
+        n_broadcast_samples: int | None = None,
+        include_inputs: bool | None = None,
+        seed: int | None = None,
+    ) -> _WorkflowFunctionCallWithOptions:
+        """Return a callable view with temporary call-time workflow options.
+
+        Keyword arguments passed to the returned callable are always treated
+        as inputs to the wrapped function. Use this method, rather than
+        call-time kwargs, to override ProbPipe controls for one call.
+
+        Parameters
+        ----------
+        n_broadcast_samples : int or None
+            Temporary sample-count override for distribution broadcasting.
+        include_inputs : bool or None
+            Temporary override for returning the joint input/output broadcast
+            distribution.
+        seed : int or None
+            Temporary PRNG seed override for one workflow call.
+
+        Returns
+        -------
+        Callable
+            Callable view that applies these options to exactly one call.
+        """
+        return _WorkflowFunctionCallWithOptions(
+            self,
+            _workflow_call.WorkflowCallOptions(
+                n_broadcast_samples=n_broadcast_samples,
+                include_inputs=include_inputs,
+                seed=seed,
+            ),
+        )
+
+    def __call__(self, *args: Any, **call_inputs: Any) -> Any:
+        return self._call_with_options(
+            args,
+            call_inputs,
+            _workflow_call.WorkflowCallOptions(),
+        )
+
+    def _call_with_options(
+        self,
+        args: tuple[Any, ...],
+        call_inputs: dict[str, Any],
+        options: _workflow_call.WorkflowCallOptions,
+    ) -> Any:
         call = _workflow_call.resolve_workflow_call(
             self._signature_info,
             args,
@@ -358,6 +475,8 @@ class WorkflowFunction(Node):
             workflow_name=self._name,
             default_n_broadcast_samples=self._n_broadcast_samples,
             default_include_inputs=self._include_inputs,
+            options=options,
+            warn_legacy_overrides=True,
         )
         if call.overrides.seed is not None:
             self._key = jax.random.PRNGKey(call.overrides.seed)
@@ -559,6 +678,30 @@ class WorkflowFunction(Node):
             self._resolved_dispatch = "sequential"
 
         return self._resolved_dispatch
+
+
+class _WorkflowFunctionCallWithOptions:
+    """Callable view that applies temporary WorkflowFunction options."""
+
+    def __init__(
+        self,
+        workflow: WorkflowFunction,
+        options: _workflow_call.WorkflowCallOptions,
+    ):
+        self._workflow = workflow
+        self._options = options
+        self.__doc__ = workflow.__doc__
+        self.__name__ = workflow.__name__
+        self.__qualname__ = workflow.__qualname__
+        self.__signature__ = workflow.__signature__
+        self.__module__ = workflow.__module__
+
+    def __call__(self, *args: Any, **call_inputs: Any) -> Any:
+        return self._workflow._call_with_options(
+            args,
+            call_inputs,
+            self._options,
+        )
 
 
 class Module(Node):

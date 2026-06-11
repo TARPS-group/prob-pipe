@@ -130,11 +130,18 @@ Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
 ``PyMCNutsMethod``.  Factory functions that return parameterized instances
 (e.g., ``TFPNutsMethod() -> _TFPGradientMethod``) use the same naming.
 
-### 1.8 Reserved parameter names
+### 1.8 Workflow option namespace
 
-`WorkflowFunction` reserves the parameter names `seed`, `n_broadcast_samples`,
-and `include_inputs` internally. Use `random_seed` instead when defining
-functions that accept a PRNG seed.
+`WorkflowFunction` keeps ProbPipe controls separate from wrapped-function
+kwargs. Use `@workflow_function.options(...)` for definition-time controls
+such as `dispatch`, `seed`, and `n_broadcast_samples`, and use
+`workflow.with_options(...)(...)` for one-call overrides such as
+`seed`, `n_broadcast_samples`, and `include_inputs`.
+
+Ordinary workflow calls should treat keyword arguments as user-function
+inputs. Wrapped functions may use names such as `seed`,
+`n_broadcast_samples`, and `include_inputs` when those names are part of
+their own domain API.
 
 ### 1.9 The `num_atoms` / `replicate_size` property convention
 
