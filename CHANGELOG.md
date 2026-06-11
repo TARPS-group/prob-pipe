@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **BayesFlow amortized-SBI backend (`[bayesflow]` extra).** New
+  `learn_amortized_posterior(prior, simulator, method="npe"|"fmpe"|"cmpe",
+  ...)` trains a jax-native (keras-on-JAX) amortized neural posterior
+  estimator — NPE (coupling flow), FMPE (flow matching), or CMPE
+  (consistency model) — and returns a `BayesFlowModel` bundling the joint
+  model (prior + simulator, exposed as properties) with the trained
+  estimator: `condition_on(model, observed)` draws from `p(theta | observed)`
+  in a single network forward pass (no MCMC). This restores the amortized
+  half of the SBI layer dropped with sbijax.
+  - Training simulates `(theta, y)` offline (`prior` drawn via the `sample`
+    op, `simulator.generate_data` for the data); the prior is used only to
+    draw `theta` and needs no TFP translation. The trained estimator is
+    amortized — the same instance conditions on any observation with no
+    retraining — and its draws are named via the prior's `record_template`.
+    The simulator receives the prior's native structured per-draw sample (named
+    fields), matching the `GenerativeLikelihood` contract, and keras training is
+    seeded for reproducibility.
+  - Continuous priors with constrained supports — including matrix- and
+    simplex-valued ones (positive, an interval, Dirichlet's simplex, Wishart's
+    positive-definite matrices, …) — are handled by per-field `bijector_for`
+    reparameterization applied at each field's native event shape: training runs
+    in the unconstrained space and draws are mapped back to the support (identity
+    for real-valued fields). NPE's coupling-flow minimum is counted in
+    unconstrained dimensions. Discrete priors have no smooth bijector and are
+    rejected with a clear error.
+  - Training seeds keras for reproducibility but snapshots and restores the
+    caller's global NumPy / Python RNG state, so a call does not perturb
+    unrelated random streams.
+  - The `[bayesflow]` extra is **Python 3.12–3.13 only** (BayesFlow 2.x caps
+    `<3.14`); keras runs on the JAX backend (`KERAS_BACKEND=jax`) — no
+    TensorFlow or PyTorch. The backend is imported lazily, so `import
+    probpipe` does not load keras.
+
+- **`ProductDistribution.supports`** — per-field support constraints (each
+  component's `support`), implementing the canonical `RecordDistribution`
+  accessor that previously raised `NotImplementedError`.
+
 - **Python 3.14 to the CI test matrix.** The matrix is now
   `[3.12, 3.13, 3.14]`. `requires-python = ">=3.12"` is unchanged.
 - **Coverage floor enforced at 88%** on the full-suite CI run

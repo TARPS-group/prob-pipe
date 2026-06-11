@@ -107,7 +107,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         """Require SimpleModel + ConditionallyIndependentLikelihood + batch_size."""
-        from ..modeling._likelihood import ConditionallyIndependentLikelihood
+        from ..core.protocols import ConditionallyIndependentLikelihood
 
         if not is_simple_model(dist):
             return MethodInfo(

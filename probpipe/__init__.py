@@ -133,6 +133,8 @@ from probpipe.inference import (
     elliptical_slice,
     condition_on_nutpie,
     MinibatchedDistribution,
+    learn_amortized_posterior,
+    BayesFlowModel,
 )
 from probpipe.modeling import ProbabilisticModel, SimpleModel, SimpleGenerativeModel
 from probpipe.validation import predictive_check
@@ -294,6 +296,8 @@ __all__ = [
     "elliptical_slice",
     "condition_on_nutpie",
     "MinibatchedDistribution",
+    "learn_amortized_posterior",
+    "BayesFlowModel",
     # Validation
     "predictive_check",
     # Converters

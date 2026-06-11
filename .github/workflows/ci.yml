@@ -323,6 +323,47 @@ jobs:
           name: coverage-html
           path: htmlcov/
 
+  bayesflow:
+    # Amortized SBI backend (keras-on-jax). BayesFlow 2.x caps Python <3.14, so
+    # this leg runs on 3.12 & 3.13 only — kept separate from the main matrix so
+    # a future 3.14 entry there is unaffected by the cap.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    env:
+      KERAS_BACKEND: jax
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        # Versions (jax/jaxlib/tfp-nightly/keras/bayesflow) are pinned in uv.lock;
+        # --frozen fails if the lockfile drifts. --python pins the interpreter to
+        # the matrix leg. The bayesflow extra is locked behind a python_version
+        # < 3.14 marker (BayesFlow caps <3.14), so it resolves only on these legs.
+        run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra nutpie --extra bayesflow
+
+      - name: Run BayesFlow backend tests
+        run: uv run pytest tests/inference/test_bayesflow.py --cov-report=xml
+
+      - name: Upload coverage reports to Codecov
+        # The test job's upload measures the BayesFlow backend as uncovered: it
+        # does not install [bayesflow], so these tests importorskip out there.
+        # Upload this leg's report too — Codecov's per-commit union then counts
+        # _bayesflow.py toward patch coverage. 3.12 only, matching the test job.
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: TARPS-group/prob-pipe
+
   notebooks:
     # Execute every docs/examples notebook to keep the reference set
     # honest against the current codebase. Separate job so the
