@@ -33,9 +33,7 @@ from ..custom_types import Array, PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 
 if TYPE_CHECKING:
-    # Type-only imports of the optional ``bayesflow`` dependency: stringized by
-    # ``from __future__ import annotations`` and never evaluated at runtime
-    # (bayesflow is loaded only inside ``_ensure_bayesflow``).
+    # Type-only: the optional bayesflow dependency loads at runtime in _ensure_bayesflow.
     from bayesflow import Adapter, ContinuousApproximator
     from bayesflow.networks import InferenceNetwork
 
@@ -139,8 +137,6 @@ def _field_bijectors(prior: Distribution, fields: tuple[str, ...]) -> dict[str, 
         supports = prior.supports
     except NotImplementedError:
         if len(fields) > 1:
-            # Spreading one support across heterogeneous fields would silently pick
-            # the wrong bijector; demand the per-field accessor instead.
             raise TypeError(
                 f"{type(prior).__name__} has {len(fields)} fields but does not "
                 "implement per-field `supports`; cannot infer per-field constraints "
@@ -185,17 +181,14 @@ def _simulate_offline(
     fields = template.fields
     k_theta, k_sim = jax.random.split(key)
     theta = _sample_op(prior, key=k_theta, sample_shape=(num_simulations,))
-    # ``theta.flatten()`` is the prior's canonical flat layout (record-template
-    # field order); ``unflatten`` lifts it back to named per-field arrays --
-    # uniform across record containers and single-field priors (whose raw draws
-    # are not field-indexable by name, but whose flat layout is well defined).
+    # Round-trip through the canonical flat layout: single-field priors' raw draws
+    # are not field-indexable by name, so unflatten gives uniform named access.
     theta_flat = jnp.asarray(theta.flatten()).reshape(num_simulations, -1)
     record = NumericRecordArray.unflatten(
         theta_flat, template=template, batch_shape=(num_simulations,)
     )
-    # Unconstrain each field at its *native* event shape -- matrix-valued bijectors
-    # (e.g. positive-definite: Chain([CholeskyOuterProduct, FillScaleTriL])) require
-    # (..., n, n) input, so the inverse must run before flattening for the adapter.
+    # Invert before flattening: matrix-valued bijectors (positive-definite) require
+    # the field's native (..., n, n) event shape, not the flat adapter layout.
     named = {}
     for f in fields:
         u = bijectors[f].inverse(jnp.asarray(record[f]))
@@ -203,9 +196,8 @@ def _simulate_offline(
     sim_keys = jax.random.split(k_sim, num_simulations)
 
     def _one(flat_row: Array, k: PRNGKey) -> Array:
-        # Reconstruct the prior's native per-draw structured params (a record with
-        # named fields, so the simulator may use ``params["a"]``) -- the same object
-        # SimpleGenerativeModel / PriorPredictiveCheck pass, not a raw flat vector.
+        # Per-draw structured params (named-field access), per the
+        # GenerativeLikelihood contract.
         params = NumericRecordArray.unflatten(flat_row, template=template, batch_shape=())
         return jnp.ravel(simulator.generate_data(params, 1, key=k)[0])
 
@@ -214,9 +206,8 @@ def _simulate_offline(
         y = jax.vmap(_one)(theta_flat, sim_keys)
     else:  # "sequential"
         # Non-traceable simulators (numpy / external code): one eager call per
-        # draw, so generate_data runs concretely rather than under a jax trace.
-        # Move theta to the host once, rather than indexing the device array
-        # (and paying a sync) on every draw; keys stay jax (they are PRNG keys).
+        # draw. Theta is hosted once -- per-draw device indexing would sync
+        # every iteration.
         theta_rows = np.asarray(theta_flat)
         y = jnp.stack([_one(theta_rows[i], sim_keys[i]) for i in range(num_simulations)])
     return named, np.asarray(y, dtype="float32")
@@ -260,18 +251,14 @@ class BayesFlowPosterior(Distribution, SupportsConditioning):
         self._data_dim = data_dim
         self._num_results = num_results
         self._random_seed = random_seed
-        # Per-field forward bijectors (R^d -> support) applied to the network's
-        # unconstrained draws; identity for real-valued priors. Missing/None entries
-        # are treated as identity.
+        # Forward bijectors (unconstrained -> support); missing entries mean identity.
         self._bijectors = bijectors or {}
         # The ``Distribution`` metaclass requires a non-empty name.
         self._name = f"BayesFlowPosterior({method})"
 
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
-        # Defined (rather than left absent) so callers probing sampleability --
-        # e.g. WorkflowFunction's dispatch fallback, which catches
-        # NotImplementedError but not AttributeError -- get the guarded signal
-        # plus an actionable message.
+        # Present so sampleability probes get NotImplementedError -- which
+        # WorkflowFunction's dispatch fallback catches -- not AttributeError.
         raise NotImplementedError(
             "BayesFlowPosterior is an amortized conditional estimator with no "
             "unconditional sampler; draw from it by conditioning on data: "
@@ -299,12 +286,8 @@ class BayesFlowPosterior(Distribution, SupportsConditioning):
             conditions={_OBSERVATION_KEY: obs_flat[None, :]},
             seed=random_seed,
         )
-        # ``out`` maps each field to ``(1, num_results, d_field)``; squeeze the
-        # observation axis, map each field's unconstrained draws back to its support
-        # via the forward bijector (identity for real-valued fields), flatten any
-        # matrix-valued output, and concatenate in record-template field order (the
-        # layout ``make_posterior`` lifts back to named draws). Stays in jnp
-        # end-to-end -- this is the latency-critical amortized path, so no per-field
+        # ``out`` maps each field to ``(1, num_results, d_field)``. Stays in jnp
+        # end-to-end: this is the latency-critical amortized path, so no per-field
         # host round-trips.
         cols = []
         for f in self._fields:
@@ -462,8 +445,8 @@ def learn_amortized_posterior(
             f"prior field name {_OBSERVATION_KEY!r} collides with the reserved "
             "observation key used internally by the BayesFlow adapter; rename the field."
         )
-    # Per-field unconstraining bijectors (identity for real-valued priors); this also
-    # rejects discrete / unsupported-support priors up front, before any simulation.
+    # Built up front: also rejects discrete / unsupported-support priors before
+    # any simulation runs.
     bijectors = _field_bijectors(prior, fields)
     # The network trains on *unconstrained* widths, which differ from the prior's
     # event sizes for dimension-shifting bijectors (a d-simplex contributes d-1).
@@ -476,12 +459,9 @@ def learn_amortized_posterior(
     bf = _ensure_bayesflow()
     import keras
 
-    # Seed Python / NumPy / keras RNG so keras network init + fit (weight init, batch
-    # shuffling) are reproducible for a given random_seed; jax.random already seeds the
-    # offline simulation and sampling, but keras training reads the global RNG.
-    # Snapshot the caller's Python/NumPy RNG state and restore it after training, so
-    # the (global, process-wide) seeding does not silently perturb the caller's
-    # unrelated random streams. keras keeps its own seeded generator state.
+    # keras reads the global RNG for network init + fit, so seed it -- but snapshot
+    # and restore the caller's Python/NumPy state so the process-wide seeding does
+    # not leak. keras keeps its own seeded generator state across the restore.
     py_state = random.getstate()
     np_state = np.random.get_state()
     keras.utils.set_random_seed(random_seed)

@@ -168,16 +168,15 @@ class _ConjugateGaussianLikelihood(Likelihood, GenerativeLikelihood):
 
 
 class _NamedFieldLikelihood(Likelihood, GenerativeLikelihood):
-    """Accesses params strictly by field name (``params["a"]``), never positionally.
-    Under the previous implementation -- which flattened theta to a raw array before
-    calling the simulator -- this would raise; it works only because the structured
-    per-draw record is now passed, per the ``GenerativeLikelihood`` contract."""
+    """Accesses params strictly by field name (``params["a"]``), never positionally
+    -- locks the ``GenerativeLikelihood`` contract that training passes the prior's
+    structured per-draw record (a flattened-vector regression raises here)."""
 
     def log_likelihood(self, params, data):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        a, b = params["a"], params["b"]        # strict named access -- the contract
+        a, b = params["a"], params["b"]
         key = key if key is not None else jax.random.PRNGKey(0)
         mean = jnp.stack([a + b, a - b])
         return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
@@ -253,17 +252,15 @@ class TestBayesFlowNPE:
 
     @pytest.mark.parametrize("bad", [0, -5])
     def test_condition_rejects_nonpositive_num_results(self, npe_model, bad):
-        """Sample-time num_results is validated like the train-time one: 0 or
-        negative fails fast at the ProbPipe boundary, not as a cryptic JAX
-        reduction/broadcast error inside the flow network."""
+        """Sample-time num_results is validated like the train-time one: zero or
+        negative fails fast at the ProbPipe boundary."""
         with pytest.raises(ValueError, match="positive integer"):
             condition_on(npe_model, _observe(0.0, 0.0, 2), num_results=bad)
 
     def test_unconditioned_sample_raises_not_implemented(self, npe_model):
-        """An unconditioned BayesFlowPosterior has no unconditional sampler; the
-        ``_sample`` probe raises NotImplementedError (the signal WorkflowFunction's
-        dispatch fallback catches -- an absent method would surface as an unguarded
-        AttributeError) with a pointer to condition_on."""
+        """An unconditioned BayesFlowPosterior has no unconditional sampler:
+        ``_sample`` raises NotImplementedError -- the signal WorkflowFunction's
+        dispatch fallback catches -- with a pointer to condition_on."""
         with pytest.raises(NotImplementedError, match="condition_on"):
             npe_model._sample(jax.random.PRNGKey(0))
 
@@ -465,9 +462,9 @@ class TestBayesFlowMethods:
 
     def test_simulator_receives_named_record(self):
         """generate_data receives the prior's structured per-draw sample (named
-        fields), per the GenerativeLikelihood contract -- not a flattened vector. The
-        simulator uses params["a"]/["b"] exclusively, so training succeeds only when
-        the structured record is passed (it would raise under the old flattening)."""
+        fields), per the GenerativeLikelihood contract -- the simulator uses
+        params["a"]/["b"] exclusively, so training succeeds only when the
+        structured record is passed."""
         model = learn_amortized_posterior(
             _prior(), _NamedFieldLikelihood(), method="npe",
             num_simulations=800, epochs=2, batch_size=256,
