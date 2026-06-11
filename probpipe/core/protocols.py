@@ -502,9 +502,9 @@ class ConditionallyIndependentLikelihood[P, D](Likelihood[P, D], Protocol):
     Required by :class:`~probpipe.MinibatchedDistribution` for
     stochastic-gradient inference, and useful independently for held-out
     predictive log-likelihoods, leave-one-out cross-validation, and
-    PSIS-LOO. Implementations expose :meth:`per_datum_log_likelihood`; a
-    length-1-batch fallback is available for likelihoods that prefer a
-    default over an efficient override.
+    PSIS-LOO. Implementations expose :meth:`per_datum_log_likelihood`;
+    :func:`_default_per_datum_log_likelihood` is a length-1-batch fallback
+    for likelihoods that prefer a default over an efficient override.
     """
 
     def per_datum_log_likelihood(self, params: P, datum: Any) -> Any:
@@ -525,6 +525,26 @@ class ConditionallyIndependentLikelihood[P, D](Likelihood[P, D], Protocol):
             Scalar log-density of the datum under ``params``.
         """
         ...
+
+
+def _default_per_datum_log_likelihood(
+    likelihood: Likelihood,
+    params: Any,
+    datum: Any,
+) -> Any:
+    """Default per-datum log-likelihood — evaluate ``log_likelihood`` on a length-1 batch.
+
+    Fallback for :class:`ConditionallyIndependentLikelihood`
+    implementations that don't have a row-specific shortcut. Adds a
+    leading axis to ``datum`` via ``jax.tree.map(lambda x: x[None, ...], datum)``
+    and calls ``likelihood.log_likelihood(params, batch)``. Less
+    efficient than an override that evaluates the family directly on
+    the un-reshaped datum (no length-1-batch wrap, no associated
+    broadcasting overhead inside ``log_likelihood``).
+    """
+    import jax
+    batch = jax.tree.map(lambda x: x[None, ...], datum)
+    return likelihood.log_likelihood(params, batch)
 
 
 @runtime_checkable

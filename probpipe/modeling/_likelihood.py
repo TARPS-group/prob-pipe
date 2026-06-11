@@ -25,30 +25,11 @@ __all__ = [
 ]
 
 
-# ``Likelihood``, ``ConditionallyIndependentLikelihood`` and
-# ``GenerativeLikelihood`` are defined in ``core.protocols`` (pure structural
-# protocols importable by both modeling/ and inference/ without a cycle) and
-# re-exported above for backward compatibility.
-
-
-def _default_per_datum_log_likelihood(
-    likelihood: "Likelihood",
-    params: Any,
-    datum: Any,
-) -> Any:
-    """Default per-datum log-likelihood — evaluate ``log_likelihood`` on a length-1 batch.
-
-    Fallback for :class:`ConditionallyIndependentLikelihood`
-    implementations that don't have a row-specific shortcut. Adds a
-    leading axis to ``datum`` via ``jax.tree.map(lambda x: x[None, ...], datum)``
-    and calls ``likelihood.log_likelihood(params, batch)``. Less
-    efficient than an override that evaluates the family directly on
-    the un-reshaped datum (no length-1-batch wrap, no associated
-    broadcasting overhead inside ``log_likelihood``).
-    """
-    import jax
-    batch = jax.tree.map(lambda x: x[None, ...], datum)
-    return likelihood.log_likelihood(params, batch)
+# ``Likelihood``, ``ConditionallyIndependentLikelihood``,
+# ``GenerativeLikelihood``, and the ``_default_per_datum_log_likelihood``
+# fallback are defined in ``core.protocols`` (pure structural protocols
+# importable by both modeling/ and inference/ without a cycle); the protocols
+# are re-exported above for backward compatibility.
 
 
 # ---------------------------------------------------------------------------
