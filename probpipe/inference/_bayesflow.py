@@ -120,6 +120,34 @@ def _build_adapter(bf: ModuleType, fields: tuple[str, ...]) -> Adapter:
     )
 
 
+def _field_bijectors(prior: Distribution, fields: tuple[str, ...]) -> dict[str, Any]:
+    """Per-field bijector mapping each parameter's unconstrained R^d to its support.
+
+    BayesFlow's ``ContinuousApproximator`` operates in unconstrained, real space, so a
+    constrained prior (positive, an interval, ...) is trained on the *unconstrained*
+    parameters (``bijector.inverse``) and the network's draws are mapped back to the
+    support (``bijector.forward``). For a real-valued prior every bijector is the
+    identity, so the round-trip is a no-op. Discrete priors have no smooth bijector and
+    are rejected here with a clear error.
+    """
+    from ..distributions import bijector_for  # lazy: inference/ -> distributions/
+
+    components = getattr(prior, "components", None)
+    bijectors: dict[str, Any] = {}
+    for f in fields:
+        constraint = components[f].support if components is not None else prior.support
+        try:
+            bijectors[f] = bijector_for(constraint)
+        except NotImplementedError as e:
+            raise ValueError(
+                f"learn_amortized_posterior cannot handle prior field {f!r} with support "
+                f"{constraint!r}: {e}. Amortized SBI requires a continuous prior whose "
+                "support admits a smooth bijector to R^d (e.g. real, positive, an "
+                "interval); discrete priors are not supported."
+            ) from e
+    return bijectors
+
+
 def _simulate_offline(
     prior: Distribution,
     simulator: GenerativeLikelihood,
@@ -155,9 +183,12 @@ def _simulate_offline(
     }
     sim_keys = jax.random.split(k_sim, num_simulations)
 
-    def _one(p: Array, k: PRNGKey) -> Array:
-        # One simulated dataset per theta, flattened to a fixed (d_y,) vector.
-        return jnp.ravel(simulator.generate_data(p, 1, key=k)[0])
+    def _one(flat_row: Array, k: PRNGKey) -> Array:
+        # Reconstruct the prior's native per-draw structured params (a record with
+        # named fields, so the simulator may use ``params["a"]``) -- the same object
+        # SimpleGenerativeModel / PriorPredictiveCheck pass, not a raw flat vector.
+        params = NumericRecordArray.unflatten(flat_row, template=template, batch_shape=())
+        return jnp.ravel(simulator.generate_data(params, 1, key=k)[0])
 
     if sim_backend == "jax":
         # JAX-traceable simulators: vmap the whole batch (fast path).
@@ -195,6 +226,7 @@ class BayesFlowPosterior(Distribution, SupportsConditioning):
         data_dim: int,
         num_results: int = 2000,
         random_seed: int = 0,
+        bijectors: dict[str, Any] | None = None,
     ):
         self._approximator = approximator
         self._prior = prior
@@ -203,6 +235,10 @@ class BayesFlowPosterior(Distribution, SupportsConditioning):
         self._data_dim = data_dim
         self._num_results = num_results
         self._random_seed = random_seed
+        # Per-field forward bijectors (R^d -> support) applied to the network's
+        # unconstrained draws; identity for real-valued priors. Missing/None entries
+        # are treated as identity.
+        self._bijectors = bijectors or {}
         # The ``Distribution`` metaclass requires a non-empty name.
         self._name = f"BayesFlowPosterior({method})"
 
@@ -226,9 +262,17 @@ class BayesFlowPosterior(Distribution, SupportsConditioning):
             seed=random_seed,
         )
         # ``out`` maps each field to ``(1, num_results, d_field)``; squeeze the
-        # observation axis and concatenate in record-template field order (the
-        # layout ``make_posterior`` lifts back to named draws).
-        cols = [np.asarray(out[f])[0].reshape(num_results, -1) for f in self._fields]
+        # observation axis, map each field's unconstrained draws back to its support
+        # via the forward bijector (identity for real-valued fields), and concatenate
+        # in record-template field order (the layout ``make_posterior`` lifts back to
+        # named draws).
+        cols = []
+        for f in self._fields:
+            draws = np.asarray(out[f])[0]
+            bij = self._bijectors.get(f)
+            if bij is not None:
+                draws = np.asarray(bij.forward(jnp.asarray(draws)))
+            cols.append(draws.reshape(num_results, -1))
         flat = jnp.asarray(np.concatenate(cols, axis=-1))
         return make_posterior(
             [flat],
@@ -281,13 +325,18 @@ def learn_amortized_posterior(
         typically a ``ProductDistribution`` of named distributions, or a single
         named distribution for a one-parameter model.  It is sampled via the
         :func:`~probpipe.sample` op to draw training thetas; it is *not*
-        otherwise translated.
+        otherwise translated.  Constrained fields (positive, an interval, ...) are
+        trained in unconstrained space via the per-field bijector from
+        :func:`~probpipe.bijector_for` and mapped back to the support at sample time;
+        real-valued fields use the identity.  Discrete priors are not supported.
     simulator : GenerativeLikelihood
-        Must implement ``generate_data(params, num_observations, *, key)``; it
-        must be JAX-vmappable unless ``sim_backend="sequential"`` (see below). Training
-        uses one simulated dataset per ``theta``, so ``condition_on`` must be
-        given a single observation of that same flattened shape (not a stacked
-        multi-observation dataset).
+        Must implement ``generate_data(params, num_observations, *, key)``.  As with
+        ``SimpleGenerativeModel`` / ``PriorPredictiveCheck``, ``params`` is the prior's
+        native per-draw sample -- a record whose fields are accessible by name
+        (``params["a"]``), not a flattened vector.  It must be JAX-vmappable unless
+        ``sim_backend="sequential"`` (see below). Training uses one simulated dataset
+        per ``theta``, so ``condition_on`` must be given a single observation of that
+        same flattened shape (not a stacked multi-observation dataset).
     method : {"npe", "fmpe", "cmpe"}
         Amortized estimator: NPE (coupling flow), FMPE (flow matching), or CMPE
         (consistency model). NPE's coupling flow needs at least two parameters,
@@ -308,8 +357,9 @@ def learn_amortized_posterior(
     num_results : int
         Default number of posterior draws per ``condition_on`` call.
     random_seed : int
-        Seed for offline simulation, training, and sampling (sampling
-        reproducibility is best-effort via keras seeding).
+        Seed for offline simulation (``jax.random``), keras network init + training
+        (via ``keras.utils.set_random_seed``), and sampling. Note that this sets the
+        global keras / NumPy / Python RNG state.
     optimizer : str or keras.Optimizer
         Passed to ``approximator.compile``.
     **fit_kwargs
@@ -324,8 +374,11 @@ def learn_amortized_posterior(
     ------
     ValueError
         If ``method`` is not one of ``"npe"`` / ``"fmpe"`` / ``"cmpe"``,
-        ``sim_backend`` is not ``"jax"`` / ``"sequential"``, or a prior field
-        collides with the reserved ``"observation"`` key.
+        ``sim_backend`` is not ``"jax"`` / ``"sequential"``, any of
+        ``num_simulations`` / ``batch_size`` / ``epochs`` / ``num_results`` is not a
+        positive integer, a prior field collides with the reserved ``"observation"``
+        key, or a prior field's support admits no smooth bijector to ``R^d`` (e.g. a
+        discrete prior).
     TypeError
         If ``simulator`` lacks ``generate_data``, or ``prior`` is not a
         ``RecordDistribution`` (has no ``record_template``).
@@ -340,6 +393,12 @@ def learn_amortized_posterior(
         raise ValueError(
             f"Unknown sim_backend: {sim_backend!r}. Supported: 'jax', 'sequential'."
         )
+    for _name, _val in (
+        ("num_simulations", num_simulations), ("batch_size", batch_size),
+        ("epochs", epochs), ("num_results", num_results),
+    ):
+        if _val < 1:
+            raise ValueError(f"{_name} must be a positive integer, got {_val}.")
     if not hasattr(simulator, "generate_data"):
         raise TypeError(
             "simulator must be a GenerativeLikelihood with a generate_data method, "
@@ -359,10 +418,27 @@ def learn_amortized_posterior(
             f"prior field name {_OBSERVATION_KEY!r} collides with the reserved "
             "observation key used internally by the BayesFlow adapter; rename the field."
         )
+    # Per-field unconstraining bijectors (identity for real-valued priors); this also
+    # rejects discrete / unsupported-support priors up front, before any simulation.
+    bijectors = _field_bijectors(prior, fields)
+
     bf = _ensure_bayesflow()
+    import keras
+
+    # Seed Python / NumPy / keras RNG so keras network init + fit (weight init, batch
+    # shuffling) are reproducible for a given random_seed; jax.random already seeds the
+    # offline simulation and sampling, but keras training reads the global RNG.
+    keras.utils.set_random_seed(random_seed)
     key = jax.random.PRNGKey(random_seed)
     named, y = _simulate_offline(prior, simulator, num_simulations, key, sim_backend=sim_backend)
-    sims = {**named, _OBSERVATION_KEY: y}
+    # Train in unconstrained space: map each field's draws to R^d via the inverse
+    # bijector (a no-op for real-valued fields), so the continuous network never has to
+    # reproduce a constrained support; the forward map is applied to draws at sample time.
+    named_u = {
+        f: np.asarray(bijectors[f].inverse(jnp.asarray(named[f])), dtype="float32")
+        for f in fields
+    }
+    sims = {**named_u, _OBSERVATION_KEY: y}
 
     adapter = _build_adapter(bf, fields)
     num_batches = max(1, -(-num_simulations // batch_size))  # ceil: count the partial batch
@@ -377,5 +453,5 @@ def learn_amortized_posterior(
 
     return BayesFlowPosterior(
         approximator, prior, method=method, data_dim=int(y.shape[-1]),
-        num_results=num_results, random_seed=random_seed,
+        num_results=num_results, random_seed=random_seed, bijectors=bijectors,
     )

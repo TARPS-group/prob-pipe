@@ -10,8 +10,8 @@ import os
 
 import pytest
 
-pytest.importorskip("bayesflow")
 os.environ.setdefault("KERAS_BACKEND", "jax")
+pytest.importorskip("bayesflow")
 
 import jax
 import jax.numpy as jnp
@@ -36,7 +36,8 @@ class _ToyLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        a, b = params[0], params[1]
+        t = params.flatten()        # structured record (training) or raw array (direct)
+        a, b = t[0], t[1]
         key = key if key is not None else jax.random.PRNGKey(0)
         mean = jnp.stack([a + b, a - b])
         return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
@@ -61,7 +62,8 @@ class _VecLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        m0, m1, s = params[0], params[1], params[2]
+        t = params.flatten()
+        m0, m1, s = t[0], t[1], t[2]
         key = key if key is not None else jax.random.PRNGKey(0)
         mean = jnp.stack([m0 + s, m1 - s])
         return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
@@ -84,8 +86,9 @@ class _SingleFieldLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
+        t = params.flatten()
         key = key if key is not None else jax.random.PRNGKey(0)
-        return params[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
+        return t[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
 
 
 class _NonJaxLikelihood(Likelihood, GenerativeLikelihood):
@@ -97,7 +100,8 @@ class _NonJaxLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        a, b = float(params[0]), float(params[1])
+        t = np.asarray(params.flatten())
+        a, b = float(t[0]), float(t[1])
         seed = 0 if key is None else int(jax.random.randint(key, (), 0, 2**16))
         noise = np.random.default_rng(seed).standard_normal((num_observations, 2))
         return np.array([a + b, a - b]) + 0.1 * noise
@@ -111,7 +115,7 @@ class _ScalarLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        a = params[0]
+        a = params.flatten()[0]
         key = key if key is not None else jax.random.PRNGKey(0)
         return a + 0.1 * jax.random.normal(key, (num_observations, 1))
 
@@ -126,7 +130,8 @@ class _MultiFieldLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        a, b0, b1, c = params[0], params[1], params[2], params[3]
+        t = params.flatten()
+        a, b0, b1, c = t[0], t[1], t[2], t[3]
         key = key if key is not None else jax.random.PRNGKey(0)
         mean = jnp.stack([a + b0, a - b0, b1 + c, b1 - c, a + c, b0 * b1, a, c])
         return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, mean.shape[0]))
@@ -158,8 +163,39 @@ class _ConjugateGaussianLikelihood(Likelihood, GenerativeLikelihood):
 
     def generate_data(self, params, num_observations, *, key=None):
         key = key if key is not None else jax.random.PRNGKey(0)
-        dim = params.shape[-1]
-        return params[None, :] + _CONJ_SIGMA * jax.random.normal(key, (num_observations, dim))
+        t = params.flatten()
+        return t[None, :] + _CONJ_SIGMA * jax.random.normal(key, (num_observations, t.shape[-1]))
+
+
+class _NamedFieldLikelihood(Likelihood, GenerativeLikelihood):
+    """Accesses params strictly by field name (``params["a"]``), never positionally.
+    Under the previous implementation -- which flattened theta to a raw array before
+    calling the simulator -- this would raise; it works only because the structured
+    per-draw record is now passed, per the ``GenerativeLikelihood`` contract."""
+
+    def log_likelihood(self, params, data):
+        return jnp.array(0.0)
+
+    def generate_data(self, params, num_observations, *, key=None):
+        a, b = params["a"], params["b"]        # strict named access -- the contract
+        key = key if key is not None else jax.random.PRNGKey(0)
+        mean = jnp.stack([a + b, a - b])
+        return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
+
+
+class _PositiveLikelihood(Likelihood, GenerativeLikelihood):
+    """Simulator for a constrained prior (positive ``r``, real ``m``):
+    ``y = [r + m, r - m] + small noise``."""
+
+    def log_likelihood(self, params, data):
+        return jnp.array(0.0)
+
+    def generate_data(self, params, num_observations, *, key=None):
+        t = params.flatten()
+        r, m = t[0], t[1]
+        key = key if key is not None else jax.random.PRNGKey(0)
+        mean = jnp.stack([r + m, r - m])
+        return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
 
 
 @pytest.fixture(scope="module")
@@ -326,9 +362,10 @@ class TestBayesFlowMethods:
         spread are checked against the analytic mean and std. The bounds are looser
         than ``test_calibration_against_conjugate_gaussian`` because flow matching
         at d=1 is a measurably noisier estimator -- its ODE sampling is less exact
-        than a coupling flow's density, and more training does not reliably tighten
-        it (mean error ranges ~0.04-0.19 posterior-std and the std ratio ~0.92-1.18
-        across training seeds)."""
+        than a coupling flow's density (across training seeds the mean error spans
+        ~0.04-0.19 posterior-std and the std ratio ~0.92-1.18). Training is seeded,
+        so a given run is reproducible; the band absorbs that estimator imprecision
+        plus cross-platform / library-version drift."""
         prior = Normal(loc=0.0, scale=1.0, name="a")   # event_size 1 -> FlowMatching
         model = learn_amortized_posterior(
             prior, _ConjugateGaussianLikelihood(), method="npe",
@@ -403,11 +440,42 @@ class TestBayesFlowMethods:
                 analytic_mean = float(obs[j]) / (1 + s2)
                 mean_errs.append(abs(float(x.mean()) - analytic_mean))
                 std_ratios.append(float(x.std()) / post_std)
-        # Estimate: mean posterior-mean error under 0.3 posterior-std (observed ~0.03-0.11
-        # across training seeds; keras training is not fully seeded, hence the margin).
+        # Training is seeded (reproducible); the margins absorb cross-platform /
+        # library-version numerical drift. Estimate: mean posterior-mean error under
+        # 0.3 posterior-std (observed ~0.03-0.11 across training seeds).
         assert np.mean(mean_errs) < 0.3 * post_std
         # Uncertainty: mean std ratio in [0.8, 1.25] (observed ~1.01-1.03 across seeds).
         assert 0.8 < np.mean(std_ratios) < 1.25
+
+    def test_simulator_receives_named_record(self):
+        """generate_data receives the prior's structured per-draw sample (named
+        fields), per the GenerativeLikelihood contract -- not a flattened vector. The
+        simulator uses params["a"]/["b"] exclusively, so training succeeds only when
+        the structured record is passed (it would raise under the old flattening)."""
+        model = learn_amortized_posterior(
+            _prior(), _NamedFieldLikelihood(), method="npe",
+            num_simulations=800, epochs=2, batch_size=256,
+            num_results=200, random_seed=0, verbose=0,
+        )
+        draws = condition_on(model, jnp.array([0.8, 0.2])).draws()
+        assert np.asarray(draws["a"]).reshape(-1).shape[0] == 200
+        assert np.isfinite(np.asarray(draws["a"])).all()
+
+    def test_constrained_prior_draws_respect_support(self):
+        """A constrained (positive) prior field is trained in unconstrained space and
+        its draws are mapped back through the forward bijector, so they land in the
+        support -- here all positive. The accompanying real-valued field is unaffected."""
+        import probpipe as pp
+        prior = ProductDistribution(pp.Gamma(3.0, 1.0, name="r"),
+                                    Normal(loc=0.0, scale=1.0, name="m"))
+        model = learn_amortized_posterior(
+            prior, _PositiveLikelihood(), method="npe",
+            num_simulations=1500, epochs=5, batch_size=256,
+            num_results=400, random_seed=0, verbose=0,
+        )
+        r = np.asarray(condition_on(model, jnp.array([3.0, 1.0])).draws()["r"]).reshape(-1)
+        assert np.isfinite(r).all()
+        assert (r > 0).all()        # forward bijector (Exp) keeps every draw in support
 
 
 class TestBayesFlowValidation:
@@ -454,3 +522,22 @@ class TestBayesFlowValidation:
                 _prior(), _ToyLikelihood(), sim_backend="bogus",
                 num_simulations=8, epochs=1,
             )
+
+    @pytest.mark.parametrize(
+        "override",
+        [{"num_simulations": 0}, {"batch_size": 0}, {"epochs": 0}, {"num_results": 0}],
+    )
+    def test_rejects_nonpositive_counts(self, override):
+        """num_simulations / batch_size / epochs / num_results must be positive."""
+        kwargs = {"num_simulations": 8, "epochs": 1, **override}
+        with pytest.raises(ValueError, match="positive integer"):
+            learn_amortized_posterior(_prior(), _ToyLikelihood(), **kwargs)
+
+    def test_rejects_discrete_prior(self):
+        """A discrete prior field has no smooth bijector to R^d and is rejected up
+        front with a clear error (here a Poisson count parameter)."""
+        import probpipe as pp
+        bad_prior = ProductDistribution(pp.Poisson(3.0, name="k"),
+                                        Normal(loc=0.0, scale=1.0, name="m"))
+        with pytest.raises(ValueError, match="discrete"):
+            learn_amortized_posterior(bad_prior, _ToyLikelihood(), num_simulations=8, epochs=1)

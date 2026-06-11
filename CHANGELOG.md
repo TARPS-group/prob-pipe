@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     draw `theta` and needs no TFP translation. The trained estimator is
     amortized — the same instance conditions on any observation with no
     retraining — and its draws are named via the prior's `record_template`.
+    The simulator receives the prior's native structured per-draw sample (named
+    fields), matching the `GenerativeLikelihood` contract, and keras training is
+    seeded for reproducibility.
+  - Continuous priors with constrained supports (positive, an interval, …) are
+    handled by per-field `bijector_for` reparameterization: training runs in the
+    unconstrained space and draws are mapped back to the support (identity for
+    real-valued fields). Discrete priors have no smooth bijector and are rejected
+    with a clear error.
   - The `[bayesflow]` extra is **Python 3.12–3.13 only** (BayesFlow 2.x caps
     `<3.14`); keras runs on the JAX backend (`KERAS_BACKEND=jax`) — no
     TensorFlow or PyTorch. The backend is imported lazily, so `import
