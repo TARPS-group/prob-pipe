@@ -76,14 +76,15 @@ when choosing a number for a new method are documented under
 Simulation-based inference with a trained amortized estimator (requires the
 `[bayesflow]` extra; Python 3.12–3.13 only). `learn_amortized_posterior`
 trains an NPE / FMPE / CMPE network from a prior and a `GenerativeLikelihood`
-simulator; the returned `BayesFlowPosterior` implements `SupportsConditioning`,
-so `condition_on(model, observed)` draws from `p(theta | observed)` in a
-single forward pass — the same trained instance conditions on any observation
-with no retraining.
+simulator; the returned `BayesFlowModel` represents the joint model:
+`sample(model)` draws `(params, data)` forward through the prior and
+simulator, and `condition_on(model, observed)` draws from
+`p(theta | observed)` in a single network forward pass — the same trained
+instance conditions on any observation with no retraining.
 
 ::: probpipe.learn_amortized_posterior
 
-::: probpipe.BayesFlowPosterior
+::: probpipe.BayesFlowModel
 
 ## Iterative transformations
 
