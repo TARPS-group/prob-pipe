@@ -2,7 +2,9 @@
 
 Requires the ``[bayesflow]`` extra (Python 3.12-3.13); skipped otherwise. The
 learned components are exercised end to end through ``SimpleModel`` +
-``condition_on`` (BlackJAX NUTS), against analytic conjugate posteriors.
+``condition_on`` (BlackJAX NUTS), judged against analytic conjugate posteriors
+and, for the constrained-prior case, against NUTS run with the exact
+likelihood on the same model.
 """
 
 from __future__ import annotations

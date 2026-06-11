@@ -77,11 +77,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     reparameterization needed on that side); discrete-valued parameter
     fields are accepted. NLE's default coupling flow needs observations with
     >= 2 dimensions and a reverse-differentiable density (adaptive-ODE
-    networks are rejected territory — documented); NRE's MLP classifier has
-    neither restriction and handles discrete observations.
+    networks such as `FlowMatching` integrate `log_prob` with a dynamic-bound
+    `while_loop`, which JAX cannot reverse-differentiate); NRE's MLP
+    classifier has neither restriction and handles discrete observations.
   - `BayesFlowRatio` values are log-ratios — valid for conditioning (the
     evidence constant cancels) but not for absolute-likelihood uses (model
-    comparison, LOO/WAIC); documented loudly.
+    comparison, LOO/WAIC); the caveat is documented on the class.
 
 - **`ProductDistribution.supports`** — per-field support constraints (each
   component's `support`), implementing the canonical `RecordDistribution`

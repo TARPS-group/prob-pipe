@@ -211,7 +211,8 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase):
 
 
 # ---------------------------------------------------------------------------
-# Workflow functions
+# Learner entry points (plain functions; see the module-top note on why these
+# are not @workflow_function)
 # ---------------------------------------------------------------------------
 
 

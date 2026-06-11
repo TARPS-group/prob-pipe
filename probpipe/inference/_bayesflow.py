@@ -9,6 +9,10 @@ forward pass through the trained network -- no MCMC, no gradient bridge, and no
 prior translation (the prior is used only to draw ``theta`` at train time via
 the :func:`~probpipe.sample` op).
 
+The shared bridge helpers here (input validation, offline simulation, adapter
+keying, seeded training) are also consumed by :mod:`._bayesflow_likelihoods`,
+which builds the NLE/NRE likelihood surrogates on the same pipeline.
+
 BayesFlow / keras is imported lazily on first use, so ``import probpipe`` does
 not pull keras.
 """
