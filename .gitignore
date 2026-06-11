@@ -141,3 +141,6 @@ __pycache__/
 .DS_Store
 .claude/scheduled_tasks.lock
 .agents
+
+# transient CI artifact (pyright advisory job tees its output here)
+pyright-output.txt

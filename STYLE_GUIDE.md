@@ -471,6 +471,11 @@ ArrayLike: TypeAlias = jnp.ndarray | list | tuple | float | int
 PRNGKey: TypeAlias = jax.Array
 ```
 
+These conventions are checked (advisorily) by pyright in CI — see
+[CONTRIBUTING.md § Type checking](CONTRIBUTING.md#type-checking). The
+check does not gate merges yet, but new code should type-check cleanly
+under the project's `basic` pyright mode where practical.
+
 ---
 
 ## 6. Subpackage Dependencies
