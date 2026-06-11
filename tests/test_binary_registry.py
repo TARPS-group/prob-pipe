@@ -7,6 +7,7 @@ synthetic two-argument registry so no real distributions are needed.
 from __future__ import annotations
 
 import warnings
+from typing import Any
 
 import pytest
 
@@ -53,7 +54,7 @@ class FakeBinaryMethod(BinaryDispatchMethod):
         right_types: tuple[type, ...] = (object,),
         priority: int = 0,
         feasible: bool = True,
-        result=None,
+        result: Any = None,
     ):
         self._name = name
         self._left_types = left_types

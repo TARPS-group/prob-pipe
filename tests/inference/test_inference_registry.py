@@ -1,6 +1,7 @@
 """Tests for the inference method registry."""
 
 import warnings
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -27,7 +28,7 @@ from probpipe.modeling._likelihood import Likelihood
 class FakeMethod(UnaryDispatchMethod):
     """Configurable stub for registry tests."""
 
-    def __init__(self, n="fake", p=0, feasible=True, result=None):
+    def __init__(self, n: str = "fake", p: int = 0, feasible: bool = True, result: Any = None):
         self._name = n
         self._priority = p
         self._feasible = feasible

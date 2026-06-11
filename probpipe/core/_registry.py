@@ -175,7 +175,8 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
 
     1. Computes a *dispatch key* from the positional arguments via
        :meth:`_cache_key`.  The key shape is arity-dependent — a single
-       ``type`` for unary registries, a ``(type, type)`` pair for binary
+       ``type`` for unary registries, a ``(type, type)`` pair for
+       binary registries.
     2. Looks up the auto-dispatchable methods that match that key via
        :meth:`_find_methods`, using an internal ``_type_cache`` so the
        ``issubclass`` pre-filter only runs once per key shape.
@@ -203,9 +204,10 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     ------------------
     :meth:`set_priorities` mutates a per-registry override map without
     touching the method instances.  This lets a deployment re-rank
-    methods at runtime (for example, demote ``tfp_nuts`` for an
-    environment where TFP graph compilation is too slow) without
-    forking and re-registering the method class.  Overrides also
+    methods at runtime (for example, demote ``blackjax_nuts`` for an
+    environment where the JAX compilation tax outweighs its per-step
+    speed advantage) without forking and re-registering the method
+    class.  Overrides also
     provide the supported escape hatch for moving a method into or out
     of opt-in-only status — a transition that emits a
     :class:`UserWarning` because it changes whether the method
