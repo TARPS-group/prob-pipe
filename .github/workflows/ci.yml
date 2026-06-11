@@ -13,6 +13,50 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Advisory ruff lint. Annotates PRs with violations but does NOT gate
+  # merges (continue-on-error). ProbPipe carries a backlog from a
+  # previously-unenforced linter, and several large refactors are in
+  # flight; advisory mode surfaces issues without blocking that work or
+  # forcing a repo-wide cleanup sweep. To enforce later: drop
+  # continue-on-error and scope to changed files. The ruff version is
+  # read from .pre-commit-config.yaml (single source of truth) so this job
+  # can't drift from the pre-commit pin that `pre-commit autoupdate` bumps;
+  # keep uv.lock's ruff in sync too for local `uv run ruff`. `ruff format`
+  # is intentionally not run (its style conflicts with the conventions in
+  # CONTRIBUTING.md).
+  lint:
+    name: lint (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      # Blocking: validates .pre-commit-config.yaml structure (all hooks, not
+      # just ruff) so a corrupted config can't slip through while the ruff
+      # check itself stays advisory. Cheap — it does not run any hook.
+      - name: Validate pre-commit config
+        run: uvx pre-commit validate-config
+
+      - name: Resolve ruff version from .pre-commit-config.yaml
+        id: ruffver
+        run: |
+          set -euo pipefail
+          # Single source of truth for the pin lives in the pre-commit config.
+          ver=$(grep -A2 'astral-sh/ruff-pre-commit' .pre-commit-config.yaml \
+                  | sed -nE 's/^[[:space:]]*rev:[[:space:]]*v?([0-9][0-9.]*).*/\1/p' | head -1)
+          test -n "$ver"   # fail loudly if the rev can't be parsed
+          echo "ruff=$ver" >> "$GITHUB_OUTPUT"
+          echo "Resolved ruff $ver from .pre-commit-config.yaml"
+
+      - name: Ruff check (advisory — does not gate merges)
+        continue-on-error: true
+        run: uvx "ruff@${{ steps.ruffver.outputs.ruff }}" check . --output-format=github
+
   # Advisory pyright type check. Reports but does NOT gate merges
   # (continue-on-error). The source carries a type-debt baseline (much of
   # it JAX/TFP untyped-attribute noise), so enforcing now would block
