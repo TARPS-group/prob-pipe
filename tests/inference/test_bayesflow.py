@@ -630,6 +630,31 @@ class TestBayesFlowValidation:
         with pytest.raises(ValueError, match="positive integer"):
             learn_amortized_posterior(_prior(), _ToyLikelihood(), **kwargs)
 
+    @pytest.mark.parametrize(
+        "override",
+        [{"num_simulations": 100.5}, {"batch_size": "64"}, {"epochs": 2.0},
+         {"num_results": None}],
+    )
+    def test_rejects_non_integer_counts(self, override):
+        """Count parameters must be integers -- floats (even integral ones),
+        strings, and None are rejected with a TypeError rather than truncating
+        or failing deep inside keras."""
+        kwargs = {"num_simulations": 8, "epochs": 1, **override}
+        with pytest.raises(TypeError, match="must be an integer"):
+            learn_amortized_posterior(_prior(), _ToyLikelihood(), **kwargs)
+
+    def test_rejects_nested_prior(self):
+        """A nested prior (dict components) is rejected up front: the per-field
+        bijector and adapter machinery is flat."""
+        nested = ProductDistribution(
+            name="joint",
+            outer={"a": Normal(loc=0.0, scale=1.0, name="a"),
+                   "b": Normal(loc=0.0, scale=1.0, name="b")},
+            m=Normal(loc=0.0, scale=1.0, name="m"),
+        )
+        with pytest.raises(TypeError, match="nested"):
+            learn_amortized_posterior(nested, _ToyLikelihood(), num_simulations=8, epochs=1)
+
     def test_rejects_discrete_prior(self):
         """A discrete prior field has no smooth bijector to R^d and is rejected up
         front with a clear error (here a Poisson count parameter)."""

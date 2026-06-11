@@ -377,8 +377,22 @@ class ProductDistribution(
 
     @property
     def supports(self):
-        """Per-field support constraints -- each component's ``support``."""
-        return {name: comp.support for name, comp in self._components.items()}
+        """Per-leaf support constraints -- each leaf component's ``support``.
+
+        Nested components are keyed by slash-delimited paths
+        (``"outer/a"``), matching ``RecordTemplate.leaf_shapes``, so every
+        value is a ``Constraint``."""
+        out: dict = {}
+
+        def _walk(components: dict, prefix: str) -> None:
+            for name, comp in components.items():
+                if isinstance(comp, dict):
+                    _walk(comp, f"{prefix}{name}/")
+                else:
+                    out[f"{prefix}{name}"] = comp.support
+
+        _walk(self._components, "")
+        return out
 
     # -- Conditioning -------------------------------------------------------
 

@@ -439,13 +439,14 @@ def learn_amortized_posterior(
     ValueError
         If ``method`` is not one of ``"npe"`` / ``"fmpe"`` / ``"cmpe"``,
         ``sim_backend`` is not ``"jax"`` / ``"sequential"``, any of
-        ``num_simulations`` / ``batch_size`` / ``epochs`` / ``num_results`` is not a
-        positive integer, or a prior field's support admits no smooth bijector to
+        ``num_simulations`` / ``batch_size`` / ``epochs`` / ``num_results`` is
+        less than one, or a prior field's support admits no smooth bijector to
         ``R^d`` (e.g. a discrete prior).
     TypeError
-        If ``simulator`` lacks ``generate_data``, ``prior`` is not a
-        ``RecordDistribution`` (has no ``record_template``), or a multi-field
-        prior implements no per-field ``supports`` accessor.
+        If a count parameter is not an integer, ``simulator`` lacks
+        ``generate_data``, ``prior`` is not a ``RecordDistribution`` (has no
+        ``record_template``), the prior is nested, or a multi-field prior
+        implements no per-field ``supports`` accessor.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """
@@ -461,6 +462,8 @@ def learn_amortized_posterior(
         ("num_simulations", num_simulations), ("batch_size", batch_size),
         ("epochs", epochs), ("num_results", num_results),
     ):
+        if not isinstance(_val, (int, np.integer)):
+            raise TypeError(f"{_name} must be an integer, got {type(_val).__name__}.")
         if _val < 1:
             raise ValueError(f"{_name} must be a positive integer, got {_val}.")
     if not hasattr(simulator, "generate_data"):
@@ -477,12 +480,18 @@ def learn_amortized_posterior(
             "record_template."
         )
     fields = record_template.fields
+    leaf_shapes = record_template.numeric_leaf_shapes
+    if any("/" in k for k in leaf_shapes):
+        raise TypeError(
+            "learn_amortized_posterior does not support nested priors (the "
+            "per-field bijector and adapter machinery is flat); flatten the "
+            "prior into top-level named fields."
+        )
     # Built up front: also rejects discrete / unsupported-support priors before
     # any simulation runs.
     bijectors = _field_bijectors(prior, fields)
     # The network trains on *unconstrained* widths, which differ from the prior's
     # event sizes for dimension-shifting bijectors (a d-simplex contributes d-1).
-    leaf_shapes = record_template.numeric_leaf_shapes
     unconstrained_size = sum(
         int(np.prod(tuple(bijectors[f].inverse_event_shape(leaf_shapes[f])), dtype=int))
         for f in fields
