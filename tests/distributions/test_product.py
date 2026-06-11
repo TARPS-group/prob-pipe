@@ -181,6 +181,17 @@ class TestProductDistribution:
         assert set(items.keys()) == {"x", "y"}
         assert all(isinstance(v, _RecordDistributionView) for v in items.values())
 
+    def test_supports_per_field(self):
+        """``supports`` maps each field to its component's support constraint
+        (heterogeneous constraints preserved per field)."""
+        joint = ProductDistribution(Gamma(2.0, 1.0, name="g"),
+                                    Normal(loc=0.0, scale=1.0, name="x"))
+        sup = joint.supports
+        assert set(sup.keys()) == {"g", "x"}
+        assert sup["g"] == joint.components["g"].support
+        assert sup["x"] == joint.components["x"].support
+        assert sup["g"] != sup["x"]  # positive vs real
+
 
 # ===========================================================================
 # 2. TestFlattenUnflatten

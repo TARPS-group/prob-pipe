@@ -25,11 +25,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     The simulator receives the prior's native structured per-draw sample (named
     fields), matching the `GenerativeLikelihood` contract, and keras training is
     seeded for reproducibility.
-  - Continuous priors with constrained supports (positive, an interval, …) are
-    handled by per-field `bijector_for` reparameterization: training runs in the
-    unconstrained space and draws are mapped back to the support (identity for
-    real-valued fields). Discrete priors have no smooth bijector and are rejected
-    with a clear error.
+  - Continuous priors with constrained supports — including matrix- and
+    simplex-valued ones (positive, an interval, Dirichlet's simplex, Wishart's
+    positive-definite matrices, …) — are handled by per-field `bijector_for`
+    reparameterization applied at each field's native event shape: training runs
+    in the unconstrained space and draws are mapped back to the support (identity
+    for real-valued fields). NPE's coupling-flow minimum is counted in
+    unconstrained dimensions. Discrete priors have no smooth bijector and are
+    rejected with a clear error.
+  - Training seeds keras for reproducibility but snapshots and restores the
+    caller's global NumPy / Python RNG state, so a call does not perturb
+    unrelated random streams.
+
+- **`ProductDistribution.supports`** — per-field support constraints (each
+  component's `support`), implementing the canonical `RecordDistribution`
+  accessor that previously raised `NotImplementedError`.
   - The `[bayesflow]` extra is **Python 3.12–3.13 only** (BayesFlow 2.x caps
     `<3.14`); keras runs on the JAX backend (`KERAS_BACKEND=jax`) — no
     TensorFlow or PyTorch. The backend is imported lazily, so `import

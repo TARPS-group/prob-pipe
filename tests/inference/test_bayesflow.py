@@ -251,6 +251,22 @@ class TestBayesFlowNPE:
         with pytest.raises(ValueError, match="trained on observations of size"):
             condition_on(npe_model, np.zeros(5, dtype="float32"))
 
+    @pytest.mark.parametrize("bad", [0, -5])
+    def test_condition_rejects_nonpositive_num_results(self, npe_model, bad):
+        """Sample-time num_results is validated like the train-time one: 0 or
+        negative fails fast at the ProbPipe boundary, not as a cryptic JAX
+        reduction/broadcast error inside the flow network."""
+        with pytest.raises(ValueError, match="positive integer"):
+            condition_on(npe_model, _observe(0.0, 0.0, 2), num_results=bad)
+
+    def test_unconditioned_sample_raises_not_implemented(self, npe_model):
+        """An unconditioned BayesFlowPosterior has no unconditional sampler; the
+        ``_sample`` probe raises NotImplementedError (the signal WorkflowFunction's
+        dispatch fallback catches -- an absent method would surface as an unguarded
+        AttributeError) with a pointer to condition_on."""
+        with pytest.raises(NotImplementedError, match="condition_on"):
+            npe_model._sample(jax.random.PRNGKey(0))
+
     def test_repr(self, npe_model):
         """``repr`` surfaces the method and the default draw count."""
         r = repr(npe_model)
@@ -476,6 +492,60 @@ class TestBayesFlowMethods:
         r = np.asarray(condition_on(model, jnp.array([3.0, 1.0])).draws()["r"]).reshape(-1)
         assert np.isfinite(r).all()
         assert (r > 0).all()        # forward bijector (Exp) keeps every draw in support
+
+    def test_wishart_matrix_prior_round_trip(self):
+        """A matrix-valued constrained field (Wishart, positive-definite support)
+        round-trips: the inverse bijector runs at the field's native (n, n) event
+        shape at train time -- a flattened input would crash the
+        CholeskyOuterProduct chain -- and the forward map at sample time returns
+        draws that are symmetric positive definite."""
+        import probpipe as pp
+        prior = ProductDistribution(pp.Wishart(df=4.0, scale=jnp.eye(2), name="cov"),
+                                    Normal(loc=0.0, scale=1.0, name="m"))
+        model = learn_amortized_posterior(
+            prior, _ConjugateGaussianLikelihood(), method="fmpe",
+            num_simulations=600, epochs=2, batch_size=256,
+            num_results=200, random_seed=0, verbose=0,
+        )
+        obs = jnp.array([1.5, 0.3, 0.3, 1.2, 0.5])    # flattened (cov, m) observation
+        cov = np.asarray(condition_on(model, obs).draws()["cov"]).reshape(-1, 2, 2)
+        assert np.isfinite(cov).all()
+        assert np.allclose(cov, np.swapaxes(cov, -1, -2), atol=1e-5)   # symmetric
+        assert np.linalg.eigvalsh(cov).min() > 0                       # positive definite
+
+    def test_dirichlet_simplex_prior_npe(self):
+        """A single 2-simplex (Dirichlet) prior under method='npe': the coupling-flow
+        guard counts *unconstrained* dimensions (one here, not the constrained
+        event_size of two), so NPE falls back to flow matching instead of building a
+        units=0 coupling flow; draws land on the simplex."""
+        import probpipe as pp
+        model = learn_amortized_posterior(
+            pp.Dirichlet(jnp.ones(2), name="p"), _ConjugateGaussianLikelihood(),
+            method="npe", num_simulations=600, epochs=2, batch_size=256,
+            num_results=300, random_seed=0, verbose=0,
+        )
+        p = np.asarray(condition_on(model, jnp.array([0.7, 0.3])).draws()["p"]).reshape(-1, 2)
+        assert np.allclose(p.sum(axis=-1), 1.0, atol=1e-5)
+        assert ((p > 0) & (p < 1)).all()
+
+    def test_global_rng_state_restored(self):
+        """Training seeds keras via the global RNG but snapshots and restores the
+        caller's NumPy / Python random state, so a call does not silently make the
+        caller's unrelated random streams deterministic."""
+        import random as pyrandom
+        np.random.seed(123)
+        pyrandom.seed(7)
+        expected_np = np.random.random()
+        expected_py = pyrandom.random()
+        np.random.seed(123)
+        pyrandom.seed(7)
+        learn_amortized_posterior(
+            _prior(), _ToyLikelihood(), method="fmpe",
+            num_simulations=256, epochs=1, batch_size=256,
+            num_results=50, random_seed=0, verbose=0,
+        )
+        assert np.random.random() == expected_np
+        assert pyrandom.random() == expected_py
 
 
 class TestBayesFlowValidation:

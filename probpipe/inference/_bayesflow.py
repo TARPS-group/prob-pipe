@@ -16,6 +16,7 @@ not pull keras.
 from __future__ import annotations
 
 import os
+import random
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -86,17 +87,19 @@ def _ensure_bayesflow() -> ModuleType:
 
 
 def _make_inference_network(
-    bf: ModuleType, method: AmortizedMethod, total_steps: int, *, event_size: int
+    bf: ModuleType, method: AmortizedMethod, total_steps: int, *, unconstrained_size: int
 ) -> InferenceNetwork:
     """The BayesFlow inference network for each amortized method.
 
     NPE's coupling flow splits the parameter vector in two and so needs at least
-    two parameters; for a one-parameter model (``event_size < 2``) the NPE default
-    falls back to a flow-matching network, which has no such constraint (the
-    posterior is still exposed under ``method="npe"``).
+    two dimensions. The network operates in *unconstrained* space, so the relevant
+    count is the unconstrained width, not the prior's event size -- e.g. a 2-simplex
+    field contributes one dimension, not two. Below two unconstrained dimensions the
+    NPE default falls back to a flow-matching network, which has no such constraint
+    (the posterior is still exposed under ``method="npe"``).
     """
     if method == "npe":
-        if event_size < 2:
+        if unconstrained_size < 2:
             return bf.networks.FlowMatching()
         return bf.networks.CouplingFlow()
     if method == "fmpe":
@@ -132,10 +135,14 @@ def _field_bijectors(prior: Distribution, fields: tuple[str, ...]) -> dict[str, 
     """
     from ..distributions import bijector_for  # lazy: inference/ -> distributions/
 
-    components = getattr(prior, "components", None)
+    try:
+        supports = prior.supports
+    except NotImplementedError:
+        # RecordDistributions without per-field supports: spread the single support.
+        supports = {f: prior.support for f in fields}
     bijectors: dict[str, Any] = {}
     for f in fields:
-        constraint = components[f].support if components is not None else prior.support
+        constraint = supports[f]
         try:
             bijectors[f] = bijector_for(constraint)
         except NotImplementedError as e:
@@ -155,32 +162,36 @@ def _simulate_offline(
     key: PRNGKey,
     *,
     sim_backend: SimBackend,
+    bijectors: dict[str, Any],
 ) -> tuple[dict[str, np.ndarray], np.ndarray]:
     """Draw ``(theta, y)`` pairs offline: ``theta ~ prior``, ``y ~ simulator(theta)``.
 
     Returns ``(named_theta, y)`` where ``named_theta`` maps each prior
-    record-template field to a ``(num_simulations, d_field)`` float32 array and
-    ``y`` is the ``(num_simulations, d_y)`` float32 array of flattened
-    simulated observations.
+    record-template field to a ``(num_simulations, d_field)`` float32 array of
+    *unconstrained* parameters (each field's draws pushed through its inverse
+    bijector at the field's native event shape, then flattened) and ``y`` is the
+    ``(num_simulations, d_y)`` float32 array of flattened simulated observations.
+    The simulator itself always sees the constrained, structured draws.
     """
     template = prior.record_template
     fields = template.fields
     k_theta, k_sim = jax.random.split(key)
     theta = _sample_op(prior, key=k_theta, sample_shape=(num_simulations,))
     # ``theta.flatten()`` is the prior's canonical flat layout (record-template
-    # field order); the simulator's ``generate_data(params, ...)`` consumes it
-    # positionally, and ``unflatten`` splits it back into per-field arrays for
-    # the adapter via the same canonical layout -- uniform across record
-    # containers and single-field priors (whose raw draws are not field-indexable
-    # by name, but whose flat layout is well defined).
+    # field order); ``unflatten`` lifts it back to named per-field arrays --
+    # uniform across record containers and single-field priors (whose raw draws
+    # are not field-indexable by name, but whose flat layout is well defined).
     theta_flat = jnp.asarray(theta.flatten()).reshape(num_simulations, -1)
     record = NumericRecordArray.unflatten(
         theta_flat, template=template, batch_shape=(num_simulations,)
     )
-    named = {
-        f: np.asarray(jnp.asarray(record[f]).reshape(num_simulations, -1), dtype="float32")
-        for f in fields
-    }
+    # Unconstrain each field at its *native* event shape -- matrix-valued bijectors
+    # (e.g. positive-definite: Chain([CholeskyOuterProduct, FillScaleTriL])) require
+    # (..., n, n) input, so the inverse must run before flattening for the adapter.
+    named = {}
+    for f in fields:
+        u = bijectors[f].inverse(jnp.asarray(record[f]))
+        named[f] = np.asarray(jnp.reshape(u, (num_simulations, -1)), dtype="float32")
     sim_keys = jax.random.split(k_sim, num_simulations)
 
     def _one(flat_row: Array, k: PRNGKey) -> Array:
@@ -196,7 +207,10 @@ def _simulate_offline(
     else:  # "sequential"
         # Non-traceable simulators (numpy / external code): one eager call per
         # draw, so generate_data runs concretely rather than under a jax trace.
-        y = jnp.stack([_one(theta_flat[i], sim_keys[i]) for i in range(num_simulations)])
+        # Move theta to the host once, rather than indexing the device array
+        # (and paying a sync) on every draw; keys stay jax (they are PRNG keys).
+        theta_rows = np.asarray(theta_flat)
+        y = jnp.stack([_one(theta_rows[i], sim_keys[i]) for i in range(num_simulations)])
     return named, np.asarray(y, dtype="float32")
 
 
@@ -242,8 +256,21 @@ class BayesFlowPosterior(Distribution, SupportsConditioning):
         # The ``Distribution`` metaclass requires a non-empty name.
         self._name = f"BayesFlowPosterior({method})"
 
+    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
+        # Defined (rather than left absent) so callers probing sampleability --
+        # e.g. WorkflowFunction's dispatch fallback, which catches
+        # NotImplementedError but not AttributeError -- get the guarded signal
+        # plus an actionable message.
+        raise NotImplementedError(
+            "BayesFlowPosterior is an amortized conditional estimator with no "
+            "unconditional sampler; draw from it by conditioning on data: "
+            "condition_on(model, observed)."
+        )
+
     def _condition_on(self, observed: Any, /, **kwargs: Any) -> ApproximateDistribution:
         num_results = int(kwargs.get("num_results", self._num_results))
+        if num_results < 1:
+            raise ValueError(f"num_results must be a positive integer, got {num_results}.")
         random_seed = int(kwargs.get("random_seed", self._random_seed))
 
         # One observation -> a length-1 condition batch, matching the flattened
@@ -263,17 +290,19 @@ class BayesFlowPosterior(Distribution, SupportsConditioning):
         )
         # ``out`` maps each field to ``(1, num_results, d_field)``; squeeze the
         # observation axis, map each field's unconstrained draws back to its support
-        # via the forward bijector (identity for real-valued fields), and concatenate
-        # in record-template field order (the layout ``make_posterior`` lifts back to
-        # named draws).
+        # via the forward bijector (identity for real-valued fields), flatten any
+        # matrix-valued output, and concatenate in record-template field order (the
+        # layout ``make_posterior`` lifts back to named draws). Stays in jnp
+        # end-to-end -- this is the latency-critical amortized path, so no per-field
+        # host round-trips.
         cols = []
         for f in self._fields:
-            draws = np.asarray(out[f])[0]
+            draws = jnp.asarray(out[f])[0]
             bij = self._bijectors.get(f)
             if bij is not None:
-                draws = np.asarray(bij.forward(jnp.asarray(draws)))
-            cols.append(draws.reshape(num_results, -1))
-        flat = jnp.asarray(np.concatenate(cols, axis=-1))
+                draws = bij.forward(draws)
+            cols.append(jnp.reshape(draws, (num_results, -1)))
+        flat = jnp.concatenate(cols, axis=-1)
         return make_posterior(
             [flat],
             parents=(self._prior,),
@@ -325,9 +354,10 @@ def learn_amortized_posterior(
         typically a ``ProductDistribution`` of named distributions, or a single
         named distribution for a one-parameter model.  It is sampled via the
         :func:`~probpipe.sample` op to draw training thetas; it is *not*
-        otherwise translated.  Constrained fields (positive, an interval, ...) are
-        trained in unconstrained space via the per-field bijector from
-        :func:`~probpipe.bijector_for` and mapped back to the support at sample time;
+        otherwise translated.  Constrained fields (positive, an interval, a simplex,
+        positive-definite matrices, ...) are trained in unconstrained space via the
+        per-field bijector from :func:`~probpipe.bijector_for` -- applied at the
+        field's native event shape -- and mapped back to the support at sample time;
         real-valued fields use the identity.  Discrete priors are not supported.
     simulator : GenerativeLikelihood
         Must implement ``generate_data(params, num_observations, *, key)``.  As with
@@ -339,8 +369,9 @@ def learn_amortized_posterior(
         same flattened shape (not a stacked multi-observation dataset).
     method : {"npe", "fmpe", "cmpe"}
         Amortized estimator: NPE (coupling flow), FMPE (flow matching), or CMPE
-        (consistency model). NPE's coupling flow needs at least two parameters,
-        so for a one-parameter prior the NPE default falls back to a flow-matching
+        (consistency model). NPE's coupling flow needs at least two *unconstrained*
+        parameter dimensions (a one-parameter prior has one; so does a single
+        2-simplex), below which the NPE default falls back to a flow-matching
         network (still reported as ``method="npe"``).
     num_simulations : int
         Number of ``(theta, y)`` pairs simulated offline for training.
@@ -358,8 +389,9 @@ def learn_amortized_posterior(
         Default number of posterior draws per ``condition_on`` call.
     random_seed : int
         Seed for offline simulation (``jax.random``), keras network init + training
-        (via ``keras.utils.set_random_seed``), and sampling. Note that this sets the
-        global keras / NumPy / Python RNG state.
+        (via ``keras.utils.set_random_seed``), and sampling. The caller's global
+        NumPy / Python RNG state is snapshotted and restored after training, so the
+        call does not perturb unrelated random streams.
     optimizer : str or keras.Optimizer
         Passed to ``approximator.compile``.
     **fit_kwargs
@@ -421,6 +453,13 @@ def learn_amortized_posterior(
     # Per-field unconstraining bijectors (identity for real-valued priors); this also
     # rejects discrete / unsupported-support priors up front, before any simulation.
     bijectors = _field_bijectors(prior, fields)
+    # The network trains on *unconstrained* widths, which differ from the prior's
+    # event sizes for dimension-shifting bijectors (a d-simplex contributes d-1).
+    leaf_shapes = record_template.numeric_leaf_shapes
+    unconstrained_size = sum(
+        int(np.prod(tuple(bijectors[f].inverse_event_shape(leaf_shapes[f])), dtype=int))
+        for f in fields
+    )
 
     bf = _ensure_bayesflow()
     import keras
@@ -428,28 +467,33 @@ def learn_amortized_posterior(
     # Seed Python / NumPy / keras RNG so keras network init + fit (weight init, batch
     # shuffling) are reproducible for a given random_seed; jax.random already seeds the
     # offline simulation and sampling, but keras training reads the global RNG.
+    # Snapshot the caller's Python/NumPy RNG state and restore it after training, so
+    # the (global, process-wide) seeding does not silently perturb the caller's
+    # unrelated random streams. keras keeps its own seeded generator state.
+    py_state = random.getstate()
+    np_state = np.random.get_state()
     keras.utils.set_random_seed(random_seed)
-    key = jax.random.PRNGKey(random_seed)
-    named, y = _simulate_offline(prior, simulator, num_simulations, key, sim_backend=sim_backend)
-    # Train in unconstrained space: map each field's draws to R^d via the inverse
-    # bijector (a no-op for real-valued fields), so the continuous network never has to
-    # reproduce a constrained support; the forward map is applied to draws at sample time.
-    named_u = {
-        f: np.asarray(bijectors[f].inverse(jnp.asarray(named[f])), dtype="float32")
-        for f in fields
-    }
-    sims = {**named_u, _OBSERVATION_KEY: y}
+    try:
+        key = jax.random.PRNGKey(random_seed)
+        named, y = _simulate_offline(
+            prior, simulator, num_simulations, key,
+            sim_backend=sim_backend, bijectors=bijectors,
+        )
+        sims = {**named, _OBSERVATION_KEY: y}
 
-    adapter = _build_adapter(bf, fields)
-    num_batches = max(1, -(-num_simulations // batch_size))  # ceil: count the partial batch
-    net = inference_network or _make_inference_network(
-        bf, method, total_steps=epochs * num_batches, event_size=prior.event_size
-    )
+        adapter = _build_adapter(bf, fields)
+        num_batches = max(1, -(-num_simulations // batch_size))  # ceil: count partial batch
+        net = inference_network or _make_inference_network(
+            bf, method, total_steps=epochs * num_batches, unconstrained_size=unconstrained_size
+        )
 
-    approximator = bf.ContinuousApproximator(inference_network=net, adapter=adapter)
-    approximator.compile(optimizer=optimizer)
-    dataset = bf.OfflineDataset(data=sims, batch_size=batch_size, adapter=adapter)
-    approximator.fit(dataset=dataset, epochs=epochs, **fit_kwargs)
+        approximator = bf.ContinuousApproximator(inference_network=net, adapter=adapter)
+        approximator.compile(optimizer=optimizer)
+        dataset = bf.OfflineDataset(data=sims, batch_size=batch_size, adapter=adapter)
+        approximator.fit(dataset=dataset, epochs=epochs, **fit_kwargs)
+    finally:
+        random.setstate(py_state)
+        np.random.set_state(np_state)
 
     return BayesFlowPosterior(
         approximator, prior, method=method, data_dim=int(y.shape[-1]),

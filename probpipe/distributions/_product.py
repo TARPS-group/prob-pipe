@@ -375,6 +375,11 @@ class ProductDistribution(
             return MappingProxyType(self._components)
         return self._components
 
+    @property
+    def supports(self):
+        """Per-field support constraints -- each component's ``support``."""
+        return {name: comp.support for name, comp in self._components.items()}
+
     # -- Conditioning -------------------------------------------------------
 
     def _condition_on(self, observed=None, /, **kwargs):
