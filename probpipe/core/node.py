@@ -202,6 +202,11 @@ class WorkflowFunction(Node):
         use this setting.
     seed : int
         Random seed for JAX PRNG key management during broadcasting.
+
+    Raises
+    ------
+    TypeError
+        If ``workflow_kind`` is not a ``WorkflowKind`` enum member.
     """
 
     DEFAULT_N_BROADCAST_SAMPLES: int = 128
@@ -566,6 +571,19 @@ class Module(Node):
     Internally:
         - kwargs whose values are Node instances become child_nodes
         - everything else becomes inputs
+
+    Parameters
+    ----------
+    workflow_kind : WorkflowKind
+        Prefect orchestration mode propagated to workflow methods built
+        from this module.
+    **kwargs : Any
+        Shared child nodes and inputs available to workflow methods.
+
+    Raises
+    ------
+    TypeError
+        If ``workflow_kind`` is not a ``WorkflowKind`` enum member.
     """
 
     def __init__(

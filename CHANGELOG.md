@@ -160,6 +160,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`WorkflowFunction.workflow_kind` and `Module.workflow_kind` now require
+  `WorkflowKind` enum members.** String aliases such as `"task"` / `"flow"`
+  and `None` are no longer accepted and now raise `TypeError`; use
+  `WorkflowKind.TASK`, `WorkflowKind.FLOW`, or `WorkflowKind.OFF` explicitly.
+  The old `parallel=` / `vectorize=` keyword guard on `WorkflowFunction` was
+  also removed, so those names are no longer specially reserved by the
+  constructor.
 - **`tfp_rwmh` removed.** The hand-rolled Python-loop RWMH that sat
   behind ``method="tfp_rwmh"`` is gone; ``blackjax_rwmh`` is the only
   RWMH backend. Callers must rename ``method="tfp_rwmh"`` →
@@ -631,8 +638,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Or via the new `PROBPIPE_WORKFLOW_KIND` environment variable
   (`off` / `task` / `flow` / `default`, case-insensitive), which is
-  read once at import time. Per-call overrides via
-  `@workflow_function(workflow_kind="task")` are unchanged.
+  read once at import time. Per-workflow overrides remain available via
+  `@workflow_function(workflow_kind=probpipe.WorkflowKind.TASK)`; string
+  aliases are no longer accepted in this release (see the
+  `workflow_kind` breaking entry above).
   Migration: production callers that relied on the implicit
   "Prefect importable → tasks enabled" path must add the one-line
   assignment or env var above.
