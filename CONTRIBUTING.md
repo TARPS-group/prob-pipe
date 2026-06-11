@@ -139,6 +139,18 @@ uv run pytest --cov=probpipe --cov-report=term-missing
 
 Target: >90% on all modules.
 
+### Test quality for numerical code
+
+Coverage is necessary but not sufficient: tests of mathematical behavior
+must check correctness against an **independent baseline** (an analytic
+result, an exact reference computation, a known invariant, or finite
+differences for gradients) — and where the claim is distributional,
+check both location and spread. Tolerances on stochastic or trained
+components are **measured, not guessed**: run the test's configuration
+across a few seeds, bound the observed spread with modest margin, and
+document the measured range in a comment next to the assertion. Full
+conventions in [STYLE_GUIDE.md § 8.6](STYLE_GUIDE.md#86-numerical-correctness-and-tolerances).
+
 ### Code formatting
 
 Keep Python code compact horizontally. The hard upper bound is 100
