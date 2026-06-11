@@ -46,6 +46,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   component's `support`), implementing the canonical `RecordDistribution`
   accessor that previously raised `NotImplementedError`.
 
+- **Python 3.14 to the CI test matrix.** The matrix is now
+  `[3.12, 3.13, 3.14]`. `requires-python = ">=3.12"` is unchanged.
+- **Coverage floor enforced at 88%** on the full-suite CI run
+  (`--cov-fail-under=88`). The changed-files-only PR path and local
+  single-file runs are exempt (`--cov-fail-under=0`), since a global floor
+  is only meaningful when the whole suite executes. Current measured
+  coverage on `main` is ~91%; the floor is set conservatively within the
+  beta plan's ≥85–90% commitment to leave headroom for normal fluctuation.
+- **Concurrency cancellation on CI for PR pushes.** A new push to a PR
+  branch cancels the prior in-progress CI run. Pushes to `main` are
+  unaffected (no cancellation — the merge-history gate stays solid).
+  Same pattern added to the docs build (PR builds cancel; pages deploys
+  still serialize via the original `pages` group).
+- **PR auto-labeling.** `.github/workflows/labeler.yml` +
+  `.github/labeler.yml` apply `area:*` labels to PRs based on changed
+  file paths. `kind:*` and `status:*` labels are still applied by
+  humans.
+- **Dependabot for GitHub Actions.** `.github/dependabot.yml` opens
+  weekly PRs that bump pinned action versions (`actions/checkout`,
+  `astral-sh/setup-uv`, `codecov/codecov-action`, `actions/labeler`).
+  Auto-labeled `area:infrastructure`. Pip/uv dependency bumps are NOT
+  enabled — the JAX/TFP resolver interaction means lockfile updates
+  must be intentional.
+
 ### Changed
 
 - **Pyright type checking (advisory).** A `typecheck (advisory)` CI job
@@ -66,6 +90,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   then `uv run pytest`. The pip path (`pip install -e ".[dev]"`) still
   works for contributors with an existing pip setup. See
   [CONTRIBUTING.md](CONTRIBUTING.md#installation).
+
+- **Ruff linting + pre-commit hooks.** A `lint (advisory)` CI job runs
+  `ruff check` and annotates PRs with violations; it is **advisory for
+  now** (does not gate merges) while the pre-existing lint backlog is
+  burned down and large refactors are in flight. A new
+  `.pre-commit-config.yaml` (install with `uvx pre-commit install`) runs
+  ruff plus file-hygiene hooks on staged files. The ruff config gains
+  ignores for ambiguous-unicode rules (`RUF001/2/3` — false positives on
+  mathematical notation) and per-file ignores for notebook
+  import/semicolon idioms (`E402`/`E702`). `ruff format` is intentionally
+  not adopted; its style conflicts with the documented formatting
+  conventions. See [CONTRIBUTING.md](CONTRIBUTING.md#linting--pre-commit).
 
 - **`pymc_nuts` reclaims multi-core sampling.** The method previously
   forced `cores=1` to avoid an `os.fork()` deadlock against JAX's worker

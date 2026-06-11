@@ -1,0 +1,108 @@
+# Path → area:* label mappings used by .github/workflows/labeler.yml.
+# Multiple labels apply when a PR touches multiple areas — that's intentional.
+# `kind:*` and `status:*` labels are NOT auto-applied; humans set those.
+
+"area:distributions":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "probpipe/distributions/**"
+          - "probpipe/converters/**"
+          - "probpipe/linalg/**"
+          - "probpipe/core/distribution.py"
+          - "probpipe/core/_distribution_*.py"
+          - "probpipe/core/_empirical.py"
+          - "probpipe/core/_random_measures.py"
+          - "probpipe/core/_random_functions.py"
+          - "probpipe/core/_array_backend.py"
+          - "probpipe/core/constraints.py"
+          - "tests/distributions/**"
+          - "tests/converters/**"
+          - "tests/linalg/**"
+          - "tests/core/test_distribution*.py"
+          - "tests/core/test_empirical*.py"
+          - "tests/core/test_random*.py"
+
+"area:records":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "probpipe/record/**"
+          - "probpipe/core/record.py"
+          - "probpipe/core/_record_*.py"
+          - "probpipe/core/_numeric_record*.py"
+          - "tests/record/**"
+          - "tests/core/test_record*.py"
+
+"area:inference":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "probpipe/inference/**"
+          - "probpipe/modeling/**"
+          - "tests/inference/**"
+          - "tests/modeling/**"
+
+"area:workflow":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "probpipe/core/node.py"
+          - "probpipe/core/_workflow_*.py"
+          - "probpipe/core/_broadcast_distributions.py"
+          - "probpipe/core/ops.py"
+          - "probpipe/core/protocols.py"
+          - "probpipe/core/_registry.py"
+          - "probpipe/core/transition.py"
+          - "tests/core/test_workflow*.py"
+          - "tests/core/test_broadcast*.py"
+          - "tests/core/test_ops*.py"
+          - "tests/core/test_protocols*.py"
+
+"area:orchestration":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "example_scripts/run_prefect_demo.py"
+          - "example_scripts/run_ray_demo.py"
+          - "probpipe/core/config.py"
+          - "tests/core/test_prefect*.py"
+          - "tests/core/test_workflow_kind*.py"
+          - "docs/orchestration/**"
+
+"area:diagnostics":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "probpipe/validation/**"
+          - "tests/validation/**"
+
+"area:provenance":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "probpipe/core/provenance.py"
+          - "tests/core/test_provenance*.py"
+
+"area:docs":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "mkdocs.yml"
+          - "mkdocs_hooks.py"
+          - "*.md"
+          - "AUTHORS"
+
+"area:infrastructure":
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**"
+          - "pyproject.toml"
+          - "uv.lock"
+          - "setup.py"
+          - "codecov.yml"
+          - ".gitignore"
+          - "STYLE_GUIDE.md"
+
+"area:core":
+  - changed-files:
+      - any-glob-to-any-file:
+          # Root-level foundational modules + root tests that no subpackage
+          # area glob matches: type aliases (custom_types.py), Weights,
+          # dtype/array helpers, and the package surface (__init__.py).
+          # `*` does not cross `/`, so these match only top-level files.
+          - "probpipe/*.py"
+          - "tests/*.py"

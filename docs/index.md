@@ -27,7 +27,7 @@ ProbPipe provides a set of built-in **ops**, which are workflow functions that c
 
 ## Installation
 
-ProbPipe requires Python ≥ 3.12 (tested on 3.12 and 3.13).
+ProbPipe requires Python ≥ 3.12 (tested on 3.12, 3.13, and 3.14).
 
 ```bash
 git clone https://github.com/TARPS-group/prob-pipe.git
