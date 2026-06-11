@@ -22,8 +22,9 @@ should use when choosing a priority for a new method.
 **Arity-typed subclasses.** :class:`UnaryDispatchRegistry` and
 :class:`BinaryDispatchRegistry` differ only in ``supported_types()``
 signature, cache-key construction, and the pre-filter predicate.  Arity
-is a type-level property: ``BinaryDispatchRegistry[KLMethod].execute(p)``
-is a static type error rather than a runtime one.
+is a type-level property: calling ``execute(p)`` (a single positional
+argument) on a :class:`BinaryDispatchRegistry` is a static type error
+rather than a runtime one.
 """
 
 from __future__ import annotations
@@ -185,6 +186,19 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     (``0``) are excluded from that auto-dispatch walk and are reachable
     only by name via ``method="..."``.
 
+    Under-arity behaviour
+    ---------------------
+    :meth:`check` is a polite probe: when called with **no** positional
+    arguments it returns an infeasible :class:`MethodInfo` (``"No
+    arguments provided"``) rather than raising.  This is the natural
+    "is there anything dispatchable here?" form.  If fewer arguments
+    are given than the registry's dispatch shape requires — e.g. a
+    single positional arg to a :class:`BinaryDispatchRegistry` —
+    :meth:`_cache_key` raises :class:`TypeError`, and :meth:`check`
+    propagates it.  The asymmetry is intentional: zero args is a
+    no-target probe, partial args is an API-contract violation that
+    should fail loudly.  :meth:`execute` raises in both cases.
+
     Priority overrides
     ------------------
     :meth:`set_priorities` mutates a per-registry override map without
@@ -207,7 +221,21 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     # -- registration -------------------------------------------------------
 
     def register(self, method: M) -> None:
-        """Register a method (invalidates the lookup cache)."""
+        """Register a method (invalidates the lookup cache).
+
+        Parameters
+        ----------
+        method
+            The dispatch method to register.  Must expose a non-empty
+            ``name`` and a unique name across all currently-registered
+            methods.
+
+        Raises
+        ------
+        ValueError
+            If ``method.name`` is empty/falsy, or if a method with the
+            same name is already registered.
+        """
         if not method.name:
             raise ValueError(
                 "Method.name must be a non-empty string; "
@@ -362,7 +390,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     # -- internals (arity-specific overrides) --------------------------------
 
     @abstractmethod
-    def _cache_key(self, args: tuple) -> Any:
+    def _cache_key(self, args: tuple[Any, ...]) -> Any:
         """Compute the dispatch cache key from positional arguments."""
         ...
 
@@ -391,7 +419,7 @@ class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]):
     Dispatches on the type of the first positional argument.
     """
 
-    def _cache_key(self, args: tuple) -> type:
+    def _cache_key(self, args: tuple[Any, ...]) -> type:
         return type(args[0])
 
     def _find_methods(self, key: type) -> list[M]:
@@ -426,7 +454,7 @@ class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]):
     of type-tuples: ``((left_types, ...), (right_types, ...))``.
     """
 
-    def _cache_key(self, args: tuple) -> tuple[type, type]:
+    def _cache_key(self, args: tuple[Any, ...]) -> tuple[type, type]:
         if len(args) < 2:
             raise TypeError(
                 "BinaryDispatchRegistry requires at least two positional "
@@ -447,12 +475,15 @@ class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]):
         """
         if key not in self._type_cache:
             tl, tr = key
-            self._type_cache[key] = [
-                m for m in self._methods
-                if self._is_auto_dispatchable(m)
-                and any(issubclass(tl, lt) for lt in m.supported_types()[0])
-                and any(issubclass(tr, rt) for rt in m.supported_types()[1])
-            ]
+            matches: list[M] = []
+            for m in self._methods:
+                if not self._is_auto_dispatchable(m):
+                    continue
+                st = m.supported_types()
+                if (any(issubclass(tl, lt) for lt in st[0])
+                        and any(issubclass(tr, rt) for rt in st[1])):
+                    matches.append(m)
+            self._type_cache[key] = matches
         return self._type_cache[key]
 
     def _format_key(self, key: tuple[type, type]) -> str:
