@@ -27,7 +27,7 @@ import jax.numpy as jnp
 from ..core.distribution import Distribution
 from ..core.protocols import ConditionallyIndependentLikelihood, GenerativeLikelihood
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ._bayesflow import (
+from ._bayesflow_common import (
     _OBSERVATION_KEY,
     SimBackend,
     _adapter_field_keys,

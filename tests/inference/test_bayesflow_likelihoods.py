@@ -31,7 +31,7 @@ from probpipe import (
     learn_amortized_ratio,
 )
 from probpipe.core._record_array import NumericRecordArray
-from probpipe.inference._bayesflow import _adapter_field_keys
+from probpipe.inference._bayesflow_common import _adapter_field_keys
 from probpipe.modeling import GenerativeLikelihood, Likelihood
 
 # Conjugate model: theta ~ N(0, I_2), y_i = theta + sigma * eps. With n rows the
