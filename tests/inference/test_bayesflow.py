@@ -257,19 +257,15 @@ class TestBayesFlowNPE:
         with pytest.raises(ValueError, match="positive integer"):
             condition_on(npe_model, _observe(0.0, 0.0, 2), num_results=bad)
 
-    def test_forward_sampling_from_joint(self, npe_model):
-        """The model represents the joint p(theta, y): sampling draws
-        (params, data) via prior + simulator -- params carry the prior's named
-        fields, data has the simulator's output shape. Batched draws are
-        rejected like SimpleGenerativeModel's."""
-        from probpipe import SupportsSampling
-        assert isinstance(npe_model, SupportsSampling)
-        params, data = npe_model._sample(jax.random.PRNGKey(0))
-        assert np.isfinite(float(params["a"]))
-        assert np.isfinite(float(params["b"]))
-        assert np.asarray(data).shape == (2,)   # _ToyLikelihood's per-dataset shape
-        with pytest.raises(NotImplementedError, match="sample_shape"):
-            npe_model._sample(jax.random.PRNGKey(0), (3,))
+    def test_direct_sampling_not_implemented(self, npe_model):
+        """BayesFlowModel has no direct sampler: ``_sample`` raises
+        NotImplementedError -- the signal WorkflowFunction's dispatch fallback
+        catches -- pointing to condition_on and the prior/simulator components
+        (which remain accessible for forward simulation)."""
+        with pytest.raises(NotImplementedError, match="condition_on"):
+            npe_model._sample(jax.random.PRNGKey(0))
+        assert npe_model.prior is not None
+        assert hasattr(npe_model.simulator, "generate_data")
 
     def test_repr(self, npe_model):
         """``repr`` surfaces the method and the default draw count."""

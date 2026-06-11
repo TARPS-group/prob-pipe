@@ -3,11 +3,11 @@
 Trains amortized conditional posterior estimators -- NPE (neural posterior
 estimation), FMPE (flow-matching) and CMPE (consistency-model) -- with BayesFlow
 (keras-on-JAX) and wraps prior + simulator + trained estimator as a
-:class:`BayesFlowModel` of the joint ``p(theta, y)``: forward sampling draws
-``(params, data)`` through the simulator, and ``condition_on(model, observed)``
-draws from ``p(theta | observed)`` in a single forward pass through the trained
-network -- no MCMC, no gradient bridge, and no prior translation (the prior is
-used only to draw ``theta`` at train time via the :func:`~probpipe.sample` op).
+:class:`BayesFlowModel` of the joint ``p(theta, y)``:
+``condition_on(model, observed)`` draws from ``p(theta | observed)`` in a single
+forward pass through the trained network -- no MCMC, no gradient bridge, and no
+prior translation (the prior is used only to draw ``theta`` at train time via
+the :func:`~probpipe.sample` op).
 
 BayesFlow / keras is imported lazily on first use, so ``import probpipe`` does
 not pull keras.
@@ -28,7 +28,7 @@ from ..core._record_array import NumericRecordArray
 from ..core.distribution import Distribution
 from ..core.node import workflow_function
 from ..core.ops import sample as _sample_op
-from ..core.protocols import GenerativeLikelihood, SupportsConditioning, SupportsSampling
+from ..core.protocols import GenerativeLikelihood, SupportsConditioning
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 
@@ -239,25 +239,22 @@ def _simulate_offline(
 # ---------------------------------------------------------------------------
 
 
-class BayesFlowModel(Distribution, SupportsSampling, SupportsConditioning):
+class BayesFlowModel(Distribution, SupportsConditioning):
     """A BayesFlow amortized model of the joint ``p(theta, y)``.
 
-    Bundles the generative model it was trained from (``prior`` + ``simulator``)
-    with the trained amortized estimator.  Sampling draws ``(params, data)``
-    from the joint via the prior and one simulator call, exactly like
-    :class:`~probpipe.SimpleGenerativeModel`.  Conditioning runs the trained
-    network: ``condition_on(model, observed)`` draws from ``p(theta | observed)``
-    in one forward pass, and -- because the estimator is amortized -- the same
-    instance conditions on any observation with no retraining.  The network
-    samples in unconstrained space; posterior draws are mapped back to each
-    field's support via the per-field forward bijectors recorded at training
-    time (identity for real-valued fields).  The amortized path honours
-    ``num_results`` (a positive integer) and ``random_seed``; ``num_warmup`` /
-    ``num_chains`` do not apply (a forward pass yields a single draw block).
+    Bundles the generative model it was trained from (``prior`` + ``simulator``,
+    exposed as properties) with the trained amortized estimator.  Conditioning
+    runs the trained network: ``condition_on(model, observed)`` draws from
+    ``p(theta | observed)`` in one forward pass, and -- because the estimator is
+    amortized -- the same instance conditions on any observation with no
+    retraining.  The network samples in unconstrained space; posterior draws are
+    mapped back to each field's support via the per-field forward bijectors
+    recorded at training time (identity for real-valued fields).  The amortized
+    path honours ``num_results`` (a positive integer) and ``random_seed``;
+    ``num_warmup`` / ``num_chains`` do not apply (a forward pass yields a single
+    draw block).  Direct sampling is not implemented; simulate from the joint
+    via the ``prior`` / ``simulator`` components.
     """
-
-    _sampling_cost: str = "medium"
-    _preferred_orchestration: str | None = None
 
     def __init__(
         self,
@@ -294,31 +291,14 @@ class BayesFlowModel(Distribution, SupportsSampling, SupportsConditioning):
         """The generative likelihood (provides ``generate_data``)."""
         return self._simulator
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> tuple[Any, Any]:
-        """Draw one joint ``(params, data)`` sample from the generative model.
-
-        Samples ``params`` from the prior and one dataset from
-        ``simulator.generate_data(params, 1)`` -- forward sampling, independent
-        of the trained network.  ``params`` is the same named-field structured
-        record the simulator sees during training.  Batched draws are not
-        supported because ``GenerativeLikelihood.generate_data`` takes a single
-        params object by contract (same restriction as
-        ``SimpleGenerativeModel``).
-        """
-        if sample_shape != ():
-            raise NotImplementedError(
-                "BayesFlowModel._sample(..., sample_shape=...) with a non-empty "
-                "sample_shape is not supported. Loop over _sample(key, ()) with "
-                "independent keys instead."
-            )
-        k_prior, k_data = jax.random.split(key)
-        theta = _sample_op(self._prior, key=k_prior, sample_shape=(1,))
-        params = NumericRecordArray.unflatten(
-            jnp.reshape(jnp.asarray(theta.flatten()), (-1,)),
-            template=self._prior.record_template, batch_shape=(),
+    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
+        # Present so sampleability probes get NotImplementedError -- which
+        # WorkflowFunction's dispatch fallback catches -- not AttributeError.
+        raise NotImplementedError(
+            "BayesFlowModel does not implement direct sampling; draw posterior "
+            "samples by conditioning (condition_on(model, observed)), or simulate "
+            "from the joint via the prior / simulator properties."
         )
-        data = self._simulator.generate_data(params, 1, key=k_data)[0]
-        return (params, data)
 
     def _condition_on(
         self, observed: ArrayLike | np.ndarray, /, **kwargs: Any
@@ -396,8 +376,7 @@ def learn_amortized_posterior(
     ``prior`` and a ``simulator`` and returns a :class:`BayesFlowModel` -- the
     joint model bundling prior, simulator, and the trained estimator.
     ``condition_on(result, observed)`` produces fast amortized posterior draws
-    in a single forward pass (no MCMC); ``sample(result)`` draws ``(params,
-    data)`` from the joint generative model.
+    in a single forward pass (no MCMC).
 
     Parameters
     ----------
@@ -452,8 +431,8 @@ def learn_amortized_posterior(
     Returns
     -------
     BayesFlowModel
-        The joint model: forward sampling via prior + simulator, amortized
-        conditioning via the trained estimator.
+        The joint-model wrapper: prior + simulator exposed as properties,
+        amortized conditioning via the trained estimator.
 
     Raises
     ------

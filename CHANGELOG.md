@@ -13,11 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `learn_amortized_posterior(prior, simulator, method="npe"|"fmpe"|"cmpe",
   ...)` trains a jax-native (keras-on-JAX) amortized neural posterior
   estimator — NPE (coupling flow), FMPE (flow matching), or CMPE
-  (consistency model) — and returns a `BayesFlowModel` of the joint
-  `p(theta, y)`: `sample(model)` draws `(params, data)` forward through the
-  prior and simulator, and `condition_on(model, observed)` draws from
-  `p(theta | observed)` in a single network forward pass (no MCMC). This
-  restores the amortized half of the SBI layer dropped with sbijax.
+  (consistency model) — and returns a `BayesFlowModel` bundling the joint
+  model (prior + simulator, exposed as properties) with the trained
+  estimator: `condition_on(model, observed)` draws from `p(theta | observed)`
+  in a single network forward pass (no MCMC). This restores the amortized
+  half of the SBI layer dropped with sbijax.
   - Training simulates `(theta, y)` offline (`prior` drawn via the `sample`
     op, `simulator.generate_data` for the data); the prior is used only to
     draw `theta` and needs no TFP translation. The trained estimator is
