@@ -74,27 +74,28 @@ when choosing a number for a new method are documented under
 ## Amortized SBI
 
 Simulation-based inference with trained amortized estimators (requires the
-`[bayesflow]` extra; Python 3.12–3.13 only). Three flavors share one offline
-simulation pipeline:
+`[bayesflow]` extra; Python 3.12–3.13 only). All three learners take the same
+inputs — a `RecordDistribution` prior and a `GenerativeLikelihood` simulator —
+and share one offline simulation pipeline; they differ in what the network
+estimates, and therefore in how posterior draws are produced:
 
-- **NPE** — `learn_amortized_posterior` trains an NPE / FMPE / CMPE network;
-  the returned `BayesFlowModel` bundles the joint model (the prior and
-  simulator are exposed as properties) with the trained estimator, and
-  `condition_on(model, observed)` draws from `p(theta | observed)` in a single
-  network forward pass — the same trained instance conditions on any
-  observation with no retraining.
-- **NLE** — `learn_amortized_likelihood` trains a conditional density
-  `p(y | theta)` and returns a `BayesFlowLikelihood`, a
-  `ConditionallyIndependentLikelihood` whose `log_likelihood` is
-  jax-grad-transparent: plug it into `SimpleModel(prior, learned)` +
-  `condition_on` and the standard gradient-based MCMC machinery samples the
-  posterior, for single observations or multi-observation datasets.
-- **NRE** — `learn_amortized_ratio` trains a likelihood-to-evidence ratio
-  classifier and returns a `BayesFlowRatio` with the same `Likelihood`
-  surface (valid for conditioning — the evidence constant cancels in MCMC —
-  but **not** for absolute-likelihood uses such as model comparison or
-  LOO/WAIC). The classifier natively handles discrete-valued and
-  one-dimensional observations, where NLE's coupling flow does not apply.
+| Learner | Estimates | Returns | Posterior draws via |
+|---|---|---|---|
+| `learn_amortized_posterior` | the posterior directly (NPE, FMPE, or CMPE) | `BayesFlowModel` | `condition_on(model, observed)` — one network forward pass, no MCMC |
+| `learn_amortized_likelihood` | the likelihood (NLE) | `BayesFlowLikelihood` | `condition_on(SimpleModel(prior, learned), data)` — gradient-based MCMC through the learned density |
+| `learn_amortized_ratio` | the likelihood-to-evidence ratio (NRE) | `BayesFlowRatio` | same as NLE; the evidence constant cancels in MCMC |
+
+Choosing between them: NPE is amortized over observations — the one trained
+model conditions on any (single) observation with no retraining and no cost
+beyond a forward pass. NLE and NRE instead pay an MCMC run per dataset (the
+learned `log_likelihood` is jax-grad-transparent, so the standard NUTS
+machinery applies) but handle **multi-observation datasets** natively: both
+wrappers are `ConditionallyIndependentLikelihood`s, so per-row scores sum.
+Between those two, NLE learns an actual density and needs continuous
+observations of at least two dimensions; NRE's classifier has no dimension
+minimum and handles discrete-valued observations, but its values are
+log-ratios — valid for conditioning, **not** for absolute-likelihood uses
+such as model comparison or LOO/WAIC.
 
 ::: probpipe.learn_amortized_posterior
 
