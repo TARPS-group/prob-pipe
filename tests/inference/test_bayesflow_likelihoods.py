@@ -97,7 +97,9 @@ class TestSurrogateContract:
                 keys[1]: np.array([[-0.3]], "float32"),
                 "observation": y_row}
         public = float(np.asarray(nle.approximator.log_prob(data=data)).reshape(-1)[0])
-        np.testing.assert_allclose(ours, public, atol=1e-4)
+        # The bypass is the same op sequence on the same float32 buffers --
+        # observed diff is exactly 0.0; the bound is float32 headroom.
+        np.testing.assert_allclose(ours, public, atol=1e-5)
 
     def test_nre_faithful_to_public_log_ratio(self, nre):
         """The traceable logits path matches the public ``log_ratio``."""
@@ -109,7 +111,8 @@ class TestSurrogateContract:
                 keys[1]: np.array([[-0.3]], "float32"),
                 "observation": y_row}
         public = float(np.asarray(nre.approximator.log_ratio(data=data)).reshape(-1)[0])
-        np.testing.assert_allclose(ours, public, atol=1e-4)
+        # Same op sequence as the public path; observed diff exactly 0.0.
+        np.testing.assert_allclose(ours, public, atol=1e-5)
 
     @pytest.mark.parametrize("which", ["nle", "nre"])
     def test_grad_transparent(self, which, request):
@@ -130,7 +133,9 @@ class TestSurrogateContract:
             for i in range(2)
         ])
         rel = np.abs(np.asarray(g) - fd) / (np.abs(fd) + 1e-6)
-        assert rel.max() < 5e-2
+        # Observed max relative error across training seeds and probe points:
+        # NLE <= 9.2e-4, NRE <= 6.4e-3 (the classifier is only piecewise-smooth).
+        assert rel.max() < 2e-2
         v, gj = jax.jit(jax.value_and_grad(f))(th0)
         assert jnp.isfinite(v) and jnp.isfinite(gj).all()
 
@@ -166,8 +171,8 @@ class TestSurrogateContract:
             np.asarray(_SIM.generate_data(params, 3, key=key)))
 
     def test_repr(self, nle, nre):
-        assert "BayesFlowLikelihood(theta_dim=2, data_dim=2)" == repr(nle)
-        assert "BayesFlowRatio(theta_dim=2, data_dim=2)" == repr(nre)
+        assert repr(nle) == "BayesFlowLikelihood(theta_dim=2, data_dim=2)"
+        assert repr(nre) == "BayesFlowRatio(theta_dim=2, data_dim=2)"
 
     def test_data_width_guard(self, nle):
         """Wrong-width data fails fast with an actionable message."""
@@ -181,7 +186,13 @@ class TestSurrogateContract:
 
 class TestConditioning:
     """End-to-end: SimpleModel(prior, learned) + condition_on -> NUTS, against
-    the analytic conjugate posterior (mean AND spread)."""
+    the analytic conjugate posterior (mean AND spread).
+
+    Bounds are measured: each test's config was run across four training seeds
+    and the bound covers the observed spread with ~2-3x margin for
+    cross-platform / library-version drift (training is seeded, so a given
+    environment is reproducible).
+    """
 
     def _check_posterior(self, model, y_rows, mean_tol, ratio_band):
         post = condition_on(model, jnp.asarray(y_rows),
@@ -193,46 +204,72 @@ class TestConditioning:
         ratio = draws.std(0) / an_std
         assert mean_err < mean_tol, (mean_err, draws.mean(0), an_mean)
         assert (ratio_band[0] < ratio).all() and (ratio < ratio_band[1]).all(), ratio
-        return draws, an_std
 
     def test_nle_single_observation(self, nle):
+        # Observed across seeds: mean err 0.05-0.10 post-std, ratios 0.99-1.11.
         y = np.array([[0.8, -0.4]], dtype="float32")
         self._check_posterior(SimpleModel(prior=_prior(), likelihood=nle), y,
-                              mean_tol=0.5, ratio_band=(0.7, 1.4))
+                              mean_tol=0.3, ratio_band=(0.85, 1.25))
 
     def test_nle_multi_observation_sharpens(self, nle):
         """n=8 i.i.d. rows: the posterior matches the analytic n-observation
-        posterior -- the capability NPE's single-observation conditioning lacks."""
+        posterior -- the capability NPE's single-observation conditioning lacks.
+        The analytic n=8 std (~0.17) is ~2.6x tighter than n=1 (~0.45), so the
+        ratio band transitively enforces the sharpening."""
         theta_true = jnp.array([0.6, -0.6])
         y = np.asarray(_SIM.generate_data(theta_true, 8, key=jax.random.PRNGKey(3)))
-        draws, an_std = self._check_posterior(
-            SimpleModel(prior=_prior(), likelihood=nle), y,
-            mean_tol=0.6, ratio_band=(0.6, 1.5))
-        # The n=8 analytic std is ~3x tighter than n=1; the chain should reflect it.
-        assert an_std < 0.2
-        assert draws.std(0).max() < 0.35
+        # Observed across seeds: mean err 0.03-0.34 post-std, ratios 0.99-1.10
+        # (the per-row score errors accumulate over n rows, hence the wider
+        # mean bound than n=1).
+        self._check_posterior(SimpleModel(prior=_prior(), likelihood=nle), y,
+                              mean_tol=0.6, ratio_band=(0.85, 1.25))
 
     def test_nre_single_observation(self, nre):
+        # Observed across seeds: mean err 0.02-0.09 post-std, ratios 0.95-1.08.
         y = np.array([[0.8, -0.4]], dtype="float32")
         self._check_posterior(SimpleModel(prior=_prior(), likelihood=nre), y,
-                              mean_tol=0.5, ratio_band=(0.65, 1.5))
+                              mean_tol=0.3, ratio_band=(0.8, 1.25))
 
-    def test_nle_constrained_prior(self):
-        """A constrained (Gamma) prior end to end: NUTS walks the natural space;
-        the learned likelihood conditions on raw positive theta."""
-        prior = ProductDistribution(pp.Gamma(5.0, 1.0, name="lam"),
-                                    Normal(loc=0.0, scale=1.0, name="m"))
-        lik = learn_amortized_likelihood(
-            prior, _SIM, num_simulations=3000, epochs=20,
-            batch_size=256, random_seed=0, verbose=0,
-        )
+    def test_nle_constrained_prior_matches_true_likelihood(self):
+        """A constrained (Gamma) prior end to end, judged against NUTS run with
+        the TRUE (analytic Gaussian) likelihood on the same model -- isolating
+        the learned component's error from MCMC and prior effects. NUTS walks
+        the natural space; the learned likelihood conditions on raw positive
+        theta."""
+
+        class _TrueGaussianLik(Likelihood):
+            def log_likelihood(self, params, data):
+                t = params.flatten() if hasattr(params, "flatten") else params
+                t = jnp.ravel(jnp.asarray(t))
+                rows = jnp.atleast_2d(jnp.asarray(data))
+                resid = (rows - t[None, :]) / _SIGMA
+                return (-0.5 * jnp.sum(resid**2)
+                        - rows.size * jnp.log(_SIGMA * np.sqrt(2 * np.pi)))
+
+        def _gamma_prior():
+            return ProductDistribution(pp.Gamma(5.0, 1.0, name="lam"),
+                                       Normal(loc=0.0, scale=1.0, name="m"))
+
         y = np.asarray(_SIM.generate_data(jnp.array([5.0, 0.5]), 4,
                                           key=jax.random.PRNGKey(5)))
-        post = condition_on(SimpleModel(prior=prior, likelihood=lik), jnp.asarray(y),
-                            num_results=1000, num_warmup=500, random_seed=0)
-        lam = np.asarray(post.draws()["lam"]).reshape(-1)
+
+        def _lam_draws(likelihood):
+            post = condition_on(SimpleModel(prior=_gamma_prior(), likelihood=likelihood),
+                                jnp.asarray(y), num_results=1500, num_warmup=500,
+                                random_seed=0)
+            return np.asarray(post.draws()["lam"]).reshape(-1)
+
+        ref = _lam_draws(_TrueGaussianLik())
+        lik = learn_amortized_likelihood(
+            _gamma_prior(), _SIM, num_simulations=3000, epochs=20,
+            batch_size=256, random_seed=0, verbose=0,
+        )
+        lam = _lam_draws(lik)
         assert (lam > 0).all()
-        assert abs(lam.mean() - 5.0) < 1.5
+        # Observed across seeds: |mean diff| 0.00-0.26 reference-std units,
+        # std ratio 1.02-1.10.
+        assert abs(lam.mean() - ref.mean()) / ref.std() < 0.6
+        assert 0.8 < lam.std() / ref.std() < 1.3
 
 
 class TestValidation:
