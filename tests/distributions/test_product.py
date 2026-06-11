@@ -193,19 +193,20 @@ class TestProductDistribution:
         assert sup["g"] != sup["x"]  # positive vs real
 
     def test_supports_nested_components(self):
-        """``supports`` walks nested dict components, keying leaves by
-        slash-delimited paths -- the same keying as ``leaf_shapes`` -- so every
-        value is a leaf Constraint."""
+        """``supports`` walks nested dict components recursively (two levels
+        here), keying leaves by slash-delimited paths -- the same keying as
+        ``leaf_shapes`` -- so every value is a leaf Constraint."""
         joint = ProductDistribution(
             name="joint",
             outer={"a": Normal(loc=0.0, scale=1.0, name="a"),
-                   "g": Gamma(2.0, 1.0, name="g")},
+                   "deep": {"g": Gamma(2.0, 1.0, name="g")}},
             m=Normal(loc=0.0, scale=1.0, name="m"),
         )
         sup = joint.supports
         assert set(sup.keys()) == set(joint.record_template.leaf_shapes.keys())
-        assert sup["outer/g"] != sup["outer/a"]  # positive vs real
-        assert sup["outer/a"] == sup["m"]        # both real
+        assert "outer/deep/g" in sup
+        assert sup["outer/deep/g"] != sup["outer/a"]  # positive vs real
+        assert sup["outer/a"] == sup["m"]             # both real
 
 
 # ===========================================================================

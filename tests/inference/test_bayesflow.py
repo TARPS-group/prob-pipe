@@ -17,10 +17,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+import probpipe as pp
 from probpipe import (
     ApproximateDistribution,
     Normal,
     ProductDistribution,
+    RecordTemplate,
     condition_on,
     learn_amortized_posterior,
 )
@@ -70,8 +72,6 @@ class _VecLikelihood(Likelihood, GenerativeLikelihood):
 
 
 def _vec_prior():
-    import probpipe as pp
-
     return ProductDistribution(
         pp.MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="m"),
         Normal(loc=0.0, scale=1.0, name="s"),
@@ -138,8 +138,6 @@ class _MultiFieldLikelihood(Likelihood, GenerativeLikelihood):
 
 
 def _multi_field_prior():
-    import probpipe as pp
-
     return ProductDistribution(
         Normal(loc=0.0, scale=1.0, name="a"),
         pp.MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="b"),
@@ -260,12 +258,23 @@ class TestBayesFlowNPE:
     def test_direct_sampling_not_implemented(self, npe_model):
         """BayesFlowModel has no direct sampler: ``_sample`` raises
         NotImplementedError -- the signal WorkflowFunction's dispatch fallback
-        catches -- pointing to condition_on and the prior/simulator components
-        (which remain accessible for forward simulation)."""
+        catches -- pointing to condition_on and the prior/simulator components.
+        The properties pass the training inputs through (which remain available
+        for forward simulation by hand)."""
         with pytest.raises(NotImplementedError, match="condition_on"):
             npe_model._sample(jax.random.PRNGKey(0))
-        assert npe_model.prior is not None
-        assert hasattr(npe_model.simulator, "generate_data")
+        assert npe_model.prior.record_template.fields == ("a", "b")
+        assert isinstance(npe_model.simulator, _ToyLikelihood)
+
+    def test_condition_random_seed_reproducible(self, npe_model):
+        """The amortized path honours ``random_seed`` at condition time: the same
+        seed reproduces the draws exactly; a different seed changes them."""
+        obs = _observe(0.3, 0.1, 4)
+        d1 = np.asarray(condition_on(npe_model, obs, random_seed=11).draws()["a"]).reshape(-1)
+        d2 = np.asarray(condition_on(npe_model, obs, random_seed=11).draws()["a"]).reshape(-1)
+        d3 = np.asarray(condition_on(npe_model, obs, random_seed=12).draws()["a"]).reshape(-1)
+        np.testing.assert_array_equal(d1, d2)
+        assert not np.array_equal(d1, d3)
 
     def test_repr(self, npe_model):
         """``repr`` surfaces the method and the default draw count."""
@@ -326,7 +335,6 @@ class TestBayesFlowMethods:
         """A single-field prior (not a ProductDistribution) is supported: its
         draws are not field-indexable, but the canonical flat layout drives the
         per-field split, so it round-trips end-to-end to named draws."""
-        import probpipe as pp
 
         prior = pp.MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="theta")
         model = learn_amortized_posterior(
@@ -382,12 +390,14 @@ class TestBayesFlowMethods:
         ~0.04-0.19 posterior-std and the std ratio ~0.92-1.18). Training is seeded,
         so a given run is reproducible; the band absorbs that estimator imprecision
         plus cross-platform / library-version drift."""
+        import bayesflow as bf
         prior = Normal(loc=0.0, scale=1.0, name="a")   # event_size 1 -> FlowMatching
         model = learn_amortized_posterior(
             prior, _ConjugateGaussianLikelihood(), method="npe",
             num_simulations=5000, epochs=40, batch_size=256,
             num_results=2000, random_seed=0, verbose=0,
         )
+        assert isinstance(model._approximator.inference_network, bf.networks.FlowMatching)
         s2 = _CONJ_SIGMA**2
         post_std = (s2 / (1 + s2)) ** 0.5          # analytic posterior std
         sim = _ConjugateGaussianLikelihood()
@@ -481,7 +491,6 @@ class TestBayesFlowMethods:
         """A constrained (positive) prior field is trained in unconstrained space and
         its draws are mapped back through the forward bijector, so they land in the
         support -- here all positive. The accompanying real-valued field is unaffected."""
-        import probpipe as pp
         prior = ProductDistribution(pp.Gamma(3.0, 1.0, name="r"),
                                     Normal(loc=0.0, scale=1.0, name="m"))
         model = learn_amortized_posterior(
@@ -517,7 +526,6 @@ class TestBayesFlowMethods:
         """A bounded-interval prior field (Beta, unit-interval support) rounds
         through the Sigmoid bijector: trained unconstrained, every posterior
         draw lands strictly inside (0, 1)."""
-        import probpipe as pp
         prior = ProductDistribution(pp.Beta(2.0, 2.0, name="q"),
                                     Normal(loc=0.0, scale=1.0, name="m"))
         model = learn_amortized_posterior(
@@ -535,7 +543,6 @@ class TestBayesFlowMethods:
         shape at train time -- a flattened input would crash the
         CholeskyOuterProduct chain -- and the forward map at sample time returns
         draws that are symmetric positive definite."""
-        import probpipe as pp
         prior = ProductDistribution(pp.Wishart(df=4.0, scale=jnp.eye(2), name="cov"),
                                     Normal(loc=0.0, scale=1.0, name="m"))
         model = learn_amortized_posterior(
@@ -546,23 +553,39 @@ class TestBayesFlowMethods:
         obs = jnp.array([1.5, 0.3, 0.3, 1.2, 0.5])    # flattened (cov, m) observation
         cov = np.asarray(condition_on(model, obs).draws()["cov"]).reshape(-1, 2, 2)
         assert np.isfinite(cov).all()
-        assert np.allclose(cov, np.swapaxes(cov, -1, -2), atol=1e-5)   # symmetric
-        assert np.linalg.eigvalsh(cov).min() > 0                       # positive definite
+        np.testing.assert_allclose(cov, np.swapaxes(cov, -1, -2), atol=1e-5)  # symmetric
+        assert np.linalg.eigvalsh(cov).min() > 0                              # positive definite
 
     def test_dirichlet_simplex_prior_npe(self):
         """A single 2-simplex (Dirichlet) prior under method='npe': the coupling-flow
         guard counts *unconstrained* dimensions (one here, not the constrained
         event_size of two), so NPE falls back to flow matching instead of building a
         units=0 coupling flow; draws land on the simplex."""
-        import probpipe as pp
+        import bayesflow as bf
         model = learn_amortized_posterior(
             pp.Dirichlet(jnp.ones(2), name="p"), _ConjugateGaussianLikelihood(),
             method="npe", num_simulations=600, epochs=2, batch_size=256,
             num_results=300, random_seed=0, verbose=0,
         )
+        assert isinstance(model._approximator.inference_network, bf.networks.FlowMatching)
         p = np.asarray(condition_on(model, jnp.array([0.7, 0.3])).draws()["p"]).reshape(-1, 2)
-        assert np.allclose(p.sum(axis=-1), 1.0, atol=1e-5)
+        np.testing.assert_allclose(p.sum(axis=-1), 1.0, atol=1e-5)
         assert ((p > 0) & (p < 1)).all()
+
+    def test_training_deterministic_for_seed(self):
+        """Two same-seed trainings produce bit-identical models: keras init + fit
+        are seeded via ``keras.utils.set_random_seed`` (the calibration tests'
+        tolerance rationale relies on this reproducibility)."""
+        def _fit():
+            return learn_amortized_posterior(
+                _prior(), _ToyLikelihood(), method="npe",
+                num_simulations=400, epochs=1, batch_size=256,
+                num_results=100, random_seed=0, verbose=0,
+            )
+        obs = _observe(0.4, -0.2, 5)
+        d1 = np.asarray(condition_on(_fit(), obs).draws()["a"]).reshape(-1)
+        d2 = np.asarray(condition_on(_fit(), obs).draws()["a"]).reshape(-1)
+        np.testing.assert_array_equal(d1, d2)
 
     def test_global_rng_state_restored(self):
         """Training seeds keras via the global RNG but snapshots and restores the
@@ -658,8 +681,23 @@ class TestBayesFlowValidation:
     def test_rejects_discrete_prior(self):
         """A discrete prior field has no smooth bijector to R^d and is rejected up
         front with a clear error (here a Poisson count parameter)."""
-        import probpipe as pp
         bad_prior = ProductDistribution(pp.Poisson(3.0, name="k"),
                                         Normal(loc=0.0, scale=1.0, name="m"))
         with pytest.raises(ValueError, match="discrete"):
             learn_amortized_posterior(bad_prior, _ToyLikelihood(), num_simulations=8, epochs=1)
+
+    def test_rejects_multifield_prior_without_supports(self):
+        """A multi-field prior implementing no per-field ``supports`` accessor is
+        rejected: spreading the single whole-distribution ``support`` across
+        heterogeneous fields could silently pick the wrong bijector."""
+
+        class _NoSupports:
+            record_template = RecordTemplate(a=(), b=())
+
+            @property
+            def supports(self):
+                raise NotImplementedError
+
+        with pytest.raises(TypeError, match="per-field"):
+            learn_amortized_posterior(_NoSupports(), _ToyLikelihood(),
+                                      num_simulations=8, epochs=1)
