@@ -496,8 +496,9 @@ class ConditionallyIndependentLikelihood[P, D](Likelihood[P, D], Protocol):
     regression-style likelihoods each datum carries a covariate ``x_i``
     that the per-observation density depends on; the factorisation then
     reads ``Σ_i log p(y_i | x_i, θ)``, with the covariates treated as
-    fixed inputs. This is the "conditionally independent" case rather
-    than the stricter "i.i.d." (where every ``p(y_i | θ)`` is identical).
+    fixed inputs rather than random variables. This is the "conditionally
+    independent" case rather than the stricter "i.i.d." (where every
+    ``p(y_i | θ)`` is identical).
 
     Required by :class:`~probpipe.MinibatchedDistribution` for
     stochastic-gradient inference, and useful independently for held-out

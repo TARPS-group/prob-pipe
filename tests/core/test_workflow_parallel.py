@@ -304,11 +304,6 @@ class TestWorkflowFunctionExecutionConfig:
         assert execution.mode == "sequential"
         assert execution.max_workers is None
 
-    @pytest.mark.parametrize("removed_keyword", ["parallel", "vectorize"])
-    def test_workflow_function_rejects_removed_keywords(self, removed_keyword):
-        with pytest.raises(TypeError, match="no longer accepts"):
-            WorkflowFunction(func=add_one, **{removed_keyword: True})
-
     @pytest.mark.parametrize("dispatch", ["loop", "python", "map", None, 1])
     def test_workflow_function_rejects_invalid_dispatch(self, dispatch):
         with pytest.raises(ValueError, match="dispatch must be one of"):

@@ -285,9 +285,11 @@ probpipe.prefect_config.workflow_kind = probpipe.WorkflowKind.TASK
 export PROBPIPE_WORKFLOW_KIND=task   # or flow / off / default
 ```
 
-Per-call overrides via `@workflow_function(workflow_kind="task")` and
-explicit `WorkflowFunction(..., workflow_kind=WorkflowKind.FLOW)`
-continue to work and are unaffected by either of the above.
+Per-workflow overrides via
+`@workflow_function(workflow_kind=probpipe.WorkflowKind.TASK)` and
+explicit `WorkflowFunction(..., workflow_kind=probpipe.WorkflowKind.FLOW)`
+are unaffected by either of the above. String aliases such as `"task"` /
+`"flow"` are not accepted; use `WorkflowKind` enum members explicitly.
 
 The off-by-default behaviour exists because the prior auto-detect path
 ("Prefect importable → tasks enabled") confused notebook and REPL

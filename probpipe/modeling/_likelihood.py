@@ -7,9 +7,10 @@ step function, and a stateful module for sequential Bayesian updating.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable
 from typing import Any
 
+from ..core.config import WorkflowKind
 from ..core.distribution import Distribution
 from ..core.node import Module, WorkflowFunction
 from ..core.protocols import ConditionallyIndependentLikelihood, GenerativeLikelihood, Likelihood
@@ -18,10 +19,10 @@ from ..core.transition import iterate
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "Likelihood",
     "ConditionallyIndependentLikelihood",
     "GenerativeLikelihood",
     "IncrementalConditioner",
+    "Likelihood",
 ]
 
 
@@ -68,7 +69,7 @@ class _ConditioningStep[P, D](WorkflowFunction):
         likelihood: Likelihood[P, D],
         *,
         condition_fn: Callable[..., Distribution[P]] | None = None,
-        workflow_kind: str | None = None,
+        workflow_kind: WorkflowKind = WorkflowKind.OFF,
         **condition_kwargs: Any,
     ):
         if condition_fn is None:
@@ -91,8 +92,8 @@ class _ConditioningStep[P, D](WorkflowFunction):
         dist: Distribution,
         data: Any,
     ) -> Distribution:
-        from ._simple import SimpleModel
         from ..core.protocols import SupportsLogProb
+        from ._simple import SimpleModel
 
         prior = dist
         if not isinstance(prior, SupportsLogProb):
