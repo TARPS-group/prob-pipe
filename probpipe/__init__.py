@@ -135,6 +135,10 @@ from probpipe.inference import (
     MinibatchedDistribution,
     learn_amortized_posterior,
     BayesFlowModel,
+    learn_amortized_likelihood,
+    learn_amortized_ratio,
+    BayesFlowLikelihood,
+    BayesFlowRatio,
 )
 from probpipe.modeling import ProbabilisticModel, SimpleModel, SimpleGenerativeModel
 from probpipe.validation import predictive_check
@@ -298,6 +302,10 @@ __all__ = [
     "MinibatchedDistribution",
     "learn_amortized_posterior",
     "BayesFlowModel",
+    "learn_amortized_likelihood",
+    "learn_amortized_ratio",
+    "BayesFlowLikelihood",
+    "BayesFlowRatio",
     # Validation
     "predictive_check",
     # Converters

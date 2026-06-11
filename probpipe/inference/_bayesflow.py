@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import random
+from contextlib import contextmanager
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -67,6 +68,63 @@ def _adapter_field_keys(fields: tuple[str, ...]) -> tuple[str, ...]:
     across train and inference without storing it.
     """
     return tuple(f"theta_{i}" for i in range(len(fields)))
+
+
+def _validate_learn_inputs(
+    prior: Distribution,
+    simulator: GenerativeLikelihood,
+    *,
+    caller: str,
+    sim_backend: SimBackend,
+    counts: tuple[tuple[str, Any], ...],
+) -> Any:
+    """Shared train-time validation for the amortized learners; returns the
+    prior's record template. Raises before any simulation runs."""
+    if sim_backend not in ("jax", "sequential"):
+        raise ValueError(
+            f"Unknown sim_backend: {sim_backend!r}. Supported: 'jax', 'sequential'."
+        )
+    for _name, _val in counts:
+        if not isinstance(_val, (int, np.integer)):
+            raise TypeError(f"{_name} must be an integer, got {type(_val).__name__}.")
+        if _val < 1:
+            raise ValueError(f"{_name} must be a positive integer, got {_val}.")
+    if not hasattr(simulator, "generate_data"):
+        raise TypeError(
+            "simulator must be a GenerativeLikelihood with a generate_data method, "
+            f"got {type(simulator).__name__}"
+        )
+    record_template = getattr(prior, "record_template", None)
+    if record_template is None:
+        raise TypeError(
+            f"{caller} requires a RecordDistribution prior with named parameter "
+            "fields -- typically a ProductDistribution of named distributions -- "
+            f"but got {type(prior).__name__}, which has no record_template."
+        )
+    if any("/" in k for k in record_template.numeric_leaf_shapes):
+        raise TypeError(
+            f"{caller} does not support nested priors (the per-field adapter "
+            "machinery is flat); flatten the prior into top-level named fields."
+        )
+    return record_template
+
+
+@contextmanager
+def _seeded_keras_training(random_seed: int):
+    """Seed keras (which reads the global RNG for init + fit) for reproducible
+    training, snapshotting and restoring the caller's Python/NumPy RNG state so
+    the process-wide seeding does not leak. keras keeps its own seeded generator
+    state across the restore."""
+    import keras
+
+    py_state = random.getstate()
+    np_state = np.random.get_state()
+    keras.utils.set_random_seed(random_seed)
+    try:
+        yield
+    finally:
+        random.setstate(py_state)
+        np.random.set_state(np_state)
 
 
 def _ensure_bayesflow() -> ModuleType:
@@ -187,16 +245,19 @@ def _simulate_offline(
     key: PRNGKey,
     *,
     sim_backend: SimBackend,
-    bijectors: dict[str, tfb.Bijector],
+    bijectors: dict[str, tfb.Bijector] | None,
 ) -> tuple[dict[str, np.ndarray], np.ndarray]:
     """Draw ``(theta, y)`` pairs offline: ``theta ~ prior``, ``y ~ simulator(theta)``.
 
     Returns ``(named_theta, y)`` where ``named_theta`` maps each prior
-    record-template field to a ``(num_simulations, d_field)`` float32 array of
-    *unconstrained* parameters (each field's draws pushed through its inverse
-    bijector at the field's native event shape, then flattened) and ``y`` is the
-    ``(num_simulations, d_y)`` float32 array of flattened simulated observations.
-    The simulator itself always sees the constrained, structured draws.
+    record-template field to a ``(num_simulations, d_field)`` float32 array and
+    ``y`` is the ``(num_simulations, d_y)`` float32 array of flattened simulated
+    observations.  With ``bijectors`` given (the NPE path), each theta field is
+    *unconstrained* (pushed through its inverse bijector at the field's native
+    event shape, then flattened); with ``bijectors=None`` (the NLE/NRE paths,
+    where theta is a network *input* rather than a modeled density), the raw
+    constrained draws are returned.  The simulator itself always sees the
+    constrained, structured draws.
     """
     template = prior.record_template
     fields = template.fields
@@ -212,8 +273,10 @@ def _simulate_offline(
     # the field's native (..., n, n) event shape, not the flat adapter layout.
     named = {}
     for f in fields:
-        u = bijectors[f].inverse(jnp.asarray(record[f]))
-        named[f] = np.asarray(jnp.reshape(u, (num_simulations, -1)), dtype="float32")
+        arr = jnp.asarray(record[f])
+        if bijectors is not None:
+            arr = bijectors[f].inverse(arr)
+        named[f] = np.asarray(jnp.reshape(arr, (num_simulations, -1)), dtype="float32")
     sim_keys = jax.random.split(k_sim, num_simulations)
 
     def _one(flat_row: Array, k: PRNGKey) -> Array:
@@ -454,39 +517,13 @@ def learn_amortized_posterior(
         raise ValueError(
             f"Unknown amortized SBI method: {method!r}. Supported: 'npe', 'fmpe', 'cmpe'."
         )
-    if sim_backend not in ("jax", "sequential"):
-        raise ValueError(
-            f"Unknown sim_backend: {sim_backend!r}. Supported: 'jax', 'sequential'."
-        )
-    for _name, _val in (
-        ("num_simulations", num_simulations), ("batch_size", batch_size),
-        ("epochs", epochs), ("num_results", num_results),
-    ):
-        if not isinstance(_val, (int, np.integer)):
-            raise TypeError(f"{_name} must be an integer, got {type(_val).__name__}.")
-        if _val < 1:
-            raise ValueError(f"{_name} must be a positive integer, got {_val}.")
-    if not hasattr(simulator, "generate_data"):
-        raise TypeError(
-            "simulator must be a GenerativeLikelihood with a generate_data method, "
-            f"got {type(simulator).__name__}"
-        )
-    record_template = getattr(prior, "record_template", None)
-    if record_template is None:
-        raise TypeError(
-            "learn_amortized_posterior requires a RecordDistribution prior with "
-            "named parameter fields -- typically a ProductDistribution of named "
-            f"distributions -- but got {type(prior).__name__}, which has no "
-            "record_template."
-        )
+    record_template = _validate_learn_inputs(
+        prior, simulator, caller="learn_amortized_posterior", sim_backend=sim_backend,
+        counts=(("num_simulations", num_simulations), ("batch_size", batch_size),
+                ("epochs", epochs), ("num_results", num_results)),
+    )
     fields = record_template.fields
     leaf_shapes = record_template.numeric_leaf_shapes
-    if any("/" in k for k in leaf_shapes):
-        raise TypeError(
-            "learn_amortized_posterior does not support nested priors (the "
-            "per-field bijector and adapter machinery is flat); flatten the "
-            "prior into top-level named fields."
-        )
     # Built up front: also rejects discrete / unsupported-support priors before
     # any simulation runs.
     bijectors = _field_bijectors(prior, fields)
@@ -498,15 +535,7 @@ def learn_amortized_posterior(
     )
 
     bf = _ensure_bayesflow()
-    import keras
-
-    # keras reads the global RNG for network init + fit, so seed it -- but snapshot
-    # and restore the caller's Python/NumPy state so the process-wide seeding does
-    # not leak. keras keeps its own seeded generator state across the restore.
-    py_state = random.getstate()
-    np_state = np.random.get_state()
-    keras.utils.set_random_seed(random_seed)
-    try:
+    with _seeded_keras_training(random_seed):
         key = jax.random.PRNGKey(random_seed)
         named, y = _simulate_offline(
             prior, simulator, num_simulations, key,
@@ -529,9 +558,6 @@ def learn_amortized_posterior(
         approximator.compile(optimizer=optimizer)
         dataset = bf.OfflineDataset(data=sims, batch_size=batch_size, adapter=adapter)
         approximator.fit(dataset=dataset, epochs=epochs, **fit_kwargs)
-    finally:
-        random.setstate(py_state)
-        np.random.set_state(np_state)
 
     return BayesFlowModel(
         approximator, prior, simulator, method=method, data_dim=int(y.shape[-1]),

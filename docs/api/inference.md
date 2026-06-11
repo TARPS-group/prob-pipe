@@ -73,18 +73,40 @@ when choosing a number for a new method are documented under
 
 ## Amortized SBI
 
-Simulation-based inference with a trained amortized estimator (requires the
-`[bayesflow]` extra; Python 3.12–3.13 only). `learn_amortized_posterior`
-trains an NPE / FMPE / CMPE network from a prior and a `GenerativeLikelihood`
-simulator; the returned `BayesFlowModel` bundles the joint model (the prior
-and simulator are exposed as properties) with the trained estimator, and
-`condition_on(model, observed)` draws from `p(theta | observed)` in a single
-network forward pass — the same trained instance conditions on any
-observation with no retraining.
+Simulation-based inference with trained amortized estimators (requires the
+`[bayesflow]` extra; Python 3.12–3.13 only). Three flavors share one offline
+simulation pipeline:
+
+- **NPE** — `learn_amortized_posterior` trains an NPE / FMPE / CMPE network;
+  the returned `BayesFlowModel` bundles the joint model (the prior and
+  simulator are exposed as properties) with the trained estimator, and
+  `condition_on(model, observed)` draws from `p(theta | observed)` in a single
+  network forward pass — the same trained instance conditions on any
+  observation with no retraining.
+- **NLE** — `learn_amortized_likelihood` trains a conditional density
+  `p(y | theta)` and returns a `BayesFlowLikelihood`, a
+  `ConditionallyIndependentLikelihood` whose `log_likelihood` is
+  jax-grad-transparent: plug it into `SimpleModel(prior, learned)` +
+  `condition_on` and the standard gradient-based MCMC machinery samples the
+  posterior, for single observations or multi-observation datasets.
+- **NRE** — `learn_amortized_ratio` trains a likelihood-to-evidence ratio
+  classifier and returns a `BayesFlowRatio` with the same `Likelihood`
+  surface (valid for conditioning — the evidence constant cancels in MCMC —
+  but **not** for absolute-likelihood uses such as model comparison or
+  LOO/WAIC). The classifier natively handles discrete-valued and
+  one-dimensional observations, where NLE's coupling flow does not apply.
 
 ::: probpipe.learn_amortized_posterior
 
 ::: probpipe.BayesFlowModel
+
+::: probpipe.learn_amortized_likelihood
+
+::: probpipe.BayesFlowLikelihood
+
+::: probpipe.learn_amortized_ratio
+
+::: probpipe.BayesFlowRatio
 
 ## Iterative transformations
 
