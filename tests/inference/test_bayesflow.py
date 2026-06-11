@@ -497,6 +497,26 @@ class TestBayesFlowMethods:
         assert np.isfinite(r).all()
         assert (r > 0).all()        # forward bijector (Exp) keeps every draw in support
 
+    def test_adapter_internal_names_avoid_collisions(self):
+        """No reserved field names: theta fields are re-keyed to internal adapter
+        names, so even fields named like BayesFlow's own keys ("observation",
+        "inference_variables") train and condition, with draws returned under the
+        user's names."""
+        prior = ProductDistribution(
+            Normal(loc=0.0, scale=1.0, name="observation"),
+            Normal(loc=0.0, scale=1.0, name="inference_variables"),
+        )
+        model = learn_amortized_posterior(
+            prior, _ToyLikelihood(), method="npe",
+            num_simulations=800, epochs=2, batch_size=256,
+            num_results=200, random_seed=0, verbose=0,
+        )
+        draws = condition_on(model, jnp.array([0.5, 0.1])).draws()
+        for f in ("observation", "inference_variables"):
+            x = np.asarray(draws[f]).reshape(-1)
+            assert x.shape[0] == 200
+            assert np.isfinite(x).all()
+
     def test_interval_prior_draws_respect_support(self):
         """A bounded-interval prior field (Beta, unit-interval support) rounds
         through the Sigmoid bijector: trained unconstrained, every posterior
@@ -570,15 +590,6 @@ class TestBayesFlowMethods:
 
 class TestBayesFlowValidation:
     """Train-time input validation -- each raises before any simulation runs."""
-
-    def test_rejects_reserved_field_name(self):
-        """A prior field named like the reserved observation key is rejected."""
-        bad_prior = ProductDistribution(
-            Normal(loc=0.0, scale=1.0, name="observation"),
-            Normal(loc=0.0, scale=1.0, name="b"),
-        )
-        with pytest.raises(ValueError, match="reserved"):
-            learn_amortized_posterior(bad_prior, _ToyLikelihood(), num_simulations=8, epochs=1)
 
     def test_rejects_non_generative_simulator(self):
         """A simulator without ``generate_data`` is rejected with a clear TypeError."""

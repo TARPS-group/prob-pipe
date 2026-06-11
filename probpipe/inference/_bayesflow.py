@@ -50,10 +50,23 @@ AmortizedMethod = Literal["npe", "fmpe", "cmpe"]
 # dispatch names ("jax" = vmap the simulator, "sequential" = eager per-draw loop).
 SimBackend = Literal["jax", "sequential"]
 
-# Reserved key for the simulated observation in BayesFlow's named-array dicts.
+# Internal adapter key for the simulated observation. User field names never
+# enter BayesFlow's key namespace -- theta fields are re-keyed via
+# ``_adapter_field_keys`` -- so this (and BayesFlow's own ``inference_variables``
+# / ``inference_conditions`` targets) can never collide with a prior field.
 _OBSERVATION_KEY = "observation"
 
 _bayesflow_module: ModuleType | None = None
+
+
+def _adapter_field_keys(fields: tuple[str, ...]) -> tuple[str, ...]:
+    """Positional internal keys (``theta_0``, ``theta_1``, ...) for the adapter.
+
+    Both the training dict and the sample-side extraction derive these from the
+    prior's ``record_template.fields`` order, so the mapping is deterministic
+    across train and inference without storing it.
+    """
+    return tuple(f"theta_{i}" for i in range(len(fields)))
 
 
 def _ensure_bayesflow() -> ModuleType:
@@ -117,14 +130,14 @@ def _make_inference_network(
     )
 
 
-def _build_adapter(bf: ModuleType, fields: tuple[str, ...]) -> Adapter:
-    """Route named theta fields to ``inference_variables`` and the observation
-    to ``inference_conditions``. The adapter is invertible, so ``sample``
-    returns the parameters split back into named fields."""
+def _build_adapter(bf: ModuleType, internal_keys: tuple[str, ...]) -> Adapter:
+    """Route the internal theta keys to ``inference_variables`` and the
+    observation to ``inference_conditions``. The adapter is invertible, so
+    ``sample`` returns the parameters split back under the same keys."""
     return (
         bf.Adapter()
         .convert_dtype("float64", "float32")
-        .concatenate(list(fields), into="inference_variables")
+        .concatenate(list(internal_keys), into="inference_variables")
         .concatenate([_OBSERVATION_KEY], into="inference_conditions")
     )
 
@@ -330,12 +343,12 @@ class BayesFlowModel(Distribution, SupportsSampling, SupportsConditioning):
             conditions={_OBSERVATION_KEY: obs_flat[None, :]},
             seed=random_seed,
         )
-        # ``out`` maps each field to ``(1, num_results, d_field)``. Stays in jnp
-        # end-to-end: this is the latency-critical amortized path, so no per-field
-        # host round-trips.
+        # ``out`` maps each internal theta key to ``(1, num_results, d_field)``.
+        # Stays in jnp end-to-end: this is the latency-critical amortized path,
+        # so no per-field host round-trips.
         cols = []
-        for f in self._fields:
-            draws = jnp.asarray(out[f])[0]
+        for k, f in zip(_adapter_field_keys(self._fields), self._fields):
+            draws = jnp.asarray(out[k])[0]
             bij = self._bijectors.get(f)
             if bij is not None:
                 draws = bij.forward(draws)
@@ -448,9 +461,8 @@ def learn_amortized_posterior(
         If ``method`` is not one of ``"npe"`` / ``"fmpe"`` / ``"cmpe"``,
         ``sim_backend`` is not ``"jax"`` / ``"sequential"``, any of
         ``num_simulations`` / ``batch_size`` / ``epochs`` / ``num_results`` is not a
-        positive integer, a prior field collides with the reserved ``"observation"``
-        key, or a prior field's support admits no smooth bijector to ``R^d`` (e.g. a
-        discrete prior).
+        positive integer, or a prior field's support admits no smooth bijector to
+        ``R^d`` (e.g. a discrete prior).
     TypeError
         If ``simulator`` lacks ``generate_data``, ``prior`` is not a
         ``RecordDistribution`` (has no ``record_template``), or a multi-field
@@ -486,11 +498,6 @@ def learn_amortized_posterior(
             "record_template."
         )
     fields = record_template.fields
-    if _OBSERVATION_KEY in fields:
-        raise ValueError(
-            f"prior field name {_OBSERVATION_KEY!r} collides with the reserved "
-            "observation key used internally by the BayesFlow adapter; rename the field."
-        )
     # Built up front: also rejects discrete / unsupported-support priors before
     # any simulation runs.
     bijectors = _field_bijectors(prior, fields)
@@ -517,9 +524,14 @@ def learn_amortized_posterior(
             prior, simulator, num_simulations, key,
             sim_backend=sim_backend, bijectors=bijectors,
         )
-        sims = {**named, _OBSERVATION_KEY: y}
+        # Re-key theta fields to positional internal names so user field names
+        # never enter BayesFlow's key namespace (no collision with the
+        # observation key or the adapter's inference_variables/conditions).
+        internal_keys = _adapter_field_keys(fields)
+        sims = {k: named[f] for k, f in zip(internal_keys, fields)}
+        sims[_OBSERVATION_KEY] = y
 
-        adapter = _build_adapter(bf, fields)
+        adapter = _build_adapter(bf, internal_keys)
         num_batches = max(1, -(-num_simulations // batch_size))  # ceil: count partial batch
         net = inference_network or _make_inference_network(
             bf, method, total_steps=epochs * num_batches, unconstrained_size=unconstrained_size
