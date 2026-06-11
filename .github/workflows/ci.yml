@@ -6,17 +6,113 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel superseded runs on PR pushes (saves CI minutes during iteration).
+# Pushes to main keep running — never cancel work that gates the merged history.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # Advisory ruff lint. Annotates PRs with violations but does NOT gate
+  # merges (continue-on-error). ProbPipe carries a backlog from a
+  # previously-unenforced linter, and several large refactors are in
+  # flight; advisory mode surfaces issues without blocking that work or
+  # forcing a repo-wide cleanup sweep. To enforce later: drop
+  # continue-on-error and scope to changed files. The ruff version is
+  # read from .pre-commit-config.yaml (single source of truth) so this job
+  # can't drift from the pre-commit pin that `pre-commit autoupdate` bumps;
+  # keep uv.lock's ruff in sync too for local `uv run ruff`. `ruff format`
+  # is intentionally not run (its style conflicts with the conventions in
+  # CONTRIBUTING.md).
+  lint:
+    name: lint (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      # Blocking: validates .pre-commit-config.yaml structure (all hooks, not
+      # just ruff) so a corrupted config can't slip through while the ruff
+      # check itself stays advisory. Cheap — it does not run any hook.
+      - name: Validate pre-commit config
+        run: uvx pre-commit validate-config
+
+      - name: Resolve ruff version from .pre-commit-config.yaml
+        id: ruffver
+        run: |
+          set -euo pipefail
+          # Single source of truth for the pin lives in the pre-commit config.
+          ver=$(grep -A2 'astral-sh/ruff-pre-commit' .pre-commit-config.yaml \
+                  | sed -nE 's/^[[:space:]]*rev:[[:space:]]*v?([0-9][0-9.]*).*/\1/p' | head -1)
+          test -n "$ver"   # fail loudly if the rev can't be parsed
+          echo "ruff=$ver" >> "$GITHUB_OUTPUT"
+          echo "Resolved ruff $ver from .pre-commit-config.yaml"
+
+      - name: Ruff check (advisory — does not gate merges)
+        continue-on-error: true
+        run: uvx "ruff@${{ steps.ruffver.outputs.ruff }}" check . --output-format=github
+
+  # Advisory pyright type check. Reports but does NOT gate merges
+  # (continue-on-error). The source carries a type-debt baseline (much of
+  # it JAX/TFP untyped-attribute noise), so enforcing now would block
+  # unrelated work; advisory surfaces it without forcing a cleanup. Syncs
+  # the full dependency env first so imports resolve against the real
+  # jax/tfp/pymc. Config + scope live in pyrightconfig.json. To enforce
+  # later: drop continue-on-error and tighten typeCheckingMode.
+  #
+  # Pyright runs as an ephemeral `uv run --with` tool rather than a locked
+  # [dev] dependency: that keeps its per-platform Node binaries out of
+  # uv.lock. The version is pinned here (and referenced in CONTRIBUTING.md)
+  # for a reproducible baseline; `[nodejs]` bundles the Node runtime so CI
+  # doesn't depend on a runtime download. The final summary line is lifted
+  # into the job summary so the count is visible without opening the log.
+  typecheck:
+    name: typecheck (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev --extra nutpie --extra pymc
+
+      - name: Pyright (advisory — does not gate merges)
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          uv run --frozen --with 'pyright[nodejs]==1.1.410' pyright | tee pyright-output.txt
+
+      - name: Surface pyright summary
+        if: always()
+        run: |
+          {
+            echo "### Pyright (advisory — does not gate merges)"
+            echo '```'
+            grep -E '[0-9]+ error' pyright-output.txt | tail -n 1 || echo "no summary line found"
+            echo '```'
+            echo "_Full report in the \"Pyright\" step log above. Type checking is advisory; see CONTRIBUTING.md § Type checking._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.12", "3.13", "3.14"]
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0   # need full history for git diff
 
@@ -37,16 +133,19 @@ jobs:
 
           # If foundational files changed, run the full suite. Scan ALL
           # changed files (not just .py): a dependency bump in pyproject.toml
-          # touches no .py file but must still trigger the suite.
-          # Also force the full suite on direct pushes to main (post-merge
-          # safety net — targeted tests are for PRs only).
+          # or uv.lock touches no .py file but must still trigger the suite —
+          # this is what makes a lockfile-only dependency change actually
+          # verified by CI rather than silently skipped. A change to this
+          # workflow itself (ci.yml) also forces the suite so CI edits are
+          # self-tested. Also force the full suite on direct pushes to main
+          # (post-merge safety net — targeted tests are for PRs only).
           if [ "${{ github.event_name }}" = "push" ]; then
             RUN_ALL=true
           else
             RUN_ALL=false
             for f in $CHANGED_ALL; do
               case "$f" in
-                pyproject.toml|setup.cfg|setup.py|tests/conftest.py|probpipe/__init__.py)
+                pyproject.toml|uv.lock|setup.cfg|setup.py|tests/conftest.py|probpipe/__init__.py|.github/workflows/ci.yml)
                   RUN_ALL=true ;;
               esac
             done
@@ -176,49 +275,94 @@ jobs:
             fi
           fi
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
         with:
-          python-version: ${{ matrix.python-version }}
+          enable-cache: true
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          # Install the project together with the verified jax / tfp-nightly
-          # pins in a single resolver transaction. Installing the project
-          # first and re-pinning afterwards resolves the tree twice — the
-          # first time against unpinned metadata — which can leave the rest
-          # of the dependency set resolved against a different jax. tfp-nightly
-          # tracks jax's internal API, and a fresh nightly can lag the current
-          # jax release (DeprecationWarnings, occasionally hard errors) under
-          # jax 0.10+. Refresh this pair when the nightly is purged from PyPI.
-          # [pymc] is installed so pymc 6 is exercised on both matrix legs.
-          pip install -e ".[dev,nutpie,pymc]" \
-            "jax==0.10.1" "jaxlib==0.10.1" "tfp-nightly==0.26.0.dev20260608"
+        # Dependency versions (including jax/jaxlib/tfp-nightly) are pinned
+        # in uv.lock. --frozen makes the resolver fail if the lockfile is
+        # out of sync, so CI never silently drifts from the committed pins.
+        # --python pins the interpreter to the matrix leg: uv fetches a managed
+        # CPython when the runner lacks it, so the "3.13" and "3.14" legs
+        # genuinely run those versions. (setup-uv's python-version input was
+        # silently ignored on @v3, which let every leg fall back to the system
+        # 3.12.) [pymc] is included so pymc 6 is exercised on all matrix legs.
+        run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra nutpie --extra pymc
 
       - name: Run tests (changed files only)
         if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'false'
+        # A targeted run executes a subset of tests but still measures
+        # --cov=probpipe (the whole package), so a global coverage floor
+        # would always fail here. The floor is enforced on the full-suite
+        # run below; keep partial runs exempt with --cov-fail-under=0.
         run: |
-          pytest ${{ steps.changed.outputs.test_files }} --cov-report=xml --cov-report=html
+          uv run pytest ${{ steps.changed.outputs.test_files }} --cov-fail-under=0 --cov-report=xml --cov-report=html
 
       - name: Run tests (full suite)
         if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'true'
+        # The 88% coverage floor is enforced here (full suite only): a
+        # foundational change or any push to main runs every test, so the
+        # whole-package measurement is meaningful. This overrides the
+        # --cov-fail-under=0 in pyproject's addopts.
         run: |
-          pytest --cov-report=xml --cov-report=html
+          uv run pytest --cov-fail-under=88 --cov-report=xml --cov-report=html
 
       - name: Upload coverage reports to Codecov
         if: matrix.python-version == '3.12' && steps.changed.outputs.run_all == 'true'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: TARPS-group/prob-pipe
 
       - name: Upload coverage HTML report
         if: always() && matrix.python-version == '3.12' && steps.changed.outputs.run_all == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-html
           path: htmlcov/
+
+  bayesflow:
+    # Amortized SBI backend (keras-on-jax). BayesFlow 2.x caps Python <3.14, so
+    # this leg runs on 3.12 & 3.13 only — kept separate from the main matrix so
+    # a future 3.14 entry there is unaffected by the cap.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    env:
+      KERAS_BACKEND: jax
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        # Versions (jax/jaxlib/tfp-nightly/keras/bayesflow) are pinned in uv.lock;
+        # --frozen fails if the lockfile drifts. --python pins the interpreter to
+        # the matrix leg. The bayesflow extra is locked behind a python_version
+        # < 3.14 marker (BayesFlow caps <3.14), so it resolves only on these legs.
+        run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra nutpie --extra bayesflow
+
+      - name: Run BayesFlow backend tests
+        run: uv run pytest tests/inference/test_bayesflow.py --cov-report=xml
+
+      - name: Upload coverage reports to Codecov
+        # The test job's upload measures the BayesFlow backend as uncovered: it
+        # does not install [bayesflow], so these tests importorskip out there.
+        # Upload this leg's report too — Codecov's per-commit union then counts
+        # _bayesflow.py toward patch coverage. 3.12 only, matching the test job.
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: TARPS-group/prob-pipe
 
   notebooks:
     # Execute every docs/examples notebook to keep the reference set
@@ -228,7 +372,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0   # need full history for git diff
 
@@ -244,17 +388,18 @@ jobs:
             -- 'docs/examples/*.ipynb' 'probpipe/' || true)
           CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
 
-          # A dependency bump in pyproject.toml touches no notebook or source
-          # file but can still break every notebook, so foundational changes
-          # force the full notebook set (mirrors the test job's RUN_ALL). Also
-          # force it on direct pushes to main (post-merge safety net).
+          # A dependency bump in pyproject.toml or uv.lock touches no notebook
+          # or source file but can still break every notebook, so foundational
+          # changes force the full notebook set (mirrors the test job's
+          # RUN_ALL); a change to ci.yml does too. Also force it on direct
+          # pushes to main (post-merge safety net).
           if [ "${{ github.event_name }}" = "push" ]; then
             RUN_ALL_NB=true
           else
             RUN_ALL_NB=false
             for f in $CHANGED_ALL; do
               case "$f" in
-                pyproject.toml|setup.cfg|setup.py) RUN_ALL_NB=true ;;
+                pyproject.toml|uv.lock|setup.cfg|setup.py|.github/workflows/ci.yml) RUN_ALL_NB=true ;;
               esac
             done
           fi
@@ -422,26 +567,20 @@ jobs:
             fi
           fi
 
-      - name: Set up Python
+      - name: Install uv
         if: steps.nb_check.outputs.skip != 'true'
-        uses: actions/setup-python@v5
+        uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.12"
+          enable-cache: true
 
       - name: Install dependencies
         if: steps.nb_check.outputs.skip != 'true'
-        run: |
-          python -m pip install --upgrade pip
-          # Install the project together with the verified jax / tfp-nightly
-          # pins in a single resolver transaction. Installing the project
-          # first and re-pinning afterwards resolves the tree twice — the
-          # first time against unpinned metadata — which can leave the rest
-          # of the dependency set resolved against a different jax. tfp-nightly
-          # tracks jax's internal API, and a fresh nightly can lag the current
-          # jax release (DeprecationWarnings, occasionally hard errors) under
-          # jax 0.10+. Refresh this pair when the nightly is purged from PyPI.
-          pip install -e ".[dev,nutpie]" \
-            "jax==0.10.1" "jaxlib==0.10.1" "tfp-nightly==0.26.0.dev20260608"
+        # Dependency versions are pinned in uv.lock. --frozen fails if the
+        # lockfile is out of sync, so CI never silently drifts. --python pins
+        # the interpreter (setup-uv's python-version input was ignored on @v3).
+        # [pymc] is intentionally not installed for the notebook job (matches
+        # the previous pip-based setup).
+        run: uv sync --frozen --python 3.12 --extra dev --extra nutpie
 
       - name: Execute affected docs/examples notebooks
         if: steps.nb_check.outputs.skip != 'true'
@@ -449,6 +588,6 @@ jobs:
           set -euo pipefail
           for nb in ${{ steps.nb_check.outputs.notebooks }}; do
             echo "--- executing $nb ---"
-            python -m nbconvert --to notebook --execute \
+            uv run python -m nbconvert --to notebook --execute \
               --ExecutePreprocessor.timeout=900 --output /tmp/out.ipynb "$nb"
           done

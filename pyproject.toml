@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,8 @@ version = "0.1.0"
 description = "Tools for probabilistic data-processing pipelines"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "AUTHORS"]
 authors = [
   { name = "Jonathan Huggins", email = "huggins@bu.edu" },
   { name = "Andrew Roberts",   email = "arober@bu.edu" },
@@ -39,6 +40,10 @@ stan = ["bridgestan>=2.0", "cmdstanpy>=1.2"]
 # arviz<1.0); matplotlib is required by the pymc 6 sampler progress bar.
 pymc = ["pymc>=6", "matplotlib"]
 nutpie = ["nutpie>=0.12"]
+# Amortized neural SBI (NPE/FMPE/CMPE), jax-native via keras (KERAS_BACKEND=jax).
+# BayesFlow 2.x requires Python <3.14 and numpy>=2.2.6, so this extra is
+# Python 3.12-3.13 only; bare core stays 3.14-capable.
+bayesflow = ["bayesflow>=2.0,<3"]
 dev = [
   "probpipe[prefect,viz,docs]",
   "pytest>=7",
@@ -86,7 +91,21 @@ ignore = [
   "E501",   # line too long (handled by formatter)
   "B905",   # zip without strict= (not always needed)
   "SIM108", # ternary operator (readability preference)
+  # Ambiguous-unicode rules fire constantly on legitimate mathematical
+  # notation in a Bayesian-stats codebase — Greek letters, en-dashes,
+  # →, ×, ≤, etc. in docstrings/comments/strings are intentional, not
+  # homoglyph mistakes. The homoglyph-attack surface these rules guard
+  # is negligible here, so the rules are pure noise.
+  "RUF001", # ambiguous character in a string
+  "RUF002", # ambiguous character in a docstring
+  "RUF003", # ambiguous character in a comment
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Notebooks legitimately import after narrative/setup cells (E402) and use
+# semicolons to group plotting calls on one line (E702) — both idiomatic in
+# example notebooks, not errors.
+"*.ipynb" = ["E402", "E702"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["probpipe"]

@@ -41,6 +41,24 @@ last task is done.
 For small fixes (typos, bug fixes, test additions), skip the plan step and
 go straight to an implementation PR.
 
+### Opening the PR
+
+A few conventions keep PRs consistent; the PR template
+(`.github/PULL_REQUEST_TEMPLATE.md`) is the checklist for them:
+
+- **Title** follows `<type>(<scope>): <subject>` — e.g.
+  `feat(inference): add BayesFlow backend`, `fix(core): guard empty record`,
+  `docs(contributing): document PR conventions`. Common types are `feat`,
+  `fix`, `refactor`, `perf`, `test`, `docs`, `chore`, and `ci`; the scope is
+  the affected subpackage or area.
+- **Labels** — `area:*` labels are auto-applied from the changed paths (see
+  [Labels](#labels) below); set `kind:*` / `status:*` by hand, and always add
+  `kind:breaking-change` if the PR changes a user-visible API.
+- **Linked issue** — reference the plan/tracking issue (`Refs #N` on stage
+  PRs, `Closes #N` on the final one). A small standalone fix that skipped the
+  plan step (above) has no issue to link; leave that section and its checklist
+  item as N/A.
+
 ### Branch naming
 
 Use `dev/<short-kebab-case-description>` for branches. Examples:
@@ -56,31 +74,67 @@ open PRs to the new branch — it silently closes them
 (see [#157](https://github.com/TARPS-group/prob-pipe/pull/157) for an
 example). If you must rename after a PR is open, use the web UI.
 
+### Labels
+
+ProbPipe uses three label families:
+
+- **`area:*`** — the affected subsystem (`area:core`, `area:distributions`,
+  `area:records`, `area:inference`, `area:workflow`, `area:orchestration`,
+  `area:diagnostics`, `area:provenance`, `area:docs`,
+  `area:infrastructure`). On PRs these are **applied automatically** by
+  `.github/workflows/labeler.yml` from the changed file paths (mapping in
+  `.github/labeler.yml`), so a PR that touches several areas gets several
+  `area:*` labels. On *issues*, apply them by hand — the auto-labeler runs
+  on PRs only.
+- **`kind:*`** — the nature of the change (`kind:refactor`,
+  `kind:breaking-change`, `kind:deprecation`, `kind:tracking`). Always
+  human-set; paths cannot infer intent.
+- **`status:*`** — workflow state (`status:blocked`, `status:needs-design`,
+  `status:needs-review`). Human-set.
+
+`enhancement` and `documentation` remain the catch-all tags for issues.
+
 ---
 
 ## Development Setup
 
 ### Installation
 
+ProbPipe uses [uv](https://docs.astral.sh/uv/) for environment + dependency
+management. The dependency tree is locked in `uv.lock` — CI installs from
+the same lockfile so a contributor's local env and CI agree.
+
 ```bash
-pip install -e ".[dev]"          # core + test deps
-pip install -e ".[dev,nutpie]"   # + nutpie for MCMC
+# One-time: install uv (see https://docs.astral.sh/uv/getting-started/installation/).
+# On macOS/Linux:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create the dev environment (.venv at the project root):
+uv sync --extra dev --extra nutpie            # core + test + nutpie
+uv sync --extra dev --extra nutpie --extra pymc   # + pymc backend
 ```
 
-Optional backends (not required for tests): `bridgestan`, `pymc`.
+The `pip install -e ".[dev]"` path still works for contributors with an
+existing pip-based setup, but uv is the recommended path. Optional backends
+not required for tests: `bridgestan`, `pymc`, `bayesflow` (amortized SBI;
+Python 3.12–3.13 only).
 
 ### Running Tests
 
 ```bash
-pytest                           # parallel via xdist (configured in pyproject.toml)
-pytest -p no:xdist -o "addopts=" # disable parallel for debugging
-pytest tests/test_foo.py -x -v   # single file, stop on first failure
+uv run pytest                              # parallel via xdist
+uv run pytest -p no:xdist -o "addopts="    # disable parallel for debugging
+uv run pytest tests/test_foo.py -x -v      # single file, stop on first failure
 ```
+
+`uv run` executes inside the synced `.venv` without manual activation; you
+can also `source .venv/bin/activate` once per shell and then just type
+`pytest`.
 
 ### Coverage
 
 ```bash
-pytest --cov=probpipe --cov-report=term-missing
+uv run pytest --cov=probpipe --cov-report=term-missing
 ```
 
 Target: >90% on all modules.
@@ -139,11 +193,76 @@ line.
 
 This applies equally to source files and notebook code cells.
 
+### Linting & pre-commit
+
+Linting uses [ruff](https://docs.astral.sh/ruff/) (configured in
+`pyproject.toml`). Install the pre-commit hooks once:
+
+```bash
+uvx pre-commit install      # or: pre-commit install
+```
+
+Thereafter `ruff` (lint) plus a few file-hygiene hooks run on your staged
+files at commit time. The hooks see only the files you're changing, so the
+codebase cleans up file-by-file rather than in one sweep. To run manually:
+
+```bash
+uv run ruff check .              # lint the whole tree (uses the uv.lock-pinned ruff)
+uvx pre-commit run --all-files   # run every hook over everything
+```
+
+A full `--all-files` run is **not** expected to be clean yet: the repo carries a
+lint and file-hygiene backlog that the hooks burn down file-by-file (see below),
+so it will report — and the fixer hooks will modify — pre-existing issues in
+files you did not touch. That is expected for now, not a regression.
+
+Two deliberate choices:
+
+- **`ruff check` is advisory in CI for now.** ProbPipe carries a lint
+  backlog from a period when ruff wasn't enforced, and several large
+  refactors are in flight. The CI `lint (advisory)` job annotates PRs with
+  violations but does not yet gate merges; it will become blocking once the
+  backlog is burned down. Locally, the pre-commit hook flags issues on the
+  files you touch — fix them when practical; `git commit --no-verify`
+  bypasses it for a pre-existing-violation file you'd rather not clean in
+  an unrelated change.
+- **`ruff format` is not used.** Its output conflicts with the horizontal
+  packing conventions in *Code formatting* above, so formatting stays
+  manual. Only `ruff check` runs.
+
+### Type checking
+
+Type checking uses [pyright](https://microsoft.github.io/pyright/)
+(configured in `pyrightconfig.json`, scoped to the `probpipe` package).
+Run it locally in the synced environment:
+
+```bash
+uv run --with 'pyright[nodejs]' pyright
+```
+
+CI pins a specific pyright version for a reproducible baseline, so a
+local run on a newer pyright may report a slightly different count — pin
+to match CI (`pyright[nodejs]==<version from ci.yml>`) if you need exact
+parity.
+
+Like ruff, **pyright is advisory in CI for now** — the `typecheck
+(advisory)` job reports type issues (and surfaces the count in the run's
+job summary) but does not gate merges. The source carries a type-debt
+baseline (much of it noise from JAX/TFP untyped attributes), so enforcing
+immediately would block unrelated work. The plan is to burn the baseline
+down, then tighten `typeCheckingMode` in `pyrightconfig.json` and make the
+gate blocking. New code should be clean under the current `basic` mode
+where practical.
+
+ProbPipe ships a `py.typed` marker, so the package's annotations are
+consumed by downstream users' type checkers — keeping the public surface
+well-typed is user-facing quality, not just an internal nicety.
+
 ### Documentation
 
 ```bash
-mkdocs build --strict   # build docs, fail on warnings
-mkdocs serve            # local preview
+uv run mkdocs build --strict   # build docs, fail on warnings
+uv run mkdocs serve            # local preview
 ```
 
 API docs use `mkdocstrings` directives in `docs/api/*.md` referencing
@@ -166,9 +285,11 @@ probpipe.prefect_config.workflow_kind = probpipe.WorkflowKind.TASK
 export PROBPIPE_WORKFLOW_KIND=task   # or flow / off / default
 ```
 
-Per-call overrides via `@workflow_function(workflow_kind="task")` and
-explicit `WorkflowFunction(..., workflow_kind=WorkflowKind.FLOW)`
-continue to work and are unaffected by either of the above.
+Per-workflow overrides via
+`@workflow_function(workflow_kind=probpipe.WorkflowKind.TASK)` and
+explicit `WorkflowFunction(..., workflow_kind=probpipe.WorkflowKind.FLOW)`
+are unaffected by either of the above. String aliases such as `"task"` /
+`"flow"` are not accepted; use `WorkflowKind` enum members explicitly.
 
 The off-by-default behaviour exists because the prior auto-detect path
 ("Prefect importable → tasks enabled") confused notebook and REPL
@@ -184,11 +305,30 @@ full rationale.
 
 GitHub Actions (`.github/workflows/ci.yml`):
 
-- Tests on Python 3.12 and 3.13
-- Installs `.[dev,nutpie]` (bridgestan and pymc are not included)
+- Tests on Python 3.12, 3.13, and 3.14
+- Installs via `uv sync --frozen` from `uv.lock` (single source of truth
+  for pinned dependency versions, shared between local dev and CI)
+- Test job uses extras `dev,nutpie,pymc`; the notebooks job uses
+  `dev,nutpie` only (`bridgestan` is not included anywhere by default)
+- A separate `bayesflow` leg (Python 3.12 and 3.13 only — BayesFlow caps
+  `<3.14`) syncs `dev,nutpie,bayesflow` and runs the amortized-SBI tests
 - Coverage uploaded to Codecov
+- A `lint (advisory)` job runs `ruff check` and annotates PRs with
+  violations but does **not** gate merges yet (see *Linting & pre-commit*)
 
-Docs build (`.github/workflows/docs.yml`) with `mkdocs build --strict`.
+Docs build (`.github/workflows/docs.yml`) with `uv run mkdocs build --strict`.
+
+### Updating dependencies
+
+`uv.lock` is committed and CI uses `--frozen`, so a dependency bump needs an
+explicit lockfile update:
+
+```bash
+uv lock --upgrade-package <name>    # bump one package within pyproject.toml constraints
+uv lock --upgrade                   # refresh the whole lock
+```
+
+Commit the resulting `uv.lock` change alongside the `pyproject.toml` change.
 
 ---
 
@@ -369,6 +509,13 @@ Built-in methods:
 | 0 | `pymc_advi` | PyMC | `PyMCModel`; opt-in only via `method=` |
 | 0 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 | 0 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
+
+**Amortized SBI bypasses the registry.** Trained amortized posterior estimators
+(`learn_amortized_posterior` → `BayesFlowPosterior`, the `[bayesflow]` extra)
+implement `SupportsConditioning` directly, so `condition_on(model, observed)` is
+a single forward pass through the trained network. Because `condition_on` checks
+`SupportsConditioning` *before* the inference-method registry, these estimators
+short-circuit it and register no method.
 
 ### Converter priority system
 

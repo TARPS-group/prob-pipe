@@ -471,6 +471,11 @@ ArrayLike: TypeAlias = jnp.ndarray | list | tuple | float | int
 PRNGKey: TypeAlias = jax.Array
 ```
 
+These conventions are checked (advisorily) by pyright in CI — see
+[CONTRIBUTING.md § Type checking](CONTRIBUTING.md#type-checking). The
+check does not gate merges yet, but new code should type-check cleanly
+under the project's `basic` pyright mode where practical.
+
 ---
 
 ## 6. Subpackage Dependencies
@@ -513,6 +518,9 @@ inference/    (imports core/, custom_types)
 >
 > - `inference/` → `modeling/` (lazy imports for model-type dispatch in
 >   `_tfp_mcmc`, `_nutpie`, `_cmdstan_method`, `_pymc_method`)
+> - `inference/` → `distributions/` (lazy imports: prior-type dispatch on
+>   distribution classes in `_blackjax_ess`, `bijector_for` constraint
+>   reparameterization in `_bayesflow`)
 >
 > These use lazy (in-function) imports to avoid circular imports at
 > module load time.  Do not add new reverse edges without discussion.
@@ -536,9 +544,16 @@ class SupportsFoo(Protocol):
 ### 7.2 Protocol hierarchy
 
 - `SupportsLogProb` extends `SupportsUnnormalizedLogProb`.
-- All other protocols (`SupportsSampling`, `SupportsMean`,
+- All other capability protocols (`SupportsSampling`, `SupportsMean`,
   `SupportsVariance`, `SupportsCovariance`, `SupportsExpectation`,
   `SupportsConditioning`) are standalone.
+- The likelihood / simulator protocols `Likelihood`,
+  `ConditionallyIndependentLikelihood` (extends `Likelihood`), and
+  `GenerativeLikelihood` also live in `core/protocols.py`. They type model
+  components — log-density, per-datum log-density, and data generation —
+  rather than distribution capabilities, so they are *not* named `Supports*`
+  (they describe what a likelihood/simulator *is*, not a capability a
+  distribution *supports*).
 
 ### 7.3 Implementing protocols
 

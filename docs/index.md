@@ -27,13 +27,15 @@ ProbPipe provides a set of built-in **ops**, which are workflow functions that c
 
 ## Installation
 
-ProbPipe requires Python ≥ 3.12 (tested on 3.12 and 3.13).
+ProbPipe requires Python ≥ 3.12 (tested on 3.12, 3.13, and 3.14).
 
 ```bash
 git clone https://github.com/TARPS-group/prob-pipe.git
 cd prob-pipe
 pip install .
 ```
+
+ProbPipe also installs cleanly with [uv](https://docs.astral.sh/uv/). For a lockfile-managed dev environment, run `uv sync` (see [CONTRIBUTING.md](https://github.com/TARPS-group/prob-pipe/blob/main/CONTRIBUTING.md#installation)). To use `uv pip install` in place of the `pip install` examples below, first create and activate an environment with `uv venv && source .venv/bin/activate` — `uv pip` installs into the active (or an explicitly targeted) environment, not a global one.
 
 Core dependencies: JAX and TensorFlow Probability. ProbPipe uses [tfp-nightly](https://pypi.org/project/tfp-nightly/), which is the [recommended approach](https://github.com/tensorflow/probability/issues/1994#issuecomment-3129033043) for TFP on JAX since stable TFP releases are tied to TensorFlow and often lag behind JAX.
 

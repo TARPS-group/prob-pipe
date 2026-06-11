@@ -7,7 +7,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Package license metadata corrected to Apache-2.0 (was MIT).**
+  `pyproject.toml` declared `license = { text = "MIT" }` while the
+  repository's `LICENSE` is Apache License 2.0 — and the metadata field is
+  what PyPI displays. The field is now a PEP 639 SPDX expression
+  (`license = "Apache-2.0"` with `license-files = ["LICENSE", "AUTHORS"]`),
+  so built distributions carry `License-Expression: Apache-2.0` (core
+  metadata 2.4). The setuptools build floor rises from 61 to 77.0.3 — PEP
+  639 support landed in 77.0.0, which also deprecated the old
+  `license = { text = ... }` table form, and 77.0.3 relaxed the new
+  `license-files` validation from errors to warnings — and the redundant
+  `wheel` build requirement is dropped (`bdist_wheel` ships inside
+  setuptools since 70.1). Build-time changes only; runtime dependencies
+  are unchanged.
+
+### Added
+
+- **BayesFlow amortized-SBI backend (`[bayesflow]` extra).** New
+  `learn_amortized_posterior(prior, simulator, method="npe"|"fmpe"|"cmpe",
+  ...)` trains a jax-native (keras-on-JAX) amortized neural posterior
+  estimator — NPE (coupling flow), FMPE (flow matching), or CMPE
+  (consistency model) — and returns a `BayesFlowModel` bundling the joint
+  model (prior + simulator, exposed as properties) with the trained
+  estimator: `condition_on(model, observed)` draws from `p(theta | observed)`
+  in a single network forward pass (no MCMC). This restores the amortized
+  half of the SBI layer dropped with sbijax.
+  - Training simulates `(theta, y)` offline (`prior` drawn via the `sample`
+    op, `simulator.generate_data` for the data); the prior is used only to
+    draw `theta` and needs no TFP translation. The trained estimator is
+    amortized — the same instance conditions on any observation with no
+    retraining — and its draws are named via the prior's `record_template`.
+    The simulator receives the prior's native structured per-draw sample (named
+    fields), matching the `GenerativeLikelihood` contract, and keras training is
+    seeded for reproducibility.
+  - Continuous priors with constrained supports — including matrix- and
+    simplex-valued ones (positive, an interval, Dirichlet's simplex, Wishart's
+    positive-definite matrices, …) — are handled by per-field `bijector_for`
+    reparameterization applied at each field's native event shape: training runs
+    in the unconstrained space and draws are mapped back to the support (identity
+    for real-valued fields). NPE's coupling-flow minimum is counted in
+    unconstrained dimensions. Discrete priors have no smooth bijector and are
+    rejected with a clear error.
+  - Training seeds keras for reproducibility but snapshots and restores the
+    caller's global NumPy / Python RNG state, so a call does not perturb
+    unrelated random streams.
+  - The `[bayesflow]` extra is **Python 3.12–3.13 only** (BayesFlow 2.x caps
+    `<3.14`); keras runs on the JAX backend (`KERAS_BACKEND=jax`) — no
+    TensorFlow or PyTorch. The backend is imported lazily, so `import
+    probpipe` does not load keras.
+
+- **`ProductDistribution.supports`** — per-field support constraints (each
+  component's `support`), implementing the canonical `RecordDistribution`
+  accessor that previously raised `NotImplementedError`.
+
+- **Python 3.14 to the CI test matrix.** The matrix is now
+  `[3.12, 3.13, 3.14]`. `requires-python = ">=3.12"` is unchanged.
+- **Coverage floor enforced at 88%** on the full-suite CI run
+  (`--cov-fail-under=88`). The changed-files-only PR path and local
+  single-file runs are exempt (`--cov-fail-under=0`), since a global floor
+  is only meaningful when the whole suite executes. Current measured
+  coverage on `main` is ~91%; the floor is set conservatively within the
+  beta plan's ≥85–90% commitment to leave headroom for normal fluctuation.
+- **Concurrency cancellation on CI for PR pushes.** A new push to a PR
+  branch cancels the prior in-progress CI run. Pushes to `main` are
+  unaffected (no cancellation — the merge-history gate stays solid).
+  Same pattern added to the docs build (PR builds cancel; pages deploys
+  still serialize via the original `pages` group).
+- **PR auto-labeling.** `.github/workflows/labeler.yml` +
+  `.github/labeler.yml` apply `area:*` labels to PRs based on changed
+  file paths. `kind:*` and `status:*` labels are still applied by
+  humans.
+- **Dependabot for GitHub Actions.** `.github/dependabot.yml` opens
+  weekly PRs that bump pinned action versions (`actions/checkout`,
+  `astral-sh/setup-uv`, `codecov/codecov-action`, `actions/labeler`).
+  Auto-labeled `area:infrastructure`. Pip/uv dependency bumps are NOT
+  enabled — the JAX/TFP resolver interaction means lockfile updates
+  must be intentional.
+
 ### Changed
+
+- **Pyright type checking (advisory).** A `typecheck (advisory)` CI job
+  runs [pyright](https://microsoft.github.io/pyright/) over the `probpipe`
+  package and reports type issues; it is **advisory for now** (does not
+  gate merges) while the type-debt baseline — largely JAX/TFP
+  untyped-attribute noise — is burned down. Config lives in
+  `pyrightconfig.json` (`basic` mode, `reportMissingTypeStubs` off). Run
+  locally with `uv run --with 'pyright[nodejs]' pyright`. To enforce
+  later: drop the job's `continue-on-error` and tighten
+  `typeCheckingMode`. See [CONTRIBUTING.md](CONTRIBUTING.md#type-checking).
+
+- **Dev tooling: migrated to [uv](https://docs.astral.sh/uv/) for
+  environment + dependency management.** `uv.lock` is committed and used
+  by CI (`uv sync --frozen`), making the install reproducible and lifting
+  the duplicated inline jax/jaxlib/tfp-nightly pins out of the workflow
+  files. Local dev: `uv sync --extra dev --extra nutpie [--extra pymc]`,
+  then `uv run pytest`. The pip path (`pip install -e ".[dev]"`) still
+  works for contributors with an existing pip setup. See
+  [CONTRIBUTING.md](CONTRIBUTING.md#installation).
+
+- **Ruff linting + pre-commit hooks.** A `lint (advisory)` CI job runs
+  `ruff check` and annotates PRs with violations; it is **advisory for
+  now** (does not gate merges) while the pre-existing lint backlog is
+  burned down and large refactors are in flight. A new
+  `.pre-commit-config.yaml` (install with `uvx pre-commit install`) runs
+  ruff plus file-hygiene hooks on staged files. The ruff config gains
+  ignores for ambiguous-unicode rules (`RUF001/2/3` — false positives on
+  mathematical notation) and per-file ignores for notebook
+  import/semicolon idioms (`E402`/`E702`). `ruff format` is intentionally
+  not adopted; its style conflicts with the documented formatting
+  conventions. See [CONTRIBUTING.md](CONTRIBUTING.md#linting--pre-commit).
+
+- **`pymc_nuts` reclaims multi-core sampling.** The method previously
+  forced `cores=1` to avoid an `os.fork()` deadlock against JAX's worker
+  threads. It now samples one worker per chain (capped at the CPU count,
+  overridable via a `cores=` kwarg) using the **`spawn`** multiprocessing
+  start method — clean worker processes with no inherited threads, so it
+  is deadlock-free on every platform (POSIX `fork`, the deadlock-prone
+  default on Linux, is never used). Empirically `cores=2` spawn is no
+  slower than the old single-core path; a new test exercises the
+  multi-core path after spinning up JAX's threads to reproduce the
+  hazard.
 
 - **Ecosystem cutover to arviz 1.x and pymc 6 (breaking).** The core
   `arviz` pin moves `>=0.13,<1.0` → `>=1.1,<2.0`, **dropping arviz 0.x
@@ -22,8 +143,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aux.children`). `[pymc]` additionally requires `matplotlib` (the
   pymc 6 sampler progress bar imports it). Internal pymc-6 fix:
   `pm.sample_prior_predictive(samples=)` → `draws=` (the `samples=`
-  kwarg was dropped in pymc 6); `pymc_nuts` keeps `cores=1` pending a
-  dedicated fork-safety review (the multicore reclaim is deferred). The
+  kwarg was dropped in pymc 6). The
   ArviZ 1.0 defaults — credible interval 0.94 → 0.89 and HDI → ETI —
   are adopted as-is: no affected statistic is called in ProbPipe
   source, so no `rcParams` pin is needed, and a frozen-fixture suite
@@ -141,6 +261,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`WorkflowFunction.workflow_kind` and `Module.workflow_kind` now require
+  `WorkflowKind` enum members.** String aliases such as `"task"` / `"flow"`
+  and `None` are no longer accepted and now raise `TypeError`; use
+  `WorkflowKind.TASK`, `WorkflowKind.FLOW`, or `WorkflowKind.OFF` explicitly.
+  The old `parallel=` / `vectorize=` keyword guard on `WorkflowFunction` was
+  also removed, so those names are no longer specially reserved by the
+  constructor.
 - **`tfp_rwmh` removed.** The hand-rolled Python-loop RWMH that sat
   behind ``method="tfp_rwmh"`` is gone; ``blackjax_rwmh`` is the only
   RWMH backend. Callers must rename ``method="tfp_rwmh"`` →
@@ -627,8 +754,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Or via the new `PROBPIPE_WORKFLOW_KIND` environment variable
   (`off` / `task` / `flow` / `default`, case-insensitive), which is
-  read once at import time. Per-call overrides via
-  `@workflow_function(workflow_kind="task")` are unchanged.
+  read once at import time. Per-workflow overrides remain available via
+  `@workflow_function(workflow_kind=probpipe.WorkflowKind.TASK)`; string
+  aliases are no longer accepted in this release (see the
+  `workflow_kind` breaking entry above).
   Migration: production callers that relied on the implicit
   "Prefect importable → tasks enabled" path must add the one-line
   assignment or env var above.

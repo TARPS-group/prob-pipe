@@ -1,8 +1,8 @@
 """Tests for Prefect orchestration in WorkflowFunction.
 
 Exercises all Prefect dispatch paths:
-- workflow_kind="task" with sequential and JAX dispatch
-- workflow_kind="flow" with sequential and JAX dispatch
+- workflow_kind=WorkflowKind.TASK with sequential and JAX dispatch
+- workflow_kind=WorkflowKind.FLOW with sequential and JAX dispatch
 - Import guard when Prefect is unavailable
 - Provenance metadata includes orchestration info
 
@@ -16,7 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Normal
+from probpipe import Normal, WorkflowKind
 from probpipe.core.node import WorkflowFunction
 
 prefect_testing = pytest.importorskip("prefect.testing.utilities")
@@ -65,7 +65,7 @@ def sum_xy(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# workflow_kind="task" with sequential dispatch
+# workflow_kind=WorkflowKind.TASK with sequential dispatch
 # ---------------------------------------------------------------------------
 
 class TestPrefectTaskRowWise:
@@ -74,7 +74,7 @@ class TestPrefectTaskRowWise:
     def test_returns_empirical_distribution(self, normal_dist):
         wf = WorkflowFunction(
             func=add_one,
-            workflow_kind="task",
+            workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=30,
             seed=0,
@@ -86,7 +86,7 @@ class TestPrefectTaskRowWise:
     def test_output_values_correct(self, normal_dist):
         wf = WorkflowFunction(
             func=add_one,
-            workflow_kind="task",
+            workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=200,
             seed=1,
@@ -100,7 +100,7 @@ class TestPrefectTaskRowWise:
     def test_multiple_broadcast_args(self, normal_dist):
         wf = WorkflowFunction(
             func=sum_xy,
-            workflow_kind="task",
+            workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=30,
             seed=2,
@@ -112,7 +112,7 @@ class TestPrefectTaskRowWise:
 
 
 # ---------------------------------------------------------------------------
-# workflow_kind="flow" with sequential dispatch
+# workflow_kind=WorkflowKind.FLOW with sequential dispatch
 # ---------------------------------------------------------------------------
 
 class TestPrefectFlowRowWise:
@@ -121,7 +121,7 @@ class TestPrefectFlowRowWise:
     def test_returns_empirical_distribution(self, normal_dist):
         wf = WorkflowFunction(
             func=double_it,
-            workflow_kind="flow",
+            workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
             n_broadcast_samples=25,
             seed=10,
@@ -133,7 +133,7 @@ class TestPrefectFlowRowWise:
     def test_output_values_correct(self, normal_dist):
         wf = WorkflowFunction(
             func=double_it,
-            workflow_kind="flow",
+            workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
             n_broadcast_samples=200,
             seed=11,
@@ -146,16 +146,16 @@ class TestPrefectFlowRowWise:
 
 
 # ---------------------------------------------------------------------------
-# workflow_kind="task" with JAX dispatch
+# workflow_kind=WorkflowKind.TASK with JAX dispatch
 # ---------------------------------------------------------------------------
 
 class TestPrefectTaskJax:
-    """Exercises Prefect-wrapped jax.vmap path in _broadcast_jax."""
+    """Exercises the Prefect-wrapped distribution-broadcast JAX path."""
 
     def test_returns_empirical_distribution(self, normal_dist):
         wf = WorkflowFunction(
             func=add_one,
-            workflow_kind="task",
+            workflow_kind=WorkflowKind.TASK,
             dispatch="jax",
             n_broadcast_samples=30,
             seed=20,
@@ -167,7 +167,7 @@ class TestPrefectTaskJax:
     def test_output_values_correct(self, normal_dist):
         wf = WorkflowFunction(
             func=add_one,
-            workflow_kind="task",
+            workflow_kind=WorkflowKind.TASK,
             dispatch="jax",
             n_broadcast_samples=200,
             seed=21,
@@ -179,7 +179,7 @@ class TestPrefectTaskJax:
 
 
 # ---------------------------------------------------------------------------
-# workflow_kind="flow" with JAX dispatch
+# workflow_kind=WorkflowKind.FLOW with JAX dispatch
 # ---------------------------------------------------------------------------
 
 class TestPrefectFlowJax:
@@ -188,7 +188,7 @@ class TestPrefectFlowJax:
     def test_returns_empirical_distribution(self, normal_dist):
         wf = WorkflowFunction(
             func=double_it,
-            workflow_kind="flow",
+            workflow_kind=WorkflowKind.FLOW,
             dispatch="jax",
             n_broadcast_samples=25,
             seed=30,
@@ -200,7 +200,7 @@ class TestPrefectFlowJax:
     def test_output_values_correct(self, normal_dist):
         wf = WorkflowFunction(
             func=double_it,
-            workflow_kind="flow",
+            workflow_kind=WorkflowKind.FLOW,
             dispatch="jax",
             n_broadcast_samples=200,
             seed=31,
@@ -221,7 +221,7 @@ class TestPrefectProvenance:
     def test_task_provenance(self, normal_dist):
         wf = WorkflowFunction(
             func=add_one,
-            workflow_kind="task",
+            workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=20,
             seed=40,
@@ -235,7 +235,7 @@ class TestPrefectProvenance:
     def test_flow_provenance(self, normal_dist):
         wf = WorkflowFunction(
             func=add_one,
-            workflow_kind="flow",
+            workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
             n_broadcast_samples=20,
             seed=41,
@@ -247,7 +247,7 @@ class TestPrefectProvenance:
     def test_no_orchestration_provenance(self, normal_dist):
         wf = WorkflowFunction(
             func=add_one,
-            workflow_kind=None,
+            workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
             n_broadcast_samples=20,
             seed=42,
@@ -267,7 +267,7 @@ class TestPrefectNonBroadcast:
     def test_task_no_broadcast(self):
         wf = WorkflowFunction(
             func=add_one,
-            workflow_kind="task",
+            workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             seed=50,
         )
@@ -278,7 +278,7 @@ class TestPrefectNonBroadcast:
     def test_flow_no_broadcast(self):
         wf = WorkflowFunction(
             func=double_it,
-            workflow_kind="flow",
+            workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
             seed=51,
         )
@@ -300,7 +300,7 @@ class TestPrefectImportGuard:
 
         wf = WorkflowFunction(
             func=add_one,
-            workflow_kind="task",
+            workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=10,
             seed=60,
@@ -316,7 +316,7 @@ class TestPrefectImportGuard:
 
         wf = WorkflowFunction(
             func=add_one,
-            workflow_kind="flow",
+            workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
             n_broadcast_samples=10,
             seed=61,
@@ -332,7 +332,7 @@ class TestPrefectImportGuard:
 
         wf = WorkflowFunction(
             func=add_one,
-            workflow_kind="task",
+            workflow_kind=WorkflowKind.TASK,
             dispatch="jax",
             n_broadcast_samples=10,
             seed=62,

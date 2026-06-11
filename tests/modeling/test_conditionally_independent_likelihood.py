@@ -19,7 +19,7 @@ from probpipe import (
     Likelihood,
     Record,
 )
-from probpipe.modeling._likelihood import _default_per_datum_log_likelihood
+from probpipe.core.protocols import _default_per_datum_log_likelihood
 
 
 # -- Protocol structure --------------------------------------------------------

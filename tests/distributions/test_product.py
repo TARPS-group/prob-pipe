@@ -181,6 +181,33 @@ class TestProductDistribution:
         assert set(items.keys()) == {"x", "y"}
         assert all(isinstance(v, _RecordDistributionView) for v in items.values())
 
+    def test_supports_per_field(self):
+        """``supports`` maps each field to its component's support constraint
+        (heterogeneous constraints preserved per field)."""
+        joint = ProductDistribution(Gamma(2.0, 1.0, name="g"),
+                                    Normal(loc=0.0, scale=1.0, name="x"))
+        sup = joint.supports
+        assert set(sup.keys()) == {"g", "x"}
+        assert sup["g"] == joint.components["g"].support
+        assert sup["x"] == joint.components["x"].support
+        assert sup["g"] != sup["x"]  # positive vs real
+
+    def test_supports_nested_components(self):
+        """``supports`` walks nested dict components recursively (two levels
+        here), keying leaves by slash-delimited paths -- the same keying as
+        ``leaf_shapes`` -- so every value is a leaf Constraint."""
+        joint = ProductDistribution(
+            name="joint",
+            outer={"a": Normal(loc=0.0, scale=1.0, name="a"),
+                   "deep": {"g": Gamma(2.0, 1.0, name="g")}},
+            m=Normal(loc=0.0, scale=1.0, name="m"),
+        )
+        sup = joint.supports
+        assert set(sup.keys()) == set(joint.record_template.leaf_shapes.keys())
+        assert "outer/deep/g" in sup
+        assert sup["outer/deep/g"] != sup["outer/a"]  # positive vs real
+        assert sup["outer/a"] == sup["m"]             # both real
+
 
 # ===========================================================================
 # 2. TestFlattenUnflatten
