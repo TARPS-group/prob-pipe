@@ -51,11 +51,6 @@ def _default_per_datum_log_likelihood(
     return likelihood.log_likelihood(params, batch)
 
 
-# ``GenerativeLikelihood`` now lives in ``core.protocols`` (a pure structural
-# protocol with no modeling dependency, so the inference/ layer can import it
-# without a cycle). Re-exported above for backward compatibility.
-
-
 # ---------------------------------------------------------------------------
 # _ConditioningStep — private WorkflowFunction for IncrementalConditioner
 # ---------------------------------------------------------------------------

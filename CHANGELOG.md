@@ -36,14 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Training seeds keras for reproducibility but snapshots and restores the
     caller's global NumPy / Python RNG state, so a call does not perturb
     unrelated random streams.
-
-- **`ProductDistribution.supports`** — per-field support constraints (each
-  component's `support`), implementing the canonical `RecordDistribution`
-  accessor that previously raised `NotImplementedError`.
   - The `[bayesflow]` extra is **Python 3.12–3.13 only** (BayesFlow 2.x caps
     `<3.14`); keras runs on the JAX backend (`KERAS_BACKEND=jax`) — no
     TensorFlow or PyTorch. The backend is imported lazily, so `import
     probpipe` does not load keras.
+
+- **`ProductDistribution.supports`** — per-field support constraints (each
+  component's `support`), implementing the canonical `RecordDistribution`
+  accessor that previously raised `NotImplementedError`.
 
 ### Changed
 

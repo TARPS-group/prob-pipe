@@ -71,6 +71,20 @@ when choosing a number for a new method are documented under
     options:
       show_root_heading: true
 
+## Amortized SBI
+
+Simulation-based inference with a trained amortized estimator (requires the
+`[bayesflow]` extra; Python 3.12–3.13 only). `learn_amortized_posterior`
+trains an NPE / FMPE / CMPE network from a prior and a `GenerativeLikelihood`
+simulator; the returned `BayesFlowPosterior` implements `SupportsConditioning`,
+so `condition_on(model, observed)` draws from `p(theta | observed)` in a
+single forward pass — the same trained instance conditions on any observation
+with no retraining.
+
+::: probpipe.learn_amortized_posterior
+
+::: probpipe.BayesFlowPosterior
+
 ## Iterative transformations
 
 Step functions folded over inputs by `iterate`, with `with_conversion` and

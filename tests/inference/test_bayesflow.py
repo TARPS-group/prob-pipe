@@ -493,6 +493,22 @@ class TestBayesFlowMethods:
         assert np.isfinite(r).all()
         assert (r > 0).all()        # forward bijector (Exp) keeps every draw in support
 
+    def test_interval_prior_draws_respect_support(self):
+        """A bounded-interval prior field (Beta, unit-interval support) rounds
+        through the Sigmoid bijector: trained unconstrained, every posterior
+        draw lands strictly inside (0, 1)."""
+        import probpipe as pp
+        prior = ProductDistribution(pp.Beta(2.0, 2.0, name="q"),
+                                    Normal(loc=0.0, scale=1.0, name="m"))
+        model = learn_amortized_posterior(
+            prior, _ConjugateGaussianLikelihood(), method="npe",
+            num_simulations=800, epochs=2, batch_size=256,
+            num_results=300, random_seed=0, verbose=0,
+        )
+        q = np.asarray(condition_on(model, jnp.array([0.5, 0.0])).draws()["q"]).reshape(-1)
+        assert np.isfinite(q).all()
+        assert ((q > 0) & (q < 1)).all()   # Sigmoid forward keeps draws in (0, 1)
+
     def test_wishart_matrix_prior_round_trip(self):
         """A matrix-valued constrained field (Wishart, positive-definite support)
         round-trips: the inverse bijector runs at the field's native (n, n) event

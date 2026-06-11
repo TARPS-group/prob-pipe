@@ -518,6 +518,9 @@ inference/    (imports core/, custom_types)
 >
 > - `inference/` → `modeling/` (lazy imports for model-type dispatch in
 >   `_tfp_mcmc`, `_nutpie`, `_cmdstan_method`, `_pymc_method`)
+> - `inference/` → `distributions/` (lazy imports: prior-type dispatch on
+>   distribution classes in `_blackjax_ess`, `bijector_for` constraint
+>   reparameterization in `_bayesflow`)
 >
 > These use lazy (in-function) imports to avoid circular imports at
 > module load time.  Do not add new reverse edges without discussion.

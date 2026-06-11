@@ -138,7 +138,15 @@ def _field_bijectors(prior: Distribution, fields: tuple[str, ...]) -> dict[str, 
     try:
         supports = prior.supports
     except NotImplementedError:
-        # RecordDistributions without per-field supports: spread the single support.
+        if len(fields) > 1:
+            # Spreading one support across heterogeneous fields would silently pick
+            # the wrong bijector; demand the per-field accessor instead.
+            raise TypeError(
+                f"{type(prior).__name__} has {len(fields)} fields but does not "
+                "implement per-field `supports`; cannot infer per-field constraints "
+                "from the single `support`. Implement `supports` on the prior."
+            ) from None
+        # Single-field priors: the whole-distribution support is the field's support.
         supports = {f: prior.support for f in fields}
     bijectors: dict[str, Any] = {}
     for f in fields:
@@ -226,9 +234,12 @@ class BayesFlowPosterior(Distribution, SupportsConditioning):
     ``condition_on(model, observed)`` draws from ``p(theta | observed)`` in one
     forward pass through the trained network.  Because the estimator is
     amortized, the same instance conditions on any observation with no
-    retraining.  The amortized path honours ``num_results`` and (best-effort)
-    ``random_seed``; ``num_warmup`` / ``num_chains`` do not apply (a forward
-    pass yields a single draw block).
+    retraining.  The network samples in unconstrained space; draws are mapped
+    back to each field's support via the per-field forward bijectors recorded
+    at training time (identity for real-valued fields).  The amortized path
+    honours ``num_results`` (a positive integer) and ``random_seed``;
+    ``num_warmup`` / ``num_chains`` do not apply (a forward pass yields a
+    single draw block).
     """
 
     def __init__(
@@ -412,8 +423,9 @@ def learn_amortized_posterior(
         key, or a prior field's support admits no smooth bijector to ``R^d`` (e.g. a
         discrete prior).
     TypeError
-        If ``simulator`` lacks ``generate_data``, or ``prior`` is not a
-        ``RecordDistribution`` (has no ``record_template``).
+        If ``simulator`` lacks ``generate_data``, ``prior`` is not a
+        ``RecordDistribution`` (has no ``record_template``), or a multi-field
+        prior implements no per-field ``supports`` accessor.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """
