@@ -30,6 +30,12 @@ jobs:
         with:
           enable-cache: true
 
+      # Blocking: validates .pre-commit-config.yaml structure (all hooks, not
+      # just ruff) so a corrupted config can't slip through while the ruff
+      # check itself stays advisory. Cheap — it does not run any hook.
+      - name: Validate pre-commit config
+        run: uvx pre-commit validate-config
+
       - name: Resolve ruff version from .pre-commit-config.yaml
         id: ruffver
         run: |

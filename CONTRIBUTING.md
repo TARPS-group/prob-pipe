@@ -185,7 +185,7 @@ files at commit time. The hooks see only the files you're changing, so the
 codebase cleans up file-by-file rather than in one sweep. To run manually:
 
 ```bash
-uvx ruff check .            # lint the whole tree
+uv run ruff check .              # lint the whole tree (uses the uv.lock-pinned ruff)
 uvx pre-commit run --all-files   # run every hook over everything
 ```
 
