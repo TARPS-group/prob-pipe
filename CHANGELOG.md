@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Python 3.14 to the CI test matrix.** The matrix is now
+  `[3.12, 3.13, 3.14]`. `requires-python = ">=3.12"` is unchanged.
+- **Coverage floor enforced at 88%** on the full-suite CI run
+  (`--cov-fail-under=88`). The changed-files-only PR path and local
+  single-file runs are exempt (`--cov-fail-under=0`), since a global floor
+  is only meaningful when the whole suite executes. Current measured
+  coverage on `main` is ~91%; the floor is set conservatively within the
+  beta plan's ≥85–90% commitment to leave headroom for normal fluctuation.
+- **Concurrency cancellation on CI for PR pushes.** A new push to a PR
+  branch cancels the prior in-progress CI run. Pushes to `main` are
+  unaffected (no cancellation — the merge-history gate stays solid).
+  Same pattern added to the docs build (PR builds cancel; pages deploys
+  still serialize via the original `pages` group).
+- **PR auto-labeling.** `.github/workflows/labeler.yml` +
+  `.github/labeler.yml` apply `area:*` labels to PRs based on changed
+  file paths. `kind:*` and `status:*` labels are still applied by
+  humans.
+- **Dependabot for GitHub Actions.** `.github/dependabot.yml` opens
+  weekly PRs that bump pinned action versions (`actions/checkout`,
+  `astral-sh/setup-uv`, `codecov/codecov-action`, `actions/labeler`).
+  Auto-labeled `area:infrastructure`. Pip/uv dependency bumps are NOT
+  enabled — the JAX/TFP resolver interaction means lockfile updates
+  must be intentional.
+
 ### Changed
 
 - **Pyright type checking (advisory).** A `typecheck (advisory)` CI job

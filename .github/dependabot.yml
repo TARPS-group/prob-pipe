@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # GitHub Actions only — keeps actions/checkout, astral-sh/setup-uv,
+  # codecov/codecov-action, actions/labeler, etc. current as upstream
+  # releases. Deliberately NOT enabled for pip/uv: the dependency tree is
+  # tightly pinned (jax/tfp-nightly resolver interaction), and lockfile
+  # updates need to be intentional, not auto-PRed.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    # Batch all action bumps into a single weekly PR rather than one per action.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    labels:
+      - "area:infrastructure"
+    commit-message:
+      prefix: "chore(infra)"
