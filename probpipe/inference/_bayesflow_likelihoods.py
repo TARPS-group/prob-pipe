@@ -41,12 +41,14 @@ from ._bayesflow_common import (
 )
 
 if TYPE_CHECKING:
+    from bayesflow.approximators import ContinuousApproximator, RatioApproximator
     from bayesflow.networks import InferenceNetwork
     from keras import Layer as KerasLayer
     from keras.optimizers import Optimizer as KerasOptimizer
 else:
     # Runtime aliases so the optional-dependency names in signatures stay
     # resolvable for get_type_hints consumers.
+    ContinuousApproximator = RatioApproximator = Any
     InferenceNetwork = KerasLayer = KerasOptimizer = Any
 
 
@@ -58,15 +60,31 @@ else:
 class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLikelihood):
     """Shared surface of the learned-likelihood wrappers.
 
-    Subclasses implement ``_row_scores(theta_rows, data_rows)`` -- the
-    jax-traceable per-row score (a log-density for NLE, a log-ratio for NRE).
-    Everything else is common: params/data coercion, the CIL sum over rows, and
-    the ``generate_data`` passthrough to the training simulator.
+    Subclasses implement :meth:`_row_scores` -- the jax-traceable per-row score
+    (a log-density for NLE, a log-ratio for NRE). Everything else is common:
+    coercing ``params``/``data`` to the row layout the trained network expects,
+    the conditionally-independent sum over rows, and the ``generate_data``
+    passthrough to the training simulator (so the wrapper can also drive
+    predictive checks).
+
+    Parameters
+    ----------
+    approximator : ContinuousApproximator or RatioApproximator
+        The trained BayesFlow approximator whose components the subclass's
+        ``_row_scores`` calls.
+    prior : Distribution
+        The prior the estimator was trained against; its ``event_size`` fixes
+        the expected ``theta`` width.
+    simulator : GenerativeLikelihood
+        The training simulator, kept for the ``generate_data`` passthrough.
+    data_dim : int
+        Flattened per-row observation width the network was trained on (fixed
+        by the simulator's per-draw output at training time).
     """
 
     def __init__(
         self,
-        approximator: Any,
+        approximator: ContinuousApproximator | RatioApproximator,
         prior: Distribution,
         simulator: GenerativeLikelihood,
         *,
@@ -89,12 +107,20 @@ class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLik
         return self._simulator
 
     @property
-    def approximator(self) -> Any:
+    def approximator(self) -> ContinuousApproximator | RatioApproximator:
         """The trained BayesFlow approximator (for direct/advanced use)."""
         return self._approximator
 
     def _theta_row(self, params: Any) -> Array:
-        """Coerce params (structured record or flat vector) to a ``(d_theta,)`` row."""
+        """Coerce ``params`` to a ``(d_theta,)`` row in canonical flat order.
+
+        Accepts the two shapes that reach a likelihood in practice -- the
+        structured per-draw record of predictive/checking paths (flattened via
+        its own canonical layout, which matches the training layout) and the
+        flat vector the gradient-MCMC log-density assembly passes -- plus plain
+        array-likes. Width is validated against the prior's ``event_size``
+        (static under jit: shapes are concrete at trace time).
+        """
         if hasattr(params, "flatten"):
             t = params.flatten()
         elif hasattr(params, "to_numeric"):
@@ -110,7 +136,12 @@ class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLik
         return t
 
     def _data_rows(self, data: ArrayLike | np.ndarray) -> Array:
-        """Coerce data to ``(n, d_y)`` rows of the trained observation width."""
+        """Coerce ``data`` to ``(n, d_y)`` rows of the trained observation width.
+
+        A single ``(d_y,)`` observation becomes one row; ``(n, d_y)`` passes
+        through; higher-rank inputs collapse to rows provided the trailing axis
+        is ``d_y`` (validated; static under jit).
+        """
         rows = jnp.atleast_2d(jnp.asarray(data))
         if rows.shape[-1] != self._data_dim:
             raise ValueError(
@@ -122,14 +153,20 @@ class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLik
         return rows.reshape(-1, self._data_dim)
 
     def log_likelihood(self, params: Any, data: ArrayLike | np.ndarray) -> Array:
-        """Sum of per-row scores over the dataset (conditionally independent rows)."""
+        """Joint score of ``data`` under ``params``: the sum of per-row scores.
+
+        The sum is the conditionally-independent joint (rows are iid given
+        ``theta``), evaluated in **one batched network call** -- ``theta`` is
+        tiled across rows rather than looped -- so a NUTS step costs a single
+        forward pass regardless of dataset size.
+        """
         rows = self._data_rows(data)
         theta = self._theta_row(params)
         theta_rows = jnp.tile(theta[None, :], (rows.shape[0], 1))
         return jnp.sum(self._row_scores(theta_rows, rows))
 
     def per_datum_log_likelihood(self, params: Any, datum: Any) -> Array:
-        """Score of a single observation row."""
+        """Score of a single ``(d_y,)`` observation row (scalar)."""
         theta = self._theta_row(params)
         row = jnp.reshape(jnp.asarray(datum), (1, -1))
         if row.shape[-1] != self._data_dim:
@@ -147,7 +184,10 @@ class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLik
 
     @abstractmethod
     def _row_scores(self, theta_rows: Array, data_rows: Array) -> Array:
-        """Jax-traceable per-row scores for ``(theta_rows, data_rows)`` of equal length."""
+        """Per-row scores for ``theta_rows`` ``(n, d_theta)`` against ``data_rows``
+        ``(n, d_y)``, returned as ``(n,)``. Must be jax-traceable and
+        reverse-mode differentiable in ``theta_rows`` -- this is the gradient-MCMC
+        hot path."""
 
 
 class BayesFlowLikelihood(_BayesFlowLikelihoodBase):
@@ -175,7 +215,7 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase):
 
     def __init__(
         self,
-        approximator: Any,
+        approximator: ContinuousApproximator,
         prior: Distribution,
         simulator: GenerativeLikelihood,
         *,
@@ -186,8 +226,15 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase):
         self._dequantized = dequantized
 
     def _row_scores(self, theta_rows: Array, data_rows: Array) -> Array:
+        # The public approximator.log_prob is host-bound at both edges (adapter
+        # numpy in, convert_to_numpy out), so this re-traces its math on-device:
+        # standardize both slots exactly as training did -- theta feeds the
+        # "inference_conditions" slot, y is the modeled "inference_variables" --
+        # then ask the flow for the density of standardized y. Adding the
+        # standardization log-det-jacobian converts that density back to the
+        # original y units, making the values equal to the public log_prob.
         if self._dequantized:
-            data_rows = data_rows + 0.5
+            data_rows = data_rows + 0.5   # midpoint of the trained cell [y, y+1)
         a = self._approximator
         conds = a.standardizer.maybe_standardize(
             theta_rows, key="inference_conditions", stage="inference")
@@ -223,6 +270,12 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase):
     """
 
     def _row_scores(self, theta_rows: Array, data_rows: Array) -> Array:
+        # NRE swaps the adapter roles relative to NLE: theta is the *classified*
+        # quantity ("inference_variables"), y the conditioning input
+        # ("inference_conditions"). The classifier head's logits converge to the
+        # log density ratio. No log-det-jacobian term here: standardization is
+        # the same fixed transform in the ratio's numerator and denominator, so
+        # its jacobian cancels -- the logits already live in original units.
         a = self._approximator
         thv = a.standardizer.maybe_standardize(
             theta_rows, key="inference_variables", stage="inference")
@@ -259,7 +312,7 @@ def _train_offline(
     optimizer: str | KerasOptimizer,
     fit_kwargs: dict[str, Any],
     dequantize: bool = False,
-) -> tuple[Any, int]:
+) -> tuple[ContinuousApproximator | RatioApproximator, int]:
     """Shared NLE/NRE training loop: validate, simulate, adapt, fit.
 
     ``theta_role`` is the adapter slot the (raw, constrained) theta fields feed
