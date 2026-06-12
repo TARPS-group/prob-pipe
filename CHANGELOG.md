@@ -39,6 +39,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Contributor conventions for comments, naming, tests, and PR hygiene.**
+  CONTRIBUTING.md gains "Code comments & docstrings" (no process narration,
+  no negative documentation, public docstrings describe behavior) and "Test
+  quality" (tightest reliable tolerances, structured cases, dispatch-path
+  equivalence) sections, a description-equals-final-state PR rule, and a
+  docs-ship-with-the-change rule. STYLE_GUIDE.md gains §1.12 "Naming
+  accuracy" (semantic accuracy, ecosystem alignment, symmetry, complete
+  rename sweeps). The `review-pr` skill now checks all of these and reads
+  the convention docs from the PR's base ref.
+
 - **BayesFlow amortized-SBI backend (`[bayesflow]` extra).** New
   `learn_amortized_posterior(prior, simulator, method="npe"|"fmpe"|"cmpe",
   ...)` trains a jax-native (keras-on-JAX) amortized neural posterior
