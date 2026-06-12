@@ -36,7 +36,7 @@ import xarray as xr
 from ..core.distribution import Distribution
 from ._datatree import _add_group
 
-__all__ = ["loo", "run_loo"]
+__all__ = ["add_loo"]
 
 
 # ---------------------------------------------------------------------
@@ -342,7 +342,7 @@ def _pointwise_dataarray(
 # ---------------------------------------------------------------------
 
 
-def loo(
+def add_loo(
     posterior: Distribution,
     *,
     log_likelihood: Any | None = None,
@@ -535,11 +535,3 @@ def loo(
     _add_group(posterior, "diagnostics/runs/loo", run_ds)
 
     return None
-
-
-def run_loo(*args, **kwargs) -> None:
-    """Alias for :func:`loo`.
-
-    Provided for users who prefer verb-style diagnostic names.
-    """
-    return loo(*args, **kwargs)

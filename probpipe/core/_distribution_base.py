@@ -118,46 +118,66 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
 
     @property
     def is_approximate(self) -> bool:
-        """Whether this distribution is an approximation (e.g., from sampling or MCMC)."""
+        """Whether this distribution is an approximation.
+
+        Approximate distributions are typically produced by sampling,
+        variational inference, MCMC, bootstrap procedures, or other numerical
+        approximations.
+        """
         return getattr(self, "_approximate", False)
 
     # -- auxiliary information ----------------------------------------------
 
     @property
     def auxiliary(self) -> DataTree | None:
-        """An xarray ``DataTree`` of auxiliary information, or ``None``.
+        """Auxiliary metadata attached to this distribution.
 
-        Populated by inference methods, validators, and diagnostic
-        functions. The tree may follow ArviZ group conventions
-        (``posterior``, ``sample_stats``, ``warmup``, etc.) and may also
-        contain ProbPipe-specific diagnostic summaries and metadata.
+        Returns an ``xarray.DataTree`` of auxiliary information, or ``None``
+        if no auxiliary information has been attached.
 
-        Typical structure::
+        ``_auxiliary`` is ProbPipe's general-purpose post-construction
+        metadata store. It may contain ArviZ-compatible inference data,
+        diagnostic summaries, validation results, provenance-like metadata,
+        or other append-only metadata produced after inference.
 
-            _auxiliary/
-            ├── arviz/        ← ArviZ-compatible inference data
+        The expected diagnostics-related layout is::
+
+            posterior._auxiliary
+            ├── arviz/          # ArviZ-compatible DataTree subtree
             │   ├── posterior
             │   ├── sample_stats
-            │   └── warmup
-            ├── diagnostics/  ← ProbPipe scalar summaries and run metadata
-            │   ├── mcmc      ← rhat, ess_bulk, ess_tail, mcse, ...
-            │   └── runs      ← on-demand diagnostics such as ppc, loo, ...
-            └── ...           ← other append-only diagnostic/metadata groups
+            │   ├── observed_data
+            │   ├── posterior_predictive
+            │   └── log_likelihood
+            └── diagnostics/    # ProbPipe diagnostic summaries and metadata
+                ├── mcmc        # rhat, ess_bulk, ess_tail, mcse, ...
+                └── runs        # on-demand diagnostics such as ppc, loo, spc
+                    ├── ppc
+                    ├── loo
+                    └── spc
 
-        ``diagnostics`` is a structured Python accessor over the
-        ``/diagnostics/`` subtree. ArviZ-compatible information should
-        remain available separately for functions that need to pass data
-        directly to ArviZ.
+        The ``/arviz/`` subtree is intended to be passed to ArviZ functions.
+        In ArviZ 1.0+, this is an ArviZ-compatible ``DataTree`` rather than
+        the older ``InferenceData`` representation.
 
-        **Documented exception to distribution immutability.** Unlike
-        parameter-like state on a :class:`Distribution`, ``_auxiliary`` is
-        designed to be mutated in place by validators, inference methods,
-        and diagnostic operations after construction. The alternative
-        would be returning a renamed clone for every diagnostic, which
-        would break the source/identity tracking downstream code depends
-        on. Treat this channel as append-only: new diagnostic operations
-        should write under their own named group and should not overwrite
-        or mutate parameter-like state.
+        The ``/diagnostics/`` subtree contains ProbPipe-owned scalar
+        summaries, warning metadata, and run metadata. It is exposed through
+        the structured ``posterior.diagnostics`` Python accessor.
+
+        Documented exception to distribution immutability
+        -------------------------------------------------
+        Unlike parameter-like state on a :class:`Distribution`, ``_auxiliary``
+        is designed to be mutated in place by inference backends, validators,
+        and diagnostic operations after construction.
+
+        Diagnostic functions such as ``add_mcmc_diagnostics`` and ``add_ppc``
+        write into ``_auxiliary`` and return ``None``. This preserves posterior
+        identity/source tracking while allowing diagnostics to annotate an
+        already-fitted posterior.
+
+        Treat this channel as append-only: new diagnostic operations should
+        write under their own named group and should not overwrite or mutate
+        parameter-like distribution state.
         """
         return getattr(self, "_auxiliary", None)
 
@@ -166,25 +186,67 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         """Structured view over diagnostic results stored in ``_auxiliary``.
 
         Returns ``None`` if no diagnostics have been computed yet.
-        Distinct from ``inference_data``: ``diagnostics`` is a structured
-        Python accessor over the ``/diagnostics/`` subtree only;
-        ``inference_data`` is the ArviZ DataTree passed directly to ArviZ
-        functions.
 
-        Example
-        -------
+        ProbPipe stores auxiliary posterior metadata in a general-purpose
+        ``xarray.DataTree`` attached to the distribution. The expected layout is::
+
+            posterior._auxiliary
+            ├── arviz/          # ArviZ-compatible DataTree subtree
+            └── diagnostics/    # ProbPipe diagnostic summaries and metadata
+
+        This property returns a structured Python accessor over the
+        ``/diagnostics/`` subtree only. It is distinct from the ArviZ-compatible
+        data used for plotting or ArviZ computations.
+
+        In other words::
+
+            posterior.diagnostics
+                # structured ProbPipe view over posterior._auxiliary["diagnostics"]
+
+            posterior.inference_data
+                # backward-compatible alias for the ArviZ-compatible DataTree
+                # subtree, typically posterior._auxiliary["arviz"]
+
+        Examples
+        --------
         ::
 
             posterior = condition_on(model, data)
-            mcmc_diagnostics(posterior)
 
-            posterior.diagnostics.rhat      # {"intercept": 1.001}
-            posterior.diagnostics.warnings  # []
-            posterior.diagnostics.runs      # []
+            # MCMC diagnostics mutate posterior._auxiliary in place and return None.
+            add_mcmc_diagnostics(posterior)
 
-            run_ppc(posterior, test_fns=[...], observed_data=y)
-            posterior.diagnostics.runs[0].result   # {"var_mean_ratio": {...}}
-            posterior.diagnostics.runs[0].plot_fn  # "az.plot_ppc"
+            posterior.diagnostics.rhat
+            # {"intercept": 1.001, "slope": 1.002}
+
+            posterior.diagnostics.warnings
+            # []
+
+            posterior.diagnostics.runs
+            # []
+
+            # Posterior predictive checks are stored under diagnostics/runs/ppc.
+            add_ppc(
+                posterior,
+                test_fns=[...],
+                observed_data=y,
+                generative_likelihood=lik,
+            )
+
+            posterior.diagnostics.ppc.result
+            # {"var_mean_ratio": {"p_value": 0.43, "observed": 3.2}}
+
+            posterior.diagnostics.runs[0].result
+            # {"p_value": {"var_mean_ratio": 0.43}, ...}
+
+            posterior.diagnostics.runs[0].plot_fn
+            # "az.plot_ppc"
+
+        Notes
+        -----
+        The diagnostics accessor is read-only. Diagnostic functions such as
+        ``add_mcmc_diagnostics`` and ``add_ppc`` are responsible for writing
+        diagnostic results into ``posterior._auxiliary``.
         """
         aux = self.auxiliary
         if aux is None:
@@ -192,17 +254,19 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         children = aux.children if hasattr(aux, "children") else {}
         if "diagnostics" not in children:
             return None
-        from ..diagnostics._datatree import DiagnosticsView
+        from ..diagnostics.views import DiagnosticsView
         return DiagnosticsView(aux["diagnostics"])
 
     # -- naming & provenance ------------------------------------------------
 
     @property
     def name(self) -> str:
+        """Name of this distribution."""
         return self._name
 
     @property
     def source(self) -> Provenance | None:
+        """Provenance describing how this distribution was created, if any."""
         return getattr(self, "_source", None)
 
     def with_source(self, source: Provenance) -> Distribution:

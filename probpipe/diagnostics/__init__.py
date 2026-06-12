@@ -1,74 +1,138 @@
 """Diagnostic functions for ProbPipe.
 
-MCMC diagnostics mutate posterior in place and return None::
+This package exposes diagnostic APIs for adding Bayesian diagnostics to
+ProbPipe posterior objects.
+
+Primary public API
+------------------
+
+In-place diagnostic functions mutate ``posterior._auxiliary`` and return
+``None``::
 
     from probpipe.diagnostics import (
-        mcmc_diagnostics,
-        compute_rhat,
-        compute_ess,
-        compute_mcse,
+        add_rhat,
+        add_ess,
+        add_mcse,
+        add_mcmc_diagnostics,
+        add_ppc,
+        add_spc,
+        loo,
+        run_loo,
     )
 
-Predictive checks mutate posterior in place and return None::
+These functions write diagnostic summaries under::
 
-    from probpipe.diagnostics import run_ppc, run_spc
+    posterior._auxiliary["diagnostics"]
 
-LOO-PSIS mutates posterior in place and returns None::
+and, when needed, ArviZ-compatible data under::
 
-    from probpipe.diagnostics import loo, run_loo
+    posterior._auxiliary["arviz"]
 
-Diagnostic accessors::
+Unified diagnostic workflow
+---------------------------
 
-    from probpipe.diagnostics import DiagnosticsView, DiagnosticRunView, NotComputed
+::
 
-ArviZ plots use posterior.inference_data directly::
+    from probpipe.diagnostics import DiagnosticsModule
+
+Diagnostic accessors
+--------------------
+
+``posterior.diagnostics`` returns a structured view over the diagnostics
+subtree. The accessor classes are available as::
+
+    from probpipe.diagnostics import (
+        DiagnosticsView,
+        DiagnosticRunView,
+        MCMCView,
+        PPCView,
+        LOOView,
+        NotComputed,
+    )
+
+ArviZ plotting
+--------------
+
+ArviZ-compatible data live under ``posterior._auxiliary["arviz"]``.
+For backward compatibility, ``posterior.inference_data`` may expose that
+ArviZ-compatible DataTree subtree::
 
     import arviz as az
+
     az.plot_trace(posterior.inference_data)
     az.plot_ppc(posterior.inference_data)
     az.plot_loo_pit(posterior.inference_data)
 """
 from __future__ import annotations
 
-from .diagnostics_workflow import DiagnosticsModule
+__all__: list[str] = []
 
-__all__ = ["DiagnosticsModule"]
 
-# ── MCMC diagnostics ──────────────────────────────────────────────────────
+# ── Unified diagnostics workflow ──────────────────────────────────────────
 try:
-    from ._mcmc import (
-        mcmc_diagnostics,
-        compute_rhat,
-        compute_ess,
-        compute_mcse,
-    )
+    from .diagnostics_workflow import DiagnosticsModule
 
     __all__ += [
-        "mcmc_diagnostics",
-        "compute_rhat",
-        "compute_ess",
-        "compute_mcse",
+        "DiagnosticsModule",
     ]
 except ImportError:
     pass
 
 
+# ── MCMC diagnostics ──────────────────────────────────────────────────────
+from ._mcmc import (
+    add_rhat,
+    add_ess,
+    add_mcse,
+    add_mcmc_diagnostics,
+)
+
+__all__ += [
+    "add_rhat",
+    "add_ess",
+    "add_mcse",
+    "add_mcmc_diagnostics",
+]
+
+
 # ── Predictive checks ────────────────────────────────────────────────────
-from ._ppc_spc import run_ppc, run_spc
+from ._ppc_spc import (
+    add_ppc,
+    add_spc,
+)
 
 __all__ += [
-    "run_ppc",
-    "run_spc",
+    "add_ppc",
+    "add_spc",
 ]
 
 
-# ── LOO-PSIS ─────────────────────────────────────────────────────────────
-from ._loo import loo, run_loo
+# # ── LOO-PSIS ─────────────────────────────────────────────────────────────
+# # LOO may be mid-refactor, so support both:
+# #   - loo_op + loo + run_loo
+# #   - loo + run_loo only
+# try:
+#     from ._loo import (
+#         loo_op,
+#         loo,
+#         run_loo,
+#     )
 
-__all__ += [
-    "loo",
-    "run_loo",
-]
+#     __all__ += [
+#         "loo_op",
+#         "loo",
+#         "run_loo",
+#     ]
+# except ImportError:
+#     from ._loo import (
+#         loo,
+#         run_loo,
+#     )
+
+#     __all__ += [
+#         "loo",
+#         "run_loo",
+#     ]
 
 
 # ── Sensitivity analysis ─────────────────────────────────────────────────
@@ -90,15 +154,33 @@ except ImportError:
     pass
 
 
-# ── Accessor classes ──────────────────────────────────────────────────────
-from ._datatree import (
-    DiagnosticsView,
-    DiagnosticRunView,
-    NotComputed,
-)
+# ── Diagnostic view classes ───────────────────────────────────────────────
+# Prefer the new public facade if present. Fall back to _datatree for
+# compatibility during the refactor.
+try:
+    from .views import (
+        DiagnosticsView,
+        DiagnosticRunView,
+        MCMCView,
+        PPCView,
+        LOOView,
+        NotComputed,
+    )
+except ImportError:
+    from ._datatree import (
+        DiagnosticsView,
+        DiagnosticRunView,
+        MCMCView,
+        PPCView,
+        LOOView,
+        NotComputed,
+    )
 
 __all__ += [
     "DiagnosticsView",
     "DiagnosticRunView",
+    "MCMCView",
+    "PPCView",
+    "LOOView",
     "NotComputed",
 ]

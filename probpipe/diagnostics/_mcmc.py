@@ -1,35 +1,33 @@
 """MCMC diagnostic functions for ProbPipe.
 
-All functions mutate ``posterior._auxiliary`` in place and return ``None``.
-They are plain Python — not ``@workflow_function`` — because diagnostics
-are side-effectful operations on an already-fitted posterior and do not
-belong in the probabilistic pipeline graph.
+This module has two layers:
 
-Usage::
+1. Private pure ops returning ``Record`` objects:
 
-    from probpipe.diagnostics import mcmc_diagnostics
+   - ``_compute_rhat_op``
+   - ``_compute_ess_op``
+   - ``_compute_mcse_op``
+   - ``_mcmc_diagnostics_op``
 
-    posterior = condition_on(model, data)
-    mcmc_diagnostics(posterior)
+   These compute diagnostics and return structured ``Record`` results.
+   They do not mutate ``posterior._auxiliary``. Not part of the public API.
 
-    posterior.diagnostics.rhat      # {"intercept": 1.001, "slope": 1.002}
-    posterior.diagnostics.warnings  # []
-    posterior.diagnostics.runs      # []
+2. In-place writer wrappers returning ``None``:
 
-Individual functions for targeted use::
+   - ``add_rhat``
+   - ``add_ess``
+   - ``add_mcse``
+   - ``add_mcmc_diagnostics``
 
-    from probpipe.diagnostics import compute_rhat, compute_ess, compute_mcse
+   These call the pure ops, write results into ``posterior._auxiliary``,
+   emit warnings, and return ``None``.
 
-    compute_rhat(posterior, method="split")
-    compute_ess(posterior)
-    compute_mcse(posterior)
+The in-place wrappers write MCMC summaries under::
 
-Provides:
+    _auxiliary/diagnostics/mcmc/
 
-- :func:`mcmc_diagnostics` -- convenience wrapper: rhat + ess + mcse
-- :func:`compute_rhat`     -- R-hat (rank-normalized by default)
-- :func:`compute_ess`      -- bulk and tail ESS
-- :func:`compute_mcse`     -- MCSE of mean and sd
+The pure ops are useful for the new DiagnosticsModule direction where
+diagnostics are pure operations returning ProbPipe ``Record`` objects.
 """
 from __future__ import annotations
 
@@ -37,81 +35,545 @@ import json
 import warnings
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
+from ..core.record import Record
+
 if TYPE_CHECKING:
     from ..inference._approximate_distribution import ApproximateDistribution
 
 __all__ = [
-    "mcmc_diagnostics",
-    "compute_rhat",
-    "compute_ess",
-    "compute_mcse",
+    # In-place wrappers
+    "add_rhat",
+    "add_ess",
+    "add_mcse",
+    "add_mcmc_diagnostics",
 ]
 
+
 _RHAT_THRESHOLD: float = 1.01
-_ESS_THRESHOLD:  int   = 400
+_ESS_THRESHOLD: int = 400
+
+
+# ---------------------------------------------------------------------------
+# ArviZ bridge fallback
+# ---------------------------------------------------------------------------
+
+
+try:
+    from ._arviz_bridge import (
+        arviz_rhat,
+        arviz_ess,
+        arviz_mcse,
+    )
+except ImportError:
+
+    def arviz_rhat(arviz_tree: Any, *, method: str = "rank") -> Any:
+        """Fallback ArviZ R-hat call.
+
+        Prefer using ``diagnostics._arviz_bridge`` when available.
+        """
+        _check_arviz()
+        import arviz as az
+
+        return az.rhat(arviz_tree, method=method)
+
+    def arviz_ess(arviz_tree: Any, *, method: str = "bulk") -> Any:
+        """Fallback ArviZ ESS call.
+
+        Prefer using ``diagnostics._arviz_bridge`` when available.
+        """
+        _check_arviz()
+        import arviz as az
+
+        return az.ess(arviz_tree, method=method)
+
+    def arviz_mcse(arviz_tree: Any, *, method: str = "mean") -> Any:
+        """Fallback ArviZ MCSE call.
+
+        Prefer using ``diagnostics._arviz_bridge`` when available.
+        """
+        _check_arviz()
+        import arviz as az
+
+        return az.mcse(arviz_tree, method=method)
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _check_arviz() -> None:
+    """Raise a helpful error if ArviZ is unavailable."""
     try:
         import arviz  # noqa: F401
-    except ImportError:
+    except ImportError as exc:
         raise ImportError(
             "ArviZ is required for MCMC diagnostics. "
             "Install with: pip install probpipe[diagnostics]"
-        )
-
-
-def _rhat_warnings(values: dict, threshold: float) -> list[str]:
-    from ._datatree import NotComputed
-    msgs = []
-    for param, val in values.items():
-        if isinstance(val, NotComputed):
-            continue
-        if float(val) > threshold:
-            msgs.append(
-                f"R-hat > {threshold} for '{param}' ({val:.4f}) -- "
-                f"chains may not have converged."
-            )
-    return msgs
-
-
-def _ess_warnings(bulk: dict, tail: dict, threshold: int) -> list[str]:
-    from ._datatree import NotComputed
-    msgs = []
-    for param, val in bulk.items():
-        if isinstance(val, NotComputed):
-            continue
-        if float(val) < threshold:
-            msgs.append(
-                f"Low ESS (bulk) for '{param}' ({val:.0f}) -- "
-                f"consider more iterations."
-            )
-    for param, val in tail.items():
-        if isinstance(val, NotComputed):
-            continue
-        if float(val) < threshold:
-            msgs.append(
-                f"Low ESS (tail) for '{param}' ({val:.0f}) -- "
-                f"tail estimates may be unreliable."
-            )
-    return msgs
+        ) from exc
 
 
 def _scalar_from_da(da: Any) -> float:
     """Robustly extract a Python float from an ArviZ diagnostic DataArray."""
-    import numpy as np
     return float(np.asarray(da, dtype=float).squeeze().item())
 
 
+def _rhat_warnings(values: dict[str, Any], threshold: float) -> list[str]:
+    """Generate R-hat warning messages."""
+    from ._datatree import NotComputed
+
+    msgs: list[str] = []
+
+    for param, val in values.items():
+        if isinstance(val, NotComputed):
+            continue
+
+        try:
+            numeric_val = float(val)
+        except Exception:
+            continue
+
+        if numeric_val > threshold:
+            msgs.append(
+                f"R-hat > {threshold} for '{param}' ({numeric_val:.4f}) -- "
+                f"chains may not have converged."
+            )
+
+    return msgs
+
+
+def _ess_warnings(
+    bulk: dict[str, Any],
+    tail: dict[str, Any],
+    threshold: int,
+) -> list[str]:
+    """Generate ESS warning messages."""
+    from ._datatree import NotComputed
+
+    msgs: list[str] = []
+
+    for param, val in bulk.items():
+        if isinstance(val, NotComputed):
+            continue
+
+        try:
+            numeric_val = float(val)
+        except Exception:
+            continue
+
+        if numeric_val < threshold:
+            msgs.append(
+                f"Low ESS (bulk) for '{param}' ({numeric_val:.0f}) -- "
+                f"consider more iterations."
+            )
+
+    for param, val in tail.items():
+        if isinstance(val, NotComputed):
+            continue
+
+        try:
+            numeric_val = float(val)
+        except Exception:
+            continue
+
+        if numeric_val < threshold:
+            msgs.append(
+                f"Low ESS (tail) for '{param}' ({numeric_val:.0f}) -- "
+                f"tail estimates may be unreliable."
+            )
+
+    return msgs
+
+
+def _emit_record_warnings(record: Record) -> None:
+    """Emit warnings stored in a diagnostic Record."""
+    try:
+        warnings_list = record["warnings"]
+    except Exception:
+        return
+
+    if warnings_list is None:
+        return
+
+    for msg in warnings_list:
+        warnings.warn(str(msg), stacklevel=3)
+
+
+def _json_warnings(warnings_list: list[str]) -> str:
+    """JSON-encode warnings for xarray attrs."""
+    return json.dumps(list(warnings_list))
+
+
+def _record_kind(record: Record) -> str:
+    """Return the diagnostic kind from a Record."""
+    try:
+        return str(record["kind"])
+    except Exception as exc:
+        raise ValueError("Diagnostic Record is missing required field 'kind'.") from exc
+
+
 # ---------------------------------------------------------------------------
-# compute_rhat
+# Private pure op: _compute_rhat_op
 # ---------------------------------------------------------------------------
 
-def compute_rhat(
+
+def _compute_rhat_op(
+    posterior: "ApproximateDistribution",
+    *,
+    method: str = "rank",
+    threshold: float = _RHAT_THRESHOLD,
+) -> Record:
+    """Pure R-hat diagnostic operation.
+
+    Computes R-hat and returns a ``Record``. Does not mutate
+    ``posterior._auxiliary`` and does not emit warnings.
+
+    Parameters
+    ----------
+    posterior : ApproximateDistribution
+        Fitted posterior.
+    method : str
+        ArviZ R-hat variant: ``"rank"`` by default.
+    threshold : float
+        Warning threshold.
+
+    Returns
+    -------
+    Record
+        Record with fields ``kind``, ``values``, ``warnings``, and ``attrs``.
+    """
+    from ._datatree import NotComputed, to_named_posterior_dataset
+
+    if getattr(posterior, "num_chains", 1) < 2:
+        values = {
+            field: NotComputed("R-hat requires at least 2 chains")
+            for field in getattr(posterior, "fields", ())
+        }
+        warns: list[str] = []
+
+        attrs = {
+            "rhat_method": method,
+            "rhat_threshold": threshold,
+            "rhat_warnings": _json_warnings(warns),
+        }
+
+        return Record(
+            name="rhat_diagnostic",
+            kind="rhat",
+            values=values,
+            warnings=warns,
+            attrs=attrs,
+        )
+
+    ds = to_named_posterior_dataset(posterior)
+    rhat_ds = arviz_rhat(ds, method=method)
+
+    values = {
+        param: _scalar_from_da(rhat_ds[param])
+        for param in rhat_ds.data_vars
+    }
+
+    warns = _rhat_warnings(values, threshold)
+
+    attrs = {
+        "rhat_method": method,
+        "rhat_threshold": threshold,
+        "rhat_warnings": _json_warnings(warns),
+    }
+
+    return Record(
+        name="rhat_diagnostic",
+        kind="rhat",
+        values=values,
+        warnings=warns,
+        attrs=attrs,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Private pure op: _compute_ess_op
+# ---------------------------------------------------------------------------
+
+
+def _compute_ess_op(
+    posterior: "ApproximateDistribution",
+    *,
+    threshold: int = _ESS_THRESHOLD,
+) -> Record:
+    """Pure ESS diagnostic operation.
+
+    Computes bulk ESS and tail ESS and returns a ``Record``. Does not mutate
+    ``posterior._auxiliary`` and does not emit warnings.
+
+    Parameters
+    ----------
+    posterior : ApproximateDistribution
+        Fitted posterior.
+    threshold : int
+        Warning threshold.
+
+    Returns
+    -------
+    Record
+        Record with fields ``kind``, ``bulk``, ``tail``, ``warnings``,
+        ``bulk_attrs``, and ``tail_attrs``.
+    """
+    from ._datatree import to_named_posterior_dataset
+
+    ds = to_named_posterior_dataset(posterior)
+
+    bulk_ds = arviz_ess(ds, method="bulk")
+    tail_ds = arviz_ess(ds, method="tail")
+
+    bulk = {
+        param: _scalar_from_da(bulk_ds[param])
+        for param in bulk_ds.data_vars
+    }
+
+    tail = {
+        param: _scalar_from_da(tail_ds[param])
+        for param in tail_ds.data_vars
+    }
+
+    warns = _ess_warnings(bulk, tail, threshold)
+
+    bulk_attrs = {
+        "ess_method": "bulk",
+        "ess_threshold": threshold,
+    }
+
+    tail_attrs = {
+        "ess_method": "tail",
+        "ess_threshold": threshold,
+        "ess_warnings": _json_warnings(warns),
+    }
+
+    return Record(
+        name="ess_diagnostic",
+        kind="ess",
+        bulk=bulk,
+        tail=tail,
+        warnings=warns,
+        bulk_attrs=bulk_attrs,
+        tail_attrs=tail_attrs,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Private pure op: _compute_mcse_op
+# ---------------------------------------------------------------------------
+
+
+def _compute_mcse_op(
+    posterior: "ApproximateDistribution",
+) -> Record:
+    """Pure MCSE diagnostic operation.
+
+    Computes MCSE of the mean and MCSE of the standard deviation and returns
+    a ``Record``. Does not mutate ``posterior._auxiliary``.
+
+    Parameters
+    ----------
+    posterior : ApproximateDistribution
+        Fitted posterior.
+
+    Returns
+    -------
+    Record
+        Record with fields ``kind``, ``mean``, ``sd``, ``warnings``,
+        ``mean_attrs``, and ``sd_attrs``.
+    """
+    from ._datatree import to_named_posterior_dataset
+
+    ds = to_named_posterior_dataset(posterior)
+
+    mean_ds = arviz_mcse(ds, method="mean")
+    sd_ds = arviz_mcse(ds, method="sd")
+
+    mean = {
+        param: _scalar_from_da(mean_ds[param])
+        for param in mean_ds.data_vars
+    }
+
+    sd = {
+        param: _scalar_from_da(sd_ds[param])
+        for param in sd_ds.data_vars
+    }
+
+    mean_attrs = {
+        "mcse_method": "mean",
+    }
+
+    sd_attrs = {
+        "mcse_method": "sd",
+    }
+
+    return Record(
+        name="mcse_diagnostic",
+        kind="mcse",
+        mean=mean,
+        sd=sd,
+        warnings=[],
+        mean_attrs=mean_attrs,
+        sd_attrs=sd_attrs,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Private pure op: _mcmc_diagnostics_op
+# ---------------------------------------------------------------------------
+
+
+def _mcmc_diagnostics_op(
+    posterior: "ApproximateDistribution",
+    *,
+    metrics: list[str] | None = None,
+    rhat_method: str = "rank",
+    rhat_threshold: float = _RHAT_THRESHOLD,
+    ess_threshold: int = _ESS_THRESHOLD,
+) -> Record:
+    """Pure MCMC diagnostics operation.
+
+    Computes requested MCMC diagnostics and returns one combined ``Record``.
+    Does not mutate ``posterior._auxiliary`` and does not emit warnings.
+
+    Parameters
+    ----------
+    posterior : ApproximateDistribution
+        Fitted posterior.
+    metrics : list of str or None
+        Subset to compute. ``None`` computes ``["rhat", "ess", "mcse"]``.
+    rhat_method : str
+        ArviZ R-hat method.
+    rhat_threshold : float
+        R-hat warning threshold.
+    ess_threshold : int
+        ESS warning threshold.
+
+    Returns
+    -------
+    Record
+        Combined MCMC diagnostic Record.
+    """
+    compute = set(metrics) if metrics is not None else {"rhat", "ess", "mcse"}
+
+    records: dict[str, Record] = {}
+    result: dict[str, Any] = {}
+    all_warnings: list[str] = []
+
+    if "rhat" in compute:
+        rec = _compute_rhat_op(
+            posterior,
+            method=rhat_method,
+            threshold=rhat_threshold,
+        )
+        records["rhat"] = rec
+        result["rhat"] = rec["values"]
+        all_warnings.extend(rec["warnings"])
+
+    if "ess" in compute:
+        rec = _compute_ess_op(
+            posterior,
+            threshold=ess_threshold,
+        )
+        records["ess"] = rec
+        result["ess_bulk"] = rec["bulk"]
+        result["ess_tail"] = rec["tail"]
+        all_warnings.extend(rec["warnings"])
+
+    if "mcse" in compute:
+        rec = _compute_mcse_op(posterior)
+        records["mcse"] = rec
+        result["mcse_mean"] = rec["mean"]
+        result["mcse_sd"] = rec["sd"]
+        all_warnings.extend(rec["warnings"])
+
+    return Record(
+        name="mcmc_diagnostic",
+        kind="mcmc",
+        records=records,
+        result=result,
+        warnings=all_warnings,
+        metrics=sorted(compute),
+        attrs={
+            "rhat_method": rhat_method,
+            "rhat_threshold": rhat_threshold,
+            "ess_threshold": ess_threshold,
+            "warnings": _json_warnings(all_warnings),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Writer helpers
+# ---------------------------------------------------------------------------
+
+
+def _write_mcmc_record(
+    posterior: "ApproximateDistribution",
+    record: Record,
+) -> None:
+    """Write an MCMC diagnostic Record into ``posterior._auxiliary``."""
+    from ._datatree import _write_mcmc_field
+
+    kind = _record_kind(record)
+
+    if kind == "rhat":
+        _write_mcmc_field(
+            posterior,
+            "rhat",
+            record["values"],
+            attrs=record["attrs"],
+        )
+        return None
+
+    if kind == "ess":
+        _write_mcmc_field(
+            posterior,
+            "ess_bulk",
+            record["bulk"],
+            attrs=record["bulk_attrs"],
+        )
+        _write_mcmc_field(
+            posterior,
+            "ess_tail",
+            record["tail"],
+            attrs=record["tail_attrs"],
+        )
+        return None
+
+    if kind == "mcse":
+        _write_mcmc_field(
+            posterior,
+            "mcse_mean",
+            record["mean"],
+            attrs=record["mean_attrs"],
+        )
+        _write_mcmc_field(
+            posterior,
+            "mcse_sd",
+            record["sd"],
+            attrs=record["sd_attrs"],
+        )
+        return None
+
+    if kind == "mcmc":
+        records = record["records"]
+        for child in records.values():
+            _write_mcmc_record(posterior, child)
+        return None
+
+    raise ValueError(f"Unknown MCMC diagnostic Record kind: {kind!r}")
+
+
+# ---------------------------------------------------------------------------
+# In-place wrapper: add_rhat
+# ---------------------------------------------------------------------------
+
+
+def add_rhat(
     posterior: "ApproximateDistribution",
     *,
     method: str = "rank",
@@ -120,63 +582,34 @@ def compute_rhat(
 ) -> None:
     """Compute R-hat and attach to ``_auxiliary/diagnostics/mcmc/``.
 
+    This is the in-place wrapper around :func:`_compute_rhat_op`.
+
     Skips computation if R-hat is already present unless ``force=True``.
     Emits a Python warning for any parameter with R-hat > ``threshold``.
-
-    Parameters
-    ----------
-    posterior : ApproximateDistribution
-        The fitted posterior. Mutated in place.
-    method : str
-        ArviZ R-hat variant: ``"rank"`` (default), ``"split"``,
-        or ``"folded"``.
-    threshold : float
-        Warning threshold. Default ``1.01``.
-    force : bool
-        Recompute even if R-hat is already stored. Default ``False``.
     """
-    from ._datatree import (
-        NotComputed, _mcmc_has_field, _write_mcmc_field,
-        to_named_posterior_dataset,
-    )
-    _check_arviz()
-    import arviz as az
+    from ._datatree import _mcmc_has_field
 
     if not force and _mcmc_has_field(posterior, "rhat"):
-        return
+        return None
 
-    if posterior.num_chains < 2:
-        values = {
-            f: NotComputed("R-hat requires at least 2 chains")
-            for f in posterior.fields
-        }
-        _write_mcmc_field(posterior, "rhat", values, attrs={
-            "rhat_method":    method,
-            "rhat_threshold": threshold,
-            "rhat_warnings":  json.dumps([]),
-        })
-        return
+    record = _compute_rhat_op(
+        posterior,
+        method=method,
+        threshold=threshold,
+    )
 
-    ds      = to_named_posterior_dataset(posterior)
-    rhat_ds = az.rhat(ds, method=method)
+    _emit_record_warnings(record)
+    _write_mcmc_record(posterior, record)
 
-    values = {p: _scalar_from_da(rhat_ds[p]) for p in rhat_ds.data_vars}
-    warns  = _rhat_warnings(values, threshold)
-    for w in warns:
-        warnings.warn(w, stacklevel=2)
-
-    _write_mcmc_field(posterior, "rhat", values, attrs={
-        "rhat_method":    method,
-        "rhat_threshold": threshold,
-        "rhat_warnings":  json.dumps(warns),
-    })
+    return None
 
 
 # ---------------------------------------------------------------------------
-# compute_ess
+# In-place wrapper: add_ess
 # ---------------------------------------------------------------------------
 
-def compute_ess(
+
+def add_ess(
     posterior: "ApproximateDistribution",
     *,
     threshold: int = _ESS_THRESHOLD,
@@ -184,91 +617,62 @@ def compute_ess(
 ) -> None:
     """Compute bulk and tail ESS and attach to ``_auxiliary/diagnostics/mcmc/``.
 
+    This is the in-place wrapper around :func:`_compute_ess_op`.
+
     Skips computation if ESS is already present unless ``force=True``.
     Emits Python warnings for parameters below ``threshold``.
-
-    Parameters
-    ----------
-    posterior : ApproximateDistribution
-        The fitted posterior. Mutated in place.
-    threshold : int
-        Warning threshold. Default ``400``.
-    force : bool
-        Recompute even if ESS is already stored. Default ``False``.
     """
-    from ._datatree import (
-        _mcmc_has_field, _write_mcmc_field,
-        to_named_posterior_dataset,
-    )
-    _check_arviz()
-    import arviz as az
+    from ._datatree import _mcmc_has_field
 
     if not force and _mcmc_has_field(posterior, "ess_bulk"):
-        return
+        return None
 
-    ds      = to_named_posterior_dataset(posterior)
-    bulk_ds = az.ess(ds, method="bulk")
-    tail_ds = az.ess(ds, method="tail")
+    record = _compute_ess_op(
+        posterior,
+        threshold=threshold,
+    )
 
-    bulk = {p: _scalar_from_da(bulk_ds[p]) for p in bulk_ds.data_vars}
-    tail = {p: _scalar_from_da(tail_ds[p]) for p in tail_ds.data_vars}
+    _emit_record_warnings(record)
+    _write_mcmc_record(posterior, record)
 
-    warns = _ess_warnings(bulk, tail, threshold)
-    for w in warns:
-        warnings.warn(w, stacklevel=2)
-
-    _write_mcmc_field(posterior, "ess_bulk", bulk)
-    _write_mcmc_field(posterior, "ess_tail", tail, attrs={
-        "ess_threshold": threshold,
-        "ess_warnings":  json.dumps(warns),
-    })
+    return None
 
 
 # ---------------------------------------------------------------------------
-# compute_mcse
+# In-place wrapper: add_mcse
 # ---------------------------------------------------------------------------
 
-def compute_mcse(
+
+def add_mcse(
     posterior: "ApproximateDistribution",
     *,
     force: bool = False,
 ) -> None:
-    """Compute MCSE (mean and sd) and attach to ``_auxiliary/diagnostics/mcmc/``.
+    """Compute MCSE and attach to ``_auxiliary/diagnostics/mcmc/``.
+
+    This is the in-place wrapper around :func:`_compute_mcse_op`.
 
     Skips computation if MCSE is already present unless ``force=True``.
-
-    Parameters
-    ----------
-    posterior : ApproximateDistribution
-        The fitted posterior. Mutated in place.
-    force : bool
-        Recompute even if MCSE is already stored. Default ``False``.
     """
-    from ._datatree import (
-        _mcmc_has_field, _write_mcmc_field,
-        to_named_posterior_dataset,
-    )
-    _check_arviz()
-    import arviz as az
+    from ._datatree import _mcmc_has_field
 
     if not force and _mcmc_has_field(posterior, "mcse_mean"):
-        return
+        return None
 
-    ds      = to_named_posterior_dataset(posterior)
-    mean_ds = az.mcse(ds, method="mean")
-    sd_ds   = az.mcse(ds, method="sd")
+    record = _compute_mcse_op(posterior)
 
-    _write_mcmc_field(posterior, "mcse_mean",
-                      {p: _scalar_from_da(mean_ds[p]) for p in mean_ds.data_vars})
-    _write_mcmc_field(posterior, "mcse_sd",
-                      {p: _scalar_from_da(sd_ds[p])   for p in sd_ds.data_vars})
+    _emit_record_warnings(record)
+    _write_mcmc_record(posterior, record)
+
+    return None
 
 
 # ---------------------------------------------------------------------------
-# mcmc_diagnostics
+# In-place wrapper: add_mcmc_diagnostics
 # ---------------------------------------------------------------------------
 
-def mcmc_diagnostics(
+
+def add_mcmc_diagnostics(
     posterior: "ApproximateDistribution",
     *,
     metrics: list[str] | None = None,
@@ -285,41 +689,39 @@ def mcmc_diagnostics(
     Parameters
     ----------
     posterior : ApproximateDistribution
-        The fitted posterior. Mutated in place -- no return value.
+        The fitted posterior. Mutated in place.
     metrics : list of str or None
         Subset to compute. ``None`` computes all: ``["rhat", "ess", "mcse"]``.
     rhat_method : str
-        ArviZ R-hat variant: ``"rank"`` (default), ``"split"``, ``"folded"``.
+        ArviZ R-hat variant: ``"rank"`` by default.
     rhat_threshold : float
-        R-hat warning threshold. Default ``1.01``.
+        R-hat warning threshold.
     ess_threshold : int
-        ESS warning threshold. Default ``400``.
+        ESS warning threshold.
     force : bool
-        Recompute even if metrics are already stored. Default ``False``.
-
-    Examples
-    --------
-    ::
-
-        posterior = condition_on(model, data)
-        mcmc_diagnostics(posterior)
-
-        posterior.diagnostics.rhat      # {"intercept": 1.001, "slope": 1.002}
-        posterior.diagnostics.ess_bulk  # {"intercept": 962.0, "slope": 944.0}
-        posterior.diagnostics.warnings  # []
-
-        # Custom subset
-        mcmc_diagnostics(posterior, metrics=["rhat"])
-
-        # Force recompute with different method
-        mcmc_diagnostics(posterior, rhat_method="split", force=True)
+        Recompute even if metrics are already stored.
     """
     compute = set(metrics) if metrics is not None else {"rhat", "ess", "mcse"}
 
     if "rhat" in compute:
-        compute_rhat(posterior, method=rhat_method,
-                     threshold=rhat_threshold, force=force)
+        add_rhat(
+            posterior,
+            method=rhat_method,
+            threshold=rhat_threshold,
+            force=force,
+        )
+
     if "ess" in compute:
-        compute_ess(posterior, threshold=ess_threshold, force=force)
+        add_ess(
+            posterior,
+            threshold=ess_threshold,
+            force=force,
+        )
+
     if "mcse" in compute:
-        compute_mcse(posterior, force=force)
+        add_mcse(
+            posterior,
+            force=force,
+        )
+
+    return None
