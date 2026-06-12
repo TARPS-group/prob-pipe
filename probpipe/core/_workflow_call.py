@@ -1,7 +1,7 @@
 """WorkflowFunction call-resolution helpers.
 
-This private module owns function signature metadata, call-time override
-extraction, argument binding, module/default resolution, and dependency
+This private module owns function signature metadata, workflow option
+resolution, argument binding, module/default resolution, and dependency
 validation. It deliberately knows nothing about distribution conversion,
 broadcast planning, execution, or result coercion.
 """
@@ -9,13 +9,10 @@ broadcast planning, execution, or result coercion.
 from __future__ import annotations
 
 import inspect
+import warnings
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any, get_type_hints
-
-RESERVED_WORKFLOW_CALL_NAMES = frozenset(
-    {"n_broadcast_samples", "seed", "include_inputs"}
-)
 
 
 @dataclass(frozen=True)
@@ -26,12 +23,25 @@ class WorkflowSignatureInfo:
     hints: Mapping[str, Any]
     param_names: tuple[str, ...]
     has_var_keyword: bool
-    reserved_names: frozenset[str]
+
+
+@dataclass(frozen=True)
+class WorkflowCallOptions:
+    """Optional call-time workflow controls outside user kwargs."""
+
+    n_broadcast_samples: int | None = None
+    include_inputs: bool | None = None
+    seed: int | None = None
+
+
+WORKFLOW_CALL_OPTION_NAMES = frozenset(
+    field.name for field in fields(WorkflowCallOptions)
+)
 
 
 @dataclass(frozen=True)
 class WorkflowCallOverrides:
-    """Reserved call-time settings consumed by ``WorkflowFunction``."""
+    """Resolved call-time workflow settings consumed by ``WorkflowFunction``."""
 
     n_broadcast_samples: int
     include_inputs: bool
@@ -48,8 +58,6 @@ class ResolvedWorkflowCall:
 
 def make_signature_info(
     func: Callable[..., Any],
-    *,
-    reserved_names: frozenset[str] = RESERVED_WORKFLOW_CALL_NAMES,
 ) -> WorkflowSignatureInfo:
     """Build reusable signature metadata for a wrapped function."""
     signature = inspect.signature(func)
@@ -64,23 +72,7 @@ def make_signature_info(
         hints=hints,
         param_names=param_names,
         has_var_keyword=has_var_keyword,
-        reserved_names=reserved_names,
     )
-
-
-def validate_reserved_parameter_names(
-    info: WorkflowSignatureInfo,
-    *,
-    workflow_name: str,
-) -> None:
-    """Raise if the wrapped function declares reserved workflow names."""
-    collision = info.reserved_names & set(info.param_names)
-    if collision:
-        raise ValueError(
-            f"Function '{workflow_name}' has parameter(s) {collision} which are "
-            f"reserved by WorkflowFunction for call-time overrides. Rename them in "
-            f"your function signature."
-        )
 
 
 def is_dependency_param(
@@ -97,6 +89,27 @@ def is_dependency_param(
         return False
 
 
+def _flatten_bound_inputs(
+    signature: inspect.Signature,
+    bound: inspect.BoundArguments,
+) -> dict[str, Any]:
+    """Flatten bound arguments into workflow input names.
+
+    ``**kwargs`` parameters are expanded into the returned input mapping.
+    """
+    inputs: dict[str, Any] = {}
+
+    for name, value in bound.arguments.items():
+        param = signature.parameters[name]
+
+        if param.kind == inspect.Parameter.VAR_KEYWORD:
+            inputs.update(value)
+        else:
+            inputs[name] = value
+
+    return inputs
+
+
 def bind_call_inputs(
     info: WorkflowSignatureInfo,
     args: tuple[Any, ...],
@@ -104,29 +117,51 @@ def bind_call_inputs(
     *,
     default_n_broadcast_samples: int,
     default_include_inputs: bool,
+    options: WorkflowCallOptions | None = None,
+    warn_legacy_overrides: bool = False,
 ) -> tuple[dict[str, Any], WorkflowCallOverrides]:
-    """Bind positional/keyword inputs and extract reserved overrides."""
+    """Bind user inputs and resolve workflow controls.
+
+    Legacy call-time controls are consumed from ``call_inputs`` only when
+    they cannot bind to the wrapped function. Explicit ``options`` are the
+    preferred control plane and take precedence.
+    """
     raw_inputs = dict(call_inputs)
-    n_broadcast_samples = raw_inputs.pop(
-        "n_broadcast_samples", default_n_broadcast_samples
+
+    legacy_options = _pop_legacy_workflow_options(
+        info,
+        raw_inputs,
+        warn=warn_legacy_overrides,
     )
-    include_inputs = raw_inputs.pop("include_inputs", default_include_inputs)
-    seed = raw_inputs.pop("seed", None)
+    explicit_options = options if options is not None else WorkflowCallOptions()
+
+    def resolve_option(name: str, default: Any = None) -> Any:
+        explicit_value = getattr(explicit_options, name)
+        if explicit_value is not None:
+            return explicit_value
+
+        legacy_value = getattr(legacy_options, name)
+        if legacy_value is not None:
+            return legacy_value
+
+        return default
+
+    overrides = WorkflowCallOverrides(
+        n_broadcast_samples=resolve_option(
+            "n_broadcast_samples",
+            default_n_broadcast_samples,
+        ),
+        include_inputs=resolve_option(
+            "include_inputs",
+            default_include_inputs,
+        ),
+        seed=resolve_option("seed"),
+    )
 
     bound = info.signature.bind_partial(*args, **raw_inputs)
-    bound_inputs: dict[str, Any] = {}
-    for name, value in bound.arguments.items():
-        param = info.signature.parameters[name]
-        if param.kind == inspect.Parameter.VAR_KEYWORD:
-            bound_inputs.update(value)
-        else:
-            bound_inputs[name] = value
+    bound_inputs = _flatten_bound_inputs(info.signature, bound)
 
-    return bound_inputs, WorkflowCallOverrides(
-        n_broadcast_samples=n_broadcast_samples,
-        include_inputs=include_inputs,
-        seed=seed,
-    )
+    return bound_inputs, overrides
 
 
 def resolve_workflow_values(
@@ -194,6 +229,8 @@ def resolve_workflow_call(
     workflow_name: str,
     default_n_broadcast_samples: int,
     default_include_inputs: bool,
+    options: WorkflowCallOptions | None = None,
+    warn_legacy_overrides: bool = False,
 ) -> ResolvedWorkflowCall:
     """Resolve one ``WorkflowFunction`` call into values plus overrides."""
     bound_inputs, overrides = bind_call_inputs(
@@ -202,6 +239,8 @@ def resolve_workflow_call(
         call_inputs,
         default_n_broadcast_samples=default_n_broadcast_samples,
         default_include_inputs=default_include_inputs,
+        options=options,
+        warn_legacy_overrides=warn_legacy_overrides,
     )
     values = resolve_workflow_values(
         info,
@@ -220,6 +259,40 @@ def _get_type_hints(func: Callable[..., Any]) -> dict[str, Any]:
         return get_type_hints(func)
     localns = {param.__name__: param for param in type_params}
     return get_type_hints(func, localns=localns)
+
+
+def _pop_legacy_workflow_options(
+    info: WorkflowSignatureInfo,
+    raw_inputs: dict[str, Any],
+    *,
+    warn: bool,
+) -> WorkflowCallOptions:
+    consumed: dict[str, Any] = {}
+    for name in WORKFLOW_CALL_OPTION_NAMES:
+        if name not in raw_inputs:
+            continue
+        if _can_bind_as_user_input(info, name):
+            continue
+        consumed[name] = raw_inputs.pop(name)
+
+    if consumed and warn:
+        names = ", ".join(sorted(consumed))
+        warnings.warn(
+            "Passing WorkflowFunction options as call kwargs is deprecated "
+            f"for {names}; use workflow.with_options(...)(...) instead.",
+            DeprecationWarning,
+            stacklevel=6,
+        )
+
+    return WorkflowCallOptions(
+        n_broadcast_samples=consumed.get("n_broadcast_samples"),
+        include_inputs=consumed.get("include_inputs"),
+        seed=consumed.get("seed"),
+    )
+
+
+def _can_bind_as_user_input(info: WorkflowSignatureInfo, name: str) -> bool:
+    return name in info.signature.parameters or info.has_var_keyword
 
 
 def _validate_required_values(
