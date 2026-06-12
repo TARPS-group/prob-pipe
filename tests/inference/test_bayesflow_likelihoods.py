@@ -186,6 +186,33 @@ class TestSurrogateContract:
         with pytest.raises(ValueError, match="trained on"):
             nle.log_likelihood(jnp.zeros(3), jnp.zeros(2))
 
+    def test_scalar_observations_accept_one_dimensional_dataset(self):
+        """d_y == 1: a 1-D array is n scalar observations, not one n-wide row
+        (the atleast_2d reading would reject every multi-row scalar dataset).
+        Tiny untuned training -- this checks shape semantics, not calibration."""
+
+        class _ScalarSim(Likelihood, GenerativeLikelihood):
+            def log_likelihood(self, params, data):
+                return jnp.array(0.0)
+
+            def generate_data(self, params, num_observations, *, key=None):
+                key = key if key is not None else jax.random.PRNGKey(0)
+                a = params.flatten()[0]
+                return a + 0.1 * jax.random.normal(key, (num_observations, 1))
+
+        lik = learn_amortized_ratio(_prior(), _ScalarSim(), num_simulations=256,
+                                    epochs=2, batch_size=64, random_seed=0,
+                                    verbose=0)
+        theta = jnp.array([0.3, -0.2])
+        y3 = jnp.array([0.1, 0.4, -0.3])
+        total = float(lik.log_likelihood(theta, y3))
+        per = sum(float(lik.per_datum_log_likelihood(theta, jnp.array([v])))
+                  for v in [0.1, 0.4, -0.3])
+        np.testing.assert_allclose(total, per, rtol=1e-5)
+        # A (n, 1) column is the same dataset.
+        np.testing.assert_allclose(
+            total, float(lik.log_likelihood(theta, y3[:, None])), rtol=1e-6)
+
 
 class TestConditioning:
     """End-to-end: SimpleModel(prior, learned) + condition_on -> NUTS, against
@@ -354,6 +381,22 @@ class TestValidation:
         )
         with pytest.raises(TypeError, match="nested"):
             learn_amortized_likelihood(nested, _SIM, num_simulations=8, epochs=1)
+
+    def test_dequantize_rejects_counts_at_float32_cell_limit(self):
+        """dequantize=True enforces the documented 2**23 bound on the simulated
+        observations (float32 spacing reaches 1.0 there, so the unit-cell
+        arithmetic would silently round away)."""
+
+        class _HugeCounts(Likelihood, GenerativeLikelihood):
+            def log_likelihood(self, params, data):
+                return jnp.array(0.0)
+
+            def generate_data(self, params, num_observations, *, key=None):
+                return jnp.full((num_observations, 2), 2.0**23)
+
+        with pytest.raises(ValueError, match=r"2\*\*23"):
+            learn_amortized_likelihood(_prior(), _HugeCounts(), num_simulations=8,
+                                       epochs=1, dequantize=True)
 
     def test_nle_rejects_one_dimensional_observations(self):
         """The default coupling flow cannot model 1-D densities; the error points

@@ -520,12 +520,18 @@ Built-in methods:
 | 0 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 | 0 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 
-**Amortized SBI bypasses the registry.** Trained amortized posterior estimators
-(`learn_amortized_posterior` → `BayesFlowPosterior`, the `[bayesflow]` extra)
+**Amortized SBI dispatches two ways.** Trained amortized posterior estimators
+(`learn_amortized_posterior` → `BayesFlowModel`, the `[bayesflow]` extra)
 implement `SupportsConditioning` directly, so `condition_on(model, observed)` is
 a single forward pass through the trained network. Because `condition_on` checks
 `SupportsConditioning` *before* the inference-method registry, these estimators
-short-circuit it and register no method.
+short-circuit it and register no method. The learned NLE/NRE likelihoods
+(`learn_amortized_likelihood` / `learn_amortized_ratio` → `BayesFlowLikelihood`
+/ `BayesFlowRatio`) take the opposite route: they are ordinary
+`ConditionallyIndependentLikelihood` components, so
+`SimpleModel(prior, learned)` + `condition_on` selects a sampler through the
+registry table above (typically `blackjax_nuts` — the learned scores are
+JAX-traceable) with no new registry entries.
 
 ### Converter priority system
 

@@ -138,11 +138,17 @@ class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLik
     def _data_rows(self, data: ArrayLike | np.ndarray) -> Array:
         """Coerce ``data`` to ``(n, d_y)`` rows of the trained observation width.
 
-        A single ``(d_y,)`` observation becomes one row; ``(n, d_y)`` passes
-        through; higher-rank inputs collapse to rows provided the trailing axis
-        is ``d_y`` (validated; static under jit).
+        A single ``(d_y,)`` observation becomes one row and ``(n, d_y)`` passes
+        through; for scalar observations (``d_y == 1``) a 1-D array is read as
+        ``n`` observations, not one ``n``-wide row. Higher-rank inputs collapse
+        to rows provided the trailing axis is ``d_y`` (validated; static under
+        jit).
         """
-        rows = jnp.atleast_2d(jnp.asarray(data))
+        rows = jnp.asarray(data)
+        if self._data_dim == 1 and rows.ndim == 1:
+            rows = rows[:, None]
+        else:
+            rows = jnp.atleast_2d(rows)
         if rows.shape[-1] != self._data_dim:
             raise ValueError(
                 f"data rows have {rows.shape[-1]} values but the estimator was "
@@ -345,6 +351,13 @@ def _train_offline(
             sim_backend=sim_backend, bijectors=None,   # raw theta: it is a net input
         )
         if dequantize:
+            if float(np.abs(y).max()) >= 2.0**23:
+                raise ValueError(
+                    "dequantize=True requires counts below 2**23: float32 "
+                    "spacing reaches 1.0 there, silently rounding away the "
+                    "jitter and the midpoint shift. Rescale the observations "
+                    "or use learn_amortized_ratio."
+                )
             y = np.asarray(jnp.asarray(y) + jax.random.uniform(k_jitter, y.shape),
                            dtype="float32")
         internal_keys = _adapter_field_keys(fields)
@@ -431,7 +444,8 @@ def learn_amortized_likelihood(
         2019 "Flow++", arXiv:1902.00275, section 3.1). Pass raw integers as
         data; do **not** pre-jitter or pre-shift. Counts must stay below
         ``2**23`` (~8.4e6): the pipeline is float32, whose spacing reaches 1.0
-        there, silently rounding away the jitter and the midpoint shift. For
+        there, silently rounding away the jitter and the midpoint shift
+        (enforced on the simulated training observations). For
         mixed discrete/continuous rows or when a learned density is not
         needed, prefer :func:`learn_amortized_ratio`, whose classifier
         consumes discrete observations natively (cf. MNLE, Boelts et al.,
@@ -455,7 +469,8 @@ def learn_amortized_likelihood(
         the simulated observations are one-dimensional with the default network
         (the coupling flow needs ``d_y >= 2``; use
         :func:`learn_amortized_ratio`, whose classifier has no minimum, or pass
-        a custom ``inference_network``).
+        a custom ``inference_network``); with ``dequantize=True``, also if the
+        simulated observations reach ``2**23``.
     TypeError
         If a count parameter is not an integer, ``simulator`` lacks
         ``generate_data``, or ``prior`` is not a flat ``RecordDistribution``.
