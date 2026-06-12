@@ -215,10 +215,11 @@ class BayesFlowModel(Distribution, SupportsConditioning):
         obs_flat = np.ravel(np.asarray(observed, dtype="float32"))
         if obs_flat.size != self._data_dim:
             raise ValueError(
-                f"observation has {obs_flat.size} values but the estimator was "
-                f"trained on observations of size {self._data_dim} (one simulated "
-                "dataset); pass a single observation of the simulator's output "
-                "shape, not a stacked multi-observation dataset."
+                f"observed data has {obs_flat.size} values but the estimator was "
+                f"trained to condition on size {self._data_dim} (the simulator's "
+                "per-draw output) -- the conditioning shape is fixed at training "
+                "time. Pass observed data of that shape; for datasets of other "
+                "sizes use learn_amortized_likelihood or learn_amortized_ratio."
             )
         out = self._approximator.sample(
             num_samples=num_results,
@@ -298,8 +299,9 @@ def learn_amortized_posterior(
         native per-draw sample -- a record whose fields are accessible by name
         (``params["a"]``), not a flattened vector.  It must be JAX-vmappable unless
         ``sim_backend="sequential"`` (see below). Training uses one simulated dataset
-        per ``theta``, so ``condition_on`` must be given a single observation of that
-        same flattened shape (not a stacked multi-observation dataset).
+        per ``theta``, fixing the conditioning shape: ``condition_on`` must be given
+        observed data of that same flattened size (datasets of any size are the
+        NLE/NRE learners' case).
     method : {"npe", "fmpe", "cmpe"}
         Amortized estimator: NPE (coupling flow), FMPE (flow matching), or CMPE
         (consistency model). NPE's coupling flow needs at least two *unconstrained*

@@ -9,9 +9,10 @@ existing BlackJAX/TFP NUTS machinery with no new samplers and no PyTorch.
 
 Both wrappers are :class:`~probpipe.ConditionallyIndependentLikelihood`: the
 estimator is trained on single ``(theta, y_i)`` pairs and a dataset's
-log-likelihood is the sum of per-row scores, so multi-observation datasets work
-natively. The networks condition on (NLE) or classify (NRE) the *raw constrained*
-``theta``, matching what the MCMC log-density assembly passes at sampling time.
+log-likelihood is the sum of per-row scores, so datasets of any size work
+natively (NPE, by contrast, conditions on a shape fixed at training time). The
+networks condition on (NLE) or classify (NRE) the *raw constrained* ``theta``,
+matching what the MCMC log-density assembly passes at sampling time.
 
 BayesFlow / keras load lazily on first use, so ``import probpipe`` does not pull
 keras.
@@ -325,9 +326,9 @@ def learn_amortized_likelihood(
     :class:`~probpipe.ConditionallyIndependentLikelihood` whose jax-traceable
     ``log_likelihood`` plugs into ``SimpleModel(prior, learned)`` +
     :func:`~probpipe.condition_on`, so the existing gradient-based MCMC machinery
-    (BlackJAX/TFP NUTS) samples the posterior -- for single observations or
-    multi-observation datasets (per-row scores sum under conditional
-    independence). The network conditions on the raw constrained ``theta``.
+    (BlackJAX/TFP NUTS) samples the posterior -- for datasets of any size
+    (per-row scores sum under conditional independence). The network conditions
+    on the raw constrained ``theta``.
 
     Parameters
     ----------

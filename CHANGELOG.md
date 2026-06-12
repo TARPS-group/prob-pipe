@@ -70,8 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   planned sbi-torch default path (verified by the Step-6a spike — gradients
   finite-difference-exact and NUTS recovering analytic posteriors, including
   discrete-observation + constrained-parameter cases for NRE).
-  - Per-row scores sum under conditional independence, so multi-observation
-    datasets work natively (unlike NPE's single-observation conditioning),
+  - Per-row scores sum under conditional independence, so datasets of any
+    size work natively (NPE's conditioning shape is fixed at training time),
     and `per_datum_log_likelihood` comes for free.
   - The networks take raw constrained `theta` as *input* (no bijector
     reparameterization needed on that side); discrete-valued parameter

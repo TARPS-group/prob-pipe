@@ -88,20 +88,23 @@ draws are produced:
 
 ### Choosing a learner
 
-- **Re-conditioning on many single observations** → `learn_amortized_posterior`:
-  training is amortized over observations, so each new observation costs one
-  forward pass — no retraining and no MCMC.
-- **Multi-observation datasets** → `learn_amortized_likelihood` or
+- **Datasets of a fixed size** → `learn_amortized_posterior`: the network
+  conditions on data of the shape the simulator emits per draw, and training
+  is amortized over it — each new dataset of that shape costs one forward
+  pass, no retraining and no MCMC.
+- **Datasets of any size** → `learn_amortized_likelihood` or
   `learn_amortized_ratio`: both wrappers are
-  `ConditionallyIndependentLikelihood`s (per-row scores sum), at the price of
-  an MCMC run per dataset. NPE conditions on a single observation only.
+  `ConditionallyIndependentLikelihood`s, so per-row scores sum — train once
+  on per-row simulations, then condition on any number of rows — at the
+  price of an MCMC run per dataset. (NPE's conditioning shape is fixed at
+  training time.)
 - **Integer-valued observations** → `learn_amortized_likelihood` with
   `dequantize=True`, or `learn_amortized_ratio`, which consumes discrete and
   mixed rows natively. Without one of these, the continuous NLE fit degrades
   (overdispersed posteriors) as observations concentrate on few values.
-- **One-dimensional observations** → `learn_amortized_ratio` (NLE's default
-  coupling flow needs `d_y >= 2`; alternatively pass a custom
-  `inference_network`).
+- **One-dimensional observations** → `learn_amortized_posterior` and
+  `learn_amortized_ratio` handle `d_y = 1` natively; NLE's default coupling
+  flow needs `d_y >= 2` (alternatively pass a custom `inference_network`).
 - **Discrete-valued parameters** → `learn_amortized_likelihood` or
   `learn_amortized_ratio` (`theta` is a network input there); NPE models
   `theta` with a continuous flow and rejects discrete priors.
