@@ -22,6 +22,7 @@ import numpy as np
 
 import probpipe as pp
 from probpipe import (
+    BayesFlowLikelihood,
     ConditionallyIndependentLikelihood,
     Normal,
     ProductDistribution,
@@ -272,6 +273,46 @@ class TestConditioning:
         # std ratio 1.02-1.10.
         assert abs(lam.mean() - ref.mean()) / ref.std() < 0.6
         assert 0.8 < lam.std() / ref.std() < 1.3
+
+    def test_nle_dequantize_discrete_observations(self):
+        """dequantize=True on integer count data, judged against the analytic
+        Gamma-Poisson posterior: lam ~ Gamma(2, 2), y row = 2 iid Poisson(lam)
+        counts, y_obs = (2, 1) -> Gamma(5, 4). This atom-heavy regime is where
+        the raw (non-dequantized) flow measurably miscalibrates (std ratios
+        1.13-1.27 across seeds); the cell-midpoint scoring must also match a
+        non-dequantized wrapper of the same approximator at y + 1/2 exactly."""
+
+        class _PoissonPairSim(Likelihood, GenerativeLikelihood):
+            def log_likelihood(self, params, data):
+                return jnp.array(0.0)
+
+            def generate_data(self, params, num_observations, *, key=None):
+                key = key if key is not None else jax.random.PRNGKey(0)
+                lam = params.flatten()[0]
+                counts = jax.random.poisson(key, lam, (num_observations, 2))
+                return counts.astype(jnp.float32)
+
+        y_obs = jnp.array([[2.0, 1.0]])
+        an_mean, an_std = 5.0 / 4.0, np.sqrt(5.0) / 4.0
+        lik = learn_amortized_likelihood(
+            pp.Gamma(2.0, 2.0, name="lam"), _PoissonPairSim(),
+            num_simulations=4000, epochs=25, batch_size=256, random_seed=0,
+            dequantize=True, verbose=0,
+        )
+        twin = BayesFlowLikelihood(lik.approximator, lik.prior, lik.simulator,
+                                   data_dim=2, dequantized=False)
+        np.testing.assert_allclose(
+            float(lik.log_likelihood(jnp.array([1.3]), y_obs)),
+            float(twin.log_likelihood(jnp.array([1.3]), y_obs + 0.5)), rtol=1e-6)
+        post = condition_on(
+            SimpleModel(prior=pp.Gamma(2.0, 2.0, name="lam"), likelihood=lik),
+            y_obs, num_results=1500, num_warmup=500, random_seed=0)
+        lam = np.asarray(post.draws()["lam"]).reshape(-1)
+        assert (lam > 0).all()
+        # Observed across seeds 0-2: mean err 0.11-0.17 posterior-std units,
+        # std ratio 0.93-0.96.
+        assert abs(lam.mean() - an_mean) / an_std < 0.5
+        assert 0.8 < lam.std() / an_std < 1.2
 
 
 class TestValidation:

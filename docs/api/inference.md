@@ -91,9 +91,13 @@ beyond a forward pass. NLE and NRE instead pay an MCMC run per dataset (the
 learned `log_likelihood` is jax-grad-transparent, so the standard NUTS
 machinery applies) but handle **multi-observation datasets** natively: both
 wrappers are `ConditionallyIndependentLikelihood`s, so per-row scores sum.
-Between those two, NLE learns an actual density and needs continuous
-observations of at least two dimensions; NRE's classifier has no dimension
-minimum and handles discrete-valued observations, but its values are
+Between those two, NLE learns an actual density and needs observations of at
+least two dimensions (with the default coupling flow); for integer-valued
+observations pass `dequantize=True`, which trains on uniformly jittered
+simulations and scores integer data at the unit-cell midpoint — without it,
+the continuous fit degrades (overdispersed posteriors) as observations
+concentrate on few values. NRE's classifier has no dimension minimum and
+consumes discrete or mixed observations natively, but its values are
 log-ratios — valid for conditioning, **not** for absolute-likelihood uses
 such as model comparison or LOO/WAIC.
 

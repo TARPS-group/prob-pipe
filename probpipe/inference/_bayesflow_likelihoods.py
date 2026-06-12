@@ -161,9 +161,31 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase):
     ``SimpleModel`` + ``condition_on`` gradient-based MCMC. Values are faithful
     to the public ``approximator.log_prob`` (same standardization and
     log-det-jacobian); the only difference is staying on-device.
+
+    With ``dequantized=True`` (set by ``learn_amortized_likelihood``'s
+    ``dequantize`` flag), the flow was trained on uniformly jittered
+    observations ``y + U[0,1)^d``, and scoring shifts integer-valued data to
+    the unit-cell midpoint ``y + 1/2`` -- a one-point approximation of the
+    implied pmf ``P(y | theta) = integral over [y, y+1)^d of p(u | theta) du``
+    (Theis et al., 2016, arXiv:1511.01844). Pass raw integer-valued
+    observations; the wrapper owns the cell convention.
     """
 
+    def __init__(
+        self,
+        approximator: Any,
+        prior: Distribution,
+        simulator: GenerativeLikelihood,
+        *,
+        data_dim: int,
+        dequantized: bool = False,
+    ):
+        super().__init__(approximator, prior, simulator, data_dim=data_dim)
+        self._dequantized = dequantized
+
     def _row_scores(self, theta_rows: Array, data_rows: Array) -> Array:
+        if self._dequantized:
+            data_rows = data_rows + 0.5
         a = self._approximator
         conds = a.standardizer.maybe_standardize(
             theta_rows, key="inference_conditions", stage="inference")
@@ -172,9 +194,10 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase):
         return a.inference_network.log_prob(z, conditions=conds) + ldj
 
     def __repr__(self) -> str:
+        dq = ", dequantized=True" if self._dequantized else ""
         return (
             f"BayesFlowLikelihood(theta_dim={self._theta_dim}, "
-            f"data_dim={self._data_dim})"
+            f"data_dim={self._data_dim}{dq})"
         )
 
 
@@ -191,8 +214,10 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase):
 
     Because the estimator is a classifier (an MLP over ``concat(theta, y)``), it
     has no continuous-density machinery: it handles **discrete-valued
-    observations** natively and has no minimum observation dimension -- the two
-    cases where :class:`BayesFlowLikelihood`'s coupling flow does not apply.
+    observations** natively (no ``dequantize`` flag needed, and mixed
+    discrete/continuous rows are fine) and has no minimum observation
+    dimension -- the two cases where :class:`BayesFlowLikelihood`'s coupling
+    flow needs, respectively, dequantization or a custom network.
     """
 
     def _row_scores(self, theta_rows: Array, data_rows: Array) -> Array:
@@ -230,12 +255,15 @@ def _train_offline(
     build_approximator: Any,
     optimizer: str | KerasOptimizer,
     fit_kwargs: dict[str, Any],
+    dequantize: bool = False,
 ) -> tuple[Any, int]:
     """Shared NLE/NRE training loop: validate, simulate, adapt, fit.
 
     ``theta_role`` is the adapter slot the (raw, constrained) theta fields feed
     -- ``"inference_conditions"`` for NLE, ``"inference_variables"`` for NRE --
-    with the observation taking the other slot. Returns ``(approximator, d_y)``.
+    with the observation taking the other slot. With ``dequantize``, U[0,1)
+    jitter is added to the simulated observations after the fact (the simulator
+    stays untouched). Returns ``(approximator, d_y)``.
     """
     record_template = _validate_learn_inputs(
         prior, simulator, caller=caller, sim_backend=sim_backend,
@@ -251,6 +279,12 @@ def _train_offline(
             prior, simulator, num_simulations, key,
             sim_backend=sim_backend, bijectors=None,   # raw theta: it is a net input
         )
+        if dequantize:
+            # fold_in: an independent jitter stream that leaves the simulation
+            # key path (and therefore existing measured tolerances) untouched.
+            k_jitter = jax.random.fold_in(key, 1)
+            y = np.asarray(jnp.asarray(y) + jax.random.uniform(k_jitter, y.shape),
+                           dtype="float32")
         internal_keys = _adapter_field_keys(fields)
         sims = {k: named[f] for k, f in zip(internal_keys, fields)}
         sims[_OBSERVATION_KEY] = y
@@ -279,6 +313,7 @@ def learn_amortized_likelihood(
     batch_size: int = 128,
     sim_backend: SimBackend = "jax",
     inference_network: InferenceNetwork | None = None,
+    dequantize: bool = False,
     random_seed: int = 0,
     optimizer: str | KerasOptimizer = "adam",
     **fit_kwargs: Any,
@@ -316,6 +351,26 @@ def learn_amortized_likelihood(
         reverse-mode differentiable for gradient-based MCMC -- adaptive-ODE
         networks (``FlowMatching``, ``DiffusionModel``) are **not** (their
         ``log_prob`` integrates with a dynamic-bound ``while_loop``).
+    dequantize : bool
+        Set for **integer-valued observations** (counts, categories encoded as
+        ordinals). Fitting a continuous flow to atoms is ill-posed -- the MLE
+        collapses density onto the data points, which in practice shows up as
+        overdispersed, seed-unstable posteriors as observations concentrate on
+        few values. Uniform dequantization fixes this: training adds
+        ``U[0,1)^d`` jitter to the simulated ``y`` (the simulator itself stays
+        untouched and keeps emitting raw integers), making the target
+        absolutely continuous, and the returned wrapper scores integer data at
+        the unit-cell midpoint ``y + 1/2``, approximating the implied pmf
+        ``P(y | theta) = integral over [y, y+1)^d of p(u | theta) du``. This is
+        the fixed-``q`` special case of variational dequantization -- exact in
+        the cell-integral identity, a Jensen lower bound in training objective
+        (Theis et al., 2016, arXiv:1511.01844; Ho et al., 2019 "Flow++",
+        arXiv:1902.00275, section 3.1). Pass raw integers as data; do **not**
+        pre-jitter or pre-shift. For mixed discrete/continuous rows or when a
+        learned density is not needed, prefer :func:`learn_amortized_ratio`,
+        whose classifier consumes discrete observations natively (cf. MNLE,
+        Boelts et al., 2022, for the mixed-data approach in the torch ``sbi``
+        ecosystem).
     random_seed : int
         Seeds simulation, network init, and training; the caller's global
         NumPy / Python RNG state is restored afterwards.
@@ -359,9 +414,10 @@ def learn_amortized_likelihood(
         num_simulations=num_simulations, epochs=epochs, batch_size=batch_size,
         sim_backend=sim_backend, random_seed=random_seed,
         theta_role="inference_conditions", build_approximator=_build,
-        optimizer=optimizer, fit_kwargs=fit_kwargs,
+        optimizer=optimizer, fit_kwargs=fit_kwargs, dequantize=dequantize,
     )
-    return BayesFlowLikelihood(approximator, prior, simulator, data_dim=data_dim)
+    return BayesFlowLikelihood(approximator, prior, simulator, data_dim=data_dim,
+                               dequantized=dequantize)
 
 
 def learn_amortized_ratio(

@@ -80,6 +80,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     networks such as `FlowMatching` integrate `log_prob` with a dynamic-bound
     `while_loop`, which JAX cannot reverse-differentiate); NRE's MLP
     classifier has neither restriction and handles discrete observations.
+  - `learn_amortized_likelihood(dequantize=True)` supports integer-valued
+    observations via uniform dequantization (Theis et al. 2016; Ho et al.
+    2019, Flow++): training adds `U[0,1)` jitter to the simulated `y` and the
+    wrapper scores integer data at the unit-cell midpoint `y + 1/2`. Without
+    it, the continuous fit measurably overdisperses the posterior as
+    observations concentrate on few atoms.
   - `BayesFlowRatio` values are log-ratios — valid for conditioning (the
     evidence constant cancels) but not for absolute-likelihood uses (model
     comparison, LOO/WAIC); the caveat is documented on the class.
