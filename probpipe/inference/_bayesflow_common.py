@@ -47,7 +47,7 @@ _OBSERVATION_KEY = "observation"
 _bayesflow_module: ModuleType | None = None
 
 
-def _ensure_bayesflow() -> ModuleType:
+def _import_bayesflow() -> ModuleType:
     """Import BayesFlow on the keras JAX backend, or raise a helpful error.
 
     Imported lazily (and cached) so that ``import probpipe`` does not load keras.
@@ -120,15 +120,21 @@ def _validate_learn_inputs(
             f"but got {type(prior).__name__}, which has no record_template."
         )
     if any("/" in k for k in record_template.numeric_leaf_shapes):
+        # Nothing here needs flatness in principle (the adapter could key on
+        # numeric leaves), but batched draws from a nested prior do not yet
+        # flatten -- NumericRecordArray.flatten chokes on the plain-Record
+        # sub-records ProductDistribution._sample embeds -- and flattening is
+        # this pipeline's first step. Reject early with a clear error instead.
         raise TypeError(
-            f"{caller} does not support nested priors (the per-field adapter "
-            "machinery is flat); flatten the prior into top-level named fields."
+            f"{caller} does not support nested priors yet: batched draws from "
+            "a nested prior cannot currently be flattened for offline "
+            "simulation. Flatten the prior into top-level named fields."
         )
     return record_template
 
 
 @contextmanager
-def _seeded_keras_training(random_seed: int):
+def _isolated_keras_seeding(random_seed: int):
     """Seed keras (which reads the global RNG for init + fit) for reproducible
     training, snapshotting and restoring the caller's Python/NumPy RNG state so
     the process-wide seeding does not leak. keras keeps its own seeded generator

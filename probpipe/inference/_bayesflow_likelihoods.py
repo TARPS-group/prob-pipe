@@ -32,8 +32,8 @@ from ._bayesflow_common import (
     _OBSERVATION_KEY,
     SimBackend,
     _adapter_field_keys,
-    _ensure_bayesflow,
-    _seeded_keras_training,
+    _import_bayesflow,
+    _isolated_keras_seeding,
     _simulate_offline,
     _validate_learn_inputs,
 )
@@ -272,8 +272,8 @@ def _train_offline(
     )
     fields = record_template.fields
 
-    bf = _ensure_bayesflow()
-    with _seeded_keras_training(random_seed):
+    bf = _import_bayesflow()
+    with _isolated_keras_seeding(random_seed):
         key = jax.random.PRNGKey(random_seed)
         named, y = _simulate_offline(
             prior, simulator, num_simulations, key,

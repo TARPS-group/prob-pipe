@@ -36,14 +36,14 @@ from ._bayesflow_common import (
     _OBSERVATION_KEY,
     SimBackend,
     _adapter_field_keys,
-    _ensure_bayesflow,
-    _seeded_keras_training,
+    _import_bayesflow,
+    _isolated_keras_seeding,
     _simulate_offline,
     _validate_learn_inputs,
 )
 
 if TYPE_CHECKING:
-    # Type-only: bayesflow/keras load at runtime in _ensure_bayesflow; tfp is a
+    # Type-only: bayesflow/keras load at runtime in _import_bayesflow; tfp is a
     # hard dependency but is only needed here for bijector annotations.
     import tensorflow_probability.substrates.jax.bijectors as tfb
     from bayesflow import Adapter, ContinuousApproximator
@@ -373,8 +373,8 @@ def learn_amortized_posterior(
         for f in fields
     )
 
-    bf = _ensure_bayesflow()
-    with _seeded_keras_training(random_seed):
+    bf = _import_bayesflow()
+    with _isolated_keras_seeding(random_seed):
         key = jax.random.PRNGKey(random_seed)
         named, y = _simulate_offline(
             prior, simulator, num_simulations, key,

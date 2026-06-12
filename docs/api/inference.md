@@ -74,10 +74,11 @@ when choosing a number for a new method are documented under
 ## Amortized SBI
 
 Simulation-based inference with trained amortized estimators (requires the
-`[bayesflow]` extra; Python 3.12–3.13 only). All three learners take the same
-inputs — a `RecordDistribution` prior and a `GenerativeLikelihood` simulator —
-and share one offline simulation pipeline; they differ in what the network
-estimates, and therefore in how posterior draws are produced:
+`[bayesflow]` extra; Python 3.12–3.13 only). Each learner takes the same two
+ingredients — a `RecordDistribution` prior and a `GenerativeLikelihood`
+simulator — and trains a neural estimator on simulated `(theta, y)` pairs;
+they differ in what the network estimates, and therefore in how posterior
+draws are produced:
 
 | Learner | Estimates | Returns | Posterior draws via |
 |---|---|---|---|
@@ -85,21 +86,28 @@ estimates, and therefore in how posterior draws are produced:
 | `learn_amortized_likelihood` | the likelihood (NLE) | `BayesFlowLikelihood` | `condition_on(SimpleModel(prior, learned), data)` — gradient-based MCMC through the learned density |
 | `learn_amortized_ratio` | the likelihood-to-evidence ratio (NRE) | `BayesFlowRatio` | same as NLE; the evidence constant cancels in MCMC |
 
-Choosing between them: NPE is amortized over observations — the one trained
-model conditions on any (single) observation with no retraining and no cost
-beyond a forward pass. NLE and NRE instead pay an MCMC run per dataset (the
-learned `log_likelihood` is jax-grad-transparent, so the standard NUTS
-machinery applies) but handle **multi-observation datasets** natively: both
-wrappers are `ConditionallyIndependentLikelihood`s, so per-row scores sum.
-Between those two, NLE learns an actual density and needs observations of at
-least two dimensions (with the default coupling flow); for integer-valued
-observations pass `dequantize=True`, which trains on uniformly jittered
-simulations and scores integer data at the unit-cell midpoint — without it,
-the continuous fit degrades (overdispersed posteriors) as observations
-concentrate on few values. NRE's classifier has no dimension minimum and
-consumes discrete or mixed observations natively, but its values are
-log-ratios — valid for conditioning, **not** for absolute-likelihood uses
-such as model comparison or LOO/WAIC.
+### Choosing a learner
+
+- **Re-conditioning on many single observations** → `learn_amortized_posterior`:
+  training is amortized over observations, so each new observation costs one
+  forward pass — no retraining and no MCMC.
+- **Multi-observation datasets** → `learn_amortized_likelihood` or
+  `learn_amortized_ratio`: both wrappers are
+  `ConditionallyIndependentLikelihood`s (per-row scores sum), at the price of
+  an MCMC run per dataset. NPE conditions on a single observation only.
+- **Integer-valued observations** → `learn_amortized_likelihood` with
+  `dequantize=True`, or `learn_amortized_ratio`, which consumes discrete and
+  mixed rows natively. Without one of these, the continuous NLE fit degrades
+  (overdispersed posteriors) as observations concentrate on few values.
+- **One-dimensional observations** → `learn_amortized_ratio` (NLE's default
+  coupling flow needs `d_y >= 2`; alternatively pass a custom
+  `inference_network`).
+- **Discrete-valued parameters** → `learn_amortized_likelihood` or
+  `learn_amortized_ratio` (`theta` is a network input there); NPE models
+  `theta` with a continuous flow and rejects discrete priors.
+- **Absolute likelihood values** (model comparison, LOO/WAIC) →
+  `learn_amortized_likelihood` only: `BayesFlowRatio` values are log-ratios —
+  valid for conditioning, **not** for absolute-likelihood reads.
 
 ::: probpipe.learn_amortized_posterior
 
