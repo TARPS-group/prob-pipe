@@ -22,8 +22,8 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from ..custom_types import Array, PRNGKey
 from .._utils import _auto_key
+from ..custom_types import Array, PRNGKey
 from .distribution import Distribution, RandomFunction
 from .node import workflow_function
 from .protocols import (
@@ -40,19 +40,19 @@ from .protocols import (
 )
 
 __all__ = [
-    "sample",
-    "log_prob",
-    "prob",
-    "unnormalized_log_prob",
-    "unnormalized_prob",
-    "mean",
-    "variance",
+    "condition_on",
     "cov",
     "expectation",
+    "from_distribution",
+    "log_prob",
+    "mean",
+    "prob",
     "random_log_prob",
     "random_unnormalized_log_prob",
-    "condition_on",
-    "from_distribution",
+    "sample",
+    "unnormalized_log_prob",
+    "unnormalized_prob",
+    "variance",
 ]
 
 
@@ -314,8 +314,9 @@ def condition_on(
         condition_on(model, y_obs)
 
         # Named data kwargs — bundled into Record(X=..., y=...):
-        condition_on(model, X=bootstrap["X"], y=bootstrap["y"],
-                     n_broadcast_samples=16)
+        condition_on.with_options(n_broadcast_samples=16)(
+            model, X=bootstrap["X"], y=bootstrap["y"],
+        )
 
     When named data kwargs are distribution views from the same parent,
     the workflow function broadcasting machinery samples the parent once

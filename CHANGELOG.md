@@ -275,6 +275,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`WorkflowFunction` controls now live outside user call kwargs.**
+  `@workflow_function(...)` configures definition-time controls, and
+  `workflow.with_options(...)(...)` is the preferred call-time override
+  API for `seed`, `n_broadcast_samples`, and `include_inputs`. Wrapped
+  functions may now declare and receive those names as ordinary
+  parameters. Legacy call-time option kwargs still work during a
+  transition window when they cannot bind to the wrapped function, but
+  they emit `DeprecationWarning`.
 - **`WorkflowFunction.workflow_kind` and `Module.workflow_kind` now require
   `WorkflowKind` enum members.** String aliases such as `"task"` / `"flow"`
   and `None` are no longer accepted and now raise `TypeError`; use

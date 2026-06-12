@@ -996,6 +996,7 @@ class TestRecordDistributionProperties:
         result = dist.unflatten_value(jnp.zeros(3), template=dist.record_template)
         # Single-field path returns a raw array; the template carries
         # the single field name.
+        assert result.shape == (3,)
         assert dist.record_template.fields == ("x",)
 
     def test_record_distribution_event_shapes(self, posterior):

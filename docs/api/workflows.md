@@ -8,6 +8,35 @@ Prefect orchestration is **off by default**. Set
 `prefect_config.workflow_kind = WorkflowKind.TASK` (or `FLOW`) globally, or
 export `PROBPIPE_WORKFLOW_KIND=task` in the environment.
 
+## Options namespace
+
+Use bare `@workflow_function` when no ProbPipe controls are needed:
+
+```python
+@workflow_function
+def score(x, seed):
+    return x + seed
+```
+
+Use `@workflow_function(...)` for definition-time controls:
+
+```python
+@workflow_function(dispatch="jax", n_broadcast_samples=1_000, seed=0)
+def score(x, seed):
+    return x + seed
+```
+
+Use `workflow.with_options(...)(...)` for one-call overrides:
+
+```python
+result = score.with_options(seed=42, n_broadcast_samples=2_000)(x, seed=7)
+```
+
+Keyword arguments in the final workflow call belong to the wrapped user
+function whenever they can bind to that function. This keeps common names
+such as `seed`, `name`, `dispatch`, `n_broadcast_samples`, and
+`include_inputs` available for user APIs.
+
 ## Wrappers and decorators
 
 ::: probpipe.WorkflowFunction
