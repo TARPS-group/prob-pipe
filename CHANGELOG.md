@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Package license metadata corrected to Apache-2.0 (was MIT).**
+  `pyproject.toml` declared `license = { text = "MIT" }` while the
+  repository's `LICENSE` is Apache License 2.0 — and the metadata field is
+  what PyPI displays. The field is now a PEP 639 SPDX expression
+  (`license = "Apache-2.0"` with `license-files = ["LICENSE", "AUTHORS"]`),
+  so built distributions carry `License-Expression: Apache-2.0` (core
+  metadata 2.4). The setuptools build floor rises from 61 to 77.0.3 — PEP
+  639 support landed in 77.0.0, which also deprecated the old
+  `license = { text = ... }` table form, and 77.0.3 relaxed the new
+  `license-files` validation from errors to warnings — and the redundant
+  `wheel` build requirement is dropped (`bdist_wheel` ships inside
+  setuptools since 70.1). Build-time changes only; runtime dependencies
+  are unchanged.
+
 ### Added
 
 - **BayesFlow amortized-SBI backend (`[bayesflow]` extra).** New
