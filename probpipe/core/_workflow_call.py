@@ -11,12 +11,8 @@ from __future__ import annotations
 import inspect
 import warnings
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any, get_type_hints
-
-WORKFLOW_CALL_OPTION_NAMES = frozenset(
-    {"n_broadcast_samples", "seed", "include_inputs"}
-)
 
 
 @dataclass(frozen=True)
@@ -36,6 +32,11 @@ class WorkflowCallOptions:
     n_broadcast_samples: int | None = None
     include_inputs: bool | None = None
     seed: int | None = None
+
+
+WORKFLOW_CALL_OPTION_NAMES = frozenset(
+    field.name for field in fields(WorkflowCallOptions)
+)
 
 
 @dataclass(frozen=True)
