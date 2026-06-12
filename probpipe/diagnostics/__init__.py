@@ -16,8 +16,7 @@ In-place diagnostic functions mutate ``posterior._auxiliary`` and return
         add_mcmc_diagnostics,
         add_ppc,
         add_spc,
-        loo,
-        run_loo,
+        add_loo,
     )
 
 These functions write diagnostic summaries under::
@@ -107,51 +106,26 @@ __all__ += [
 ]
 
 
-# # ── LOO-PSIS ─────────────────────────────────────────────────────────────
-# # LOO may be mid-refactor, so support both:
-# #   - loo_op + loo + run_loo
-# #   - loo + run_loo only
-# try:
-#     from ._loo import (
-#         loo_op,
-#         loo,
-#         run_loo,
-#     )
+# ── LOO-PSIS ─────────────────────────────────────────────────────────────
+from ._loo import add_loo
 
-#     __all__ += [
-#         "loo_op",
-#         "loo",
-#         "run_loo",
-#     ]
-# except ImportError:
-#     from ._loo import (
-#         loo,
-#         run_loo,
-#     )
-
-#     __all__ += [
-#         "loo",
-#         "run_loo",
-#     ]
+__all__ += [
+    "add_loo",
+]
 
 
 # ── Sensitivity analysis ─────────────────────────────────────────────────
-# Optional for now because _sensitivity may depend on helpers that are still
-# being refactored during the diagnostics workflow work.
-try:
-    from ._sensitivity import (
-        prior_sensitivity,
-        data_sensitivity,
-        power_scale_sensitivity,
-    )
+from ._sensitivity import (
+    prior_sensitivity,
+    data_sensitivity,
+    power_scale_sensitivity,
+)
 
-    __all__ += [
-        "prior_sensitivity",
-        "data_sensitivity",
-        "power_scale_sensitivity",
-    ]
-except ImportError:
-    pass
+__all__ += [
+    "prior_sensitivity",
+    "data_sensitivity",
+    "power_scale_sensitivity",
+]
 
 
 # ── Diagnostic view classes ───────────────────────────────────────────────

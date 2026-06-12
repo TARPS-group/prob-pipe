@@ -7,7 +7,6 @@ This module has two layers:
    - ``_compute_rhat_op``
    - ``_compute_ess_op``
    - ``_compute_mcse_op``
-   - ``_mcmc_diagnostics_op``
 
    These compute diagnostics and return structured ``Record`` results.
    They do not mutate ``posterior._auxiliary``. Not part of the public API.
@@ -60,43 +59,22 @@ _ESS_THRESHOLD: int = 400
 # ---------------------------------------------------------------------------
 
 
-try:
-    from ._arviz_bridge import (
-        arviz_rhat,
-        arviz_ess,
-        arviz_mcse,
-    )
-except ImportError:
+def arviz_rhat(arviz_tree: Any, *, method: str = "rank") -> Any:
+    _check_arviz()
+    import arviz as az
+    return az.rhat(arviz_tree, method=method)
 
-    def arviz_rhat(arviz_tree: Any, *, method: str = "rank") -> Any:
-        """Fallback ArviZ R-hat call.
 
-        Prefer using ``diagnostics._arviz_bridge`` when available.
-        """
-        _check_arviz()
-        import arviz as az
+def arviz_ess(arviz_tree: Any, *, method: str = "bulk") -> Any:
+    _check_arviz()
+    import arviz as az
+    return az.ess(arviz_tree, method=method)
 
-        return az.rhat(arviz_tree, method=method)
 
-    def arviz_ess(arviz_tree: Any, *, method: str = "bulk") -> Any:
-        """Fallback ArviZ ESS call.
-
-        Prefer using ``diagnostics._arviz_bridge`` when available.
-        """
-        _check_arviz()
-        import arviz as az
-
-        return az.ess(arviz_tree, method=method)
-
-    def arviz_mcse(arviz_tree: Any, *, method: str = "mean") -> Any:
-        """Fallback ArviZ MCSE call.
-
-        Prefer using ``diagnostics._arviz_bridge`` when available.
-        """
-        _check_arviz()
-        import arviz as az
-
-        return az.mcse(arviz_tree, method=method)
+def arviz_mcse(arviz_tree: Any, *, method: str = "mean") -> Any:
+    _check_arviz()
+    import arviz as az
+    return az.mcse(arviz_tree, method=method)
 
 
 # ---------------------------------------------------------------------------
@@ -418,91 +396,6 @@ def _compute_mcse_op(
         warnings=[],
         mean_attrs=mean_attrs,
         sd_attrs=sd_attrs,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Private pure op: _mcmc_diagnostics_op
-# ---------------------------------------------------------------------------
-
-
-def _mcmc_diagnostics_op(
-    posterior: "ApproximateDistribution",
-    *,
-    metrics: list[str] | None = None,
-    rhat_method: str = "rank",
-    rhat_threshold: float = _RHAT_THRESHOLD,
-    ess_threshold: int = _ESS_THRESHOLD,
-) -> Record:
-    """Pure MCMC diagnostics operation.
-
-    Computes requested MCMC diagnostics and returns one combined ``Record``.
-    Does not mutate ``posterior._auxiliary`` and does not emit warnings.
-
-    Parameters
-    ----------
-    posterior : ApproximateDistribution
-        Fitted posterior.
-    metrics : list of str or None
-        Subset to compute. ``None`` computes ``["rhat", "ess", "mcse"]``.
-    rhat_method : str
-        ArviZ R-hat method.
-    rhat_threshold : float
-        R-hat warning threshold.
-    ess_threshold : int
-        ESS warning threshold.
-
-    Returns
-    -------
-    Record
-        Combined MCMC diagnostic Record.
-    """
-    compute = set(metrics) if metrics is not None else {"rhat", "ess", "mcse"}
-
-    records: dict[str, Record] = {}
-    result: dict[str, Any] = {}
-    all_warnings: list[str] = []
-
-    if "rhat" in compute:
-        rec = _compute_rhat_op(
-            posterior,
-            method=rhat_method,
-            threshold=rhat_threshold,
-        )
-        records["rhat"] = rec
-        result["rhat"] = rec["values"]
-        all_warnings.extend(rec["warnings"])
-
-    if "ess" in compute:
-        rec = _compute_ess_op(
-            posterior,
-            threshold=ess_threshold,
-        )
-        records["ess"] = rec
-        result["ess_bulk"] = rec["bulk"]
-        result["ess_tail"] = rec["tail"]
-        all_warnings.extend(rec["warnings"])
-
-    if "mcse" in compute:
-        rec = _compute_mcse_op(posterior)
-        records["mcse"] = rec
-        result["mcse_mean"] = rec["mean"]
-        result["mcse_sd"] = rec["sd"]
-        all_warnings.extend(rec["warnings"])
-
-    return Record(
-        name="mcmc_diagnostic",
-        kind="mcmc",
-        records=records,
-        result=result,
-        warnings=all_warnings,
-        metrics=sorted(compute),
-        attrs={
-            "rhat_method": rhat_method,
-            "rhat_threshold": rhat_threshold,
-            "ess_threshold": ess_threshold,
-            "warnings": _json_warnings(all_warnings),
-        },
     )
 
 

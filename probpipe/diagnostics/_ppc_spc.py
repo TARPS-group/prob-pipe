@@ -49,7 +49,13 @@ from ..validation._predictive_check import (
     _supports_key_arg,
 )
 from .._utils import _auto_key
-from ._utils import _resolve_generative_likelihood
+from ._utils import (
+    _resolve_generative_likelihood,
+    _record_get,
+    _safe_float,
+    _as_numpy,
+    _json_dumps_safe,
+)
 from ._datatree import _add_group
 
 __all__ = [
@@ -61,85 +67,8 @@ __all__ = [
 # ---------------------------------------------------------------------
 # General helpers
 # ---------------------------------------------------------------------
-
-
-def _record_get(obj: Any, key: str, default: Any = None) -> Any:
-    """Get a field from dict-like, Record-like, or attribute-like objects.
-
-    ``predictive_check`` may be decorated by ``@workflow_function``. In that
-    case, its dictionary return value can be coerced into a ``Record``. This
-    helper supports:
-
-    - plain dictionaries: ``obj.get(key)``
-    - Record-like objects: ``obj[key]``
-    - attribute-style objects: ``obj.key``
-    """
-    if obj is None:
-        return default
-
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-
-    try:
-        return obj[key]
-    except Exception:
-        pass
-
-    try:
-        return getattr(obj, key)
-    except Exception:
-        pass
-
-    get = getattr(obj, "get", None)
-    if callable(get):
-        try:
-            return get(key, default)
-        except Exception:
-            pass
-
-    return default
-
-
-def _safe_float(value: Any) -> float:
-    """Convert value to float while preserving valid 0.0 values."""
-    if value is None:
-        return float("nan")
-
-    try:
-        arr = np.asarray(value)
-        if arr.shape == ():
-            return float(arr)
-        return float(arr.ravel()[0])
-    except Exception:
-        return float("nan")
-
-
-def _as_numpy(obj: Any) -> np.ndarray | None:
-    """Best-effort conversion of arrays or Distribution-like objects to NumPy."""
-    if obj is None:
-        return None
-
-    if hasattr(obj, "samples"):
-        try:
-            return np.asarray(obj.samples)
-        except Exception:
-            pass
-
-    try:
-        return np.asarray(obj)
-    except Exception:
-        return None
-
-
-def _json_dumps_safe(obj: Any) -> str:
-    """JSON-dump helper for xarray attrs."""
-    try:
-        return json.dumps(obj)
-    except TypeError:
-        try:
-            return json.dumps(str(obj))
-        except Exception:
-            return "{}"
+# _record_get, _safe_float, _as_numpy, _json_dumps_safe are imported
+# from ._utils — see imports above.
 
 
 def _observed_data_to_dataset(observed_data: Any, var_name: str = "y") -> xr.Dataset:

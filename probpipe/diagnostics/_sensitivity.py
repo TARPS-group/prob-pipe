@@ -30,7 +30,7 @@ from ._arviz_bridge import (
     check_arviz_installed,
     extract_draws,
 )
-from ._loo import _to_log_likelihood_dataset, _build_loo_warnings
+from ._loo import _log_likelihood_to_dataset
 
 __all__ = [
     "prior_sensitivity",
@@ -270,6 +270,31 @@ def prior_sensitivity(
 # data_sensitivity
 # ---------------------------------------------------------------------------
 
+
+def _build_loo_warnings(pareto_k: np.ndarray) -> list[str]:
+    """Generate warning strings from a Pareto-k array.
+
+    Thresholds follow ArviZ / Stan recommendations:
+    - k >= 0.7  → LOO estimate may be unreliable
+    - k >= 1.0  → LOO estimate not reliable
+    """
+    arr = np.asarray(pareto_k, dtype=float).ravel()
+    n_very_bad = int(np.sum(arr >= 1.0))
+    n_bad = int(np.sum(arr >= 0.7))
+    msgs: list[str] = []
+    if n_very_bad > 0:
+        msgs.append(
+            f"{n_very_bad} observation(s) with Pareto-k >= 1.0 — "
+            "LOO estimate is not reliable for these points."
+        )
+    elif n_bad > 0:
+        msgs.append(
+            f"{n_bad} observation(s) with Pareto-k >= 0.7 — "
+            "LOO estimate may be unreliable."
+        )
+    return msgs
+
+
 @workflow_function
 def data_sensitivity(
     posterior: Any,
@@ -336,7 +361,7 @@ def data_sensitivity(
     check_arviz_installed()
     import arviz as az
 
-    log_lik_ds = _to_log_likelihood_dataset(log_likelihood, var_name=var_name)
+    log_lik_ds = _log_likelihood_to_dataset(log_likelihood, var_name=var_name)
     loo_result = az.loo(log_lik_ds, var_name=var_name, pointwise=True)
     pareto_k   = np.asarray(loo_result.pareto_k)
     n_obs      = len(pareto_k)

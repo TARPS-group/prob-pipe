@@ -93,17 +93,12 @@ def to_arviz_dataset(
 ) -> "xr.Dataset":
     """Convert a posterior distribution to an xarray.Dataset for ArviZ 1.0.
 
-    For ``ApproximateDistribution`` (returned by ``condition_on``), builds
-    the dataset from ``posterior.draws(chain=i)`` per chain, producing one
-    named variable per field with shape ``(chain, draw)`` each. This
-    preserves chain structure and gives ArviZ the named per-parameter
-    variables it needs to compute scalar diagnostics (R-hat, ESS, MCSE).
+    For ``ApproximateDistribution``, delegates to
+    ``_datatree_store.to_named_posterior_dataset`` which builds a
+    ``(chain, draw)`` Dataset with one named variable per field.
 
-    The ``inference_data`` DataTree is intentionally not used here — it
-    stores parameters as a flat ``params`` vector without named fields,
-    which ArviZ cannot reduce to per-parameter scalars.
-
-    Falls back to flat construction for plain ``EmpiricalDistribution``.
+    Falls back to flat construction for plain ``EmpiricalDistribution``
+    (no chain structure).
 
     Parameters
     ----------
@@ -122,31 +117,15 @@ def to_arviz_dataset(
             "xarray is required. pip install probpipe[diagnostics]"
         )
 
-    # ── Fast path: ApproximateDistribution with named chain structure ────────────
-    # The inference_data DataTree stores parameters as a flat "params" vector
-    # (shape (chain, draw, n_params)) without named fields, so it cannot be
-    # used directly. Instead, build the dataset from per-chain draws keyed by
-    # field name — this preserves chain structure AND gives named variables
-    # that ArviZ diagnostics (rhat, ess, mcse) reduce to per-parameter scalars.
+    # ── ApproximateDistribution: delegate to the canonical builder ────────────
     if hasattr(posterior, "chains") and hasattr(posterior, "fields"):
-        # chains: list of (num_draws, *flat_event) arrays
-        # fields: parameter names from the record_template
-        data_vars = {}
-        for field in posterior.fields:
-            # Stack chains: shape (num_chains, num_draws, *event_shape)
-            chain_arrays = []
-            for i, chain_arr in enumerate(posterior.chains):
-                draws_i = posterior.draws(chain=i)
-                field_arr = np.asarray(draws_i[field], dtype=float)
-                chain_arrays.append(field_arr)
-            stacked = np.stack(chain_arrays, axis=0)  # (chain, draw, *event)
-            event_dims = [f"dim_{j}" for j in range(stacked.ndim - 2)]
-            dims = ["chain", "draw"] + event_dims
-            if var_names is None or field in var_names:
-                data_vars[field] = xr.DataArray(stacked, dims=dims)
-        return xr.Dataset(data_vars)
+        from ._datatree_store import to_named_posterior_dataset
+        ds = to_named_posterior_dataset(posterior)
+        if var_names is not None:
+            ds = ds[var_names]
+        return ds
 
-    # ── Final fallback: flat EmpiricalDistribution — no chain structure ───────
+    # ── Fallback: flat EmpiricalDistribution — no chain structure ─────────────
     draws = extract_draws(posterior)
     if var_names is not None:
         draws = {k: v for k, v in draws.items() if k in var_names}
@@ -161,56 +140,3 @@ def to_arviz_dataset(
         data_vars[name] = xr.DataArray(arr, dims=dims)
 
     return xr.Dataset(data_vars)
-
-
-# ── Warning builder ───────────────────────────────────────────────────────────
-
-def build_warnings(
-    rhat: dict[str, float],
-    ess_bulk: dict[str, float],
-    ess_tail: dict[str, float],
-) -> list[str]:
-    """Generate human-readable warnings from diagnostic values.
-
-    Thresholds follow ArviZ / Stan recommendations:
-
-    - R-hat > 1.01       → convergence concern
-    - ESS (bulk) < 400   → too few effective samples
-    - ESS (tail) < 400   → tail estimates unreliable
-
-    Parameters
-    ----------
-    rhat : dict[str, float]
-        Per-variable R-hat values.
-    ess_bulk : dict[str, float]
-        Per-variable bulk ESS values.
-    ess_tail : dict[str, float]
-        Per-variable tail ESS values.
-
-    Returns
-    -------
-    list[str]
-        Warning messages. Empty list means all diagnostics passed.
-    """
-    messages = []
-
-    for var, val in rhat.items():
-        if val > 1.01:
-            messages.append(
-                f"R-hat > 1.01 for '{var}' ({val:.4f}) — "
-                f"chains may not have converged."
-            )
-    for var, val in ess_bulk.items():
-        if val < 400:
-            messages.append(
-                f"Low ESS (bulk) for '{var}' ({val:.0f}) — "
-                f"consider more iterations."
-            )
-    for var, val in ess_tail.items():
-        if val < 400:
-            messages.append(
-                f"Low ESS (tail) for '{var}' ({val:.0f}) — "
-                f"tail estimates may be unreliable."
-            )
-
-    return messages

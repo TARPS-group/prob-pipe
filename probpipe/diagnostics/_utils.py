@@ -7,7 +7,78 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["_resolve_generative_likelihood"]
+__all__ = [
+    "_resolve_generative_likelihood",
+    "_record_get",
+    "_safe_float",
+    "_as_numpy",
+    "_json_dumps_safe",
+]
+
+import json
+import numpy as np
+
+
+def _record_get(obj: Any, key: str, default: Any = None) -> Any:
+    """Get a field from dict-like, Record-like, or attribute-like objects."""
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    try:
+        return obj[key]
+    except Exception:
+        pass
+    try:
+        return getattr(obj, key)
+    except Exception:
+        pass
+    get = getattr(obj, "get", None)
+    if callable(get):
+        try:
+            return get(key, default)
+        except Exception:
+            pass
+    return default
+
+
+def _safe_float(value: Any) -> float:
+    """Convert value to float, returning NaN on failure."""
+    if value is None:
+        return float("nan")
+    try:
+        arr = np.asarray(value)
+        if arr.shape == ():
+            return float(arr)
+        return float(arr.ravel()[0])
+    except Exception:
+        return float("nan")
+
+
+def _as_numpy(obj: Any) -> "np.ndarray | None":
+    """Best-effort conversion to NumPy array."""
+    if obj is None:
+        return None
+    if hasattr(obj, "samples"):
+        try:
+            return np.asarray(obj.samples)
+        except Exception:
+            pass
+    try:
+        return np.asarray(obj)
+    except Exception:
+        return None
+
+
+def _json_dumps_safe(obj: Any) -> str:
+    """JSON-dump helper for xarray attrs."""
+    try:
+        return json.dumps(obj)
+    except TypeError:
+        try:
+            return json.dumps(str(obj))
+        except Exception:
+            return "{}"
 
 
 def _resolve_generative_likelihood(
