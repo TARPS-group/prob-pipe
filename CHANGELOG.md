@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Codecov no longer misreports coverage on targeted PRs (#261).**
+  On a PR that ran only the changed-files test path, the main test job
+  skipped its Codecov upload while the BayesFlow job still uploaded, so
+  Codecov computed project/patch from the BayesFlow report alone —
+  yielding spuriously low numbers and a "HEAD has 1 upload less than
+  BASE" warning even though every Actions job passed. Now: the main
+  test job uploads coverage on the targeted path too (tagged `unit`),
+  so **patch** coverage is accurate and stays an enforced PR gate;
+  Codecov **project** is `informational` on PRs (the real 88% floor is
+  enforced in-CI on the full-suite run via `--cov-fail-under`); the
+  BayesFlow leg is gated to run only on BayesFlow-relevant changes; and
+  per-flag `carryforward` keeps the project number sane when a flag
+  isn't uploaded.
+
 - **Package license metadata corrected to Apache-2.0 (was MIT).**
   `pyproject.toml` declared `license = { text = "MIT" }` while the
   repository's `LICENSE` is Apache License 2.0 — and the metadata field is

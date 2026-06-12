@@ -310,11 +310,18 @@ jobs:
           uv run pytest --cov-fail-under=88 --cov-report=xml --cov-report=html
 
       - name: Upload coverage reports to Codecov
-        if: matrix.python-version == '3.12' && steps.changed.outputs.run_all == 'true'
+        # Upload on 3.12 for BOTH the targeted and full-suite paths (gated only
+        # on the test step having run). The targeted run covers exactly the
+        # changed files — which is what Codecov *patch* coverage needs — so the
+        # patch gate is accurate even on targeted PRs. The full-suite path
+        # additionally gives the authoritative *project* number. Tagged `unit`
+        # so the flag carries forward when a PR doesn't run it (see codecov.yml).
+        if: matrix.python-version == '3.12' && steps.changed.outputs.skip != 'true'
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: TARPS-group/prob-pipe
+          flags: unit
 
       - name: Upload coverage HTML report
         if: always() && matrix.python-version == '3.12' && steps.changed.outputs.run_all == 'true'
@@ -337,13 +344,52 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need full history for git diff
+
+      - name: Check if BayesFlow-relevant files changed
+        id: bf_check
+        # Gate the leg with the same logic the test job uses for RUN_ALL: run
+        # on pushes to main, on foundational changes (deps / this workflow),
+        # or when a BayesFlow file itself changed. Otherwise skip — and the
+        # `bayesflow` coverage flag carries forward from base (codecov.yml),
+        # so a skipped leg doesn't drag the coverage union down.
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
+            -- 'probpipe/inference/_bayesflow.py' 'tests/inference/test_bayesflow.py' || true)
+          CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
+          RUN_BF=false
+          if [ "${{ github.event_name }}" = "push" ]; then
+            RUN_BF=true
+          else
+            for f in $CHANGED_ALL; do
+              case "$f" in
+                pyproject.toml|uv.lock|.github/workflows/ci.yml) RUN_BF=true ;;
+              esac
+            done
+            [ -n "$CHANGED" ] && RUN_BF=true
+          fi
+          if [ "$RUN_BF" = "true" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Running the BayesFlow leg."
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No BayesFlow-relevant changes — skipping (coverage flag carries forward)."
+          fi
 
       - name: Install uv
+        if: steps.bf_check.outputs.skip != 'true'
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
 
       - name: Install dependencies
+        if: steps.bf_check.outputs.skip != 'true'
         # Versions (jax/jaxlib/tfp-nightly/keras/bayesflow) are pinned in uv.lock;
         # --frozen fails if the lockfile drifts. --python pins the interpreter to
         # the matrix leg. The bayesflow extra is locked behind a python_version
@@ -351,18 +397,20 @@ jobs:
         run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra nutpie --extra bayesflow
 
       - name: Run BayesFlow backend tests
+        if: steps.bf_check.outputs.skip != 'true'
         run: uv run pytest tests/inference/test_bayesflow.py --cov-report=xml
 
       - name: Upload coverage reports to Codecov
-        # The test job's upload measures the BayesFlow backend as uncovered: it
-        # does not install [bayesflow], so these tests importorskip out there.
-        # Upload this leg's report too — Codecov's per-commit union then counts
-        # _bayesflow.py toward patch coverage. 3.12 only, matching the test job.
-        if: matrix.python-version == '3.12'
+        # The main test job does not install [bayesflow], so its run measures
+        # _bayesflow.py as uncovered. Upload this leg under the `bayesflow`
+        # flag so Codecov's union counts _bayesflow.py toward coverage. 3.12
+        # only, matching the test job's upload.
+        if: steps.bf_check.outputs.skip != 'true' && matrix.python-version == '3.12'
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: TARPS-group/prob-pipe
+          flags: bayesflow
 
   notebooks:
     # Execute every docs/examples notebook to keep the reference set
