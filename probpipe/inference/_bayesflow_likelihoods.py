@@ -20,6 +20,7 @@ keras.
 
 from __future__ import annotations
 
+from abc import abstractmethod
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -144,8 +145,9 @@ class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLik
         """Delegate to the training simulator (``GenerativeLikelihood`` passthrough)."""
         return self._simulator.generate_data(params, num_observations, key=key)
 
+    @abstractmethod
     def _row_scores(self, theta_rows: Array, data_rows: Array) -> Array:
-        raise NotImplementedError
+        """Jax-traceable per-row scores for ``(theta_rows, data_rows)`` of equal length."""
 
 
 class BayesFlowLikelihood(_BayesFlowLikelihoodBase):
