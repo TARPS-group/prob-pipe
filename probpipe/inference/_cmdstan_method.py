@@ -12,7 +12,7 @@ from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 
 
-def _ensure_cmdstanpy():
+def _import_cmdstanpy():
     """Import cmdstanpy or raise a helpful error."""
     try:
         import cmdstanpy
@@ -52,7 +52,7 @@ class CmdStanNutsMethod(InferenceMethod):
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
-        cmdstanpy = _ensure_cmdstanpy()
+        cmdstanpy = _import_cmdstanpy()
 
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 1000)
