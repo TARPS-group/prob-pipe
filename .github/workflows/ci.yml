@@ -360,16 +360,21 @@ jobs:
           else
             BASE="${{ github.event.before }}"
           fi
+          # Globs, not single files: the BayesFlow backend is being split into
+          # multiple modules (NLE/NRE), so match the whole family.
           CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
-            -- 'probpipe/inference/_bayesflow.py' 'tests/inference/test_bayesflow.py' || true)
+            -- 'probpipe/inference/_bayesflow*.py' 'tests/inference/test_bayesflow*.py' || true)
           CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
           RUN_BF=false
           if [ "${{ github.event_name }}" = "push" ]; then
             RUN_BF=true
           else
+            # Same foundational set as the test job's RUN_ALL — these can affect
+            # the test environment or the public surface, so they run every leg.
             for f in $CHANGED_ALL; do
               case "$f" in
-                pyproject.toml|uv.lock|.github/workflows/ci.yml) RUN_BF=true ;;
+                pyproject.toml|uv.lock|setup.cfg|setup.py|tests/conftest.py|probpipe/__init__.py|.github/workflows/ci.yml)
+                  RUN_BF=true ;;
               esac
             done
             [ -n "$CHANGED" ] && RUN_BF=true
@@ -398,7 +403,8 @@ jobs:
 
       - name: Run BayesFlow backend tests
         if: steps.bf_check.outputs.skip != 'true'
-        run: uv run pytest tests/inference/test_bayesflow.py --cov-report=xml
+        # Glob to pick up the split BayesFlow test files (NLE/NRE) as they land.
+        run: uv run pytest tests/inference/test_bayesflow*.py --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         # The main test job does not install [bayesflow], so its run measures
