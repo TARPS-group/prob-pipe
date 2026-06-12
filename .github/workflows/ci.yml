@@ -351,7 +351,8 @@ jobs:
         run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra nutpie --extra bayesflow
 
       - name: Run BayesFlow backend tests
-        run: uv run pytest tests/inference/test_bayesflow_posteriors.py tests/inference/test_bayesflow_likelihoods.py --cov-report=xml
+        # Glob so new test_bayesflow*.py files are picked up automatically.
+        run: uv run pytest tests/inference/test_bayesflow*.py --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         # The test job's upload measures the BayesFlow backend as uncovered: it
