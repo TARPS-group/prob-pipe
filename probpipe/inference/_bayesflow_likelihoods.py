@@ -43,10 +43,8 @@ if TYPE_CHECKING:
     from keras import Layer as KerasLayer
     from keras.optimizers import Optimizer as KerasOptimizer
 else:
-    # Plain functions (deliberately NOT @workflow_function: the workflow result
-    # boundary coerces returns into Record/Distribution, which would wrap these
-    # Likelihood components); the runtime aliases keep the annotations
-    # resolvable for any get_type_hints consumer.
+    # Runtime aliases so the optional-dependency names in signatures stay
+    # resolvable for get_type_hints consumers.
     InferenceNetwork = KerasLayer = KerasOptimizer = Any
 
 
@@ -165,8 +163,9 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase):
     With ``dequantized=True`` (set by ``learn_amortized_likelihood``'s
     ``dequantize`` flag), the flow was trained on uniformly jittered
     observations ``y + U[0,1)^d``, and scoring shifts integer-valued data to
-    the unit-cell midpoint ``y + 1/2`` -- a one-point approximation of the
-    implied pmf ``P(y | theta) = integral over [y, y+1)^d of p(u | theta) du``
+    the unit-cell midpoint -- values then equal the public ``log_prob``
+    evaluated at ``y + 1/2``, a one-point approximation of the implied pmf
+    ``P(y | theta) = integral over [y, y+1)^d of p(u | theta) du``
     (Theis et al., 2016, arXiv:1511.01844). Pass raw integer-valued
     observations; the wrapper owns the cell convention.
     """
@@ -236,8 +235,9 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase):
 
 
 # ---------------------------------------------------------------------------
-# Learner entry points (plain functions; see the module-top note on why these
-# are not @workflow_function)
+# Learner entry points. Deliberately plain functions, NOT @workflow_function:
+# the workflow result boundary coerces returns into Record/Distribution, which
+# would wrap (and break) these Likelihood components. See STYLE_GUIDE 1.4.
 # ---------------------------------------------------------------------------
 
 
@@ -262,8 +262,8 @@ def _train_offline(
     ``theta_role`` is the adapter slot the (raw, constrained) theta fields feed
     -- ``"inference_conditions"`` for NLE, ``"inference_variables"`` for NRE --
     with the observation taking the other slot. With ``dequantize``, U[0,1)
-    jitter is added to the simulated observations after the fact (the simulator
-    stays untouched). Returns ``(approximator, d_y)``.
+    jitter is added to the simulated observations after simulation (the
+    simulator stays untouched). Returns ``(approximator, d_y)``.
     """
     record_template = _validate_learn_inputs(
         prior, simulator, caller=caller, sim_backend=sim_backend,
@@ -352,25 +352,26 @@ def learn_amortized_likelihood(
         networks (``FlowMatching``, ``DiffusionModel``) are **not** (their
         ``log_prob`` integrates with a dynamic-bound ``while_loop``).
     dequantize : bool
-        Set for **integer-valued observations** (counts, categories encoded as
-        ordinals). Fitting a continuous flow to atoms is ill-posed -- the MLE
-        collapses density onto the data points, which in practice shows up as
-        overdispersed, seed-unstable posteriors as observations concentrate on
-        few values. Uniform dequantization fixes this: training adds
+        Set for **integer-valued observations** (counts and other *ordered*
+        integer encodings; unordered categoricals would inherit a meaningless
+        cell adjacency). Fitting a continuous flow to atoms is ill-posed -- the
+        MLE collapses density onto the data points, which in practice shows up
+        as overdispersed, seed-unstable posteriors as observations concentrate
+        on few values. Uniform dequantization fixes this: training adds
         ``U[0,1)^d`` jitter to the simulated ``y`` (the simulator itself stays
         untouched and keeps emitting raw integers), making the target
         absolutely continuous, and the returned wrapper scores integer data at
         the unit-cell midpoint ``y + 1/2``, approximating the implied pmf
         ``P(y | theta) = integral over [y, y+1)^d of p(u | theta) du``. This is
-        the fixed-``q`` special case of variational dequantization -- exact in
-        the cell-integral identity, a Jensen lower bound in training objective
-        (Theis et al., 2016, arXiv:1511.01844; Ho et al., 2019 "Flow++",
-        arXiv:1902.00275, section 3.1). Pass raw integers as data; do **not**
-        pre-jitter or pre-shift. For mixed discrete/continuous rows or when a
-        learned density is not needed, prefer :func:`learn_amortized_ratio`,
-        whose classifier consumes discrete observations natively (cf. MNLE,
-        Boelts et al., 2022, for the mixed-data approach in the torch ``sbi``
-        ecosystem).
+        the fixed-``q`` special case of variational dequantization: the
+        cell-integral identity is exact, and the training objective is its
+        Jensen lower bound (Theis et al., 2016, arXiv:1511.01844; Ho et al.,
+        2019 "Flow++", arXiv:1902.00275, section 3.1). Pass raw integers as
+        data; do **not** pre-jitter or pre-shift. For mixed
+        discrete/continuous rows or when a learned density is not needed,
+        prefer :func:`learn_amortized_ratio`, whose classifier consumes
+        discrete observations natively (cf. MNLE, Boelts et al., 2022, for the
+        mixed-data approach in the torch ``sbi`` ecosystem).
     random_seed : int
         Seeds simulation, network init, and training; the caller's global
         NumPy / Python RNG state is restored afterwards.

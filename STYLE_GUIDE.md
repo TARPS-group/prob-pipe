@@ -94,12 +94,12 @@ condition_on_nutpie = WorkflowFunction(
 ```
 
 Exception: functions whose return value is a model *component* rather than a
-`Record`/`Distribution` (e.g. the learned-likelihood factories
-`learn_amortized_likelihood` / `learn_amortized_ratio`, like the de-workflowed
-`rwmh` / `elliptical_slice`) are deliberately **plain functions** — the
-workflow result boundary coerces returns into `Record`/`Distribution`, which
-would wrap and break such components. Note the rationale in a comment at the
-definition site.
+`Record`/`Distribution` are deliberately **plain functions** — the workflow
+result boundary coerces returns into `Record`/`Distribution`, which would wrap
+and break such components. Examples: the learned-likelihood factories
+`learn_amortized_likelihood` / `learn_amortized_ratio`; precedent: the
+de-workflowed `rwmh` / `elliptical_slice`. Note the rationale in a comment at
+the definition site.
 
 ### 1.5 Classes
 

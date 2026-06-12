@@ -191,10 +191,10 @@ class TestConditioning:
     """End-to-end: SimpleModel(prior, learned) + condition_on -> NUTS, against
     the analytic conjugate posterior (mean AND spread).
 
-    Bounds are measured: each test's config was run across four training seeds
-    and the bound covers the observed spread with ~2-3x margin for
-    cross-platform / library-version drift (training is seeded, so a given
-    environment is reproducible).
+    Bounds are measured: each test's config was run across 3-4 training seeds
+    (the per-assertion comments give the observed ranges) and the bound covers
+    the observed spread with ~2-3x margin for cross-platform / library-version
+    drift (training is seeded, so a given environment is reproducible).
     """
 
     def _check_posterior(self, model, y_rows, mean_tol, ratio_band):
