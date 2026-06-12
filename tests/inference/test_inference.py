@@ -1133,7 +1133,7 @@ class TestEndToEndValuesPipeline:
         """Broadcast predict(params, x) computes correct function of posterior."""
         from probpipe.core.node import workflow_function
 
-        @workflow_function.options(n_broadcast_samples=100, dispatch="sequential", seed=0)
+        @workflow_function(n_broadcast_samples=100, dispatch="sequential", seed=0)
         def predict(params, x):
             return params[0] + params[1] * x
 
@@ -1152,7 +1152,7 @@ class TestEndToEndValuesPipeline:
         """
         from probpipe.core.node import workflow_function
 
-        @workflow_function.options(n_broadcast_samples=50, dispatch="sequential", seed=0)
+        @workflow_function(n_broadcast_samples=50, dispatch="sequential", seed=0)
         def identity_pair(a, b):
             return a - b
 
@@ -1193,7 +1193,7 @@ class TestEndToEndValuesPipeline:
         """Workflow with both posterior views and an independent distribution."""
         from probpipe.core.node import workflow_function
 
-        @workflow_function.options(n_broadcast_samples=50, dispatch="sequential", seed=0)
+        @workflow_function(n_broadcast_samples=50, dispatch="sequential", seed=0)
         def noisy_predict(params, noise):
             return params[0] + params[1] * 0.5 + noise
 

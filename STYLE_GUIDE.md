@@ -133,7 +133,7 @@ Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
 ### 1.8 Workflow option namespace
 
 `WorkflowFunction` keeps ProbPipe controls separate from wrapped-function
-kwargs. Use `@workflow_function.options(...)` for definition-time controls
+kwargs. Use `@workflow_function(...)` for definition-time controls
 such as `dispatch`, `seed`, and `n_broadcast_samples`, and use
 `workflow.with_options(...)(...)` for one-call overrides such as
 `seed`, `n_broadcast_samples`, and `include_inputs`.

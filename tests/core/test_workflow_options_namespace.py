@@ -5,13 +5,12 @@ from __future__ import annotations
 import warnings
 
 import jax.numpy as jnp
-import pytest
 
 from probpipe import BroadcastDistribution, Normal, WorkflowFunction, workflow_function
 
 
-def test_workflow_function_options_sets_construction_defaults():
-    @workflow_function.options(
+def test_workflow_function_decorator_sets_construction_defaults():
+    @workflow_function(
         n_broadcast_samples=7,
         dispatch="sequential",
         seed=0,
@@ -24,15 +23,24 @@ def test_workflow_function_options_sets_construction_defaults():
     assert result.num_atoms == 7
 
 
-def test_legacy_decorator_options_warn():
-    with pytest.warns(DeprecationWarning, match="workflow_function.options"):
+def test_workflow_function_decorator_options_do_not_warn():
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
 
         @workflow_function(n_broadcast_samples=5, dispatch="sequential", seed=0)
         def identity(x):
             return x
 
     result = identity(Normal(loc=0.0, scale=1.0, name="x"))
+    assert not any(
+        issubclass(warning.category, DeprecationWarning)
+        for warning in caught
+    )
     assert result.num_atoms == 5
+
+
+def test_workflow_function_has_no_options_alias():
+    assert not hasattr(workflow_function, "options")
 
 
 def test_bare_decorator_forms_do_not_warn():

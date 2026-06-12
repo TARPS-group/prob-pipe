@@ -83,21 +83,21 @@ def abstract_workflow_method(func: Callable):
 def workflow_function(_func=None, /, **kwargs):
     """Decorator to create a :class:`WorkflowFunction` from a plain function.
 
-    Bare usage keeps the wrapped function's namespace untouched::
+    Bare usage wraps a function with default ``WorkflowFunction`` controls::
 
         @workflow_function
         def my_func(x, y):
             return x + y
 
-    Use ``@workflow_function.options(...)`` for ProbPipe construction
-    controls::
+    Pass keyword arguments to configure ProbPipe controls at definition time::
 
-        @workflow_function.options(n_broadcast_samples=100, dispatch="sequential")
+        @workflow_function(n_broadcast_samples=100, dispatch="sequential")
         def my_func(x, y):
             return x + y
 
-    Passing options directly to ``@workflow_function(...)`` is deprecated;
-    use ``@workflow_function.options(...)`` instead.
+    Keyword arguments passed later to the workflow call itself belong to the
+    wrapped function whenever they can bind to that function. Use
+    ``workflow.with_options(...)(...)`` for one-call ProbPipe controls.
 
     Parameters
     ----------
@@ -105,68 +105,22 @@ def workflow_function(_func=None, /, **kwargs):
         Function being decorated for bare ``@workflow_function`` usage.
         Users should not pass this argument by keyword.
     **kwargs : Any
-        Deprecated construction-time ``WorkflowFunction`` options. Use
-        ``@workflow_function.options(...)`` instead.
+        Construction-time ``WorkflowFunction`` controls such as ``dispatch``,
+        ``seed``, ``n_broadcast_samples``, ``include_inputs``, and
+        ``workflow_kind``.
 
     Returns
     -------
     WorkflowFunction or Callable
         Wrapped workflow function for bare usage, or a decorator when called
         with parentheses.
-
-    Warns
-    -----
-    DeprecationWarning
-        If construction-time options are passed directly to
-        ``@workflow_function(...)``.
-    """
-    if _func is not None:
-        if kwargs:
-            warnings.warn(
-                "Passing WorkflowFunction options directly to "
-                "@workflow_function(...) is deprecated; use "
-                "@workflow_function.options(...) instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return _workflow_function_options(**kwargs)(_func)
-        # Bare @workflow_function (no parentheses)
-        return _workflow_function_options()(_func)
-    if kwargs:
-        warnings.warn(
-            "Passing WorkflowFunction options directly to "
-            "@workflow_function(...) is deprecated; use "
-            "@workflow_function.options(...) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-    return _workflow_function_options(**kwargs)
-
-
-def _workflow_function_options(
-    **kwargs: Any,
-) -> Callable[[Callable[..., Any]], WorkflowFunction]:
-    """Create a decorator with explicit WorkflowFunction construction options.
-
-    Parameters
-    ----------
-    **kwargs : Any
-        Construction-time ``WorkflowFunction`` options such as ``dispatch``,
-        ``seed``, ``n_broadcast_samples``, ``include_inputs``, and
-        ``workflow_kind``.
-
-    Returns
-    -------
-    Callable
-        Decorator that wraps a user function in ``WorkflowFunction``.
     """
     def decorator(func: Callable[..., Any]) -> WorkflowFunction:
         return WorkflowFunction(func=func, name=func.__name__, **kwargs)
 
+    if _func is not None:
+        return decorator(_func)
     return decorator
-
-
-workflow_function.options = _workflow_function_options
 
 
 class Node(ABC):  # noqa: B024

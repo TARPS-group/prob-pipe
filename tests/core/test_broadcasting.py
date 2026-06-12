@@ -58,7 +58,7 @@ class TestBroadcastingBasic:
         """WorkflowFunction accepts positional arguments."""
         from probpipe.core.node import workflow_function
 
-        @workflow_function.options(
+        @workflow_function(
             n_broadcast_samples=30,
             dispatch="sequential",
             seed=5,

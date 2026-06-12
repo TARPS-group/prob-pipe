@@ -393,7 +393,7 @@ class TestMixedGroupingComposition:
         Output is a DistributionArray of (4,) per-row marginals."""
         noise = Normal(loc=0.0, scale=0.1, name="noise")
 
-        @workflow_function.options(n_broadcast_samples=20, dispatch="sequential")
+        @workflow_function(n_broadcast_samples=20, dispatch="sequential")
         def f(x, noise: float):
             return x + noise
 

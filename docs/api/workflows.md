@@ -18,10 +18,10 @@ def score(x, seed):
     return x + seed
 ```
 
-Use `@workflow_function.options(...)` for definition-time controls:
+Use `@workflow_function(...)` for definition-time controls:
 
 ```python
-@workflow_function.options(dispatch="jax", n_broadcast_samples=1_000, seed=0)
+@workflow_function(dispatch="jax", n_broadcast_samples=1_000, seed=0)
 def score(x, seed):
     return x + seed
 ```
