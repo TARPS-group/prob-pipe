@@ -6,7 +6,6 @@ import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from .._utils import _auto_key
 from ..core.record import Record, RecordTemplate
 from ..custom_types import Array, ArrayLike, PRNGKey
 
@@ -49,7 +48,9 @@ class GLMLikelihood:
 
         Xy = Record(X=X_covariates, y=y_observed)
         bootstrap = BootstrapReplicateDistribution(EmpiricalDistribution(Xy))
-        bagged = condition_on(model, bootstrap, n_broadcast_samples=16)
+        bagged = condition_on.with_options(n_broadcast_samples=16)(
+            model, bootstrap,
+        )
 
     Parameters
     ----------

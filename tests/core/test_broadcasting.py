@@ -58,7 +58,11 @@ class TestBroadcastingBasic:
         """WorkflowFunction accepts positional arguments."""
         from probpipe.core.node import workflow_function
 
-        @workflow_function(n_broadcast_samples=30, dispatch="sequential", seed=5)
+        @workflow_function(
+            n_broadcast_samples=30,
+            dispatch="sequential",
+            seed=5,
+        )
         def add(x, y):
             return x + y
 
@@ -127,7 +131,7 @@ class TestBroadcastingNSamples:
 
         w = WorkflowFunction(func=identity, n_broadcast_samples=100, dispatch="sequential", seed=6)
         g = Normal(loc=0.0, scale=1.0, name="x")
-        result = w(x=g, n_broadcast_samples=10)
+        result = w.with_options(n_broadcast_samples=10)(x=g)
         assert result.num_atoms == 10
 
     def test_call_time_override_rejects_non_integer(self):
@@ -138,7 +142,7 @@ class TestBroadcastingNSamples:
         g = Normal(loc=0.0, scale=1.0, name="x")
 
         with pytest.raises(TypeError, match="n_broadcast_samples must be an integer"):
-            w(x=g, n_broadcast_samples=2.5)
+            w.with_options(n_broadcast_samples=2.5)(x=g)
 
     @pytest.mark.parametrize("n_broadcast_samples", [0, -1])
     def test_call_time_override_rejects_non_positive(self, n_broadcast_samples):
@@ -149,30 +153,33 @@ class TestBroadcastingNSamples:
         g = Normal(loc=0.0, scale=1.0, name="x")
 
         with pytest.raises(ValueError, match="n_broadcast_samples must be a positive integer"):
-            w(x=g, n_broadcast_samples=n_broadcast_samples)
+            w.with_options(n_broadcast_samples=n_broadcast_samples)(x=g)
 
 
-class TestReservedParameterNames:
-    def test_n_broadcast_samples_forbidden(self):
-        def bad_fn(x: jnp.ndarray, n_broadcast_samples: int = 10) -> jnp.ndarray:
-            return x
+class TestFormerlyReservedParameterNames:
+    def test_n_broadcast_samples_allowed(self):
+        def func(x: jnp.ndarray, n_broadcast_samples: int = 10) -> float:
+            return float(n_broadcast_samples)
 
-        with pytest.raises(ValueError, match="reserved"):
-            WorkflowFunction(func=bad_fn, dispatch="sequential")
+        wf = WorkflowFunction(func=func, dispatch="sequential")
 
-    def test_seed_forbidden(self):
-        def bad_fn(x: jnp.ndarray, seed: int = 0) -> jnp.ndarray:
-            return x
+        assert float(wf(x=jnp.asarray(1.0), n_broadcast_samples=3)) == 3.0
 
-        with pytest.raises(ValueError, match="reserved"):
-            WorkflowFunction(func=bad_fn, dispatch="sequential")
+    def test_seed_allowed(self):
+        def func(x: jnp.ndarray, seed: int = 0) -> float:
+            return float(seed)
 
-    def test_include_inputs_forbidden(self):
-        def bad_fn(x: jnp.ndarray, include_inputs: bool = False) -> jnp.ndarray:
-            return x
+        wf = WorkflowFunction(func=func, dispatch="sequential")
 
-        with pytest.raises(ValueError, match="reserved"):
-            WorkflowFunction(func=bad_fn, dispatch="sequential")
+        assert float(wf(x=jnp.asarray(1.0), seed=5)) == 5.0
+
+    def test_include_inputs_allowed(self):
+        def func(x: jnp.ndarray, include_inputs: bool = False) -> float:
+            return 1.0 if include_inputs else 0.0
+
+        wf = WorkflowFunction(func=func, dispatch="sequential")
+
+        assert float(wf(x=jnp.asarray(1.0), include_inputs=True)) == 1.0
 
 
 class TestWorkflowFunctionCallResolution:
@@ -290,7 +297,7 @@ class TestBroadcastingEnumeration:
         ed = EmpiricalDistribution(samples, name="x")
 
         w = WorkflowFunction(func=identity, n_broadcast_samples=100, dispatch="sequential", seed=7)
-        result = w(x=ed, include_inputs=True)
+        result = w.with_options(include_inputs=True)(x=ed)
         assert isinstance(result, BroadcastDistribution)
         assert "x" in result.input_samples
         assert result.input_samples["x"].shape == (3, 1)
@@ -381,7 +388,7 @@ class TestBroadcastingJAX:
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=30, dispatch="jax", seed=20)
         g = Normal(loc=1.0, scale=0.5, name="x")
-        result = w(x=g, include_inputs=True)
+        result = w.with_options(include_inputs=True)(x=g)
         assert isinstance(result, BroadcastDistribution)
         assert "x" in result.input_samples
         assert result.input_samples["x"].shape[0] == 30
@@ -488,9 +495,9 @@ class TestSeedManagement:
         g = Normal(loc=0.0, scale=1.0, name="x")
         w = WorkflowFunction(func=identity, n_broadcast_samples=20, dispatch="sequential", seed=0)
 
-        r1 = w(x=g, seed=42)
+        r1 = w.with_options(seed=42)(x=g)
         # Reset and call with same seed
-        r2 = w(x=g, seed=42)
+        r2 = w.with_options(seed=42)(x=g)
         np.testing.assert_allclose(r1.samples, r2.samples, atol=1e-5)
 
 
@@ -517,7 +524,7 @@ class TestIncludeInputsArgument:
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=20, dispatch="sequential", seed=0)
         g = Normal(loc=1.0, scale=0.5, name="x")
-        result = w(x=g, include_inputs=True)
+        result = w.with_options(include_inputs=True)(x=g)
         assert isinstance(result, BroadcastDistribution)
         assert "x" in result.input_samples
 
@@ -538,7 +545,7 @@ class TestIncludeInputsArgument:
         w = WorkflowFunction(func=add_them, n_broadcast_samples=20, dispatch="sequential", seed=0)
         g1 = Normal(loc=1.0, scale=0.1, name="a")
         g2 = Normal(loc=2.0, scale=0.1, name="b")
-        result = w(a=g1, b=g2, include_inputs=True)
+        result = w.with_options(include_inputs=True)(a=g1, b=g2)
         assert isinstance(result, BroadcastDistribution)
         assert "a" in result.fields
         assert "b" in result.fields
@@ -557,7 +564,7 @@ class TestNamedComponents:
         w = WorkflowFunction(func=add_them, n_broadcast_samples=20, dispatch="sequential", seed=0)
         g1 = Normal(loc=1.0, scale=0.1, name="a")
         g2 = Normal(loc=2.0, scale=0.1, name="b")
-        result = w(a=g1, b=g2, include_inputs=True)
+        result = w.with_options(include_inputs=True)(a=g1, b=g2)
         assert "a" in result.fields
         assert "b" in result.fields
         assert "_output" in result.fields
@@ -568,7 +575,7 @@ class TestNamedComponents:
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=20, dispatch="sequential", seed=0)
         g = Normal(loc=1.0, scale=0.5, name="x")
-        result = w(x=g, include_inputs=True)
+        result = w.with_options(include_inputs=True)(x=g)
         x_marginal = result["x"]
         assert isinstance(x_marginal, EmpiricalDistribution)
         assert x_marginal.num_atoms == 20
@@ -579,7 +586,7 @@ class TestNamedComponents:
 
         w = WorkflowFunction(func=double_it, n_broadcast_samples=20, dispatch="sequential", seed=0)
         g = Normal(loc=1.0, scale=0.5, name="x")
-        result = w(x=g, include_inputs=True)
+        result = w.with_options(include_inputs=True)(x=g)
         out = result["_output"]
         assert hasattr(out, 'samples')
 

@@ -2,9 +2,31 @@ coverage:
   status:
     project:
       default:
+        # Informational on PRs: a targeted PR uploads only a partial report
+        # (the changed-files test subset), so Codecov's project number is not
+        # authoritative here and must not gate. The real project floor (88%)
+        # is enforced in-CI on the full-suite run — `pytest --cov-fail-under`
+        # in .github/workflows/ci.yml, which fires on pushes to main and on
+        # foundational PRs. `informational` makes this status report-only.
+        informational: true
         # Allow small drops during large refactors. Absolute coverage
         # should still land in the 80s.
         threshold: 2%
     patch:
       default:
+        # Enforced on every PR. The main test job uploads coverage of exactly
+        # the changed files (targeted run), so patch — "did you cover your new
+        # lines" — is a meaningful, accurate gate even on targeted PRs.
         target: 70%
+
+# Carry each flag's coverage forward from the base commit when a PR doesn't
+# upload it, so the project number stays sane and Codecov stops reporting
+# "HEAD has N uploads less than BASE":
+#   - unit: the main pytest suite (probpipe, minus the BayesFlow backend).
+#   - bayesflow: the keras-on-jax BayesFlow leg, which only runs when
+#     BayesFlow-relevant files change (see the bayesflow job's gating).
+flags:
+  unit:
+    carryforward: true
+  bayesflow:
+    carryforward: true
