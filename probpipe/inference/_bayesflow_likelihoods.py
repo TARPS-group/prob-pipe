@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from ..core.distribution import Distribution
 from ..core.protocols import ConditionallyIndependentLikelihood, GenerativeLikelihood
@@ -38,7 +39,6 @@ from ._bayesflow_common import (
 )
 
 if TYPE_CHECKING:
-    import numpy as np
     from bayesflow.networks import InferenceNetwork
     from keras import Layer as KerasLayer
     from keras.optimizers import Optimizer as KerasOptimizer
@@ -390,12 +390,30 @@ def learn_amortized_ratio(
 
     Parameters
     ----------
-    prior, simulator, num_simulations, epochs, batch_size, sim_backend,
-    random_seed, optimizer, **fit_kwargs
-        As in :func:`learn_amortized_likelihood`.
+    prior : Distribution
+        Prior over the model parameters; a flat ``RecordDistribution`` (as in
+        :func:`learn_amortized_likelihood` -- constrained and discrete-valued
+        parameter fields are fine, theta is a network input).
+    simulator : GenerativeLikelihood
+        ``generate_data(params, num_observations, *, key)``; receives the
+        prior's structured per-draw record.
+    num_simulations : int
+        Number of ``(theta, y)`` pairs simulated offline for training.
+    epochs, batch_size : int
+        keras training schedule.
+    sim_backend : {"jax", "sequential"}
+        ``"jax"`` (default) vmaps the simulator; ``"sequential"`` runs an eager
+        per-draw loop for non-JAX simulators.
     inference_network : keras.Layer or None
         The classifier body (defaults to ``bayesflow.networks.MLP()``); the
         ``RatioApproximator`` adds its own scalar projection head.
+    random_seed : int
+        Seeds simulation, network init, and training; the caller's global
+        NumPy / Python RNG state is restored afterwards.
+    optimizer : str or keras.Optimizer
+        Passed to ``approximator.compile``.
+    **fit_kwargs
+        Forwarded to ``approximator.fit`` (e.g. ``callbacks``, ``verbose``).
 
     Returns
     -------
@@ -403,9 +421,14 @@ def learn_amortized_ratio(
 
     Raises
     ------
-    ValueError, TypeError, ImportError
-        As in :func:`learn_amortized_likelihood` (no minimum observation
-        dimension).
+    ValueError
+        If ``sim_backend`` is unknown or a count parameter is less than one
+        (no minimum observation dimension, unlike NLE).
+    TypeError
+        If a count parameter is not an integer, ``simulator`` lacks
+        ``generate_data``, or ``prior`` is not a flat ``RecordDistribution``.
+    ImportError
+        If the ``[bayesflow]`` extra is not installed.
     """
 
     def _build(bf: Any, adapter: Any, data_dim: int) -> Any:
