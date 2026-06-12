@@ -331,14 +331,20 @@ def _train_offline(
     bf = _import_bayesflow()
     with _isolated_keras_seeding(random_seed):
         key = jax.random.PRNGKey(random_seed)
+        k_jitter = None
+        if dequantize:
+            # A dedicated sibling key, split off before the simulator sees the
+            # key. Never derive twice from one key: jax's threefry makes
+            # fold_in(key, i) IDENTICAL to split(key, n)[i], so a folded
+            # "extra" stream would alias the simulation keys. Splitting only
+            # under the flag keeps the dequantize=False key path -- and every
+            # tolerance measured on it -- bit-identical.
+            key, k_jitter = jax.random.split(key)
         named, y = _simulate_offline(
             prior, simulator, num_simulations, key,
             sim_backend=sim_backend, bijectors=None,   # raw theta: it is a net input
         )
         if dequantize:
-            # fold_in: an independent jitter stream that leaves the simulation
-            # key path (and therefore existing measured tolerances) untouched.
-            k_jitter = jax.random.fold_in(key, 1)
             y = np.asarray(jnp.asarray(y) + jax.random.uniform(k_jitter, y.shape),
                            dtype="float32")
         internal_keys = _adapter_field_keys(fields)
@@ -423,11 +429,13 @@ def learn_amortized_likelihood(
         cell-integral identity is exact, and the training objective is its
         Jensen lower bound (Theis et al., 2016, arXiv:1511.01844; Ho et al.,
         2019 "Flow++", arXiv:1902.00275, section 3.1). Pass raw integers as
-        data; do **not** pre-jitter or pre-shift. For mixed
-        discrete/continuous rows or when a learned density is not needed,
-        prefer :func:`learn_amortized_ratio`, whose classifier consumes
-        discrete observations natively (cf. MNLE, Boelts et al., 2022, for the
-        mixed-data approach in the torch ``sbi`` ecosystem).
+        data; do **not** pre-jitter or pre-shift. Counts must stay below
+        ``2**23`` (~8.4e6): the pipeline is float32, whose spacing reaches 1.0
+        there, silently rounding away the jitter and the midpoint shift. For
+        mixed discrete/continuous rows or when a learned density is not
+        needed, prefer :func:`learn_amortized_ratio`, whose classifier
+        consumes discrete observations natively (cf. MNLE, Boelts et al.,
+        2022, for the mixed-data approach in the torch ``sbi`` ecosystem).
     random_seed : int
         Seeds simulation, network init, and training; the caller's global
         NumPy / Python RNG state is restored afterwards.

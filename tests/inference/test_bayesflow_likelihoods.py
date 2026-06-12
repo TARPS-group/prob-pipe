@@ -309,8 +309,8 @@ class TestConditioning:
             y_obs, num_results=1500, num_warmup=500, random_seed=0)
         lam = np.asarray(post.draws()["lam"]).reshape(-1)
         assert (lam > 0).all()
-        # Observed across seeds 0-2: mean err 0.11-0.17 posterior-std units,
-        # std ratio 0.93-0.96.
+        # Observed across seeds 0-2: mean err 0.03-0.17 posterior-std units,
+        # std ratio 0.96-1.02.
         assert abs(lam.mean() - an_mean) / an_std < 0.5
         assert 0.8 < lam.std() / an_std < 1.2
 
