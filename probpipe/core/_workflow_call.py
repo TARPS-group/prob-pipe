@@ -89,6 +89,27 @@ def is_dependency_param(
         return False
 
 
+def _flatten_bound_inputs(
+    signature: inspect.Signature,
+    bound: inspect.BoundArguments,
+) -> dict[str, Any]:
+    """Flatten bound arguments into workflow input names.
+
+    ``**kwargs`` parameters are expanded into the returned input mapping.
+    """
+    inputs: dict[str, Any] = {}
+
+    for name, value in bound.arguments.items():
+        param = signature.parameters[name]
+
+        if param.kind == inspect.Parameter.VAR_KEYWORD:
+            inputs.update(value)
+        else:
+            inputs[name] = value
+
+    return inputs
+
+
 def bind_call_inputs(
     info: WorkflowSignatureInfo,
     args: tuple[Any, ...],
@@ -106,43 +127,41 @@ def bind_call_inputs(
     preferred control plane and take precedence.
     """
     raw_inputs = dict(call_inputs)
+
     legacy_options = _pop_legacy_workflow_options(
         info,
         raw_inputs,
         warn=warn_legacy_overrides,
     )
-    explicit_options = options or WorkflowCallOptions()
+    explicit_options = options if options is not None else WorkflowCallOptions()
 
-    n_broadcast_samples = default_n_broadcast_samples
-    if legacy_options.n_broadcast_samples is not None:
-        n_broadcast_samples = legacy_options.n_broadcast_samples
-    if explicit_options.n_broadcast_samples is not None:
-        n_broadcast_samples = explicit_options.n_broadcast_samples
+    def resolve_option(name: str, default: Any = None) -> Any:
+        explicit_value = getattr(explicit_options, name)
+        if explicit_value is not None:
+            return explicit_value
 
-    include_inputs = default_include_inputs
-    if legacy_options.include_inputs is not None:
-        include_inputs = legacy_options.include_inputs
-    if explicit_options.include_inputs is not None:
-        include_inputs = explicit_options.include_inputs
+        legacy_value = getattr(legacy_options, name)
+        if legacy_value is not None:
+            return legacy_value
 
-    seed = legacy_options.seed
-    if explicit_options.seed is not None:
-        seed = explicit_options.seed
+        return default
+
+    overrides = WorkflowCallOverrides(
+        n_broadcast_samples=resolve_option(
+            "n_broadcast_samples",
+            default_n_broadcast_samples,
+        ),
+        include_inputs=resolve_option(
+            "include_inputs",
+            default_include_inputs,
+        ),
+        seed=resolve_option("seed"),
+    )
 
     bound = info.signature.bind_partial(*args, **raw_inputs)
-    bound_inputs: dict[str, Any] = {}
-    for name, value in bound.arguments.items():
-        param = info.signature.parameters[name]
-        if param.kind == inspect.Parameter.VAR_KEYWORD:
-            bound_inputs.update(value)
-        else:
-            bound_inputs[name] = value
+    bound_inputs = _flatten_bound_inputs(info.signature, bound)
 
-    return bound_inputs, WorkflowCallOverrides(
-        n_broadcast_samples=n_broadcast_samples,
-        include_inputs=include_inputs,
-        seed=seed,
-    )
+    return bound_inputs, overrides
 
 
 def resolve_workflow_values(
