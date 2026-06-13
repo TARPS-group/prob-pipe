@@ -21,10 +21,13 @@ are made.
 
 ### 1a. Read project conventions (do this first)
 
-Read the following files in full. These are the **authoritative source of truth**
-for all naming, style, architecture, and API conventions. Every check you perform
-in Step 2 must be grounded in what these documents say — do not rely on your own
-prior knowledge of ProbPipe conventions, as they may have changed.
+Read the following files in full, **from the PR's base ref** — e.g.
+`git show origin/main:STYLE_GUIDE.md` after `git fetch origin main` — not from
+the local checkout: a worktree copy may be stale relative to the branch the PR
+merges into. These are the **authoritative source of truth** for all naming,
+style, architecture, and API conventions. Every check you perform in Step 2
+must be grounded in what these documents say — do not rely on your own prior
+knowledge of ProbPipe conventions, as they may have changed.
 
 - `STYLE_GUIDE.md` — naming, imports, types, protocols, testing, module layout
 - `CONTRIBUTING.md` — architecture overview, design principles, package
@@ -65,7 +68,10 @@ the docs actually say over this summary:
 - **Design principles** — immutability, ops-not-methods, protocol-based dispatch,
   private method convention, etc. (see CONTRIBUTING.md "Design principles")
 - **Naming** — protocols, ops, implementation functions, classes, modules,
-  reserved parameter names, the `.n` property convention (see STYLE_GUIDE.md)
+  reserved parameter names, the `num_atoms` / `replicate_size` property
+  convention, and **naming accuracy** (STYLE_GUIDE.md §1.12): names describe
+  what the object *is* (semantic accuracy), align with numpy/JAX vocabulary,
+  pair symmetrically, and renames sweep all analogous symbols + test files
 - **Imports** — `from __future__ import annotations`, relative internals, import
   order, optional dependency patterns, `TYPE_CHECKING` guards
 - **Type annotations** — modern Python 3.12+ syntax, project type aliases.
@@ -107,6 +113,13 @@ the docs actually say over this summary:
 - Have any existing tests become stale — testing behavior that no longer matches
   the implementation?
 - Do tests follow project conventions (see STYLE_GUIDE.md section 8)?
+- Are correctness tolerances as tight as they can reliably be? Loose tolerances
+  — or shape-only assertions on inference output where a statistical sanity
+  check is feasible — are findings.
+- Do tests cover structured cases (multi-field Records, mixed scalar/vector
+  parameters), not just scalar happy paths?
+- If the change touches dispatch (jax vs sequential paths), is there an
+  equivalence test guarding against silent path divergence?
 
 ### 2.4 Duplicate and redundant code
 
@@ -132,7 +145,14 @@ documentation:
 - Overly verbose explainer comments that restate what the code obviously does
 - `# TODO` or `# FIXME` comments that were not in the original code and seem
   like AI planning artifacts rather than genuine action items
-- Comments that narrate the development process rather than explain the code
+- Comments that narrate the development process or provenance rather than
+  explain the code — which PR/plan phase introduced a line, which review
+  comment prompted it ("addressed in review", "previously this was...")
+- Negative documentation — comments or docstrings describing what something
+  *isn't* ("this is not a mixture"); usually a naming or design smell
+  (CONTRIBUTING.md "Code comments & docstrings")
+- Public docstrings that explain implementation internals rather than
+  behavior and usage
 
 ### 2.6 General concerns
 
@@ -150,6 +170,22 @@ documentation:
 - Is there dead code, unused imports, or unreachable branches?
 - Are there opportunities to use JAX idioms more effectively (e.g., `vmap`
   instead of Python loops, `jnp` instead of `np` where JIT is intended)?
+
+### 2.8 PR body and branch hygiene
+
+- Does the PR title/description match the **final** diff? Flag drift in either
+  direction: features described but not present, changes present but
+  undescribed.
+- Is the body free of internal process jargon ("Phase 1b", plan-file
+  references, review-round narration) that an outside reader cannot follow?
+- Is there a CHANGELOG entry for user-visible changes, and a
+  `kind:breaking-change` label where the public API changes?
+- Did scratch artifacts leak into the diff — `*_plan.md` files, references to
+  local plan directories, leftover debug scripts?
+- When the PR pins a version (CI action, tool), is the pin consistent with the
+  same pin elsewhere in the repo, and reachable by the automated bumpers
+  (Dependabot, `pre-commit autoupdate`)? An inline pin no bumper parses will
+  silently drift.
 
 ## Step 3: Present findings
 

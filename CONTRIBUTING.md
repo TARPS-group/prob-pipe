@@ -51,6 +51,14 @@ A few conventions keep PRs consistent; the PR template
   `docs(contributing): document PR conventions`. Common types are `feat`,
   `fix`, `refactor`, `perf`, `test`, `docs`, `chore`, and `ci`; the scope is
   the affected subpackage or area.
+- **Description = final state.** The title and body describe the change as
+  it stands, and are updated whenever the scope shifts during review — a
+  stale description is a review blocker. No internal process jargon
+  ("Phase 1b", plan-file references, review-round narration): an outside
+  reader must be able to follow the description on its own. User-visible
+  changes get a CHANGELOG entry, and scratch planning artifacts
+  (`*_plan.md` files, references to local plan directories) never land on
+  the branch.
 - **Labels** — `area:*` labels are auto-applied from the changed paths (see
   [Labels](#labels) below); set `kind:*` / `status:*` by hand, and always add
   `kind:breaking-change` if the PR changes a user-visible API.
@@ -131,6 +139,18 @@ uv run pytest tests/test_foo.py -x -v      # single file, stop on first failure
 can also `source .venv/bin/activate` once per shell and then just type
 `pytest`.
 
+### Test quality
+
+- Correctness tests use the **tightest tolerances that pass reliably** —
+  a loose tolerance is a review flag, not a convenience.
+- Cover structured cases (multi-field Records, mixed scalar/vector
+  parameters), error paths, and **equivalence across dispatch paths**
+  (jax vs sequential) — path divergence has produced real
+  silently-wrong-results bugs.
+- Inference code gets a statistical sanity check (parameter estimates and
+  uncertainty roughly correct on a known target), not just shape
+  assertions.
+
 ### Coverage
 
 ```bash
@@ -204,6 +224,26 @@ layout helps readability there even when the call would fit on one
 line.
 
 This applies equally to source files and notebook code cells.
+
+### Code comments & docstrings
+
+Comments state constraints and contracts the code cannot express — not
+the development process. Match the comment density of the surrounding
+code, and when in doubt, delete: an over-explained obvious line is worse
+than no comment.
+
+- **No process narration.** Never record provenance in code — which PR
+  or plan phase introduced a line, which review comment prompted it
+  ("addressed in review", "previously this was..."). Such comments are
+  noise the moment the PR merges. (Citing an issue that documents a
+  known limitation or a non-obvious rationale is fine — that is a
+  constraint, not history.)
+- **Describe what something *is*, not what it *isn't*.** Negative
+  documentation ("this is not a mixture") usually signals that the name
+  or design needs fixing instead.
+- **Public docstrings describe behavior and usage, not implementation
+  internals.** Internals discussion belongs on private helpers, or
+  nowhere.
 
 ### Linting & pre-commit
 
@@ -279,6 +319,12 @@ uv run mkdocs serve            # local preview
 
 API docs use `mkdocstrings` directives in `docs/api/*.md` referencing
 fully-qualified Python paths.
+
+A behavior or API change and its documentation ship in the **same PR**:
+docstrings, the user-guide notebooks, README / `docs/index.md`, the
+CHANGELOG, and STYLE_GUIDE.md / CONTRIBUTING.md when conventions change.
+Examples and notebooks show idiomatic usage — never add a compat shim to
+keep an example running against an old API.
 
 ### Prefect orchestration
 

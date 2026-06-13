@@ -242,6 +242,28 @@ WF-output classes (`BroadcastDistribution`, `_RecordMarginal`,
 their bases and aren't directly parametrised; if you add a new such
 class, verify non-iterability via the parent class's contract.
 
+### 1.12 Naming accuracy
+
+Names describe what the object *is*, not its history or one of its
+uses:
+
+- **Semantic accuracy.** A class representing a joint model is not a
+  `*Posterior`; a distribution is not a `*LogDensity`; a helper that
+  imports and returns a module is not adequately described by
+  `_ensure_*` alone. If documenting a class honestly requires saying
+  what it is *not*, rename it.
+- **Ecosystem alignment.** Where numpy/JAX have an established
+  convention (`shape`, `__len__` over the leading axis, `size` as the
+  total element count), follow it rather than inventing a parallel
+  vocabulary.
+- **Symmetry.** Paired APIs get symmetric names — e.g.,
+  `as_flat_distribution` / `as_record_distribution` produce
+  `FlattenedDistributionView` / `NumericRecordDistributionView`.
+- **Rename sweeps are complete.** Renaming a symbol includes every
+  analogous symbol (fixing `_ensure_bayesflow` means fixing
+  `_ensure_cmdstanpy` too), the test files named after the old symbol,
+  and the docs that mention it.
+
 ---
 
 ## 2. Module Granularity
