@@ -408,8 +408,8 @@ jobs:
 
       - name: Upload coverage reports to Codecov
         # The main test job does not install [bayesflow], so its run measures
-        # _bayesflow.py as uncovered. Upload this leg under the `bayesflow`
-        # flag so Codecov's union counts _bayesflow.py toward coverage. 3.12
+        # the _bayesflow_* modules as uncovered. Upload this leg under the
+        # `bayesflow` flag so Codecov's union counts them toward coverage. 3.12
         # only, matching the test job's upload.
         if: steps.bf_check.outputs.skip != 'true' && matrix.python-version == '3.12'
         uses: codecov/codecov-action@v5

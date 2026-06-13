@@ -243,9 +243,9 @@ class TestBayesFlowNPE:
         assert np.asarray(default_post.draws()["a"]).reshape(-1).shape[0] == 500
 
     def test_observation_dim_mismatch(self, npe_model):
-        """Conditioning on a wrong-size observation raises a clear error rather
+        """Conditioning on wrong-size observed data raises a clear error rather
         than an opaque keras shape failure."""
-        with pytest.raises(ValueError, match="trained on observations of size"):
+        with pytest.raises(ValueError, match="conditioning shape is fixed"):
             condition_on(npe_model, np.zeros(5, dtype="float32"))
 
     @pytest.mark.parametrize("bad", [0, -5])

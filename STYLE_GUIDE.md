@@ -93,6 +93,14 @@ condition_on_nutpie = WorkflowFunction(
 )
 ```
 
+Exception: functions whose return value is a model *component* rather than a
+`Record`/`Distribution` are deliberately **plain functions** — the workflow
+result boundary coerces returns into `Record`/`Distribution`, which would wrap
+and break such components. Examples: the learned-likelihood factories
+`learn_amortized_likelihood` / `learn_amortized_ratio`; precedent: the
+de-workflowed `rwmh` / `elliptical_slice`. Note the rationale in a comment at
+the definition site.
+
 ### 1.5 Classes
 
 - **Distribution classes:** CamelCase, descriptive — `Normal`, `MultivariateNormal`,
@@ -527,7 +535,7 @@ inference/    (imports core/, custom_types)
 >   `_tfp_mcmc`, `_nutpie`, `_cmdstan_method`, `_pymc_method`)
 > - `inference/` → `distributions/` (lazy imports: prior-type dispatch on
 >   distribution classes in `_blackjax_ess`, `bijector_for` constraint
->   reparameterization in `_bayesflow`)
+>   reparameterization in `_bayesflow_posteriors`)
 >
 > These use lazy (in-function) imports to avoid circular imports at
 > module load time.  Do not add new reverse edges without discussion.
@@ -620,6 +628,51 @@ distribution families.
 
 Tests run in parallel via `pytest-xdist` (`-n auto --dist worksteal`).
 Disable for debugging: `pytest -p no:xdist -o "addopts="`.
+
+### 8.6 Numerical correctness and tolerances
+
+Tests of mathematical behavior (distributions, inference, learned
+estimators, linear algebra) must validate against an **independent
+baseline** — never the code path under test:
+
+- an analytic result (conjugate posteriors, known moments);
+- an exact reference computation run through the same pipeline (e.g.,
+  judging a learned likelihood by comparing its NUTS posterior against
+  NUTS run with the *true* likelihood on the same model — this isolates
+  the component's error from sampler and prior effects);
+- a known invariant (support membership, symmetry, positive
+  definiteness, simplex sums, `log_prob`/`prob` consistency);
+- central finite differences for gradients.
+
+Checking `mean(d) == d.loc` only verifies passthrough; it is not a
+correctness test. Where the claim is distributional, check **both
+location and spread** (e.g., posterior mean *and* std against the
+analytic values), not just point recovery.
+
+**Tolerances are measured, not guessed.** For stochastic or trained
+components, run the test's exact configuration across several seeds
+(3–4 is typically enough), then set the bound to cover the observed
+spread with roughly 2–3× margin. Seed everything that can be seeded —
+training, simulation, sampling — so a given environment is exactly
+reproducible; the margin exists only for cross-platform and
+library-version numerical drift, not for RNG variation.
+
+**Document the measured range in a comment next to the assertion**, so
+the bound reads as calibrated rather than arbitrary, and anyone
+tightening it later knows the baseline:
+
+```python
+# Observed across training seeds: mean err 0.05-0.10 post-std,
+# std ratios 0.99-1.11.
+assert mean_err < 0.3
+assert 0.85 < ratio < 1.25
+```
+
+Use `np.testing.assert_allclose` (with explicit `atol`/`rtol`) for
+numerical comparisons rather than bare `assert` with hand-rolled
+tolerance arithmetic — its failure output shows the offending values.
+Flag both failure directions when choosing bounds: too loose masks
+bugs; too tight is flaky on other platforms.
 
 ---
 

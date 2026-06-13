@@ -9,14 +9,17 @@ forward pass through the trained network -- no MCMC, no gradient bridge, and no
 prior translation (the prior is used only to draw ``theta`` at train time via
 the :func:`~probpipe.sample` op).
 
+The shared bridge (lazy import, validation, offline simulation, adapter keying,
+seeded training) lives in :mod:`._bayesflow_common`;
+:mod:`._bayesflow_likelihoods` builds the NLE/NRE likelihood surrogates on the
+same pipeline.
+
 BayesFlow / keras is imported lazily on first use, so ``import probpipe`` does
 not pull keras.
 """
 
 from __future__ import annotations
 
-import os
-import random
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -24,16 +27,23 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._record_array import NumericRecordArray
 from ..core.distribution import Distribution
 from ..core.node import workflow_function
-from ..core.ops import sample as _sample_op
 from ..core.protocols import GenerativeLikelihood, SupportsConditioning
-from ..custom_types import Array, ArrayLike, PRNGKey
+from ..custom_types import ArrayLike, PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ._bayesflow_common import (
+    _OBSERVATION_KEY,
+    SimBackend,
+    _adapter_field_keys,
+    _import_bayesflow,
+    _isolated_keras_seeding,
+    _simulate_offline,
+    _validate_learn_inputs,
+)
 
 if TYPE_CHECKING:
-    # Type-only: bayesflow/keras load at runtime in _ensure_bayesflow; tfp is a
+    # Type-only: bayesflow/keras load at runtime in _import_bayesflow; tfp is a
     # hard dependency but is only needed here for bijector annotations.
     import tensorflow_probability.substrates.jax.bijectors as tfb
     from bayesflow import Adapter, ContinuousApproximator
@@ -46,60 +56,6 @@ else:
     InferenceNetwork = KerasOptimizer = Any
 
 AmortizedMethod = Literal["npe", "fmpe", "cmpe"]
-# Offline-simulation execution backend; values mirror ``WorkflowFunction``'s
-# dispatch names ("jax" = vmap the simulator, "sequential" = eager per-draw loop).
-SimBackend = Literal["jax", "sequential"]
-
-# Internal adapter key for the simulated observation. User field names never
-# enter BayesFlow's key namespace -- theta fields are re-keyed via
-# ``_adapter_field_keys`` -- so this (and BayesFlow's own ``inference_variables``
-# / ``inference_conditions`` targets) can never collide with a prior field.
-_OBSERVATION_KEY = "observation"
-
-_bayesflow_module: ModuleType | None = None
-
-
-def _adapter_field_keys(fields: tuple[str, ...]) -> tuple[str, ...]:
-    """Positional internal keys (``theta_0``, ``theta_1``, ...) for the adapter.
-
-    Both the training dict and the sample-side extraction derive these from the
-    prior's ``record_template.fields`` order, so the mapping is deterministic
-    across train and inference without storing it.
-    """
-    return tuple(f"theta_{i}" for i in range(len(fields)))
-
-
-def _ensure_bayesflow() -> ModuleType:
-    """Import BayesFlow on the keras JAX backend, or raise a helpful error.
-
-    Imported lazily (and cached) so that ``import probpipe`` does not load keras.
-    """
-    global _bayesflow_module
-    if _bayesflow_module is not None:
-        return _bayesflow_module
-    # keras resolves its backend at import time from ``KERAS_BACKEND``; pin jax
-    # before keras / bayesflow load. ``setdefault`` leaves an explicit choice.
-    os.environ.setdefault("KERAS_BACKEND", "jax")
-    try:
-        import bayesflow as bf
-        import keras
-    except ImportError as e:
-        raise ImportError(
-            "BayesFlow is required for learn_amortized_posterior: "
-            "pip install probpipe[bayesflow]"
-        ) from e
-    if keras.backend.backend() != "jax":
-        # ``setdefault`` cannot re-bind an already-imported keras, so a process
-        # that imported keras with another backend first lands here.
-        raise ImportError(
-            "ProbPipe's BayesFlow backend requires the keras JAX backend, but "
-            f"keras reports {keras.backend.backend()!r}. Set KERAS_BACKEND=jax "
-            "before keras or bayesflow is first imported."
-        )
-    _bayesflow_module = bf
-    return bf
-
-
 # ---------------------------------------------------------------------------
 # Bridge helpers: ProbPipe prior / simulator <-> BayesFlow named-array dicts
 # ---------------------------------------------------------------------------
@@ -178,60 +134,6 @@ def _field_bijectors(prior: Distribution, fields: tuple[str, ...]) -> dict[str, 
                 "interval); discrete priors are not supported."
             ) from e
     return bijectors
-
-
-def _simulate_offline(
-    prior: Distribution,
-    simulator: GenerativeLikelihood,
-    num_simulations: int,
-    key: PRNGKey,
-    *,
-    sim_backend: SimBackend,
-    bijectors: dict[str, tfb.Bijector],
-) -> tuple[dict[str, np.ndarray], np.ndarray]:
-    """Draw ``(theta, y)`` pairs offline: ``theta ~ prior``, ``y ~ simulator(theta)``.
-
-    Returns ``(named_theta, y)`` where ``named_theta`` maps each prior
-    record-template field to a ``(num_simulations, d_field)`` float32 array of
-    *unconstrained* parameters (each field's draws pushed through its inverse
-    bijector at the field's native event shape, then flattened) and ``y`` is the
-    ``(num_simulations, d_y)`` float32 array of flattened simulated observations.
-    The simulator itself always sees the constrained, structured draws.
-    """
-    template = prior.record_template
-    fields = template.fields
-    k_theta, k_sim = jax.random.split(key)
-    theta = _sample_op(prior, key=k_theta, sample_shape=(num_simulations,))
-    # Round-trip through the canonical flat layout: single-field priors' raw draws
-    # are not field-indexable by name, so unflatten gives uniform named access.
-    theta_flat = jnp.asarray(theta.flatten()).reshape(num_simulations, -1)
-    record = NumericRecordArray.unflatten(
-        theta_flat, template=template, batch_shape=(num_simulations,)
-    )
-    # Invert before flattening: matrix-valued bijectors (positive-definite) require
-    # the field's native (..., n, n) event shape, not the flat adapter layout.
-    named = {}
-    for f in fields:
-        u = bijectors[f].inverse(jnp.asarray(record[f]))
-        named[f] = np.asarray(jnp.reshape(u, (num_simulations, -1)), dtype="float32")
-    sim_keys = jax.random.split(k_sim, num_simulations)
-
-    def _one(flat_row: Array, k: PRNGKey) -> Array:
-        # Per-draw structured params (named-field access), per the
-        # GenerativeLikelihood contract.
-        params = NumericRecordArray.unflatten(flat_row, template=template, batch_shape=())
-        return jnp.ravel(simulator.generate_data(params, 1, key=k)[0])
-
-    if sim_backend == "jax":
-        # JAX-traceable simulators: vmap the whole batch (fast path).
-        y = jax.vmap(_one)(theta_flat, sim_keys)
-    else:  # "sequential"
-        # Non-traceable simulators (numpy / external code): one eager call per
-        # draw. Theta is hosted once -- per-draw device indexing would sync
-        # every iteration.
-        theta_rows = np.asarray(theta_flat)
-        y = jnp.stack([_one(theta_rows[i], sim_keys[i]) for i in range(num_simulations)])
-    return named, np.asarray(y, dtype="float32")
 
 
 # ---------------------------------------------------------------------------
@@ -313,10 +215,11 @@ class BayesFlowModel(Distribution, SupportsConditioning):
         obs_flat = np.ravel(np.asarray(observed, dtype="float32"))
         if obs_flat.size != self._data_dim:
             raise ValueError(
-                f"observation has {obs_flat.size} values but the estimator was "
-                f"trained on observations of size {self._data_dim} (one simulated "
-                "dataset); pass a single observation of the simulator's output "
-                "shape, not a stacked multi-observation dataset."
+                f"observed data has {obs_flat.size} values but the estimator was "
+                f"trained to condition on size {self._data_dim} (the simulator's "
+                "per-draw output) -- the conditioning shape is fixed at training "
+                "time. Pass observed data of that shape; for datasets of other "
+                "sizes use learn_amortized_likelihood or learn_amortized_ratio."
             )
         out = self._approximator.sample(
             num_samples=num_results,
@@ -396,8 +299,9 @@ def learn_amortized_posterior(
         native per-draw sample -- a record whose fields are accessible by name
         (``params["a"]``), not a flattened vector.  It must be JAX-vmappable unless
         ``sim_backend="sequential"`` (see below). Training uses one simulated dataset
-        per ``theta``, so ``condition_on`` must be given a single observation of that
-        same flattened shape (not a stacked multi-observation dataset).
+        per ``theta``, fixing the conditioning shape: ``condition_on`` must be given
+        observed data of that same flattened size (datasets of any size are the
+        NLE/NRE learners' case).
     method : {"npe", "fmpe", "cmpe"}
         Amortized estimator: NPE (coupling flow), FMPE (flow matching), or CMPE
         (consistency model). NPE's coupling flow needs at least two *unconstrained*
@@ -454,39 +358,13 @@ def learn_amortized_posterior(
         raise ValueError(
             f"Unknown amortized SBI method: {method!r}. Supported: 'npe', 'fmpe', 'cmpe'."
         )
-    if sim_backend not in ("jax", "sequential"):
-        raise ValueError(
-            f"Unknown sim_backend: {sim_backend!r}. Supported: 'jax', 'sequential'."
-        )
-    for _name, _val in (
-        ("num_simulations", num_simulations), ("batch_size", batch_size),
-        ("epochs", epochs), ("num_results", num_results),
-    ):
-        if not isinstance(_val, (int, np.integer)):
-            raise TypeError(f"{_name} must be an integer, got {type(_val).__name__}.")
-        if _val < 1:
-            raise ValueError(f"{_name} must be a positive integer, got {_val}.")
-    if not hasattr(simulator, "generate_data"):
-        raise TypeError(
-            "simulator must be a GenerativeLikelihood with a generate_data method, "
-            f"got {type(simulator).__name__}"
-        )
-    record_template = getattr(prior, "record_template", None)
-    if record_template is None:
-        raise TypeError(
-            "learn_amortized_posterior requires a RecordDistribution prior with "
-            "named parameter fields -- typically a ProductDistribution of named "
-            f"distributions -- but got {type(prior).__name__}, which has no "
-            "record_template."
-        )
+    record_template = _validate_learn_inputs(
+        prior, simulator, caller="learn_amortized_posterior", sim_backend=sim_backend,
+        counts=(("num_simulations", num_simulations), ("batch_size", batch_size),
+                ("epochs", epochs), ("num_results", num_results)),
+    )
     fields = record_template.fields
     leaf_shapes = record_template.numeric_leaf_shapes
-    if any("/" in k for k in leaf_shapes):
-        raise TypeError(
-            "learn_amortized_posterior does not support nested priors (the "
-            "per-field bijector and adapter machinery is flat); flatten the "
-            "prior into top-level named fields."
-        )
     # Built up front: also rejects discrete / unsupported-support priors before
     # any simulation runs.
     bijectors = _field_bijectors(prior, fields)
@@ -497,16 +375,8 @@ def learn_amortized_posterior(
         for f in fields
     )
 
-    bf = _ensure_bayesflow()
-    import keras
-
-    # keras reads the global RNG for network init + fit, so seed it -- but snapshot
-    # and restore the caller's Python/NumPy state so the process-wide seeding does
-    # not leak. keras keeps its own seeded generator state across the restore.
-    py_state = random.getstate()
-    np_state = np.random.get_state()
-    keras.utils.set_random_seed(random_seed)
-    try:
+    bf = _import_bayesflow()
+    with _isolated_keras_seeding(random_seed):
         key = jax.random.PRNGKey(random_seed)
         named, y = _simulate_offline(
             prior, simulator, num_simulations, key,
@@ -529,9 +399,6 @@ def learn_amortized_posterior(
         approximator.compile(optimizer=optimizer)
         dataset = bf.OfflineDataset(data=sims, batch_size=batch_size, adapter=adapter)
         approximator.fit(dataset=dataset, epochs=epochs, **fit_kwargs)
-    finally:
-        random.setstate(py_state)
-        np.random.set_state(np_state)
 
     return BayesFlowModel(
         approximator, prior, simulator, method=method, data_dim=int(y.shape[-1]),

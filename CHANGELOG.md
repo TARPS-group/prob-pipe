@@ -72,6 +72,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     TensorFlow or PyTorch. The backend is imported lazily, so `import
     probpipe` does not load keras.
 
+- **jax-native NLE and NRE (`[bayesflow]` extra).** New
+  `learn_amortized_likelihood(prior, simulator, ...)` (neural likelihood
+  estimation: a conditional coupling flow for `p(y | theta)`) and
+  `learn_amortized_ratio(...)` (neural ratio estimation: an NRE-C classifier
+  for the likelihood-to-evidence ratio) return `BayesFlowLikelihood` /
+  `BayesFlowRatio` — `ConditionallyIndependentLikelihood` components whose
+  `log_likelihood` is **jax.grad-transparent**, so
+  `SimpleModel(prior, learned)` + `condition_on` samples the posterior with
+  the existing BlackJAX/TFP NUTS machinery. No PyTorch: this replaces the
+  planned sbi-torch default path (verified by the Step-6a spike — gradients
+  finite-difference-exact and NUTS recovering analytic posteriors, including
+  discrete-observation + constrained-parameter cases for NRE).
+  - Per-row scores sum under conditional independence, so datasets of any
+    size work natively (NPE's conditioning shape is fixed at training time),
+    and `per_datum_log_likelihood` comes for free.
+  - The networks take raw constrained `theta` as *input* (no bijector
+    reparameterization needed on that side); discrete-valued parameter
+    fields are accepted. NLE's default coupling flow needs observations with
+    >= 2 dimensions and a reverse-differentiable density (adaptive-ODE
+    networks such as `FlowMatching` integrate `log_prob` with a dynamic-bound
+    `while_loop`, which JAX cannot reverse-differentiate); NRE's MLP
+    classifier has neither restriction and handles discrete observations.
+  - `learn_amortized_likelihood(dequantize=True)` supports integer-valued
+    observations via uniform dequantization (Theis et al. 2016; Ho et al.
+    2019, Flow++): training adds `U[0,1)` jitter to the simulated `y` and the
+    wrapper scores integer data at the unit-cell midpoint `y + 1/2`. Without
+    it, the continuous fit measurably overdisperses the posterior as
+    observations concentrate on few atoms.
+  - `BayesFlowRatio` values are log-ratios — valid for conditioning (the
+    evidence constant cancels) but not for absolute-likelihood uses (model
+    comparison, LOO/WAIC); the caveat is documented on the class.
+
 - **`ProductDistribution.supports`** — per-field support constraints (each
   component's `support`), implementing the canonical `RecordDistribution`
   accessor that previously raised `NotImplementedError`.

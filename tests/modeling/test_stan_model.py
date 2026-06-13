@@ -239,19 +239,19 @@ class TestStanModelConditionOn:
 class TestCmdStanInferenceMethod:
     """Test CmdStan inference via the registry method."""
 
-    def test_ensure_cmdstanpy_missing(self):
-        from probpipe.inference._cmdstan_method import _ensure_cmdstanpy
+    def test_import_cmdstanpy_missing(self):
+        from probpipe.inference._cmdstan_method import _import_cmdstanpy
 
         with patch.dict("sys.modules", {"cmdstanpy": None}):
             with pytest.raises(ImportError, match="pip install probpipe"):
-                _ensure_cmdstanpy()
+                _import_cmdstanpy()
 
-    def test_ensure_cmdstanpy_present(self):
-        from probpipe.inference._cmdstan_method import _ensure_cmdstanpy
+    def test_import_cmdstanpy_present(self):
+        from probpipe.inference._cmdstan_method import _import_cmdstanpy
 
         mock_cmdstanpy = MagicMock()
         with patch.dict("sys.modules", {"cmdstanpy": mock_cmdstanpy}):
-            result = _ensure_cmdstanpy()
+            result = _import_cmdstanpy()
             assert result is mock_cmdstanpy
 
 

@@ -139,6 +139,18 @@ uv run pytest --cov=probpipe --cov-report=term-missing
 
 Target: >90% on all modules.
 
+### Test quality for numerical code
+
+Coverage is necessary but not sufficient: tests of mathematical behavior
+must check correctness against an **independent baseline** (an analytic
+result, an exact reference computation, a known invariant, or finite
+differences for gradients) — and where the claim is distributional,
+check both location and spread. Tolerances on stochastic or trained
+components are **measured, not guessed**: run the test's configuration
+across a few seeds, bound the observed spread with modest margin, and
+document the measured range in a comment next to the assertion. Full
+conventions in [STYLE_GUIDE.md § 8.6](STYLE_GUIDE.md#86-numerical-correctness-and-tolerances).
+
 ### Code formatting
 
 Keep Python code compact horizontally. The hard upper bound is 100
@@ -508,12 +520,18 @@ Built-in methods:
 | 0 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 | 0 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 
-**Amortized SBI bypasses the registry.** Trained amortized posterior estimators
-(`learn_amortized_posterior` → `BayesFlowPosterior`, the `[bayesflow]` extra)
+**Amortized SBI dispatches two ways.** Trained amortized posterior estimators
+(`learn_amortized_posterior` → `BayesFlowModel`, the `[bayesflow]` extra)
 implement `SupportsConditioning` directly, so `condition_on(model, observed)` is
 a single forward pass through the trained network. Because `condition_on` checks
 `SupportsConditioning` *before* the inference-method registry, these estimators
-short-circuit it and register no method.
+short-circuit it and register no method. The learned NLE/NRE likelihoods
+(`learn_amortized_likelihood` / `learn_amortized_ratio` → `BayesFlowLikelihood`
+/ `BayesFlowRatio`) take the opposite route: they are ordinary
+`ConditionallyIndependentLikelihood` components, so
+`SimpleModel(prior, learned)` + `condition_on` selects a sampler through the
+registry table above (typically `blackjax_nuts` — the learned scores are
+JAX-traceable) with no new registry entries.
 
 ### Converter priority system
 

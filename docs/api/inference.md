@@ -73,18 +73,56 @@ when choosing a number for a new method are documented under
 
 ## Amortized SBI
 
-Simulation-based inference with a trained amortized estimator (requires the
-`[bayesflow]` extra; Python 3.12–3.13 only). `learn_amortized_posterior`
-trains an NPE / FMPE / CMPE network from a prior and a `GenerativeLikelihood`
-simulator; the returned `BayesFlowModel` bundles the joint model (the prior
-and simulator are exposed as properties) with the trained estimator, and
-`condition_on(model, observed)` draws from `p(theta | observed)` in a single
-network forward pass — the same trained instance conditions on any
-observation with no retraining.
+Simulation-based inference with trained amortized estimators (requires the
+`[bayesflow]` extra; Python 3.12–3.13 only). Each learner takes the same two
+ingredients — a `RecordDistribution` prior and a `GenerativeLikelihood`
+simulator — and trains a neural estimator on simulated `(theta, y)` pairs;
+they differ in what the network estimates, and therefore in how posterior
+draws are produced:
+
+| Learner | Estimates | Returns | Posterior draws via |
+|---|---|---|---|
+| `learn_amortized_posterior` | the posterior directly (NPE, FMPE, or CMPE) | `BayesFlowModel` | `condition_on(model, observed)` — one network forward pass, no MCMC |
+| `learn_amortized_likelihood` | the likelihood (NLE) | `BayesFlowLikelihood` | `condition_on(SimpleModel(prior, learned), data)` — gradient-based MCMC through the learned density |
+| `learn_amortized_ratio` | the likelihood-to-evidence ratio (NRE) | `BayesFlowRatio` | same as NLE; the evidence constant cancels in MCMC |
+
+### Choosing a learner
+
+- **Datasets of a fixed size** → `learn_amortized_posterior`: the network
+  conditions on data of the shape the simulator emits per draw, and training
+  is amortized over it — each new dataset of that shape costs one forward
+  pass, no retraining and no MCMC.
+- **Datasets of any size** → `learn_amortized_likelihood` or
+  `learn_amortized_ratio`: both wrappers are
+  `ConditionallyIndependentLikelihood`s, so per-row scores sum — train once
+  on per-row simulations, then condition on any number of rows — at the
+  price of an MCMC run per dataset. (NPE's conditioning shape is fixed at
+  training time.)
+- **Integer-valued observations** → `learn_amortized_likelihood` with
+  `dequantize=True`, or `learn_amortized_ratio`, which consumes discrete and
+  mixed rows natively. Without one of these, the continuous NLE fit degrades
+  (overdispersed posteriors) as observations concentrate on few values.
+- **One-dimensional observations** → `learn_amortized_posterior` and
+  `learn_amortized_ratio` handle `d_y = 1` natively; NLE's default coupling
+  flow needs `d_y >= 2` (alternatively pass a custom `inference_network`).
+- **Discrete-valued parameters** → `learn_amortized_likelihood` or
+  `learn_amortized_ratio` (`theta` is a network input there); NPE models
+  `theta` with a continuous flow and rejects discrete priors.
+- **Absolute likelihood values** (model comparison, LOO/WAIC) →
+  `learn_amortized_likelihood` only: `BayesFlowRatio` values are log-ratios —
+  valid for conditioning, **not** for absolute-likelihood reads.
 
 ::: probpipe.learn_amortized_posterior
 
 ::: probpipe.BayesFlowModel
+
+::: probpipe.learn_amortized_likelihood
+
+::: probpipe.BayesFlowLikelihood
+
+::: probpipe.learn_amortized_ratio
+
+::: probpipe.BayesFlowRatio
 
 ## Iterative transformations
 
