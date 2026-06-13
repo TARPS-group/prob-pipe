@@ -69,12 +69,12 @@ Core dependencies: JAX and TensorFlow Probability. ProbPipe uses [tfp-nightly](h
 Optional extras (append to the `pip install .` / `uv pip install .` above, e.g. `pip install ".[dev]"`):
 
 ```bash
-pip install .[dev]        # pytest, jupyter, matplotlib, graphviz
-pip install .[prefect]    # Prefect orchestration backend
-pip install .[stan]       # Stan models via BridgeStan + CmdStanPy
-pip install .[pymc]       # PyMC model integration
-pip install .[nutpie]     # nutpie Markov chain Monte Carlo (MCMC) sampler
-pip install .[bayesflow]  # BayesFlow amortized simulation-based inference (Python 3.12-3.13)
+pip install ".[dev]"        # pytest, jupyter, matplotlib, graphviz
+pip install ".[prefect]"    # Prefect orchestration backend
+pip install ".[stan]"       # Stan models via BridgeStan + CmdStanPy
+pip install ".[pymc]"       # PyMC model integration
+pip install ".[nutpie]"     # nutpie Markov chain Monte Carlo (MCMC) sampler
+pip install ".[bayesflow]"  # BayesFlow amortized simulation-based inference (Python 3.12-3.13)
 ```
 
 ### Ray via Prefect
