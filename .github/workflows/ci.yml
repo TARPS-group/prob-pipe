@@ -419,11 +419,13 @@ jobs:
           flags: bayesflow
 
   notebooks:
-    # Execute every docs/examples notebook to keep the reference set
-    # honest against the current codebase. Separate job so the
+    # Execute every docs/examples and docs/tutorials notebook to keep the
+    # reference set honest against the current codebase. Separate job so the
     # ~10-15 min notebook pass does not gate the unit-test matrix.
-    # Skipped when neither example notebooks nor probpipe source files change.
+    # Skipped when no notebook or probpipe source file changes.
     runs-on: ubuntu-latest
+    env:
+      KERAS_BACKEND: jax   # bayesflow tutorials run keras on the JAX backend
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -439,7 +441,7 @@ jobs:
             BASE="${{ github.event.before }}"
           fi
           CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
-            -- 'docs/examples/*.ipynb' 'probpipe/' || true)
+            -- 'docs/examples/*.ipynb' 'docs/tutorials/*.ipynb' 'probpipe/' || true)
           CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
 
           # A dependency bump in pyproject.toml or uv.lock touches no notebook
@@ -461,10 +463,10 @@ jobs:
           # Check RUN_ALL_NB before the empty-CHANGED skip, so a foundational
           # change with no notebook/source edits still runs every notebook.
           if [ "$RUN_ALL_NB" = "true" ]; then
-            NOTEBOOKS=$(find docs/examples -maxdepth 1 -name '*.ipynb' | sort | tr '\n' ' ' | xargs)
+            NOTEBOOKS=$(find docs/examples docs/tutorials -maxdepth 1 -name '*.ipynb' | sort | tr '\n' ' ' | xargs)
             if [ -z "$NOTEBOOKS" ]; then
               echo "skip=true" >> "$GITHUB_OUTPUT"
-              echo "No example notebooks found — skipping notebook CI."
+              echo "No notebooks found — skipping notebook CI."
             else
               echo "skip=false" >> "$GITHUB_OUTPUT"
               echo "notebooks=$NOTEBOOKS" >> "$GITHUB_OUTPUT"
@@ -473,7 +475,7 @@ jobs:
             fi
           elif [ -z "$CHANGED" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "No docs/examples notebook or probpipe source changes — skipping notebook CI."
+            echo "No notebook or probpipe source changes — skipping notebook CI."
           else
             echo "Changes detected:"
             echo "$CHANGED"
@@ -538,7 +540,7 @@ jobs:
                           if isinstance(target, ast.Name):
                               sym_defs.setdefault(target.id, mod)
 
-          changed_nbs = [f for f in sys.argv[1:] if f.startswith('docs/examples/') and f.endswith('.ipynb') and Path(f).exists()]
+          changed_nbs = [f for f in sys.argv[1:] if f.startswith(('docs/examples/', 'docs/tutorials/')) and f.endswith('.ipynb') and Path(f).exists()]
           changed_sources = [f for f in sys.argv[1:] if f.startswith('probpipe/')]
 
           seen = set(file_to_module(f) for f in changed_sources)
@@ -597,7 +599,8 @@ jobs:
 
           to_run = set(changed_nbs)
           if affected_mods:
-              for nb_path in sorted(Path('docs/examples').glob('*.ipynb')):
+              nb_dirs = (Path('docs/examples'), Path('docs/tutorials'))
+              for nb_path in sorted(p for d in nb_dirs for p in d.glob('*.ipynb')):
                   nb_str = str(nb_path)
                   if nb_str not in to_run and notebook_affected(nb_str):
                       to_run.add(nb_str)
@@ -632,11 +635,11 @@ jobs:
         # Dependency versions are pinned in uv.lock. --frozen fails if the
         # lockfile is out of sync, so CI never silently drifts. --python pins
         # the interpreter (setup-uv's python-version input was ignored on @v3).
-        # [pymc] is intentionally not installed for the notebook job (matches
-        # the previous pip-based setup).
-        run: uv sync --frozen --python 3.12 --extra dev --extra nutpie
+        # Tutorials exercise the amortized-SBI (bayesflow) and PyMC backends,
+        # so the notebook job installs both extras alongside nutpie.
+        run: uv sync --frozen --python 3.12 --extra dev --extra nutpie --extra bayesflow --extra pymc
 
-      - name: Execute affected docs/examples notebooks
+      - name: Execute affected notebooks
         if: steps.nb_check.outputs.skip != 'true'
         run: |
           set -euo pipefail
