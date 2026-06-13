@@ -109,7 +109,31 @@ plt.xlabel('Temperature (°F)'); plt.ylabel('P(O-ring damage)'); plt.legend()
 
 ## Installation
 
-Requires Python >= 3.12 (tested on 3.12, 3.13, and 3.14).
+Requires Python >= 3.12 (tested on 3.12, 3.13, and 3.14). ProbPipe is not yet
+on PyPI, so installation is from source.
+
+### New to Python?
+
+You do **not** need an existing Python installation. [uv](https://docs.astral.sh/uv/)
+manages both Python and the environment for you. First
+[install uv](https://docs.astral.sh/uv/getting-started/installation/) (on
+macOS/Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`), then:
+
+```bash
+git clone https://github.com/TARPS-group/prob-pipe.git
+cd prob-pipe
+uv venv                 # create an isolated environment (uv fetches a compatible Python)
+uv pip install .        # install ProbPipe into it
+source .venv/bin/activate   # activate it; now `python` and `probpipe` are available
+```
+
+Then work through the
+**[Getting Started tutorial](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)**.
+(Prefer not to activate? Prefix commands with `uv run`, e.g. `uv run python`.)
+
+### Already have a Python environment?
+
+Install from source with pip into your active environment:
 
 ```bash
 git clone https://github.com/TARPS-group/prob-pipe.git
@@ -117,18 +141,23 @@ cd prob-pipe
 pip install .
 ```
 
-ProbPipe also installs cleanly with [uv](https://docs.astral.sh/uv/). For a lockfile-managed dev environment, run `uv sync` (see [CONTRIBUTING.md](CONTRIBUTING.md#installation)). To use `uv pip install` in place of the `pip install` examples below, first create and activate an environment with `uv venv && source .venv/bin/activate` — `uv pip` installs into the active (or an explicitly targeted) environment, not a global one.
+uv users can substitute `uv pip install .` (into an active `uv venv`), or
+`uv sync` for a lockfile-managed dev environment — see
+[CONTRIBUTING.md](CONTRIBUTING.md#installation).
+
+### Dependencies and optional extras
 
 Core dependencies: JAX, [BlackJAX](https://blackjax-devs.github.io/blackjax/), and TensorFlow Probability. JAX provides arrays and autodiff; BlackJAX is the default backend for gradient MCMC (`condition_on(model, data)` auto-dispatches to `blackjax_nuts`); TFP supplies the distribution implementations the wrappers in `probpipe.Normal`, `probpipe.Gamma`, etc. delegate to. ProbPipe uses [tfp-nightly](https://pypi.org/project/tfp-nightly/), which is the [recommended approach](https://github.com/tensorflow/probability/issues/1994#issuecomment-3129033043) for TFP on JAX since stable TFP releases are tied to TensorFlow and often lag behind JAX.
 
-Optional extras:
+Optional extras (append to the `pip install .` / `uv pip install .` above, e.g. `pip install ".[dev]"`):
 
 ```bash
-pip install .[dev]       # pytest, jupyter, matplotlib, graphviz
-pip install .[prefect]   # Prefect orchestration backend
-pip install .[stan]      # Stan models via BridgeStan + CmdStanPy
-pip install .[pymc]      # PyMC model integration
-pip install .[nutpie]    # nutpie Markov chain Monte Carlo (MCMC) sampler
+pip install ".[dev]"        # pytest, jupyter, matplotlib, graphviz
+pip install ".[prefect]"    # Prefect orchestration backend
+pip install ".[stan]"       # Stan models via BridgeStan + CmdStanPy
+pip install ".[pymc]"       # PyMC model integration
+pip install ".[nutpie]"     # nutpie Markov chain Monte Carlo (MCMC) sampler
+pip install ".[bayesflow]"  # BayesFlow amortized simulation-based inference (Python 3.12-3.13)
 ```
 
 ### Ray via Prefect
