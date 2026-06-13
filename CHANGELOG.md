@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ask questions / file issues). The Zenodo DOI is minted from the first
   tagged release and is dropped into the BibTeX/CFF once available.
 
+### Changed
+
+- **Install docs: a "New to Python?" two-route fork.** The README and docs
+  landing now split installation into a newcomer path (uv manages Python and
+  the environment — no prior Python needed) and an experienced-user pip path,
+  and note that ProbPipe installs from source (not yet on PyPI). The optional-
+  extras list also gains the previously-missing `bayesflow` extra.
+
 ### Fixed
 
 - **Codecov no longer misreports coverage on targeted PRs (#261).**
