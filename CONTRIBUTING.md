@@ -366,8 +366,12 @@ GitHub Actions (`.github/workflows/ci.yml`):
 - Tests on Python 3.12, 3.13, and 3.14
 - Installs via `uv sync --frozen` from `uv.lock` (single source of truth
   for pinned dependency versions, shared between local dev and CI)
-- Test job uses extras `dev,nutpie,pymc`; the notebooks job uses
-  `dev,nutpie` only (`bridgestan` is not included anywhere by default)
+- Test job uses extras `dev,nutpie,pymc`. The notebooks job is a two-leg
+  matrix that runs in parallel — an `examples` leg (`dev,nutpie`) for
+  `docs/examples` and a `tutorials` leg (`dev,nutpie,bayesflow,pymc`) for
+  `docs/tutorials` — each scoped to its own directory with independent
+  change detection, so an unrelated leg is skipped (`bridgestan` is not
+  included anywhere by default)
 - A separate `bayesflow` leg (Python 3.12 and 3.13 only — BayesFlow caps
   `<3.14`) syncs `dev,nutpie,bayesflow` and runs the amortized-SBI tests
 - Coverage uploaded to Codecov

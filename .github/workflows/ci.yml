@@ -449,6 +449,9 @@ jobs:
       - name: Check if notebooks or source files changed
         id: nb_check
         run: |
+          # Fail fast if a leg's directory is misconfigured (a typo or a future
+          # rename would otherwise glob/find empty and silently skip the leg).
+          test -d "${{ matrix.dir }}" || { echo "::error::notebook dir '${{ matrix.dir }}' not found"; exit 1; }
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="origin/${{ github.base_ref }}"
           else
@@ -477,13 +480,14 @@ jobs:
           # Check RUN_ALL_NB before the empty-CHANGED skip, so a foundational
           # change with no notebook/source edits still runs every notebook.
           if [ "$RUN_ALL_NB" = "true" ]; then
-            NOTEBOOKS=$(find ${{ matrix.dir }} -maxdepth 1 -name '*.ipynb' | sort | tr '\n' ' ' | xargs)
+            NOTEBOOKS=$(find ${{ matrix.dir }} -maxdepth 1 -name '*.ipynb' | sort)
             if [ -z "$NOTEBOOKS" ]; then
               echo "skip=true" >> "$GITHUB_OUTPUT"
               echo "No notebooks found — skipping notebook CI."
             else
               echo "skip=false" >> "$GITHUB_OUTPUT"
-              echo "notebooks=$NOTEBOOKS" >> "$GITHUB_OUTPUT"
+              # Newline-delimited (multiline) output so paths are never word-split.
+              { echo "notebooks<<NBEOF"; echo "$NOTEBOOKS"; echo "NBEOF"; } >> "$GITHUB_OUTPUT"
               echo "Foundational change detected — executing ALL notebooks:"
               echo "$NOTEBOOKS"
             fi
@@ -632,10 +636,10 @@ jobs:
               echo "skip=true" >> "$GITHUB_OUTPUT"
               echo "No affected notebooks — skipping notebook CI."
             else
-              NOTEBOOKS_SPACE=$(echo "$NOTEBOOKS" | tr '\n' ' ' | xargs)
               echo "skip=false" >> "$GITHUB_OUTPUT"
-              echo "notebooks=$NOTEBOOKS_SPACE" >> "$GITHUB_OUTPUT"
-              echo "Will execute: $NOTEBOOKS_SPACE"
+              # Newline-delimited (multiline) output so paths are never word-split.
+              { echo "notebooks<<NBEOF"; echo "$NOTEBOOKS"; echo "NBEOF"; } >> "$GITHUB_OUTPUT"
+              echo "Will execute:"; echo "$NOTEBOOKS"
             fi
           fi
 
@@ -656,10 +660,15 @@ jobs:
 
       - name: Execute affected notebooks
         if: steps.nb_check.outputs.skip != 'true'
+        # Read the list via an env var (not spliced into the script) and iterate
+        # with read, so notebook paths are never word-split or shell-injected.
+        env:
+          NB_LIST: ${{ steps.nb_check.outputs.notebooks }}
         run: |
           set -euo pipefail
-          for nb in ${{ steps.nb_check.outputs.notebooks }}; do
+          while IFS= read -r nb; do
+            [ -z "$nb" ] && continue
             echo "--- executing $nb ---"
             uv run python -m nbconvert --to notebook --execute \
               --ExecutePreprocessor.timeout=900 --output /tmp/out.ipynb "$nb"
-          done
+          done <<< "$NB_LIST"
