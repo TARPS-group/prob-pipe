@@ -419,11 +419,27 @@ jobs:
           flags: bayesflow
 
   notebooks:
-    # Execute every docs/examples notebook to keep the reference set
-    # honest against the current codebase. Separate job so the
-    # ~10-15 min notebook pass does not gate the unit-test matrix.
-    # Skipped when neither example notebooks nor probpipe source files change.
+    # Execute the docs notebooks to keep the reference set honest against the
+    # current codebase. Two parallel legs: `examples` (lean — dev+nutpie) and
+    # `tutorials` (the SBI backends — bayesflow+pymc). Splitting roughly halves
+    # the wall-clock vs one serial pass (~8 min each, on par with the test
+    # matrix) and spares the examples the ~200 MB pymc/bayesflow install (no
+    # example imports them in code). Separate from the unit-test matrix either
+    # way. Skipped per-leg when no notebook in its dir or probpipe source changes.
+    name: notebooks (${{ matrix.group }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: examples
+            dir: docs/examples
+            extras: --extra dev --extra nutpie
+          - group: tutorials
+            dir: docs/tutorials
+            extras: --extra dev --extra nutpie --extra bayesflow --extra pymc
     runs-on: ubuntu-latest
+    env:
+      KERAS_BACKEND: jax   # bayesflow tutorials run keras on the JAX backend
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -433,13 +449,16 @@ jobs:
       - name: Check if notebooks or source files changed
         id: nb_check
         run: |
+          # Fail fast if a leg's directory is misconfigured (a typo or a future
+          # rename would otherwise glob/find empty and silently skip the leg).
+          test -d "${{ matrix.dir }}" || { echo "::error::notebook dir '${{ matrix.dir }}' not found"; exit 1; }
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="origin/${{ github.base_ref }}"
           else
             BASE="${{ github.event.before }}"
           fi
           CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
-            -- 'docs/examples/*.ipynb' 'probpipe/' || true)
+            -- '${{ matrix.dir }}/*.ipynb' 'probpipe/' || true)
           CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
 
           # A dependency bump in pyproject.toml or uv.lock touches no notebook
@@ -461,19 +480,20 @@ jobs:
           # Check RUN_ALL_NB before the empty-CHANGED skip, so a foundational
           # change with no notebook/source edits still runs every notebook.
           if [ "$RUN_ALL_NB" = "true" ]; then
-            NOTEBOOKS=$(find docs/examples -maxdepth 1 -name '*.ipynb' | sort | tr '\n' ' ' | xargs)
+            NOTEBOOKS=$(find ${{ matrix.dir }} -maxdepth 1 -name '*.ipynb' | sort)
             if [ -z "$NOTEBOOKS" ]; then
               echo "skip=true" >> "$GITHUB_OUTPUT"
-              echo "No example notebooks found — skipping notebook CI."
+              echo "No notebooks found — skipping notebook CI."
             else
               echo "skip=false" >> "$GITHUB_OUTPUT"
-              echo "notebooks=$NOTEBOOKS" >> "$GITHUB_OUTPUT"
+              # Newline-delimited (multiline) output so paths are never word-split.
+              { echo "notebooks<<NBEOF"; echo "$NOTEBOOKS"; echo "NBEOF"; } >> "$GITHUB_OUTPUT"
               echo "Foundational change detected — executing ALL notebooks:"
               echo "$NOTEBOOKS"
             fi
           elif [ -z "$CHANGED" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "No docs/examples notebook or probpipe source changes — skipping notebook CI."
+            echo "No notebook or probpipe source changes — skipping notebook CI."
           else
             echo "Changes detected:"
             echo "$CHANGED"
@@ -538,8 +558,10 @@ jobs:
                           if isinstance(target, ast.Name):
                               sym_defs.setdefault(target.id, mod)
 
-          changed_nbs = [f for f in sys.argv[1:] if f.startswith('docs/examples/') and f.endswith('.ipynb') and Path(f).exists()]
-          changed_sources = [f for f in sys.argv[1:] if f.startswith('probpipe/')]
+          nb_dir = sys.argv[1]   # this leg's notebook dir (docs/examples or docs/tutorials)
+          changed = sys.argv[2:]
+          changed_nbs = [f for f in changed if f.startswith(nb_dir + '/') and f.endswith('.ipynb') and Path(f).exists()]
+          changed_sources = [f for f in changed if f.startswith('probpipe/')]
 
           seen = set(file_to_module(f) for f in changed_sources)
           queue = list(seen)
@@ -597,7 +619,7 @@ jobs:
 
           to_run = set(changed_nbs)
           if affected_mods:
-              for nb_path in sorted(Path('docs/examples').glob('*.ipynb')):
+              for nb_path in sorted(Path(nb_dir).glob('*.ipynb')):
                   nb_str = str(nb_path)
                   if nb_str not in to_run and notebook_affected(nb_str):
                       to_run.add(nb_str)
@@ -606,7 +628,7 @@ jobs:
               print(nb)
           PYEOF
 
-            NOTEBOOKS=$(python3 /tmp/affected_notebooks.py $CHANGED)
+            NOTEBOOKS=$(python3 /tmp/affected_notebooks.py "${{ matrix.dir }}" $CHANGED)
             echo "Notebooks to run:"
             echo "$NOTEBOOKS"
 
@@ -614,10 +636,10 @@ jobs:
               echo "skip=true" >> "$GITHUB_OUTPUT"
               echo "No affected notebooks — skipping notebook CI."
             else
-              NOTEBOOKS_SPACE=$(echo "$NOTEBOOKS" | tr '\n' ' ' | xargs)
               echo "skip=false" >> "$GITHUB_OUTPUT"
-              echo "notebooks=$NOTEBOOKS_SPACE" >> "$GITHUB_OUTPUT"
-              echo "Will execute: $NOTEBOOKS_SPACE"
+              # Newline-delimited (multiline) output so paths are never word-split.
+              { echo "notebooks<<NBEOF"; echo "$NOTEBOOKS"; echo "NBEOF"; } >> "$GITHUB_OUTPUT"
+              echo "Will execute:"; echo "$NOTEBOOKS"
             fi
           fi
 
@@ -632,16 +654,21 @@ jobs:
         # Dependency versions are pinned in uv.lock. --frozen fails if the
         # lockfile is out of sync, so CI never silently drifts. --python pins
         # the interpreter (setup-uv's python-version input was ignored on @v3).
-        # [pymc] is intentionally not installed for the notebook job (matches
-        # the previous pip-based setup).
-        run: uv sync --frozen --python 3.12 --extra dev --extra nutpie
+        # Per-leg extras (matrix.extras): the examples leg needs only
+        # dev+nutpie; the tutorials leg adds the SBI backends bayesflow+pymc.
+        run: uv sync --frozen --python 3.12 ${{ matrix.extras }}
 
-      - name: Execute affected docs/examples notebooks
+      - name: Execute affected notebooks
         if: steps.nb_check.outputs.skip != 'true'
+        # Read the list via an env var (not spliced into the script) and iterate
+        # with read, so notebook paths are never word-split or shell-injected.
+        env:
+          NB_LIST: ${{ steps.nb_check.outputs.notebooks }}
         run: |
           set -euo pipefail
-          for nb in ${{ steps.nb_check.outputs.notebooks }}; do
+          while IFS= read -r nb; do
+            [ -z "$nb" ] && continue
             echo "--- executing $nb ---"
             uv run python -m nbconvert --to notebook --execute \
               --ExecutePreprocessor.timeout=900 --output /tmp/out.ipynb "$nb"
-          done
+          done <<< "$NB_LIST"
