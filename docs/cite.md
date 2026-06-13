@@ -4,13 +4,11 @@ If you use ProbPipe in your research, we would appreciate a citation.
 
 ## Citing the software
 
-ProbPipe is archived on [Zenodo](https://zenodo.org/), which mints a
-version-independent **concept DOI** (always resolving to the latest release)
-alongside a per-version DOI. Cite the concept DOI unless you need to pin a
-specific version.
-
-<!-- Fill in once the v0.1.0 release is processed by Zenodo: replace
-     XXXXXXX with the concept-DOI suffix and remove this comment. -->
+ProbPipe is archived on [Zenodo](https://zenodo.org/) under the
+version-independent **concept DOI**
+[10.5281/zenodo.20683559](https://doi.org/10.5281/zenodo.20683559), which
+always resolves to the latest release. Cite the concept DOI unless you need
+to pin a specific version (each release also gets its own version DOI).
 
 ```bibtex
 @software{probpipe,
@@ -19,7 +17,7 @@ specific version.
   title   = {{ProbPipe}: Probabilistic pipelines with automated uncertainty quantification},
   year    = {2026},
   version = {0.1.0},
-  doi     = {10.5281/zenodo.XXXXXXX},
+  doi     = {10.5281/zenodo.20683559},
   url     = {https://github.com/TARPS-group/prob-pipe}
 }
 ```

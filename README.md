@@ -3,6 +3,7 @@
 [![CI](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml/badge.svg)](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/TARPS-group/prob-pipe/branch/main/graph/badge.svg)](https://codecov.io/gh/TARPS-group/prob-pipe)
 [![docs](https://img.shields.io/badge/docs-tarps--group.github.io%2Fprob--pipe-blue)](https://tarps-group.github.io/prob-pipe/)
+[![DOI](https://zenodo.org/badge/1041525504.svg)](https://doi.org/10.5281/zenodo.20683559)
 
 **[Installation Guide](#installation)** | **[Getting Started](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** | **[Full Documentation](https://tarps-group.github.io/prob-pipe/)** | **[Help](https://tarps-group.github.io/prob-pipe/help/)**
 
@@ -160,10 +161,9 @@ for setup details, deployment notes, and current support boundaries.
 ## Citing ProbPipe
 
 If you use ProbPipe in your research, please cite it. The project is archived
-on Zenodo, which provides a version-independent concept DOI:
-
-<!-- Replace XXXXXXX with the Zenodo concept-DOI suffix once the v0.1.0
-     release is processed (then drop this comment). -->
+on Zenodo under the version-independent concept DOI
+[10.5281/zenodo.20683559](https://doi.org/10.5281/zenodo.20683559), which
+always resolves to the latest release:
 
 ```bibtex
 @software{probpipe,
@@ -172,7 +172,7 @@ on Zenodo, which provides a version-independent concept DOI:
   title   = {{ProbPipe}: Probabilistic pipelines with automated uncertainty quantification},
   year    = {2026},
   version = {0.1.0},
-  doi     = {10.5281/zenodo.XXXXXXX},
+  doi     = {10.5281/zenodo.20683559},
   url     = {https://github.com/TARPS-group/prob-pipe}
 }
 ```

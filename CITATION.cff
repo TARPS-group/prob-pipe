@@ -29,8 +29,5 @@ url: "https://tarps-group.github.io/prob-pipe/"
 license: Apache-2.0
 version: "0.1.0"
 date-released: "2026-06-12"
-# Once Zenodo mints the DOI for the v0.1.0 release, add the *concept* DOI
-# (the version-independent one, which always resolves to the latest release)
-# here. GitHub's "Cite this repository" panel and citation tooling then
-# surface it automatically:
-# doi: "10.5281/zenodo.XXXXXXX"
+# Version-independent concept DOI (always resolves to the latest release):
+doi: "10.5281/zenodo.20683559"
