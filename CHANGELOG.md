@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Citation metadata and a "Cite" / "Help" docs section.** A
+  `CITATION.cff` enables GitHub's "Cite this repository" button; the
+  README gains a "Citing ProbPipe" section with a BibTeX entry; and the
+  docs site adds a [Cite](https://tarps-group.github.io/prob-pipe/cite/)
+  page (software citation + how to cite the inference backends) and a
+  [Help](https://tarps-group.github.io/prob-pipe/help/) page (where to
+  ask questions / file issues). The Zenodo DOI is minted from the first
+  tagged release and is dropped into the BibTeX/CFF once available.
+
 ### Fixed
 
 - **Codecov no longer misreports coverage on targeted PRs (#261).**

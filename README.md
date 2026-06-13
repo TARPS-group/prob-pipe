@@ -3,8 +3,9 @@
 [![CI](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml/badge.svg)](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/TARPS-group/prob-pipe/branch/main/graph/badge.svg)](https://codecov.io/gh/TARPS-group/prob-pipe)
 [![docs](https://img.shields.io/badge/docs-tarps--group.github.io%2Fprob--pipe-blue)](https://tarps-group.github.io/prob-pipe/)
+[![DOI](https://zenodo.org/badge/1041525504.svg)](https://doi.org/10.5281/zenodo.20683559)
 
-**[Installation Guide](#installation)** | **[Getting Started](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** | **[Full Documentation](https://tarps-group.github.io/prob-pipe/)**
+**[Installation Guide](#installation)** | **[Getting Started](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** | **[Full Documentation](https://tarps-group.github.io/prob-pipe/)** | **[Help](https://tarps-group.github.io/prob-pipe/help/)**
 
 ProbPipe is a Python framework for building scalable probabilistic pipelines with automated uncertainty quantification.
 
@@ -156,5 +157,24 @@ for setup details, deployment notes, and current support boundaries.
 - For a more detailed overview of ProbPipe, see the **[Getting Started Tutorial](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)**
 - For all the details of the ProbPipe API, see the **[Reference Documentation](https://tarps-group.github.io/prob-pipe/)**
 - For getting started as a ProbPipe developer, see the **[Contributing Guide](CONTRIBUTING.md)**.
+
+## Citing ProbPipe
+
+If you use ProbPipe in your research, please cite it:
+
+```bibtex
+@software{probpipe,
+  author  = {Huggins, Jonathan and Roberts, Andrew and Lim, Yongho and
+             Erozer, Can and Zhu, Jiaqiang},
+  title   = {{ProbPipe}: Probabilistic pipelines with automated uncertainty quantification},
+  year    = {2026},
+  version = {0.1.0},
+  doi     = {10.5281/zenodo.20683559},
+  url     = {https://github.com/TARPS-group/prob-pipe}
+}
+```
+
+See the **[citation page](https://tarps-group.github.io/prob-pipe/cite/)** for
+version-specific DOIs and how to cite the inference backends ProbPipe builds on.
 
 
