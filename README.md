@@ -160,10 +160,7 @@ for setup details, deployment notes, and current support boundaries.
 
 ## Citing ProbPipe
 
-If you use ProbPipe in your research, please cite it. The project is archived
-on Zenodo under the version-independent concept DOI
-[10.5281/zenodo.20683559](https://doi.org/10.5281/zenodo.20683559), which
-always resolves to the latest release:
+If you use ProbPipe in your research, please cite it:
 
 ```bibtex
 @software{probpipe,
@@ -178,6 +175,6 @@ always resolves to the latest release:
 ```
 
 See the **[citation page](https://tarps-group.github.io/prob-pipe/cite/)** for
-the concept DOI and for how to cite the inference backends ProbPipe builds on.
+version-specific DOIs and how to cite the inference backends ProbPipe builds on.
 
 
