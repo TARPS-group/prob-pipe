@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ask questions / file issues). The Zenodo DOI is minted from the first
   tagged release and is dropped into the BibTeX/CFF once available.
 
+- **"Open in Colab" badges on the tutorials.** Both tutorial notebooks
+  (Getting Started, Flexible Inference) gain an "Open in Colab" badge and a
+  guarded setup cell that, *only when run on Colab*, installs ProbPipe with
+  the extras the notebook uses (and, for Getting Started, fetches the
+  dataset). The cell is a no-op in local Jupyter, the docs build, and CI, so
+  notebook execution elsewhere is unaffected.
+
 ### Changed
 
 - **Install docs: a "New to Python?" two-route fork.** The README and docs
