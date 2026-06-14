@@ -126,7 +126,7 @@ the definition site.
 
 ### 1.7 Registry method naming
 
-Inference methods registered with the ``MethodRegistry`` follow
+Inference methods registered with the ``UnaryDispatchRegistry`` follow
 ``{backend}_{algorithm}`` naming in ``snake_case``:
 
 ```

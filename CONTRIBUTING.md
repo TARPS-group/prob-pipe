@@ -526,7 +526,9 @@ full public API surface.
 | `WorkflowFunction` | Orchestration-aware function wrapper (Prefect off by default; see the Prefect-orchestration section above); groups views by parent for correlated broadcasting |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
-| `MethodRegistry` | Generic priority-based dispatch; used by the inference method registry |
+| `BaseDispatchRegistry` | Abstract base for priority-based registries: holds registration, priority management (incl. opt-in-only sentinel + override warnings), and the `check`/`execute` loop. Arity-specific subclasses override `_cache_key`, `_find_methods`, and `_format_key`. |
+| `UnaryDispatchRegistry` | Single-argument dispatch registry; dispatches on the type of the first positional argument. Used by the inference method registry. |
+| `BinaryDispatchRegistry` | Two-argument dispatch registry; dispatches on the joint type of the first two positional args via paired `((left_types,), (right_types,))` pre-filters. |
 | `ProbabilisticModel` | Base for models (extends `Distribution`; provides `fields`) |
 | `SimpleGenerativeModel` | Simulator-only model wrapper for SBI/ABC (prior + `GenerativeLikelihood`) |
 | `IncrementalConditioner` | Stateful `Module` for sequential Bayesian updating via `update()` / `update_all()` |
@@ -625,9 +627,11 @@ and `pandas.DataFrame`. Lookup walks the MRO of `type(obj)`, so
 registering a base class also covers its subclasses.
 
 This registry is **not** a behavioural-dispatch hierarchy — it has
-no priority system, no feasibility check, no `execute()`. Use
-`MethodRegistry` (inference) or `ConverterRegistry` (distribution
-conversion) when behaviour dispatch is needed.
+no priority system, no feasibility check, no `execute()`. Use a
+`BaseDispatchRegistry` subclass (`UnaryDispatchRegistry` for the
+inference registry, `BinaryDispatchRegistry` for two-argument dispatch)
+or `ConverterRegistry` (distribution conversion) when behaviour
+dispatch is needed.
 
 ### Constraint → Bijector registry
 
@@ -649,9 +653,10 @@ mirrors PyTorch's `constraint_registry` semantics.
 
 Like the aux registry, this is **not** a behavioural-dispatch
 hierarchy: there is no priority system or feasibility check. Reach
-for `MethodRegistry` / `ConverterRegistry` instead when dispatch
-needs to consider the input value, environment, or installed
-backends.
+for a `BaseDispatchRegistry` subclass (`UnaryDispatchRegistry` /
+`BinaryDispatchRegistry`) or `ConverterRegistry` instead when
+dispatch needs to consider the input value, environment, or
+installed backends.
 
 ### Generic vs Record-based pattern
 
