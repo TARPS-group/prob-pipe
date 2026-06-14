@@ -16,7 +16,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..custom_types import ArrayLike
+from ..custom_types import Array
 from ._numeric_record import _NUMERIC_DTYPE_KINDS, NumericRecord
 from .provenance import Provenance
 from .record import _PATH_SEP, Record, RecordTemplate, _spec_size
@@ -206,7 +206,7 @@ class RecordArray(Record):
         """
         nd_index = np.unravel_index(index, self._batch_shape)
 
-        def _elem(val: Any) -> Any:
+        def _elem(val: Record | Array) -> Record | Array:
             if isinstance(val, RecordArray):
                 return val._get_record(index)
             if isinstance(val, Record):
