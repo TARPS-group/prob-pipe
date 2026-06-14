@@ -332,7 +332,9 @@ def _train_offline(
         counts=(("num_simulations", num_simulations), ("batch_size", batch_size),
                 ("epochs", epochs)),
     )
-    fields = record_template.fields
+    # Numeric leaves (slash paths for a nested prior; == fields for a flat one).
+    # NLE/NRE feed raw theta to the network, so no bijectors -- just the keying.
+    leaf_keys = tuple(record_template.numeric_leaf_shapes)
 
     bf = _import_bayesflow()
     with _isolated_keras_seeding(random_seed):
@@ -360,8 +362,8 @@ def _train_offline(
                 )
             y = np.asarray(jnp.asarray(y) + jax.random.uniform(k_jitter, y.shape),
                            dtype="float32")
-        internal_keys = _adapter_field_keys(fields)
-        sims = {k: named[f] for k, f in zip(internal_keys, fields)}
+        internal_keys = _adapter_field_keys(leaf_keys)
+        sims = {k: named[lk] for k, lk in zip(internal_keys, leaf_keys)}
         sims[_OBSERVATION_KEY] = y
 
         obs_role = ("inference_variables" if theta_role == "inference_conditions"
@@ -407,11 +409,12 @@ def learn_amortized_likelihood(
     Parameters
     ----------
     prior : Distribution
-        Prior over the model parameters; a ``RecordDistribution`` with named,
-        non-nested fields. Sampled (only) to draw training thetas; constrained
-        and discrete-valued parameter fields are both fine here, since theta is
-        a network *input* (whether the downstream sampler can handle the prior
-        is the sampler's concern).
+        Prior over the model parameters; a ``RecordDistribution`` with named
+        fields, which may be nested (a ``ProductDistribution`` of named
+        distributions, possibly nested). Sampled (only) to draw training thetas;
+        constrained and discrete-valued parameter fields are both fine here,
+        since theta is a network *input* (whether the downstream sampler can
+        handle the prior is the sampler's concern).
     simulator : GenerativeLikelihood
         ``generate_data(params, num_observations, *, key)``; receives the
         prior's structured per-draw record (named-field access). Must be
@@ -527,9 +530,9 @@ def learn_amortized_ratio(
     Parameters
     ----------
     prior : Distribution
-        Prior over the model parameters; a flat ``RecordDistribution`` (as in
-        :func:`learn_amortized_likelihood` -- constrained and discrete-valued
-        parameter fields are fine, theta is a network input).
+        Prior over the model parameters; a ``RecordDistribution``, possibly
+        nested (as in :func:`learn_amortized_likelihood` -- constrained and
+        discrete-valued parameter fields are fine, theta is a network input).
     simulator : GenerativeLikelihood
         ``generate_data(params, num_observations, *, key)``; receives the
         prior's structured per-draw record.

@@ -98,8 +98,12 @@ def _build_adapter(bf: ModuleType, internal_keys: tuple[str, ...]) -> Adapter:
     )
 
 
-def _field_bijectors(prior: Distribution, fields: tuple[str, ...]) -> dict[str, tfb.Bijector]:
-    """Per-field bijector mapping each parameter's unconstrained R^d to its support.
+def _field_bijectors(prior: Distribution, keys: tuple[str, ...]) -> dict[str, tfb.Bijector]:
+    """Per-leaf bijector mapping each parameter's unconstrained R^d to its support.
+
+    ``keys`` are the prior's numeric leaves (slash paths like ``"outer/a"`` for a
+    nested prior; top-level field names for a flat one), matching the keying of
+    ``prior.supports``.
 
     BayesFlow's ``ContinuousApproximator`` operates in unconstrained, real space, so a
     constrained prior (positive, an interval, ...) is trained on the *unconstrained*
@@ -113,24 +117,24 @@ def _field_bijectors(prior: Distribution, fields: tuple[str, ...]) -> dict[str, 
     try:
         supports = prior.supports
     except NotImplementedError:
-        if len(fields) > 1:
+        if len(keys) > 1:
             raise TypeError(
-                f"{type(prior).__name__} has {len(fields)} fields but does not "
+                f"{type(prior).__name__} has {len(keys)} parameters but does not "
                 "implement per-field `supports`; cannot infer per-field constraints "
                 "from the single `support`. Implement `supports` on the prior."
             ) from None
         # Single-field priors: the whole-distribution support is the field's support.
-        supports = {f: prior.support for f in fields}
+        supports = {k: prior.support for k in keys}
     bijectors: dict[str, tfb.Bijector] = {}
-    for f in fields:
-        constraint = supports[f]
+    for k in keys:
+        constraint = supports[k]
         try:
-            bijectors[f] = bijector_for(constraint)
+            bijectors[k] = bijector_for(constraint)
         except NotImplementedError as e:
             raise ValueError(
-                f"learn_amortized_posterior cannot handle prior field {f!r} with support "
-                f"{constraint!r}: {e}. Amortized SBI requires a continuous prior whose "
-                "support admits a smooth bijector to R^d (e.g. real, positive, an "
+                f"learn_amortized_posterior cannot handle prior parameter {k!r} with "
+                f"support {constraint!r}: {e}. Amortized SBI requires a continuous prior "
+                "whose support admits a smooth bijector to R^d (e.g. real, positive, an "
                 "interval); discrete priors are not supported."
             ) from e
     return bijectors
@@ -173,7 +177,9 @@ class BayesFlowModel(Distribution, SupportsConditioning):
         self._approximator = approximator
         self._prior = prior
         self._simulator = simulator
-        self._fields = tuple(prior.record_template.fields)
+        # Numeric leaves (slash paths for a nested prior; == fields for a flat
+        # one) -- the column order the network emits, matching training.
+        self._leaf_keys = tuple(prior.record_template.numeric_leaf_shapes)
         self._method = method
         self._data_dim = data_dim
         self._num_results = num_results
@@ -226,13 +232,14 @@ class BayesFlowModel(Distribution, SupportsConditioning):
             conditions={_OBSERVATION_KEY: obs_flat[None, :]},
             seed=random_seed,
         )
-        # ``out`` maps each internal theta key to ``(1, num_results, d_field)``.
+        # ``out`` maps each internal theta key to ``(1, num_results, d_leaf)``.
         # Stays in jnp end-to-end: this is the latency-critical amortized path,
-        # so no per-field host round-trips.
+        # so no per-leaf host round-trips. Columns are concatenated in leaf order,
+        # which is the canonical flatten order the record_template unflattens by.
         cols = []
-        for k, f in zip(_adapter_field_keys(self._fields), self._fields):
+        for k, leaf in zip(_adapter_field_keys(self._leaf_keys), self._leaf_keys):
             draws = jnp.asarray(out[k])[0]
-            bij = self._bijectors.get(f)
+            bij = self._bijectors.get(leaf)
             if bij is not None:
                 draws = bij.forward(draws)
             cols.append(jnp.reshape(draws, (num_results, -1)))
@@ -285,14 +292,14 @@ def learn_amortized_posterior(
     ----------
     prior : Distribution
         Prior over the model parameters.  Must be a ``RecordDistribution`` --
-        typically a ``ProductDistribution`` of named distributions, or a single
-        named distribution for a one-parameter model.  It is sampled via the
-        :func:`~probpipe.sample` op to draw training thetas; it is *not*
-        otherwise translated.  Constrained fields (positive, an interval, a simplex,
-        positive-definite matrices, ...) are trained in unconstrained space via the
-        per-field bijector from :func:`~probpipe.bijector_for` -- applied at the
-        field's native event shape -- and mapped back to the support at sample time;
-        real-valued fields use the identity.  Discrete priors are not supported.
+        typically a ``ProductDistribution`` of named distributions (which may be
+        nested), or a single named distribution for a one-parameter model.  It is
+        sampled via the :func:`~probpipe.sample` op to draw training thetas; it is
+        *not* otherwise translated.  Constrained leaves (positive, an interval, a
+        simplex, positive-definite matrices, ...) are trained in unconstrained space
+        via the per-leaf bijector from :func:`~probpipe.bijector_for` -- applied at
+        the leaf's native event shape -- and mapped back to the support at sample
+        time; real-valued leaves use the identity.  Discrete priors are not supported.
     simulator : GenerativeLikelihood
         Must implement ``generate_data(params, num_observations, *, key)``.  As with
         ``SimpleGenerativeModel`` / ``PriorPredictiveCheck``, ``params`` is the prior's
@@ -349,8 +356,8 @@ def learn_amortized_posterior(
     TypeError
         If a count parameter is not an integer, ``simulator`` lacks
         ``generate_data``, ``prior`` is not a ``RecordDistribution`` (has no
-        ``record_template``), the prior is nested, or a multi-field prior
-        implements no per-field ``supports`` accessor.
+        ``record_template``), or a multi-field prior implements no per-field
+        ``supports`` accessor.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """
@@ -363,16 +370,18 @@ def learn_amortized_posterior(
         counts=(("num_simulations", num_simulations), ("batch_size", batch_size),
                 ("epochs", epochs), ("num_results", num_results)),
     )
-    fields = record_template.fields
+    # Per numeric leaf (slash paths for a nested prior; == fields for a flat
+    # one). supports / bijectors are leaf-keyed, so this serves both uniformly.
     leaf_shapes = record_template.numeric_leaf_shapes
+    leaf_keys = tuple(leaf_shapes)
     # Built up front: also rejects discrete / unsupported-support priors before
     # any simulation runs.
-    bijectors = _field_bijectors(prior, fields)
+    bijectors = _field_bijectors(prior, leaf_keys)
     # The network trains on *unconstrained* widths, which differ from the prior's
     # event sizes for dimension-shifting bijectors (a d-simplex contributes d-1).
     unconstrained_size = sum(
-        int(np.prod(tuple(bijectors[f].inverse_event_shape(leaf_shapes[f])), dtype=int))
-        for f in fields
+        int(np.prod(tuple(bijectors[k].inverse_event_shape(leaf_shapes[k])), dtype=int))
+        for k in leaf_keys
     )
 
     bf = _import_bayesflow()
@@ -382,11 +391,11 @@ def learn_amortized_posterior(
             prior, simulator, num_simulations, key,
             sim_backend=sim_backend, bijectors=bijectors,
         )
-        # Re-key theta fields to positional internal names so user field names
+        # Re-key theta leaves to positional internal names so user field names
         # never enter BayesFlow's key namespace (no collision with the
         # observation key or the adapter's inference_variables/conditions).
-        internal_keys = _adapter_field_keys(fields)
-        sims = {k: named[f] for k, f in zip(internal_keys, fields)}
+        internal_keys = _adapter_field_keys(leaf_keys)
+        sims = {k: named[lk] for k, lk in zip(internal_keys, leaf_keys)}
         sims[_OBSERVATION_KEY] = y
 
         adapter = _build_adapter(bf, internal_keys)
