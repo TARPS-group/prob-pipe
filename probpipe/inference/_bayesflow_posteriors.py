@@ -154,8 +154,8 @@ class BayesFlowModel(Distribution, SupportsConditioning):
     ``p(theta | observed)`` in one forward pass, and -- because the estimator is
     amortized -- the same instance conditions on any observation with no
     retraining.  The network samples in unconstrained space; posterior draws are
-    mapped back to each field's support via the per-field forward bijectors
-    recorded at training time (identity for real-valued fields).  The amortized
+    mapped back to each leaf's support via the per-leaf forward bijectors
+    recorded at training time (identity for real-valued leaves).  The amortized
     path honours ``num_results`` (a positive integer) and ``random_seed``;
     ``num_warmup`` / ``num_chains`` do not apply (a forward pass yields a single
     draw block).  Direct sampling is not implemented; simulate from the joint

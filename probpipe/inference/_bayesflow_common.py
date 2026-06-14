@@ -154,14 +154,15 @@ def _simulate_offline(
     """Draw ``(theta, y)`` pairs offline: ``theta ~ prior``, ``y ~ simulator(theta)``.
 
     Returns ``(named_theta, y)`` where ``named_theta`` maps each prior
-    record-template field to a ``(num_simulations, d_field)`` float32 array and
-    ``y`` is the ``(num_simulations, d_y)`` float32 array of flattened simulated
-    observations.  With ``bijectors`` given (the NPE path), each theta field is
-    *unconstrained* (pushed through its inverse bijector at the field's native
-    event shape, then flattened); with ``bijectors=None`` (the NLE/NRE paths,
-    where theta is a network *input* rather than a modeled density), the raw
-    constrained draws are returned.  The simulator itself always sees the
-    constrained, structured draws.
+    record-template numeric leaf (slash paths like ``"outer/a"`` for a nested
+    prior; top-level fields for a flat one) to a ``(num_simulations, d_leaf)``
+    float32 array and ``y`` is the ``(num_simulations, d_y)`` float32 array of
+    flattened simulated observations.  With ``bijectors`` given (the NPE path),
+    each theta leaf is *unconstrained* (pushed through its inverse bijector at the
+    leaf's native event shape, then flattened); with ``bijectors=None`` (the
+    NLE/NRE paths, where theta is a network *input* rather than a modeled
+    density), the raw constrained draws are returned.  The simulator itself always
+    sees the constrained, structured draws.
     """
     template = prior.record_template
     # Iterate numeric leaves (slash paths like "outer/a" for nested priors; ==
