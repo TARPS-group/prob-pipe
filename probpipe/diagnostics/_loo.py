@@ -35,6 +35,7 @@ import xarray as xr
 
 from ..core.distribution import Distribution
 from ._datatree import _add_group
+from ._utils import _record_get, _safe_float, _json_dumps_safe
 
 __all__ = ["add_loo"]
 
@@ -42,20 +43,7 @@ __all__ = ["add_loo"]
 # ---------------------------------------------------------------------
 # General helpers
 # ---------------------------------------------------------------------
-
-
-def _safe_float(value: Any) -> float:
-    """Convert value to float, returning NaN if conversion fails."""
-    if value is None:
-        return float("nan")
-
-    try:
-        arr = np.asarray(value)
-        if arr.shape == ():
-            return float(arr)
-        return float(arr.ravel()[0])
-    except Exception:
-        return float("nan")
+# _record_get, _safe_float, _json_dumps_safe imported from ._utils.
 
 
 def _safe_int(value: Any) -> int:
@@ -70,39 +58,6 @@ def _safe_int(value: Any) -> int:
             return int(np.asarray(value).ravel()[0])
         except Exception:
             return -1
-
-
-def _record_get(obj: Any, key: str, default: Any = None) -> Any:
-    """Get a field from dict-like, pandas-Series-like, or attribute-like objects.
-
-    ArviZ's ``az.loo`` returns an ELPDData object, which behaves somewhat like a
-    pandas Series but also exposes attributes. This helper supports several
-    access styles.
-    """
-    if obj is None:
-        return default
-
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-
-    try:
-        return obj[key]
-    except Exception:
-        pass
-
-    try:
-        return getattr(obj, key)
-    except Exception:
-        pass
-
-    get = getattr(obj, "get", None)
-    if callable(get):
-        try:
-            return get(key, default)
-        except Exception:
-            pass
-
-    return default
 
 
 def _as_numpy(obj: Any) -> np.ndarray | None:
@@ -132,17 +87,6 @@ def _as_numpy(obj: Any) -> np.ndarray | None:
         return np.asarray(obj)
     except Exception:
         return None
-
-
-def _json_dumps_safe(obj: Any) -> str:
-    """JSON-dump helper for xarray attrs."""
-    try:
-        return json.dumps(obj)
-    except TypeError:
-        try:
-            return json.dumps(str(obj))
-        except Exception:
-            return "{}"
 
 
 # ---------------------------------------------------------------------
