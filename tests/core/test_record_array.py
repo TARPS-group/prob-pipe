@@ -305,6 +305,60 @@ class TestNumericRecordArrayFlatten:
 
 
 # ---------------------------------------------------------------------------
+# Nested-record flatten / slash indexing (issue #262)
+# ---------------------------------------------------------------------------
+
+
+class TestNumericRecordArrayNested:
+    """flatten() recurses into nested record fields, in depth-first leaf order,
+    and round-trips through unflatten; slash paths index leaves."""
+
+    @staticmethod
+    def _nested_tpl():
+        return RecordTemplate(outer=RecordTemplate(a=(), b=()), m=())
+
+    def test_flatten_nested_record_array_field(self):
+        # The unflatten / canonical-_sample shape: the nested field is itself a
+        # NumericRecordArray (exercises the RecordArray branch).
+        tpl = self._nested_tpl()
+        flat = jnp.arange(15.0).reshape(5, 3)  # columns = outer/a, outer/b, m
+        nra = NumericRecordArray.unflatten(flat, template=tpl, batch_shape=(5,))
+        assert isinstance(nra["outer"], NumericRecordArray)
+        np.testing.assert_allclose(nra.flatten(), flat)  # round-trips exactly
+
+    def test_flatten_nested_record_field(self):
+        # The pre-canonical shape: the nested field is a plain Record holding
+        # batch-shaped leaves (exercises the Record branch).
+        tpl = self._nested_tpl()
+        inner = Record(a=jnp.arange(5.0), b=jnp.arange(5.0) + 10)
+        nra = NumericRecordArray(
+            {"outer": inner, "m": jnp.arange(5.0) + 100},
+            batch_shape=(5,), template=tpl,
+        )
+        flat = nra.flatten()
+        assert flat.shape == (5, 3)
+        np.testing.assert_allclose(flat[:, 0], inner["a"])
+        np.testing.assert_allclose(flat[:, 1], inner["b"])
+        np.testing.assert_allclose(flat[:, 2], nra["m"])
+
+    def test_flatten_nested_depth2_roundtrip(self):
+        tpl = RecordTemplate(
+            outer=RecordTemplate(deep=RecordTemplate(g=(), h=()), a=()), m=())
+        flat = jnp.arange(20.0).reshape(5, 4)  # outer/deep/g, outer/deep/h, outer/a, m
+        nra = NumericRecordArray.unflatten(flat, template=tpl, batch_shape=(5,))
+        np.testing.assert_allclose(nra.flatten(), flat)
+        np.testing.assert_allclose(nra["outer/deep/g"], flat[:, 0])
+
+    def test_getitem_slash_path(self):
+        tpl = self._nested_tpl()
+        nra = NumericRecordArray.unflatten(
+            jnp.arange(15.0).reshape(5, 3), template=tpl, batch_shape=(5,))
+        np.testing.assert_allclose(nra["outer/a"], nra["outer"]["a"])
+        with pytest.raises(KeyError):
+            nra["outer/missing"]
+
+
+# ---------------------------------------------------------------------------
 # NumericRecordArray mean / var
 # ---------------------------------------------------------------------------
 
