@@ -476,7 +476,7 @@ def learn_amortized_likelihood(
         simulated observations reach ``2**23``.
     TypeError
         If a count parameter is not an integer, ``simulator`` lacks
-        ``generate_data``, or ``prior`` is not a flat ``RecordDistribution``.
+        ``generate_data``, or ``prior`` is not a ``RecordDistribution``.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """
@@ -565,7 +565,7 @@ def learn_amortized_ratio(
         (no minimum observation dimension, unlike NLE).
     TypeError
         If a count parameter is not an integer, ``simulator`` lacks
-        ``generate_data``, or ``prior`` is not a flat ``RecordDistribution``.
+        ``generate_data``, or ``prior`` is not a ``RecordDistribution``.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """

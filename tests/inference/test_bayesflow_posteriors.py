@@ -574,6 +574,30 @@ class TestBayesFlowMethods:
         assert np.mean(mean_errs) < 0.3 * post_std
         assert 0.8 < np.mean(std_ratios) < 1.25
 
+    def test_nested_wishart_matrix_leaf(self):
+        """A matrix-valued constrained leaf (Wishart, positive-definite) nested
+        under ``outer``: the per-leaf inverse bijector runs at the leaf's native
+        (n, n) event shape under nesting (a flat layout would crash the
+        CholeskyOuterProduct chain), and the forward map at sample time returns
+        SPD draws under the nested leaf name ``outer/cov`` -- the nested analogue
+        of test_wishart_matrix_prior_round_trip."""
+        prior = ProductDistribution(
+            name="joint",
+            outer={"cov": pp.Wishart(df=4.0, scale=jnp.eye(2), name="cov"),
+                   "m": Normal(loc=0.0, scale=1.0, name="m")},
+            c=Normal(loc=0.0, scale=1.0, name="c"),
+        )
+        model = learn_amortized_posterior(
+            prior, _ConjugateGaussianLikelihood(), method="fmpe",
+            num_simulations=600, epochs=2, batch_size=256,
+            num_results=200, random_seed=0, verbose=0,
+        )
+        obs = jnp.array([1.5, 0.3, 0.3, 1.2, 0.5, 0.0])  # flat (cov 2x2, m, c)
+        cov = np.asarray(condition_on(model, obs).draws()["outer/cov"]).reshape(-1, 2, 2)
+        assert np.isfinite(cov).all()
+        np.testing.assert_allclose(cov, np.swapaxes(cov, -1, -2), atol=1e-5)  # symmetric
+        assert np.linalg.eigvalsh(cov).min() > 0  # positive definite
+
     def test_simulator_receives_named_record(self):
         """generate_data receives the prior's structured per-draw sample (named
         fields), per the GenerativeLikelihood contract -- the simulator uses
