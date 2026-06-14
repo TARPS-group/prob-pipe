@@ -12,6 +12,7 @@ import json
 import pytest
 from import_graph import (
     affected_modules,
+    main,
     notebook_affected,
     reverse_dependency_map,
     symbol_definition_map,
@@ -32,88 +33,141 @@ def fake_pkg(tmp_path, monkeypatch):
     return _build
 
 
-def test_relative_imports_resolve(fake_pkg):
-    """``from .a`` / ``from ..a`` resolve to the correct absolute target."""
-    fake_pkg(
-        {
-            "probpipe/__init__.py": "",
-            "probpipe/a.py": "x = 1\n",
-            "probpipe/b.py": "from .a import x\n",
-            "probpipe/core/__init__.py": "",
-            "probpipe/core/d.py": "from ..a import x\n",
-        }
-    )
-    rdeps = reverse_dependency_map()
-    assert "probpipe.b" in rdeps["probpipe.a"]
-    assert "probpipe.core.d" in rdeps["probpipe.a"]
+class TestImportGraph:
+    def test_relative_imports_resolve(self, fake_pkg):
+        """``from .a`` / ``from ..a`` resolve to the correct absolute target."""
+        fake_pkg(
+            {
+                "probpipe/__init__.py": "",
+                "probpipe/a.py": "x = 1\n",
+                "probpipe/b.py": "from .a import x\n",
+                "probpipe/core/__init__.py": "",
+                "probpipe/core/d.py": "from ..a import x\n",
+            }
+        )
+        rdeps = reverse_dependency_map()
+        assert "probpipe.b" in rdeps["probpipe.a"]
+        assert "probpipe.core.d" in rdeps["probpipe.a"]
+
+    def test_alias_import_recorded(self, fake_pkg):
+        """``import probpipe.sub as s`` records an edge under ``probpipe.sub``."""
+        fake_pkg(
+            {
+                "probpipe/__init__.py": "",
+                "probpipe/sub.py": "y = 2\n",
+                "probpipe/user.py": "import probpipe.sub as s\n",
+            }
+        )
+        rdeps = reverse_dependency_map()
+        assert "probpipe.user" in rdeps["probpipe.sub"]
+
+    def test_transitive_bfs_reaches_indirect_dependents(self, fake_pkg):
+        """A change to a leaf surfaces modules that import it transitively."""
+        fake_pkg(
+            {
+                "probpipe/__init__.py": "",
+                "probpipe/leaf.py": "class Thing:\n    pass\n",
+                "probpipe/mid.py": "from .leaf import Thing\n",
+                "probpipe/top.py": "from .mid import Thing\n",
+            }
+        )
+        rdeps = reverse_dependency_map()
+        affected = affected_modules(["probpipe/leaf.py"], rdeps)
+        assert {"probpipe.leaf", "probpipe.mid", "probpipe.top"} <= affected
+
+    def test_affected_modules_skip_init_flag(self, fake_pkg):
+        """skip_init=True drops __init__ hubs; the default (False) keeps them.
+
+        skip_init=False is what preserves the test job's root-test trigger; a
+        directly changed __init__ is always a seed regardless of the flag.
+        """
+        fake_pkg(
+            {
+                "probpipe/__init__.py": "from .leaf import Thing\n",
+                "probpipe/leaf.py": "class Thing:\n    pass\n",
+                "probpipe/mid.py": "from .leaf import Thing\n",
+            }
+        )
+        rdeps = reverse_dependency_map()
+
+        # Notebooks behavior: skip __init__, keep real dependents.
+        skipped = affected_modules(["probpipe/leaf.py"], rdeps, skip_init=True)
+        assert "probpipe.mid" in skipped
+        assert "probpipe.__init__" not in skipped
+
+        # Test-job behavior (default): keep __init__ so the root trigger fires.
+        kept = affected_modules(["probpipe/leaf.py"], rdeps)
+        assert "probpipe.__init__" in kept
+        assert affected_modules(["probpipe/leaf.py"], rdeps, skip_init=False) == kept
+
+        # A directly changed __init__ is honoured as a seed either way.
+        assert "probpipe.__init__" in affected_modules(
+            ["probpipe/__init__.py"], rdeps, skip_init=True
+        )
+
+    def test_symbol_map_and_notebook_affected_via_init(self, fake_pkg, tmp_path):
+        """from-package imports resolve through sym_defs to the defining module."""
+        fake_pkg(
+            {
+                "probpipe/__init__.py": "from .leaf import Normal\n",
+                "probpipe/leaf.py": "class Normal:\n    pass\n",
+                "probpipe/other.py": "class Other:\n    pass\n",
+            }
+        )
+        sym_defs = symbol_definition_map()
+        assert sym_defs["Normal"] == "probpipe.leaf"
+
+        nb = {"cells": [{"cell_type": "code", "source": ["from probpipe import Normal\n"]}]}
+        nb_path = tmp_path / "demo.ipynb"
+        nb_path.write_text(json.dumps(nb))
+
+        assert notebook_affected(str(nb_path), {"probpipe.leaf"}, sym_defs) is True
+        assert notebook_affected(str(nb_path), {"probpipe.other"}, sym_defs) is False
+
+    def test_symbol_map_ignores_nested_definitions(self, fake_pkg):
+        """Only module-level defs are recorded (tree.body, not a full walk)."""
+        fake_pkg(
+            {
+                "probpipe/__init__.py": "",
+                "probpipe/leaf.py": (
+                    "def factory():\n    class Local:\n        pass\n    return Local\n"
+                ),
+            }
+        )
+        sym_defs = symbol_definition_map()
+        assert sym_defs.get("factory") == "probpipe.leaf"  # module-level def kept
+        assert "Local" not in sym_defs  # nested inside a function body, ignored
 
 
-def test_alias_import_recorded(fake_pkg):
-    """``import probpipe.sub as s`` records an edge under ``probpipe.sub``."""
-    fake_pkg(
-        {
-            "probpipe/__init__.py": "",
-            "probpipe/sub.py": "y = 2\n",
-            "probpipe/user.py": "import probpipe.sub as s\n",
-        }
-    )
-    rdeps = reverse_dependency_map()
-    assert "probpipe.user" in rdeps["probpipe.sub"]
+class TestCLI:
+    def test_expand_keeps_init_for_root_trigger(self, fake_pkg, capsys):
+        """`expand` (skip_init=False) emits probpipe/__init__.py for re-exports."""
+        fake_pkg(
+            {
+                "probpipe/__init__.py": "from .leaf import Thing\n",
+                "probpipe/leaf.py": "class Thing:\n    pass\n",
+                "probpipe/mid.py": "from .leaf import Thing\n",
+            }
+        )
+        assert main(["expand", "probpipe/leaf.py"]) == 0
+        printed = capsys.readouterr().out.split()
+        assert "probpipe/leaf.py" in printed
+        assert "probpipe/mid.py" in printed
+        assert "probpipe/__init__.py" in printed
 
+    def test_notebooks_selects_affected(self, fake_pkg, tmp_path, capsys):
+        """`notebooks` prints notebooks importing a changed module's symbols."""
+        fake_pkg(
+            {
+                "probpipe/__init__.py": "from .leaf import Normal\n",
+                "probpipe/leaf.py": "class Normal:\n    pass\n",
+            }
+        )
+        nb_dir = tmp_path / "nbs"
+        nb_dir.mkdir()
+        nb = {"cells": [{"cell_type": "code", "source": ["from probpipe import Normal\n"]}]}
+        (nb_dir / "demo.ipynb").write_text(json.dumps(nb))
 
-def test_transitive_bfs_reaches_indirect_dependents(fake_pkg):
-    """A change to a leaf surfaces modules that import it transitively."""
-    fake_pkg(
-        {
-            "probpipe/__init__.py": "",
-            "probpipe/leaf.py": "class Thing:\n    pass\n",
-            "probpipe/mid.py": "from .leaf import Thing\n",
-            "probpipe/top.py": "from .mid import Thing\n",
-        }
-    )
-    rdeps = reverse_dependency_map()
-    affected = affected_modules(["probpipe/leaf.py"], rdeps)
-    assert {"probpipe.leaf", "probpipe.mid", "probpipe.top"} <= affected
-
-
-def test_affected_modules_skips_init_reexport(fake_pkg):
-    """__init__ re-exports are not pulled in transitively (the unify rule)...
-
-    ...while genuine non-__init__ dependents still are, and a directly changed
-    __init__ is honoured as a seed.
-    """
-    fake_pkg(
-        {
-            "probpipe/__init__.py": "from .leaf import Thing\n",
-            "probpipe/leaf.py": "class Thing:\n    pass\n",
-            "probpipe/mid.py": "from .leaf import Thing\n",
-        }
-    )
-    rdeps = reverse_dependency_map()
-
-    affected = affected_modules(["probpipe/leaf.py"], rdeps)
-    assert "probpipe.mid" in affected  # real dependent kept
-    assert "probpipe.__init__" not in affected  # re-export hub skipped
-
-    # A directly changed __init__ still enters as a seed.
-    assert "probpipe.__init__" in affected_modules(["probpipe/__init__.py"], rdeps)
-
-
-def test_symbol_map_and_notebook_affected_via_init(fake_pkg, tmp_path):
-    """from-package imports resolve through sym_defs to the defining module."""
-    fake_pkg(
-        {
-            "probpipe/__init__.py": "from .leaf import Normal\n",
-            "probpipe/leaf.py": "class Normal:\n    pass\n",
-            "probpipe/other.py": "class Other:\n    pass\n",
-        }
-    )
-    sym_defs = symbol_definition_map()
-    assert sym_defs["Normal"] == "probpipe.leaf"
-
-    nb = {"cells": [{"cell_type": "code", "source": ["from probpipe import Normal\n"]}]}
-    nb_path = tmp_path / "demo.ipynb"
-    nb_path.write_text(json.dumps(nb))
-
-    assert notebook_affected(str(nb_path), {"probpipe.leaf"}, sym_defs) is True
-    assert notebook_affected(str(nb_path), {"probpipe.other"}, sym_defs) is False
+        assert main(["notebooks", str(nb_dir), "probpipe/leaf.py"]) == 0
+        printed = capsys.readouterr().out.split()
+        assert str(nb_dir / "demo.ipynb") in printed

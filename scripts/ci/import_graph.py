@@ -54,15 +54,15 @@ def module_to_file(module: str) -> str | None:
     return None
 
 
-def _resolve_import_from(node: ast.ImportFrom, importer: str) -> str | None:
+def _resolve_import_from(node: ast.ImportFrom, importer: str, package: str) -> str | None:
     """Resolve an ``ast.ImportFrom`` to its absolute intra-package target.
 
     Handles relative imports via ``node.level``. Returns ``None`` for imports
-    that do not target :data:`PACKAGE`.
+    that do not target *package*.
     """
     level = node.level or 0
     if level == 0:
-        if not node.module or not node.module.startswith(PACKAGE):
+        if not node.module or not node.module.startswith(package):
             return None
         return node.module
     parts = importer.split(".")
@@ -72,84 +72,108 @@ def _resolve_import_from(node: ast.ImportFrom, importer: str) -> str | None:
     return ".".join(base)
 
 
-def reverse_dependency_map(package_root: str = PACKAGE) -> dict[str, set[str]]:
-    """Build ``module -> {modules that directly import it}`` over the package.
+def _scan_package(package_root: str = PACKAGE) -> tuple[dict[str, set[str]], dict[str, str]]:
+    """Single AST pass over *package_root*, returning ``(rdeps, sym_defs)``.
 
-    Walks every ``*.py`` file under *package_root*, parsing intra-package
-    imports (absolute ``from probpipe... import`` / ``import probpipe...`` and
-    relative ``from . import`` with ``level`` handling) into reverse edges.
+    Each file is read and parsed exactly once. ``rdeps`` (module ->
+    {modules that directly import it}) is built from every file, including
+    ``__init__``, via a full ``ast.walk`` so imports nested under
+    ``TYPE_CHECKING`` or inside functions are still captured. ``sym_defs``
+    (top-level symbol name -> defining module, first-wins) is built only from
+    the *module-level* defs/assignments of non-``__init__`` files, so it
+    records true definition sites for resolving ``probpipe/__init__.py``
+    re-exports.
     """
     rdeps: dict[str, set[str]] = defaultdict(set)
-    for fpath in Path(package_root).rglob("*.py"):
-        importer = file_to_module(str(fpath))
-        try:
-            tree = ast.parse(fpath.read_text())
-        except (OSError, SyntaxError, ValueError):
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                imported = _resolve_import_from(node, importer)
-                if imported is not None:
-                    rdeps[imported].add(importer)
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name.startswith(PACKAGE):
-                        rdeps[alias.name].add(importer)
-    return rdeps
-
-
-def affected_modules(
-    changed_files: Iterable[str],
-    rdeps: dict[str, set[str]],
-) -> set[str]:
-    """Transitively expand changed source files over the reverse graph.
-
-    Seeds the walk with the modules of *changed_files* and follows reverse
-    edges. ``__init__`` modules are skipped *during traversal*: they are sinks
-    in the reverse graph (nothing imports a package by its dunder name), so
-    they add no real dependents, and traversing into the top-level
-    ``probpipe/__init__.py`` would otherwise make the test job treat any change
-    to a re-exported module as a root-level change. A directly changed
-    ``__init__.py`` is still honoured (it enters as a seed).
-    """
-    seen = {file_to_module(f) for f in changed_files}
-    queue = list(seen)
-    while queue:
-        module = queue.pop(0)
-        for dep in rdeps.get(module, ()):
-            if dep not in seen and dep.rsplit(".", 1)[-1] != "__init__":
-                seen.add(dep)
-                queue.append(dep)
-    return seen
-
-
-def symbol_definition_map(package_root: str = PACKAGE) -> dict[str, str]:
-    """Map each top-level symbol name to the module that defines it.
-
-    ``__init__`` files are skipped so the map records true definition sites;
-    used to resolve ``from probpipe import Name`` re-exports back to where
-    ``Name`` is actually defined. First definition wins on collisions.
-    """
     sym_defs: dict[str, str] = {}
     for fpath in Path(package_root).rglob("*.py"):
-        if fpath.name == "__init__.py":
-            continue
         module = file_to_module(str(fpath))
         try:
             tree = ast.parse(fpath.read_text())
         except (OSError, SyntaxError, ValueError):
             continue
         for node in ast.walk(tree):
-            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-                sym_defs.setdefault(node.name, module)
-            elif isinstance(node, ast.Assign):
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        sym_defs.setdefault(target.id, module)
-    return sym_defs
+            if isinstance(node, ast.ImportFrom):
+                imported = _resolve_import_from(node, module, package_root)
+                if imported is not None:
+                    rdeps[imported].add(module)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.startswith(package_root):
+                        rdeps[alias.name].add(module)
+        if fpath.name != "__init__.py":
+            for node in tree.body:
+                if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                    sym_defs.setdefault(node.name, module)
+                elif isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            sym_defs.setdefault(target.id, module)
+    return rdeps, sym_defs
 
 
-def _cell_imported_modules(tree: ast.AST, sym_defs: dict[str, str]) -> set[str]:
+def reverse_dependency_map(package_root: str = PACKAGE) -> dict[str, set[str]]:
+    """Build ``module -> {modules that directly import it}`` over the package.
+
+    Parses every ``*.py`` file under *package_root*, recording intra-package
+    imports (absolute ``from probpipe... import`` / ``import probpipe...`` and
+    relative ``from . import`` with ``level`` handling) as reverse edges.
+    """
+    return _scan_package(package_root)[0]
+
+
+def symbol_definition_map(package_root: str = PACKAGE) -> dict[str, str]:
+    """Map each top-level symbol name to the module that defines it.
+
+    ``__init__`` files are skipped and only module-level definitions are
+    recorded, so the map holds true definition sites; used to resolve
+    ``from probpipe import Name`` re-exports back to where ``Name`` is defined.
+    First definition wins on collisions.
+    """
+    return _scan_package(package_root)[1]
+
+
+def affected_modules(
+    changed_files: Iterable[str],
+    rdeps: dict[str, set[str]],
+    *,
+    skip_init: bool = False,
+) -> set[str]:
+    """Transitively expand changed source files over the reverse graph.
+
+    Seeds the walk with the modules of *changed_files* and follows reverse
+    edges, returning every transitively affected module.
+
+    *skip_init* selects each job's historical behavior:
+
+    * ``False`` (the ``test`` job): keep ``__init__`` modules. A change to a
+      module re-exported by ``probpipe/__init__.py`` then reaches the
+      top-level ``__init__``, which the ci.yml mapping treats as a root-level
+      change and so runs the root ``tests/test_*.py`` files (e.g.
+      ``test_coverage_gaps.py``, which regression-tests re-exported classes).
+    * ``True`` (the ``notebooks`` job): skip ``__init__`` modules during
+      traversal. That job resolves package-level imports through
+      :func:`symbol_definition_map` rather than the reverse graph, so it never
+      relied on ``__init__`` edges.
+
+    A directly changed ``__init__.py`` always enters as a seed regardless of
+    *skip_init*.
+    """
+    seen = {file_to_module(f) for f in changed_files}
+    queue = list(seen)
+    while queue:
+        module = queue.pop(0)
+        for dep in rdeps.get(module, ()):
+            if dep in seen:
+                continue
+            if skip_init and dep.rsplit(".", 1)[-1] == "__init__":
+                continue
+            seen.add(dep)
+            queue.append(dep)
+    return seen
+
+
+def _cell_imported_modules(tree: ast.AST, sym_defs: dict[str, str], package: str) -> set[str]:
     """Resolve the probpipe modules a parsed notebook cell depends on.
 
     ``from probpipe import Name`` is resolved through *sym_defs* to the module
@@ -160,7 +184,7 @@ def _cell_imported_modules(tree: ast.AST, sym_defs: dict[str, str]) -> set[str]:
     resolved: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
-            if node.level != 0 or not node.module or not node.module.startswith(PACKAGE):
+            if node.level != 0 or not node.module or not node.module.startswith(package):
                 continue
             src_file = module_to_file(node.module)
             if src_file and src_file.endswith("__init__.py"):
@@ -173,7 +197,7 @@ def _cell_imported_modules(tree: ast.AST, sym_defs: dict[str, str]) -> set[str]:
                 resolved.add(node.module)
         elif isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name.startswith(PACKAGE):
+                if alias.name.startswith(package):
                     resolved.add(alias.name)
     return resolved
 
@@ -182,6 +206,7 @@ def notebook_affected(
     nb_path: str,
     affected: set[str],
     sym_defs: dict[str, str],
+    package: str = PACKAGE,
 ) -> bool:
     """Return whether *nb_path* imports any symbol defined in *affected*."""
     nb = json.loads(Path(nb_path).read_text())
@@ -194,7 +219,7 @@ def notebook_affected(
             tree = ast.parse(source)
         except SyntaxError:
             continue
-        resolved |= _cell_imported_modules(tree, sym_defs)
+        resolved |= _cell_imported_modules(tree, sym_defs, package)
     return any(
         af_mod == nb_mod or af_mod.startswith(nb_mod + ".")
         for nb_mod in resolved
@@ -204,8 +229,13 @@ def notebook_affected(
 
 def _cmd_expand(args: argparse.Namespace) -> int:
     rdeps = reverse_dependency_map()
+    # The two jobs historically filtered changed sources slightly differently
+    # (test: startswith("probpipe"); notebooks: startswith("probpipe/")); each
+    # is preserved verbatim. skip_init=False preserves the test job's behavior:
+    # a change to a module re-exported by probpipe/__init__.py still triggers
+    # the root test files.
     changed_sources = [f for f in args.files if f.startswith(PACKAGE)]
-    for module in sorted(affected_modules(changed_sources, rdeps)):
+    for module in sorted(affected_modules(changed_sources, rdeps, skip_init=False)):
         path = module_to_file(module)
         if path:
             print(path)
@@ -215,11 +245,9 @@ def _cmd_expand(args: argparse.Namespace) -> int:
 def _cmd_notebooks(args: argparse.Namespace) -> int:
     nb_dir = args.nb_dir
     changed = args.files
-    rdeps = reverse_dependency_map()
-    sym_defs = symbol_definition_map()
-
+    rdeps, sym_defs = _scan_package()  # single pass builds both maps
     changed_sources = [f for f in changed if f.startswith(PACKAGE + "/")]
-    affected = affected_modules(changed_sources, rdeps)
+    affected = affected_modules(changed_sources, rdeps, skip_init=True)
 
     to_run = {
         f
