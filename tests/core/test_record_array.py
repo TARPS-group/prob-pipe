@@ -357,6 +357,25 @@ class TestNumericRecordArrayNested:
         with pytest.raises(KeyError):
             nra["outer/missing"]
 
+    def test_getitem_int_nested_element(self):
+        # Integer indexing of a nested record array descends into the nested
+        # field, returning a (nested) record element — not an indexing error.
+        tpl = self._nested_tpl()
+        nra = NumericRecordArray.unflatten(
+            jnp.arange(15.0).reshape(5, 3), template=tpl, batch_shape=(5,))
+        elem = nra[2]
+        assert isinstance(elem, Record)
+        np.testing.assert_allclose(elem["outer"]["a"], nra["outer"]["a"][2])
+        np.testing.assert_allclose(elem.flatten(), nra.flatten()[2])
+
+    def test_getitem_int_nested_multidim_batch(self):
+        tpl = self._nested_tpl()
+        nra = NumericRecordArray.unflatten(
+            jnp.arange(24.0).reshape(2, 4, 3), template=tpl, batch_shape=(2, 4))
+        elem = nra[5]  # flat index into the (2, 4) batch
+        np.testing.assert_allclose(
+            elem["outer"]["a"], np.asarray(nra["outer"]["a"]).reshape(-1)[5])
+
 
 # ---------------------------------------------------------------------------
 # NumericRecordArray mean / var
