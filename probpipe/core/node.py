@@ -509,13 +509,17 @@ class WorkflowFunction(Node):
             execution=self._make_execution_config(),
         )
         result = _workflow_execution.execute_many(request)[0]
-        parents = tuple(
-            v for v in values.values() if hasattr(v, "source")
-        )
-        provenance = Provenance(
-            operation=f"workflow.{self._name or self._func.__name__}",
-            parents=parents,
-            metadata={"func": self._name or self._func.__name__},
+        seen: set[int] = set()
+        candidates = []
+        for v in values.values():
+            if hasattr(v, "source") and id(v) not in seen:
+                seen.add(id(v))
+                candidates.append(v)
+        name = self._name or self._func.__name__
+        provenance = Provenance.create(
+            f"workflow.{name}",
+            parents=candidates,
+            metadata={"func": name},
         )
         return _workflow_result._coerce_output(
             result,

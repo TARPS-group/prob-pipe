@@ -284,7 +284,7 @@ class TestDispatch:
 
 
 class TestProvenanceChain:
-    def test_pure_sweep_provenance(self):
+    def test_pure_sweep_provenance(self, full_provenance_mode):
         @workflow_function
         def f(p: NumericRecord) -> float:
             return p["x"]
@@ -295,12 +295,12 @@ class TestProvenanceChain:
         out = f(p=sweep)
         assert out.source is not None
         assert out.source.operation == "workflow.stack"
-        assert sweep in out.source.parents
+        assert any(p.obj is sweep for p in out.source.parents)
         assert out.source.metadata["batch_shape"] == (3,)
         assert out.source.metadata["k"] == 0
         assert out.source.metadata["func"] == "f"
 
-    def test_nested_provenance_includes_both(self):
+    def test_nested_provenance_includes_both(self, full_provenance_mode):
         @workflow_function(n_broadcast_samples=10, dispatch="sequential")
         def f(p: NumericRecord, noise: float) -> float:
             return p["x"] + noise
@@ -311,8 +311,8 @@ class TestProvenanceChain:
         noise_dist = Normal(loc=0.0, scale=1.0, name="noise")
         out = f(p=sweep, noise=noise_dist)
         assert out.source.operation == "workflow.nested"
-        assert sweep in out.source.parents
-        assert noise_dist in out.source.parents
+        assert any(p.obj is sweep for p in out.source.parents)
+        assert any(p.obj is noise_dist for p in out.source.parents)
         assert out.source.metadata["k"] == 10
 
 

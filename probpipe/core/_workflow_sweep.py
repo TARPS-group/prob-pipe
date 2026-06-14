@@ -253,17 +253,20 @@ def make_sweep_provenance(
     workflow_name: str,
     batch_shape: tuple[int, ...],
     k: int,
-) -> Provenance:
-    """Build provenance metadata for pure and nested sweep outputs."""
+) -> Provenance | None:
+    """Build provenance metadata for pure and nested sweep outputs.
+
+    Returns ``None`` when :attr:`ProvenanceMode.OFF` is active.
+    """
     regime = "nested" if dist_args else "stack"
-    parents = tuple(values[name] for name in array_args) + tuple(
-        values[name]
-        for name in dist_args
+    array_candidates = [values[name] for name in array_args]
+    dist_candidates = [
+        values[name] for name in dist_args
         if isinstance(values[name], Distribution)
-    )
-    return Provenance(
-        operation=f"workflow.{regime}",
-        parents=parents,
+    ]
+    return Provenance.create(
+        f"workflow.{regime}",
+        parents=array_candidates + dist_candidates,
         metadata={
             "func": workflow_name,
             "batch_shape": tuple(batch_shape),
