@@ -197,12 +197,23 @@ class RecordArray(Record):
     """
 
     def _get_record(self, index: int) -> Record:
-        """Extract a single Record at a flat batch index."""
+        """Extract a single Record at a flat batch index.
+
+        Nested record fields (a co-batched ``RecordArray`` or a plain
+        ``Record`` with batch-shaped leaves) are descended recursively so
+        the element is itself a (nested) record, not indexed by the raw
+        batch tuple.
+        """
         nd_index = np.unravel_index(index, self._batch_shape)
-        fields: dict[str, Any] = {}
-        for name in self._store:
-            fields[name] = self._store[name][nd_index]
-        return self._record_cls(fields)
+
+        def _elem(val: Any) -> Any:
+            if isinstance(val, RecordArray):
+                return val._get_record(index)
+            if isinstance(val, Record):
+                return type(val)({k: _elem(val[k]) for k in val.fields})
+            return val[nd_index]
+
+        return self._record_cls({name: _elem(self._store[name]) for name in self._store})
 
     def __contains__(self, name: str) -> bool:
         return name in self._store
