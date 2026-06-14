@@ -276,11 +276,17 @@ class ProductDistribution(
         from ..core._record_array import NumericRecordArray, RecordArray
         names = list(self._components.keys())
         keys = jax.random.split(key, len(names))
+        numeric = isinstance(self, NumericRecordDistribution)
         fields: dict[str, jnp.ndarray | Record] = {}
         for subkey, name in zip(keys, names):
             comp = self._components[name]
             if isinstance(comp, dict):
-                fields[name] = _sample_nested(comp, subkey, sample_shape)
+                # Pass the sub-template so a batched nested draw is a nested
+                # record-array (canonical, flattenable), not a plain Record.
+                sub_template = self.record_template[name] if sample_shape else None
+                fields[name] = _sample_nested(
+                    comp, subkey, sample_shape,
+                    template=sub_template, numeric=numeric)
             else:
                 fields[name] = comp._sample(subkey, sample_shape)
         if sample_shape:
@@ -504,17 +510,30 @@ class TFPProductDistribution(ProductDistribution):
 # -- Helpers for nested component pytrees ----------------------------------
 
 
-def _sample_nested(components: dict, key, sample_shape) -> Record:
-    """Recursively sample from nested component dicts, returning nested Record."""
+def _sample_nested(components: dict, key, sample_shape, template=None, numeric=False):
+    """Recursively sample from nested component dicts.
+
+    For an **unbatched** draw (``sample_shape == ()``) returns a plain nested
+    ``Record``. For a **batched** draw returns a nested record-array
+    (``NumericRecordArray`` when ``numeric`` else ``RecordArray``) carrying the
+    sub-``template`` and ``batch_shape``, so the result is canonical and
+    flattenable rather than a plain ``Record`` with batch-shaped leaves.
+    """
     names = list(components.keys())
     keys = jax.random.split(key, len(names))
     fields: dict = {}
     for subkey, name in zip(keys, names):
         comp = components[name]
         if isinstance(comp, dict):
-            fields[name] = _sample_nested(comp, subkey, sample_shape)
+            sub_template = template[name] if template is not None else None
+            fields[name] = _sample_nested(
+                comp, subkey, sample_shape, template=sub_template, numeric=numeric)
         else:
             fields[name] = comp._sample(subkey, sample_shape)
+    if sample_shape and template is not None:
+        from ..core._record_array import NumericRecordArray, RecordArray
+        cls = NumericRecordArray if numeric else RecordArray
+        return cls(fields, batch_shape=sample_shape, template=template)
     return Record(fields)
 
 

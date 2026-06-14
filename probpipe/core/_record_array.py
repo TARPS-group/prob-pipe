@@ -19,7 +19,7 @@ import numpy as np
 from ..custom_types import ArrayLike
 from ._numeric_record import _NUMERIC_DTYPE_KINDS, NumericRecord
 from .provenance import Provenance
-from .record import Record, RecordTemplate, _spec_size
+from .record import _PATH_SEP, Record, RecordTemplate, _spec_size
 
 __all__ = [
     "RecordArray",
@@ -158,6 +158,14 @@ class RecordArray(Record):
 
     def __getitem__(self, key: str | int) -> Any:
         if isinstance(key, str):
+            if _PATH_SEP in key:
+                head, _, rest = key.partition(_PATH_SEP)
+                if head not in self._store:
+                    raise KeyError(key)
+                try:
+                    return self._store[head][rest]
+                except (KeyError, TypeError) as e:
+                    raise KeyError(key) from e
             if key not in self._store:
                 raise KeyError(key)
             return self._store[key]
@@ -420,16 +428,25 @@ class NumericRecordArray(RecordArray):
     def flatten(self) -> jnp.ndarray:
         """Flatten event dimensions into a single trailing axis.
 
-        Returns array of shape ``(*batch_shape, flat_event_size)``.
+        Returns array of shape ``(*batch_shape, flat_event_size)``. Nested
+        record fields are flattened depth-first in field order, matching
+        :meth:`unflatten` and :meth:`NumericRecord.flatten`.
         """
         n_batch = len(self._batch_shape)
-        parts = []
-        for name in self._store:
-            val = self._store[name]
-            event_shape = val.shape[n_batch:]
-            field_size = prod(event_shape)
-            new_shape = self._batch_shape + (field_size,)
-            parts.append(jnp.reshape(val, new_shape))
+
+        def _flat_field(val: Any) -> jnp.ndarray:
+            # A nested record-array field (from unflatten, or a batched _sample)
+            # carries the same batch axis and flattens its own leaves.
+            if isinstance(val, RecordArray):
+                return val.flatten()
+            # A nested plain Record whose leaves still carry the batch axis
+            # (a non-canonical batched draw): flatten each leaf and concatenate.
+            if isinstance(val, Record):
+                return jnp.concatenate(
+                    [_flat_field(val[f]) for f in val.fields], axis=-1)
+            return jnp.reshape(val, self._batch_shape + (prod(val.shape[n_batch:]),))
+
+        parts = [_flat_field(self._store[name]) for name in self._store]
         return jnp.concatenate(parts, axis=-1)
 
     @classmethod

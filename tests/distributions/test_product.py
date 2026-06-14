@@ -270,6 +270,47 @@ class TestFlattenUnflatten:
 
 
 # ===========================================================================
+# 3b. TestNestedSampleFlatten (issue #262)
+# ===========================================================================
+
+class TestNestedSampleFlatten:
+    """A batched draw from a nested ProductDistribution is a canonical, nested
+    NumericRecordArray that flattens and round-trips; the unbatched draw stays
+    a plain Record."""
+
+    @pytest.fixture
+    def nested(self):
+        return ProductDistribution(
+            name="joint",
+            outer={"a": Normal(loc=0.0, scale=1.0, name="a"),
+                   "b": Normal(loc=2.0, scale=0.5, name="b")},
+            m=Normal(loc=-1.0, scale=1.0, name="m"),
+        )
+
+    def test_batched_nested_field_is_record_array(self, nested):
+        from probpipe.core._record_array import NumericRecordArray
+        s = sample(nested, key=jax.random.PRNGKey(0), sample_shape=(6,))
+        assert isinstance(s, NumericRecordArray)
+        assert isinstance(s["outer"], NumericRecordArray)  # not a plain Record
+
+    def test_unbatched_nested_field_stays_record(self, nested):
+        s = sample(nested, key=jax.random.PRNGKey(0))
+        assert isinstance(s, Record) and not isinstance(s, RecordArray)
+        assert isinstance(s["outer"], Record) and not isinstance(s["outer"], RecordArray)
+
+    def test_batched_nested_flatten_roundtrip(self, nested):
+        from probpipe.core._record_array import NumericRecordArray
+        s = sample(nested, key=jax.random.PRNGKey(1), sample_shape=(6,))
+        leaves = list(nested.record_template.numeric_leaf_shapes)
+        flat = s.flatten()
+        assert flat.shape == (6, len(leaves))  # ('outer/a', 'outer/b', 'm')
+        rec = NumericRecordArray.unflatten(
+            flat, template=nested.record_template, batch_shape=(6,))
+        for i, leaf in enumerate(leaves):
+            np.testing.assert_allclose(rec[leaf], flat[:, i], atol=1e-6)
+
+
+# ===========================================================================
 # 4. TestDistributionView (RecordDistributionView for ProductDistribution)
 # ===========================================================================
 
