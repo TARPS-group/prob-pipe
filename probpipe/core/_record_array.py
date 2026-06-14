@@ -210,7 +210,11 @@ class RecordArray(Record):
             if isinstance(val, RecordArray):
                 return val._get_record(index)
             if isinstance(val, Record):
-                return type(val)({k: _elem(val[k]) for k in val.fields})
+                # A NumericRecord requires NumericRecord children, so a plain-Record
+                # nested field (the pre-canonical shape) is promoted; a non-numeric
+                # parent keeps the child's own type.
+                cls = NumericRecord if isinstance(self, NumericRecordArray) else type(val)
+                return cls({k: _elem(val[k]) for k in val.fields})
             return val[nd_index]
 
         return self._record_cls({name: _elem(self._store[name]) for name in self._store})
