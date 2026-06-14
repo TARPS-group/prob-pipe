@@ -157,6 +157,14 @@ class RecordArray(Record):
     # -- Field access -------------------------------------------------------
 
     def __getitem__(self, key: str | int) -> Any:
+        """Index a field by name, or extract one element by integer batch index.
+
+        A string ``key`` selects a field; slash-delimited paths descend into
+        nested record fields (``arr["outer/a"]``, per the path convention). An
+        integer ``key`` returns the element at that flat batch index as a
+        (possibly nested) ``Record``. A missing field -- or a path that descends
+        into a leaf -- raises ``KeyError``; a non-str/int key raises ``TypeError``.
+        """
         if isinstance(key, str):
             if _PATH_SEP in key:
                 head, _, rest = key.partition(_PATH_SEP)
