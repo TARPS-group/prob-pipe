@@ -163,66 +163,11 @@ jobs:
             echo "run_all=false" >> "$GITHUB_OUTPUT"
             echo "No .py files changed — skipping tests."
           else
-            # Write an import-graph expander: given changed source files, it
-            # uses AST parsing to find all probpipe modules that *transitively*
-            # depend on them, so a change to provenance.py also runs
-            # tests/test_record.py (because record.py imports provenance.py).
-            cat > /tmp/expand_deps.py << 'PYEOF'
-          import ast, sys
-          from pathlib import Path
-          from collections import defaultdict
-
-          def file_to_module(p):
-              return str(Path(p).with_suffix('')).replace('/', '.')
-
-          def module_to_file(m):
-              path = m.replace('.', '/')
-              for candidate in [path + '.py', path + '/__init__.py']:
-                  if Path(candidate).exists():
-                      return candidate
-              return None
-
-          # Build reverse import graph: module -> {modules that directly import it}
-          rdeps = defaultdict(set)
-          for fpath in Path('probpipe').rglob('*.py'):
-              importer = file_to_module(str(fpath))
-              try:
-                  tree = ast.parse(fpath.read_text())
-              except Exception:
-                  continue
-              for node in ast.walk(tree):
-                  if isinstance(node, ast.ImportFrom):
-                      lvl = node.level or 0
-                      if lvl == 0:
-                          if not node.module or not node.module.startswith('probpipe'):
-                              continue
-                          imported = node.module
-                      else:
-                          parts = importer.split('.')
-                          base = parts[:-lvl] if lvl < len(parts) else []
-                          imported = '.'.join(base + node.module.split('.')) if node.module else '.'.join(base)
-                      rdeps[imported].add(importer)
-                  elif isinstance(node, ast.Import):
-                      for alias in node.names:
-                          if alias.name.startswith('probpipe'):
-                              rdeps[alias.name].add(importer)
-
-          # BFS: expand changed source files to all transitively dependent modules
-          changed_sources = [f for f in sys.argv[1:] if f.startswith('probpipe')]
-          seen = set(file_to_module(f) for f in changed_sources)
-          queue = list(seen)
-          while queue:
-              m = queue.pop(0)
-              for dep in rdeps.get(m, []):
-                  if dep not in seen:
-                      seen.add(dep)
-                      queue.append(dep)
-
-          for m in sorted(seen):
-              f = module_to_file(m)
-              if f:
-                  print(f)
-          PYEOF
+            # Expand changed source files to their transitively-dependent
+            # modules via the shared, unit-tested import-graph builder
+            # (scripts/ci/import_graph.py; tests in tests/ci/) — so a change to
+            # provenance.py also runs tests/core/. Replaces the former inline
+            # heredoc (issue #266).
 
             # Split CHANGED into test files (include directly) and source
             # files (expand via import graph before mapping to test folders).
@@ -241,7 +186,7 @@ jobs:
             # Root-level modules (probpipe/_utils.py) map to test files at
             # tests/ root only (not descending into subfolders).
             if [ -n "$CHANGED_SOURCE" ]; then
-              EXPANDED=$(python3 /tmp/expand_deps.py $CHANGED_SOURCE)
+              EXPANDED=$(python3 scripts/ci/import_graph.py expand $CHANGED_SOURCE)
               echo "Expanded source files (via import graph):"
               echo "$EXPANDED"
               HAS_ROOT_CHANGE=false
@@ -498,137 +443,11 @@ jobs:
             echo "Changes detected:"
             echo "$CHANGED"
 
-            cat > /tmp/affected_notebooks.py << 'PYEOF'
-          import ast, json, sys
-          from pathlib import Path
-          from collections import defaultdict
-
-          def file_to_module(p):
-              return str(Path(p).with_suffix('')).replace('/', '.')
-
-          def module_to_file(m):
-              path = m.replace('.', '/')
-              for candidate in [path + '.py', path + '/__init__.py']:
-                  if Path(candidate).exists():
-                      return candidate
-              return None
-
-          rdeps = defaultdict(set)
-          for fpath in Path('probpipe').rglob('*.py'):
-              importer = file_to_module(str(fpath))
-              try:
-                  tree = ast.parse(fpath.read_text())
-              except Exception:
-                  continue
-              for node in ast.walk(tree):
-                  if isinstance(node, ast.ImportFrom):
-                      lvl = node.level or 0
-                      if lvl == 0:
-                          if not node.module or not node.module.startswith('probpipe'):
-                              continue
-                          imported = node.module
-                      else:
-                          parts = importer.split('.')
-                          base = parts[:-lvl] if lvl < len(parts) else []
-                          imported = '.'.join(base + node.module.split('.')) if node.module else '.'.join(base)
-                      rdeps[imported].add(importer)
-                  elif isinstance(node, ast.Import):
-                      for alias in node.names:
-                          if alias.name.startswith('probpipe'):
-                              rdeps[alias.name].add(importer)
-
-          # Build symbol definition map: name -> module where it is actually
-          # defined. Non-__init__ files take priority (they are the true
-          # definition sites); __init__ files are a fallback for anything
-          # defined directly inside a package init.
-          sym_defs = {}
-          for fpath in Path('probpipe').rglob('*.py'):
-              if fpath.name == '__init__.py':
-                  continue
-              mod = file_to_module(str(fpath))
-              try:
-                  tree = ast.parse(fpath.read_text())
-              except Exception:
-                  continue
-              for node in ast.walk(tree):
-                  if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-                      sym_defs.setdefault(node.name, mod)
-                  elif isinstance(node, ast.Assign):
-                      for target in node.targets:
-                          if isinstance(target, ast.Name):
-                              sym_defs.setdefault(target.id, mod)
-
-          nb_dir = sys.argv[1]   # this leg's notebook dir (docs/examples or docs/tutorials)
-          changed = sys.argv[2:]
-          changed_nbs = [f for f in changed if f.startswith(nb_dir + '/') and f.endswith('.ipynb') and Path(f).exists()]
-          changed_sources = [f for f in changed if f.startswith('probpipe/')]
-
-          seen = set(file_to_module(f) for f in changed_sources)
-          queue = list(seen)
-          while queue:
-              m = queue.pop(0)
-              for dep in rdeps.get(m, []):
-                  if dep not in seen and dep.split('.')[-1] != '__init__':
-                      seen.add(dep)
-                      queue.append(dep)
-          affected_mods = seen
-
-          def notebook_affected(nb_path):
-              nb = json.loads(Path(nb_path).read_text())
-              nb_resolved = set()
-              for cell in nb.get('cells', []):
-                  if cell.get('cell_type') != 'code':
-                      continue
-                  source = ''.join(cell.get('source', []))
-                  try:
-                      tree = ast.parse(source)
-                  except SyntaxError:
-                      continue
-                  for node in ast.walk(tree):
-                      if isinstance(node, ast.ImportFrom):
-                          if node.level != 0 or not node.module or not node.module.startswith('probpipe'):
-                              continue
-                          src_mod = node.module
-                          src_file = module_to_file(src_mod)
-                          if src_file and src_file.endswith('__init__.py'):
-                              # e.g. "from probpipe import WorkflowFunction, Normal"
-                              # Resolve each name to where it is actually defined.
-                              for alias in node.names:
-                                  if alias.name == '*':
-                                      nb_resolved.add(src_mod)
-                                  elif alias.name in sym_defs:
-                                      nb_resolved.add(sym_defs[alias.name])
-                                  else:
-                                      nb_resolved.add(src_mod)
-                          else:
-                              # e.g. "from probpipe.core.node import WorkflowFunction"
-                              # Module is already the definition site.
-                              nb_resolved.add(src_mod)
-                      elif isinstance(node, ast.Import):
-                          for alias in node.names:
-                              if alias.name.startswith('probpipe'):
-                                  # "import probpipe" — bare module import,
-                                  # can't resolve symbols statically; treat as
-                                  # matching anything under that prefix.
-                                  nb_resolved.add(alias.name)
-              for nb_mod in nb_resolved:
-                  for af_mod in affected_mods:
-                      if af_mod == nb_mod or af_mod.startswith(nb_mod + '.'):
-                          return True
-              return False
-
-          to_run = set(changed_nbs)
-          if affected_mods:
-              for nb_path in sorted(Path(nb_dir).glob('*.ipynb')):
-                  nb_str = str(nb_path)
-                  if nb_str not in to_run and notebook_affected(nb_str):
-                      to_run.add(nb_str)
-
-          for nb in sorted(to_run):
-              print(nb)
-          PYEOF
-
-            NOTEBOOKS=$(python3 /tmp/affected_notebooks.py "${{ matrix.dir }}" $CHANGED)
+            # Select notebooks under this leg's dir affected by the changed
+            # files, via the same shared import-graph builder the test job uses
+            # (scripts/ci/import_graph.py; tests in tests/ci/). Replaces the
+            # former inline heredoc (issue #266).
+            NOTEBOOKS=$(python3 scripts/ci/import_graph.py notebooks "${{ matrix.dir }}" $CHANGED)
             echo "Notebooks to run:"
             echo "$NOTEBOOKS"
 
