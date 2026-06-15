@@ -185,6 +185,32 @@ class TestNoBatchShape:
         assert da.batch_shape == (5,)
 
 
+class TestAuxiliaryDiagnosticsAccessor:
+    def test_auxiliary_defaults_to_none(self):
+        dist = Normal(loc=0.0, scale=1.0, name="x")
+        assert dist.auxiliary is None
+        assert dist.diagnostics is None
+
+    def test_diagnostics_none_when_auxiliary_has_no_diagnostics_group(self):
+        import xarray as xr
+
+        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist._auxiliary = xr.DataTree.from_dict({"arviz": xr.Dataset()})
+        assert dist.auxiliary is dist._auxiliary
+        assert dist.diagnostics is None
+
+    def test_diagnostics_returns_view_for_diagnostics_group(self):
+        import xarray as xr
+
+        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist._auxiliary = xr.DataTree.from_dict(
+            {"diagnostics": xr.Dataset(attrs={"warnings": "[]"})}
+        )
+        view = dist.diagnostics
+        assert view is not None
+        assert view.warnings == []
+
+
 class TestMetaclassEnforcement:
     """The ``_DistributionMeta`` metaclass enforces a non-empty ``name``
     on every Distribution subclass instance, even when the subclass
