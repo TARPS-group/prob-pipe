@@ -32,7 +32,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dataset). The cell is a no-op in local Jupyter, the docs build, and CI, so
   notebook execution elsewhere is unaffected.
 
+- **Keyword form for the `log_prob`-family ops (#228).** `log_prob`, `prob`,
+  `unnormalized_log_prob`, `unnormalized_prob`, and the `random_*_log_prob`
+  ops accept named field arguments —
+  `log_prob(model, intercept=0.0, slope=0.5, X=X_obs, y=y_obs)` — built into a
+  single draw via the new `Distribution._pack_value` (single-field → the bare
+  field value; multi-field → a `Record`). The ops stay plain
+  `WorkflowFunction`s that resolve this in their body — the same shape as
+  `condition_on`'s named data kwargs — so the positional form (including
+  `value=`) is unchanged and still broadcasts, and per-call controls use
+  `with_options` (`log_prob.with_options(seed=0)(dist, value)`). The keyword
+  form is purely additive; the one case it cannot express is a distribution
+  whose field name collides with the op's own `value`/`dist` parameter — pass
+  the positional `Record` there (mirroring `condition_on`'s `observed`).
+
 ### Changed
+
+- **`SupportsLogProb` / `SupportsUnnormalizedLogProb` are now generic in the
+  sample type (#228)** — `SupportsLogProb[T]`. Annotation-level only; runtime
+  behavior is unchanged.
 
 - **Amortized SBI learners accept nested priors (#262).**
   `learn_amortized_posterior` / `learn_amortized_likelihood` /
