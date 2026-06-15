@@ -287,13 +287,35 @@ def _split_data_kwargs(
     any kwarg whose name matches a component name is data (conditioning
     target); everything else is an inference parameter.
 
+    Guards against case-mismatched field names: a kwarg that matches a field
+    only up to case (e.g. ``x=`` when the field is ``X``) is almost certainly a
+    mistyped data field. Routed to ``inference_kwargs`` it would be silently
+    ignored downstream (e.g. by NUTS) — a wrong result with no error — so it
+    raises a :class:`TypeError` with the correct casing instead. Unknown
+    kwargs that are *not* a case-variant of any field stay inference
+    parameters (the inference layer validates those).
+
     Returns ``(data_kwargs, inference_kwargs)``.
     """
-    comp_names = frozenset(
-        dist.fields if hasattr(dist, 'fields') else ()
-    )
-    data_kwargs = {k: v for k, v in kwargs.items() if k in comp_names}
-    inference_kwargs = {k: v for k, v in kwargs.items() if k not in comp_names}
+    comp_names = tuple(dist.fields) if hasattr(dist, 'fields') else ()
+    comp_set = frozenset(comp_names)
+    by_lower = {name.lower(): name for name in comp_names}
+
+    data_kwargs: dict[str, Any] = {}
+    inference_kwargs: dict[str, Any] = {}
+    for k, v in kwargs.items():
+        if k in comp_set:
+            data_kwargs[k] = v
+            continue
+        canonical = by_lower.get(k.lower())
+        if canonical is not None:
+            raise TypeError(
+                f"condition_on: keyword argument {k!r} does not match a field "
+                f"of {type(dist).__name__}, but {canonical!r} does (case "
+                f"differs) — did you mean {canonical}=...? "
+                f"Fields: {comp_names}."
+            )
+        inference_kwargs[k] = v
     return data_kwargs, inference_kwargs
 
 
