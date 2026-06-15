@@ -482,6 +482,11 @@ class NumericRecordArray(RecordArray):
     ) -> NumericRecordArray:
         """Reconstruct from a flat array.
 
+        The inverse of :meth:`flatten`: nested ``RecordTemplate`` specs are
+        rebuilt recursively, so a template with nested fields yields nested
+        ``NumericRecordArray`` fields, matching the depth-first leaf order
+        ``flatten`` uses.
+
         Parameters
         ----------
         flat : array
@@ -490,6 +495,12 @@ class NumericRecordArray(RecordArray):
             Structural description providing field names and event shapes.
         batch_shape : tuple of int, optional
             If not provided, inferred as ``flat.shape[:-1]``.
+
+        Returns
+        -------
+        NumericRecordArray
+            Array of the template's structure with the given ``batch_shape``;
+            nested template fields become nested ``NumericRecordArray`` fields.
         """
         if batch_shape is None:
             batch_shape = flat.shape[:-1]
