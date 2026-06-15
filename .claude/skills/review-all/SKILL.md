@@ -1,6 +1,6 @@
 ---
 name: review-all
-description: Run three independent PR reviews (/review-pr, /review, /code-review) in parallel and merge them into one deduplicated, severity-tiered report. Use for a thorough multi-lens review before merging a non-trivial PR.
+description: Run four independent PR reviews (/review-pr, /review, /code-review, /audit-tests) in parallel and merge them into one deduplicated, severity-tiered report. Use for a thorough multi-lens review before merging a non-trivial PR.
 disable-model-invocation: true
 allowed-tools: Read Grep Glob Bash(gh *) Bash(git *) Agent
 argument-hint: [pr-number]
@@ -9,13 +9,13 @@ argument-hint: [pr-number]
 # ProbPipe Consolidated PR Review
 
 Review pull request **$ARGUMENTS** (if no number is given, detect the PR for the
-current branch with `gh pr view`) by running three independent reviews in
+current branch with `gh pr view`) by running four independent reviews in
 parallel and merging them into one report.
 
 This is READ-ONLY. **Do not edit any files.** Present the consolidated report
 and wait for the user to decide what to act on.
 
-The three lenses are complementary, and running them as separate agents keeps
+The four lenses are complementary, and running them as separate agents keeps
 their judgments independent. A finding raised by two lenses is high-confidence;
 a disagreement between lenses is itself signal.
 
@@ -27,11 +27,11 @@ gh pr diff <number> --repo TARPS-group/prob-pipe
 ```
 
 Note the head/base branches, the changed files, and a one-line statement of what
-the PR is meant to do. Pass this to all three agents so none re-derives it.
+the PR is meant to do. Pass this to all four agents so none re-derives it.
 
-## Step 2: Spawn the three reviews as parallel agents
+## Step 2: Spawn the four reviews as parallel agents
 
-Spawn **all three in a single message** (three `Agent` tool calls, `general-purpose`
+Spawn **all four in a single message** (four `Agent` tool calls, `general-purpose`
 type) so they run concurrently. Each agent **invokes the corresponding skill**
 on the PR and returns its report. In every prompt, include the Step 1 context
 and require: READ-ONLY; **do not spawn further sub-agents**; return a
@@ -44,13 +44,17 @@ coordinator for consolidation).
   performance, test coverage, security).
 - **Agent 3** — invoke the `code-review` skill (focused, high-effort correctness
   bug-hunt of the diff; it may run code read-only to confirm/refute findings).
+- **Agent 4** — invoke the `audit-tests` skill, scoped to the test files the PR
+  touches (test gaps, weak or tautological assertions, stale/duplicate tests, and
+  the mathematical correctness of the assertions). If the PR changes no tests, it
+  judges whether the changed behavior should have had coverage.
 
 If a skill is unavailable in the agent's context, tell it to fall back to
 performing that review directly per the lens description above.
 
 ## Step 3: Consolidate
 
-Merge the three reports into ONE — do not concatenate.
+Merge the four reports into ONE — do not concatenate.
 
 1. **Deduplicate** findings that describe the same underlying issue, even when
    worded or located differently. Note where lenses agree independently.
@@ -60,8 +64,8 @@ Merge the three reports into ONE — do not concatenate.
 3. **Attribute** each finding to the lens(es) that raised it; keep `file:line`.
 4. **Surface disagreements** explicitly, with a reconciliation grounded in
    `STYLE_GUIDE.md` / `CONTRIBUTING.md`.
-5. **Keep a "Verified correct" section** carrying forward what the bug-hunt lens
-   checked and found sound.
+5. **Keep a "Verified correct" section** carrying forward what the bug-hunt and
+   test-audit lenses checked and found sound.
 6. **End with a recommendation** — what you would do, in order — and offer to
    implement it.
 
@@ -81,7 +85,7 @@ Merge the three reports into ONE — do not concatenate.
 
 ## Notes
 
-- Three agents is real token cost. For a quick look, `/review-pr` alone is
+- Four agents is real token cost. For a quick look, `/review-pr` alone is
   enough; reach for `/review-all` before merging a non-trivial PR.
 - Explicit-invocation only — general "review this PR" requests route to
   `/review-pr`.
