@@ -1,19 +1,32 @@
 """Built-in operations for distribution computation.
 
-Each public function (``sample``, ``mean``, ``log_prob``, …) is a
-:class:`~probpipe.core.node.WorkflowFunction` created via the
-``@workflow_function`` decorator.  This means every call automatically
-participates in broadcasting and Prefect orchestration when a
-distribution argument is passed where a concrete value is expected.
+The value-free / dispatch ops (``sample``, ``mean``, ``variance``, ``cov``,
+``expectation``, ``condition_on``, ``from_distribution``) are
+:class:`~probpipe.core.node.WorkflowFunction` instances created via the
+``@workflow_function`` decorator, so every call automatically participates
+in broadcasting and Prefect orchestration when a distribution argument is
+passed where a concrete value is expected.
+
+The density ops (``log_prob``, ``prob``, ``unnormalized_log_prob``,
+``unnormalized_prob``, and the ``random_*_log_prob`` ops) are thin Python
+wrappers over inner ``_<op>_impl`` WorkflowFunctions. The wrapper adds the
+positional-or-keyword value form — ``log_prob(dist, value)`` or
+``log_prob(dist, field=value, ...)`` (packed via
+:meth:`~probpipe.core._distribution_base.Distribution._pack_value`) — and
+forwards the WorkflowFunction controls (``seed`` / ``n_broadcast_samples`` /
+``include_inputs``) via ``with_options``; broadcasting still happens because
+the inner impl is the WorkflowFunction. ``dist`` and ``value`` are
+positional-only so field names are free for the keyword form.
 
 Usage::
 
     from probpipe import sample, mean, log_prob, condition_on
 
-    dist = Normal(loc=0.0, scale=1.0)
+    dist = Normal(loc=0.0, scale=1.0, name="x")
     s = sample(dist, key=jax.random.PRNGKey(0), sample_shape=(100,))
     m = mean(dist)
-    lp = log_prob(dist, jnp.array(1.5))
+    lp = log_prob(dist, jnp.array(1.5))   # positional
+    lp = log_prob(dist, x=1.5)            # keyword
 """
 
 from __future__ import annotations
@@ -57,7 +70,8 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Public API — each function is a WorkflowFunction via @workflow_function
+# Public API — value-free ops are WorkflowFunctions directly; the density
+# ops (below) are wrappers over inner _<op>_impl WorkflowFunctions
 # ---------------------------------------------------------------------------
 
 
@@ -97,21 +111,29 @@ def sample(
 #
 # Each density op is an outer Python wrapper over an inner
 # ``@workflow_function`` impl.  The outer layer resolves the
-# positional-or-keyword value and forwards the WorkflowFunction control
-# kwargs explicitly, so a distribution field whose name happens to be a
-# reserved control name (``seed`` / ``n_broadcast_samples`` /
-# ``include_inputs``) cannot be silently swallowed by the workflow layer.
-# Broadcasting still happens — the inner impl is the WorkflowFunction.
+# positional-or-keyword value and applies the WorkflowFunction controls via
+# ``with_options`` (the non-deprecated control path), so a distribution
+# field whose name happens to be a reserved control name (``seed`` /
+# ``n_broadcast_samples`` / ``include_inputs``) cannot be silently swallowed
+# by the workflow layer.  Broadcasting still happens — the inner impl is the
+# WorkflowFunction.
 
 
 def _resolve_value(
-    op_name: str, dist: Any, value: Any, field_kwargs: dict[str, Any],
+    op_name: str,
+    dist: Any,
+    value: Any,
+    field_kwargs: dict[str, Any],
+    *,
+    allow_none: bool = False,
 ) -> Any:
     """Resolve a density op's value from the positional or keyword form.
 
     Keyword form packs ``field_kwargs`` into a single draw via
     ``dist._pack_value``; positional form passes ``value`` through. Raises
-    if both forms are given, or if neither is.
+    if both forms are given. With ``allow_none=False`` (default) a missing
+    value also raises; ``allow_none=True`` (the ``random_*`` ops) lets
+    ``value=None`` through so the bare random function is returned.
     """
     if field_kwargs:
         if value is not None:
@@ -119,8 +141,14 @@ def _resolve_value(
                 f"{op_name}: pass either a positional value or field kwargs, "
                 f"not both."
             )
+        if "value" in field_kwargs and "value" not in getattr(dist, "fields", ()):
+            # ``value`` was the pre-#228 keyword name; it is now positional-only.
+            raise TypeError(
+                f"{op_name}: `value` is positional-only — call "
+                f"{op_name}(dist, value), not {op_name}(dist, value=...)."
+            )
         return dist._pack_value(**field_kwargs)
-    if value is None:
+    if value is None and not allow_none:
         raise TypeError(
             f"{op_name}: a value is required — pass it positionally or as "
             f"field keyword arguments."
@@ -128,18 +156,29 @@ def _resolve_value(
     return value
 
 
-def _wf_controls(
+def _apply_controls(
+    impl: Any,
     seed: int | None,
     n_broadcast_samples: int | None,
     include_inputs: bool | None,
-) -> dict[str, Any]:
-    """Collect the non-``None`` WorkflowFunction control kwargs to forward."""
+) -> Any:
+    """Return a call view of *impl* with the non-``None`` WorkflowFunction
+    controls applied via ``with_options`` — the bare *impl* when none is set.
+
+    Using ``with_options`` rather than splatting the controls as call kwargs
+    avoids the legacy-call-kwarg ``DeprecationWarning`` the workflow layer
+    raises for these names.
+    """
     controls = {
-        "seed": seed,
-        "n_broadcast_samples": n_broadcast_samples,
-        "include_inputs": include_inputs,
+        k: v
+        for k, v in (
+            ("seed", seed),
+            ("n_broadcast_samples", n_broadcast_samples),
+            ("include_inputs", include_inputs),
+        )
+        if v is not None
     }
-    return {k: v for k, v in controls.items() if v is not None}
+    return impl.with_options(**controls) if controls else impl
 
 
 @workflow_function(name="log_prob")
@@ -174,9 +213,9 @@ def log_prob(
     ``WorkflowFunction`` controls forwarded to the broadcasting layer.
     """
     value = _resolve_value("log_prob", dist, value, field_kwargs)
-    return _log_prob_impl(
-        dist, value, **_wf_controls(seed, n_broadcast_samples, include_inputs)
-    )
+    return _apply_controls(
+        _log_prob_impl, seed, n_broadcast_samples, include_inputs
+    )(dist, value)
 
 
 @workflow_function(name="prob")
@@ -203,9 +242,9 @@ def prob(
     See :func:`log_prob` for the positional and keyword call forms.
     """
     value = _resolve_value("prob", dist, value, field_kwargs)
-    return _prob_impl(
-        dist, value, **_wf_controls(seed, n_broadcast_samples, include_inputs)
-    )
+    return _apply_controls(
+        _prob_impl, seed, n_broadcast_samples, include_inputs
+    )(dist, value)
 
 
 @workflow_function(name="unnormalized_log_prob")
@@ -235,9 +274,9 @@ def unnormalized_log_prob(
     See :func:`log_prob` for the positional and keyword call forms.
     """
     value = _resolve_value("unnormalized_log_prob", dist, value, field_kwargs)
-    return _unnormalized_log_prob_impl(
-        dist, value, **_wf_controls(seed, n_broadcast_samples, include_inputs)
-    )
+    return _apply_controls(
+        _unnormalized_log_prob_impl, seed, n_broadcast_samples, include_inputs
+    )(dist, value)
 
 
 @workflow_function(name="unnormalized_prob")
@@ -267,9 +306,9 @@ def unnormalized_prob(
     See :func:`log_prob` for the positional and keyword call forms.
     """
     value = _resolve_value("unnormalized_prob", dist, value, field_kwargs)
-    return _unnormalized_prob_impl(
-        dist, value, **_wf_controls(seed, n_broadcast_samples, include_inputs)
-    )
+    return _apply_controls(
+        _unnormalized_prob_impl, seed, n_broadcast_samples, include_inputs
+    )(dist, value)
 
 
 @workflow_function
@@ -385,16 +424,12 @@ def random_log_prob(
     ``_random_log_prob()`` returning a ``RandomFunction``; the optional
     *value* dispatch lives entirely in this op, not on the protocol.
     """
-    if field_kwargs:
-        if value is not None:
-            raise TypeError(
-                "random_log_prob: pass either a positional value or field "
-                "kwargs, not both."
-            )
-        value = dist._pack_value(**field_kwargs)
-    return _random_log_prob_impl(
-        dist, value, **_wf_controls(seed, n_broadcast_samples, include_inputs)
+    value = _resolve_value(
+        "random_log_prob", dist, value, field_kwargs, allow_none=True
     )
+    return _apply_controls(
+        _random_log_prob_impl, seed, n_broadcast_samples, include_inputs
+    )(dist, value)
 
 
 @workflow_function(name="random_unnormalized_log_prob")
@@ -441,16 +476,12 @@ def random_unnormalized_log_prob(
     the optional *value* dispatch lives entirely in this op, not on
     the protocol.
     """
-    if field_kwargs:
-        if value is not None:
-            raise TypeError(
-                "random_unnormalized_log_prob: pass either a positional value "
-                "or field kwargs, not both."
-            )
-        value = dist._pack_value(**field_kwargs)
-    return _random_unnormalized_log_prob_impl(
-        dist, value, **_wf_controls(seed, n_broadcast_samples, include_inputs)
+    value = _resolve_value(
+        "random_unnormalized_log_prob", dist, value, field_kwargs, allow_none=True
     )
+    return _apply_controls(
+        _random_unnormalized_log_prob_impl, seed, n_broadcast_samples, include_inputs
+    )(dist, value)
 
 
 def _split_data_kwargs(

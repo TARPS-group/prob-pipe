@@ -97,7 +97,8 @@ def _warn_reserved_field_names(instance: Any) -> None:
             f"that collide with WorkflowFunction-reserved parameters "
             f"({sorted(_RESERVED_WF_PARAMS)}); the keyword form "
             f"log_prob(dist, {sorted(clash)[0]}=...) is intercepted by the "
-            f"workflow layer. Pass a positional Record for those fields.",
+            f"workflow layer. Pass the value positionally "
+            f"(log_prob(dist, value)) instead.",
             stacklevel=3,
         )
 

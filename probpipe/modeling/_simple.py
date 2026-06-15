@@ -210,15 +210,22 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         if isinstance(value, tuple) and len(value) == 2:
             return value
         if isinstance(value, Record):
+            data_fields = self._data_fields
+            if not data_fields:
+                # The likelihood has no named data fields (no data_template),
+                # so the Record / keyword form cannot supply the data. Reject
+                # loudly rather than silently passing data=None downstream.
+                raise TypeError(
+                    f"{type(self).__name__}: the keyword/Record form is "
+                    f"unavailable because the likelihood "
+                    f"({type(self._likelihood).__name__}) has no named data "
+                    f"fields (no data_template); pass a (params, data) pair "
+                    f"positionally instead."
+                )
             params = self._prior._pack_value(
                 **{f: value[f] for f in self._prior_fields}
             )
-            data_fields = self._data_fields
-            data = (
-                Record(**{f: value[f] for f in data_fields})
-                if data_fields
-                else None
-            )
+            data = Record(**{f: value[f] for f in data_fields})
             return params, data
         raise TypeError(
             f"SimpleModel._log_prob expects a Record over {self.fields} or a "
