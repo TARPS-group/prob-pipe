@@ -36,8 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `unnormalized_log_prob`, `unnormalized_prob`, and the `random_*_log_prob`
   ops accept named field arguments —
   `log_prob(model, intercept=0.0, slope=0.5, X=X_obs, y=y_obs)` — built into a
-  single draw via the new `Distribution._pack_value` (single-field → the bare
-  field value; multi-field → a `Record`). The ops stay plain
+  single draw via `Distribution._pack_value` (single-field → the bare field
+  value; multi-field → a `Record`), whose general field validation and
+  `Record` building is the new public `RecordTemplate.pack`. The ops stay plain
   `WorkflowFunction`s that resolve this in their body — the same shape as
   `condition_on`'s named data kwargs — so the positional form (including
   `value=`) is unchanged and still broadcasts, and per-call controls use
