@@ -377,6 +377,11 @@ GitHub Actions (`.github/workflows/ci.yml`):
 - Coverage uploaded to Codecov
 - A `lint (advisory)` job runs `ruff check` and annotates PRs with
   violations but does **not** gate merges yet (see *Linting & pre-commit*)
+- Both the `test` and `notebooks` jobs choose what to run via a shared,
+  unit-tested AST import-graph helper — `scripts/ci/import_graph.py` (tests
+  in `tests/ci/`) — so a change to a source file also exercises the tests and
+  notebooks that transitively import it. Edit that committed helper, not inline
+  workflow scripts.
 
 Docs build (`.github/workflows/docs.yml`) with `uv run mkdocs build --strict`.
 
