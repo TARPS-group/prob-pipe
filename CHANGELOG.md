@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Nested `ProductDistribution` support in the record layer (#262).**
+  `RecordArray` accepts slash-delimited paths in string indexing
+  (`arr["outer/a"]`) and integer-indexes a nested array into a nested record
+  element; `flatten` / `unflatten` recurse into nested record fields in
+  depth-first leaf order; and a batched draw from a nested `ProductDistribution`
+  is a canonical, flattenable nested record array.
+
 - **Citation metadata and a "Cite" / "Help" docs section.** A
   `CITATION.cff` enables GitHub's "Cite this repository" button; the
   README gains a "Citing ProbPipe" section with a BibTeX entry; and the

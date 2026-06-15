@@ -16,7 +16,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..custom_types import ArrayLike
+from ..custom_types import Array
 from ._numeric_record import _NUMERIC_DTYPE_KINDS, NumericRecord
 from .provenance import Provenance
 from .record import _PATH_SEP, Record, RecordTemplate, _spec_size
@@ -157,6 +157,14 @@ class RecordArray(Record):
     # -- Field access -------------------------------------------------------
 
     def __getitem__(self, key: str | int) -> Any:
+        """Index a field by name, or extract one element by integer batch index.
+
+        A string ``key`` selects a field; slash-delimited paths descend into
+        nested record fields (``arr["outer/a"]``, per the path convention). An
+        integer ``key`` returns the element at that flat batch index as a
+        (possibly nested) ``Record``. A missing field -- or a path that descends
+        into a leaf -- raises ``KeyError``; a non-str/int key raises ``TypeError``.
+        """
         if isinstance(key, str):
             if _PATH_SEP in key:
                 head, _, rest = key.partition(_PATH_SEP)
@@ -206,11 +214,15 @@ class RecordArray(Record):
         """
         nd_index = np.unravel_index(index, self._batch_shape)
 
-        def _elem(val: Any) -> Any:
+        def _elem(val: Record | Array) -> Record | Array:
             if isinstance(val, RecordArray):
                 return val._get_record(index)
             if isinstance(val, Record):
-                return type(val)({k: _elem(val[k]) for k in val.fields})
+                # A NumericRecord requires NumericRecord children, so a plain-Record
+                # nested field (the pre-canonical shape) is promoted; a non-numeric
+                # parent keeps the child's own type.
+                cls = NumericRecord if isinstance(self, NumericRecordArray) else type(val)
+                return cls({k: _elem(val[k]) for k in val.fields})
             return val[nd_index]
 
         return self._record_cls({name: _elem(self._store[name]) for name in self._store})

@@ -340,6 +340,11 @@ class TestNumericRecordArrayNested:
         np.testing.assert_allclose(flat[:, 0], inner["a"])
         np.testing.assert_allclose(flat[:, 1], inner["b"])
         np.testing.assert_allclose(flat[:, 2], nra["m"])
+        # Integer-indexing descends the plain-Record nested field (the Record
+        # branch of _get_record), returning a nested record element.
+        elem = nra[2]
+        np.testing.assert_allclose(elem["outer"]["a"], inner["a"][2])
+        np.testing.assert_allclose(elem["outer"]["b"], inner["b"][2])
 
     def test_flatten_nested_depth2_roundtrip(self):
         tpl = RecordTemplate(
@@ -349,13 +354,29 @@ class TestNumericRecordArrayNested:
         np.testing.assert_allclose(nra.flatten(), flat)
         np.testing.assert_allclose(nra["outer/deep/g"], flat[:, 0])
 
+    def test_flatten_nested_vector_leaf(self):
+        # A non-scalar (vector) leaf under nesting: flatten lays out its columns
+        # at the leaf's event size, in canonical leaf order, and round-trips.
+        tpl = RecordTemplate(outer=RecordTemplate(a=(2,), b=()), m=())
+        flat = jnp.arange(20.0).reshape(5, 4)  # outer/a (2), outer/b (1), m (1)
+        nra = NumericRecordArray.unflatten(flat, template=tpl, batch_shape=(5,))
+        assert np.asarray(nra["outer/a"]).shape == (5, 2)
+        np.testing.assert_allclose(nra["outer/a"], flat[:, 0:2])
+        np.testing.assert_allclose(nra["outer/b"], flat[:, 2])
+        np.testing.assert_allclose(nra["m"], flat[:, 3])
+        np.testing.assert_allclose(nra.flatten(), flat)
+
     def test_getitem_slash_path(self):
         tpl = self._nested_tpl()
         nra = NumericRecordArray.unflatten(
             jnp.arange(15.0).reshape(5, 3), template=tpl, batch_shape=(5,))
         np.testing.assert_allclose(nra["outer/a"], nra["outer"]["a"])
         with pytest.raises(KeyError):
-            nra["outer/missing"]
+            nra["outer/missing"]    # leaf missing inside the sub-record
+        with pytest.raises(KeyError):
+            nra["nope/a"]           # head field not in the store
+        with pytest.raises(KeyError):
+            nra["m/x"]              # slash descends into a (scalar) leaf
 
     def test_getitem_int_nested_element(self):
         # Integer indexing of a nested record array descends into the nested
