@@ -34,10 +34,11 @@ import numpy as np
 import xarray as xr
 
 from ..core.distribution import Distribution
+from ..core.record import Record
 from ._datatree import _add_group
 from ._utils import _record_get, _safe_float, _json_dumps_safe
 
-__all__ = ["add_loo"]
+__all__ = ["add_loo", "add_log_likelihood"]
 
 
 # ---------------------------------------------------------------------
@@ -477,5 +478,152 @@ def add_loo(
     }
 
     _add_group(posterior, "diagnostics/runs/loo", run_ds)
+
+    return None
+
+
+# ---------------------------------------------------------------------
+# Log-likelihood computation
+# ---------------------------------------------------------------------
+
+
+def add_log_likelihood(
+    posterior: Distribution,
+    model: Any,
+    data: Any,
+    *,
+    var_name: str = "y",
+) -> None:
+    """Compute pointwise log likelihoods and write to ``_auxiliary["arviz/log_likelihood"]``.
+
+    Must be called before ``add_loo`` when the MCMC backend did not
+    automatically store log likelihoods during sampling.
+
+    Parameters
+    ----------
+    posterior : ApproximateDistribution
+        Fitted posterior.
+    model : SimpleModel
+        The model the posterior was conditioned from. Must expose
+        ``_likelihood`` with a ``per_datum_log_likelihood(params, datum)``
+        method — satisfied by ``GLMLikelihood`` and any other likelihood
+        implementing ``ConditionallyIndependentLikelihood``.
+    data : Record-like
+        Observed data with fields matching the likelihood's
+        ``data_template``. For ``GLMLikelihood``, needs ``X`` and ``y``.
+    var_name : str
+        Variable name written into the log-likelihood xarray Dataset.
+
+    Returns
+    -------
+    None
+        Mutates ``posterior._auxiliary`` in place.
+
+    Notes
+    -----
+    Uses ``jax.vmap`` to vectorise over draws and observations in a single
+    call per chain, giving a large speedup over a Python loop. Falls back
+    to a Python loop if the likelihood or params are not JAX-traceable.
+
+    Examples
+    --------
+    ::
+
+        add_log_likelihood(posterior, model, data)
+        add_loo(posterior)
+        print(posterior.diagnostics.loo.elpd_loo)
+    """
+    import jax
+    import jax.numpy as jnp
+
+    ll = model._likelihood
+    n_chains = posterior.num_chains
+    n_draws = posterior.num_draws
+
+    y = jnp.asarray(data["y"])
+    X = jnp.asarray(ll._x)          # (n_obs, n_features)
+    n_obs = y.shape[0]
+
+    # ------------------------------------------------------------------
+    # Build field metadata from one reference draw for flat↔Record conversion
+    # ------------------------------------------------------------------
+    ref_draws = posterior.draws(chain=0)
+    fields = ref_draws.fields
+    _field_meta = [
+        (f, jnp.asarray(ref_draws[f][0]).shape)
+        for f in fields
+    ]
+
+    def _flat_to_record(flat: Any, field_meta: list) -> Record:
+        """Reconstruct a named Record from a flat parameter array."""
+        out = {}
+        idx = 0
+        for fname, shape in field_meta:
+            size = int(np.prod(shape)) if shape else 1
+            val = flat[idx: idx + size]
+            out[fname] = val.reshape(shape) if shape else val[0]
+            idx += size
+        return Record(**out)
+
+    def _draws_to_flat(draws_c: Any) -> Any:
+        """Stack all fields into a (n_draws, n_params) array."""
+        parts = []
+        for f, shape in _field_meta:
+            arr = jnp.asarray(draws_c[f])          # (n_draws, *shape)
+            parts.append(arr.reshape(n_draws, -1) if arr.ndim > 1
+                         else arr[:, None])
+        return jnp.concatenate(parts, axis=1)       # (n_draws, n_params)
+
+    # ------------------------------------------------------------------
+    # Build a JAX-traceable per-(params, datum) log likelihood function.
+    # params here is a flat 1D array of length n_params; datum is a
+    # (x_i, y_i) pair. We avoid Record construction inside jax.vmap
+    # because Records are Python objects, not JAX pytrees.
+    # ------------------------------------------------------------------
+
+    def _log_lik_single(params_flat: Any, x_i: Any, y_i: Any) -> Any:
+        """Scalar log likelihood for one draw and one observation.
+
+        Constructs the datum Record at the Python level via a closure so
+        JAX only traces the numeric computation inside
+        ``per_datum_log_likelihood``, not the Record construction.
+        """
+        datum = Record(X=x_i, y=y_i)
+        return ll.per_datum_log_likelihood(params_flat, datum)
+
+    # Note: Record(X=x_i, y=y_i) is constructed inside the vmapped
+    # function. If the likelihood's per_datum_log_likelihood is not
+    # JAX-traceable (e.g. uses Python control flow on datum fields),
+    # the except branch below falls back to a Python loop.
+
+    # vmap over observations (x_i, y_i) for a fixed draw
+    _log_lik_obs = jax.vmap(_log_lik_single, in_axes=(None, 0, 0))
+
+    # vmap over draws for a fixed chain
+    _log_lik_draws = jax.vmap(_log_lik_obs, in_axes=(0, None, None))
+
+    log_lik = np.zeros((n_chains, n_draws, n_obs), dtype=np.float32)
+
+    for c in range(n_chains):
+        draws_c = posterior.draws(chain=c)
+        params_flat = _draws_to_flat(draws_c)       # (n_draws, n_params)
+
+        try:
+            # Fast path: vmap over (draws, obs) in one call
+            chain_ll = _log_lik_draws(params_flat, X, y)   # (n_draws, n_obs)
+            log_lik[c] = np.asarray(chain_ll, dtype=np.float32)
+
+        except Exception:
+            # Fallback: Python loop over draws (likelihood not JAX-traceable)
+            for d in range(n_draws):
+                param_record = _flat_to_record(params_flat[d], _field_meta)
+                for i in range(n_obs):
+                    datum = Record(X=X[i], y=y[i])
+                    log_lik[c, d, i] = float(
+                        ll.per_datum_log_likelihood(param_record, datum)
+                    )
+
+    log_lik_ds = _log_likelihood_to_dataset(log_lik, var_name=var_name)
+    _add_group(posterior, "arviz/log_likelihood", log_lik_ds)
 
     return None

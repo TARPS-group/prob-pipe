@@ -107,10 +107,11 @@ __all__ += [
 
 
 # ── LOO-PSIS ─────────────────────────────────────────────────────────────
-from ._loo import add_loo
+from ._loo import add_loo, add_log_likelihood
 
 __all__ += [
     "add_loo",
+    "add_log_likelihood",
 ]
 
 
