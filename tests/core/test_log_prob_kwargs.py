@@ -5,8 +5,8 @@ positional value or named field kwargs; the kwargs are packed into a
 single draw of the distribution's value type via
 :meth:`Distribution._pack_value` (single-field → bare value; multi-field
 → ``Record``). This file exercises the keyword form across the
-distribution surface, the error paths, and the reserved-name construction
-warning.
+distribution surface, the error paths, and the ``with_options`` control
+path.
 """
 
 from __future__ import annotations
@@ -179,28 +179,25 @@ class TestProbAndUnnormalizedKwargForm:
         assert jnp.allclose(unnormalized_prob(d, x=0.3), unnormalized_prob(d, 0.3))
 
 
-class TestReservedNameWarning:
-    """A distribution whose field collides with a reserved WF control param
-    warns at construction."""
+class TestFormerlyReservedFieldNames:
+    """Controls live only on ``with_options``, so a field whose name matches a
+    former WF control (``seed`` / ``n_broadcast_samples`` / ``include_inputs``)
+    is an ordinary field: construction does not warn, and the keyword form
+    addresses it (issue #228)."""
 
-    @pytest.mark.parametrize("reserved", ["seed", "n_broadcast_samples", "include_inputs"])
-    def test_reserved_single_field_name_warns(self, reserved):
-        # Single-field auto-build: the cheap check sees field == the name.
-        with pytest.warns(UserWarning, match="reserved"):
-            Normal(0.0, 1.0, name=reserved)
-
-    def test_reserved_multi_field_name_warns(self):
-        # Multi-field: the check sees the reserved name in the cached template.
-        with pytest.warns(UserWarning, match="reserved"):
-            ProductDistribution(
-                Normal(0.0, 1.0, name="seed"), Normal(0.0, 1.0, name="slope")
-            )
-
-    def test_ordinary_name_does_not_warn(self):
+    @pytest.mark.parametrize("name", ["seed", "n_broadcast_samples", "include_inputs"])
+    def test_construction_does_not_warn(self, name):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            Normal(0.0, 1.0, name="x")
+            Normal(0.0, 1.0, name=name)
         assert not any("reserved" in str(w.message).lower() for w in caught)
+
+    @pytest.mark.parametrize("name", ["seed", "n_broadcast_samples", "include_inputs"])
+    def test_keyword_form_addresses_the_field(self, name):
+        # The field name is not swallowed by the workflow layer — it packs
+        # into the value, matching the positional form.
+        d = Normal(0.0, 1.0, name=name)
+        assert jnp.allclose(log_prob(d, **{name: 1.5}), log_prob(d, 1.5))
 
 
 class TestControlsViaWithOptions:

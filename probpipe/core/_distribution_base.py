@@ -9,7 +9,6 @@ Provides:
 from __future__ import annotations
 
 import copy as _copy
-import warnings
 from abc import ABC, abstractmethod
 # ``_ProtocolMeta`` is technically private (leading underscore in
 # ``typing``), but it's the only way to compose a custom metaclass with
@@ -63,46 +62,6 @@ def set_return_approx_dist(value: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
-# Parameter names reserved by ``WorkflowFunction`` for call-time control
-# (see node.py).  A distribution field with one of these names cannot be
-# addressed through the keyword form ``log_prob(dist, seed=...)`` — the
-# workflow layer intercepts it — so we warn at construction.
-_RESERVED_WF_PARAMS: frozenset[str] = frozenset(
-    {"seed", "n_broadcast_samples", "include_inputs"}
-)
-
-
-def _warn_reserved_field_names(instance: Any) -> None:
-    """Warn if a distribution's field names collide with reserved WF params.
-
-    Cheap and side-effect-free: inspects only the *cached* record
-    template (``_record_template``) — never forces the lazy auto-build —
-    and the distribution's own ``name`` (which becomes the single field
-    for auto-built templates). A collision means the keyword form
-    ``log_prob(dist, <field>=...)`` is intercepted by the workflow layer;
-    the user must pass a positional ``Record`` for that field instead.
-    """
-    names: set[str] = set()
-    tpl = getattr(instance, "_record_template", None)
-    if tpl is not None:
-        names.update(getattr(tpl, "fields", ()))
-    else:
-        nm = getattr(instance, "_name", None)
-        if isinstance(nm, str):
-            names.add(nm)
-    clash = _RESERVED_WF_PARAMS & names
-    if clash:
-        warnings.warn(
-            f"{type(instance).__name__} has field name(s) {sorted(clash)} "
-            f"that collide with WorkflowFunction-reserved parameters "
-            f"({sorted(_RESERVED_WF_PARAMS)}); the keyword form "
-            f"log_prob(dist, {sorted(clash)[0]}=...) is intercepted by the "
-            f"workflow layer. Pass the value positionally "
-            f"(log_prob(dist, value)) instead.",
-            stacklevel=3,
-        )
-
-
 class _DistributionMeta(_ProtocolMeta):
     """Metaclass enforcing that every Distribution instance has a
     non-empty ``name`` set by the time construction returns.
@@ -130,7 +89,6 @@ class _DistributionMeta(_ProtocolMeta):
                 f"(via super().__init__(name=...) or by assigning "
                 f"self._name to a non-empty string) before returning."
             )
-        _warn_reserved_field_names(instance)
         return instance
 
 
