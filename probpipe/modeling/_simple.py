@@ -174,18 +174,56 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
 
     # -- SupportsLogProb interface -----------------------------------------
 
-    def _log_prob(self, value: tuple[P, D]) -> Array:
+    def _log_prob(self, value: Record | tuple[P, D]) -> Array:
         """Joint log-density: prior log-prob + log-likelihood.
+
+        Accepts either form:
+
+        * **Record** — a single record carrying all of :attr:`fields`
+          (the prior's parameter fields plus the likelihood's named data
+          fields). This is what the keyword API
+          (``log_prob(model, intercept=..., y=...)``) produces. It is
+          split into a parameter value — repacked via the prior's own
+          :meth:`~probpipe.core._distribution_base.Distribution._pack_value`
+          so a single-field prior receives a bare array and a multi-field
+          prior a ``Record`` — and a data sub-record built from the
+          likelihood's ``data_template`` fields.
+        * **(params, data) pair** — the explicit joint form. Required when
+          the likelihood's data has no named template (bare arrays), and
+          retained for backward compatibility.
 
         Parameters
         ----------
-        value : tuple[P, D]
-            A ``(params, data)`` pair.
+        value : Record or tuple[P, D]
+            All model fields as a record, or an explicit ``(params, data)``
+            pair.
         """
-        params, data = value
+        params, data = self._split_log_prob_value(value)
         lp = self._prior._log_prob(params)
         ll = self._likelihood.log_likelihood(params=params, data=data)
         return lp + ll
+
+    def _split_log_prob_value(self, value: Record | tuple[P, D]) -> tuple[Any, Any]:
+        """Resolve ``value`` (Record or (params, data) pair) into
+        ``(params, data)`` in the forms the prior and likelihood expect."""
+        # A Record is not a tuple, so the tuple check is unambiguous.
+        if isinstance(value, tuple) and len(value) == 2:
+            return value
+        if isinstance(value, Record):
+            params = self._prior._pack_value(
+                **{f: value[f] for f in self._prior_fields}
+            )
+            data_fields = self._data_fields
+            data = (
+                Record(**{f: value[f] for f in data_fields})
+                if data_fields
+                else None
+            )
+            return params, data
+        raise TypeError(
+            f"SimpleModel._log_prob expects a Record over {self.fields} or a "
+            f"(params, data) pair; got {type(value).__name__}."
+        )
 
     # -- repr ---------------------------------------------------------------
 

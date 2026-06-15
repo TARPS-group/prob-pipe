@@ -93,32 +93,125 @@ def sample(
     return dist._sample(key, sample_shape)
 
 
-@workflow_function
-def log_prob(dist: SupportsLogProb, value: Any) -> Array:
-    """Evaluate the normalized log-density at *value*."""
-    if not isinstance(dist, SupportsLogProb):
+# -- value resolution shared by the density ops -----------------------------
+#
+# Each density op is an outer Python wrapper over an inner
+# ``@workflow_function`` impl.  The outer layer resolves the
+# positional-or-keyword value and forwards the WorkflowFunction control
+# kwargs explicitly, so a distribution field whose name happens to be a
+# reserved control name (``seed`` / ``n_broadcast_samples`` /
+# ``include_inputs``) cannot be silently swallowed by the workflow layer.
+# Broadcasting still happens — the inner impl is the WorkflowFunction.
+
+
+def _resolve_value(
+    op_name: str, dist: Any, value: Any, field_kwargs: dict[str, Any],
+) -> Any:
+    """Resolve a density op's value from the positional or keyword form.
+
+    Keyword form packs ``field_kwargs`` into a single draw via
+    ``dist._pack_value``; positional form passes ``value`` through. Raises
+    if both forms are given, or if neither is.
+    """
+    if field_kwargs:
+        if value is not None:
+            raise TypeError(
+                f"{op_name}: pass either a positional value or field kwargs, "
+                f"not both."
+            )
+        return dist._pack_value(**field_kwargs)
+    if value is None:
         raise TypeError(
-            f"{type(dist).__name__} does not support log_prob"
+            f"{op_name}: a value is required — pass it positionally or as "
+            f"field keyword arguments."
         )
+    return value
+
+
+def _wf_controls(
+    seed: int | None,
+    n_broadcast_samples: int | None,
+    include_inputs: bool | None,
+) -> dict[str, Any]:
+    """Collect the non-``None`` WorkflowFunction control kwargs to forward."""
+    controls = {
+        "seed": seed,
+        "n_broadcast_samples": n_broadcast_samples,
+        "include_inputs": include_inputs,
+    }
+    return {k: v for k, v in controls.items() if v is not None}
+
+
+@workflow_function(name="log_prob")
+def _log_prob_impl(dist: SupportsLogProb, value: Any) -> Array:
+    if not isinstance(dist, SupportsLogProb):
+        raise TypeError(f"{type(dist).__name__} does not support log_prob")
     return dist._log_prob(value)
 
 
-@workflow_function
-def prob(dist: SupportsLogProb, value: Any) -> Array:
-    """Evaluate the density at *value* (``exp(log_prob)``)."""
+def log_prob(
+    dist: SupportsLogProb,
+    value: Any = None,
+    /,
+    *,
+    seed: int | None = None,
+    n_broadcast_samples: int | None = None,
+    include_inputs: bool | None = None,
+    **field_kwargs: Any,
+) -> Array:
+    """Evaluate the normalized log-density at *value*.
+
+    Two call forms:
+
+    * **Positional** — ``log_prob(dist, value)``; *value* is a single draw
+      of *dist*'s sample type, or a batched form (which broadcasts).
+    * **Keyword** — ``log_prob(dist, field=value, ...)`` builds a single
+      draw from named fields via :meth:`Distribution._pack_value`
+      (single-field → bare value; multi-field → ``Record``). Use the
+      positional form for batched evaluation.
+
+    ``seed`` / ``n_broadcast_samples`` / ``include_inputs`` are
+    ``WorkflowFunction`` controls forwarded to the broadcasting layer.
+    """
+    value = _resolve_value("log_prob", dist, value, field_kwargs)
+    return _log_prob_impl(
+        dist, value, **_wf_controls(seed, n_broadcast_samples, include_inputs)
+    )
+
+
+@workflow_function(name="prob")
+def _prob_impl(dist: SupportsLogProb, value: Any) -> Array:
     if not isinstance(dist, SupportsLogProb):
         raise TypeError(
-            f"{type(dist).__name__} does not support prob "
-            f"(missing _log_prob method)"
+            f"{type(dist).__name__} does not support prob (missing _log_prob method)"
         )
     return jnp.exp(dist._log_prob(value))
 
 
-@workflow_function
-def unnormalized_log_prob(
+def prob(
+    dist: SupportsLogProb,
+    value: Any = None,
+    /,
+    *,
+    seed: int | None = None,
+    n_broadcast_samples: int | None = None,
+    include_inputs: bool | None = None,
+    **field_kwargs: Any,
+) -> Array:
+    """Evaluate the density at *value* (``exp(log_prob)``).
+
+    See :func:`log_prob` for the positional and keyword call forms.
+    """
+    value = _resolve_value("prob", dist, value, field_kwargs)
+    return _prob_impl(
+        dist, value, **_wf_controls(seed, n_broadcast_samples, include_inputs)
+    )
+
+
+@workflow_function(name="unnormalized_log_prob")
+def _unnormalized_log_prob_impl(
     dist: SupportsUnnormalizedLogProb, value: Any,
 ) -> Array:
-    """Evaluate the unnormalized log-density at *value*."""
     if not isinstance(dist, SupportsUnnormalizedLogProb):
         raise TypeError(
             f"{type(dist).__name__} does not support unnormalized_log_prob "
@@ -127,17 +220,56 @@ def unnormalized_log_prob(
     return dist._unnormalized_log_prob(value)
 
 
-@workflow_function
-def unnormalized_prob(
+def unnormalized_log_prob(
+    dist: SupportsUnnormalizedLogProb,
+    value: Any = None,
+    /,
+    *,
+    seed: int | None = None,
+    n_broadcast_samples: int | None = None,
+    include_inputs: bool | None = None,
+    **field_kwargs: Any,
+) -> Array:
+    """Evaluate the unnormalized log-density at *value*.
+
+    See :func:`log_prob` for the positional and keyword call forms.
+    """
+    value = _resolve_value("unnormalized_log_prob", dist, value, field_kwargs)
+    return _unnormalized_log_prob_impl(
+        dist, value, **_wf_controls(seed, n_broadcast_samples, include_inputs)
+    )
+
+
+@workflow_function(name="unnormalized_prob")
+def _unnormalized_prob_impl(
     dist: SupportsUnnormalizedLogProb, value: Any,
 ) -> Array:
-    """Evaluate the unnormalized density at *value* (``exp(unnormalized_log_prob)``)."""
     if not isinstance(dist, SupportsUnnormalizedLogProb):
         raise TypeError(
             f"{type(dist).__name__} does not support unnormalized_prob "
             f"(missing _unnormalized_log_prob method)"
         )
     return jnp.exp(dist._unnormalized_log_prob(value))
+
+
+def unnormalized_prob(
+    dist: SupportsUnnormalizedLogProb,
+    value: Any = None,
+    /,
+    *,
+    seed: int | None = None,
+    n_broadcast_samples: int | None = None,
+    include_inputs: bool | None = None,
+    **field_kwargs: Any,
+) -> Array:
+    """Evaluate the unnormalized density at *value* (``exp(unnormalized_log_prob)``).
+
+    See :func:`log_prob` for the positional and keyword call forms.
+    """
+    value = _resolve_value("unnormalized_prob", dist, value, field_kwargs)
+    return _unnormalized_prob_impl(
+        dist, value, **_wf_controls(seed, n_broadcast_samples, include_inputs)
+    )
 
 
 @workflow_function
@@ -212,28 +344,10 @@ def expectation(
     )
 
 
-@workflow_function
-def random_log_prob(
-    dist: SupportsRandomLogProb,
-    value: Any = None,
+@workflow_function(name="random_log_prob")
+def _random_log_prob_impl(
+    dist: SupportsRandomLogProb, value: Any = None,
 ) -> RandomFunction | Distribution:
-    """Return the random (normalized) log-density of a random measure.
-
-    For a ``RandomMeasure[T]`` ``M`` with draws ``D ~ M``, the random
-    function ``x ↦ log D(x)`` is itself a callable returning a
-    distribution over scalars at every input.
-
-    When *value* is omitted, returns that callable as a
-    :class:`~probpipe.core._random_functions.RandomFunction`. When
-    *value* is provided, returns the ``Distribution[Array]`` over
-    ``log D(value)`` directly — equivalent to
-    ``random_log_prob(dist)(value)``. The two-argument form mirrors
-    :func:`log_prob` for non-random distributions.
-
-    Concrete subclasses implement a single method
-    ``_random_log_prob()`` returning a ``RandomFunction``; the optional
-    *value* dispatch lives entirely in this op, not on the protocol.
-    """
     if not isinstance(dist, SupportsRandomLogProb):
         raise TypeError(
             f"{type(dist).__name__} does not support random_log_prob "
@@ -243,10 +357,68 @@ def random_log_prob(
     return rf if value is None else rf(value)
 
 
-@workflow_function
+def random_log_prob(
+    dist: SupportsRandomLogProb,
+    value: Any = None,
+    /,
+    *,
+    seed: int | None = None,
+    n_broadcast_samples: int | None = None,
+    include_inputs: bool | None = None,
+    **field_kwargs: Any,
+) -> RandomFunction | Distribution:
+    """Return the random (normalized) log-density of a random measure.
+
+    For a ``RandomMeasure[T]`` ``M`` with draws ``D ~ M``, the random
+    function ``x ↦ log D(x)`` is itself a callable returning a
+    distribution over scalars at every input.
+
+    When *value* is omitted, returns that callable as a
+    :class:`~probpipe.core._random_functions.RandomFunction`. When
+    *value* is provided (positionally, or built from ``field_kwargs`` via
+    :meth:`Distribution._pack_value`), returns the ``Distribution[Array]``
+    over ``log D(value)`` directly — equivalent to
+    ``random_log_prob(dist)(value)``. The two-/keyword-argument forms
+    mirror :func:`log_prob` for non-random distributions.
+
+    Concrete subclasses implement a single method
+    ``_random_log_prob()`` returning a ``RandomFunction``; the optional
+    *value* dispatch lives entirely in this op, not on the protocol.
+    """
+    if field_kwargs:
+        if value is not None:
+            raise TypeError(
+                "random_log_prob: pass either a positional value or field "
+                "kwargs, not both."
+            )
+        value = dist._pack_value(**field_kwargs)
+    return _random_log_prob_impl(
+        dist, value, **_wf_controls(seed, n_broadcast_samples, include_inputs)
+    )
+
+
+@workflow_function(name="random_unnormalized_log_prob")
+def _random_unnormalized_log_prob_impl(
+    dist: SupportsRandomUnnormalizedLogProb, value: Any = None,
+) -> RandomFunction | Distribution:
+    if not isinstance(dist, SupportsRandomUnnormalizedLogProb):
+        raise TypeError(
+            f"{type(dist).__name__} does not support random_unnormalized_log_prob "
+            f"(does not implement SupportsRandomUnnormalizedLogProb)"
+        )
+    rf = dist._random_unnormalized_log_prob()
+    return rf if value is None else rf(value)
+
+
 def random_unnormalized_log_prob(
     dist: SupportsRandomUnnormalizedLogProb,
     value: Any = None,
+    /,
+    *,
+    seed: int | None = None,
+    n_broadcast_samples: int | None = None,
+    include_inputs: bool | None = None,
+    **field_kwargs: Any,
 ) -> RandomFunction | Distribution:
     """Return the random unnormalized log-density of a random measure.
 
@@ -257,10 +429,11 @@ def random_unnormalized_log_prob(
 
     When *value* is omitted, returns that callable as a
     :class:`~probpipe.core._random_functions.RandomFunction`. When
-    *value* is provided, returns the ``Distribution[Array]`` over
-    ``log D̃(value)`` directly — equivalent to
-    ``random_unnormalized_log_prob(dist)(value)``. The two-argument
-    form mirrors :func:`unnormalized_log_prob` for non-random
+    *value* is provided (positionally, or built from ``field_kwargs`` via
+    :meth:`Distribution._pack_value`), returns the ``Distribution[Array]``
+    over ``log D̃(value)`` directly — equivalent to
+    ``random_unnormalized_log_prob(dist)(value)``. The two-/keyword-
+    argument forms mirror :func:`unnormalized_log_prob` for non-random
     distributions.
 
     Concrete subclasses implement a single method
@@ -268,13 +441,16 @@ def random_unnormalized_log_prob(
     the optional *value* dispatch lives entirely in this op, not on
     the protocol.
     """
-    if not isinstance(dist, SupportsRandomUnnormalizedLogProb):
-        raise TypeError(
-            f"{type(dist).__name__} does not support random_unnormalized_log_prob "
-            f"(does not implement SupportsRandomUnnormalizedLogProb)"
-        )
-    rf = dist._random_unnormalized_log_prob()
-    return rf if value is None else rf(value)
+    if field_kwargs:
+        if value is not None:
+            raise TypeError(
+                "random_unnormalized_log_prob: pass either a positional value "
+                "or field kwargs, not both."
+            )
+        value = dist._pack_value(**field_kwargs)
+    return _random_unnormalized_log_prob_impl(
+        dist, value, **_wf_controls(seed, n_broadcast_samples, include_inputs)
+    )
 
 
 def _split_data_kwargs(

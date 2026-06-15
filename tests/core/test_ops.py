@@ -253,14 +253,35 @@ class TestConditionOn:
 # ---------------------------------------------------------------------------
 
 class TestWorkflowFunctionRouting:
-    """Verify public ops are WorkflowFunction instances."""
+    """Verify ops route through WorkflowFunctions (directly or via inner impls)."""
 
     def test_ops_are_workflow_functions(self):
+        """Value-free / dispatch ops are WorkflowFunctions directly. The
+        density-family ops (``log_prob`` and friends) are thin Python
+        wrappers — they add the positional/keyword value form and forward
+        WF control kwargs — over inner ``_<name>_impl`` WorkflowFunctions,
+        so broadcasting still applies.
+        """
         from probpipe.core.node import WorkflowFunction
-        for name in ops.__all__:
-            fn = getattr(ops, name)
-            assert isinstance(fn, WorkflowFunction), (
+
+        wf_ops = [
+            "sample", "mean", "variance", "cov", "expectation",
+            "condition_on", "from_distribution",
+        ]
+        for name in wf_ops:
+            assert isinstance(getattr(ops, name), WorkflowFunction), (
                 f"ops.{name} is not a WorkflowFunction"
+            )
+
+        density_ops = [
+            "log_prob", "prob", "unnormalized_log_prob", "unnormalized_prob",
+            "random_log_prob", "random_unnormalized_log_prob",
+        ]
+        for name in density_ops:
+            assert callable(getattr(ops, name)), f"ops.{name} is not callable"
+            impl = getattr(ops, f"_{name}_impl")
+            assert isinstance(impl, WorkflowFunction), (
+                f"ops._{name}_impl is not a WorkflowFunction"
             )
 
     def test_public_ops_are_callable(self):
@@ -278,10 +299,10 @@ class TestWorkflowFunctionRouting:
         m = ops.mean(normal)
         assert m.shape == ()
 
-    def test_positional_and_keyword_duplicate_raises(self, normal):
-        """Passing the same arg both positionally and as keyword raises."""
-        with pytest.raises(TypeError, match="multiple values"):
-            ops.log_prob(normal, value=jnp.array(1.0), dist=normal)
+    def test_positional_value_and_field_kwargs_raises(self, normal):
+        """Passing a value both positionally and as field kwargs raises."""
+        with pytest.raises(TypeError, match="not both"):
+            ops.log_prob(normal, jnp.array(1.0), x=jnp.array(2.0))
 
 
 # ---------------------------------------------------------------------------

@@ -467,9 +467,11 @@ class TestLogProbViaSweep:
     def test_same_value_all_cells(self):
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(3)]
         da = _make_distribution_array(comps)
-        # Single scalar value broadcasts to every cell.
+        # Single scalar value broadcasts to every cell. ``value`` is
+        # positional-only on log_prob (so it can't collide with a field
+        # named "value" in the keyword form).
         value = jnp.asarray(0.0)
-        lp = log_prob(da, value=value)
+        lp = log_prob(da, value)
         assert isinstance(lp, NumericRecordArray)
         assert lp.batch_shape == (3,)
         # Cell i evaluates Normal(i, 1) at 0 → gaussian log-density at

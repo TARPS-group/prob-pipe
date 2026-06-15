@@ -101,6 +101,22 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
 
     # -- SupportsLogProb interface ------------------------------------------
 
+    def _pack_value(self, **field_kwargs: Any) -> Array:
+        """Keyword form (Tier 1): a single flat ``parameters=`` array.
+
+        ``StanModel._log_prob`` consumes a flat constrained parameter
+        vector, so the keyword form takes one ``parameters=`` argument
+        rather than per-Stan-parameter fields. (Tier 2 — issue #228 — will
+        expose the individual Stan parameters as fields built from
+        BridgeStan's ``param_unc_names()``.)
+        """
+        if set(field_kwargs) != {"parameters"}:
+            raise TypeError(
+                f"{type(self).__name__} keyword form takes a single "
+                f"'parameters=' flat array; got {sorted(field_kwargs)}."
+            )
+        return field_kwargs["parameters"]
+
     def _log_prob(self, value: Any) -> Array:
         """Log-density in the constrained parameter space.
 
@@ -167,6 +183,16 @@ class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):
     @property
     def event_shape(self) -> tuple[int, ...]:
         return self._model.event_shape
+
+    def _pack_value(self, **field_kwargs: Any) -> Array:
+        """Keyword form (Tier 1): a single flat ``parameters=`` array in
+        the unconstrained space (see :meth:`StanModel._pack_value`)."""
+        if set(field_kwargs) != {"parameters"}:
+            raise TypeError(
+                f"{type(self).__name__} keyword form takes a single "
+                f"'parameters=' flat array; got {sorted(field_kwargs)}."
+            )
+        return field_kwargs["parameters"]
 
     def _log_prob(self, value: Any) -> Array:
         """Log-density directly in unconstrained space."""

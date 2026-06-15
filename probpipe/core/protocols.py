@@ -61,7 +61,7 @@ from typing import (
 
 import jax.numpy as jnp
 
-from ..custom_types import Array, PRNGKey
+from ..custom_types import Array, ArrayLike, PRNGKey
 
 if TYPE_CHECKING:
     from ._distribution_base import Distribution
@@ -166,17 +166,19 @@ class SupportsSampling(Protocol):
 # ---------------------------------------------------------------------------
 
 @runtime_checkable
-class SupportsUnnormalizedLogProb(Protocol):
+class SupportsUnnormalizedLogProb[T](Protocol):
     """Distribution with an unnormalized log-density.
 
-    Provides ``_unnormalized_log_prob(value)``.
+    Provides ``_unnormalized_log_prob(value)``, where *value* is a single
+    draw of the distribution's sample type ``T`` (or the batched form;
+    see :class:`SupportsLogProb`).
     """
 
-    def _unnormalized_log_prob(self, value: Any) -> Array: ...
+    def _unnormalized_log_prob(self, value: T | ArrayLike) -> Array: ...
 
 
 @runtime_checkable
-class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
+class SupportsLogProb[T](SupportsUnnormalizedLogProb[T], Protocol):
     """Distribution with a (normalized) log-density.
 
     Extends :class:`SupportsUnnormalizedLogProb` because any distribution
@@ -184,11 +186,20 @@ class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
     The base :class:`~probpipe.core.distribution.Distribution` class
     provides ``_unnormalized_log_prob`` defaulting to ``_log_prob``.
 
+    ``_log_prob`` accepts a single draw of the distribution's sample type
+    ``T`` or the batched form (``Array`` → ``Array`` with leading batch
+    axes; ``Record`` → ``RecordArray``; ``NumericRecord`` →
+    ``NumericRecordArray``). The ``T | ArrayLike`` annotation is
+    deliberately loose: ``ArrayLike`` covers the scalar batched case,
+    while Record-based batched forms follow the convention above. The
+    kwarg form ``log_prob(dist, field=value, ...)`` builds a single ``T``
+    via :meth:`Distribution._pack_value`; batched evaluation goes through
+    the positional path.
     """
 
-    def _log_prob(self, value: Any) -> Array: ...
+    def _log_prob(self, value: T | ArrayLike) -> Array: ...
 
-    def _unnormalized_log_prob(self, value: Any) -> Array:
+    def _unnormalized_log_prob(self, value: T | ArrayLike) -> Array:
         """Default: delegates to ``_log_prob``."""
         return self._log_prob(value)
 

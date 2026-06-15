@@ -9,6 +9,7 @@ Provides:
 from __future__ import annotations
 
 import copy as _copy
+import warnings
 from abc import ABC, abstractmethod
 # ``_ProtocolMeta`` is technically private (leading underscore in
 # ``typing``), but it's the only way to compose a custom metaclass with
@@ -62,6 +63,45 @@ def set_return_approx_dist(value: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
+# Parameter names reserved by ``WorkflowFunction`` for call-time control
+# (see node.py).  A distribution field with one of these names cannot be
+# addressed through the keyword form ``log_prob(dist, seed=...)`` — the
+# workflow layer intercepts it — so we warn at construction.
+_RESERVED_WF_PARAMS: frozenset[str] = frozenset(
+    {"seed", "n_broadcast_samples", "include_inputs"}
+)
+
+
+def _warn_reserved_field_names(instance: Any) -> None:
+    """Warn if a distribution's field names collide with reserved WF params.
+
+    Cheap and side-effect-free: inspects only the *cached* record
+    template (``_record_template``) — never forces the lazy auto-build —
+    and the distribution's own ``name`` (which becomes the single field
+    for auto-built templates). A collision means the keyword form
+    ``log_prob(dist, <field>=...)`` is intercepted by the workflow layer;
+    the user must pass a positional ``Record`` for that field instead.
+    """
+    names: set[str] = set()
+    tpl = getattr(instance, "_record_template", None)
+    if tpl is not None:
+        names.update(getattr(tpl, "fields", ()))
+    else:
+        nm = getattr(instance, "_name", None)
+        if isinstance(nm, str):
+            names.add(nm)
+    clash = _RESERVED_WF_PARAMS & names
+    if clash:
+        warnings.warn(
+            f"{type(instance).__name__} has field name(s) {sorted(clash)} "
+            f"that collide with WorkflowFunction-reserved parameters "
+            f"({sorted(_RESERVED_WF_PARAMS)}); the keyword form "
+            f"log_prob(dist, {sorted(clash)[0]}=...) is intercepted by the "
+            f"workflow layer. Pass a positional Record for those fields.",
+            stacklevel=3,
+        )
+
+
 class _DistributionMeta(_ProtocolMeta):
     """Metaclass enforcing that every Distribution instance has a
     non-empty ``name`` set by the time construction returns.
@@ -89,6 +129,7 @@ class _DistributionMeta(_ProtocolMeta):
                 f"(via super().__init__(name=...) or by assigning "
                 f"self._name to a non-empty string) before returning."
             )
+        _warn_reserved_field_names(instance)
         return instance
 
 
@@ -113,6 +154,60 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
                 f"{type(self).__name__} requires a non-empty name= argument"
             )
         self._name = name
+
+    # -- keyword-form value construction ------------------------------------
+
+    def _pack_value(self, **field_kwargs: Any) -> Any:
+        """Build a single draw of this distribution's value type ``T`` from
+        named field kwargs — the adapter behind the keyword form
+        ``log_prob(dist, field=value, ...)``.
+
+        Default behaviour, driven by the distribution's named ``fields``:
+
+        * **single field** → the bare field value (``T = Array``), so a
+          scalar distribution's ``_log_prob`` still receives a raw array.
+        * **multiple fields** → a :class:`~probpipe.core.record.Record`
+          keyed in field order (``T = Record``).
+
+        Distributions whose ``_log_prob`` consumes a Record but splits it
+        internally (e.g. ``SimpleModel`` → ``(params, data)``) keep this
+        default and do the split in ``_log_prob``. Override only when the
+        value type is neither a bare array nor a flat Record.
+
+        Builds exactly one draw (``sample_shape == ()``). Batched
+        evaluation does not go through kwargs — pass the batch positionally
+        and let ``WorkflowFunction`` broadcasting handle it.
+
+        Raises
+        ------
+        TypeError
+            If the distribution has no named fields, or the kwargs do not
+            match its fields exactly (missing or unexpected names).
+        """
+        fields = getattr(self, "fields", None)
+        if not fields:
+            raise TypeError(
+                f"{type(self).__name__} does not support the keyword form of "
+                f"log_prob (it has no named fields); pass a positional value."
+            )
+        given = set(field_kwargs)
+        expected = set(fields)
+        missing = [f for f in fields if f not in given]
+        extra = [k for k in field_kwargs if k not in expected]
+        if missing or extra:
+            parts = []
+            if missing:
+                parts.append(f"missing {missing}")
+            if extra:
+                parts.append(f"unexpected {extra}")
+            raise TypeError(
+                f"{type(self).__name__}: the keyword form expects exactly the "
+                f"fields {tuple(fields)} — {'; '.join(parts)}."
+            )
+        if len(fields) == 1:
+            return field_kwargs[fields[0]]
+        from .record import Record
+        return Record(**{f: field_kwargs[f] for f in fields})
 
     # -- approximation tracking ---------------------------------------------
 

@@ -116,7 +116,13 @@ def workflow_function(_func=None, /, **kwargs):
         with parentheses.
     """
     def decorator(func: Callable[..., Any]) -> WorkflowFunction:
-        return WorkflowFunction(func=func, name=func.__name__, **kwargs)
+        # ``name`` defaults to the function name but may be overridden via
+        # ``@workflow_function(name=...)`` — e.g. when the public op is a
+        # thin wrapper over an inner ``_<op>_impl`` and the broadcast output
+        # field should be keyed by the public op name, not the impl name.
+        call_kwargs = dict(kwargs)
+        name = call_kwargs.pop("name", func.__name__)
+        return WorkflowFunction(func=func, name=name, **call_kwargs)
 
     if _func is not None:
         return decorator(_func)
