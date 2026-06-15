@@ -8,8 +8,8 @@ in broadcasting and Prefect orchestration when a distribution argument is
 passed where a concrete value is expected.
 
 The density ops (``log_prob``, ``prob``, ``unnormalized_log_prob``,
-``unnormalized_prob``, and the ``random_*_log_prob`` ops) are
-:class:`_DensityOp` wrappers over inner ``_<op>_impl`` WorkflowFunctions. The
+``unnormalized_prob``, and the ``random_*_log_prob`` ops) are thin
+plain-function wrappers over inner ``_<op>_impl`` WorkflowFunctions. The
 wrapper adds the positional-or-keyword value form — ``log_prob(dist, value)``
 or ``log_prob(dist, field=value, ...)`` (packed via
 :meth:`~probpipe.core._distribution_base.Distribution._pack_value`);
@@ -111,10 +111,12 @@ def sample(
 
 # -- density ops: positional/keyword value form + with_options controls ------
 #
-# Each density op (``log_prob`` and friends) is a :class:`_DensityOp` — a
-# callable wrapper over an inner ``@workflow_function`` impl
-# (``_<op>_impl``).  The wrapper resolves the positional-or-keyword value and
-# forwards to the inner impl, so broadcasting and orchestration are unchanged.
+# Each density op (``log_prob`` and friends) is a thin plain function over an
+# inner ``@workflow_function`` impl (``_<op>_impl``): it resolves the
+# positional-or-keyword value (packing field kwargs via ``_pack_value``) and
+# calls the impl, so broadcasting and orchestration are unchanged. The op's
+# ``with_options`` is the impl's own method — the genuine control path, not a
+# re-implementation.
 #
 # Per-call ProbPipe controls are applied with ``with_options`` — the same
 # idiom as the dispatch ops (``condition_on.with_options(...)``) and the
@@ -165,69 +167,39 @@ def _resolve_value(
     return value
 
 
-class _DensityOp:
-    """A density op: the positional/keyword value form over an inner
-    :class:`~probpipe.core.node.WorkflowFunction`, plus a ``with_options``
-    control path.
-
-    Calling the op resolves the value — a positional ``value`` or named
-    ``field_kwargs`` packed via :meth:`Distribution._pack_value` — and
-    forwards to the inner impl, so broadcasting and orchestration are
-    unchanged. :meth:`with_options` returns a callable that applies the given
-    WorkflowFunction controls (``seed`` / ``n_broadcast_samples`` /
-    ``include_inputs``) and accepts the same value form, mirroring
-    ``condition_on.with_options(...)`` and the other dispatch ops.
-    """
-
-    def __init__(
-        self, impl: Any, *, name: str, doc: str | None, allow_none: bool = False,
-    ):
-        self._impl = impl
-        self._allow_none = allow_none
-        self.__name__ = name
-        self.__qualname__ = name
-        self.__doc__ = doc
-
-    def _invoke(
-        self, impl: Any, dist: Any, value: Any, field_kwargs: dict[str, Any],
-    ) -> Any:
-        value = _resolve_value(
-            self.__name__, dist, value, field_kwargs, allow_none=self._allow_none,
-        )
-        return impl(dist, value)
-
-    def __call__(self, dist: Any, value: Any = None, /, **field_kwargs: Any) -> Any:
-        return self._invoke(self._impl, dist, value, field_kwargs)
-
-    def with_options(self, **options: Any):
-        """Return a callable that applies WorkflowFunction *options* for one
-        call and accepts the same positional/keyword value form as the op."""
-        configured = self._impl.with_options(**options)
-
-        def call(dist: Any, value: Any = None, /, **field_kwargs: Any) -> Any:
-            return self._invoke(configured, dist, value, field_kwargs)
-
-        call.__name__ = call.__qualname__ = f"{self.__name__}.with_options"
-        return call
-
-    def __repr__(self) -> str:
-        return f"<density op {self.__name__}>"
-
-
 def _density_op(impl: Any, *, allow_none: bool = False):
     """Build a public density op from a stub carrying the op's name and
     docstring.
 
-    The decorated stub's body is never executed — it is only the natural
-    place to write the op's signature and docstring. The returned
-    :class:`_DensityOp` provides the call behaviour (value resolution +
-    ``with_options``) over *impl*, the inner ``_<op>_impl`` WorkflowFunction.
+    The decorated stub's body is never executed — it is only the natural place
+    to write the op's signature and docstring. The returned plain function adds
+    the positional-or-keyword value form (named ``field_kwargs`` packed via
+    :meth:`Distribution._pack_value`) over *impl*, the inner ``_<op>_impl``
+    WorkflowFunction. ``dist`` and ``value`` are positional-only, so any field
+    name is free for the keyword form.
+
+    ``op.with_options`` is *impl*'s own
+    :meth:`~probpipe.core.node.WorkflowFunction.with_options` — per-call
+    controls go through the genuine WorkflowFunction path (with the positional
+    value form), not a re-implementation. Controls never combine meaningfully
+    with the keyword form anyway: ``seed`` / ``n_broadcast_samples`` only
+    matter for broadcasting, which uses the positional value.
     """
 
-    def decorate(stub: Any) -> _DensityOp:
-        return _DensityOp(
-            impl, name=stub.__name__, doc=stub.__doc__, allow_none=allow_none,
-        )
+    def decorate(stub: Any):
+        name = stub.__name__
+
+        def op(dist: Any, value: Any = None, /, **field_kwargs: Any) -> Any:
+            value = _resolve_value(
+                name, dist, value, field_kwargs, allow_none=allow_none,
+            )
+            return impl(dist, value)
+
+        op.__name__ = name
+        op.__qualname__ = name
+        op.__doc__ = stub.__doc__
+        op.with_options = impl.with_options
+        return op
 
     return decorate
 

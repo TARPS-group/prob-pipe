@@ -217,11 +217,19 @@ class TestControlsViaWithOptions:
         deps = [w for w in caught if issubclass(w.category, DeprecationWarning)]
         assert not deps, [str(w.message) for w in deps]
 
-    def test_with_options_accepts_keyword_value_form(self):
+    def test_with_options_uses_positional_value_form(self):
+        # with_options delegates to the inner WorkflowFunction, so the
+        # controlled call takes the positional value form (the keyword form
+        # lives on the bare op).
         d = Normal(0.0, 1.0, name="x")
         assert jnp.allclose(
-            log_prob.with_options(seed=0)(d, x=1.5), log_prob(d, 1.5)
+            log_prob.with_options(seed=0)(d, 1.5), log_prob(d, 1.5)
         )
+
+    def test_with_options_is_the_inner_workflow_method(self):
+        # No re-implementation: op.with_options *is* the inner WF's own method.
+        from probpipe.core import ops
+        assert log_prob.with_options == ops._log_prob_impl.with_options
 
     def test_control_as_call_kwarg_is_rejected(self):
         # Controls are not call kwargs on the density ops; with a positional

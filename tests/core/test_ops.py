@@ -257,10 +257,10 @@ class TestWorkflowFunctionRouting:
 
     def test_ops_are_workflow_functions(self):
         """Value-free / dispatch ops are WorkflowFunctions directly. The
-        density-family ops (``log_prob`` and friends) are ``_DensityOp``
-        wrappers — adding the positional/keyword value form, with controls
-        via ``with_options`` — over inner ``_<name>_impl`` WorkflowFunctions,
-        so broadcasting still applies.
+        density-family ops (``log_prob`` and friends) are thin plain-function
+        wrappers — adding the positional/keyword value form, with
+        ``op.with_options`` delegating to the inner ``_<name>_impl``
+        WorkflowFunction — so broadcasting still applies.
         """
         from probpipe.core.node import WorkflowFunction
 
