@@ -7,6 +7,7 @@ import xarray as xr
 
 from probpipe.diagnostics._datatree_store import (
     _add_group,
+    _flatten_datatree,
     _get_or_create_mcmc_ds,
     _mcmc_has_field,
     _write_mcmc_field,
@@ -67,6 +68,15 @@ class TestAddGroup:
         val = float(retrieved["rhat"].values)
         assert val == pytest.approx(1.001)
 
+    def test_flatten_datatree_ignores_nodes_that_cannot_export_dataset(self):
+        class _BadNode:
+            children = {}
+
+            def to_dataset(self):
+                raise RuntimeError("no dataset")
+
+        assert _flatten_datatree(_BadNode()) == {}
+
 
 # ---------------------------------------------------------------------------
 # _get_or_create_mcmc_ds
@@ -86,6 +96,14 @@ class TestGetOrCreateMcmcDs:
         _add_group(post, "diagnostics/mcmc", ds)
         result = _get_or_create_mcmc_ds(post)
         assert "rhat" in result.data_vars
+
+    def test_returns_empty_when_mcmc_group_missing(self):
+        post = _MinimalPosterior()
+        _add_group(post, "diagnostics/runs/ppc", xr.Dataset({"p_value": xr.DataArray(0.5)}))
+
+        result = _get_or_create_mcmc_ds(post)
+
+        assert len(result.data_vars) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +166,11 @@ class TestMcmcHasField:
         post = _MinimalPosterior()
         _write_mcmc_field(post, "rhat", {"alpha": 1.0})
         assert _mcmc_has_field(post, "rhat") is True
+
+    def test_false_when_mcmc_group_missing(self):
+        post = _MinimalPosterior()
+        _add_group(post, "diagnostics/runs/loo", xr.Dataset({"elpd_loo": xr.DataArray(-1.0)}))
+        assert _mcmc_has_field(post, "rhat") is False
 
 
 # ---------------------------------------------------------------------------

@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import builtins
+import importlib
+import importlib.util
+import sys
+import types
 from unittest.mock import MagicMock, patch
 
 import jax
@@ -11,6 +15,7 @@ import pytest
 import xarray as xr
 
 import probpipe.diagnostics._arviz_bridge as arviz_bridge
+import probpipe.diagnostics._predictive_check as predictive_check_module
 from probpipe.diagnostics._arviz_bridge import (
     check_arviz_installed,
     extract_draws,
@@ -22,6 +27,7 @@ from probpipe.diagnostics._predictive_check import (
     _supports_key_arg,
     predictive_check,
 )
+from probpipe.core._numeric_record import NumericRecord
 from probpipe.diagnostics._sensitivity import (
     _build_loo_warnings,
     _compare_summaries,
@@ -162,6 +168,83 @@ def test_check_arviz_installed_reports_missing_dependencies(monkeypatch):
     monkeypatch.setattr(arviz_bridge, "xr", None)
     with pytest.raises(ImportError, match="xarray is required"):
         check_arviz_installed()
+
+
+def test_arviz_bridge_import_sets_xarray_none_when_missing(monkeypatch):
+    real_import = builtins.__import__
+
+    def _missing_xarray(name, *args, **kwargs):
+        if name == "xarray":
+            raise ImportError("missing xarray")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _missing_xarray)
+    spec = importlib.util.spec_from_file_location(
+        "_probpipe_arviz_bridge_missing_xarray",
+        arviz_bridge.__file__,
+    )
+    module = importlib.util.module_from_spec(spec)
+
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    assert module.xr is None
+
+
+def test_diagnostics_init_optional_import_paths(monkeypatch):
+    import probpipe.diagnostics as diagnostics
+
+    fake_workflow = types.ModuleType("probpipe.diagnostics.diagnostics_workflow")
+
+    class _FakeDiagnosticsModule:
+        pass
+
+    fake_workflow.DiagnosticsModule = _FakeDiagnosticsModule
+    monkeypatch.setitem(
+        sys.modules,
+        "probpipe.diagnostics.diagnostics_workflow",
+        fake_workflow,
+    )
+    reloaded = importlib.reload(diagnostics)
+    assert reloaded.DiagnosticsModule is _FakeDiagnosticsModule
+
+    monkeypatch.setitem(sys.modules, "probpipe.diagnostics.views", None)
+    reloaded = importlib.reload(diagnostics)
+    assert "DiagnosticsView" in reloaded.__all__
+
+    monkeypatch.delitem(sys.modules, "probpipe.diagnostics.diagnostics_workflow", raising=False)
+    monkeypatch.delitem(sys.modules, "probpipe.diagnostics.views", raising=False)
+    importlib.import_module("probpipe.diagnostics.views")
+    importlib.reload(diagnostics)
+
+
+def test_predictive_check_auto_key_and_numeric_record_unwrap(monkeypatch):
+    numeric = NumericRecord(x=np.array([0.0, 1.0, 2.0]), name="posterior")
+
+    class _FakeRecordEmpiricalDistribution:
+        validation_results = []
+
+        def __init__(self, values, name=None):
+            self.values = values
+            self.name = name
+
+        def _sample(self, key, shape):
+            return jax.random.normal(key, shape)
+
+    monkeypatch.setattr(
+        predictive_check_module,
+        "RecordEmpiricalDistribution",
+        _FakeRecordEmpiricalDistribution,
+    )
+
+    result = predictive_check(
+        numeric,
+        _KeyedLikelihood(),
+        lambda y: jnp.mean(y),
+        observed_data=np.ones(3),
+        n_replications=4,
+    )
+
+    assert "p_value" in result
 
 
 def test_sensitivity_numeric_helpers_cover_edge_cases():

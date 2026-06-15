@@ -359,11 +359,31 @@ class TestDiagnosticsView:
         view = DiagnosticsView(tree)
         assert any(r.name == "ppc" for r in view.runs)
 
+    def test_child_or_none_returns_none_when_child_lookup_fails(self):
+        class _TreeLike:
+            children = {"runs": object()}
+
+            def __getitem__(self, key):
+                raise RuntimeError("cannot descend")
+
+        assert DiagnosticsView(_TreeLike())._child_or_none("runs", "ppc") is None
+
     def test_summary_table_contains_params(self):
         view = self._view_with_mcmc()
         table = view.summary_table()
         assert "alpha" in table
         assert "R-hat" in table
+
+    def test_summary_table_formats_not_computed(self):
+        da = xr.DataArray(
+            [float("nan")],
+            dims=["param"],
+            coords={"param": ["alpha"]},
+            attrs={"not_computed_alpha": "single chain"},
+        )
+        view = DiagnosticsView(_diagnostics_tree(mcmc_ds=xr.Dataset({"rhat": da})))
+
+        assert "N/A" in view.summary_table()
 
     def test_summary_table_no_diagnostics(self):
         view = DiagnosticsView(None)

@@ -4,7 +4,14 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from probpipe.core.record import Record
+import probpipe.diagnostics._mcmc as mcmc
 from probpipe.diagnostics._mcmc import (
+    _check_arviz,
+    _emit_record_warnings,
+    _ess_warnings,
+    _rhat_warnings,
+    _write_mcmc_record,
     add_ess,
     add_mcmc_diagnostics,
     add_mcse,
@@ -61,6 +68,73 @@ class TestAddRhat:
         assert add_rhat(posterior) is None
 
 
+class TestMcmcHelpers:
+    def test_check_arviz_reports_missing_dependency(self, monkeypatch):
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _missing_arviz(name, *args, **kwargs):
+            if name == "arviz":
+                raise ImportError("missing arviz")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _missing_arviz)
+
+        with pytest.raises(ImportError, match="ArviZ is required"):
+            _check_arviz()
+
+    def test_warning_helpers_skip_unusable_values_and_report_failures(self):
+        class _BadFloat:
+            def __float__(self):
+                raise TypeError("not numeric")
+
+        rhat_messages = _rhat_warnings(
+            {"missing": NotComputed("single chain"), "bad": _BadFloat(), "alpha": 1.2},
+            threshold=1.01,
+        )
+        assert any("alpha" in msg for msg in rhat_messages)
+
+        ess_messages = _ess_warnings(
+            {"missing": NotComputed("no bulk"), "bad": _BadFloat(), "alpha": 100.0},
+            {"missing": NotComputed("no tail"), "bad": _BadFloat(), "beta": 120.0},
+            threshold=400,
+        )
+        assert any("bulk" in msg and "alpha" in msg for msg in ess_messages)
+        assert any("tail" in msg and "beta" in msg for msg in ess_messages)
+
+    def test_emit_record_warnings_handles_missing_and_none_warning_fields(self):
+        class _NoWarnings:
+            def __getitem__(self, key):
+                raise KeyError(key)
+
+        _emit_record_warnings(_NoWarnings())
+        _emit_record_warnings(Record(name="no_warnings", kind="test", warnings=None))
+
+    def test_write_mcmc_record_handles_composite_and_unknown_records(self, posterior):
+        child = Record(
+            name="rhat_child",
+            kind="rhat",
+            values={"alpha": 1.0},
+            attrs={},
+        )
+        composite = Record(name="all_mcmc", kind="mcmc", records={"rhat": child})
+
+        _write_mcmc_record(posterior, composite)
+
+        assert _mcmc_has_field(posterior, "rhat")
+
+        with pytest.raises(ValueError, match="Unknown MCMC"):
+            _write_mcmc_record(posterior, Record(name="unknown", kind="bogus"))
+
+        class _MissingKind:
+            def __getitem__(self, key):
+                raise KeyError(key)
+
+        with pytest.raises(ValueError, match="missing required field"):
+            _write_mcmc_record(posterior, _MissingKind())
+
+
 # ---------------------------------------------------------------------------
 # add_ess
 # ---------------------------------------------------------------------------
@@ -92,6 +166,26 @@ class TestAddEss:
     def test_does_not_return_value(self, posterior):
         assert add_ess(posterior) is None
 
+    def test_idempotent_skip_and_force_recompute(self, posterior, monkeypatch):
+        add_ess(posterior)
+        original = mcmc._compute_ess_op
+
+        def _fail_if_called(*args, **kwargs):
+            raise AssertionError("ESS should have been skipped")
+
+        monkeypatch.setattr(mcmc, "_compute_ess_op", _fail_if_called)
+        add_ess(posterior)
+
+        calls = []
+
+        def _record_call(*args, **kwargs):
+            calls.append(kwargs)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(mcmc, "_compute_ess_op", _record_call)
+        add_ess(posterior, force=True)
+        assert calls
+
 
 # ---------------------------------------------------------------------------
 # add_mcse
@@ -114,6 +208,15 @@ class TestAddMcse:
 
     def test_does_not_return_value(self, posterior):
         assert add_mcse(posterior) is None
+
+    def test_idempotent_skip(self, posterior, monkeypatch):
+        add_mcse(posterior)
+
+        def _fail_if_called(*args, **kwargs):
+            raise AssertionError("MCSE should have been skipped")
+
+        monkeypatch.setattr(mcmc, "_compute_mcse_op", _fail_if_called)
+        add_mcse(posterior)
 
 
 # ---------------------------------------------------------------------------

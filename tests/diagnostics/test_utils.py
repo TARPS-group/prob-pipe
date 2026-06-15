@@ -6,6 +6,7 @@ import json
 import numpy as np
 import pytest
 
+import probpipe.diagnostics._utils as utils
 from probpipe.diagnostics._utils import (
     _as_numpy,
     _json_dumps_safe,
@@ -53,6 +54,19 @@ class TestRecordGet:
 
     def test_completely_unknown_returns_default(self):
         assert _record_get(object(), "nonexistent", default="sentinel") == "sentinel"
+
+    def test_get_method_exception_returns_default(self):
+        class _ExplodingGet:
+            def __getitem__(self, key):
+                raise KeyError(key)
+
+            def __getattr__(self, key):
+                raise AttributeError(key)
+
+            def get(self, key, default=None):
+                raise RuntimeError("boom")
+
+        assert _record_get(_ExplodingGet(), "x", default="fallback") == "fallback"
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +126,19 @@ class TestAsNumpy:
         result = _as_numpy(_HasSamples())
         np.testing.assert_array_equal(result, np.array([4.0, 5.0]))
 
+    def test_samples_attribute_failure_falls_back(self):
+        class _BadSamples:
+            def __array__(self, dtype=None):
+                raise RuntimeError("no samples")
+
+        class _SamplesFail:
+            samples = _BadSamples()
+
+            def __array__(self, dtype=None):
+                return np.asarray([8.0], dtype=dtype)
+
+        np.testing.assert_array_equal(_as_numpy(_SamplesFail()), [8.0])
+
     def test_unconvertible_returns_none(self):
         class _Bad:
             def __array__(self):
@@ -146,6 +173,19 @@ class TestJsonDumpsSafe:
 
     def test_empty_list(self):
         assert json.loads(_json_dumps_safe([])) == []
+
+    def test_double_json_failure_returns_empty_object(self, monkeypatch):
+        calls = []
+
+        def _always_fails(obj):
+            calls.append(obj)
+            if len(calls) == 1:
+                raise TypeError("not serializable")
+            raise RuntimeError("still not serializable")
+
+        monkeypatch.setattr(utils.json, "dumps", _always_fails)
+
+        assert _json_dumps_safe(object()) == "{}"
 
 
 # ---------------------------------------------------------------------------

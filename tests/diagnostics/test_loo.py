@@ -132,6 +132,27 @@ class TestAsNumpy:
 
         assert _as_numpy(_Unconvertible()) is None
 
+    def test_dataarray_values_failure_returns_none(self, monkeypatch):
+        def _raise_values(self):
+            raise RuntimeError("no values")
+
+        monkeypatch.setattr(xr.DataArray, "values", property(_raise_values))
+
+        assert _as_numpy(xr.DataArray([1.0])) is None
+
+    def test_samples_failure_falls_back_to_array_conversion(self):
+        class _BadSamples:
+            def __array__(self, dtype=None):
+                raise RuntimeError("no samples")
+
+        class _SamplesFail:
+            samples = _BadSamples()
+
+            def __array__(self, dtype=None):
+                return np.asarray([13.0], dtype=dtype)
+
+        np.testing.assert_array_equal(_as_numpy(_SamplesFail()), [13.0])
+
 
 class TestSafeInt:
     def test_none_and_unconvertible_return_minus_one(self):
@@ -215,6 +236,10 @@ class TestHasGroup:
 
     def test_none_tree(self):
         assert not _has_group(None, "anything")
+
+    def test_root_path_skips_empty_path_parts(self):
+        tree = xr.DataTree()
+        assert _has_group(tree, "/")
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +426,13 @@ class TestAddLoo:
         with pytest.raises(ValueError):
             add_loo(post)
 
+    def test_raises_when_arviz_tree_has_no_log_likelihood(self):
+        post = _FakePosterior(with_arviz_log_likelihood=False)
+        _add_group(post, "arviz/posterior", xr.Dataset(attrs={"present": True}))
+
+        with pytest.raises(ValueError, match="No log_likelihood group"):
+            add_loo(post)
+
     @patch("probpipe.diagnostics._loo.az.loo")
     def test_pointwise_stored_by_default(self, mock_loo):
         k = np.abs(np.random.default_rng(0).standard_normal(30)) * 0.3
@@ -467,6 +499,15 @@ class TestGetArvizTree:
             inference_data = None
 
         assert _get_arviz_tree(_EmptyPost()) is None
+
+    def test_auxiliary_without_arviz_falls_back_to_auxiliary(self):
+        from probpipe.diagnostics._loo import _get_arviz_tree
+
+        class _Post:
+            _auxiliary = xr.DataTree.from_dict({"diagnostics": xr.Dataset()})
+            inference_data = None
+
+        assert _get_arviz_tree(_Post()) is _Post._auxiliary
 
 
 # ---------------------------------------------------------------------------
@@ -684,3 +725,27 @@ class TestAddLogLikelihood:
         assert post._auxiliary is not None
         view = LOOView(post._auxiliary["diagnostics"]["runs"]["loo"])
         assert isinstance(view.elpd_loo, float)
+
+    def test_fast_path_writes_log_likelihood(self):
+        class _JaxModel:
+            def __init__(self):
+                self._x = np.arange(6, dtype=float).reshape(3, 2)
+
+                class _Likelihood:
+                    def __init__(self, x):
+                        self._x = x
+
+                    def per_datum_log_likelihood(self, params, datum):
+                        eta = params[0] + datum["X"] @ params[1:]
+                        return -0.5 * (datum["y"] - eta) ** 2
+
+                self._likelihood = _Likelihood(self._x)
+
+        post = _FakePostForLL(n_chains=1, n_draws=4, n_features=2)
+        model = _JaxModel()
+        data = {"X": model._x, "y": np.array([0.0, 1.0, 2.0])}
+
+        add_log_likelihood(post, model, data)
+
+        ll_ds = post._auxiliary["arviz"]["log_likelihood"].to_dataset()
+        assert ll_ds["y"].shape == (1, 4, 3)

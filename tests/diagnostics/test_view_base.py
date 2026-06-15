@@ -194,6 +194,15 @@ class TestDataTreeView:
         child = DataTreeView(tree).child("child")
         assert child is not None
 
+    def test_child_returns_none_when_lookup_fails(self):
+        class _TreeLike:
+            children = {"child": object()}
+
+            def __getitem__(self, key):
+                raise RuntimeError("cannot read child")
+
+        assert DataTreeView(_TreeLike()).child("child") is None
+
     def test_dataset_falls_back_to_ds_attribute(self):
         class _TreeLike:
             def __init__(self):
@@ -215,6 +224,13 @@ class TestDataTreeView:
 
         ds = DataTreeView(_TreeLike()).dataset()
         assert ds["x"].item() == pytest.approx(2.0)
+
+    def test_dataset_returns_none_when_all_accessors_fail(self):
+        class _TreeLike:
+            def to_dataset(self):
+                raise RuntimeError("no direct dataset")
+
+        assert DataTreeView(_TreeLike()).dataset() is None
 
 
 # ---------------------------------------------------------------------------

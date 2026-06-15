@@ -8,9 +8,12 @@ import pytest
 import xarray as xr
 
 from probpipe.diagnostics._ppc_spc import (
+    _dataset_from_record,
     _observed_data_to_dataset,
+    _ppc_op,
     _replicated_data_to_dataset,
     _replicated_statistics_summary,
+    _write_ppc_record,
     add_ppc,
     add_spc,
 )
@@ -35,6 +38,14 @@ class _NumpyLikelihood:
 
     def generate_data(self, params, n_samples: int) -> np.ndarray:
         return self._rng.standard_normal(n_samples)
+
+
+class _KeyedLikelihood:
+    def generate_data(self, params, n_samples: int, *, key=None):
+        import jax.numpy as jnp
+
+        params_arr = jnp.asarray(params["alpha"])
+        return jnp.broadcast_to(params_arr[:, None], (params_arr.shape[0], n_samples))
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +112,10 @@ class TestReplicatedDataToDataset:
         ds = _replicated_data_to_dataset(np.ones((2, 5, 3)))
         assert ds["y"].shape == (2, 5, 3)
         assert ds["y"].dims == ("chain", "draw", "obs")
+
+    def test_higher_dimensional_obs_dims_are_named(self):
+        ds = _replicated_data_to_dataset(np.ones((2, 5, 3, 4)))
+        assert ds["y"].dims == ("chain", "draw", "obs_dim_0", "obs_dim_1")
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +255,40 @@ class TestAddPpc:
         )
         view = DiagnosticsView(posterior._auxiliary["diagnostics"])
         assert view.ppc.exists
+
+    def test_keyed_likelihood_uses_batched_path(self, posterior):
+        record = _ppc_op(
+            posterior,
+            _mean,
+            observed_data=np.ones(5),
+            generative_likelihood=_KeyedLikelihood(),
+            n_replications=4,
+        )
+
+        ds = _dataset_from_record(record)
+        assert "p_value" in ds
+
+    def test_dataset_from_record_rejects_non_dataset(self):
+        from probpipe.core.record import Record
+
+        with pytest.raises(TypeError, match="xarray.Dataset"):
+            _dataset_from_record(Record(name="bad", dataset="not-a-dataset"))
+
+    def test_write_ppc_record_stores_optional_predictive_group(self, posterior):
+        from probpipe.core.record import Record
+
+        run_ds = xr.Dataset({"p_value": xr.DataArray([0.5], dims=["test_fn"])})
+        pred_ds = xr.Dataset({"y": xr.DataArray(np.ones((1, 2)), dims=["chain", "draw"])})
+        record = Record(
+            name="ppc",
+            posterior_predictive_dataset=pred_ds,
+            observed_data_dataset=None,
+            dataset=run_ds,
+        )
+
+        _write_ppc_record(posterior, record)
+
+        assert "posterior_predictive" in posterior._auxiliary["arviz"].children
 
 
 # ---------------------------------------------------------------------------
