@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -288,7 +288,7 @@ jobs:
       KERAS_BACKEND: jax
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0   # need full history for git diff
 
@@ -334,7 +334,7 @@ jobs:
 
       - name: Install uv
         if: steps.bf_check.outputs.skip != 'true'
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
@@ -357,7 +357,7 @@ jobs:
         # `bayesflow` flag so Codecov's union counts them toward coverage. 3.12
         # only, matching the test job's upload.
         if: steps.bf_check.outputs.skip != 'true' && matrix.python-version == '3.12'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: TARPS-group/prob-pipe
