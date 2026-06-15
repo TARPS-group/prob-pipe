@@ -16,6 +16,7 @@ from probpipe.diagnostics._loo import (
     _log_likelihood_to_dataset,
     _pareto_k_summary,
     _pointwise_dataarray,
+    _safe_int,
     add_loo,
     add_log_likelihood,
 )
@@ -111,6 +112,35 @@ class TestAsNumpy:
 
         np.testing.assert_array_equal(_as_numpy(_HasSamples()), [9.0])
 
+    def test_falls_through_when_values_and_samples_fail(self):
+        class _BadArray:
+            def __array__(self, dtype=None):
+                raise RuntimeError("bad array")
+
+        class _BadArrayHooks:
+            values = _BadArray()
+
+            def __array__(self, dtype=None):
+                return np.asarray([11.0], dtype=dtype)
+
+        np.testing.assert_array_equal(_as_numpy(_BadArrayHooks()), [11.0])
+
+    def test_returns_none_when_array_conversion_fails(self):
+        class _Unconvertible:
+            def __array__(self, dtype=None):
+                raise RuntimeError("no array")
+
+        assert _as_numpy(_Unconvertible()) is None
+
+
+class TestSafeInt:
+    def test_none_and_unconvertible_return_minus_one(self):
+        assert _safe_int(None) == -1
+        assert _safe_int(object()) == -1
+
+    def test_array_like_fallback(self):
+        assert _safe_int(np.array([7.9])) == 7
+
 
 # ---------------------------------------------------------------------------
 # _log_likelihood_to_dataset
@@ -155,6 +185,11 @@ class TestLogLikelihoodToDataset:
     def test_custom_var_name(self):
         ds = _log_likelihood_to_dataset(np.ones((2, 10, 5)), var_name="loglik")
         assert "loglik" in ds.data_vars
+
+    def test_higher_dimensional_obs_dims_are_named(self):
+        ds = _log_likelihood_to_dataset(np.ones((2, 10, 3, 4)))
+        da = ds["y"]
+        assert da.dims == ("chain", "draw", "obs_dim_0", "obs_dim_1")
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +254,10 @@ class TestParetoKSummary:
         assert s["pareto_k_max"] == pytest.approx(0.85)
         assert s["pareto_k_bad_count"] == 1
 
+    def test_nan_good_k_uses_default_threshold(self):
+        s = _pareto_k_summary(np.array([0.69, 0.71]), good_k=float("nan"))
+        assert s["pareto_k_bad_count"] == 1
+
 
 # ---------------------------------------------------------------------------
 # _extract_pointwise_array and _pointwise_dataarray
@@ -244,6 +283,9 @@ class TestExtractPointwiseArray:
         result = _extract_pointwise_array(arr)
         assert result.shape == (6,)
 
+    def test_non_numeric_returns_none(self):
+        assert _extract_pointwise_array(["not-a-number"]) is None
+
 
 class TestPointwiseDataarray:
     def test_returns_dataarray(self):
@@ -258,6 +300,9 @@ class TestPointwiseDataarray:
     def test_custom_dim(self):
         da = _pointwise_dataarray(np.ones(5), name="loo_i", dim="observation")
         assert "observation" in da.dims
+
+    def test_bad_values_return_none(self):
+        assert _pointwise_dataarray(["bad"], name="loo_i") is None
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +417,18 @@ class TestAddLoo:
         add_loo(post, store_pointwise=False)
         loo_ds = post._auxiliary["diagnostics"]["runs"]["loo"].to_dataset()
         assert "pareto_k" not in loo_ds.data_vars
+
+    @patch("probpipe.diagnostics._loo.az.loo")
+    def test_plot_ready_when_loo_pit_groups_exist(self, mock_loo):
+        mock_loo.return_value = _fake_loo_result()
+        post = self._posterior_with_ll()
+        _add_group(post, "arviz/observed_data", xr.Dataset(attrs={"present": True}))
+        _add_group(post, "arviz/posterior_predictive", xr.Dataset(attrs={"present": True}))
+
+        add_loo(post)
+
+        view = LOOView(post._auxiliary["diagnostics"]["runs"]["loo"])
+        assert view.plot_ready is True
 
 
 # ---------------------------------------------------------------------------

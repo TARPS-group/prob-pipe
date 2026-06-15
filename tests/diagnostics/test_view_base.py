@@ -10,6 +10,7 @@ from probpipe.diagnostics._view_base import (
     DataTreeView,
     DiagnosticRunView,
     NotComputed,
+    read_json_attr,
     read_indexed,
     read_scalar,
 )
@@ -87,6 +88,31 @@ class TestReadScalar:
         result = read_scalar(da, label="alpha")
         assert result == pytest.approx(2.0)
 
+    def test_non_numeric_returns_not_computed(self):
+        result = read_scalar(xr.DataArray("not numeric"))
+        assert isinstance(result, NotComputed)
+
+    def test_not_computed_attr_without_reason_uses_unknown(self):
+        da = self._da(1.0)
+        da.attrs["not_computed_alpha"] = ""
+        da.attrs["not_computed"] = "global reason"
+        result = read_scalar(da, label="alpha")
+        assert isinstance(result, NotComputed)
+        assert result.reason == "global reason"
+
+
+class TestReadJsonAttr:
+    def test_valid_json(self):
+        assert read_json_attr({"groups": '["a", "b"]'}, "groups") == ["a", "b"]
+
+    def test_missing_uses_empty_list_default(self):
+        assert read_json_attr({}, "missing") == []
+
+    def test_invalid_json_uses_custom_default(self):
+        assert read_json_attr({"groups": "not-json"}, "groups", default=["fallback"]) == [
+            "fallback"
+        ]
+
 
 # ---------------------------------------------------------------------------
 # read_indexed
@@ -163,6 +189,33 @@ class TestDataTreeView:
         view = DataTreeView(self._make_tree())
         assert not view.has_child("x")
 
+    def test_child_returns_present_child(self):
+        tree = xr.DataTree.from_dict({"child": xr.Dataset()})
+        child = DataTreeView(tree).child("child")
+        assert child is not None
+
+    def test_dataset_falls_back_to_ds_attribute(self):
+        class _TreeLike:
+            def __init__(self):
+                self.ds = xr.Dataset({"x": xr.DataArray(1.0)})
+
+            def to_dataset(self):
+                raise RuntimeError("no direct dataset")
+
+        ds = DataTreeView(_TreeLike()).dataset()
+        assert "x" in ds
+
+    def test_dataset_falls_back_to_dataset_attribute(self):
+        class _TreeLike:
+            def __init__(self):
+                self.dataset = xr.Dataset({"x": xr.DataArray(2.0)})
+
+            def to_dataset(self):
+                raise RuntimeError("no direct dataset")
+
+        ds = DataTreeView(_TreeLike()).dataset()
+        assert ds["x"].item() == pytest.approx(2.0)
+
 
 # ---------------------------------------------------------------------------
 # DatasetView
@@ -219,6 +272,18 @@ class TestDiagnosticRunView:
         view = self._view("ppc", p_value=0.43)
         assert view.result["p_value"] == pytest.approx(0.43)
 
+    def test_result_one_dimensional_values(self):
+        da = xr.DataArray([0.2, 0.8], dims=["test_fn"], coords={"test_fn": ["a", "b"]})
+        tree = xr.DataTree(dataset=xr.Dataset({"p_value": da}))
+        result = DiagnosticRunView("ppc", tree).result
+        assert result["p_value"]["b"] == pytest.approx(0.8)
+
+    def test_result_multidimensional_values_are_not_computed(self):
+        da = xr.DataArray(np.ones((2, 2)), dims=["row", "col"])
+        tree = xr.DataTree(dataset=xr.Dataset({"matrix": da}))
+        result = DiagnosticRunView("run", tree).result
+        assert isinstance(result["matrix"], NotComputed)
+
     def test_result_empty_when_no_tree(self):
         view = DiagnosticRunView("ppc", None)
         assert view.result == {}
@@ -230,6 +295,23 @@ class TestDiagnosticRunView:
     def test_timestamp_default_empty(self):
         view = self._view("ppc")
         assert view.timestamp == ""
+
+    def test_plot_metadata_from_attrs(self):
+        tree = xr.DataTree(
+            dataset=xr.Dataset(
+                attrs={
+                    "plot_fn": "az.plot_ppc",
+                    "plot_ready": True,
+                    "plot_groups": '["posterior_predictive"]',
+                    "timestamp": "2026-01-01T00:00:00",
+                }
+            )
+        )
+        view = DiagnosticRunView("ppc", tree)
+        assert view.plot_fn == "az.plot_ppc"
+        assert view.plot_ready is True
+        assert view.plot_groups == ["posterior_predictive"]
+        assert view.timestamp.startswith("2026")
 
     def test_repr_contains_name(self):
         view = self._view("loo")

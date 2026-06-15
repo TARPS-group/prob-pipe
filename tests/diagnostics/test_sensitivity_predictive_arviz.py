@@ -1,6 +1,7 @@
 """Focused coverage for sensitivity, predictive checks, and ArviZ bridge."""
 from __future__ import annotations
 
+import builtins
 from unittest.mock import MagicMock, patch
 
 import jax
@@ -9,7 +10,12 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from probpipe.diagnostics._arviz_bridge import extract_draws, to_arviz_dataset
+import probpipe.diagnostics._arviz_bridge as arviz_bridge
+from probpipe.diagnostics._arviz_bridge import (
+    check_arviz_installed,
+    extract_draws,
+    to_arviz_dataset,
+)
 from probpipe.diagnostics._predictive_check import (
     _predictive_check_batched,
     _predictive_check_loop,
@@ -84,6 +90,15 @@ def test_extract_draws_supports_draws_records_dicts_and_samples():
         extract_draws(object())
 
 
+def test_extract_draws_supports_sample_records():
+    post = _SamplesPosterior(_Record({"alpha": [1.0, 2.0], "beta": [3.0, 4.0]}))
+
+    draws = extract_draws(post)
+
+    assert set(draws) == {"alpha", "beta"}
+    np.testing.assert_array_equal(draws["beta"], [3.0, 4.0])
+
+
 def test_to_arviz_dataset_flat_empirical_and_filtering():
     post = _DrawsPosterior(
         {
@@ -96,6 +111,57 @@ def test_to_arviz_dataset_flat_empirical_and_filtering():
     assert set(ds.data_vars) == {"alpha"}
     assert ds["alpha"].dims == ("chain", "draw")
     assert ds["alpha"].shape == (1, 3)
+
+
+def test_to_arviz_dataset_delegates_for_approximate_distribution(monkeypatch):
+    class _ApproxPosterior:
+        chains = [object()]
+        fields = ["alpha", "beta"]
+
+    source = xr.Dataset(
+        {
+            "alpha": xr.DataArray(np.ones((1, 2)), dims=["chain", "draw"]),
+            "beta": xr.DataArray(np.zeros((1, 2)), dims=["chain", "draw"]),
+        }
+    )
+
+    def _fake_builder(posterior):
+        assert isinstance(posterior, _ApproxPosterior)
+        return source
+
+    monkeypatch.setattr(
+        "probpipe.diagnostics._datatree_store.to_named_posterior_dataset",
+        _fake_builder,
+    )
+
+    ds = to_arviz_dataset(_ApproxPosterior(), var_names=["beta"])
+
+    assert list(ds.data_vars) == ["beta"]
+
+
+def test_to_arviz_dataset_requires_xarray(monkeypatch):
+    monkeypatch.setattr(arviz_bridge, "xr", None)
+
+    with pytest.raises(ImportError, match="xarray is required"):
+        to_arviz_dataset(_DrawsPosterior({"x": [1.0]}))
+
+
+def test_check_arviz_installed_reports_missing_dependencies(monkeypatch):
+    real_import = builtins.__import__
+
+    def _missing_arviz(name, *args, **kwargs):
+        if name == "arviz":
+            raise ImportError("missing arviz")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _missing_arviz)
+    with pytest.raises(ImportError, match="ArviZ is required"):
+        check_arviz_installed()
+
+    monkeypatch.setattr(builtins, "__import__", real_import)
+    monkeypatch.setattr(arviz_bridge, "xr", None)
+    with pytest.raises(ImportError, match="xarray is required"):
+        check_arviz_installed()
 
 
 def test_sensitivity_numeric_helpers_cover_edge_cases():
@@ -142,6 +208,16 @@ def test_prior_sensitivity_compares_posteriors_and_warns():
         prior_sensitivity({"base": baseline, "shifted": shifted}, baseline="nope")
 
 
+def test_prior_sensitivity_default_baseline_and_no_warning_path():
+    base = _DrawsPosterior({"theta": np.array([0.0, 0.1, -0.1, 0.0])})
+    close = _DrawsPosterior({"theta": np.array([0.0, 0.11, -0.11, 0.0])})
+
+    result = prior_sensitivity({"base": base, "close": close}, kl_threshold=100.0)
+
+    assert result["baseline"] == "base"
+    assert result["warnings"] == []
+
+
 def test_data_sensitivity_uses_pareto_k_thresholds_and_recommendations():
     fake_loo = MagicMock()
     fake_loo.pareto_k = xr.DataArray([0.2, 0.75, 1.2], dims=["obs"])
@@ -163,6 +239,24 @@ def test_data_sensitivity_uses_pareto_k_thresholds_and_recommendations():
     assert "heavier-tailed" in result["recommendations"][0]
     assert _build_loo_warnings(np.array([0.1, 0.8]))[0].startswith("1 observation")
     assert _build_loo_warnings(np.array([0.1, 0.2])) == []
+
+
+def test_data_sensitivity_recommendation_paths_without_very_bad_points():
+    fake_loo = MagicMock()
+    fake_loo.pareto_k = xr.DataArray([0.1, 0.72, 0.2], dims=["obs"])
+
+    with patch("arviz.loo", return_value=fake_loo):
+        influential = data_sensitivity(object(), np.ones((5, 3)))
+
+    assert influential["very_bad_indices"] == []
+    assert "drive the posterior" in influential["recommendations"][0]
+
+    fake_loo.pareto_k = xr.DataArray([0.1, 0.2, 0.3], dims=["obs"])
+    with patch("arviz.loo", return_value=fake_loo):
+        quiet = data_sensitivity(object(), np.ones((5, 3)))
+
+    assert quiet["influential_indices"] == []
+    assert "No highly influential" in quiet["recommendations"][0]
 
 
 def test_power_scale_sensitivity_handles_shapes_warnings_and_errors():
@@ -193,6 +287,26 @@ def test_power_scale_sensitivity_handles_shapes_warnings_and_errors():
         power_scale_sensitivity(post, np.ones(6), log_prior)
     with pytest.raises(ValueError, match="log_prior must be 1D"):
         power_scale_sensitivity(post, log_lik, np.ones((2, 3)))
+
+
+def test_power_scale_sensitivity_2d_inputs_without_warnings():
+    post = _DrawsPosterior({"theta": np.array([0.0, 0.5, 1.0, 1.5])})
+    log_lik = np.zeros((4, 2))
+    log_prior = np.zeros(4)
+
+    result = power_scale_sensitivity(
+        post,
+        log_lik,
+        log_prior,
+        lower=0.5,
+        upper=1.5,
+        n_steps=3,
+        high_sensitivity_threshold=10.0,
+    )
+
+    assert result["warnings"] == []
+    assert result["prior_sensitivity"]["theta"]["means"].shape == (3,)
+    assert result["likelihood_sensitivity"]["theta"]["high_sensitivity"] is False
 
 
 def test_predictive_check_batched_loop_and_public_result_paths():
@@ -234,3 +348,47 @@ def test_predictive_check_batched_loop_and_public_result_paths():
 
     with pytest.raises(ValueError, match="n_samples is required"):
         predictive_check(dist, _LoopLikelihood(), np.mean, key=key)
+
+
+def test_predictive_check_keyed_public_path_without_observed_data():
+    dist = _SamplingDistribution()
+
+    result = predictive_check(
+        dist,
+        _KeyedLikelihood(),
+        np.mean,
+        n_samples=3,
+        n_replications=4,
+        key=jax.random.PRNGKey(1),
+    )
+
+    assert "observed_statistic" not in result
+    assert result["test_fn_name"] == "mean"
+    assert len(dist.validation_results) == 1
+
+
+def test_predictive_check_uses_repr_for_callable_without_name():
+    class _Statistic:
+        def __call__(self, y):
+            return float(np.mean(y))
+
+        def __repr__(self):
+            return "StatisticObject"
+
+    result = predictive_check(
+        _SamplingDistribution(),
+        _LoopLikelihood(),
+        _Statistic(),
+        n_samples=2,
+        n_replications=2,
+        key=jax.random.PRNGKey(2),
+    )
+
+    assert result["test_fn_name"] == "StatisticObject"
+
+
+def test_supports_key_arg_handles_uninspectable_generate_data():
+    class _BadLikelihood:
+        generate_data = 42
+
+    assert _supports_key_arg(_BadLikelihood()) is False

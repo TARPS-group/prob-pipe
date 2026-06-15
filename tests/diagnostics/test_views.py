@@ -128,6 +128,19 @@ class TestMCMCView:
         result = view.n_divergences
         assert isinstance(result, NotComputed)
 
+    def test_n_divergences_not_computed_payload(self):
+        tree = xr.DataTree(
+            dataset=xr.Dataset(attrs={"n_divergences": json.dumps({"not_computed": "no stats"})})
+        )
+        result = MCMCView(tree).n_divergences
+        assert isinstance(result, NotComputed)
+        assert result.reason == "no stats"
+
+    def test_n_divergences_unparseable(self):
+        tree = xr.DataTree(dataset=xr.Dataset(attrs={"n_divergences": "not-an-int"}))
+        result = MCMCView(tree).n_divergences
+        assert isinstance(result, NotComputed)
+
     def test_warnings_from_attrs(self):
         view = MCMCView(_mcmc_tree(rhat_warnings=["R-hat > 1.01 for 'alpha'"]))
         assert any("alpha" in w for w in view.warnings)
@@ -135,6 +148,10 @@ class TestMCMCView:
     def test_warnings_empty_when_none(self):
         view = MCMCView(_mcmc_tree())
         assert view.warnings == []
+
+    def test_warnings_ignore_invalid_json_attrs(self):
+        tree = xr.DataTree(dataset=xr.Dataset(attrs={"rhat_warnings": "not-json"}))
+        assert MCMCView(tree).warnings == []
 
     def test_repr_contains_params(self):
         view = MCMCView(_mcmc_tree(rhat={"mu": 1.0}))
@@ -166,6 +183,28 @@ class TestPPCView:
             ["mean_fn", "var_fn"], [0.4, 0.7], [1.0, 2.0]
         ))
         assert set(view.result.keys()) == {"mean_fn", "var_fn"}
+
+    def test_result_reports_missing_observed(self):
+        da = xr.DataArray([0.25], dims=["test_fn"], coords={"test_fn": ["fn"]})
+        view = PPCView(xr.DataTree(dataset=xr.Dataset({"p_value": da})))
+        assert isinstance(view.result["fn"]["observed"], NotComputed)
+
+    def test_result_reports_missing_p_value(self):
+        da = xr.DataArray([1.25], dims=["test_fn"], coords={"test_fn": ["fn"]})
+        view = PPCView(xr.DataTree(dataset=xr.Dataset({"observed": da})))
+        assert isinstance(view.result["fn"]["p_value"], NotComputed)
+
+    def test_replicated_summaries(self):
+        coords = {"test_fn": ["fn"]}
+        ds = xr.Dataset(
+            {
+                "replicated_stat_mean": xr.DataArray([2.0], dims=["test_fn"], coords=coords),
+                "replicated_stat_sd": xr.DataArray([0.5], dims=["test_fn"], coords=coords),
+            }
+        )
+        view = PPCView(xr.DataTree(dataset=ds))
+        assert view.replicated_stat_mean["fn"] == pytest.approx(2.0)
+        assert view.replicated_stat_sd["fn"] == pytest.approx(0.5)
 
     def test_observed_backward_compat_field_name(self):
         """Falls back to 'observed_statistic' if 'observed' is absent."""
@@ -212,6 +251,11 @@ class TestLOOView:
         view = LOOView(_loo_tree(looic=85.0))
         assert view.looic == pytest.approx(85.0)
 
+    def test_p_loo_and_pareto_k_mean(self):
+        view = LOOView(_loo_tree(p_loo=3.0, pareto_k_mean=0.25))
+        assert view.p_loo == pytest.approx(3.0)
+        assert view.pareto_k_mean == pytest.approx(0.25)
+
     def test_pareto_k_bad_count_int(self):
         view = LOOView(_loo_tree(pareto_k_bad_count=2.0))
         result = view.pareto_k_bad_count
@@ -221,6 +265,18 @@ class TestLOOView:
     def test_warning_false(self):
         view = LOOView(_loo_tree(warning=0.0))
         assert view.warning is False
+
+    def test_warning_not_computed_is_false(self):
+        view = LOOView(_loo_tree())
+        assert view.warning is False
+
+    def test_plot_metadata(self):
+        tree = xr.DataTree(
+            dataset=xr.Dataset(attrs={"plot_ready": True, "plot_fn": "az.plot_loo_pit"})
+        )
+        view = LOOView(tree)
+        assert view.plot_ready is True
+        assert view.plot_fn == "az.plot_loo_pit"
 
     def test_warning_true(self):
         view = LOOView(_loo_tree(warning=1.0))
