@@ -9,14 +9,19 @@ that supports density evaluation.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from ._tfp_base import TFPDistribution
 from .._dtype import _as_float_array
-from ..core.constraints import Constraint, real
-from ..custom_types import ArrayLike
 from .._weights import Weights
+from ..core.constraints import Constraint, real
+from ..custom_types import Array, ArrayLike
+from ._tfp_base import TFPDistribution
+
+if TYPE_CHECKING:
+    from ..core.record import RecordTemplate
 
 __all__ = ["KDEDistribution"]
 
@@ -44,6 +49,16 @@ class KDEDistribution(TFPDistribution):
         Per-dimension bandwidth (standard deviation of each Gaussian
         kernel), shape ``(d,)`` or scalar.  If ``None``, Silverman's
         rule is used: ``n^{-1/(d+4)} * std_j`` for each dimension *j*.
+    record_template : RecordTemplate or None
+        Structural template for the KDE's value type. When ``None`` (the
+        default) a single-field template keyed by ``name`` is auto-built,
+        matching the historical behavior. When supplied with multiple
+        fields, the template defines how the flat ``(n, d)`` sample matrix
+        maps back to a structured ``NumericRecord`` / ``NumericRecordArray``
+        — preserving named fields end-to-end across e.g. an MCMC posterior
+        being routed through KDE as the new prior in
+        :class:`~probpipe.modeling.IncrementalConditioner`. The template's
+        ``flat_size`` must equal ``samples.shape[1]``.
     name : str or None
         Distribution name for provenance.
     """
@@ -55,6 +70,7 @@ class KDEDistribution(TFPDistribution):
         *,
         log_weights: ArrayLike | Weights | None = None,
         bandwidth: ArrayLike | None = None,
+        record_template: "RecordTemplate | None" = None,
         name: str | None = None,
     ):
         samples = _as_float_array(samples)
@@ -71,6 +87,29 @@ class KDEDistribution(TFPDistribution):
         self._d = d
         if name is None:
             name = "kde"
+
+        # Multi-field template support: when the caller supplies a template
+        # with more than one field, preset ``_record_template`` so that
+        # ``NumericRecordDistribution.record_template`` (parent) skips its
+        # single-field auto-build keyed by ``name``. Validate that the
+        # template's flat width matches the samples' trailing dimension.
+        if record_template is not None and len(record_template.fields) > 1:
+            from ..core.record import NumericRecordTemplate
+            if isinstance(record_template, NumericRecordTemplate):
+                expected = record_template.flat_size
+            else:
+                expected = sum(
+                    int(jnp.prod(jnp.array(shape))) if shape else 1
+                    for shape in record_template.leaf_shapes.values()
+                )
+            if expected != d:
+                raise ValueError(
+                    f"record_template flat_size ({expected}) does not match "
+                    f"samples flat dimension ({d}); template fields="
+                    f"{record_template.fields}"
+                )
+            object.__setattr__(self, "_record_template", record_template)
+
         super().__init__(name=name)
 
         # Weights
@@ -117,6 +156,82 @@ class KDEDistribution(TFPDistribution):
     @property
     def support(self) -> Constraint:
         return real
+
+    # -- sampling & density (template-aware overrides) ------------------------
+    #
+    # When ``_record_template`` is multi-field, sample output is unflattened
+    # back into ``NumericRecord`` / ``NumericRecordArray`` keyed by the
+    # template, and log_prob accepts both structured and flat inputs. Single-
+    # field auto-templates fall through to the TFP base class behaviour, so
+    # existing call sites are unchanged.
+
+    def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+        flat = self._tfp_dist.sample(seed=key, sample_shape=sample_shape)
+        tpl = getattr(self, "_record_template", None)
+        if tpl is None or len(tpl.fields) <= 1:
+            return flat
+        from ..core._numeric_record_distribution import NumericRecordDistribution
+        return NumericRecordDistribution.unflatten_value(flat, template=tpl)
+
+    def _log_prob(self, value: Any) -> Array:
+        tpl = getattr(self, "_record_template", None)
+        if tpl is not None and len(tpl.fields) > 1:
+            from ..core._numeric_record import NumericRecord
+            from ..core._record_array import NumericRecordArray
+            from ..core.record import Record
+            if isinstance(value, (Record, NumericRecord, NumericRecordArray)):
+                from ..core._numeric_record_distribution import (
+                    NumericRecordDistribution,
+                )
+                value = NumericRecordDistribution.flatten_value(value)
+        return self._tfp_dist.log_prob(jnp.asarray(value))
+
+    # -- factories ------------------------------------------------------------
+
+    @classmethod
+    def from_empirical(
+        cls,
+        source: Any,
+        *,
+        bandwidth: ArrayLike | None = None,
+        name: str | None = None,
+    ) -> "KDEDistribution":
+        """Build a KDE from a :class:`RecordEmpiricalDistribution` source.
+
+        Reuses the source's stored samples, weights, and record template,
+        so the resulting KDE preserves the source's named-field structure
+        end-to-end. Works for any subclass (notably
+        :class:`~probpipe.inference.ApproximateDistribution`).
+
+        Parameters
+        ----------
+        source : RecordEmpiricalDistribution
+            Empirical or approximate distribution with stored samples.
+        bandwidth : array-like or None
+            Per-dimension bandwidth (see :class:`KDEDistribution`).
+        name : str or None
+            Distribution name; defaults to ``source.name``.
+        """
+        from ..core._empirical import RecordEmpiricalDistribution
+
+        if not isinstance(source, RecordEmpiricalDistribution):
+            raise TypeError(
+                f"from_empirical requires a RecordEmpiricalDistribution "
+                f"(or subclass); got {type(source).__name__}"
+            )
+        name = name or source.name
+        tpl = source.record_template
+        if len(tpl.fields) == 1:
+            field = tpl.fields[0]
+            arr = source.samples[field]
+            return cls(arr, weights=source._w, bandwidth=bandwidth, name=name)
+        return cls(
+            source.flat_samples,
+            weights=source._w,
+            bandwidth=bandwidth,
+            record_template=tpl,
+            name=name,
+        )
 
     def __repr__(self) -> str:
         return (

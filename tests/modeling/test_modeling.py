@@ -201,3 +201,37 @@ class TestIncrementalConditioner:
         assert isinstance(post, EmpiricalDistribution)
         # Internal state unchanged because we bypassed update().
         assert conditioner.curr_posterior is prior
+
+    def test_multi_batch_preserves_named_record_fields(self):
+        """Multi-batch IncrementalConditioner over a named ProductDistribution
+        prior preserves field names on every batch (issue #267).
+
+        Previously batches 2+ collapsed to a single unnamed ``posterior``
+        field of shape ``(d,)`` because the samples→KDE conversion at the
+        start of each subsequent step dropped the ``record_template``.
+        """
+        import tensorflow_probability.substrates.jax.glm as tfp_glm
+
+        from probpipe import (
+            GLMLikelihood,
+            Normal,
+            ProductDistribution,
+            mean,
+        )
+
+        rng = np.random.RandomState(0)
+        X = rng.randn(120).astype("float32")
+        y = rng.poisson(np.exp(0.3 + 0.5 * X)).astype("float32")
+
+        prior = ProductDistribution(
+            Normal(0.0, np.sqrt(5.0), name="intercept"),
+            Normal(0.0, np.sqrt(5.0), name="slope"),
+        )
+        cond = IncrementalConditioner(prior, GLMLikelihood(tfp_glm.NegativeBinomial()))
+        for s, e in [(0, 40), (40, 80), (80, 120)]:
+            cond.update(X=X[s:e], y=y[s:e])
+            posterior_mean = mean(cond.curr_posterior)
+            assert posterior_mean.fields == ("intercept", "slope"), (
+                f"named fields lost after batch ending at {e}: "
+                f"got {posterior_mean.fields}"
+            )
