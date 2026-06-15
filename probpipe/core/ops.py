@@ -119,10 +119,12 @@ def _resolve_value(
     value also errors; ``allow_none=True`` (the ``random_*`` ops) lets
     ``value=None`` through so the bare random function is returned.
 
-    A distribution field whose name collides with the op's own ``value``
-    parameter cannot be addressed by the keyword form (it binds to ``value``);
-    pass a positional ``Record`` for such a distribution — mirroring how
-    ``condition_on`` treats a field named ``observed``.
+    A distribution field whose name collides with the op's own ``value`` or
+    ``dist`` parameter cannot be addressed by the keyword form (it binds to the
+    parameter). For a multi-field distribution, pass a positional ``Record``
+    (``log_prob(d, Record(value=...))``); for a single-field one, pass the bare
+    positional value (``log_prob(d, v)`` — a scalar ``_log_prob`` does not
+    accept a ``Record``). This mirrors ``condition_on``'s ``observed``.
     """
     if field_kwargs:
         if value is not None:
@@ -140,9 +142,7 @@ def _resolve_value(
 
 
 @workflow_function
-def log_prob(
-    dist: SupportsLogProb, value: Any = None, **field_kwargs: Any,
-) -> Array:
+def log_prob(dist: SupportsLogProb, value: Any = None, **field_kwargs: Any) -> Array:
     """Evaluate the normalized log-density at *value*.
 
     Two call forms: positional ``log_prob(dist, value)`` (a single draw, or a
@@ -194,8 +194,7 @@ def unnormalized_log_prob(
 def unnormalized_prob(
     dist: SupportsUnnormalizedLogProb, value: Any = None, **field_kwargs: Any,
 ) -> Array:
-    """Evaluate the unnormalized density at *value*
-    (``exp(unnormalized_log_prob)``).
+    """Evaluate the unnormalized density at *value* — ``exp(unnormalized_log_prob)``.
 
     See :func:`log_prob` for the positional and keyword call forms.
     """

@@ -118,8 +118,8 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
 
     def _pack_value(self, **field_kwargs: Any) -> Any:
         """Build a single draw of this distribution's value type ``T`` from
-        named field kwargs — the adapter behind the keyword form
-        ``log_prob(dist, field=value, ...)``.
+        named field kwargs — the adapter behind the keyword form of the
+        log_prob-family ops (``log_prob(dist, field=value, ...)``).
 
         Delegates field validation and ``Record`` construction to the general
         :func:`~probpipe.core.record._pack_fields` (also exposed object-style
@@ -152,7 +152,8 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         if not fields:
             raise TypeError(
                 f"{type(self).__name__} does not support the keyword form of "
-                f"log_prob (it has no named fields); pass a positional value."
+                f"the log_prob-family ops (it has no named fields); pass a "
+                f"positional value."
             )
         rec = _pack_fields(fields, field_kwargs, owner=type(self).__name__)
         return field_kwargs[fields[0]] if len(fields) == 1 else rec

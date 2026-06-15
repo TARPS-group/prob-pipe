@@ -31,10 +31,13 @@ from probpipe import (
     SimpleModel,
     log_prob,
     prob,
+    random_log_prob,
     random_unnormalized_log_prob,
     unnormalized_log_prob,
     unnormalized_prob,
 )
+from probpipe.core.distribution import Distribution
+from probpipe.core.record import RecordTemplate
 
 
 class TestKwargFormScalar:
@@ -116,6 +119,27 @@ class TestKwargFormSimpleModel:
         lp = model._log_prob((Record(a=0.5, b=0.5), jnp.zeros(3)))
         assert jnp.isfinite(lp)
 
+    def test_single_field_prior_packs_to_bare_array(self):
+        """A single-field prior's params repack to a bare array (not a 1-field
+        Record) in _split_log_prob_value — exercises the len(fields) == 1 branch."""
+
+        class _ScalarLikelihood:
+            data_template = RecordTemplate(y=())
+
+            def log_likelihood(self, params, data):
+                # params is the bare scalar from the single-field prior
+                return -0.5 * jnp.sum((data["y"] - params) ** 2)
+
+        model = SimpleModel(
+            Normal(0.0, 1.0, name="theta"), _ScalarLikelihood(), name="m"
+        )
+        y = jnp.array([0.2, -0.1, 0.4])
+        kw = log_prob(model, theta=0.5, y=y)
+        rec = log_prob(model, Record(theta=0.5, y=y))
+        tup = model._log_prob((0.5, Record(y=y)))  # single-field prior → bare scalar
+        assert jnp.allclose(kw, rec)
+        assert jnp.allclose(kw, tup)
+
 
 class TestStanViewsPackValue:
     """StanModel / _UnconstrainedStanView Tier 1: the keyword form takes a
@@ -177,6 +201,17 @@ class TestProbAndUnnormalizedKwargForm:
     def test_unnormalized_prob_kwarg(self):
         d = Normal(0.0, 1.0, name="x")
         assert jnp.allclose(unnormalized_prob(d, x=0.3), unnormalized_prob(d, 0.3))
+
+    def test_prob_multifield_kwarg_matches_record(self):
+        p = ProductDistribution(Normal(0.0, 1.0, name="a"), Beta(2.0, 3.0, name="b"))
+        assert jnp.allclose(prob(p, a=0.5, b=0.4), prob(p, Record(a=0.5, b=0.4)))
+
+    def test_unnormalized_prob_multifield_kwarg_matches_record(self):
+        p = ProductDistribution(Normal(0.0, 1.0, name="a"), Beta(2.0, 3.0, name="b"))
+        assert jnp.allclose(
+            unnormalized_prob(p, a=0.5, b=0.4),
+            unnormalized_prob(p, Record(a=0.5, b=0.4)),
+        )
 
 
 class TestFormerlyReservedFieldNames:
@@ -261,10 +296,29 @@ class TestSequentialJointKwargForm:
         assert jnp.allclose(kw, pos)
 
 
+class _FieldlessRandomMeasure(Distribution):
+    """A random measure with no named fields, implementing both random
+    log-prob protocols — for the random_* ops' keyword-form error paths
+    (random measures have no field support yet; #228 PR 4). The returned
+    callables are never invoked: each test below raises before reaching them.
+    """
+
+    def __init__(self):
+        super().__init__(name="fieldless_rm")
+
+    def _random_log_prob(self):
+        return lambda v: v
+
+    def _random_unnormalized_log_prob(self):
+        return lambda v: v
+
+
 class TestRandomMeasureKwargForm:
     """The random_*_log_prob ops keep `value` optional (return the
-    RandomFunction) and forward controls without deprecation; the kwarg form
-    routes through _pack_value (full RandomMeasure field support is #228 PR 4)."""
+    RandomFunction) and apply controls via with_options without deprecation.
+    The keyword form routes to `_pack_value`; since random measures carry no
+    named `fields` yet, it raises a clear "no named fields" error — full
+    RandomMeasure field support is #228 PR 4."""
 
     @staticmethod
     def _measure():
@@ -284,7 +338,50 @@ class TestRandomMeasureKwargForm:
         deps = [w for w in caught if issubclass(w.category, DeprecationWarning)]
         assert not deps, [str(w.message) for w in deps]
 
-    def test_positional_value_and_kwargs_raises(self):
-        m = self._measure()
+    @pytest.mark.parametrize("op", [random_log_prob, random_unnormalized_log_prob])
+    def test_kwarg_form_raises_no_named_fields(self, op):
+        # The kwarg form routes to _pack_value; a fields-less random measure
+        # has none, so it raises loudly — covering both random ops and the base
+        # Distribution._pack_value no-named-fields guard.
+        with pytest.raises(TypeError, match="no named fields"):
+            op(_FieldlessRandomMeasure(), theta=jnp.zeros(4))
+
+    @pytest.mark.parametrize("op", [random_log_prob, random_unnormalized_log_prob])
+    def test_positional_value_and_kwargs_raises(self, op):
         with pytest.raises(TypeError, match="not both"):
-            random_unnormalized_log_prob(m, jnp.zeros(4), theta=jnp.zeros(4))
+            op(_FieldlessRandomMeasure(), jnp.zeros(4), theta=jnp.zeros(4))
+
+
+class TestKwargShapeAndBroadcast:
+    """The keyword form builds exactly one draw (scalar for a scalar dist);
+    the positional form still broadcasts after the `value=None` default."""
+
+    def test_kwarg_result_is_scalar_for_scalar_dist(self):
+        d = Normal(0.0, 1.0, name="x")
+        assert jnp.asarray(log_prob(d, x=1.5)).shape == ()
+
+    def test_positional_still_broadcasts(self):
+        d = Normal(0.0, 1.0, name="x")
+        out = log_prob(d, jnp.array([0.0, 1.0, 2.0]))
+        assert jnp.asarray(out).shape == (3,)
+
+
+class TestFieldNameCollision:
+    """A field named exactly `value`/`dist` collides with the op's parameter;
+    the escape differs by single- vs multi-field (#228, see CHANGELOG)."""
+
+    def test_multifield_value_field_via_positional_record(self):
+        p = ProductDistribution(Normal(0.0, 1.0, name="value"), Beta(2.0, 3.0, name="b"))
+        # the keyword form can't address the 'value' field (binds to the param):
+        with pytest.raises(TypeError, match="not both"):
+            log_prob(p, value=0.5, b=0.4)
+        # escape hatch for a multi-field distribution: the positional Record
+        assert jnp.isfinite(log_prob(p, Record(value=0.5, b=0.4)))
+
+    def test_singlefield_value_field_via_bare_positional(self):
+        d = Normal(0.0, 1.0, name="value")
+        # bare positional works (and equals value=, which binds to the param):
+        assert jnp.allclose(log_prob(d, 1.5), log_prob(d, value=1.5))
+        # the positional Record does NOT work for a single-field distribution:
+        with pytest.raises(TypeError):
+            log_prob(d, Record(value=1.5))

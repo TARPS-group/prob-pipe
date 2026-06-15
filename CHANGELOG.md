@@ -44,8 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `value=`) is unchanged and still broadcasts, and per-call controls use
   `with_options` (`log_prob.with_options(seed=0)(dist, value)`). The keyword
   form is purely additive; the one case it cannot express is a distribution
-  whose field name collides with the op's own `value`/`dist` parameter — pass
-  the positional `Record` there (mirroring `condition_on`'s `observed`).
+  whose field name collides with the op's own `value`/`dist` parameter — for a
+  multi-field distribution pass a positional `Record`, for a single-field one
+  the bare positional value (mirroring `condition_on`'s `observed`).
 
 ### Changed
 

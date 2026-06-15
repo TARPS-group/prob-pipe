@@ -62,6 +62,15 @@ m = mean(dist)
 m = dist._mean()
 ```
 
+The density ops (`log_prob` and its family) also accept the value by **named
+fields** — `log_prob(model, intercept=0.0, X=X_obs, y=y_obs)` — packed into one
+draw via `Distribution._pack_value` / the public `RecordTemplate.pack`
+(single-field → the bare value; multi-field → a `Record`), the same shape as
+`condition_on`'s named data kwargs. Because `dist` and `value` are ordinary
+parameters, a distribution field whose name is exactly `value` or `dist` is
+*reserved*: address it positionally (the bare value for a single-field
+distribution, or a `Record` for a multi-field one), not by keyword.
+
 ### 1.3 Implementation functions
 
 Each op has a private implementation function named `_<op>_impl`:
