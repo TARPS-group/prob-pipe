@@ -3,7 +3,7 @@
 [![CI](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml/badge.svg)](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/TARPS-group/prob-pipe/branch/main/graph/badge.svg)](https://codecov.io/gh/TARPS-group/prob-pipe)
 [![docs](https://img.shields.io/badge/docs-tarps--group.github.io%2Fprob--pipe-blue)](https://tarps-group.github.io/prob-pipe/)
-[![DOI](https://zenodo.org/badge/1041525504.svg)](https://doi.org/10.5281/zenodo.20683559)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20683559.svg)](https://doi.org/10.5281/zenodo.20683559)
 
 **[Installation Guide](#installation)** | **[Getting Started](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** | **[Full Documentation](https://tarps-group.github.io/prob-pipe/)** | **[Help](https://tarps-group.github.io/prob-pipe/help/)**
 
