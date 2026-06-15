@@ -299,6 +299,28 @@ class TestApproximateDistributionValuesTemplate:
                 record_template=template, field_order=["a"],
             )
 
+    def test_field_order_opaque_template_raises_clear_error(self):
+        """field_order cannot compute a permutation for opaque fields."""
+        template = RecordTemplate(a=None, b=())
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        with pytest.raises(ValueError, match="field 'a' has spec=None"):
+            make_posterior(
+                [chain], parents=(prior,), algorithm="test",
+                record_template=template, field_order=["a", "b"],
+            )
+
+    def test_multi_field_opaque_template_raises_clear_error(self):
+        """Multi-field splitting rejects opaque fields before sizing."""
+        template = RecordTemplate(a=None, b=())
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        with pytest.raises(ValueError, match="field 'a' has spec=None"):
+            make_posterior(
+                [chain], parents=(prior,), algorithm="test",
+                record_template=template,
+            )
+
     def test_array_shaped_fields(self):
         """Template with non-scalar fields unflattens correctly."""
         template = RecordTemplate(

@@ -244,6 +244,17 @@ class TestMetaclassEnforcement:
         with pytest.raises(TypeError, match="non-empty name"):
             _EmptyNameDist()
 
+    def test_subclass_with_non_string_name_raises(self):
+        """The metaclass requires the final ``_name`` to be a string."""
+        from probpipe.core.distribution import Distribution
+
+        class _NonStringNameDist(Distribution):
+            def __init__(self):
+                self._name = 123
+
+        with pytest.raises(TypeError, match="non-empty name"):
+            _NonStringNameDist()
+
     def test_subclass_setting_name_directly_succeeds(self):
         """Bypassing ``super().__init__`` is fine as long as
         ``self._name`` ends up set to a non-empty string."""

@@ -290,6 +290,32 @@ class TestPredictiveCheck:
         # No raise — the ``except TypeError`` clause swallows it.
         _record_check_in_auxiliary(dist, stats, result)
 
+    def test_xarray_importerror_skips_attachment_silently(self, monkeypatch):
+        """If xarray is unavailable, auxiliary attachment is skipped."""
+        import builtins
+        from probpipe.validation._predictive_check import (
+            _record_check_in_auxiliary,
+        )
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "xarray":
+                raise ImportError("xarray unavailable")
+            return real_import(name, *args, **kwargs)
+
+        class _Dist:
+            pass
+
+        dist = _Dist()
+        stats = jnp.zeros(5)
+        result = {"test_fn_name": "stub", "replicated_statistics": stats}
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        _record_check_in_auxiliary(dist, stats, result)
+
+        assert not hasattr(dist, "_auxiliary")
+
 
 # ---------------------------------------------------------------------------
 # Tests — non-JAX data types
