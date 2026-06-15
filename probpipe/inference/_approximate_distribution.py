@@ -266,28 +266,44 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
     @property
     def inference_data(self) -> DataTree | None:
-        """The auxiliary DataTree, for ArviZ compatibility.
+        """The ArviZ-compatible DataTree stored under ``_auxiliary["arviz"]``.
 
-        Alias for ``self.auxiliary``.  Use ArviZ functions for diagnostics::
+        Use ArviZ/ArviZ-stats functions for diagnostics and plots::
 
             import arviz_stats
             arviz_stats.summary(posterior.inference_data)
+
+        Plotting utilities may also consume this tree where supported.
+
+        Returns ``None`` if no auxiliary data has been attached. Falls
+        back to ``_auxiliary`` directly if set before the ``/arviz/``
+        subtree convention was adopted.
         """
-        return self.auxiliary
+        aux = self.auxiliary
+        if aux is None:
+            return None
+        if hasattr(aux, "children") and "arviz" in aux.children:
+            return aux["arviz"]
+        return aux
 
     @property
     def warmup_samples(self) -> list[Array] | None:
         """Per-chain warmup samples extracted from auxiliary data."""
-        aux = self.auxiliary
-        if aux is None:
+        idata = self.inference_data
+        if idata is None:
             return None
-        # auxiliary is an arviz 1.x ``xarray.DataTree``; groups are children
-        if "warmup" not in aux.children:
+
+        # ``inference_data`` is expected to be an ArviZ-compatible
+        # xarray DataTree. Warmup samples, when present, live under
+        # the ``warmup`` group.
+        children = idata.children if hasattr(idata, "children") else {}
+        if "warmup" not in children:
             return None
-        warmup = aux["warmup"]["params"]
+
+        warmup = idata["warmup"]["params"]
         n_chains = warmup.sizes.get("chain", 1)
         return [jnp.asarray(warmup.sel(chain=i).values) for i in range(n_chains)]
-
+      
     def draws(
         self,
         chain: int | None = None,
@@ -396,13 +412,24 @@ def make_posterior(
     ApproximateDistribution
         Posterior with chain structure, auxiliary DataTree, and provenance.
     """
+    import xarray as xr
+
     result = ApproximateDistribution(
         chains, name="posterior", record_template=record_template,
         field_order=field_order,
     )
 
     if auxiliary is not None:
-        result._auxiliary = auxiliary
+        # Nest ArviZ InferenceData groups under /arviz/ so _auxiliary
+        # can hold other subtrees (e.g. /diagnostics/) alongside it.
+        dicto: dict = {}
+        for group_path, node in auxiliary.items():
+            if group_path == "/":
+                continue
+            clean = group_path.lstrip("/")
+            ds = node.to_dataset() if isinstance(node, xr.DataTree) else node
+            dicto[f"arviz/{clean}"] = ds
+        result._auxiliary = xr.DataTree.from_dict(dicto)
 
     result.with_source(
         Provenance(algorithm, parents=parents, metadata={"algorithm": algorithm, **meta})

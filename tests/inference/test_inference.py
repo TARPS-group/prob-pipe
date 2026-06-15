@@ -79,7 +79,14 @@ class TestApproximateDistribution:
         assert hasattr(two_chain_dist.auxiliary, "groups") or hasattr(two_chain_dist.auxiliary, "children")
 
     def test_inference_data_alias(self, two_chain_dist):
-        assert two_chain_dist.inference_data is two_chain_dist.auxiliary
+        aux = two_chain_dist.auxiliary
+        assert aux is not None
+        assert "arviz" in aux.children
+
+        idata = two_chain_dist.inference_data
+        assert idata is not None
+        assert "posterior" in idata.children
+        assert "warmup" in idata.children
 
     def test_warmup_from_auxiliary(self, two_chain_dist):
         warmup = two_chain_dist.warmup_samples
@@ -422,9 +429,19 @@ class TestApproximateDistributionValuesTemplate:
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         auxiliary = build_mcmc_datatree([chain])
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
-        post = make_posterior([chain], parents=(prior,), algorithm="test",
-                             auxiliary=auxiliary)
-        assert "posterior" in post.auxiliary
+        post = make_posterior(
+            [chain],
+            parents=(prior,),
+            algorithm="test",
+            auxiliary=auxiliary,
+        )
+
+        assert post.auxiliary is not None
+        assert "arviz" in post.auxiliary.children
+
+        idata = post.inference_data
+        assert idata is not None
+        assert "posterior" in idata.children
 
     def test_algorithm_default_without_auxiliary(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
