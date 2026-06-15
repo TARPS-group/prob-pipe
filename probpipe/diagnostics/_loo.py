@@ -30,6 +30,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+import arviz as az
 import numpy as np
 import xarray as xr
 
@@ -340,8 +341,6 @@ def add_loo(
     -------
     None
     """
-    import arviz as az
-
     if not force and _has_group(getattr(posterior, "_auxiliary", None), "diagnostics/runs/loo"):
         return None
 
@@ -358,7 +357,8 @@ def add_loo(
     if arviz_tree is None:
         raise ValueError(
             "No ArviZ-compatible inference data found. Expected "
-            "posterior._auxiliary['arviz'] or posterior.inference_data."
+            "posterior._auxiliary['arviz'] or posterior.inference_data. "
+            "Provide log_likelihood=... to create the required log_likelihood group."
         )
 
     if not _has_group(arviz_tree, "log_likelihood"):
@@ -596,11 +596,14 @@ def add_log_likelihood(
     # JAX-traceable (e.g. uses Python control flow on datum fields),
     # the except branch below falls back to a Python loop.
 
-    # vmap over observations (x_i, y_i) for a fixed draw
-    _log_lik_obs = jax.vmap(_log_lik_single, in_axes=(None, 0, 0))
+    try:
+        # vmap over observations (x_i, y_i) for a fixed draw
+        _log_lik_obs = jax.vmap(_log_lik_single, in_axes=(None, 0, 0))
 
-    # vmap over draws for a fixed chain
-    _log_lik_draws = jax.vmap(_log_lik_obs, in_axes=(0, None, None))
+        # vmap over draws for a fixed chain
+        _log_lik_draws = jax.vmap(_log_lik_obs, in_axes=(0, None, None))
+    except Exception:
+        _log_lik_draws = None
 
     log_lik = np.zeros((n_chains, n_draws, n_obs), dtype=np.float32)
 
@@ -609,6 +612,9 @@ def add_log_likelihood(
         params_flat = _draws_to_flat(draws_c)       # (n_draws, n_params)
 
         try:
+            if _log_lik_draws is None:
+                raise RuntimeError("JAX vmap is unavailable")
+
             # Fast path: vmap over (draws, obs) in one call
             chain_ll = _log_lik_draws(params_flat, X, y)   # (n_draws, n_obs)
             log_lik[c] = np.asarray(chain_ll, dtype=np.float32)
