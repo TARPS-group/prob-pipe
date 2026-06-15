@@ -38,9 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `log_prob(model, intercept=0.0, slope=0.5, X=X_obs, y=y_obs)` — built into a
   single draw via the new `Distribution._pack_value` (single-field → the bare
   field value; multi-field → a `Record`). The positional form is unchanged and
-  still broadcasts. Constructing a distribution whose field name collides with a
-  reserved WorkflowFunction control (`seed` / `n_broadcast_samples` /
-  `include_inputs`) now warns.
+  still broadcasts. Per-call ProbPipe controls use `with_options` —
+  `log_prob.with_options(seed=0)(dist, x)` — consistent with the dispatch ops.
+  Constructing a distribution whose field name collides with a reserved
+  WorkflowFunction control (`seed` / `n_broadcast_samples` / `include_inputs`)
+  now warns.
 
 ### Changed
 

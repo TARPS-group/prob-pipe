@@ -203,21 +203,35 @@ class TestReservedNameWarning:
         assert not any("reserved" in str(w.message).lower() for w in caught)
 
 
-class TestControlKwargsNoDeprecation:
-    """The wrappers forward WF controls via with_options, so passing them does
-    NOT trip the legacy-call-kwarg DeprecationWarning (issue #228 review)."""
+class TestControlsViaWithOptions:
+    """Controls are applied through ``with_options`` — the non-deprecated path,
+    consistent with the WorkflowFunction dispatch ops — not as call kwargs
+    (issue #228)."""
 
     @pytest.mark.parametrize(
         "control",
         [{"seed": 3}, {"n_broadcast_samples": 8}, {"include_inputs": True}],
     )
-    def test_control_kwargs_do_not_deprecation_warn(self, control):
+    def test_with_options_does_not_deprecation_warn(self, control):
         d = Normal(0.0, 1.0, name="x")
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            log_prob(d, 1.5, **control)
+            log_prob.with_options(**control)(d, 1.5)
         deps = [w for w in caught if issubclass(w.category, DeprecationWarning)]
         assert not deps, [str(w.message) for w in deps]
+
+    def test_with_options_accepts_keyword_value_form(self):
+        d = Normal(0.0, 1.0, name="x")
+        assert jnp.allclose(
+            log_prob.with_options(seed=0)(d, x=1.5), log_prob(d, 1.5)
+        )
+
+    def test_control_as_call_kwarg_is_rejected(self):
+        # Controls are not call kwargs on the density ops; with a positional
+        # value present, a stray control name collides with the keyword form.
+        d = Normal(0.0, 1.0, name="x")
+        with pytest.raises(TypeError, match="not both"):
+            log_prob(d, 1.5, seed=3)
 
 
 class TestValuePositionalOnly:
@@ -256,7 +270,7 @@ class TestRandomMeasureKwargForm:
         m = self._measure()
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            rf = random_unnormalized_log_prob(m, seed=0)
+            rf = random_unnormalized_log_prob.with_options(seed=0)(m)
         assert callable(rf)
         deps = [w for w in caught if issubclass(w.category, DeprecationWarning)]
         assert not deps, [str(w.message) for w in deps]
