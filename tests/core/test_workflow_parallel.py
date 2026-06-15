@@ -329,9 +329,6 @@ class TestWorkflowFunctionExecutionConfig:
         assert execution.max_workers is None
 
     def test_explicit_prefect_warns_and_ignores_local_thread_options(self, monkeypatch):
-        # The mode resolver only yields prefect_* when Prefect is installed
-        # (effective_workflow_kind also gates on node_mod.flow, not just task).
-        pytest.importorskip("prefect")
         monkeypatch.setattr(node_mod, "task", object())
         wf = WorkflowFunction(
             func=add_one,
@@ -350,9 +347,6 @@ class TestWorkflowFunctionExecutionConfig:
         self,
         monkeypatch,
     ):
-        # The mode resolver only yields prefect_* when Prefect is installed
-        # (effective_workflow_kind also gates on node_mod.flow, not just task).
-        pytest.importorskip("prefect")
         monkeypatch.setattr(node_mod, "task", object())
         prefect_config.workflow_kind = WorkflowKind.FLOW
         with pytest.warns(UserWarning, match="max_workers configures only"):
@@ -402,9 +396,6 @@ class TestWorkflowFunctionExecutionConfig:
         assert result.num_atoms == 8
 
     def test_public_call_resolves_task_and_flow_modes(self, monkeypatch):
-        # The mode resolver only yields prefect_* when Prefect is installed
-        # (effective_workflow_kind also gates on node_mod.flow, not just task).
-        pytest.importorskip("prefect")
         seen_modes = []
 
         def fake_execute_many(request):
