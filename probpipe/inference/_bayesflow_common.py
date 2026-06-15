@@ -78,14 +78,16 @@ def _import_bayesflow() -> ModuleType:
     return bf
 
 
-def _adapter_field_keys(fields: tuple[str, ...]) -> tuple[str, ...]:
+def _adapter_field_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
     """Positional internal keys (``theta_0``, ``theta_1``, ...) for the adapter.
 
     Both the training dict and the sample-side extraction derive these from the
-    prior's ``record_template.fields`` order, so the mapping is deterministic
-    across train and inference without storing it.
+    prior's ``record_template`` leaf order (``numeric_leaf_shapes`` keys; ==
+    ``fields`` for a flat prior), so the mapping is deterministic across train
+    and inference without storing it, and slash-delimited nested leaf paths
+    never reach BayesFlow's key namespace.
     """
-    return tuple(f"theta_{i}" for i in range(len(fields)))
+    return tuple(f"theta_{i}" for i in range(len(keys)))
 
 
 def _validate_learn_inputs(
@@ -118,17 +120,6 @@ def _validate_learn_inputs(
             f"{caller} requires a RecordDistribution prior with named parameter "
             "fields -- typically a ProductDistribution of named distributions -- "
             f"but got {type(prior).__name__}, which has no record_template."
-        )
-    if any("/" in k for k in record_template.numeric_leaf_shapes):
-        # Nothing here needs flatness in principle (the adapter could key on
-        # numeric leaves), but batched draws from a nested prior do not yet
-        # flatten -- NumericRecordArray.flatten chokes on the plain-Record
-        # sub-records ProductDistribution._sample embeds -- and flattening is
-        # this pipeline's first step. Reject early with a clear error instead.
-        raise TypeError(
-            f"{caller} does not support nested priors yet: batched draws from "
-            "a nested prior cannot currently be flattened for offline "
-            "simulation. Flatten the prior into top-level named fields."
         )
     return record_template
 
@@ -163,17 +154,21 @@ def _simulate_offline(
     """Draw ``(theta, y)`` pairs offline: ``theta ~ prior``, ``y ~ simulator(theta)``.
 
     Returns ``(named_theta, y)`` where ``named_theta`` maps each prior
-    record-template field to a ``(num_simulations, d_field)`` float32 array and
-    ``y`` is the ``(num_simulations, d_y)`` float32 array of flattened simulated
-    observations.  With ``bijectors`` given (the NPE path), each theta field is
-    *unconstrained* (pushed through its inverse bijector at the field's native
-    event shape, then flattened); with ``bijectors=None`` (the NLE/NRE paths,
-    where theta is a network *input* rather than a modeled density), the raw
-    constrained draws are returned.  The simulator itself always sees the
-    constrained, structured draws.
+    record-template numeric leaf (slash paths like ``"outer/a"`` for a nested
+    prior; top-level fields for a flat one) to a ``(num_simulations, d_leaf)``
+    float32 array and ``y`` is the ``(num_simulations, d_y)`` float32 array of
+    flattened simulated observations.  With ``bijectors`` given (the NPE path),
+    each theta leaf is *unconstrained* (pushed through its inverse bijector at the
+    leaf's native event shape, then flattened); with ``bijectors=None`` (the
+    NLE/NRE paths, where theta is a network *input* rather than a modeled
+    density), the raw constrained draws are returned.  The simulator itself always
+    sees the constrained, structured draws.
     """
     template = prior.record_template
-    fields = template.fields
+    # Iterate numeric leaves (slash paths like "outer/a" for nested priors; ==
+    # top-level fields for flat priors). The adapter re-keys positionally, so
+    # leaf paths never reach BayesFlow's namespace.
+    leaf_keys = tuple(template.numeric_leaf_shapes)
     k_theta, k_sim = jax.random.split(key)
     theta = _sample_op(prior, key=k_theta, sample_shape=(num_simulations,))
     # Round-trip through the canonical flat layout: single-field priors' raw draws
@@ -183,13 +178,13 @@ def _simulate_offline(
         theta_flat, template=template, batch_shape=(num_simulations,)
     )
     # Invert before flattening: matrix-valued bijectors (positive-definite) require
-    # the field's native (..., n, n) event shape, not the flat adapter layout.
+    # the leaf's native (..., n, n) event shape, not the flat adapter layout.
     named = {}
-    for f in fields:
-        arr = jnp.asarray(record[f])
+    for leaf in leaf_keys:
+        arr = jnp.asarray(record[leaf])
         if bijectors is not None:
-            arr = bijectors[f].inverse(arr)
-        named[f] = np.asarray(jnp.reshape(arr, (num_simulations, -1)), dtype="float32")
+            arr = bijectors[leaf].inverse(arr)
+        named[leaf] = np.asarray(jnp.reshape(arr, (num_simulations, -1)), dtype="float32")
     sim_keys = jax.random.split(k_sim, num_simulations)
 
     def _one(flat_row: Array, k: PRNGKey) -> Array:

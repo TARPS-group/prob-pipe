@@ -62,6 +62,18 @@ def _prior():
     )
 
 
+def _nested_prior():
+    """Nested conjugate prior (issue #262): a sub-record ``outer={a, b}`` plus a
+    top-level ``m`` -- leaves ``outer/a``, ``outer/b``, ``m``, all ``N(0, 1)`` so
+    ``_analytic_posterior`` applies per leaf (``flatten`` order ``[a, b, m]``)."""
+    return ProductDistribution(
+        name="joint",
+        outer={"a": Normal(loc=0.0, scale=1.0, name="a"),
+               "b": Normal(loc=0.0, scale=1.0, name="b")},
+        m=Normal(loc=0.0, scale=1.0, name="m"),
+    )
+
+
 def _analytic_posterior(y_rows: np.ndarray) -> tuple[np.ndarray, float]:
     n = y_rows.shape[0]
     s2 = _SIGMA**2
@@ -260,6 +272,46 @@ class TestConditioning:
         self._check_posterior(SimpleModel(prior=_prior(), likelihood=nre), y,
                               mean_tol=0.3, ratio_band=(0.8, 1.25))
 
+    def _check_nested_posterior(self, model, y, mean_tol, ratio_band):
+        """Like ``_check_posterior`` but over the three *nested* leaves
+        (``outer/a``, ``outer/b``, ``m``) -- in ``flatten`` order, so leaf j of
+        the analytic posterior lines up with observation column j."""
+        post = condition_on(model, jnp.asarray(y),
+                            num_results=1500, num_warmup=500, random_seed=0)
+        draws = np.stack([np.asarray(post.draws()[f]).reshape(-1)
+                          for f in ("outer/a", "outer/b", "m")], axis=-1)
+        an_mean, an_std = _analytic_posterior(np.asarray(y))
+        mean_err = np.abs(draws.mean(0) - an_mean).max() / an_std
+        ratio = draws.std(0) / an_std
+        assert mean_err < mean_tol, (mean_err, draws.mean(0), an_mean)
+        assert (ratio_band[0] < ratio).all() and (ratio < ratio_band[1]).all(), ratio
+
+    def test_nle_nested_prior_end_to_end(self):
+        """NLE lifts a nested prior (issue #262): SimpleModel(nested prior, learned
+        likelihood) + condition_on -> NUTS recovers the analytic conjugate
+        posterior, per nested leaf. NLE feeds raw theta to the network, so the
+        nesting is purely the leaf-keyed adapter routing (no bijectors)."""
+        prior = _nested_prior()
+        nle = learn_amortized_likelihood(
+            prior, _SIM, num_simulations=4000, epochs=25,
+            batch_size=256, random_seed=0, verbose=0,
+        )
+        y = np.array([[0.8, -0.4, 0.3]], dtype="float32")
+        self._check_nested_posterior(SimpleModel(prior=prior, likelihood=nle), y,
+                                     mean_tol=0.3, ratio_band=(0.85, 1.25))
+
+    def test_nre_nested_prior_end_to_end(self):
+        """NRE lifts a nested prior (issue #262): the same nested conjugate
+        recovery as NLE, via the leaf-keyed classifier routing."""
+        prior = _nested_prior()
+        nre = learn_amortized_ratio(
+            prior, _SIM, num_simulations=8000, epochs=40,
+            batch_size=256, random_seed=0, verbose=0,
+        )
+        y = np.array([[0.8, -0.4, 0.3]], dtype="float32")
+        self._check_nested_posterior(SimpleModel(prior=prior, likelihood=nre), y,
+                                     mean_tol=0.3, ratio_band=(0.8, 1.25))
+
     def test_nle_constrained_prior_matches_true_likelihood(self):
         """A constrained (Gamma) prior end to end, judged against NUTS run with
         the TRUE (analytic Gaussian) likelihood on the same model -- isolating
@@ -371,16 +423,6 @@ class TestValidation:
     def test_rejects_non_record_prior(self):
         with pytest.raises(TypeError, match="RecordDistribution"):
             learn_amortized_ratio(jnp.zeros(2), _SIM, num_simulations=8, epochs=1)
-
-    def test_rejects_nested_prior(self):
-        nested = ProductDistribution(
-            name="joint",
-            outer={"a": Normal(loc=0.0, scale=1.0, name="a"),
-                   "b": Normal(loc=0.0, scale=1.0, name="b")},
-            m=Normal(loc=0.0, scale=1.0, name="m"),
-        )
-        with pytest.raises(TypeError, match="nested"):
-            learn_amortized_likelihood(nested, _SIM, num_simulations=8, epochs=1)
 
     def test_dequantize_rejects_counts_at_float32_cell_limit(self):
         """dequantize=True enforces the documented 2**23 bound on the simulated

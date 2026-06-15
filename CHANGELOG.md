@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Amortized SBI learners accept nested priors (#262).**
+  `learn_amortized_posterior` / `learn_amortized_likelihood` /
+  `learn_amortized_ratio` now train on nested `ProductDistribution` priors,
+  iterating the prior's numeric leaves; for NPE, per-leaf bijectors run at each
+  leaf's native event shape, and posterior draws come back under their nested
+  leaf names. Previously a nested prior was rejected up front.
+
 - **Install docs: a "New to Python?" two-route fork.** The README and docs
   landing now split installation into a newcomer path (uv manages Python and
   the environment — no prior Python needed) and an experienced-user pip path,

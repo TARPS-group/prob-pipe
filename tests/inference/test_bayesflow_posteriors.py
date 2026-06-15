@@ -26,6 +26,7 @@ from probpipe import (
     condition_on,
     learn_amortized_posterior,
 )
+from probpipe.core._record_array import NumericRecordArray
 from probpipe.modeling import GenerativeLikelihood, Likelihood
 
 
@@ -193,6 +194,44 @@ class _PositiveLikelihood(Likelihood, GenerativeLikelihood):
         key = key if key is not None else jax.random.PRNGKey(0)
         mean = jnp.stack([r + m, r - m])
         return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
+
+
+def _nested_prior():
+    """Nested ``ProductDistribution`` (issue #262): a sub-record ``outer`` (a
+    positive leaf ``r`` and a real leaf ``m``) plus a top-level real ``c`` --
+    leaves ``outer/r``, ``outer/m``, ``c``. The ``Gamma`` leaf exercises a
+    per-leaf bijector *under* nesting; ``flatten`` order is ``[r, m, c]``."""
+    return ProductDistribution(
+        name="joint",
+        outer={"r": pp.Gamma(3.0, 1.0, name="r"),
+               "m": Normal(loc=0.0, scale=1.0, name="m")},
+        c=Normal(loc=0.0, scale=1.0, name="c"),
+    )
+
+
+class _NestedLikelihood(Likelihood, GenerativeLikelihood):
+    """Nested params (``outer={r, m}``, ``c``) -> ``y = [r + c, m - c, r - m]`` +
+    small noise. Reads the per-draw record by *nested* name
+    (``params["outer"]["r"]``), locking the structured-record contract under
+    nesting -- a flattened-vector regression would raise here."""
+
+    def log_likelihood(self, params, data):
+        return jnp.array(0.0)
+
+    def generate_data(self, params, num_observations, *, key=None):
+        r, m, c = params["outer"]["r"], params["outer"]["m"], params["c"]
+        key = key if key is not None else jax.random.PRNGKey(0)
+        mean = jnp.stack([r + c, m - c, r - m])
+        return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 3))
+
+
+def _nested_observe(r, m, c, seed):
+    """Observe ``_NestedLikelihood`` at a given (r, m, c) by building the nested
+    per-draw record via ``unflatten`` (flatten order ``[r, m, c]``) -- the same
+    structured object the offline simulator passes the simulator at train time."""
+    rec = NumericRecordArray.unflatten(
+        jnp.array([r, m, c]), template=_nested_prior().record_template, batch_shape=())
+    return _NestedLikelihood().generate_data(rec, 1, key=jax.random.PRNGKey(seed))[0]
 
 
 @pytest.fixture(scope="module")
@@ -473,6 +512,92 @@ class TestBayesFlowMethods:
         # Uncertainty: mean std ratio in [0.8, 1.25] (observed ~1.01-1.03 across seeds).
         assert 0.8 < np.mean(std_ratios) < 1.25
 
+    def test_nested_prior_end_to_end(self):
+        """A nested prior (issue #262) trains and conditions end to end. The
+        simulator receives the structured *nested* record (read by nested name),
+        posterior draws come back under the same nested leaf names, and the
+        constrained leaf ``outer/r`` is mapped back through its per-leaf bijector
+        so every draw lands in the positive support. NPE no longer rejects nested
+        priors -- it lifts them via per-leaf bijectors and adapter keying."""
+        model = learn_amortized_posterior(
+            _nested_prior(), _NestedLikelihood(), method="npe",
+            num_simulations=3000, epochs=8, batch_size=256,
+            num_results=400, random_seed=0, verbose=0,
+        )
+        draws = condition_on(model, _nested_observe(2.0, -0.5, 0.4, seed=7)).draws()
+        r = np.asarray(draws["outer/r"]).reshape(-1)
+        m = np.asarray(draws["outer/m"]).reshape(-1)
+        c = np.asarray(draws["c"]).reshape(-1)
+        assert r.shape == (400,) and m.shape == (400,) and c.shape == (400,)
+        assert np.isfinite(r).all() and np.isfinite(m).all() and np.isfinite(c).all()
+        assert (r > 0).all()        # per-leaf forward bijector (Exp) under nesting
+        # Amortized response: the posterior mean of `c` tracks the observation.
+        mean_c_hi = float(np.mean(np.asarray(
+            condition_on(model, _nested_observe(2.0, 0.0, 1.0, 2)).draws()["c"])))
+        mean_c_lo = float(np.mean(np.asarray(
+            condition_on(model, _nested_observe(2.0, 0.0, -1.0, 3)).draws()["c"])))
+        assert mean_c_hi > mean_c_lo
+
+    def test_nested_prior_calibration_against_conjugate(self):
+        """Decisive correctness check for the nested lift (issue #262): against a
+        conjugate Gaussian with an analytic posterior, each *nested* leaf's
+        posterior mean and spread match the analytic values. The leaves round-trip
+        in flatten order (``outer/a``, ``outer/b``, ``m``); a mis-ordered column or
+        a mis-keyed per-leaf bijector would land a leaf's mass on the wrong
+        coordinate and fail here."""
+        prior = ProductDistribution(
+            name="joint",
+            outer={"a": Normal(loc=0.0, scale=1.0, name="a"),
+                   "b": Normal(loc=0.0, scale=1.0, name="b")},
+            m=Normal(loc=0.0, scale=1.0, name="m"),
+        )
+        model = learn_amortized_posterior(
+            prior, _ConjugateGaussianLikelihood(), method="npe",
+            num_simulations=5000, epochs=40, batch_size=256,
+            num_results=4000, random_seed=0, verbose=0,
+        )
+        s2 = _CONJ_SIGMA**2
+        post_std = (s2 / (1 + s2)) ** 0.5
+        sim = _ConjugateGaussianLikelihood()
+        leaves = ("outer/a", "outer/b", "m")
+        mean_errs, std_ratios = [], []
+        for i in range(6):
+            theta = jax.random.normal(jax.random.PRNGKey(100 + i), (3,))
+            obs = sim.generate_data(theta, 1, key=jax.random.PRNGKey(900 + i))[0]
+            draws = condition_on(model, obs).draws()
+            for j, leaf in enumerate(leaves):
+                x = np.asarray(draws[leaf]).reshape(-1)
+                analytic_mean = float(obs[j]) / (1 + s2)
+                mean_errs.append(abs(float(x.mean()) - analytic_mean))
+                std_ratios.append(float(x.std()) / post_std)
+        # Same margins as the flat conjugate test (seed-reproducible; absorbs drift).
+        assert np.mean(mean_errs) < 0.3 * post_std
+        assert 0.8 < np.mean(std_ratios) < 1.25
+
+    def test_nested_wishart_matrix_leaf(self):
+        """A matrix-valued constrained leaf (Wishart, positive-definite) nested
+        under ``outer``: the per-leaf inverse bijector runs at the leaf's native
+        (n, n) event shape under nesting (a flat layout would crash the
+        CholeskyOuterProduct chain), and the forward map at sample time returns
+        SPD draws under the nested leaf name ``outer/cov`` -- the nested analogue
+        of test_wishart_matrix_prior_round_trip."""
+        prior = ProductDistribution(
+            name="joint",
+            outer={"cov": pp.Wishart(df=4.0, scale=jnp.eye(2), name="cov"),
+                   "m": Normal(loc=0.0, scale=1.0, name="m")},
+            c=Normal(loc=0.0, scale=1.0, name="c"),
+        )
+        model = learn_amortized_posterior(
+            prior, _ConjugateGaussianLikelihood(), method="fmpe",
+            num_simulations=600, epochs=2, batch_size=256,
+            num_results=200, random_seed=0, verbose=0,
+        )
+        obs = jnp.array([1.5, 0.3, 0.3, 1.2, 0.5, 0.0])  # flat (cov 2x2, m, c)
+        cov = np.asarray(condition_on(model, obs).draws()["outer/cov"]).reshape(-1, 2, 2)
+        assert np.isfinite(cov).all()
+        np.testing.assert_allclose(cov, np.swapaxes(cov, -1, -2), atol=1e-5)  # symmetric
+        assert np.linalg.eigvalsh(cov).min() > 0  # positive definite
+
     def test_simulator_receives_named_record(self):
         """generate_data receives the prior's structured per-draw sample (named
         fields), per the GenerativeLikelihood contract -- the simulator uses
@@ -665,18 +790,6 @@ class TestBayesFlowValidation:
         kwargs = {"num_simulations": 8, "epochs": 1, **override}
         with pytest.raises(TypeError, match="must be an integer"):
             learn_amortized_posterior(_prior(), _ToyLikelihood(), **kwargs)
-
-    def test_rejects_nested_prior(self):
-        """A nested prior (dict components) is rejected up front: the per-field
-        bijector and adapter machinery is flat."""
-        nested = ProductDistribution(
-            name="joint",
-            outer={"a": Normal(loc=0.0, scale=1.0, name="a"),
-                   "b": Normal(loc=0.0, scale=1.0, name="b")},
-            m=Normal(loc=0.0, scale=1.0, name="m"),
-        )
-        with pytest.raises(TypeError, match="nested"):
-            learn_amortized_posterior(nested, _ToyLikelihood(), num_simulations=8, epochs=1)
 
     def test_rejects_discrete_prior(self):
         """A discrete prior field has no smooth bijector to R^d and is rejected up
