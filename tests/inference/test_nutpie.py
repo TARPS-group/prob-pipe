@@ -5,21 +5,20 @@ be installed.  Helper / error-path tests that don't require a compiled
 model are isolated in ``TestHelpers``.
 """
 
-import sys
+from unittest.mock import MagicMock, patch
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from unittest.mock import MagicMock, patch
 
 nutpie = pytest.importorskip("nutpie")
 
-from probpipe.inference._nutpie import (
+from probpipe.inference import ApproximateDistribution  # noqa: E402
+from probpipe.inference._nutpie import (  # noqa: E402
     _compile_for_nutpie,
     _extract_chains,
     condition_on_nutpie,
 )
-from probpipe.inference import ApproximateDistribution
-
 
 # ---------------------------------------------------------------------------
 # Helpers (no model compilation needed)
@@ -31,16 +30,42 @@ class TestCompileForNutpie:
     which nutpie function is called, not that it produces a runnable model."""
 
     def test_bridgestan_path(self):
-        """Models with _bridgestan_model use nutpie.compile_stan_model."""
+        """Stan targets use nutpie.compile_stan_model, with the conditioning
+        data merged on top of the construction-time data (``_stan_data``)."""
         model = MagicMock()
+        model._stan_data = {"N": 10, "x": [1, 2, 3]}
         model._bridgestan_model.return_value = "bs_model"
         with patch.object(nutpie, "compile_stan_model",
                           return_value="compiled") as compile_stan:
-            compiled, pymc_build = _compile_for_nutpie(model, data={"N": 10})
+            compiled, pymc_build = _compile_for_nutpie(model, data={"y": [4, 5, 6]})
         compile_stan.assert_called_once_with("bs_model")
-        model._bridgestan_model.assert_called_once_with(data={"N": 10})
+        # Construction data (N, x) is preserved, not dropped for the observed y.
+        model._bridgestan_model.assert_called_once_with(
+            data={"N": 10, "x": [1, 2, 3], "y": [4, 5, 6]}
+        )
         assert compiled == "compiled"
         assert pymc_build is None  # Stan target — no PyMC build to thread
+
+    def test_bridgestan_observed_overrides_construction_data(self):
+        """A conditioning value wins over a construction-time value of the
+        same name (matches the CmdStan method's merge order)."""
+        model = MagicMock()
+        model._stan_data = {"N": 10, "y": [0.0, 0.0]}
+        model._bridgestan_model.return_value = "bs_model"
+        with patch.object(nutpie, "compile_stan_model", return_value="compiled"):
+            _compile_for_nutpie(model, data={"y": [1.0, 2.0]})
+        model._bridgestan_model.assert_called_once_with(data={"N": 10, "y": [1.0, 2.0]})
+
+    def test_bridgestan_no_observed_reuses_cached_model(self):
+        """With no conditioning data, ``_bridgestan_model`` is called with
+        ``data=None`` so the model built at construction is reused, not
+        rebuilt."""
+        model = MagicMock()
+        model._stan_data = {"N": 10}
+        model._bridgestan_model.return_value = "bs_model"
+        with patch.object(nutpie, "compile_stan_model", return_value="compiled"):
+            _compile_for_nutpie(model, data=None)
+        model._bridgestan_model.assert_called_once_with(data=None)
 
     def test_pymc_path(self):
         """Models with _pymc_model use nutpie.compile_pymc_model and
@@ -66,9 +91,11 @@ class TestImportError:
     ImportError.  This path is exercised by temporarily hiding nutpie."""
 
     def test_import_error_message(self):
-        with patch.dict("sys.modules", {"nutpie": None}):
-            with pytest.raises(ImportError, match="pip install nutpie"):
-                condition_on_nutpie._func(MagicMock(), num_results=10)
+        with (
+            patch.dict("sys.modules", {"nutpie": None}),
+            pytest.raises(ImportError, match="pip install nutpie"),
+        ):
+            condition_on_nutpie._func(MagicMock(), num_results=10)
 
 
 # ---------------------------------------------------------------------------
@@ -84,8 +111,10 @@ class TestExtractChains:
         mock_trace = MagicMock()
         mu_vals = np.random.randn(2, 10)
         sigma_vals = np.random.randn(2, 10)
-        mu_var = MagicMock(); mu_var.values = mu_vals
-        sigma_var = MagicMock(); sigma_var.values = sigma_vals
+        mu_var = MagicMock()
+        mu_var.values = mu_vals
+        sigma_var = MagicMock()
+        sigma_var.values = sigma_vals
 
         mock_posterior = MagicMock()
         mock_posterior.data_vars = ["mu", "sigma"]
@@ -105,7 +134,8 @@ class TestExtractChains:
     def test_multidim_params(self):
         mock_trace = MagicMock()
         beta_vals = np.random.randn(1, 5, 3)
-        beta_var = MagicMock(); beta_var.values = beta_vals
+        beta_var = MagicMock()
+        beta_var.values = beta_vals
 
         mock_posterior = MagicMock()
         mock_posterior.data_vars = ["beta"]
@@ -129,10 +159,15 @@ class TestExtractChains:
         field order (declaration order), silently mislabeling draws.
         """
         mock_trace = MagicMock()
-        a = np.full((1, 4), 1.0); m = np.full((1, 4), 2.0); z = np.full((1, 4), 3.0)
-        va = MagicMock(); va.values = a
-        vm = MagicMock(); vm.values = m
-        vz = MagicMock(); vz.values = z
+        a = np.full((1, 4), 1.0)
+        m = np.full((1, 4), 2.0)
+        z = np.full((1, 4), 3.0)
+        va = MagicMock()
+        va.values = a
+        vm = MagicMock()
+        vm.values = m
+        vz = MagicMock()
+        vz.values = z
         mock_posterior = MagicMock()
         mock_posterior.data_vars = ["alpha", "mu", "zeta"]  # nutpie's sorted order
         mock_posterior.__getitem__ = (
@@ -146,6 +181,89 @@ class TestExtractChains:
         assert names == ["zeta", "alpha", "mu"]
         # Columns concatenated in keep_names order: zeta=3, alpha=1, mu=2.
         np.testing.assert_array_equal(chains[0][0], [3.0, 1.0, 2.0])
+
+
+# ---------------------------------------------------------------------------
+# Real integration: nutpie + StanModel (requires a BridgeStan toolchain)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def _stan_toolchain(tmp_path_factory):
+    """Skip the Stan integration test unless BridgeStan can compile here.
+
+    Compiling a trivial, data-free probe separates a missing C++ toolchain
+    (a legitimate skip) from a real construction failure (a bug that must
+    surface), mirroring tests/modeling/test_stan_model.py.
+    """
+    bridgestan = pytest.importorskip("bridgestan")
+    probe = tmp_path_factory.mktemp("stan_probe") / "probe.stan"
+    probe.write_text("parameters { real x; } model { x ~ normal(0, 1); }")
+    try:
+        bridgestan.StanModel(str(probe))
+    except Exception as exc:
+        pytest.skip(f"Stan compilation unavailable: {exc}")
+
+
+class TestNutpieStanIntegration:
+    """nutpie sampling of a StanModel preserves construction-time data."""
+
+    def test_construction_data_survives_conditioning(
+        self, _stan_toolchain, tmp_path_factory
+    ):
+        """A StanModel built with fixed data (N, x) samples via nutpie when
+        conditioned on y.  Without merging the construction data, the rebuilt
+        BridgeStan model would lack N and x and fail to instantiate — so
+        reaching a finite posterior pulled toward the data-generating beta is
+        the regression signal.  nutpie's inference accuracy itself is covered
+        by the PyMC integration tests below.
+        """
+        from probpipe.modeling import StanModel
+
+        stan_file = tmp_path_factory.mktemp("stan_models") / "linreg.stan"
+        stan_file.write_text(
+            """
+            data {
+              int<lower=0> N;
+              vector[N] x;
+              vector[N] y;
+            }
+            parameters {
+              real alpha;
+              real beta;
+            }
+            model {
+              alpha ~ normal(0, 1);
+              beta ~ normal(0, 1);
+              y ~ normal(alpha + beta * x, 1);
+            }
+            """
+        )
+        N = 20
+        rng = np.random.default_rng(0)
+        x = rng.normal(size=N)
+        y = 0.5 + 1.5 * x + rng.normal(size=N)
+        model = StanModel(
+            str(stan_file),
+            data={"N": N, "x": x.tolist(), "y": y.tolist()},
+            name="linreg",
+        )
+
+        result = condition_on_nutpie._func(
+            model, data={"y": y.tolist()},
+            num_results=200, num_warmup=200, num_chains=2, random_seed=0,
+        )
+        assert isinstance(result, ApproximateDistribution)
+        assert result.num_chains == 2
+        assert result.algorithm == "nutpie_nuts"
+        post = result.inference_data.posterior
+        assert "alpha" in post and "beta" in post
+        beta_mean = float(np.asarray(post["beta"]).mean())
+        assert np.isfinite(beta_mean)
+        # Data uses beta = 1.5; the posterior should be pulled toward it and
+        # away from the N(0, 1) prior mean of 0 (a tolerance-free directional
+        # check, since this run can't be re-seeded here to measure a bound).
+        assert abs(beta_mean - 1.5) < abs(beta_mean - 0.0)
 
 
 # ---------------------------------------------------------------------------

@@ -3,14 +3,14 @@
 Uses mocks to test all code paths without requiring a compiled Stan model.
 """
 
+from unittest.mock import MagicMock, patch
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
 
 from probpipe import SupportsLogProb
 from probpipe.modeling._stan import StanModel, _UnconstrainedStanView, _param_blocks
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -160,10 +160,12 @@ class TestStanModelMocked:
 
     def test_bridgestan_model_with_data(self, model):
         mock_bs = MagicMock()
-        mock_bs.StanModel.from_stan_file.return_value = MagicMock()
         with patch.dict("sys.modules", {"bridgestan": mock_bs}):
             result = model._bridgestan_model(data={"N": 10})
-            mock_bs.StanModel.from_stan_file.assert_called_once_with("test.stan", data={"N": 10})
+        # The dict is handed straight to BridgeStan's constructor, which
+        # serializes it (via stanio) — we don't pre-encode it ourselves.
+        mock_bs.StanModel.assert_called_once_with("test.stan", data={"N": 10})
+        assert result is mock_bs.StanModel.return_value
 
 
 # ---------------------------------------------------------------------------
@@ -344,9 +346,11 @@ class TestCmdStanInferenceMethod:
     def test_import_cmdstanpy_missing(self):
         from probpipe.inference._cmdstan_method import _import_cmdstanpy
 
-        with patch.dict("sys.modules", {"cmdstanpy": None}):
-            with pytest.raises(ImportError, match="pip install probpipe"):
-                _import_cmdstanpy()
+        with (
+            patch.dict("sys.modules", {"cmdstanpy": None}),
+            pytest.raises(ImportError, match="pip install probpipe"),
+        ):
+            _import_cmdstanpy()
 
     def test_import_cmdstanpy_present(self):
         from probpipe.inference._cmdstan_method import _import_cmdstanpy
@@ -365,62 +369,102 @@ class TestCmdStanInferenceMethod:
 class TestStanModelImportError:
     def test_missing_bridgestan(self):
         """StanModel raises ImportError with install instructions when bridgestan missing."""
-        with patch.dict("sys.modules", {"bridgestan": None}):
-            with pytest.raises(ImportError, match="pip install bridgestan"):
-                StanModel("test.stan")
+        with (
+            patch.dict("sys.modules", {"bridgestan": None}),
+            pytest.raises(ImportError, match="pip install bridgestan"),
+        ):
+            StanModel("test.stan")
 
 
 # ---------------------------------------------------------------------------
 # Real BridgeStan integration (requires a compiled Stan program)
+#
+# These exercise the path the mocks above cannot: the real BridgeStan
+# constructor signature and its float64-ndarray boundary.  The gate lives in
+# the fixtures (not at module scope) so the mocked tests above still run when
+# BridgeStan is absent.
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
-def tmp_stan_model(tmp_path_factory):
-    """Compile a trivial Stan program once per module for integration tests.
+def _stan_toolchain(tmp_path_factory):
+    """Skip the integration tests unless BridgeStan can compile here.
 
-    The model is Normal(mu, 1) with a unit-variance prior on mu.  This
-    gives an analytically tractable log_density for verifying StanModel
-    behaviour against first principles.  ``bridgestan`` is required only for
-    these integration tests; the mock-based tests above run without it.
+    Compiling a trivial, data-free probe separates "is the C++ toolchain
+    present?" (a legitimate skip) from "does StanModel construct correctly?"
+    (a regression that must fail loudly, not skip) — so the model fixture
+    below can construct without a try/except that would swallow real bugs.
     """
-    _bs = pytest.importorskip("bridgestan")
-    tmp_dir = tmp_path_factory.mktemp("stan_models")
-    stan_file = tmp_dir / "normal_mean.stan"
-    stan_file.write_text(
-        """
-        parameters { real mu; }
-        model { mu ~ normal(0, 1); }
-        """
-    )
+    bridgestan = pytest.importorskip("bridgestan")
+    probe = tmp_path_factory.mktemp("stan_probe") / "probe.stan"
+    probe.write_text("parameters { real x; } model { x ~ normal(0, 1); }")
     try:
-        bs_model = _bs.StanModel(str(stan_file))
+        bridgestan.StanModel(str(probe))
     except Exception as exc:
         pytest.skip(f"Stan compilation unavailable: {exc}")
-    model = object.__new__(StanModel)
-    model._stan_file = str(stan_file)
-    model._stan_data = None
-    model._name = "normal_mean"
-    model._bs_model = bs_model
-    model._num_params = 1
-    return model
+
+
+@pytest.fixture(scope="module")
+def tmp_stan_model(_stan_toolchain, tmp_path_factory):
+    """A real StanModel for ``y ~ Normal(mu, 1)`` with a unit prior on ``mu``,
+    built through the public constructor.
+
+    Construction therefore exercises the BridgeStan boundary end to end —
+    ``.stan`` compilation plus serialization of the ``data`` dict.  The
+    toolchain is known good from ``_stan_toolchain``, so any failure here is a
+    real bug, not a missing compiler.  The model is conjugate, so its
+    log-density is known in closed form.
+    """
+    stan_file = tmp_path_factory.mktemp("stan_models") / "normal_mean.stan"
+    stan_file.write_text(
+        """
+        data {
+          int<lower=0> N;
+          vector[N] y;
+        }
+        parameters { real mu; }
+        model {
+          mu ~ normal(0, 1);
+          y ~ normal(mu, 1);
+        }
+        """
+    )
+    return StanModel(str(stan_file), data={"N": 3, "y": [1.0, 2.0, 3.0]},
+                     name="normal_mean")
 
 
 class TestStanModelIntegration:
-    """Minimal real-backend checks against a compiled Stan program."""
+    """Real-backend checks against a compiled Stan program."""
 
-    def test_event_shape(self, tmp_stan_model):
+    # Observations baked into tmp_stan_model's data.
+    _Y = np.array([1.0, 2.0, 3.0])
+
+    def _expected_log_density(self, mu):
+        # Stan accumulates target = log N(mu; 0, 1) + sum_i log N(y_i; mu, 1)
+        # and drops every normalizing constant (propto), so the -0.5*log(2*pi)
+        # terms vanish and mu (an unconstrained real) carries no Jacobian.
+        return -0.5 * mu**2 - 0.5 * float(np.sum((self._Y - mu) ** 2))
+
+    def test_construct_exposes_parameters(self, tmp_stan_model):
+        assert isinstance(tmp_stan_model, StanModel)
         assert tmp_stan_model.event_shape == (1,)
+        assert tmp_stan_model.parameter_names == ("mu",)
 
     def test_log_prob_matches_analytical(self, tmp_stan_model):
-        """Stan's log_density for mu ~ N(0, 1) equals -0.5 * mu^2 + const."""
+        """``_log_prob`` matches the closed-form log-density.
+
+        A JAX array is passed in, so this also covers the JAX -> float64
+        ndarray conversion required at ``param_unconstrain`` / ``log_density``.
+        """
         for mu in [-1.0, 0.0, 0.5, 2.0]:
             lp = float(tmp_stan_model._log_prob(jnp.asarray([mu])))
-            # Stan drops the normalizing constant (log(2*pi)/2), so lp = -mu^2/2
-            np.testing.assert_allclose(lp, -0.5 * mu * mu, atol=1e-5)
+            np.testing.assert_allclose(lp, self._expected_log_density(mu), atol=1e-5)
 
-    def test_constrain_identity_for_real(self, tmp_stan_model):
-        """For unconstrained real parameters, constrain is the identity."""
-        x = np.array([1.23])
-        constrained = tmp_stan_model._bs_model.param_constrain(x)
-        np.testing.assert_allclose(constrained, x)
+    def test_param_transforms_round_trip(self, tmp_stan_model):
+        """constrain/unconstrain are identity for an unconstrained real and
+        survive the JAX-array boundary in both directions."""
+        x = jnp.asarray([1.23])
+        constrained = np.asarray(tmp_stan_model.param_constrain(x))
+        np.testing.assert_allclose(constrained, [1.23], atol=1e-6)
+        round_trip = tmp_stan_model.param_constrain(tmp_stan_model.param_unconstrain(x))
+        np.testing.assert_allclose(np.asarray(round_trip), [1.23], atol=1e-6)
