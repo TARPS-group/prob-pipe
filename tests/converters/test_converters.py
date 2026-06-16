@@ -100,7 +100,8 @@ class TestProbPipeConverter:
         result = converter_registry.convert(g, Normal)
         assert result.source is not None
         assert result.source.operation == "from_distribution"
-        assert g in result.source.parents
+        assert len(result.source.parents) == 1
+        assert result.source.parents[0].name == "prior"
 
     def test_approximate_flag(self):
         g = Gamma(concentration=3.0, rate=1.0, name="g")
@@ -604,7 +605,8 @@ class TestBootstrapMetadata:
         result = converter_registry.convert(g, Normal)
         assert result.source is not None
         assert result.source.operation == "from_distribution"
-        assert g in result.source.parents
+        assert len(result.source.parents) == 1
+        assert result.source.parents[0].name == "g"
 
 
 class TestEdgeCases:
@@ -788,7 +790,8 @@ class TestProtocolConversion:
         emp = RecordEmpiricalDistribution(samples, name="posterior")
         result = converter_registry.convert(emp, SupportsLogProb)
         assert result.source is not None
-        assert emp in result.source.parents
+        assert len(result.source.parents) == 1
+        assert result.source.parents[0].name == "posterior"
 
 
 # ---------------------------------------------------------------------------
