@@ -199,6 +199,12 @@ class TestAuxiliaryDiagnosticsAccessor:
         assert dist.auxiliary is dist._auxiliary
         assert dist.diagnostics is None
 
+    def test_diagnostics_none_when_auxiliary_has_no_children_attr(self):
+        dist = Normal(loc=0.0, scale=1.0, name="x")
+        dist._auxiliary = object()
+
+        assert dist.diagnostics is None
+
     def test_diagnostics_returns_view_for_diagnostics_group(self):
         import xarray as xr
         from probpipe.diagnostics.views import DiagnosticsView

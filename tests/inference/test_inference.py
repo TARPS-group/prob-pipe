@@ -107,6 +107,30 @@ class TestApproximateDistribution:
 
         assert dist.inference_data is legacy_aux
 
+    def test_warmup_samples_none_when_inference_data_has_no_children_attr(self):
+        dist = ApproximateDistribution(
+            [jax.random.normal(jax.random.PRNGKey(0), (5, 2))],
+            name="x",
+        )
+        dist._auxiliary = object()
+
+        assert dist.warmup_samples is None
+
+    def test_make_posterior_accepts_auxiliary_dataset_nodes(self):
+        import xarray as xr
+
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        posterior = make_posterior(
+            [chain],
+            parents=(prior,),
+            algorithm="test",
+            auxiliary={"posterior": xr.Dataset()},
+        )
+
+        assert posterior.inference_data is not None
+        assert "posterior" in posterior.inference_data.children
+
     def test_warmup_from_auxiliary(self, two_chain_dist):
         warmup = two_chain_dist.warmup_samples
         assert warmup is not None
