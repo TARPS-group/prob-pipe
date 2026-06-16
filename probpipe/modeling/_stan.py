@@ -7,12 +7,15 @@ Inference is handled by registered methods in ``probpipe.inference``.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Sequence
+from functools import cached_property
+from typing import Any, NamedTuple
 
 import jax.numpy as jnp
 
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb
+from ..core.record import NumericRecordTemplate
 from ..custom_types import Array, ArrayLike
 from ..inference._approximate_distribution import ApproximateDistribution
 from ._base import ProbabilisticModel
@@ -22,22 +25,86 @@ logger = logging.getLogger(__name__)
 __all__ = ["StanModel"]
 
 
-def _pack_parameters_value(owner: str, field_kwargs: dict[str, Any]) -> Array:
-    """Shared ``_pack_value`` for the Stan keyword form (Tier 1).
+class _StanBlock(NamedTuple):
+    """One Stan parameter block recovered from BridgeStan's flattened names."""
 
-    ``StanModel._log_prob`` (and the unconstrained view) consume a single
-    flat parameter vector, so the keyword form takes one ``parameters=``
-    argument rather than per-Stan-parameter fields. (Tier 2 — issue #228 —
-    will expose the individual Stan parameters as fields built from
-    BridgeStan's ``param_unc_names()``.) *owner* names the class in the
-    error message.
+    name: str
+    shape: tuple[int, ...]      # () for a scalar parameter
+    # advanced-index arrays mapping a ``shape``-shaped array onto the block's
+    # flat slice in BridgeStan's order; () for a scalar.
+    gather: tuple[Array, ...]
+
+
+def _param_blocks(flat_names: Sequence[str]) -> tuple[_StanBlock, ...]:
+    """Group BridgeStan's dot-flattened parameter names into typed blocks.
+
+    BridgeStan reports one flattened name per scalar (``mu``, ``theta.1``,
+    ``L.1.1`` — dot-separated, 1-indexed), with each block's scalars emitted
+    consecutively. This recovers each block's name, its reconstructed
+    multidimensional ``shape`` (``()`` for a scalar), and the advanced-index
+    ``gather`` that maps a ``shape``-shaped array onto the block's slice of the
+    flat parameter vector in BridgeStan's exact order. Placing each scalar by
+    its parsed index makes the round-trip correct for matrices (column-major)
+    and arrays alike, with no assumption about the flattening convention.
     """
-    if set(field_kwargs) != {"parameters"}:
-        raise TypeError(
-            f"{owner} keyword form takes a single 'parameters=' flat array; "
-            f"got {sorted(field_kwargs)}."
+    blocks: list[_StanBlock] = []
+    i, n = 0, len(flat_names)
+    while i < n:
+        block = flat_names[i].split(".", 1)[0]
+        idx_tuples: list[tuple[int, ...]] = []
+        while i < n and flat_names[i].split(".", 1)[0] == block:
+            idx_tuples.append(
+                tuple(int(x) - 1 for x in flat_names[i].split(".")[1:])
+            )
+            i += 1
+        if idx_tuples == [()]:
+            blocks.append(_StanBlock(block, (), ()))
+            continue
+        ndim = len(idx_tuples[0])
+        shape = tuple(max(t[d] for t in idx_tuples) + 1 for d in range(ndim))
+        gather = tuple(
+            jnp.asarray([t[d] for t in idx_tuples]) for d in range(ndim)
         )
-    return field_kwargs["parameters"]
+        blocks.append(_StanBlock(block, shape, gather))
+    return tuple(blocks)
+
+
+def _pack_block_params(
+    owner: str,
+    blocks: tuple[_StanBlock, ...],
+    field_kwargs: dict[str, Any],
+) -> Array:
+    """Assemble the flat Stan parameter vector from per-block keyword values.
+
+    Each value must match its block's declared shape; values are scattered into
+    BridgeStan's flat order via each block's ``gather`` and concatenated. The
+    flat result is exactly what ``_log_prob`` consumes (Tier 2, issue #228); the
+    flat array can also be passed positionally instead.
+    """
+    expected = [b.name for b in blocks]
+    expected_set = set(expected)
+    missing = [name for name in expected if name not in field_kwargs]
+    extra = [k for k in field_kwargs if k not in expected_set]
+    if missing or extra:
+        detail = []
+        if missing:
+            detail.append(f"missing {missing}")
+        if extra:
+            detail.append(f"unexpected {extra}")
+        raise TypeError(
+            f"{owner}: the keyword form expects the Stan parameter blocks "
+            f"{tuple(expected)} — {'; '.join(detail)}."
+        )
+    out: list[Array] = []
+    for b in blocks:
+        arr = jnp.asarray(field_kwargs[b.name])
+        if tuple(arr.shape) != b.shape:
+            raise TypeError(
+                f"{owner}: parameter {b.name!r} expects shape {b.shape}, "
+                f"got {tuple(arr.shape)}."
+            )
+        out.append(jnp.reshape(arr, (1,)) if b.shape == () else arr[b.gather])
+    return jnp.concatenate(out) if out else jnp.zeros((0,))
 
 
 class StanModel(ProbabilisticModel, SupportsLogProb):
@@ -102,12 +169,22 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
 
     # -- Named components interface ------------------------------------------
 
+    @cached_property
+    def _blocks(self) -> tuple[_StanBlock, ...]:
+        """Constrained-space parameter blocks (Tier 2), from BridgeStan."""
+        return _param_blocks(self._bs_model.param_names())
+
+    @cached_property
+    def record_template(self) -> NumericRecordTemplate:
+        """One field per Stan parameter block, shaped from BridgeStan's names."""
+        return NumericRecordTemplate({b.name: b.shape for b in self._blocks})
+
     @property
     def fields(self) -> tuple[str, ...]:
-        return self.parameter_names
+        return self.record_template.fields
 
     def __getitem__(self, key: str) -> Any:
-        if key in self.parameter_names:
+        if key in self.fields:
             return key  # placeholder — Stan doesn't expose sub-distributions
         raise KeyError(f"Unknown component: {key!r}")
 
@@ -115,14 +192,20 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
 
     @property
     def parameter_names(self) -> tuple[str, ...]:
+        # Per-scalar flattened names (the Stan / CmdStan convention) — distinct
+        # from ``fields``, which are the per-block names used by the keyword form.
         return tuple(self._bs_model.param_names())
 
     # -- SupportsLogProb interface ------------------------------------------
 
     def _pack_value(self, **field_kwargs: Any) -> Array:
-        """Keyword form (Tier 1): a single flat constrained ``parameters=``
-        array (see :func:`_pack_parameters_value`)."""
-        return _pack_parameters_value(type(self).__name__, field_kwargs)
+        """Keyword form (Tier 2): per-Stan-parameter blocks in the constrained
+        space, assembled into the flat array ``_log_prob`` consumes (see
+        :func:`_pack_block_params`). A flat array may still be passed
+        positionally."""
+        return _pack_block_params(
+            type(self).__name__, self._blocks, field_kwargs
+        )
 
     def _log_prob(self, value: Any) -> Array:
         """Log-density in the constrained parameter space.
@@ -191,10 +274,27 @@ class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):
     def event_shape(self) -> tuple[int, ...]:
         return self._model.event_shape
 
+    @cached_property
+    def _blocks(self) -> tuple[_StanBlock, ...]:
+        """Unconstrained-space parameter blocks (Tier 2), from BridgeStan."""
+        return _param_blocks(self._model._bs_model.param_unc_names())
+
+    @cached_property
+    def record_template(self) -> NumericRecordTemplate:
+        """One field per unconstrained Stan parameter block."""
+        return NumericRecordTemplate({b.name: b.shape for b in self._blocks})
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        return self.record_template.fields
+
     def _pack_value(self, **field_kwargs: Any) -> Array:
-        """Keyword form (Tier 1): a single flat ``parameters=`` array in the
-        unconstrained space (see :func:`_pack_parameters_value`)."""
-        return _pack_parameters_value(type(self).__name__, field_kwargs)
+        """Keyword form (Tier 2): per-Stan-parameter blocks in the unconstrained
+        space, assembled into the flat array ``_log_prob`` consumes. A flat
+        array may still be passed positionally."""
+        return _pack_block_params(
+            type(self).__name__, self._blocks, field_kwargs
+        )
 
     def _log_prob(self, value: Any) -> Array:
         """Log-density directly in unconstrained space."""

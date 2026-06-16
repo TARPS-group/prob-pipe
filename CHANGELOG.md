@@ -48,11 +48,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-field distribution pass a positional `Record`, for a single-field one
   the bare positional value (mirroring `condition_on`'s `observed`).
 
+- **`StanModel` participates in the `log_prob` keyword form with one field per
+  Stan parameter (#228).** `StanModel` and its unconstrained view gain a
+  `record_template` exposing one field per Stan parameter *block* — e.g.
+  `theta` for `vector[3] theta`, `L` for `matrix[2, 2] L` — with each block's
+  full multidimensional shape reconstructed from BridgeStan's flattened
+  parameter names. The keyword form assembles the flat parameter vector
+  BridgeStan consumes — `log_prob(model, mu=0.0, theta=theta_vec, L=chol)` —
+  placing each scalar by its parsed index so matrices pack in BridgeStan's
+  column-major order; a flat array may still be passed positionally.
+
 ### Changed
 
 - **`SupportsLogProb` / `SupportsUnnormalizedLogProb` are now generic in the
   sample type (#228)** — `SupportsLogProb[T]`. Annotation-level only; runtime
   behavior is unchanged.
+
+- **`StanModel.fields` now returns one name per Stan parameter block (#228)**
+  rather than one per scalar (`vector[3] theta` is the single field `theta`,
+  not `theta.1` / `theta.2` / `theta.3`). BridgeStan's flat, per-scalar names
+  remain available unchanged via `parameter_names`.
 
 - **Amortized SBI learners accept nested priors (#262).**
   `learn_amortized_posterior` / `learn_amortized_likelihood` /

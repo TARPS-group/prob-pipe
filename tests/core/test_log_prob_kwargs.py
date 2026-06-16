@@ -142,27 +142,47 @@ class TestKwargFormSimpleModel:
 
 
 class TestStanViewsPackValue:
-    """StanModel / _UnconstrainedStanView Tier 1: the keyword form takes a
-    single ``parameters=`` flat array.
+    """StanModel / _UnconstrainedStanView Tier 2: the keyword form takes one
+    array per Stan parameter *block* and assembles BridgeStan's flat vector.
 
-    bridgestan is not installed in CI, so ``_pack_value`` is exercised in
-    isolation via ``object.__new__`` (per STYLE_GUIDE §8.4). The method reads
-    no instance state beyond the class name in its error message, so no
-    attribute setup is needed.
+    bridgestan is not installed in CI, so the model is built via
+    ``object.__new__`` with a fake backend supplying the flattened parameter
+    names (per STYLE_GUIDE §8.4). Comprehensive block / shape / error coverage
+    lives in tests/modeling/test_stan_model.py.
     """
 
+    class _FakeBS:
+        def __init__(self, names):
+            self._names = list(names)
+
+        def param_names(self):
+            return self._names
+
+        def param_unc_names(self):
+            return self._names
+
     @pytest.fixture(params=["StanModel", "_UnconstrainedStanView"])
-    def bare_stan(self, request):
+    def stan_view(self, request):
         from probpipe.modeling import _stan
-        return object.__new__(getattr(_stan, request.param))
+        names = ["mu", "theta.1", "theta.2", "theta.3"]
+        base = object.__new__(_stan.StanModel)
+        base._bs_model = self._FakeBS(names)
+        base._name = "m"
+        base._num_params = len(names)
+        if request.param == "StanModel":
+            return base
+        return base.as_unconstrained_distribution()
 
-    def test_pack_value_parameters(self, bare_stan):
-        arr = jnp.array([0.1, 0.2, 0.3])
-        assert jnp.allclose(bare_stan._pack_value(parameters=arr), arr)
+    def test_fields_are_blocks(self, stan_view):
+        assert stan_view.fields == ("mu", "theta")
 
-    def test_pack_value_wrong_kwargs_raises(self, bare_stan):
-        with pytest.raises(TypeError, match="parameters="):
-            bare_stan._pack_value(theta=jnp.array([0.1]))
+    def test_pack_value_assembles_blocks(self, stan_view):
+        flat = stan_view._pack_value(mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]))
+        assert jnp.allclose(flat, jnp.array([0.5, 1.0, 2.0, 3.0]))
+
+    def test_pack_value_wrong_kwargs_raises(self, stan_view):
+        with pytest.raises(TypeError, match="theta"):
+            stan_view._pack_value(mu=0.5)  # missing the theta block
 
 
 class TestKwargErrors:

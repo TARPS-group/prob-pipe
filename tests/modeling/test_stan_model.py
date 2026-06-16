@@ -9,7 +9,7 @@ import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 
 from probpipe import SupportsLogProb
-from probpipe.modeling._stan import StanModel, _UnconstrainedStanView
+from probpipe.modeling._stan import StanModel, _UnconstrainedStanView, _param_blocks
 
 
 # ---------------------------------------------------------------------------
@@ -17,24 +17,31 @@ from probpipe.modeling._stan import StanModel, _UnconstrainedStanView
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_bs_model(num_params=3, param_names=("alpha", "beta", "sigma")):
+def _make_mock_bs_model(
+    num_params=3, param_names=("alpha", "beta", "sigma"), param_unc_names=None,
+):
     """Create a mock BridgeStan model.
 
     constrain(x) = x + 1, unconstrain(x) = x - 1: a genuine inverse pair
-    so the round-trip test can verify value preservation.
+    so the round-trip test can verify value preservation. ``param_unc_names``
+    defaults to ``param_names`` (no constrained/unconstrained difference).
     """
     mock = MagicMock()
     mock.param_unc_num.return_value = num_params
     mock.param_names.return_value = list(param_names)
+    mock.param_unc_names.return_value = list(param_unc_names or param_names)
     mock.log_density.return_value = -5.0
     mock.param_constrain.side_effect = lambda x: np.asarray(x) + 1.0
     mock.param_unconstrain.side_effect = lambda x: np.asarray(x) - 1.0
     return mock
 
 
-def _make_stan_model(num_params=3, param_names=("alpha", "beta", "sigma"), name="test"):
+def _make_stan_model(
+    num_params=3, param_names=("alpha", "beta", "sigma"), name="test",
+    param_unc_names=None,
+):
     """Create a StanModel with a mocked BridgeStan backend."""
-    mock_bs = _make_mock_bs_model(num_params, param_names)
+    mock_bs = _make_mock_bs_model(num_params, param_names, param_unc_names)
     model = object.__new__(StanModel)
     model._stan_file = "test.stan"
     model._stan_data = None
@@ -215,6 +222,101 @@ class TestUnconstrainedStanView:
 
 
 # ---------------------------------------------------------------------------
+# Tier 2: per-Stan-parameter blocks (fields, shapes, keyword _pack_value)
+# ---------------------------------------------------------------------------
+
+
+class TestParamBlocks:
+    """_param_blocks groups BridgeStan's flat, 1-indexed names into shaped
+    blocks. BridgeStan flattens matrices column-major (L.1.1, L.2.1, ...)."""
+
+    def test_all_scalars(self):
+        blocks = _param_blocks(["mu", "sigma"])
+        assert [(b.name, b.shape) for b in blocks] == [("mu", ()), ("sigma", ())]
+
+    def test_vector(self):
+        blocks = _param_blocks(["theta.1", "theta.2", "theta.3"])
+        assert [(b.name, b.shape) for b in blocks] == [("theta", (3,))]
+
+    def test_matrix(self):
+        blocks = _param_blocks(["L.1.1", "L.2.1", "L.1.2", "L.2.2"])
+        assert [(b.name, b.shape) for b in blocks] == [("L", (2, 2))]
+
+    def test_mixed_blocks(self):
+        names = ["mu", "theta.1", "theta.2", "theta.3",
+                 "L.1.1", "L.2.1", "L.1.2", "L.2.2"]
+        assert [(b.name, b.shape) for b in _param_blocks(names)] == [
+            ("mu", ()), ("theta", (3,)), ("L", (2, 2))]
+
+    def test_empty(self):
+        assert _param_blocks([]) == ()
+
+
+class TestStanModelTier2:
+    """StanModel and its view expose one field per Stan parameter *block*,
+    while ``parameter_names`` keeps BridgeStan's flat per-scalar names."""
+
+    @pytest.fixture
+    def model(self):
+        names = ["mu", "theta.1", "theta.2", "theta.3",
+                 "L.1.1", "L.2.1", "L.1.2", "L.2.2"]
+        return _make_stan_model(num_params=len(names), param_names=names)
+
+    def test_fields_are_blocks(self, model):
+        assert model.fields == ("mu", "theta", "L")
+
+    def test_parameter_names_stay_per_scalar(self, model):
+        assert model.parameter_names == (
+            "mu", "theta.1", "theta.2", "theta.3",
+            "L.1.1", "L.2.1", "L.1.2", "L.2.2")
+
+    def test_record_template_shapes(self, model):
+        assert {f: model.record_template[f] for f in model.fields} == {
+            "mu": (), "theta": (3,), "L": (2, 2)}
+
+    def test_getitem_uses_block_fields(self, model):
+        assert model["theta"] == "theta"
+        with pytest.raises(KeyError, match="Unknown component"):
+            model["theta.1"]  # per-scalar names are no longer components
+
+    def test_pack_value_assembles_column_major(self, model):
+        flat = model._pack_value(
+            mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]),
+            L=jnp.array([[10.0, 30.0], [20.0, 40.0]]))
+        # L is packed column-major to match BridgeStan: [10, 20, 30, 40].
+        assert jnp.allclose(
+            flat, jnp.array([0.5, 1.0, 2.0, 3.0, 10.0, 20.0, 30.0, 40.0]))
+
+    def test_pack_value_missing_block_raises(self, model):
+        with pytest.raises(TypeError, match="missing"):
+            model._pack_value(mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]))
+
+    def test_pack_value_unexpected_block_raises(self, model):
+        with pytest.raises(TypeError, match="unexpected"):
+            model._pack_value(mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]),
+                              L=jnp.zeros((2, 2)), zzz=1.0)
+
+    def test_pack_value_wrong_shape_raises(self, model):
+        with pytest.raises(TypeError, match=r"shape \(2, 2\)"):
+            model._pack_value(mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]),
+                              L=jnp.array([1.0, 2.0, 3.0, 4.0]))  # flat, not (2,2)
+
+    def test_view_uses_unconstrained_blocks(self):
+        # simplex[3] p: constrained names p.1..p.3 (size 3); the unconstrained
+        # parametrization drops one degree of freedom -> p.1, p.2 (size 2).
+        model = _make_stan_model(
+            num_params=3, param_names=["mu", "p.1", "p.2", "p.3"],
+            param_unc_names=["mu", "p.1", "p.2"])
+        assert model.fields == ("mu", "p")
+        assert model.record_template["p"] == (3,)
+        view = model.as_unconstrained_distribution()
+        assert view.fields == ("mu", "p")
+        assert view.record_template["p"] == (2,)
+        flat = view._pack_value(mu=0.5, p=jnp.array([0.1, 0.2]))
+        assert jnp.allclose(flat, jnp.array([0.5, 0.1, 0.2]))
+
+
+# ---------------------------------------------------------------------------
 # StanModel conditioning via registry
 # ---------------------------------------------------------------------------
 
@@ -273,17 +375,16 @@ class TestStanModelImportError:
 # ---------------------------------------------------------------------------
 
 
-_bs = pytest.importorskip("bridgestan")
-
-
 @pytest.fixture(scope="module")
 def tmp_stan_model(tmp_path_factory):
     """Compile a trivial Stan program once per module for integration tests.
 
     The model is Normal(mu, 1) with a unit-variance prior on mu.  This
     gives an analytically tractable log_density for verifying StanModel
-    behaviour against first principles.
+    behaviour against first principles.  ``bridgestan`` is required only for
+    these integration tests; the mock-based tests above run without it.
     """
+    _bs = pytest.importorskip("bridgestan")
     tmp_dir = tmp_path_factory.mktemp("stan_models")
     stan_file = tmp_dir / "normal_mean.stan"
     stan_file.write_text(
