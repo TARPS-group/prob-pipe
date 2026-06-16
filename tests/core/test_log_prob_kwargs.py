@@ -142,8 +142,8 @@ class TestKwargFormSimpleModel:
 
 
 class TestStanViewsPackValue:
-    """StanModel / _UnconstrainedStanView Tier 2: the keyword form takes one
-    array per Stan parameter *block* and assembles BridgeStan's flat vector.
+    """StanModel / _UnconstrainedStanView: the keyword form takes one array per
+    Stan parameter *block* and assembles BridgeStan's flat vector.
 
     bridgestan is not installed in CI, so the model is built via
     ``object.__new__`` with a fake backend supplying the flattened parameter

@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from probpipe import SupportsLogProb
-from probpipe.modeling._stan import StanModel, _UnconstrainedStanView, _param_blocks
+from probpipe.modeling._stan import StanModel, _param_blocks, _UnconstrainedStanView
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -224,7 +224,7 @@ class TestUnconstrainedStanView:
 
 
 # ---------------------------------------------------------------------------
-# Tier 2: per-Stan-parameter blocks (fields, shapes, keyword _pack_value)
+# Per-Stan-parameter blocks (fields, shapes, keyword _pack_value)
 # ---------------------------------------------------------------------------
 
 
@@ -254,7 +254,7 @@ class TestParamBlocks:
         assert _param_blocks([]) == ()
 
 
-class TestStanModelTier2:
+class TestStanModelParameterBlocks:
     """StanModel and its view expose one field per Stan parameter *block*,
     while ``parameter_names`` keeps BridgeStan's flat per-scalar names."""
 

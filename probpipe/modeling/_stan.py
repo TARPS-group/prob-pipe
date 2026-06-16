@@ -90,8 +90,8 @@ def _pack_block_params(
 
     Each value must match its block's declared shape; values are scattered into
     BridgeStan's flat order via each block's ``gather`` and concatenated. The
-    flat result is exactly what ``_log_prob`` consumes (Tier 2, issue #228); the
-    flat array can also be passed positionally instead.
+    flat result is exactly what ``_log_prob`` consumes; the flat array can also
+    be passed positionally instead.
     """
     expected = [b.name for b in blocks]
     expected_set = set(expected)
@@ -183,7 +183,7 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
 
     @cached_property
     def _blocks(self) -> tuple[_StanBlock, ...]:
-        """Constrained-space parameter blocks (Tier 2), from BridgeStan."""
+        """Constrained-space parameter blocks, from BridgeStan's ``param_names()``."""
         return _param_blocks(self._bs_model.param_names())
 
     @cached_property
@@ -211,7 +211,7 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
     # -- SupportsLogProb interface ------------------------------------------
 
     def _pack_value(self, **field_kwargs: Any) -> Array:
-        """Keyword form (Tier 2): per-Stan-parameter blocks in the constrained
+        """Keyword form: one array per Stan parameter block in the constrained
         space, assembled into the flat array ``_log_prob`` consumes (see
         :func:`_pack_block_params`). A flat array may still be passed
         positionally."""
@@ -281,7 +281,7 @@ class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):
 
     @cached_property
     def _blocks(self) -> tuple[_StanBlock, ...]:
-        """Unconstrained-space parameter blocks (Tier 2), from BridgeStan."""
+        """Unconstrained-space parameter blocks, from ``param_unc_names()``."""
         return _param_blocks(self._model._bs_model.param_unc_names())
 
     @cached_property
@@ -294,7 +294,7 @@ class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):
         return self.record_template.fields
 
     def _pack_value(self, **field_kwargs: Any) -> Array:
-        """Keyword form (Tier 2): per-Stan-parameter blocks in the unconstrained
+        """Keyword form: one array per Stan parameter block in the unconstrained
         space, assembled into the flat array ``_log_prob`` consumes. A flat
         array may still be passed positionally."""
         return _pack_block_params(
