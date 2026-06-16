@@ -14,7 +14,7 @@ from ._registry import InferenceMethod
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["condition_on_nutpie", "NutpieNutsMethod"]
+__all__ = ["NutpieNutsMethod", "condition_on_nutpie"]
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +95,13 @@ def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any | None]:
     """
     if hasattr(model, "_bridgestan_model"):
         import nutpie
+        if isinstance(data, dict):
+            # Keep the data the model was built with — StanModel(file, data=...)
+            # stores it on ``_stan_data`` — and let the conditioning data
+            # override key-by-key, mirroring the CmdStan method. Without this
+            # the rebuilt BridgeStan model would see only the conditioning data
+            # and fail on (or silently misuse) the construction-time variables.
+            data = {**(model._stan_data or {}), **data} or None
         return nutpie.compile_stan_model(model._bridgestan_model(data=data)), None
 
     if hasattr(model, "_pymc_model"):

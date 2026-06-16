@@ -81,6 +81,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bridgestan>=2.7` (the first release with that constructor), and a
   compile-gated integration test guards this boundary against future drift.
 
+- **nutpie sampling of a `StanModel` keeps its construction-time data.** The
+  nutpie path rebuilt the BridgeStan model from the conditioning data alone,
+  dropping any data passed to `StanModel(file, data=...)` — so a model carrying
+  fixed data (sizes, covariates) failed on the missing variables when sampled
+  via nutpie, while the CmdStan path worked. The conditioning data is now merged
+  on top of the construction-time data (conditioning values override), matching
+  the CmdStan method.
+
 - **`condition_on` no longer silently ignores a case-mismatched data kwarg
   (#228).** Passing `condition_on(model, x=...)` when the field is `X` used to
   route `x` to the inference parameters, where it was silently dropped (e.g. by
