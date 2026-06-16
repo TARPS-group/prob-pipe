@@ -10,16 +10,28 @@ import logging
 from typing import Any
 
 import jax.numpy as jnp
+import numpy as np
 
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb
 from ..custom_types import Array, ArrayLike
-from ..inference._approximate_distribution import ApproximateDistribution
 from ._base import ProbabilisticModel
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["StanModel"]
+
+
+def _to_f64(x: ArrayLike) -> np.ndarray:
+    """Coerce *x* to the contiguous ``float64`` ndarray BridgeStan requires.
+
+    BridgeStan's ctypes interface rejects anything that is not a NumPy
+    ``float64`` array — a JAX array fails the ``ndarray`` check, and a
+    ``float32`` array fails the dtype check — so every value crossing into
+    ``param_constrain`` / ``param_unconstrain`` / ``log_density`` passes
+    through here first.
+    """
+    return np.asarray(x, dtype=np.float64)
 
 
 def _pack_parameters_value(owner: str, field_kwargs: dict[str, Any]) -> Array:
@@ -88,10 +100,10 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
         # to the class name when the caller doesn't supply one.
         self._name = name if name else "StanModel"
 
-        # Compile the model
-        self._bs_model = bridgestan.StanModel.from_stan_file(
-            stan_file, data=data or {}
-        )
+        # Compile and instantiate. BridgeStan's constructor takes the
+        # ``.stan`` path directly (compiling on demand) and serializes a
+        # data dict via stanio; ``data=None`` means no data.
+        self._bs_model = bridgestan.StanModel(stan_file, data=data)
         self._num_params = self._bs_model.param_unc_num()
 
     # -- Distribution interface ---------------------------------------------
@@ -130,8 +142,7 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
         Internally unconstrains the parameters before calling Stan's
         log_density.
         """
-        params_constrained = jnp.asarray(value)
-        params_unc = self.param_unconstrain(params_constrained)
+        params_unc = self._bs_model.param_unconstrain(_to_f64(value))
         return jnp.asarray(self._bs_model.log_density(params_unc))
 
     def _unnormalized_log_prob(self, value: Any) -> Array:
@@ -148,15 +159,11 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
 
     def param_constrain(self, params_unc: ArrayLike) -> Array:
         """Transform unconstrained parameters to constrained space."""
-        return jnp.asarray(
-            self._bs_model.param_constrain(jnp.asarray(params_unc))
-        )
+        return jnp.asarray(self._bs_model.param_constrain(_to_f64(params_unc)))
 
     def param_unconstrain(self, params: ArrayLike) -> Array:
         """Transform constrained parameters to unconstrained space."""
-        return jnp.asarray(
-            self._bs_model.param_unconstrain(jnp.asarray(params))
-        )
+        return jnp.asarray(self._bs_model.param_unconstrain(_to_f64(params)))
 
     def as_unconstrained_distribution(self) -> _UnconstrainedStanView:
         """Return a view of this model in the unconstrained parameter space."""
@@ -169,9 +176,7 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
         if data is not None:
             import bridgestan
 
-            return bridgestan.StanModel.from_stan_file(
-                self._stan_file, data=data
-            )
+            return bridgestan.StanModel(self._stan_file, data=data)
         return self._bs_model
 
     def __repr__(self) -> str:
@@ -198,8 +203,7 @@ class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):
 
     def _log_prob(self, value: Any) -> Array:
         """Log-density directly in unconstrained space."""
-        params_unc = jnp.asarray(value)
-        return jnp.asarray(self._model._bs_model.log_density(params_unc))
+        return jnp.asarray(self._model._bs_model.log_density(_to_f64(value)))
 
     def _unnormalized_log_prob(self, value: Any) -> Array:
         return self._log_prob(value)

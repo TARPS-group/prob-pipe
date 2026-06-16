@@ -35,7 +35,9 @@ docs = [
   "mkdocstrings[python]",
   "mkdocs-jupyter<0.26",
 ]
-stan = ["bridgestan>=2.0", "cmdstanpy>=1.2"]
+# bridgestan 2.7 is the first release whose StanModel constructor takes a
+# .stan path directly and serializes a data dict (deprecating from_stan_file).
+stan = ["bridgestan>=2.7", "cmdstanpy>=1.2"]
 # pymc 6 is the first release compatible with arviz 1.x (pymc 5.x caps
 # arviz<1.0); matplotlib is required by the pymc 6 sampler progress bar.
 pymc = ["pymc>=6", "matplotlib"]

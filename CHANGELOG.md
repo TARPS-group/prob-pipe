@@ -69,6 +69,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`StanModel` now works against a real BridgeStan backend.** Two bugs at the
+  BridgeStan boundary were hidden by the mocked tests: construction passed a
+  `data=` keyword that `bridgestan.StanModel.from_stan_file` does not accept,
+  and JAX arrays were handed to a ctypes interface that requires `float64`
+  NumPy arrays. Construction now goes through BridgeStan's supported
+  constructor — which takes the `.stan` path directly and serializes the data
+  dict — and every value crossing into `param_constrain` / `param_unconstrain`
+  / `log_density` is coerced to a `float64` ndarray, so `StanModel(stan_file)`
+  and `log_prob(stan_model, ...)` succeed end to end. The `stan` extra now pins
+  `bridgestan>=2.7` (the first release with that constructor), and a
+  compile-gated integration test guards this boundary against future drift.
+
 - **`condition_on` no longer silently ignores a case-mismatched data kwarg
   (#228).** Passing `condition_on(model, x=...)` when the field is `X` used to
   route `x` to the inference parameters, where it was silently dropped (e.g. by

@@ -3366,7 +3366,7 @@ requires-dist = [
     { name = "arviz", specifier = ">=1.1,<2.0" },
     { name = "bayesflow", marker = "extra == 'bayesflow'", specifier = ">=2.0,<3" },
     { name = "blackjax", specifier = ">=1.4" },
-    { name = "bridgestan", marker = "extra == 'stan'", specifier = ">=2.0" },
+    { name = "bridgestan", marker = "extra == 'stan'", specifier = ">=2.7" },
     { name = "cmdstanpy", marker = "extra == 'stan'", specifier = ">=1.2" },
     { name = "graphviz", marker = "extra == 'viz'" },
     { name = "ipykernel", marker = "extra == 'dev'" },
