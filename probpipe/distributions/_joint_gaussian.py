@@ -293,9 +293,9 @@ class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb
             name=self._name,
             **u_shapes,
         )
-        result.with_source(Provenance(
+        result.with_source(Provenance.create(
             "condition_on",
-            parents=(self,),
+            parents=[self],
             metadata={"conditioned": list(observed.keys())},
         ))
         return result

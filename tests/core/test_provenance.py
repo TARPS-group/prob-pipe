@@ -67,14 +67,18 @@ class TestFromDistributionProvenance:
         converted = from_distribution(src, Normal)
         assert converted.source is not None
         assert converted.source.operation == "from_distribution"
-        assert converted.source.parents == (src,)
+        assert len(converted.source.parents) == 1
+        assert isinstance(converted.source.parents[0], ParentInfo)
+        assert converted.source.parents[0].name == "beta_src"
 
     def test_empirical_from_distribution(self):
         src = Normal(loc=0.0, scale=1.0, name="norm_src")
         ed = from_distribution(src, RecordEmpiricalDistribution, n_samples=100)
         assert ed.source is not None
         assert ed.source.operation == "from_distribution"
-        assert ed.source.parents == (src,)
+        assert len(ed.source.parents) == 1
+        assert isinstance(ed.source.parents[0], ParentInfo)
+        assert ed.source.parents[0].name == "norm_src"
 
 
 # ===========================================================================
@@ -88,7 +92,9 @@ class TestTransformedDistributionProvenance:
         td = TransformedDistribution(base, tfb.Exp())
         assert td.source is not None
         assert td.source.operation == "transform"
-        assert td.source.parents == (base,)
+        assert len(td.source.parents) == 1
+        assert isinstance(td.source.parents[0], ParentInfo)
+        assert td.source.parents[0].name == "base"
         assert td.source.metadata["bijector"] == "Exp"
 
     def test_transform_chain_provenance(self):
@@ -102,7 +108,9 @@ class TestTransformedDistributionProvenance:
         td = TransformedDistribution(ed, tfb.Exp())
         assert td.source is not None
         assert td.source.operation == "transform"
-        assert td.source.parents == (ed,)
+        assert len(td.source.parents) == 1
+        assert isinstance(td.source.parents[0], ParentInfo)
+        assert td.source.parents[0].name == "x"
 
 
 # ===========================================================================
@@ -119,7 +127,8 @@ class TestConditioningProvenance:
         cond = condition_on(joint, x=jnp.array(0.0))
         assert cond.source is not None
         assert cond.source.operation == "condition_on"
-        assert cond.source.parents == (joint,)
+        assert len(cond.source.parents) == 1
+        assert isinstance(cond.source.parents[0], ParentInfo)
         assert "x" in cond.source.metadata["conditioned"]
 
     def test_sequential_condition_on(self):
@@ -129,7 +138,8 @@ class TestConditioningProvenance:
         )
         cond = condition_on(seq, z=jnp.array(1.0))
         assert cond.source.operation == "condition_on"
-        assert cond.source.parents == (seq,)
+        assert len(cond.source.parents) == 1
+        assert isinstance(cond.source.parents[0], ParentInfo)
 
     def test_gaussian_condition_on(self):
         jg = JointGaussian(
@@ -228,7 +238,8 @@ class TestProvenanceChains:
         assert joint.source is None
         # but converted has provenance pointing to src
         assert converted.source.operation == "from_distribution"
-        assert converted.source.parents[0] is src
+        assert isinstance(converted.source.parents[0], ParentInfo)
+        assert converted.source.parents[0].name == "prior"
 
     def test_transform_then_broadcast(self, full_provenance_mode):
         """transform → broadcast creates a 2-step chain."""
@@ -247,7 +258,8 @@ class TestProvenanceChains:
         assert isinstance(parent_td, ParentInfo)
         assert parent_td.obj is td
         assert parent_td.source.operation == "transform"
-        assert parent_td.source.parents[0] is base
+        assert isinstance(parent_td.source.parents[0], ParentInfo)
+        assert parent_td.source.parents[0].obj is base
 
 
 # ===========================================================================
@@ -329,7 +341,8 @@ class TestProvenanceAncestors:
         td = TransformedDistribution(base, tfb.Exp())
         ancestors = provenance_ancestors(td)
         assert len(ancestors) == 1
-        assert ancestors[0] is base
+        assert isinstance(ancestors[0], ParentInfo)
+        assert ancestors[0].name == "base"
 
     def test_chain_of_ancestors(self, full_provenance_mode):
         """base → transform → broadcast gives 2 ancestors for broadcast result."""
@@ -343,13 +356,12 @@ class TestProvenanceAncestors:
                       n_broadcast_samples=10, seed=42)
         result = wf(x=td)
         ancestors = provenance_ancestors(result)
-        # result → td → base
-        # ancestors[0] is a ParentInfo(obj=td) from the workflow site;
-        # ancestors[1] is the live base object (from TransformedDistribution).
+        # result → td → base; both steps now produce ParentInfo in FULL mode.
         assert len(ancestors) == 2
         assert isinstance(ancestors[0], ParentInfo)
         assert ancestors[0].obj is td
-        assert ancestors[1] is base
+        assert isinstance(ancestors[1], ParentInfo)
+        assert ancestors[1].obj is base
 
     def test_no_duplicates(self, full_provenance_mode):
         """Same parent appearing in multiple roles doesn't duplicate."""
@@ -392,7 +404,8 @@ class TestProvenanceDag:
         # Cross-check: structural ancestor set must agree.
         ancestors = provenance_ancestors(td)
         assert len(ancestors) == 1
-        assert ancestors[0] is base
+        assert isinstance(ancestors[0], ParentInfo)
+        assert ancestors[0].name == "base"
 
     def test_no_provenance_single_node(self):
         n = Normal(loc=0.0, scale=1.0, name="alone")
@@ -418,12 +431,10 @@ class TestProvenanceDag:
         num_nodes, num_edges = _count_dag_entries(dag)
         assert num_nodes == 3
         assert num_edges == 2
-        # Ancestor chain must contain base (root).
+        # Ancestor chain must contain base (root); all nodes are ParentInfo in FULL mode.
         ancestors = provenance_ancestors(result)
-        # ancestors[0] is ParentInfo(obj=td) from the workflow site;
-        # ancestors[1] is the live base object from TransformedDistribution.
-        assert any(getattr(a, "obj", a) is td for a in ancestors)
-        assert any(getattr(a, "obj", a) is base for a in ancestors)
+        assert any(a.obj is td for a in ancestors)
+        assert any(a.obj is base for a in ancestors)
 
 
 # ===========================================================================

@@ -490,8 +490,8 @@ class SequentialJointDistribution(
         result._components = unconditioned_pre
         result._record_template = _build_record_template(unconditioned_pre)
 
-        result.with_source(Provenance(
-            "condition_on", parents=(self,),
+        result.with_source(Provenance.create(
+            "condition_on", parents=[self],
             metadata={"conditioned": list(observed)},
         ))
         return result

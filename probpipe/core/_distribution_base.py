@@ -189,9 +189,9 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         # Bypass write-once guard so rename provenance can be attached
         object.__setattr__(clone, "_source", None)
         clone.with_source(
-            Provenance(
+            Provenance.create(
                 "renamed",
-                parents=(self,),
+                parents=[self],
                 metadata={"old_name": self.name, "new_name": new_name},
             )
         )

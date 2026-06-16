@@ -185,7 +185,10 @@ __all__ = [
     "BootstrapDistribution",
     "BootstrapReplicateDistribution",
     "RecordBootstrapReplicateDistribution",
+    "ParentInfo",
     "Provenance",
+    "ProvenanceMode",
+    "provenance_config",
     # Constraints
     "Constraint",
     "real",

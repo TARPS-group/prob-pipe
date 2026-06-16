@@ -92,9 +92,9 @@ def iterate[T, S](
         if result.source is None:
             try:
                 result.with_source(
-                    Provenance(
+                    Provenance.create(
                         "iterate",
-                        parents=(current,),
+                        parents=[current],
                         metadata={"step": i},
                     )
                 )
@@ -248,9 +248,9 @@ def with_resampling(
                     new_record, name=out_dist.name,
                 )
                 resampled.with_source(
-                    Provenance(
+                    Provenance.create(
                         "resample",
-                        parents=(out_dist,),
+                        parents=[out_dist],
                         metadata={"ess": ess, "ess_ratio": ess_ratio},
                     )
                 )

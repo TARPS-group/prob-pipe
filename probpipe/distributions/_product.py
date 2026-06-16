@@ -387,8 +387,8 @@ class ProductDistribution(
         new_components = _prune_leaves(self._components, set(observed_leaves.keys()))
         result = ProductDistribution(**new_components, name=self._name)
         conditioned_names = [" > ".join(path) for path in observed_leaves]
-        result.with_source(Provenance(
-            "condition_on", parents=(self,),
+        result.with_source(Provenance.create(
+            "condition_on", parents=[self],
             metadata={"conditioned": conditioned_names},
         ))
         return result

@@ -184,7 +184,7 @@ class ScipyConverter(Converter):
                 params = extractor(source)
                 params.setdefault("name", dist_cls.__name__)
                 pp_dist = pp_cls(**params)
-                pp_dist.with_source(Provenance("convert_from_scipy", parents=()))
+                pp_dist.with_source(Provenance.create("convert_from_scipy", parents=[]))
                 if isinstance(pp_dist, target_type):
                     return pp_dist
                 from ._registry import converter_registry
@@ -195,7 +195,7 @@ class ScipyConverter(Converter):
             samples = jnp.asarray(source.rvs(size=n))
             emp_name = kwargs.get("name") or getattr(source, "name", None) or "samples"
             emp = RecordEmpiricalDistribution(samples, name=emp_name)
-            emp.with_source(Provenance("convert_from_scipy", parents=()))
+            emp.with_source(Provenance.create("convert_from_scipy", parents=[]))
             if issubclass(target_type, RecordEmpiricalDistribution):
                 return emp
             from ._registry import converter_registry

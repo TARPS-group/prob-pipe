@@ -18,6 +18,15 @@ Users import from the top-level package::
 from __future__ import annotations
 
 import os
+
+__all__ = [
+    "WorkflowKind",
+    "PrefectConfig",
+    "prefect_config",
+    "ProvenanceMode",
+    "ProvenanceConfig",
+    "provenance_config",
+]
 from enum import Enum
 from typing import Any
 

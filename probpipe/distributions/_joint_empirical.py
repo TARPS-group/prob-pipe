@@ -287,8 +287,8 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
             weights=self._w,
             name=self._name,
         )
-        result.with_source(Provenance(
-            "condition_on", parents=(self,),
+        result.with_source(Provenance.create(
+            "condition_on", parents=[self],
             metadata={"conditioned": list(observed_names)},
         ))
         return result
