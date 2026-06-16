@@ -363,6 +363,101 @@ jobs:
           slug: TARPS-group/prob-pipe
           flags: bayesflow
 
+  stan:
+    # BridgeStan backend. StanModel's behaviour tests compile real Stan
+    # programs (needs a C++ toolchain — ubuntu-latest provides one). Kept
+    # separate from the main matrix so the per-model compile cost stays out of
+    # every leg: the main matrix runs StanModel's pure tests (the name parser,
+    # the bridgestan-missing guard) and skips the compile-backed ones (gated by
+    # the _stan_toolchain fixture). One leg only — BridgeStan is a C++/ctypes
+    # backend, so behaviour doesn't vary by Python version and the compile cost
+    # is paid per leg.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # need full history for git diff
+
+      - name: Check if Stan-relevant files changed
+        id: stan_check
+        # Same gating shape as the bayesflow leg: run on pushes to main, on
+        # foundational changes (deps / this workflow), or when a Stan file
+        # itself changed. Otherwise skip — the `stan` coverage flag carries
+        # forward from base (codecov.yml), so a skipped leg doesn't drag the
+        # union down.
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
+            -- 'probpipe/modeling/_stan.py' 'tests/modeling/test_stan_model.py' || true)
+          CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
+          RUN_STAN=false
+          if [ "${{ github.event_name }}" = "push" ]; then
+            RUN_STAN=true
+          else
+            for f in $CHANGED_ALL; do
+              case "$f" in
+                pyproject.toml|uv.lock|setup.cfg|setup.py|tests/conftest.py|probpipe/__init__.py|.github/workflows/ci.yml)
+                  RUN_STAN=true ;;
+              esac
+            done
+            [ -n "$CHANGED" ] && RUN_STAN=true
+          fi
+          if [ "$RUN_STAN" = "true" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Running the Stan leg."
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No Stan-relevant changes — skipping (coverage flag carries forward)."
+          fi
+
+      - name: Install uv
+        if: steps.stan_check.outputs.skip != 'true'
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Cache the BridgeStan build
+        # BridgeStan downloads its C++ sources and builds the Stan math + TBB
+        # static libs under ~/.bridgestan on the first compile (minutes). Cache
+        # it so only a cold cache pays that; per-model compiles are then seconds.
+        # Keyed on uv.lock so a bridgestan version bump rebuilds; the version is
+        # a subdirectory there, so a stale restore can't mismatch.
+        if: steps.stan_check.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.bridgestan
+          key: bridgestan-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: bridgestan-${{ runner.os }}-
+
+      - name: Install dependencies
+        if: steps.stan_check.outputs.skip != 'true'
+        # Versions are pinned in uv.lock; --frozen fails if the lockfile drifts.
+        # The `stan` extra brings bridgestan (and cmdstanpy); dev+nutpie match
+        # the other backend legs' base.
+        run: uv sync --frozen --python 3.12 --extra dev --extra nutpie --extra stan
+
+      - name: Run StanModel tests (real BridgeStan)
+        if: steps.stan_check.outputs.skip != 'true'
+        # -n 0 disables xdist so the module-scoped model fixtures compile once,
+        # not once per worker. The suite is small; serial is fine.
+        run: uv run pytest tests/modeling/test_stan_model.py -n 0 --cov-report=xml
+
+      - name: Upload coverage reports to Codecov
+        # The main test job doesn't install [stan], so it measures _stan.py as
+        # (mostly) uncovered. Upload this leg under the `stan` flag so Codecov's
+        # union counts the real-backend coverage.
+        if: steps.stan_check.outputs.skip != 'true'
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: TARPS-group/prob-pipe
+          flags: stan
+
   notebooks:
     # Execute the docs notebooks to keep the reference set honest against the
     # current codebase. Two parallel legs: `examples` (lean — dev+nutpie) and
