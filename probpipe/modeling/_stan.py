@@ -22,6 +22,24 @@ logger = logging.getLogger(__name__)
 __all__ = ["StanModel"]
 
 
+def _pack_parameters_value(owner: str, field_kwargs: dict[str, Any]) -> Array:
+    """Shared ``_pack_value`` for the Stan keyword form (Tier 1).
+
+    ``StanModel._log_prob`` (and the unconstrained view) consume a single
+    flat parameter vector, so the keyword form takes one ``parameters=``
+    argument rather than per-Stan-parameter fields. (Tier 2 — issue #228 —
+    will expose the individual Stan parameters as fields built from
+    BridgeStan's ``param_unc_names()``.) *owner* names the class in the
+    error message.
+    """
+    if set(field_kwargs) != {"parameters"}:
+        raise TypeError(
+            f"{owner} keyword form takes a single 'parameters=' flat array; "
+            f"got {sorted(field_kwargs)}."
+        )
+    return field_kwargs["parameters"]
+
+
 class StanModel(ProbabilisticModel, SupportsLogProb):
     """Stan model via BridgeStan and CmdStanPy.
 
@@ -101,6 +119,11 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
 
     # -- SupportsLogProb interface ------------------------------------------
 
+    def _pack_value(self, **field_kwargs: Any) -> Array:
+        """Keyword form (Tier 1): a single flat constrained ``parameters=``
+        array (see :func:`_pack_parameters_value`)."""
+        return _pack_parameters_value(type(self).__name__, field_kwargs)
+
     def _log_prob(self, value: Any) -> Array:
         """Log-density in the constrained parameter space.
 
@@ -167,6 +190,11 @@ class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):
     @property
     def event_shape(self) -> tuple[int, ...]:
         return self._model.event_shape
+
+    def _pack_value(self, **field_kwargs: Any) -> Array:
+        """Keyword form (Tier 1): a single flat ``parameters=`` array in the
+        unconstrained space (see :func:`_pack_parameters_value`)."""
+        return _pack_parameters_value(type(self).__name__, field_kwargs)
 
     def _log_prob(self, value: Any) -> Array:
         """Log-density directly in unconstrained space."""
