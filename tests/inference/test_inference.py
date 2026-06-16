@@ -131,6 +131,26 @@ class TestApproximateDistribution:
         assert posterior.inference_data is not None
         assert "posterior" in posterior.inference_data.children
 
+    def test_make_posterior_skips_auxiliary_root_group(self):
+        import xarray as xr
+
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        posterior = make_posterior(
+            [chain],
+            parents=(prior,),
+            algorithm="test",
+            auxiliary={
+                "/": xr.Dataset(attrs={"ignored": True}),
+                "posterior": xr.Dataset(),
+            },
+        )
+
+        assert posterior.auxiliary is not None
+        assert "arviz" in posterior.auxiliary.children
+        assert "posterior" in posterior.inference_data.children
+        assert "" not in posterior.inference_data.children
+
     def test_warmup_from_auxiliary(self, two_chain_dist):
         warmup = two_chain_dist.warmup_samples
         assert warmup is not None

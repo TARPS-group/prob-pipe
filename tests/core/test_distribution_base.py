@@ -219,6 +219,17 @@ class TestAuxiliaryDiagnosticsAccessor:
         assert view.warnings == []
 
 
+class TestDistributionRepr:
+    def test_base_repr_includes_class_and_name(self):
+        from probpipe.core.distribution import Distribution
+
+        class _NamedDist(Distribution):
+            def __init__(self):
+                super().__init__(name="x")
+
+        assert repr(_NamedDist()) == "_NamedDist(name='x')"
+
+
 class TestMetaclassEnforcement:
     """The ``_DistributionMeta`` metaclass enforces a non-empty ``name``
     on every Distribution subclass instance, even when the subclass
