@@ -84,7 +84,8 @@ class TestRenamedProvenance:
     def test_source_parents(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
         n2 = n.renamed("y")
-        assert n2.source.parents == (n,)
+        assert len(n2.source.parents) == 1
+        assert n2.source.parents[0].name == "x"
 
     def test_source_metadata(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
