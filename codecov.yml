@@ -1,3 +1,12 @@
+# Wait for both uploads (`unit` + `bayesflow`) before reporting, so main doesn't
+# briefly show the BayesFlow-only union (~59%) in the gap before the slow
+# full-suite `unit` upload lands. `wait_for_ci` still finalizes a PR that skips
+# the gated BayesFlow leg and uploads only `unit` (bayesflow carried forward).
+codecov:
+  notify:
+    after_n_builds: 2
+    wait_for_ci: true
+
 coverage:
   status:
     project:
