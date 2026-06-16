@@ -88,6 +88,25 @@ class TestApproximateDistribution:
         assert "posterior" in idata.children
         assert "warmup" in idata.children
 
+    def test_inference_data_none_without_auxiliary(self):
+        dist = ApproximateDistribution(
+            [jax.random.normal(jax.random.PRNGKey(0), (5, 2))],
+            name="x",
+        )
+        assert dist.inference_data is None
+
+    def test_inference_data_falls_back_to_legacy_auxiliary_layout(self):
+        import xarray as xr
+
+        dist = ApproximateDistribution(
+            [jax.random.normal(jax.random.PRNGKey(0), (5, 2))],
+            name="x",
+        )
+        legacy_aux = xr.DataTree.from_dict({"posterior": xr.Dataset()})
+        dist._auxiliary = legacy_aux
+
+        assert dist.inference_data is legacy_aux
+
     def test_warmup_from_auxiliary(self, two_chain_dist):
         warmup = two_chain_dist.warmup_samples
         assert warmup is not None

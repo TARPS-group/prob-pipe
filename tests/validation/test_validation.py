@@ -154,6 +154,40 @@ class TestPredictiveCheck:
                 num_replications=10,
             )
 
+    def test_numeric_record_distribution_is_unwrapped(self, monkeypatch):
+        """Workflow-resolved NumericRecord values are wrapped for sampling."""
+        from probpipe.core._numeric_record import NumericRecord
+        import probpipe.validation._predictive_check as predictive_check_module
+
+        numeric = NumericRecord(x=np.array([0.0, 1.0, 2.0]), name="posterior")
+
+        class _FakeRecordEmpiricalDistribution:
+            def __init__(self, values, name=None):
+                self.values = values
+                self.name = name
+
+            def _sample(self, key, shape):
+                assert self.values is numeric
+                assert self.name == "posterior"
+                return jax.random.normal(key, shape)
+
+        monkeypatch.setattr(
+            predictive_check_module,
+            "RecordEmpiricalDistribution",
+            _FakeRecordEmpiricalDistribution,
+        )
+
+        result = predictive_check(
+            numeric,
+            NumpyGaussianLikelihood(rng_seed=0),
+            test_fn=lambda d: float(jnp.mean(d)),
+            observed_data=jnp.ones(20),
+            num_replications=5,
+            key=jax.random.PRNGKey(0),
+        )
+
+        assert "p_value" in result
+
     def test_is_workflow_function(self):
         from probpipe.core.node import WorkflowFunction
         assert isinstance(predictive_check, WorkflowFunction)
