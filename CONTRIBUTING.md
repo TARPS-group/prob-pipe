@@ -124,8 +124,10 @@ uv sync --extra dev --extra nutpie --extra pymc   # + pymc backend
 
 The `pip install -e ".[dev]"` path still works for contributors with an
 existing pip-based setup, but uv is the recommended path. Optional backends
-not required for tests: `bridgestan`, `pymc`, `bayesflow` (amortized SBI;
-Python 3.12–3.13 only).
+not required to run the test suite locally (their tests skip when the backend
+is absent): `bridgestan`, `pymc`, `bayesflow` (amortized SBI; Python 3.12–3.13
+only). In CI, `bridgestan` and `bayesflow` are exercised in their own dedicated
+legs (the `stan` and `bayesflow` jobs).
 
 ### Running Tests
 
@@ -370,10 +372,15 @@ GitHub Actions (`.github/workflows/ci.yml`):
   matrix that runs in parallel — an `examples` leg (`dev,nutpie`) for
   `docs/examples` and a `tutorials` leg (`dev,nutpie,bayesflow,pymc`) for
   `docs/tutorials` — each scoped to its own directory with independent
-  change detection, so an unrelated leg is skipped (`bridgestan` is not
-  included anywhere by default)
+  change detection, so an unrelated leg is skipped (`bridgestan` is installed
+  only in the `stan` leg, below)
 - A separate `bayesflow` leg (Python 3.12 and 3.13 only — BayesFlow caps
   `<3.14`) syncs `dev,nutpie,bayesflow` and runs the amortized-SBI tests
+- A separate `stan` leg (Python 3.12) syncs `dev,nutpie,stan`, caches the
+  `~/.bridgestan` build, and runs StanModel's compile-backed tests against a
+  real BridgeStan backend; coverage uploads under a `stan` flag. Gated like the
+  bayesflow leg — runs on pushes to main, foundational changes, or Stan-file
+  changes
 - Coverage uploaded to Codecov
 - A `lint (advisory)` job runs `ruff check` and annotates PRs with
   violations but does **not** gate merges yet (see *Linting & pre-commit*)
