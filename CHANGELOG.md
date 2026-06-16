@@ -69,6 +69,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`condition_on` no longer silently ignores a case-mismatched data kwarg
+  (#228).** Passing `condition_on(model, x=...)` when the field is `X` used to
+  route `x` to the inference parameters, where it was silently dropped (e.g. by
+  NUTS) — a wrong result with no error. A kwarg that matches a field only up to
+  case now raises a `TypeError` with the correct casing (`did you mean X=...?`);
+  unknown kwargs that are *not* a case-variant of any field remain inference
+  parameters.
+
 - **Codecov no longer misreports coverage on targeted PRs (#261).**
   On a PR that ran only the changed-files test path, the main test job
   skipped its Codecov upload while the BayesFlow job still uploaded, so
