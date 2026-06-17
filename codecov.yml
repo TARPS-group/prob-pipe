@@ -1,10 +1,11 @@
-# Wait for both uploads (`unit` + `bayesflow`) before reporting, so main doesn't
-# briefly show the BayesFlow-only union (~59%) in the gap before the slow
-# full-suite `unit` upload lands. `wait_for_ci` still finalizes a PR that skips
-# the gated BayesFlow leg and uploads only `unit` (bayesflow carried forward).
+# Wait for all three uploads (`unit` + `bayesflow` + `stan`) before reporting, so
+# main doesn't briefly show a partial union (e.g. the fast BayesFlow-only ~59%)
+# in the gap before the slower legs' uploads land. `wait_for_ci` still finalizes
+# a PR that skips the gated BayesFlow / Stan legs and uploads only `unit` (those
+# flags carried forward).
 codecov:
   notify:
-    after_n_builds: 2
+    after_n_builds: 3
     wait_for_ci: true
 
 coverage:
@@ -31,11 +32,16 @@ coverage:
 # Carry each flag's coverage forward from the base commit when a PR doesn't
 # upload it, so the project number stays sane and Codecov stops reporting
 # "HEAD has N uploads less than BASE":
-#   - unit: the main pytest suite (probpipe, minus the BayesFlow backend).
+#   - unit: the main pytest suite (probpipe, minus the BayesFlow backend and
+#     Stan's compiled-model paths).
 #   - bayesflow: the keras-on-jax BayesFlow leg, which only runs when
 #     BayesFlow-relevant files change (see the bayesflow job's gating).
+#   - stan: the BridgeStan leg (StanModel's compile-backed tests), which only
+#     runs when Stan-relevant files change (see the stan job's gating).
 flags:
   unit:
     carryforward: true
   bayesflow:
+    carryforward: true
+  stan:
     carryforward: true

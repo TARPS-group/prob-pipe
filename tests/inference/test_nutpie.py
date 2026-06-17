@@ -185,24 +185,9 @@ class TestExtractChains:
 
 # ---------------------------------------------------------------------------
 # Real integration: nutpie + StanModel (requires a BridgeStan toolchain)
+#
+# Uses the shared ``_stan_toolchain`` fixture (tests/conftest.py).
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="module")
-def _stan_toolchain(tmp_path_factory):
-    """Skip the Stan integration test unless BridgeStan can compile here.
-
-    Compiling a trivial, data-free probe separates a missing C++ toolchain
-    (a legitimate skip) from a real construction failure (a bug that must
-    surface), mirroring tests/modeling/test_stan_model.py.
-    """
-    bridgestan = pytest.importorskip("bridgestan")
-    probe = tmp_path_factory.mktemp("stan_probe") / "probe.stan"
-    probe.write_text("parameters { real x; } model { x ~ normal(0, 1); }")
-    try:
-        bridgestan.StanModel(str(probe))
-    except Exception as exc:
-        pytest.skip(f"Stan compilation unavailable: {exc}")
 
 
 class TestNutpieStanIntegration:

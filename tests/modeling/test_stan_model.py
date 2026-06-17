@@ -1,6 +1,14 @@
 """Tests for StanModel.
 
-Uses mocks to test all code paths without requiring a compiled Stan model.
+The behaviour tests compile real Stan programs through BridgeStan. The
+``_stan_toolchain`` fixture gates them with ``importorskip`` plus a probe
+compile, so they run in the dedicated ``stan`` CI job (which installs the
+``stan`` extra) and skip cleanly elsewhere. The pure tests — the
+parameter-name parser, the bridgestan-missing import guard, and the CmdStan
+import shim — need no backend and run in the main matrix.
+
+Models are compiled once per module (BridgeStan caches the shared object, so
+re-instantiating the same ``.stan`` is cheap).
 """
 
 from unittest.mock import MagicMock, patch
@@ -9,50 +17,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import SupportsLogProb
+from probpipe import SupportsLogProb, log_prob
 from probpipe.modeling._stan import StanModel, _param_blocks, _UnconstrainedStanView
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_mock_bs_model(
-    num_params=3, param_names=("alpha", "beta", "sigma"), param_unc_names=None,
-):
-    """Create a mock BridgeStan model.
-
-    constrain(x) = x + 1, unconstrain(x) = x - 1: a genuine inverse pair
-    so the round-trip test can verify value preservation. ``param_unc_names``
-    defaults to ``param_names`` (no constrained/unconstrained difference).
-    """
-    mock = MagicMock()
-    mock.param_unc_num.return_value = num_params
-    mock.param_names.return_value = list(param_names)
-    mock.param_unc_names.return_value = list(param_unc_names or param_names)
-    mock.log_density.return_value = -5.0
-    mock.param_constrain.side_effect = lambda x: np.asarray(x) + 1.0
-    mock.param_unconstrain.side_effect = lambda x: np.asarray(x) - 1.0
-    return mock
-
-
-def _make_stan_model(
-    num_params=3, param_names=("alpha", "beta", "sigma"), name="test",
-    param_unc_names=None,
-):
-    """Create a StanModel with a mocked BridgeStan backend."""
-    mock_bs = _make_mock_bs_model(num_params, param_names, param_unc_names)
-    model = object.__new__(StanModel)
-    model._stan_file = "test.stan"
-    model._stan_data = None
-    model._name = name if name else "StanModel"
-    model._bs_model = mock_bs
-    model._num_params = num_params
-    return model
-
-
-# ---------------------------------------------------------------------------
-# StanModel protocol compliance
+# Pure tests — no BridgeStan backend required (run in the main matrix)
 # ---------------------------------------------------------------------------
 
 
@@ -60,177 +29,13 @@ class TestStanModelProtocols:
     def test_supports_log_prob(self):
         assert issubclass(StanModel, SupportsLogProb)
 
-    def test_supports_named_components(self):
-        model = _make_stan_model()
-        assert hasattr(model, 'fields')
-
-
-# ---------------------------------------------------------------------------
-# StanModel with mocked backend
-# ---------------------------------------------------------------------------
-
-
-class TestStanModelMocked:
-    @pytest.fixture
-    def model(self):
-        return _make_stan_model()
-
-    def test_name(self, model):
-        assert model.name == "test"
-
-    def test_event_shape(self, model):
-        assert model.event_shape == (3,)
-
-    def test_fields(self, model):
-        assert model.fields == ("alpha", "beta", "sigma")
-
-    def test_parameter_names(self, model):
-        assert model.parameter_names == ("alpha", "beta", "sigma")
-
-    def test_getitem_returns_name_placeholder(self, model):
-        """StanModel['alpha'] returns the parameter name — BridgeStan doesn't
-        expose sub-distributions, so __getitem__ is a placeholder that merely
-        validates the key. See the comment in StanModel.__getitem__.
-        """
-        assert model["alpha"] == "alpha"
-        assert model["beta"] == "beta"
-        assert model["sigma"] == "sigma"
-
-    def test_getitem_unknown_key_raises(self, model):
-        with pytest.raises(KeyError, match="Unknown component"):
-            model["nonexistent"]
-
-    def test_repr(self, model):
-        r = repr(model)
-        assert "StanModel" in r
-        assert "test.stan" in r
-        assert "num_params=3" in r
-
-    def test_log_prob(self, model):
-        x = jnp.array([1.0, 2.0, 3.0])
-        lp = model._log_prob(x)
-        assert jnp.isfinite(lp)
-        model._bs_model.param_unconstrain.assert_called()
-        model._bs_model.log_density.assert_called()
-
-    def test_unnormalized_log_prob(self, model):
-        x = jnp.array([1.0, 2.0, 3.0])
-        ulp = model._unnormalized_log_prob(x)
-        assert jnp.isfinite(ulp)
-
-    def test_unnormalized_prob(self, model):
-        x = jnp.array([1.0, 2.0, 3.0])
-        up = model._unnormalized_prob(x)
-        assert jnp.isfinite(up)
-        assert float(up) > 0
-
-    def test_prob(self, model):
-        x = jnp.array([1.0, 2.0, 3.0])
-        p = model._prob(x)
-        assert jnp.isfinite(p)
-        assert float(p) > 0
-
-    def test_param_constrain_applies_transform(self, model):
-        """param_constrain should apply the underlying bridgestan transform."""
-        unc = jnp.array([0.5, 1.0, 1.5])
-        result = model.param_constrain(unc)
-        # Mock defines constrain(x) = x + 1.
-        np.testing.assert_allclose(np.asarray(result), np.asarray(unc) + 1.0)
-
-    def test_param_unconstrain_applies_transform(self, model):
-        """param_unconstrain should apply the underlying bridgestan transform."""
-        x = jnp.array([1.0, 2.0, 3.0])
-        result = model.param_unconstrain(x)
-        # Mock defines unconstrain(x) = x - 1.
-        np.testing.assert_allclose(np.asarray(result), np.asarray(x) - 1.0)
-
-    def test_constrain_unconstrain_are_inverses(self, model):
-        """constrain(unconstrain(x)) == x: the wrapper must preserve values."""
-        x = jnp.array([1.0, 2.0, 3.0])
-        roundtrip = model.param_constrain(model.param_unconstrain(x))
-        np.testing.assert_allclose(np.asarray(roundtrip), np.asarray(x), atol=1e-12)
-
-    def test_as_unconstrained_distribution(self, model):
-        view = model.as_unconstrained_distribution()
-        assert isinstance(view, _UnconstrainedStanView)
-
-    def test_bridgestan_model_no_data(self, model):
-        result = model._bridgestan_model()
-        assert result is model._bs_model
-
-    def test_bridgestan_model_with_data(self, model):
-        mock_bs = MagicMock()
-        with patch.dict("sys.modules", {"bridgestan": mock_bs}):
-            result = model._bridgestan_model(data={"N": 10})
-        # The dict is handed straight to BridgeStan's constructor, which
-        # serializes it (via stanio) — we don't pre-encode it ourselves.
-        mock_bs.StanModel.assert_called_once_with("test.stan", data={"N": 10})
-        assert result is mock_bs.StanModel.return_value
-
-
-# ---------------------------------------------------------------------------
-# _UnconstrainedStanView
-# ---------------------------------------------------------------------------
-
-
-class TestUnconstrainedStanView:
-    @pytest.fixture
-    def model(self):
-        return _make_stan_model(name="mymodel")
-
-    @pytest.fixture
-    def view(self, model):
-        return model.as_unconstrained_distribution()
-
-    def test_name_with_base(self, view):
-        assert view.name == "mymodel_unconstrained"
-
-    def test_name_without_base(self):
-        # StanModel without an explicit name now falls back to the
-        # class name ("StanModel") to satisfy the Distribution
-        # metaclass's non-empty-name requirement; the view name
-        # composes accordingly.
-        model = _make_stan_model(name=None)
-        view = model.as_unconstrained_distribution()
-        assert view.name == "StanModel_unconstrained"
-
-    def test_event_shape(self, view):
-        assert view.event_shape == (3,)
-
-    def test_log_prob(self, view):
-        x = jnp.array([0.5, 1.0, 1.5])
-        lp = view._log_prob(x)
-        assert jnp.isfinite(lp)
-
-    def test_unnormalized_log_prob(self, view):
-        x = jnp.array([0.5, 1.0, 1.5])
-        ulp = view._unnormalized_log_prob(x)
-        np.testing.assert_allclose(float(ulp), float(view._log_prob(x)))
-
-    def test_unnormalized_prob(self, view):
-        x = jnp.array([0.5, 1.0, 1.5])
-        up = view._unnormalized_prob(x)
-        assert jnp.isfinite(up)
-
-    def test_prob(self, view):
-        x = jnp.array([0.5, 1.0, 1.5])
-        p = view._prob(x)
-        np.testing.assert_allclose(float(p), float(jnp.exp(view._log_prob(x))))
-
-    def test_repr(self, view):
-        r = repr(view)
-        assert "UnconstrainedStanView" in r
-        assert "StanModel" in r
-
-
-# ---------------------------------------------------------------------------
-# Per-Stan-parameter blocks (fields, shapes, keyword _pack_value)
-# ---------------------------------------------------------------------------
-
 
 class TestParamBlocks:
-    """_param_blocks groups BridgeStan's flat, 1-indexed names into shaped
-    blocks. BridgeStan flattens matrices column-major (L.1.1, L.2.1, ...)."""
+    """``_param_blocks`` groups BridgeStan's flat, 1-indexed names into shaped
+    blocks. BridgeStan flattens matrices column-major (L.1.1, L.2.1, ...). The
+    name lists here are hand-written; ``test_param_blocks_match_real_names``
+    cross-checks the same parser against a compiled model's real names.
+    """
 
     def test_all_scalars(self):
         blocks = _param_blocks(["mu", "sigma"])
@@ -254,94 +59,8 @@ class TestParamBlocks:
         assert _param_blocks([]) == ()
 
 
-class TestStanModelParameterBlocks:
-    """StanModel and its view expose one field per Stan parameter *block*,
-    while ``parameter_names`` keeps BridgeStan's flat per-scalar names."""
-
-    @pytest.fixture
-    def model(self):
-        names = ["mu", "theta.1", "theta.2", "theta.3",
-                 "L.1.1", "L.2.1", "L.1.2", "L.2.2"]
-        return _make_stan_model(num_params=len(names), param_names=names)
-
-    def test_fields_are_blocks(self, model):
-        assert model.fields == ("mu", "theta", "L")
-
-    def test_parameter_names_stay_per_scalar(self, model):
-        assert model.parameter_names == (
-            "mu", "theta.1", "theta.2", "theta.3",
-            "L.1.1", "L.2.1", "L.1.2", "L.2.2")
-
-    def test_record_template_shapes(self, model):
-        assert {f: model.record_template[f] for f in model.fields} == {
-            "mu": (), "theta": (3,), "L": (2, 2)}
-
-    def test_getitem_uses_block_fields(self, model):
-        assert model["theta"] == "theta"
-        with pytest.raises(KeyError, match="Unknown component"):
-            model["theta.1"]  # per-scalar names are no longer components
-
-    def test_pack_value_assembles_column_major(self, model):
-        flat = model._pack_value(
-            mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]),
-            L=jnp.array([[10.0, 30.0], [20.0, 40.0]]))
-        # L is packed column-major to match BridgeStan: [10, 20, 30, 40].
-        assert jnp.allclose(
-            flat, jnp.array([0.5, 1.0, 2.0, 3.0, 10.0, 20.0, 30.0, 40.0]))
-
-    def test_pack_value_missing_block_raises(self, model):
-        with pytest.raises(TypeError, match="missing"):
-            model._pack_value(mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]))
-
-    def test_pack_value_unexpected_block_raises(self, model):
-        with pytest.raises(TypeError, match="unexpected"):
-            model._pack_value(mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]),
-                              L=jnp.zeros((2, 2)), zzz=1.0)
-
-    def test_pack_value_wrong_shape_raises(self, model):
-        with pytest.raises(TypeError, match=r"shape \(2, 2\)"):
-            model._pack_value(mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]),
-                              L=jnp.array([1.0, 2.0, 3.0, 4.0]))  # flat, not (2,2)
-
-    def test_view_uses_unconstrained_blocks(self):
-        # simplex[3] p: constrained names p.1..p.3 (size 3); the unconstrained
-        # parametrization drops one degree of freedom -> p.1, p.2 (size 2).
-        model = _make_stan_model(
-            num_params=3, param_names=["mu", "p.1", "p.2", "p.3"],
-            param_unc_names=["mu", "p.1", "p.2"])
-        assert model.fields == ("mu", "p")
-        assert model.record_template["p"] == (3,)
-        view = model.as_unconstrained_distribution()
-        assert view.fields == ("mu", "p")
-        assert view.record_template["p"] == (2,)
-        flat = view._pack_value(mu=0.5, p=jnp.array([0.1, 0.2]))
-        assert jnp.allclose(flat, jnp.array([0.5, 0.1, 0.2]))
-
-
-# ---------------------------------------------------------------------------
-# StanModel conditioning via registry
-# ---------------------------------------------------------------------------
-
-
-class TestStanModelConditionOn:
-    def test_condition_on_delegates_to_registry(self):
-        """condition_on routes StanModel through the inference registry."""
-        from probpipe import condition_on
-
-        model = _make_stan_model()
-        with patch("probpipe.inference._registry.inference_method_registry.execute") as mock_exec:
-            mock_exec.return_value = MagicMock()
-            condition_on(model, {"y": [1, 2, 3]}, num_results=10)
-            mock_exec.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# CmdStan inference method tests
-# ---------------------------------------------------------------------------
-
-
 class TestCmdStanInferenceMethod:
-    """Test CmdStan inference via the registry method."""
+    """The CmdStan inference method's import shim (cmdstanpy, not BridgeStan)."""
 
     def test_import_cmdstanpy_missing(self):
         from probpipe.inference._cmdstan_method import _import_cmdstanpy
@@ -361,14 +80,11 @@ class TestCmdStanInferenceMethod:
             assert result is mock_cmdstanpy
 
 
-# ---------------------------------------------------------------------------
-# ImportError path
-# ---------------------------------------------------------------------------
-
-
 class TestStanModelImportError:
     def test_missing_bridgestan(self):
-        """StanModel raises ImportError with install instructions when bridgestan missing."""
+        """StanModel raises ImportError with install instructions when bridgestan
+        is missing — this *must* simulate bridgestan's absence, so it patches
+        ``sys.modules`` rather than using a real backend."""
         with (
             patch.dict("sys.modules", {"bridgestan": None}),
             pytest.raises(ImportError, match="pip install bridgestan"),
@@ -377,44 +93,22 @@ class TestStanModelImportError:
 
 
 # ---------------------------------------------------------------------------
-# Real BridgeStan integration (requires a compiled Stan program)
+# Real BridgeStan backend
 #
-# These exercise the path the mocks above cannot: the real BridgeStan
-# constructor signature and its float64-ndarray boundary.  The gate lives in
-# the fixtures (not at module scope) so the mocked tests above still run when
-# BridgeStan is absent.
+# The model fixtures below depend on the shared ``_stan_toolchain`` fixture
+# (tests/conftest.py), which ``importorskip``s bridgestan and probe-compiles the
+# C++ toolchain — so these tests skip together when the backend is absent, while
+# the pure tests above still run.
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
-def _stan_toolchain(tmp_path_factory):
-    """Skip the integration tests unless BridgeStan can compile here.
-
-    Compiling a trivial, data-free probe separates "is the C++ toolchain
-    present?" (a legitimate skip) from "does StanModel construct correctly?"
-    (a regression that must fail loudly, not skip) — so the model fixture
-    below can construct without a try/except that would swallow real bugs.
-    """
-    bridgestan = pytest.importorskip("bridgestan")
-    probe = tmp_path_factory.mktemp("stan_probe") / "probe.stan"
-    probe.write_text("parameters { real x; } model { x ~ normal(0, 1); }")
-    try:
-        bridgestan.StanModel(str(probe))
-    except Exception as exc:
-        pytest.skip(f"Stan compilation unavailable: {exc}")
-
-
-@pytest.fixture(scope="module")
-def tmp_stan_model(_stan_toolchain, tmp_path_factory):
-    """A real StanModel for ``y ~ Normal(mu, 1)`` with a unit prior on ``mu``,
-    built through the public constructor.
-
-    Construction therefore exercises the BridgeStan boundary end to end —
-    ``.stan`` compilation plus serialization of the ``data`` dict.  The
-    toolchain is known good from ``_stan_toolchain``, so any failure here is a
-    real bug, not a missing compiler.  The model is conjugate, so its
-    log-density is known in closed form.
-    """
+def conjugate_stan_file(_stan_toolchain, tmp_path_factory):
+    """Path to a compiled conjugate model ``y ~ Normal(mu, 1)`` with a unit
+    prior on ``mu`` — a single unconstrained real, so its log-density is
+    closed-form and constrain/unconstrain are the identity. Returned as a path
+    so tests can also build name-less / no-data instances cheaply (the compiled
+    shared object is reused)."""
     stan_file = tmp_path_factory.mktemp("stan_models") / "normal_mean.stan"
     stan_file.write_text(
         """
@@ -429,15 +123,95 @@ def tmp_stan_model(_stan_toolchain, tmp_path_factory):
         }
         """
     )
-    return StanModel(str(stan_file), data={"N": 3, "y": [1.0, 2.0, 3.0]},
+    return str(stan_file)
+
+
+@pytest.fixture(scope="module")
+def conjugate_model(conjugate_stan_file):
+    """The conjugate model instantiated with data and an explicit name."""
+    return StanModel(conjugate_stan_file, data={"N": 3, "y": [1.0, 2.0, 3.0]},
                      name="normal_mean")
 
 
-class TestStanModelIntegration:
-    """Real-backend checks against a compiled Stan program."""
+@pytest.fixture(scope="module")
+def structured_model(_stan_toolchain, tmp_path_factory):
+    """A model exercising every parameter kind: a scalar, a vector, a matrix
+    (column-major flattening), and a simplex — whose unconstrained
+    parametrisation has one fewer dimension, so the view's blocks differ from
+    the constrained model's."""
+    stan_file = tmp_path_factory.mktemp("stan_models") / "structured.stan"
+    stan_file.write_text(
+        """
+        parameters {
+          real mu;
+          vector[3] theta;
+          matrix[2, 2] L;
+          simplex[3] p;
+        }
+        model {
+          mu ~ normal(0, 1);
+          theta ~ normal(0, 1);
+          to_vector(L) ~ normal(0, 1);
+          p ~ dirichlet(rep_vector(1.0, 3));
+        }
+        """
+    )
+    return StanModel(str(stan_file), name="structured")
 
-    # Observations baked into tmp_stan_model's data.
-    _Y = np.array([1.0, 2.0, 3.0])
+
+class TestStanModelSurface:
+    """Distribution / ProbabilisticModel surface on a real conjugate model."""
+
+    def test_supports_named_components(self, conjugate_model):
+        assert hasattr(conjugate_model, "fields")
+
+    def test_name(self, conjugate_model):
+        assert conjugate_model.name == "normal_mean"
+
+    def test_event_shape(self, conjugate_model):
+        assert conjugate_model.event_shape == (1,)
+
+    def test_fields(self, conjugate_model):
+        assert conjugate_model.fields == ("mu",)
+
+    def test_parameter_names(self, conjugate_model):
+        assert conjugate_model.parameter_names == ("mu",)
+
+    def test_getitem_returns_name_placeholder(self, conjugate_model):
+        # BridgeStan doesn't expose sub-distributions, so __getitem__ is a
+        # placeholder that merely validates the key.
+        assert conjugate_model["mu"] == "mu"
+
+    def test_getitem_unknown_key_raises(self, conjugate_model):
+        with pytest.raises(KeyError, match="Unknown component"):
+            conjugate_model["nonexistent"]
+
+    def test_repr(self, conjugate_model):
+        r = repr(conjugate_model)
+        assert "StanModel" in r
+        assert "normal_mean.stan" in r
+        assert "num_params=1" in r
+
+    def test_as_unconstrained_distribution(self, conjugate_model):
+        assert isinstance(conjugate_model.as_unconstrained_distribution(),
+                          _UnconstrainedStanView)
+
+    def test_name_defaults_to_class_name(self, conjugate_stan_file):
+        # Without an explicit name, StanModel falls back to the class name to
+        # satisfy the Distribution metaclass's non-empty-name requirement.
+        model = StanModel(conjugate_stan_file, data={"N": 3, "y": [1.0, 2.0, 3.0]})
+        assert model.name == "StanModel"
+
+
+class TestStanModelDensity:
+    """Density ops against the conjugate model's closed-form log-density.
+
+    Tolerances cover float64 round-off on a deterministic closed form (Stan's
+    log_density carries no RNG), so they are tight fixed constants, not
+    seed-spread bounds.
+    """
+
+    _Y = np.array([1.0, 2.0, 3.0])  # baked into conjugate_model's data
 
     def _expected_log_density(self, mu):
         # Stan accumulates target = log N(mu; 0, 1) + sum_i log N(y_i; mu, 1)
@@ -445,26 +219,236 @@ class TestStanModelIntegration:
         # terms vanish and mu (an unconstrained real) carries no Jacobian.
         return -0.5 * mu**2 - 0.5 * float(np.sum((self._Y - mu) ** 2))
 
-    def test_construct_exposes_parameters(self, tmp_stan_model):
-        assert isinstance(tmp_stan_model, StanModel)
-        assert tmp_stan_model.event_shape == (1,)
-        assert tmp_stan_model.parameter_names == ("mu",)
-
-    def test_log_prob_matches_analytical(self, tmp_stan_model):
-        """``_log_prob`` matches the closed-form log-density.
-
-        A JAX array is passed in, so this also covers the JAX -> float64
-        ndarray conversion required at ``param_unconstrain`` / ``log_density``.
-        """
+    def test_log_prob_matches_analytical(self, conjugate_model):
+        """A JAX array is passed in, so this also covers the JAX -> float64
+        ndarray conversion required at ``param_unconstrain`` / ``log_density``."""
         for mu in [-1.0, 0.0, 0.5, 2.0]:
-            lp = float(tmp_stan_model._log_prob(jnp.asarray([mu])))
+            lp = float(conjugate_model._log_prob(jnp.asarray([mu])))
             np.testing.assert_allclose(lp, self._expected_log_density(mu), atol=1e-5)
 
-    def test_param_transforms_round_trip(self, tmp_stan_model):
-        """constrain/unconstrain are identity for an unconstrained real and
-        survive the JAX-array boundary in both directions."""
+    def test_unnormalized_log_prob_equals_log_prob(self, conjugate_model):
+        # Stan's log_density is already the (unnormalized) target, so the two agree.
+        x = jnp.asarray([0.5])
+        np.testing.assert_allclose(
+            float(conjugate_model._unnormalized_log_prob(x)),
+            float(conjugate_model._log_prob(x)), atol=1e-6)
+
+    def test_prob_is_exp_log_prob(self, conjugate_model):
+        x = jnp.asarray([0.5])
+        np.testing.assert_allclose(
+            float(conjugate_model._prob(x)),
+            float(jnp.exp(conjugate_model._log_prob(x))), rtol=1e-6)
+
+    def test_unnormalized_prob_positive(self, conjugate_model):
+        up = conjugate_model._unnormalized_prob(jnp.asarray([0.5]))
+        assert jnp.isfinite(up) and float(up) > 0
+
+    def test_log_prob_accepts_float32_input(self, conjugate_model):
+        # `_to_f64` exists so a float32 array (JAX's default dtype) can cross the
+        # BridgeStan boundary, which rejects anything but float64. Passing one
+        # explicitly exercises that coercion and checks the value survives it.
+        lp = float(conjugate_model._log_prob(jnp.asarray([0.5], dtype=jnp.float32)))
+        np.testing.assert_allclose(lp, self._expected_log_density(0.5), atol=1e-5)
+
+
+class TestStanModelTransforms:
+    """constrain / unconstrain across the JAX <-> float64 boundary. The
+    conjugate model's single real is the identity in both directions; the
+    structured model's simplex exercises a genuine (non-identity) transform."""
+
+    def test_param_constrain_identity_for_real(self, conjugate_model):
         x = jnp.asarray([1.23])
-        constrained = np.asarray(tmp_stan_model.param_constrain(x))
-        np.testing.assert_allclose(constrained, [1.23], atol=1e-6)
-        round_trip = tmp_stan_model.param_constrain(tmp_stan_model.param_unconstrain(x))
+        np.testing.assert_allclose(
+            np.asarray(conjugate_model.param_constrain(x)), [1.23], atol=1e-6)
+
+    def test_param_unconstrain_identity_for_real(self, conjugate_model):
+        x = jnp.asarray([1.23])
+        np.testing.assert_allclose(
+            np.asarray(conjugate_model.param_unconstrain(x)), [1.23], atol=1e-6)
+
+    def test_constrain_unconstrain_round_trip(self, conjugate_model):
+        x = jnp.asarray([1.23])
+        round_trip = conjugate_model.param_constrain(
+            conjugate_model.param_unconstrain(x))
         np.testing.assert_allclose(np.asarray(round_trip), [1.23], atol=1e-6)
+
+    def test_constrain_yields_valid_simplex(self, structured_model):
+        # param_constrain applies the real (non-identity) transform: the simplex
+        # block of the constrained vector must sum to 1 with positive entries —
+        # a known invariant the identity-only conjugate model can't exercise.
+        constrained = np.asarray(structured_model.param_constrain(jnp.zeros(10)))
+        p = constrained[-3:]  # blocks pack in order; the simplex is last
+        np.testing.assert_allclose(float(p.sum()), 1.0, atol=1e-5)
+        assert (p > 0).all()
+
+    def test_constrain_unconstrain_round_trip_simplex(self, structured_model):
+        # constrain o unconstrain is the identity on a valid constrained point.
+        # The simplex must sum to 1 exactly in float (0.25 + 0.25 + 0.5) for
+        # BridgeStan's strict simplex_free to accept it.
+        constrained = jnp.array([0.5, 0.1, 0.2, 0.3, 1.0, 2.0, 3.0, 4.0,
+                                 0.25, 0.25, 0.5])
+        round_trip = structured_model.param_constrain(
+            structured_model.param_unconstrain(constrained))
+        np.testing.assert_allclose(np.asarray(round_trip),
+                                   np.asarray(constrained), atol=1e-5)
+
+
+class TestBridgestanModel:
+    """``_bridgestan_model`` returns the compiled model, or builds a fresh one
+    bound to new data."""
+
+    def test_no_data_returns_compiled_model(self, conjugate_model):
+        assert conjugate_model._bridgestan_model() is conjugate_model._bs_model
+
+    def test_with_data_builds_new_model(self, conjugate_model):
+        rebuilt = conjugate_model._bridgestan_model(data={"N": 2, "y": [0.0, 1.0]})
+        assert rebuilt is not conjugate_model._bs_model
+        assert rebuilt.param_unc_num() == 1  # still one parameter, `mu`
+
+
+class TestStanModelParameters:
+    """One field per Stan parameter *block*, while ``parameter_names`` keeps
+    BridgeStan's flat per-scalar names. Exercised on a model with a scalar, a
+    vector, a matrix, and a simplex."""
+
+    def test_fields_are_blocks(self, structured_model):
+        assert structured_model.fields == ("mu", "theta", "L", "p")
+
+    def test_event_shape_is_unconstrained_size(self, structured_model):
+        # mu(1) + theta(3) + L(4) + p simplex unconstrained(2) = 10.
+        assert structured_model.event_shape == (10,)
+
+    def test_parameter_names_stay_per_scalar(self, structured_model):
+        assert structured_model.parameter_names == (
+            "mu", "theta.1", "theta.2", "theta.3",
+            "L.1.1", "L.2.1", "L.1.2", "L.2.2", "p.1", "p.2", "p.3")
+
+    def test_record_template_shapes(self, structured_model):
+        assert {f: structured_model.record_template[f]
+                for f in structured_model.fields} == {
+            "mu": (), "theta": (3,), "L": (2, 2), "p": (3,)}
+
+    def test_param_blocks_match_real_names(self, structured_model):
+        # The pure name-parser, fed BridgeStan's real param_names(), recovers
+        # the declared shapes — guards against BridgeStan changing its
+        # flattening convention out from under _param_blocks.
+        blocks = _param_blocks(structured_model._bs_model.param_names())
+        assert [(b.name, b.shape) for b in blocks] == [
+            ("mu", ()), ("theta", (3,)), ("L", (2, 2)), ("p", (3,))]
+
+    def test_getitem_uses_block_fields(self, structured_model):
+        assert structured_model["theta"] == "theta"
+        with pytest.raises(KeyError, match="Unknown component"):
+            structured_model["theta.1"]  # per-scalar names are not components
+
+    def test_pack_value_assembles_column_major(self, structured_model):
+        flat = structured_model._pack_value(
+            mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]),
+            L=jnp.array([[10.0, 30.0], [20.0, 40.0]]),
+            p=jnp.array([0.2, 0.3, 0.5]))
+        # L is packed column-major to match BridgeStan: [10, 20, 30, 40].
+        assert jnp.allclose(flat, jnp.array(
+            [0.5, 1.0, 2.0, 3.0, 10.0, 20.0, 30.0, 40.0, 0.2, 0.3, 0.5]))
+
+    def test_pack_value_missing_block_raises(self, structured_model):
+        with pytest.raises(TypeError, match="missing"):
+            structured_model._pack_value(mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]),
+                                         L=jnp.zeros((2, 2)))  # no p
+
+    def test_pack_value_unexpected_block_raises(self, structured_model):
+        with pytest.raises(TypeError, match="unexpected"):
+            structured_model._pack_value(
+                mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]), L=jnp.zeros((2, 2)),
+                p=jnp.array([0.2, 0.3, 0.5]), zzz=1.0)
+
+    def test_pack_value_wrong_shape_raises(self, structured_model):
+        with pytest.raises(TypeError, match=r"shape \(2, 2\)"):
+            structured_model._pack_value(
+                mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]),
+                L=jnp.array([1.0, 2.0, 3.0, 4.0]),  # flat, not (2, 2)
+                p=jnp.array([0.2, 0.3, 0.5]))
+
+    def test_keyword_form_equals_positional(self, structured_model):
+        # Both forms route through the same _pack_value, so this guards the
+        # keyword->positional dispatch wiring; the column-major packing *order*
+        # is validated by test_pack_value_assembles_column_major and
+        # test_param_blocks_match_real_names. 0.25/0.25/0.5 are exact in float32,
+        # so the simplex sums to 1 and BridgeStan's param_unconstrain accepts it.
+        kw = dict(mu=0.5, theta=jnp.array([0.1, 0.2, 0.3]),
+                  L=jnp.array([[1.0, 2.0], [3.0, 4.0]]),
+                  p=jnp.array([0.25, 0.25, 0.5]))
+        lp_kw = float(jnp.asarray(log_prob(structured_model, **kw)))
+        lp_pos = float(jnp.asarray(
+            log_prob(structured_model, structured_model._pack_value(**kw))))
+        np.testing.assert_allclose(lp_kw, lp_pos, atol=1e-6)
+
+
+class TestUnconstrainedStanView:
+    """The unconstrained view. Its blocks follow ``param_unc_names``, so a
+    simplex appears with one fewer dimension than in the constrained model."""
+
+    def test_name_with_base(self, structured_model):
+        assert structured_model.as_unconstrained_distribution().name == \
+            "structured_unconstrained"
+
+    def test_name_without_base(self, conjugate_stan_file):
+        model = StanModel(conjugate_stan_file, data={"N": 3, "y": [1.0, 2.0, 3.0]})
+        view = model.as_unconstrained_distribution()
+        assert view.name == "StanModel_unconstrained"
+
+    def test_event_shape_matches_model(self, structured_model):
+        view = structured_model.as_unconstrained_distribution()
+        assert view.event_shape == structured_model.event_shape == (10,)
+
+    def test_blocks_follow_unconstrained_names(self, structured_model):
+        view = structured_model.as_unconstrained_distribution()
+        assert view.fields == ("mu", "theta", "L", "p")
+        # The simplex is unconstrained in (n-1) free coordinates.
+        assert structured_model.record_template["p"] == (3,)
+        assert view.record_template["p"] == (2,)
+
+    def test_log_prob_finite_and_unnormalized_agrees(self, structured_model):
+        view = structured_model.as_unconstrained_distribution()
+        # An all-zeros unconstrained point is always valid (maps to the centre
+        # of every constrained support).
+        x = jnp.zeros(view.event_shape)
+        lp = view._log_prob(x)
+        assert jnp.isfinite(lp)
+        np.testing.assert_allclose(
+            float(view._unnormalized_log_prob(x)), float(lp), atol=1e-6)
+
+    def test_log_prob_finite_difference_in_mu(self, structured_model):
+        # Exact value check: shifting the unconstrained mu coordinate by m moves
+        # the log-density by exactly -0.5*m^2 (the N(0, 1) prior on mu), with the
+        # simplex Jacobian and the other blocks held fixed.
+        view = structured_model.as_unconstrained_distribution()
+        x0 = jnp.zeros(view.event_shape)
+        for m in (0.5, 1.0):
+            delta = (float(view._log_prob(x0.at[0].set(m)))
+                     - float(view._log_prob(x0)))
+            np.testing.assert_allclose(delta, -0.5 * m**2, atol=1e-5)
+
+    def test_prob_is_exp_log_prob(self, structured_model):
+        view = structured_model.as_unconstrained_distribution()
+        x = jnp.zeros(view.event_shape)
+        np.testing.assert_allclose(
+            float(view._prob(x)), float(jnp.exp(view._log_prob(x))), rtol=1e-6)
+
+    def test_repr(self, structured_model):
+        r = repr(structured_model.as_unconstrained_distribution())
+        assert "UnconstrainedStanView" in r
+        assert "structured" in r
+
+
+class TestStanModelConditionOn:
+    def test_condition_on_delegates_to_registry(self, conjugate_model):
+        """condition_on routes a StanModel through the inference registry
+        (the registry is patched, so no actual MCMC runs)."""
+        from probpipe import condition_on
+
+        with patch(
+            "probpipe.inference._registry.inference_method_registry.execute"
+        ) as mock_exec:
+            mock_exec.return_value = MagicMock()
+            condition_on(conjugate_model, {"y": [1, 2, 3]}, num_results=10)
+            mock_exec.assert_called_once()
