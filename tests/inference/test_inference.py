@@ -73,10 +73,20 @@ class TestApproximateDistribution:
         assert two_chain_dist.algorithm == "test"
         assert two_chain_dist.source.metadata["algorithm"] == "test"
 
-    def test_auxiliary_is_inference_data(self, two_chain_dist):
+    def test_auxiliary_contains_arviz_data(self, two_chain_dist):
         assert two_chain_dist.auxiliary is not None
-        # arviz InferenceData (0.x has .groups(), 1.x DataTree has .children)
+        # ArviZ-compatible data use xarray DataTree on ArviZ 1.x.
         assert hasattr(two_chain_dist.auxiliary, "groups") or hasattr(two_chain_dist.auxiliary, "children")
+
+    def test_arviz_data_accessor(self, two_chain_dist):
+        aux = two_chain_dist.auxiliary
+        assert aux is not None
+        assert "arviz" in aux.children
+
+        arviz_data = two_chain_dist.arviz_data
+        assert arviz_data is not None
+        assert "posterior" in arviz_data.children
+        assert "warmup" in arviz_data.children
 
     def test_inference_data_alias(self, two_chain_dist):
         aux = two_chain_dist.auxiliary
@@ -88,14 +98,15 @@ class TestApproximateDistribution:
         assert "posterior" in idata.children
         assert "warmup" in idata.children
 
-    def test_inference_data_none_without_auxiliary(self):
+    def test_arviz_data_none_without_auxiliary(self):
         dist = ApproximateDistribution(
             [jax.random.normal(jax.random.PRNGKey(0), (5, 2))],
             name="x",
         )
+        assert dist.arviz_data is None
         assert dist.inference_data is None
 
-    def test_inference_data_falls_back_to_legacy_auxiliary_layout(self):
+    def test_arviz_data_falls_back_to_legacy_auxiliary_layout(self):
         import xarray as xr
 
         dist = ApproximateDistribution(
@@ -105,9 +116,10 @@ class TestApproximateDistribution:
         legacy_aux = xr.DataTree.from_dict({"posterior": xr.Dataset()})
         dist._auxiliary = legacy_aux
 
+        assert dist.arviz_data is legacy_aux
         assert dist.inference_data is legacy_aux
 
-    def test_warmup_samples_none_when_inference_data_has_no_children_attr(self):
+    def test_warmup_samples_none_when_arviz_data_has_no_children_attr(self):
         dist = ApproximateDistribution(
             [jax.random.normal(jax.random.PRNGKey(0), (5, 2))],
             name="x",

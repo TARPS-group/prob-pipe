@@ -136,33 +136,35 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         if no auxiliary information has been attached.
 
         ``_auxiliary`` is ProbPipe's general-purpose post-construction
-        metadata store. It may contain ArviZ-compatible inference data,
+        metadata store. It may contain ArviZ-compatible xarray DataTree data,
         diagnostic summaries, validation results, provenance-like metadata,
         or other append-only metadata produced after inference.
 
         The expected diagnostics-related layout is::
 
             posterior._auxiliary
-            ├── arviz/          # ArviZ-compatible DataTree subtree
+            ├── arviz/          # ArviZ-compatible data and raw inputs
             │   ├── posterior
             │   ├── sample_stats
             │   ├── observed_data
             │   ├── posterior_predictive
             │   └── log_likelihood
-            └── diagnostics/    # ProbPipe diagnostic summaries and metadata
+            └── diagnostics/    # ProbPipe-computed results and metadata
                 ├── mcmc        # rhat, ess_bulk, ess_tail, mcse, ...
                 └── runs        # on-demand diagnostics such as ppc, loo, spc
                     ├── ppc
                     ├── loo
                     └── spc
 
-        The ``/arviz/`` subtree is intended to be passed to ArviZ functions.
-        In ArviZ 1.0+, this is an ArviZ-compatible ``DataTree`` rather than
-        the older ``InferenceData`` representation.
+        The ``/arviz/`` subtree is intended to be passed to ArviZ functions
+        and to hold raw diagnostic ingredients such as sampler statistics,
+        posterior predictive samples, and pointwise log likelihoods. In ArviZ
+        1.0+, this is an ArviZ-compatible ``DataTree`` rather than the older
+        ``InferenceData`` representation.
 
-        The ``/diagnostics/`` subtree contains ProbPipe-owned scalar
-        summaries, warning metadata, and run metadata. It is exposed through
-        the structured ``posterior.diagnostics`` Python accessor.
+        The ``/diagnostics/`` subtree contains ProbPipe-owned computed
+        summaries, results, warning metadata, and run metadata. It is exposed
+        through the structured ``posterior.diagnostics`` Python accessor.
 
         Documented exception to distribution immutability
         -------------------------------------------------
@@ -191,8 +193,8 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         ``xarray.DataTree`` attached to the distribution. The expected layout is::
 
             posterior._auxiliary
-            ├── arviz/          # ArviZ-compatible DataTree subtree
-            └── diagnostics/    # ProbPipe diagnostic summaries and metadata
+            ├── arviz/          # ArviZ-compatible data and raw inputs
+            └── diagnostics/    # ProbPipe-computed results and metadata
 
         This property returns a structured Python accessor over the
         ``/diagnostics/`` subtree only. It is distinct from the ArviZ-compatible
@@ -203,9 +205,12 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
             posterior.diagnostics
                 # structured ProbPipe view over posterior._auxiliary["diagnostics"]
 
+            posterior.arviz_data
+                # ArviZ-compatible xarray DataTree subtree, typically
+                # posterior._auxiliary["arviz"]
+
             posterior.inference_data
-                # backward-compatible alias for the ArviZ-compatible DataTree
-                # subtree, typically posterior._auxiliary["arviz"]
+                # backward-compatible alias for posterior.arviz_data
 
         Examples
         --------

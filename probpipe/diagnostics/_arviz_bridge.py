@@ -1,8 +1,13 @@
-"""Internal ArviZ conversion layer.
+"""Internal ArviZ/xarray conversion layer.
 
-This module is *private* — users should never import from it directly.
-All public diagnostic functions live in mcmc.py and are re-exported
-via the package __init__.py.
+This module is private. Public diagnostic functions live in
+``probpipe.diagnostics`` and write ProbPipe-computed results under
+``posterior._auxiliary["diagnostics"]``.
+
+The bridge owns conversion into ArviZ-compatible datasets and raw diagnostic
+inputs stored under ``posterior._auxiliary["arviz"]``. Users should normally
+interact with ``add_mcmc_diagnostics``, ``add_ppc``, ``add_loo``, and
+``posterior.diagnostics`` instead of importing this module directly.
 """
 from __future__ import annotations                          
 

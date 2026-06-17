@@ -265,13 +265,14 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         return "unknown"
 
     @property
-    def inference_data(self) -> DataTree | None:
-        """The ArviZ-compatible DataTree stored under ``_auxiliary["arviz"]``.
+    def arviz_data(self) -> DataTree | None:
+        """The ArviZ-compatible xarray DataTree stored under ``_auxiliary["arviz"]``.
 
-        Use ArviZ/ArviZ-stats functions for diagnostics and plots::
+        Use ArviZ, arviz-stats, and arviz-plots functions for diagnostics and
+        plots::
 
             import arviz_stats
-            arviz_stats.summary(posterior.inference_data)
+            arviz_stats.summary(posterior.arviz_data)
 
         Plotting utilities may also consume this tree where supported.
 
@@ -287,20 +288,29 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         return aux
 
     @property
+    def inference_data(self) -> DataTree | None:
+        """Backward-compatible alias for :attr:`arviz_data`.
+
+        Modern ArviZ uses ``xarray.DataTree`` via ``arviz-base`` rather than
+        the legacy ``InferenceData`` object. New ProbPipe code should prefer
+        ``posterior.arviz_data``.
+        """
+        return self.arviz_data
+
+    @property
     def warmup_samples(self) -> list[Array] | None:
         """Per-chain warmup samples extracted from auxiliary data."""
-        idata = self.inference_data
-        if idata is None:
+        arviz_data = self.arviz_data
+        if arviz_data is None:
             return None
 
-        # ``inference_data`` is expected to be an ArviZ-compatible
-        # xarray DataTree. Warmup samples, when present, live under
-        # the ``warmup`` group.
-        children = idata.children if hasattr(idata, "children") else {}
+        # ``arviz_data`` is expected to be an ArviZ-compatible xarray DataTree.
+        # Warmup samples, when present, live under the ``warmup`` group.
+        children = arviz_data.children if hasattr(arviz_data, "children") else {}
         if "warmup" not in children:
             return None
 
-        warmup = idata["warmup"]["params"]
+        warmup = arviz_data["warmup"]["params"]
         n_chains = warmup.sizes.get("chain", 1)
         return [jnp.asarray(warmup.sel(chain=i).values) for i in range(n_chains)]
       
@@ -420,7 +430,7 @@ def make_posterior(
     )
 
     if auxiliary is not None:
-        # Nest ArviZ InferenceData groups under /arviz/ so _auxiliary
+        # Nest ArviZ-compatible DataTree groups under /arviz/ so _auxiliary
         # can hold other subtrees (e.g. /diagnostics/) alongside it.
         dicto: dict = {}
         for group_path, node in auxiliary.items():

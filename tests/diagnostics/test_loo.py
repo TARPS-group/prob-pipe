@@ -9,6 +9,7 @@ import pytest
 import xarray as xr
 
 from probpipe.diagnostics._loo import (
+    _add_log_likelihood,
     _as_numpy,
     _extract_pointwise_array,
     _has_group,
@@ -18,7 +19,6 @@ from probpipe.diagnostics._loo import (
     _pointwise_dataarray,
     _safe_int,
     add_loo,
-    add_log_likelihood,
 )
 from probpipe.diagnostics._datatree_store import _add_group
 from probpipe.diagnostics._views import LOOView
@@ -430,7 +430,7 @@ class TestAddLoo:
         post = _FakePosterior(with_arviz_log_likelihood=False)
         _add_group(post, "arviz/posterior", xr.Dataset(attrs={"present": True}))
 
-        with pytest.raises(ValueError, match="No log_likelihood group"):
+        with pytest.raises(ValueError, match="No pointwise log_likelihood group"):
             add_loo(post)
 
     @patch("probpipe.diagnostics._loo.az.loo")
@@ -588,7 +588,7 @@ class TestAddLooKwargs:
 
 
 # ---------------------------------------------------------------------------
-# add_log_likelihood
+# _add_log_likelihood
 # ---------------------------------------------------------------------------
 
 
@@ -628,7 +628,7 @@ class _FakeModel:
 
 
 class _FakePostForLL:
-    """Fake posterior compatible with add_log_likelihood."""
+    """Fake posterior compatible with internal log-likelihood computation."""
 
     def __init__(self, n_chains: int = 2, n_draws: int = 50, n_features: int = 1):
         self._auxiliary = None
@@ -672,14 +672,14 @@ class TestAddLogLikelihood:
 
     def test_writes_log_likelihood_group(self):
         post, model, data = self._setup()
-        add_log_likelihood(post, model, data)
+        _add_log_likelihood(post, model, data)
         ll_ds = post._auxiliary["arviz"]["log_likelihood"].to_dataset()
         assert "y" in ll_ds.data_vars
 
     def test_output_shape(self):
         n_obs = 15
         post, model, data = self._setup(n_obs=n_obs)
-        add_log_likelihood(post, model, data)
+        _add_log_likelihood(post, model, data)
         ll_ds = post._auxiliary["arviz"]["log_likelihood"].to_dataset()
         da = ll_ds["y"]
         assert da.dims == ("chain", "draw", "obs")
@@ -687,42 +687,43 @@ class TestAddLogLikelihood:
 
     def test_values_are_finite(self):
         post, model, data = self._setup()
-        add_log_likelihood(post, model, data)
+        _add_log_likelihood(post, model, data)
         ll_ds = post._auxiliary["arviz"]["log_likelihood"].to_dataset()
         arr = np.asarray(ll_ds["y"].values)
         assert np.all(np.isfinite(arr))
 
     def test_custom_var_name(self):
         post, model, data = self._setup()
-        add_log_likelihood(post, model, data, var_name="log_lik")
+        _add_log_likelihood(post, model, data, var_name="log_lik")
         ll_ds = post._auxiliary["arviz"]["log_likelihood"].to_dataset()
         assert "log_lik" in ll_ds.data_vars
 
     def test_returns_none(self):
         post, model, data = self._setup()
-        assert add_log_likelihood(post, model, data) is None
+        assert _add_log_likelihood(post, model, data) is None
 
     def test_fallback_loop_produces_same_shape(self):
         """Force the fallback by patching jax.vmap to raise."""
         post, model, data = self._setup(n_obs=5)
         with patch("jax.vmap", side_effect=Exception("no vmap")):
-            add_log_likelihood(post, model, data)
+            _add_log_likelihood(post, model, data)
         ll_ds = post._auxiliary["arviz"]["log_likelihood"].to_dataset()
         assert ll_ds["y"].shape == (post.num_chains, post.num_draws, 5)
 
-    def test_add_loo_works_after_add_log_likelihood(self):
-        """Integration: add_log_likelihood → add_loo pipeline."""
+    def test_add_loo_computes_missing_log_likelihood_from_model_and_data(self):
+        """Integration: add_loo owns the internal log-likelihood path."""
         from unittest.mock import patch as _patch
         post, model, data = self._setup(n_obs=10)
-        add_log_likelihood(post, model, data)
 
         k = np.abs(np.random.default_rng(0).standard_normal(10)) * 0.2
         fake_result = _fake_loo_result(pareto_k=k, loo_i=-k)
 
         with _patch("probpipe.diagnostics._loo.az.loo", return_value=fake_result):
-            add_loo(post)
+            add_loo(post, model=model, data=data)
 
         assert post._auxiliary is not None
+        ll_ds = post._auxiliary["arviz"]["log_likelihood"].to_dataset()
+        assert "y" in ll_ds.data_vars
         view = LOOView(post._auxiliary["diagnostics"]["runs"]["loo"])
         assert isinstance(view.elpd_loo, float)
 
@@ -745,7 +746,7 @@ class TestAddLogLikelihood:
         model = _JaxModel()
         data = {"X": model._x, "y": np.array([0.0, 1.0, 2.0])}
 
-        add_log_likelihood(post, model, data)
+        _add_log_likelihood(post, model, data)
 
         ll_ds = post._auxiliary["arviz"]["log_likelihood"].to_dataset()
         assert ll_ds["y"].shape == (1, 4, 3)

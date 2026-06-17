@@ -75,8 +75,8 @@ class TestMcmcHelpers:
         real_import = builtins.__import__
 
         def _missing_arviz(name, *args, **kwargs):
-            if name == "arviz":
-                raise ImportError("missing arviz")
+            if name in {"arviz", "arviz_stats"}:
+                raise ImportError(f"missing {name}")
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", _missing_arviz)

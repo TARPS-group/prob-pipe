@@ -27,6 +27,11 @@ and, when needed, ArviZ-compatible data under::
 
     posterior._auxiliary["arviz"]
 
+``posterior._auxiliary["arviz"]`` contains ArviZ-compatible xarray DataTree
+data and raw diagnostic inputs. ``posterior._auxiliary["diagnostics"]`` contains
+ProbPipe-computed summaries, results, warnings, and metadata exposed through
+``posterior.diagnostics``.
+
 Unified diagnostic workflow
 ---------------------------
 
@@ -52,15 +57,15 @@ subtree. The accessor classes are available as::
 ArviZ plotting
 --------------
 
-ArviZ-compatible data live under ``posterior._auxiliary["arviz"]``.
-For backward compatibility, ``posterior.inference_data`` may expose that
-ArviZ-compatible DataTree subtree::
+ArviZ-compatible data live under ``posterior._auxiliary["arviz"]`` and are
+exposed as ``posterior.arviz_data``. For backward compatibility,
+``posterior.inference_data`` is an alias for the same DataTree subtree::
 
     import arviz as az
 
-    az.plot_trace(posterior.inference_data)
-    az.plot_ppc(posterior.inference_data)
-    az.plot_loo_pit(posterior.inference_data)
+    az.plot_trace(posterior.arviz_data)
+    az.plot_ppc(posterior.arviz_data)
+    az.plot_loo_pit(posterior.arviz_data)
 """
 from __future__ import annotations
 
@@ -107,11 +112,10 @@ __all__ += [
 
 
 # ── LOO-PSIS ─────────────────────────────────────────────────────────────
-from ._loo import add_loo, add_log_likelihood
+from ._loo import add_loo
 
 __all__ += [
     "add_loo",
-    "add_log_likelihood",
 ]
 
 

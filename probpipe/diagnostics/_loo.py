@@ -20,7 +20,7 @@ ProbPipe diagnostic summaries are stored under::
 
 Main function
 -------------
-loo
+add_loo
     Compute PSIS-LOO using ArviZ and attach scalar summaries to
     ``posterior._auxiliary``.
 """
@@ -37,9 +37,9 @@ import xarray as xr
 from ..core.distribution import Distribution
 from ..core.record import Record
 from ._datatree import _add_group
-from ._utils import _record_get, _safe_float, _json_dumps_safe
+from ._utils import _json_dumps_safe, _record_get, _safe_float
 
-__all__ = ["add_loo", "add_log_likelihood"]
+__all__ = ["add_loo"]
 
 
 # ---------------------------------------------------------------------
@@ -104,8 +104,7 @@ def _get_arviz_tree(posterior: Distribution) -> Any:
         posterior._auxiliary["arviz"]
 
     This function is defensive so that it also works during transition periods
-    where ``posterior.inference_data`` may already return the ArviZ-compatible
-    object.
+    where older posteriors expose only ``posterior.inference_data``.
     """
     aux = getattr(posterior, "_auxiliary", None)
 
@@ -115,17 +114,19 @@ def _get_arviz_tree(posterior: Distribution) -> Any:
         except Exception:
             pass
 
-    try:
-        idata = posterior.inference_data
-        if idata is not None:
-            # If inference_data is accidentally the full auxiliary tree,
+    for attr in ("arviz_data", "inference_data"):
+        try:
+            arviz_data = getattr(posterior, attr)
+        except Exception:
+            continue
+
+        if arviz_data is not None:
+            # If the accessor accidentally returns the full auxiliary tree,
             # prefer its /arviz subtree when present.
             try:
-                return idata["arviz"]
+                return arviz_data["arviz"]
             except Exception:
-                return idata
-    except Exception:
-        pass
+                return arviz_data
 
     return aux
 
@@ -292,6 +293,8 @@ def add_loo(
     posterior: Distribution,
     *,
     log_likelihood: Any | None = None,
+    model: Any | None = None,
+    data: Any | None = None,
     var_name: str = "y",
     pointwise: bool = True,
     scale: str | None = None,
@@ -307,12 +310,19 @@ def add_loo(
     Parameters
     ----------
     posterior : Distribution
-        Posterior distribution whose ArviZ-compatible inference data are stored
-        under ``posterior._auxiliary["arviz"]``.
+        Posterior distribution whose ArviZ-compatible xarray DataTree data are
+        stored under ``posterior._auxiliary["arviz"]``.
 
     log_likelihood : optional
         Pointwise log likelihood. If provided, it is written to
-        ``_auxiliary/arviz/log_likelihood`` before calling ArviZ.
+        ``_auxiliary/arviz/log_likelihood`` before calling ArviZ. This is an
+        advanced override; the normal user-facing workflow is
+        ``add_loo(posterior)``.
+
+    model, data : optional
+        Inputs used to compute pointwise log likelihoods when
+        ``_auxiliary/arviz/log_likelihood`` is missing. This keeps LOO owned by
+        ``add_loo`` instead of requiring a separate public precomputation step.
 
     var_name : str
         Variable name to use when converting raw log-likelihood arrays into an
@@ -355,17 +365,36 @@ def add_loo(
     arviz_tree = _get_arviz_tree(posterior)
 
     if arviz_tree is None:
-        raise ValueError(
-            "No ArviZ-compatible inference data found. Expected "
-            "posterior._auxiliary['arviz'] or posterior.inference_data. "
-            "Provide log_likelihood=... to create the required log_likelihood group."
-        )
+        if model is not None and data is not None:
+            _add_log_likelihood(posterior, model, data, var_name=var_name)
+            arviz_tree = _get_arviz_tree(posterior)
+
+        if arviz_tree is None:
+            raise ValueError(
+                "No ArviZ-compatible DataTree data or pointwise "
+                "log_likelihood found. add_loo needs pointwise log "
+                "likelihoods with shape (chain, draw, obs). Either use an "
+                "inference backend/model path that records pointwise log "
+                "likelihoods, pass log_likelihood=... as an advanced override, "
+                "or pass model=... and data=... when the model exposes a "
+                "supported pointwise log-likelihood method."
+            )
 
     if not _has_group(arviz_tree, "log_likelihood"):
-        raise ValueError(
-            "No log_likelihood group found. Provide log_likelihood=... or "
-            "ensure posterior._auxiliary['arviz']['log_likelihood'] exists."
-        )
+        if model is not None and data is not None:
+            _add_log_likelihood(posterior, model, data, var_name=var_name)
+            arviz_tree = _get_arviz_tree(posterior)
+
+        if arviz_tree is None or not _has_group(arviz_tree, "log_likelihood"):
+            raise ValueError(
+                "No pointwise log_likelihood group found under "
+                "posterior._auxiliary['arviz']. add_loo needs pointwise log "
+                "likelihoods with shape (chain, draw, obs). Either use an "
+                "inference backend/model path that records pointwise log "
+                "likelihoods, pass log_likelihood=... as an advanced override, "
+                "or pass model=... and data=... when the model exposes a "
+                "supported pointwise log-likelihood method."
+            )
 
     # ------------------------------------------------------------------
     # Run ArviZ LOO
@@ -487,17 +516,18 @@ def add_loo(
 # ---------------------------------------------------------------------
 
 
-def add_log_likelihood(
+def _add_log_likelihood(
     posterior: Distribution,
     model: Any,
     data: Any,
     *,
     var_name: str = "y",
 ) -> None:
-    """Compute pointwise log likelihoods and write to ``_auxiliary["arviz/log_likelihood"]``.
+    """Compute pointwise log likelihoods for ``add_loo``.
 
-    Must be called before ``add_loo`` when the MCMC backend did not
-    automatically store log likelihoods during sampling.
+    This is an internal helper. The public LOO workflow is ``add_loo``; callers
+    should not need a separate manual log-likelihood precomputation step in the
+    normal API.
 
     Parameters
     ----------
@@ -529,8 +559,7 @@ def add_log_likelihood(
     --------
     ::
 
-        add_log_likelihood(posterior, model, data)
-        add_loo(posterior)
+        add_loo(posterior, model=model, data=data)
         print(posterior.diagnostics.loo.elpd_loo)
     """
     import jax

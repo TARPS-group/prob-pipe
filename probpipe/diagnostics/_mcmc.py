@@ -55,26 +55,38 @@ _ESS_THRESHOLD: int = 400
 
 
 # ---------------------------------------------------------------------------
-# ArviZ bridge fallback
+# ArviZ statistics bridge
 # ---------------------------------------------------------------------------
 
 
 def arviz_rhat(arviz_tree: Any, *, method: str = "rank") -> Any:
-    _check_arviz()
-    import arviz as az
-    return az.rhat(arviz_tree, method=method)
+    _check_arviz_stats()
+    try:
+        import arviz_stats as azs
+        return azs.rhat(arviz_tree, method=method)
+    except ImportError:
+        import arviz as az
+        return az.rhat(arviz_tree, method=method)
 
 
 def arviz_ess(arviz_tree: Any, *, method: str = "bulk") -> Any:
-    _check_arviz()
-    import arviz as az
-    return az.ess(arviz_tree, method=method)
+    _check_arviz_stats()
+    try:
+        import arviz_stats as azs
+        return azs.ess(arviz_tree, method=method)
+    except ImportError:
+        import arviz as az
+        return az.ess(arviz_tree, method=method)
 
 
 def arviz_mcse(arviz_tree: Any, *, method: str = "mean") -> Any:
-    _check_arviz()
-    import arviz as az
-    return az.mcse(arviz_tree, method=method)
+    _check_arviz_stats()
+    try:
+        import arviz_stats as azs
+        return azs.mcse(arviz_tree, method=method)
+    except ImportError:
+        import arviz as az
+        return az.mcse(arviz_tree, method=method)
 
 
 # ---------------------------------------------------------------------------
@@ -82,15 +94,24 @@ def arviz_mcse(arviz_tree: Any, *, method: str = "mean") -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _check_arviz() -> None:
-    """Raise a helpful error if ArviZ is unavailable."""
+def _check_arviz_stats() -> None:
+    """Raise a helpful error if ArviZ statistics support is unavailable."""
     try:
-        import arviz  # noqa: F401
+        import arviz_stats  # noqa: F401
     except ImportError as exc:
-        raise ImportError(
-            "ArviZ is required for MCMC diagnostics. "
-            "Install with: pip install probpipe[diagnostics]"
-        ) from exc
+        try:
+            import arviz  # noqa: F401
+        except ImportError:
+            raise ImportError(
+                "ArviZ is required for MCMC diagnostics; arviz-stats is "
+                "preferred for ArviZ 1.x statistics. "
+                "Install with: pip install probpipe[diagnostics]"
+            ) from exc
+
+
+def _check_arviz() -> None:
+    """Backward-compatible dependency check for MCMC diagnostics."""
+    _check_arviz_stats()
 
 
 def _scalar_from_da(da: Any) -> float:
