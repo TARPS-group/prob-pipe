@@ -129,6 +129,10 @@ is absent): `bridgestan`, `pymc`, `bayesflow` (amortized SBI; Python 3.12–3.13
 only). In CI, `bridgestan` and `bayesflow` are exercised in their own dedicated
 legs (the `stan` and `bayesflow` jobs).
 
+These commands build the **`probpipe-core`** distribution (the repository root);
+the friendly `probpipe` name is a separate code-less metapackage that bundles the
+backends — see *Package Structure* below.
+
 ### Running Tests
 
 ```bash
@@ -428,6 +432,30 @@ a leading underscore (`_simple.py`, `_blackjax_rwmh.py`).  The package
 `probpipe` or from subpackage `__init__` modules, never from
 underscore modules directly.  See `probpipe/__init__.py` for the
 full public API surface.
+
+### Distributions: `probpipe-core` and `probpipe`
+
+The repository builds **two** distributions from one tree (issue #237), both
+exposing the same `probpipe` import package above:
+
+- **`probpipe-core`** — the root `pyproject.toml`. The minimal distribution: the
+  JAX base only, with every inference backend an optional extra. This is what
+  `uv sync` / `pip install -e .` build, so it is the distribution you develop and
+  test against.
+- **`probpipe`** — a code-less metapackage in
+  `packaging/probpipe/pyproject.toml`. It pins `probpipe-core==<version>` and
+  adds the backends the docs exercise (`pymc`, `nutpie`, and marker-guarded
+  `bayesflow`), so `pip install probpipe` runs every example and tutorial. It
+  ships no modules of its own.
+
+The two versions move in lockstep: when bumping `version`, update **both**
+`pyproject.toml` files and keep the metapackage's `probpipe-core==` pin equal to
+the core version. Build each with:
+
+```bash
+uv build                      # probpipe-core (repository root)
+uv build packaging/probpipe   # probpipe (metapackage)
+```
 
 ---
 
