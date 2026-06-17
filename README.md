@@ -145,6 +145,19 @@ uv users can substitute `uv pip install .` (into an active `uv venv`), or
 `uv sync` for a lockfile-managed dev environment — see
 [CONTRIBUTING.md](CONTRIBUTING.md#installation).
 
+### Two distributions: `probpipe` (batteries) and `probpipe-core` (lean)
+
+ProbPipe ships as two distributions that share the same `probpipe` import name:
+
+| Install | What you get |
+|---|---|
+| `pip install probpipe` | **Batteries (recommended).** The lean core plus the inference backends the docs exercise — PyMC, nutpie, and BayesFlow — so every example and tutorial runs out of the box. |
+| `pip install probpipe-core` | **Lean.** The JAX base only (JAX, BlackJAX, TFP, ArviZ); add backends as extras, e.g. `pip install "probpipe-core[pymc]"`. |
+
+Both expose the same optional extras — `[prefect]`, `[viz]`, `[stan]`, `[pymc]`, `[nutpie]`, `[bayesflow]` — so `pip install "probpipe[stan]"` and `pip install "probpipe-core[stan]"` are equivalent ways to add a backend. On **Python 3.14** the batteries install omits BayesFlow (its neural-SBI backend caps `<3.14`) until upstream lifts the cap; everything else is unaffected.
+
+> Publishing to PyPI is pending; for now install from source as shown above (the repository root builds `probpipe-core` — add the extras you need).
+
 ### Dependencies and optional extras
 
 Core dependencies: JAX, [BlackJAX](https://blackjax-devs.github.io/blackjax/), and TensorFlow Probability. JAX provides arrays and autodiff; BlackJAX is the default backend for gradient MCMC (`condition_on(model, data)` auto-dispatches to `blackjax_nuts`); TFP supplies the distribution implementations the wrappers in `probpipe.Normal`, `probpipe.Gamma`, etc. delegate to. ProbPipe uses [tfp-nightly](https://pypi.org/project/tfp-nightly/), which is the [recommended approach](https://github.com/tensorflow/probability/issues/1994#issuecomment-3129033043) for TFP on JAX since stable TFP releases are tied to TensorFlow and often lag behind JAX.

@@ -1,0 +1,62 @@
+# Batteries metapackage for ProbPipe (issue #237). This distribution ships NO
+# code — it is the friendly `probpipe` name that pins the lean `probpipe-core`
+# and bundles the inference backends the docs exercise, so `pip install probpipe`
+# runs every example and tutorial out of the box. Lean users install
+# `probpipe-core` (+ extras) instead. The import package is `probpipe` either way.
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "probpipe"
+version = "0.1.0"   # kept in lockstep with probpipe-core (the == pin below)
+description = "Probabilistic data-processing pipelines (batteries: lean core plus the PyMC, nutpie, and BayesFlow backends)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [
+  { name = "Jonathan Huggins", email = "huggins@bu.edu" },
+  { name = "Andrew Roberts",   email = "arober@bu.edu" },
+  { name = "Yongho Lim",      email = "ylim2@bu.edu" },
+  { name = "Can Erozer",      email = "caner@bu.edu" },
+  { name = "Jiaqiang Zhu",      email = "julian25@bu.edu" },
+]  # See the AUTHORS file in the repository root for the full list
+dependencies = [
+  # Exact pin: one repo builds two coordinated dists (the jax/jaxlib model). A
+  # CI version-sync guard (follow-up PR) keeps this == probpipe-core's version.
+  "probpipe-core==0.1.0",
+  # Batteries backends = the docs' import closure plus deliberate picks. PyMC and
+  # BayesFlow are required to *run* the tutorials (unguarded imports); nutpie is
+  # the fast NUTS backend. `pyabc` joins once its SMC-ABC backend lands — it is
+  # only used in a guarded, self-skipping notebook section, so the docs run
+  # without it today.
+  "pymc>=6",
+  "matplotlib",        # the PyMC 6 sampler progress bar imports it
+  "nutpie>=0.12",
+  # BayesFlow caps Python <3.14, while core spans 3.12-3.14. Marker-guarded so
+  # `pip install probpipe` still resolves on 3.14 (batteries there simply lacks
+  # neural SBI until upstream lifts the cap).
+  "bayesflow>=2.0,<3; python_version < '3.14'",
+]
+
+# Re-export every user-facing core extra so `pip install "probpipe[<extra>]"`
+# keeps working for batteries users (each defers to the same extra on the pinned
+# core). Lean users use `probpipe-core[<extra>]` directly.
+[project.optional-dependencies]
+prefect = ["probpipe-core[prefect]"]
+viz = ["probpipe-core[viz]"]
+stan = ["probpipe-core[stan]"]
+pymc = ["probpipe-core[pymc]"]
+nutpie = ["probpipe-core[nutpie]"]
+bayesflow = ["probpipe-core[bayesflow]"]
+
+[project.urls]
+"Repository" = "https://github.com/TARPS-group/prob-pipe"
+"Documentation" = "https://tarps-group.github.io/prob-pipe/"
+"Changelog" = "https://github.com/TARPS-group/prob-pipe/blob/main/CHANGELOG.md"
+
+# Code-less metapackage: no import package ships here (the `probpipe` import
+# package lives in probpipe-core). The empty packages list disables setuptools
+# auto-discovery so the build produces a metadata-only wheel.
+[tool.setuptools]
+packages = []
