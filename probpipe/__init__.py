@@ -2,8 +2,8 @@ from importlib.metadata import version as _version, PackageNotFoundError as _Pac
 import warnings as _warnings
 
 # The importable ``probpipe`` package ships in the ``probpipe-core`` distribution
-# (the friendly ``probpipe`` name is a code-less batteries metapackage over it —
-# see issue #237), so the version is read from ``probpipe-core``.
+# (the friendly ``probpipe`` name is a code-less metapackage over it — see
+# issue #237), so the version is read from ``probpipe-core``.
 try:
     __version__ = _version("probpipe-core")
 except _PackageNotFoundError:  # pragma: no cover - source tree with no install

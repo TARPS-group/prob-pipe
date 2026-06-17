@@ -3,9 +3,10 @@ requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# Lean core distribution. The friendly `probpipe` name is a batteries
-# metapackage over this one (packaging/probpipe/) — see issue #237. The import
-# package is `probpipe` in both cases; only the distribution name differs.
+# Lean core distribution. The friendly `probpipe` name is a metapackage over
+# this one that also pulls in the inference backends (packaging/probpipe/) — see
+# issue #237. The import package is `probpipe` in both cases; only the
+# distribution name differs.
 name = "probpipe-core"
 version = "0.1.0"
 description = "Probabilistic data-processing pipelines — lean core (inference backends are optional extras)"

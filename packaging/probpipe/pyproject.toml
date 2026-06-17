@@ -1,8 +1,8 @@
-# Batteries metapackage for ProbPipe (issue #237). This distribution ships NO
-# code — it is the friendly `probpipe` name that pins the lean `probpipe-core`
-# and bundles the inference backends the docs exercise, so `pip install probpipe`
-# runs every example and tutorial out of the box. Lean users install
-# `probpipe-core` (+ extras) instead. The import package is `probpipe` either way.
+# Metapackage for ProbPipe (issue #237). This distribution ships NO code — it is
+# the friendly `probpipe` name that pins the lean `probpipe-core` and adds the
+# inference backends the docs use, so `pip install probpipe` runs every example
+# and tutorial. Lean users install `probpipe-core` (+ extras) instead. The import
+# package is `probpipe` either way.
 [build-system]
 requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "probpipe"
 version = "0.1.0"   # kept in lockstep with probpipe-core (the == pin below)
-description = "Probabilistic data-processing pipelines (batteries: lean core plus the PyMC, nutpie, and BayesFlow backends)"
+description = "Probabilistic data-processing pipelines, with the PyMC, nutpie, and BayesFlow inference backends included"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
@@ -25,7 +25,7 @@ dependencies = [
   # Exact pin: one repo builds two coordinated dists (the jax/jaxlib model). A
   # CI version-sync guard (follow-up PR) keeps this == probpipe-core's version.
   "probpipe-core==0.1.0",
-  # Batteries backends = the docs' import closure plus deliberate picks. PyMC and
+  # Bundled backends = the docs' import closure plus deliberate picks. PyMC and
   # BayesFlow are required to *run* the tutorials (unguarded imports); nutpie is
   # the fast NUTS backend. `pyabc` joins once its SMC-ABC backend lands — it is
   # only used in a guarded, self-skipping notebook section, so the docs run
@@ -34,15 +34,15 @@ dependencies = [
   "matplotlib",        # the PyMC 6 sampler progress bar imports it
   "nutpie>=0.12",
   # BayesFlow caps Python <3.14, while core spans 3.12-3.14. Marker-guarded so
-  # `pip install probpipe` still resolves on 3.14 (batteries there simply lacks
-  # neural SBI until upstream lifts the cap).
+  # `pip install probpipe` still resolves on 3.14 (it simply lacks neural SBI
+  # there until upstream lifts the cap).
   "bayesflow>=2.0,<3; python_version < '3.14'",
 ]
 
 # Re-export only the user-facing extras NOT already bundled above, so
 # `pip install "probpipe[<extra>]"` works for them. pymc / nutpie / bayesflow are
-# part of batteries already, so re-exporting them would be redundant. Lean
-# installs add any backend via `probpipe-core[<extra>]`.
+# bundled above already, so re-exporting them would be redundant. Lean installs
+# add any backend via `probpipe-core[<extra>]`.
 [project.optional-dependencies]
 prefect = ["probpipe-core[prefect]"]
 viz = ["probpipe-core[viz]"]
