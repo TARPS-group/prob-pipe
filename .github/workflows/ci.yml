@@ -368,10 +368,10 @@ jobs:
     # programs (needs a C++ toolchain — ubuntu-latest provides one). Kept
     # separate from the main matrix so the per-model compile cost stays out of
     # every leg: the main matrix runs StanModel's pure tests (the name parser,
-    # the bridgestan-missing guard) and skips the compile-backed ones (gated by
-    # the _stan_toolchain fixture). One leg only — BridgeStan is a C++/ctypes
-    # backend, so behaviour doesn't vary by Python version and the compile cost
-    # is paid per leg.
+    # the bridgestan-missing guard, the CmdStan import shim) and skips the
+    # compile-backed ones (gated by the _stan_toolchain fixture). One leg only —
+    # BridgeStan is a C++/ctypes backend, so behaviour doesn't vary by Python
+    # version and the compile cost is paid per leg.
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -425,8 +425,11 @@ jobs:
         # BridgeStan downloads its C++ sources and builds the Stan math + TBB
         # static libs under ~/.bridgestan on the first compile (minutes). Cache
         # it so only a cold cache pays that; per-model compiles are then seconds.
-        # Keyed on uv.lock so a bridgestan version bump rebuilds; the version is
-        # a subdirectory there, so a stale restore can't mismatch.
+        # The key rotates on every uv.lock change, but restore-keys falls back to
+        # the latest prior build, so an unrelated dependency bump reuses the
+        # existing libs (no rebuild). Only a bridgestan version bump rebuilds —
+        # under its own ~/.bridgestan/<version>/ subdir, so a stale restore can't
+        # mismatch.
         if: steps.stan_check.outputs.skip != 'true'
         uses: actions/cache@v4
         with:

@@ -95,28 +95,11 @@ class TestStanModelImportError:
 # ---------------------------------------------------------------------------
 # Real BridgeStan backend
 #
-# The gate lives in ``_stan_toolchain`` (not at module scope) so the pure tests
-# above still run when BridgeStan or a C++ toolchain is absent. The model
-# fixtures below depend on it, so they skip together.
+# The model fixtures below depend on the shared ``_stan_toolchain`` fixture
+# (tests/conftest.py), which ``importorskip``s bridgestan and probe-compiles the
+# C++ toolchain — so these tests skip together when the backend is absent, while
+# the pure tests above still run.
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="module")
-def _stan_toolchain(tmp_path_factory):
-    """Skip the integration tests unless BridgeStan can compile here.
-
-    Compiling a trivial, data-free probe separates "is the C++ toolchain
-    present?" (a legitimate skip) from "does StanModel construct correctly?"
-    (a regression that must fail loudly, not skip) — so the model fixtures
-    below construct without a try/except that would swallow real bugs.
-    """
-    bridgestan = pytest.importorskip("bridgestan")
-    probe = tmp_path_factory.mktemp("stan_probe") / "probe.stan"
-    probe.write_text("parameters { real x; } model { x ~ normal(0, 1); }")
-    try:
-        bridgestan.StanModel(str(probe))
-    except Exception as exc:
-        pytest.skip(f"Stan compilation unavailable: {exc}")
 
 
 @pytest.fixture(scope="module")
@@ -221,7 +204,12 @@ class TestStanModelSurface:
 
 
 class TestStanModelDensity:
-    """Density ops against the conjugate model's closed-form log-density."""
+    """Density ops against the conjugate model's closed-form log-density.
+
+    Tolerances cover float64 round-off on a deterministic closed form (Stan's
+    log_density carries no RNG), so they are tight fixed constants, not
+    seed-spread bounds.
+    """
 
     _Y = np.array([1.0, 2.0, 3.0])  # baked into conjugate_model's data
 
@@ -255,10 +243,18 @@ class TestStanModelDensity:
         up = conjugate_model._unnormalized_prob(jnp.asarray([0.5]))
         assert jnp.isfinite(up) and float(up) > 0
 
+    def test_log_prob_accepts_float32_input(self, conjugate_model):
+        # `_to_f64` exists so a float32 array (JAX's default dtype) can cross the
+        # BridgeStan boundary, which rejects anything but float64. Passing one
+        # explicitly exercises that coercion and checks the value survives it.
+        lp = float(conjugate_model._log_prob(jnp.asarray([0.5], dtype=jnp.float32)))
+        np.testing.assert_allclose(lp, self._expected_log_density(0.5), atol=1e-5)
+
 
 class TestStanModelTransforms:
-    """constrain / unconstrain across the JAX <-> float64 boundary. For an
-    unconstrained real both directions are the identity."""
+    """constrain / unconstrain across the JAX <-> float64 boundary. The
+    conjugate model's single real is the identity in both directions; the
+    structured model's simplex exercises a genuine (non-identity) transform."""
 
     def test_param_constrain_identity_for_real(self, conjugate_model):
         x = jnp.asarray([1.23])
@@ -275,6 +271,26 @@ class TestStanModelTransforms:
         round_trip = conjugate_model.param_constrain(
             conjugate_model.param_unconstrain(x))
         np.testing.assert_allclose(np.asarray(round_trip), [1.23], atol=1e-6)
+
+    def test_constrain_yields_valid_simplex(self, structured_model):
+        # param_constrain applies the real (non-identity) transform: the simplex
+        # block of the constrained vector must sum to 1 with positive entries —
+        # a known invariant the identity-only conjugate model can't exercise.
+        constrained = np.asarray(structured_model.param_constrain(jnp.zeros(10)))
+        p = constrained[-3:]  # blocks pack in order; the simplex is last
+        np.testing.assert_allclose(float(p.sum()), 1.0, atol=1e-5)
+        assert (p > 0).all()
+
+    def test_constrain_unconstrain_round_trip_simplex(self, structured_model):
+        # constrain o unconstrain is the identity on a valid constrained point.
+        # The simplex must sum to 1 exactly in float (0.25 + 0.25 + 0.5) for
+        # BridgeStan's strict simplex_free to accept it.
+        constrained = jnp.array([0.5, 0.1, 0.2, 0.3, 1.0, 2.0, 3.0, 4.0,
+                                 0.25, 0.25, 0.5])
+        round_trip = structured_model.param_constrain(
+            structured_model.param_unconstrain(constrained))
+        np.testing.assert_allclose(np.asarray(round_trip),
+                                   np.asarray(constrained), atol=1e-5)
 
 
 class TestBridgestanModel:
@@ -353,9 +369,11 @@ class TestStanModelParameters:
                 p=jnp.array([0.2, 0.3, 0.5]))
 
     def test_keyword_form_equals_positional(self, structured_model):
-        # The simplex sums to 1 exactly in floating point (0.25 + 0.25 + 0.5),
-        # so param_unconstrain accepts it; the keyword form must produce the
-        # same log-density as the equivalent flat vector.
+        # Both forms route through the same _pack_value, so this guards the
+        # keyword->positional dispatch wiring; the column-major packing *order*
+        # is validated by test_pack_value_assembles_column_major and
+        # test_param_blocks_match_real_names. 0.25/0.25/0.5 are exact in float32,
+        # so the simplex sums to 1 and BridgeStan's param_unconstrain accepts it.
         kw = dict(mu=0.5, theta=jnp.array([0.1, 0.2, 0.3]),
                   L=jnp.array([[1.0, 2.0], [3.0, 4.0]]),
                   p=jnp.array([0.25, 0.25, 0.5]))
@@ -398,6 +416,17 @@ class TestUnconstrainedStanView:
         assert jnp.isfinite(lp)
         np.testing.assert_allclose(
             float(view._unnormalized_log_prob(x)), float(lp), atol=1e-6)
+
+    def test_log_prob_finite_difference_in_mu(self, structured_model):
+        # Exact value check: shifting the unconstrained mu coordinate by m moves
+        # the log-density by exactly -0.5*m^2 (the N(0, 1) prior on mu), with the
+        # simplex Jacobian and the other blocks held fixed.
+        view = structured_model.as_unconstrained_distribution()
+        x0 = jnp.zeros(view.event_shape)
+        for m in (0.5, 1.0):
+            delta = (float(view._log_prob(x0.at[0].set(m)))
+                     - float(view._log_prob(x0)))
+            np.testing.assert_allclose(delta, -0.5 * m**2, atol=1e-5)
 
     def test_prob_is_exp_log_prob(self, structured_model):
         view = structured_model.as_unconstrained_distribution()

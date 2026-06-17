@@ -32,7 +32,8 @@ coverage:
 # Carry each flag's coverage forward from the base commit when a PR doesn't
 # upload it, so the project number stays sane and Codecov stops reporting
 # "HEAD has N uploads less than BASE":
-#   - unit: the main pytest suite (probpipe, minus the BayesFlow and Stan backends).
+#   - unit: the main pytest suite (probpipe, minus the BayesFlow backend and
+#     Stan's compiled-model paths).
 #   - bayesflow: the keras-on-jax BayesFlow leg, which only runs when
 #     BayesFlow-relevant files change (see the bayesflow job's gating).
 #   - stan: the BridgeStan leg (StanModel's compile-backed tests), which only

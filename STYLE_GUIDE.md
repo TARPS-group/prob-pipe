@@ -463,7 +463,8 @@ def _ensure_nutpie():
 ```
 
 For test files, use `pytest.importorskip("nutpie")` or mock-based
-approaches with `patch.dict(sys.modules)`.
+approaches with `patch.dict(sys.modules)`; see §8.4 for the per-backend
+testing patterns (e.g. the BridgeStan probe-compile fixture for Stan).
 
 ### 4.5 `Callable` and other ABCs
 
@@ -657,8 +658,8 @@ distribution families.
 - Stan tests compile real programs through BridgeStan, gated by a fixture
   that `importorskip`s `bridgestan` and probes the C++ toolchain, and run in
   the dedicated `stan` CI job (`--extra stan`). StanModel's backend-free tests
-  (the parameter-name parser, the bridgestan-missing import guard) need no
-  compiled model and run in the main matrix.
+  (the parameter-name parser, the bridgestan-missing import guard, and the
+  CmdStan import shim) need no compiled model and run in the main matrix.
 
 ### 8.5 Test runner
 
