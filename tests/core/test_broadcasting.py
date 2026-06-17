@@ -156,7 +156,7 @@ class TestBroadcastingNSamples:
             w.with_options(n_broadcast_samples=n_broadcast_samples)(x=g)
 
 
-class TestFormerlyReservedParameterNames:
+class TestWorkflowControlParameterNames:
     def test_n_broadcast_samples_allowed(self):
         def func(x: jnp.ndarray, n_broadcast_samples: int = 10) -> float:
             return float(n_broadcast_samples)
