@@ -206,8 +206,8 @@ If you use ProbPipe in your research, please cite it:
 
 ```bibtex
 @software{probpipe,
-  author  = {Huggins, Jonathan and Roberts, Andrew and Lim, Yongho and
-             Erozer, Can and Zhu, Jiaqiang},
+  author  = {Huggins, Jonathan and Roberts, Andrew and Zhu, Jiaqiang and
+             Erozer, Can and Lim, Yongho},
   title   = {{ProbPipe}: Probabilistic pipelines with automated uncertainty quantification},
   year    = {2026},
   version = {0.1.0},
