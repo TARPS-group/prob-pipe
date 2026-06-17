@@ -154,7 +154,7 @@ ProbPipe ships as two distributions that share the same `probpipe` import name:
 | `pip install probpipe` | **Batteries (recommended).** The lean core plus the inference backends the docs exercise — PyMC, nutpie, and BayesFlow — so every example and tutorial runs out of the box. |
 | `pip install probpipe-core` | **Lean.** The JAX base only (JAX, BlackJAX, TFP, ArviZ); add backends as extras, e.g. `pip install "probpipe-core[pymc]"`. |
 
-Both expose the same optional extras — `[prefect]`, `[viz]`, `[stan]`, `[pymc]`, `[nutpie]`, `[bayesflow]` — so `pip install "probpipe[stan]"` and `pip install "probpipe-core[stan]"` are equivalent ways to add a backend. On **Python 3.14** the batteries install omits BayesFlow (its neural-SBI backend caps `<3.14`) until upstream lifts the cap; everything else is unaffected.
+The batteries install already bundles PyMC, nutpie, and BayesFlow. Any remaining optional extra can be added on top with either name — `pip install "probpipe[prefect]"` (also `[viz]`, `[stan]`) — and lean `probpipe-core` users add any backend the same way, e.g. `pip install "probpipe-core[pymc]"`. On **Python 3.14** the batteries install omits BayesFlow (its neural-SBI backend caps `<3.14`) until upstream lifts the cap; everything else is unaffected.
 
 > Publishing to PyPI is pending; for now install from source as shown above (the repository root builds `probpipe-core` — add the extras you need).
 

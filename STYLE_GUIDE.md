@@ -458,7 +458,7 @@ def _ensure_nutpie():
         return nutpie
     except ImportError:
         raise ImportError(
-            "nutpie is required: pip install probpipe[nutpie]"
+            "nutpie is required: pip install probpipe-core[nutpie]"
         ) from None
 ```
 

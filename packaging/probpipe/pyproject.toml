@@ -39,16 +39,14 @@ dependencies = [
   "bayesflow>=2.0,<3; python_version < '3.14'",
 ]
 
-# Re-export every user-facing core extra so `pip install "probpipe[<extra>]"`
-# keeps working for batteries users (each defers to the same extra on the pinned
-# core). Lean users use `probpipe-core[<extra>]` directly.
+# Re-export only the user-facing extras NOT already bundled above, so
+# `pip install "probpipe[<extra>]"` works for them. pymc / nutpie / bayesflow are
+# part of batteries already, so re-exporting them would be redundant. Lean
+# installs add any backend via `probpipe-core[<extra>]`.
 [project.optional-dependencies]
 prefect = ["probpipe-core[prefect]"]
 viz = ["probpipe-core[viz]"]
 stan = ["probpipe-core[stan]"]
-pymc = ["probpipe-core[pymc]"]
-nutpie = ["probpipe-core[nutpie]"]
-bayesflow = ["probpipe-core[bayesflow]"]
 
 [project.urls]
 "Repository" = "https://github.com/TARPS-group/prob-pipe"
