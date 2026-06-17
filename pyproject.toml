@@ -3,24 +3,20 @@ requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
-# Lean core distribution. The friendly `probpipe` name is a metapackage over
+# Minimal core distribution. The friendly `probpipe` name is a metapackage over
 # this one that also pulls in the inference backends (packaging/probpipe/) — see
 # issue #237. The import package is `probpipe` in both cases; only the
 # distribution name differs.
 name = "probpipe-core"
 version = "0.1.0"
-description = "Probabilistic data-processing pipelines — lean core (inference backends are optional extras)"
+description = "Probabilistic data-processing pipelines — minimal core (inference backends are optional extras)"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE", "AUTHORS"]
 authors = [
-  { name = "Jonathan Huggins", email = "huggins@bu.edu" },
-  { name = "Andrew Roberts",   email = "arober@bu.edu" },
-  { name = "Yongho Lim",      email = "ylim2@bu.edu" },
-  { name = "Can Erozer",      email = "caner@bu.edu" },
-  { name = "Jiaqiang Zhu",      email = "julian25@bu.edu" },
-]  # See AUTHORS file for full list
+  { name = "ProbPipe Development Team", email = "huggins@bu.edu" },
+]  # Full contributor list in the AUTHORS file
 dependencies = [
   # arviz 0.x was only reachable while [pymc] allowed pymc 5.x (which caps
   # arviz<1.0); [pymc] now needs pymc>=6, so the floor moves to arviz>=1.1.

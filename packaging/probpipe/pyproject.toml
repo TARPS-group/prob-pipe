@@ -1,8 +1,8 @@
 # Metapackage for ProbPipe (issue #237). This distribution ships NO code — it is
-# the friendly `probpipe` name that pins the lean `probpipe-core` and adds the
+# the friendly `probpipe` name that pins the minimal `probpipe-core` and adds the
 # inference backends the docs use, so `pip install probpipe` runs every example
-# and tutorial. Lean users install `probpipe-core` (+ extras) instead. The import
-# package is `probpipe` either way.
+# and tutorial. For a minimal install, use `probpipe-core` (+ extras) instead.
+# The import package is `probpipe` either way.
 [build-system]
 requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
@@ -15,12 +15,8 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [
-  { name = "Jonathan Huggins", email = "huggins@bu.edu" },
-  { name = "Andrew Roberts",   email = "arober@bu.edu" },
-  { name = "Yongho Lim",      email = "ylim2@bu.edu" },
-  { name = "Can Erozer",      email = "caner@bu.edu" },
-  { name = "Jiaqiang Zhu",      email = "julian25@bu.edu" },
-]  # See the AUTHORS file in the repository root for the full list
+  { name = "ProbPipe Development Team", email = "huggins@bu.edu" },
+]  # Full contributor list in the AUTHORS file (repository root)
 dependencies = [
   # Exact pin: one repo builds two coordinated dists (the jax/jaxlib model). A
   # CI version-sync guard (follow-up PR) keeps this == probpipe-core's version.
@@ -41,7 +37,7 @@ dependencies = [
 
 # Re-export only the user-facing extras NOT already bundled above, so
 # `pip install "probpipe[<extra>]"` works for them. pymc / nutpie / bayesflow are
-# bundled above already, so re-exporting them would be redundant. Lean installs
+# bundled above already, so re-exporting them would be redundant. Minimal installs
 # add any backend via `probpipe-core[<extra>]`.
 [project.optional-dependencies]
 prefect = ["probpipe-core[prefect]"]

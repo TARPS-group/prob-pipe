@@ -9,17 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Two-distribution packaging: `probpipe-core` (lean) and `probpipe`
-  (core + all backends) (#237).** The root distribution is renamed `probpipe-core` (lean JAX base —
+- **Two-distribution packaging: `probpipe-core` (minimal) and `probpipe`
+  (core + all backends) (#237).** The root distribution is renamed `probpipe-core` (minimal JAX base —
   every inference backend is an optional extra), and a new code-less `probpipe`
   metapackage (`packaging/probpipe/`) pins `probpipe-core` and bundles the
   backends the docs exercise — PyMC, nutpie, and BayesFlow (marker-guarded
   `python_version < "3.14"`) — so `pip install probpipe` runs every example and
-  tutorial. The `probpipe` **import** name is unchanged in both. Every
-  user-facing extra is re-exported on the metapackage, so
-  `pip install "probpipe[<extra>]"` and `pip install "probpipe-core[<extra>]"`
-  are equivalent. (The `pyabc` SMC-ABC backend joins `probpipe` once it lands;
-  CI to build and publish both distributions follows in a separate PR.)
+  tutorial. The `probpipe` **import** name is unchanged in both. Extras not
+  already bundled (`prefect`, `viz`, `stan`) are re-exported on the metapackage,
+  so `pip install "probpipe[<extra>]"` works alongside
+  `pip install "probpipe-core[<extra>]"`. The package `authors` metadata is set
+  to the ProbPipe Development Team, with the full contributor list in `AUTHORS`.
+  (The `pyabc` SMC-ABC backend joins `probpipe` once it lands; CI to build and
+  publish both distributions follows in a separate PR.)
 
 - **Nested `ProductDistribution` support in the record layer (#262).**
   `RecordArray` accepts slash-delimited paths in string indexing

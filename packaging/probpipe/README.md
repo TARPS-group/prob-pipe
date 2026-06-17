@@ -1,6 +1,6 @@
 # probpipe
 
-The `probpipe` distribution pins the lean
+The `probpipe` distribution pins the minimal
 [`probpipe-core`](https://github.com/TARPS-group/prob-pipe) base and adds the
 inference backends the documentation uses, so that
 
