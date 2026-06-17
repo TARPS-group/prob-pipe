@@ -1,4 +1,4 @@
-# Metapackage for ProbPipe (issue #237). This distribution ships NO code — it is
+# Metapackage for ProbPipe. This distribution ships NO code — it is
 # the friendly `probpipe` name that pins the minimal `probpipe-core` and adds the
 # inference backends the docs use, so `pip install probpipe` runs every example
 # and tutorial. For a minimal install, use `probpipe-core` (+ extras) instead.
@@ -18,21 +18,20 @@ authors = [
   { name = "ProbPipe Development Team", email = "huggins@bu.edu" },
 ]  # Full contributor list in the AUTHORS file (repository root)
 dependencies = [
-  # Exact pin: one repo builds two coordinated dists (the jax/jaxlib model). A
-  # CI version-sync guard (follow-up PR) keeps this == probpipe-core's version.
-  "probpipe-core==0.1.0",
-  # Bundled backends = the docs' import closure plus deliberate picks. PyMC and
-  # BayesFlow are required to *run* the tutorials (unguarded imports); nutpie is
+  # Bundle the backends the docs use by pulling probpipe-core's own extras, so
+  # their version constraints stay single-sourced in the root pyproject (no
+  # drift). The set is the docs' import closure plus deliberate picks: PyMC and
+  # BayesFlow are required to *run* the tutorials (unguarded imports), nutpie is
   # the fast NUTS backend. `pyabc` joins once its SMC-ABC backend lands — it is
   # only used in a guarded, self-skipping notebook section, so the docs run
   # without it today.
-  "pymc>=6",
-  "matplotlib",        # the PyMC 6 sampler progress bar imports it
-  "nutpie>=0.12",
-  # BayesFlow caps Python <3.14, while core spans 3.12-3.14. Marker-guarded so
-  # `pip install probpipe` still resolves on 3.14 (it simply lacks neural SBI
-  # there until upstream lifts the cap).
-  "bayesflow>=2.0,<3; python_version < '3.14'",
+  #
+  # Exact `==` pin: one repo builds two coordinated dists (the jax/jaxlib model);
+  # a CI version-sync guard (follow-up) keeps it equal to probpipe-core's version.
+  "probpipe-core[pymc,nutpie]==0.1.0",
+  # BayesFlow caps Python <3.14 while core spans 3.12-3.14, so it is marker-guarded:
+  # `pip install probpipe` still resolves on 3.14, just without neural SBI there.
+  "probpipe-core[bayesflow]==0.1.0; python_version < '3.14'",
 ]
 
 # Re-export only the user-facing extras NOT already bundled above, so

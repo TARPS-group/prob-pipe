@@ -435,8 +435,8 @@ full public API surface.
 
 ### Distributions: `probpipe-core` and `probpipe`
 
-The repository builds **two** distributions from one tree (issue #237), both
-exposing the same `probpipe` import package above:
+The repository builds **two** distributions from one tree, both exposing the
+same `probpipe` import package above:
 
 - **`probpipe-core`** — the root `pyproject.toml`. The minimal distribution: the
   JAX base only, with every inference backend an optional extra. This is what

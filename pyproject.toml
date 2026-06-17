@@ -4,9 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 # Minimal core distribution. The friendly `probpipe` name is a metapackage over
-# this one that also pulls in the inference backends (packaging/probpipe/) — see
-# issue #237. The import package is `probpipe` in both cases; only the
-# distribution name differs.
+# this one that also pulls in the inference backends (packaging/probpipe/). The
+# import package is `probpipe` in both cases; only the distribution name differs.
 name = "probpipe-core"
 version = "0.1.0"
 description = "Probabilistic data-processing pipelines — minimal core (inference backends are optional extras)"
