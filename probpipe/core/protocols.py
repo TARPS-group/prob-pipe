@@ -61,7 +61,7 @@ from typing import (
 
 import jax.numpy as jnp
 
-from ..custom_types import Array, PRNGKey
+from ..custom_types import Array, ArrayLike, PRNGKey
 
 if TYPE_CHECKING:
     from ._distribution_base import Distribution
@@ -166,17 +166,19 @@ class SupportsSampling(Protocol):
 # ---------------------------------------------------------------------------
 
 @runtime_checkable
-class SupportsUnnormalizedLogProb(Protocol):
+class SupportsUnnormalizedLogProb[T](Protocol):
     """Distribution with an unnormalized log-density.
 
-    Provides ``_unnormalized_log_prob(value)``.
+    Provides ``_unnormalized_log_prob(value)``, where *value* is a single
+    draw of the distribution's sample type ``T`` (or the batched form;
+    see :class:`SupportsLogProb`).
     """
 
-    def _unnormalized_log_prob(self, value: Any) -> Array: ...
+    def _unnormalized_log_prob(self, value: T | ArrayLike) -> Array: ...
 
 
 @runtime_checkable
-class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
+class SupportsLogProb[T](SupportsUnnormalizedLogProb[T], Protocol):
     """Distribution with a (normalized) log-density.
 
     Extends :class:`SupportsUnnormalizedLogProb` because any distribution
@@ -184,11 +186,20 @@ class SupportsLogProb(SupportsUnnormalizedLogProb, Protocol):
     The base :class:`~probpipe.core.distribution.Distribution` class
     provides ``_unnormalized_log_prob`` defaulting to ``_log_prob``.
 
+    ``_log_prob`` accepts a single draw of the distribution's sample type
+    ``T`` or the batched form (``Array`` → ``Array`` with leading batch
+    axes; ``Record`` → ``RecordArray``; ``NumericRecord`` →
+    ``NumericRecordArray``). The ``T | ArrayLike`` annotation is
+    deliberately loose: ``ArrayLike`` covers the scalar batched case,
+    while Record-based batched forms follow the convention above. The
+    kwarg form ``log_prob(dist, field=value, ...)`` builds a single ``T``
+    via :meth:`Distribution._pack_value`; batched evaluation goes through
+    the positional path.
     """
 
-    def _log_prob(self, value: Any) -> Array: ...
+    def _log_prob(self, value: T | ArrayLike) -> Array: ...
 
-    def _unnormalized_log_prob(self, value: Any) -> Array:
+    def _unnormalized_log_prob(self, value: T | ArrayLike) -> Array:
         """Default: delegates to ``_log_prob``."""
         return self._log_prob(value)
 
@@ -461,6 +472,121 @@ def protocols_supported_by_all(
     return tuple(p for p in candidates if all(isinstance(l, p) for l in leaves))
 
 
+# ---------------------------------------------------------------------------
+# Likelihoods and generative simulators
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class Likelihood[P, D](Protocol):
+    """Protocol for computing log-likelihood of data given parameters.
+
+    Generic in ``P`` (parameter type) and ``D`` (data type).
+    Any class that defines ``log_likelihood(params, data) -> float``
+    satisfies this protocol.
+    """
+
+    def log_likelihood(self, params: P, data: D) -> float: ...
+
+
+@runtime_checkable
+class ConditionallyIndependentLikelihood[P, D](Likelihood[P, D], Protocol):
+    """Likelihood whose observations are conditionally independent given
+    the parameters.
+
+    Formally, for observations ``y_1, ..., y_N`` the joint log-density
+    factorises into a sum of per-observation log-densities:
+
+    .. math::
+
+        \\log p(y_1, \\ldots, y_N \\mid \\theta)
+            = \\sum_{i=1}^N \\log p(y_i \\mid \\theta).
+
+    The "conditionally" refers to conditioning on the parameters ``θ``:
+    the ``y_i`` are independent *given* ``θ``, not marginally. For
+    regression-style likelihoods each datum carries a covariate ``x_i``
+    that the per-observation density depends on; the factorisation then
+    reads ``Σ_i log p(y_i | x_i, θ)``, with the covariates treated as
+    fixed inputs rather than random variables. This is the "conditionally
+    independent" case rather than the stricter "i.i.d." (where every
+    ``p(y_i | θ)`` is identical).
+
+    Required by :class:`~probpipe.MinibatchedDistribution` for
+    stochastic-gradient inference, and useful independently for held-out
+    predictive log-likelihoods, leave-one-out cross-validation, and
+    PSIS-LOO. Implementations expose :meth:`per_datum_log_likelihood`;
+    :func:`_default_per_datum_log_likelihood` is a length-1-batch fallback
+    for likelihoods that prefer a default over an efficient override.
+    """
+
+    def per_datum_log_likelihood(self, params: P, datum: Any) -> Any:
+        """Log-density of a single datum given parameters.
+
+        Parameters
+        ----------
+        params : P
+            Model parameters.
+        datum : Any
+            One observation; its shape depends on the data format the
+            likelihood was built against (a row ``(x_i, y_i)`` for a
+            regression model, a single value for a scalar response).
+
+        Returns
+        -------
+        Array
+            Scalar log-density of the datum under ``params``.
+        """
+        ...
+
+
+def _default_per_datum_log_likelihood(
+    likelihood: Likelihood,
+    params: Any,
+    datum: Any,
+) -> Any:
+    """Default per-datum log-likelihood — evaluate ``log_likelihood`` on a length-1 batch.
+
+    Fallback for :class:`ConditionallyIndependentLikelihood`
+    implementations that don't have a row-specific shortcut. Adds a
+    leading axis to ``datum`` via ``jax.tree.map(lambda x: x[None, ...], datum)``
+    and calls ``likelihood.log_likelihood(params, batch)``. Less
+    efficient than an override that evaluates the family directly on
+    the un-reshaped datum (no length-1-batch wrap, no associated
+    broadcasting overhead inside ``log_likelihood``).
+    """
+    import jax
+    batch = jax.tree.map(lambda x: x[None, ...], datum)
+    return likelihood.log_likelihood(params, batch)
+
+
+@runtime_checkable
+class GenerativeLikelihood[P, D](Protocol):
+    """Protocol for generating synthetic data given parameters.
+
+    Generic in ``P`` (parameter type) and ``D`` (data type).
+    Any class that defines
+    ``generate_data(params, num_observations, *, key) -> D``
+    satisfies this protocol.
+    """
+
+    def generate_data(
+        self, params: P, num_observations: int,
+        *, key: PRNGKey | None = None,
+    ) -> D:
+        """Generate ``num_observations`` synthetic data points from ``params``.
+
+        Parameters
+        ----------
+        params : P
+            Model parameters.
+        num_observations : int
+            Number of data points to generate.
+        key : PRNGKey or None
+            JAX PRNG key for reproducible generation.
+        """
+        ...
+
+
 __all__ = [
     "compute_expectation",
     "SupportsExpectation",
@@ -474,5 +600,8 @@ __all__ = [
     "SupportsRandomUnnormalizedLogProb",
     "SupportsConditioning",
     "SupportsArrayBackend",
+    "Likelihood",
+    "ConditionallyIndependentLikelihood",
+    "GenerativeLikelihood",
     "protocols_supported_by_all",
 ]

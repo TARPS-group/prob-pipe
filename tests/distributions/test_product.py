@@ -181,6 +181,33 @@ class TestProductDistribution:
         assert set(items.keys()) == {"x", "y"}
         assert all(isinstance(v, _RecordDistributionView) for v in items.values())
 
+    def test_supports_per_field(self):
+        """``supports`` maps each field to its component's support constraint
+        (heterogeneous constraints preserved per field)."""
+        joint = ProductDistribution(Gamma(2.0, 1.0, name="g"),
+                                    Normal(loc=0.0, scale=1.0, name="x"))
+        sup = joint.supports
+        assert set(sup.keys()) == {"g", "x"}
+        assert sup["g"] == joint.components["g"].support
+        assert sup["x"] == joint.components["x"].support
+        assert sup["g"] != sup["x"]  # positive vs real
+
+    def test_supports_nested_components(self):
+        """``supports`` walks nested dict components recursively (two levels
+        here), keying leaves by slash-delimited paths -- the same keying as
+        ``leaf_shapes`` -- so every value is a leaf Constraint."""
+        joint = ProductDistribution(
+            name="joint",
+            outer={"a": Normal(loc=0.0, scale=1.0, name="a"),
+                   "deep": {"g": Gamma(2.0, 1.0, name="g")}},
+            m=Normal(loc=0.0, scale=1.0, name="m"),
+        )
+        sup = joint.supports
+        assert set(sup.keys()) == set(joint.record_template.leaf_shapes.keys())
+        assert "outer/deep/g" in sup
+        assert sup["outer/deep/g"] != sup["outer/a"]  # positive vs real
+        assert sup["outer/a"] == sup["m"]             # both real
+
 
 # ===========================================================================
 # 2. TestFlattenUnflatten
@@ -240,6 +267,76 @@ class TestFlattenUnflatten:
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
         np.testing.assert_allclose(recovered["y"], s["y"], atol=1e-6)
 
+
+
+# ===========================================================================
+# 3b. TestNestedSampleFlatten (issue #262)
+# ===========================================================================
+
+class TestNestedSampleFlatten:
+    """A batched draw from a nested ProductDistribution is a canonical, nested
+    NumericRecordArray that flattens and round-trips; the unbatched draw stays
+    a plain Record."""
+
+    @pytest.fixture
+    def nested(self):
+        return ProductDistribution(
+            name="joint",
+            outer={"a": Normal(loc=0.0, scale=1.0, name="a"),
+                   "b": Normal(loc=2.0, scale=0.5, name="b")},
+            m=Normal(loc=-1.0, scale=1.0, name="m"),
+        )
+
+    def test_batched_nested_field_is_record_array(self, nested):
+        from probpipe.core._record_array import NumericRecordArray
+        s = sample(nested, key=jax.random.PRNGKey(0), sample_shape=(6,))
+        assert isinstance(s, NumericRecordArray)
+        assert isinstance(s["outer"], NumericRecordArray)  # not a plain Record
+
+    def test_unbatched_nested_field_stays_record(self, nested):
+        s = sample(nested, key=jax.random.PRNGKey(0))
+        assert isinstance(s, Record) and not isinstance(s, RecordArray)
+        assert isinstance(s["outer"], Record) and not isinstance(s["outer"], RecordArray)
+
+    def test_batched_nested_flatten_roundtrip(self, nested):
+        from probpipe.core._record_array import NumericRecordArray
+        s = sample(nested, key=jax.random.PRNGKey(1), sample_shape=(6,))
+        leaves = list(nested.record_template.numeric_leaf_shapes)
+        flat = s.flatten()
+        assert flat.shape == (6, len(leaves))  # ('outer/a', 'outer/b', 'm')
+        # Primary check: flatten places each sampled leaf into its own column in
+        # canonical leaf order -- compared against the sample's own slash leaves.
+        # A permuted column order would fail here; the unflatten round-trip below
+        # cannot catch one, since flatten and unflatten share the leaf ordering.
+        for i, leaf in enumerate(leaves):
+            np.testing.assert_allclose(flat[:, i], s[leaf], atol=1e-6)
+        # Secondary: the columns round-trip back to the same leaves via unflatten.
+        rec = NumericRecordArray.unflatten(
+            flat, template=nested.record_template, batch_shape=(6,))
+        for leaf in leaves:
+            np.testing.assert_allclose(rec[leaf], s[leaf], atol=1e-6)
+
+    def test_batched_nested_non_numeric_field_is_plain_record_array(self):
+        # A non-numeric joint (an object-dtype JointEmpirical leaf) makes the
+        # batched nested field a plain RecordArray, not a NumericRecordArray
+        # (the else branch of _sample_nested); such a field is not flattenable.
+        from probpipe import JointEmpirical
+        from probpipe.core._record_array import NumericRecordArray, RecordArray
+        je = JointEmpirical(
+            labels=np.array(["a", "b", "c"], dtype=object),
+            ids=np.array([0, 1, 2]), name="je",
+        )
+        joint = ProductDistribution(
+            name="joint",
+            outer={"a": Normal(loc=0.0, scale=1.0, name="a"),
+                   "b": Normal(loc=2.0, scale=0.5, name="b")},
+            je=je,
+        )
+        assert not isinstance(joint, NumericRecordDistribution)
+        s = sample(joint, key=jax.random.PRNGKey(0), sample_shape=(4,))
+        assert isinstance(s, RecordArray) and not isinstance(s, NumericRecordArray)
+        assert isinstance(s["outer"], RecordArray)
+        assert not isinstance(s["outer"], NumericRecordArray)
 
 
 # ===========================================================================

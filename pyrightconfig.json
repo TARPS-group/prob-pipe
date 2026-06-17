@@ -1,0 +1,10 @@
+{
+  "//": "Pyright config. Type checking is ADVISORY for now — the CI 'typecheck (advisory)' job reports but does not gate merges (see CONTRIBUTING.md). Scoped to the shipped package; tests/docs are out of scope until the source baseline is clean. Tighten typeCheckingMode toward 'standard'/'strict' and add report* rules as the type-debt burns down.",
+  "include": ["probpipe"],
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "basic",
+  "venvPath": ".",
+  "venv": ".venv",
+  "//reportMissingTypeStubs": "jax / tfp-nightly / pymc ship incomplete or absent type stubs; their missing-stub noise is not actionable here.",
+  "reportMissingTypeStubs": "none"
+}

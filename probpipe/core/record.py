@@ -599,6 +599,42 @@ def _all_numeric(specs) -> bool:
     return True
 
 
+def _pack_fields(
+    fields: tuple[str, ...],
+    field_kwargs: dict[str, Any],
+    *,
+    owner: str = "",
+) -> Record:
+    """Validate that *field_kwargs* names exactly *fields*, then build a Record.
+
+    The general "named values → validated :class:`Record`" operation behind
+    :meth:`RecordTemplate.pack`. Raises ``TypeError`` if any field is missing
+    or unexpected; otherwise returns a ``Record`` keyed in *fields* order.
+    *owner* (optional) prefixes the error message — the calling distribution or
+    template class name.
+
+    :meth:`Distribution._pack_value` calls this directly rather than through
+    :meth:`RecordTemplate.pack` because some distributions expose ``fields``
+    without a ``RecordTemplate`` instance.
+    """
+    given = set(field_kwargs)
+    expected = set(fields)
+    missing = [f for f in fields if f not in given]
+    extra = [k for k in field_kwargs if k not in expected]
+    if missing or extra:
+        parts = []
+        if missing:
+            parts.append(f"missing {missing}")
+        if extra:
+            parts.append(f"unexpected {extra}")
+        prefix = f"{owner}: " if owner else ""
+        raise TypeError(
+            f"{prefix}expected exactly the fields {tuple(fields)} — "
+            f"{'; '.join(parts)}."
+        )
+    return Record(**{f: field_kwargs[f] for f in fields})
+
+
 class RecordTemplate:
     """Structural description of a Record: field names, leaf shapes, nesting.
 
@@ -758,6 +794,17 @@ class RecordTemplate:
             return spec
         # Record-valued fallback (legacy templates).
         return spec.shape if not isinstance(spec, Record) else ()
+
+    def pack(self, **field_kwargs: Any) -> Record:
+        """Build a :class:`Record` from named values matching this template.
+
+        Validates that *field_kwargs* names exactly this template's top-level
+        :attr:`fields` (no missing or unexpected names) and returns a
+        ``Record`` keyed in field order. Values pass through unchanged (a
+        nested-template field takes a sub-``Record``). Object form of
+        :func:`_pack_fields`.
+        """
+        return _pack_fields(self.fields, field_kwargs, owner=type(self).__name__)
 
     def __contains__(self, name: str) -> bool:
         return name in self._specs

@@ -83,23 +83,43 @@ def abstract_workflow_method(func: Callable):
 def workflow_function(_func=None, /, **kwargs):
     """Decorator to create a :class:`WorkflowFunction` from a plain function.
 
-    Can be used with or without arguments::
+    Bare usage wraps a function with default ``WorkflowFunction`` controls::
 
         @workflow_function
         def my_func(x, y):
             return x + y
 
+    Pass keyword arguments to configure ProbPipe controls at definition time::
+
         @workflow_function(n_broadcast_samples=100, dispatch="sequential")
         def my_func(x, y):
             return x + y
+
+    Keyword arguments passed later to the workflow call itself belong to the
+    wrapped function whenever they can bind to that function. Use
+    ``workflow.with_options(...)(...)`` for one-call ProbPipe controls.
+
+    Parameters
+    ----------
+    _func : Callable or None
+        Function being decorated for bare ``@workflow_function`` usage.
+        Users should not pass this argument by keyword.
+    **kwargs : Any
+        Construction-time ``WorkflowFunction`` controls such as ``dispatch``,
+        ``seed``, ``n_broadcast_samples``, ``include_inputs``, and
+        ``workflow_kind``.
+
+    Returns
+    -------
+    WorkflowFunction or Callable
+        Wrapped workflow function for bare usage, or a decorator when called
+        with parentheses.
     """
-    def decorator(func):
+    def decorator(func: Callable[..., Any]) -> WorkflowFunction:
         return WorkflowFunction(func=func, name=func.__name__, **kwargs)
 
     if _func is not None:
-        # Bare @workflow_function (no parentheses)
         return decorator(_func)
-    # @workflow_function(...) with arguments
     return decorator
 
 
@@ -171,8 +191,7 @@ class WorkflowFunction(Node):
         set via the ``PROBPIPE_WORKFLOW_KIND`` environment variable
         or explicit assignment).  ``TASK`` / ``FLOW`` explicitly
         request Prefect orchestration.  ``OFF`` disables
-        orchestration.  Legacy strings (``"task"``, ``"flow"``) and
-        ``None`` are auto-converted.
+        orchestration.
     name : str or None
         Display name; defaults to ``func.__name__``.
     bind : dict or None
@@ -180,9 +199,8 @@ class WorkflowFunction(Node):
     module : Module or None
         Parent module for input / dependency resolution.
     n_broadcast_samples : int
-        Default number of samples drawn when broadcasting.  Can be overridden
-        at call time by passing ``n_broadcast_samples=…`` (provided the
-        wrapped function does not itself declare a parameter with that name).
+        Default number of samples drawn when broadcasting.  Override it for
+        one call with ``workflow.with_options(n_broadcast_samples=...)(...)``.
     dispatch : str
         Function-call dispatch strategy for broadcasting:
 
@@ -203,14 +221,27 @@ class WorkflowFunction(Node):
         use this setting.
     seed : int
         Random seed for JAX PRNG key management during broadcasting.
+
+    Notes
+    -----
+    Keyword arguments passed to a workflow call belong to the wrapped user
+    function whenever they can bind to that function. Use
+    ``with_options(...)`` for call-time ProbPipe controls such as
+    ``seed``, ``n_broadcast_samples``, and ``include_inputs``.
+
+    Raises
+    ------
+    TypeError
+        If ``workflow_kind`` is not a ``WorkflowKind`` enum member.
     """
 
     DEFAULT_N_BROADCAST_SAMPLES: int = 128
+
     def __init__(
         self,
         *,
         func: Callable,
-        workflow_kind: WorkflowKind | str | None = WorkflowKind.DEFAULT,  # TODO: remove str | None in follow-up issue
+        workflow_kind: WorkflowKind = WorkflowKind.DEFAULT,
         name: str | None = None,
         bind: dict[str, Any] | None = None,         # construction-time bindings (defaults/config)
         module: Any | None = None,                  # typically a Module; kept as Any to avoid import cycles
@@ -221,13 +252,7 @@ class WorkflowFunction(Node):
         include_inputs: bool = False,                # True → return BroadcastDistribution (joint over inputs+outputs)
         **kwargs: Any,                              # convenience bindings (merged into bind)
     ):
-        removed_keywords = {"parallel", "vectorize"} & set(kwargs)
-        if removed_keywords:
-            names = ", ".join(sorted(removed_keywords))
-            raise TypeError(
-                f"WorkflowFunction no longer accepts {names}; use dispatch= instead."
-            )
-
+        # Validate arguments before setting any instance state.
         if dispatch not in _VALID_DISPATCH_STRATEGIES:
             raise ValueError(
                 f"dispatch must be one of {_VALID_DISPATCH_STRATEGIES}; got {dispatch!r}"
@@ -240,16 +265,15 @@ class WorkflowFunction(Node):
                 stacklevel=2,
             )
 
+        if not isinstance(workflow_kind, WorkflowKind):
+            raise TypeError(
+                f"workflow_kind must be a WorkflowKind enum member, "
+                f"got {type(workflow_kind).__name__}"
+            )
+
         self._func = func
         self._signature_info = _workflow_call.make_signature_info(func)
-        # Convert legacy string / None values to WorkflowKind enum
-        # TODO: remove this legacy conversion in follow-up issue
-        if workflow_kind is None:
-            self._workflow_kind_raw = WorkflowKind.OFF
-        elif isinstance(workflow_kind, str) and not isinstance(workflow_kind, WorkflowKind):
-            self._workflow_kind_raw = WorkflowKind(workflow_kind)
-        else:
-            self._workflow_kind_raw = workflow_kind
+        self._workflow_kind_raw = workflow_kind
         self._name = name or getattr(func, "__name__", self.__class__.__name__)
 
         # Expose wrapped function's metadata for introspection (help(),
@@ -274,11 +298,6 @@ class WorkflowFunction(Node):
         self._bind = b
 
         super().__init__()
-
-        _workflow_call.validate_reserved_parameter_names(
-            self._signature_info, workflow_name=self._name,
-        )
-
 
     @property
     def effective_workflow_kind(self) -> WorkflowKind:
@@ -350,7 +369,56 @@ class WorkflowFunction(Node):
             ),
         )
 
-    def __call__(self, *args, **call_inputs):
+    def with_options(
+        self,
+        *,
+        n_broadcast_samples: int | None = None,
+        include_inputs: bool | None = None,
+        seed: int | None = None,
+    ) -> _WorkflowFunctionCallWithOptions:
+        """Return a callable view with temporary call-time workflow options.
+
+        Keyword arguments passed to the returned callable are always treated
+        as inputs to the wrapped function. Use this method, rather than
+        call-time kwargs, to override ProbPipe controls for one call.
+
+        Parameters
+        ----------
+        n_broadcast_samples : int or None
+            Temporary sample-count override for distribution broadcasting.
+        include_inputs : bool or None
+            Temporary override for returning the joint input/output broadcast
+            distribution.
+        seed : int or None
+            Temporary PRNG seed override for one workflow call.
+
+        Returns
+        -------
+        Callable
+            Callable view that applies these options to exactly one call.
+        """
+        return _WorkflowFunctionCallWithOptions(
+            self,
+            _workflow_call.WorkflowCallOptions(
+                n_broadcast_samples=n_broadcast_samples,
+                include_inputs=include_inputs,
+                seed=seed,
+            ),
+        )
+
+    def __call__(self, *args: Any, **call_inputs: Any) -> Any:
+        return self._call_with_options(
+            args,
+            call_inputs,
+            _workflow_call.WorkflowCallOptions(),
+        )
+
+    def _call_with_options(
+        self,
+        args: tuple[Any, ...],
+        call_inputs: dict[str, Any],
+        options: _workflow_call.WorkflowCallOptions,
+    ) -> Any:
         call = _workflow_call.resolve_workflow_call(
             self._signature_info,
             args,
@@ -361,6 +429,8 @@ class WorkflowFunction(Node):
             workflow_name=self._name,
             default_n_broadcast_samples=self._n_broadcast_samples,
             default_include_inputs=self._include_inputs,
+            options=options,
+            warn_legacy_overrides=True,
         )
         if call.overrides.seed is not None:
             self._key = jax.random.PRNGKey(call.overrides.seed)
@@ -568,6 +638,30 @@ class WorkflowFunction(Node):
         return self._resolved_dispatch
 
 
+class _WorkflowFunctionCallWithOptions:
+    """Callable view that applies temporary WorkflowFunction options."""
+
+    def __init__(
+        self,
+        workflow: WorkflowFunction,
+        options: _workflow_call.WorkflowCallOptions,
+    ):
+        self._workflow = workflow
+        self._options = options
+        self.__doc__ = workflow.__doc__
+        self.__name__ = workflow.__name__
+        self.__qualname__ = workflow.__qualname__
+        self.__signature__ = workflow.__signature__
+        self.__module__ = workflow.__module__
+
+    def __call__(self, *args: Any, **call_inputs: Any) -> Any:
+        return self._workflow._call_with_options(
+            args,
+            call_inputs,
+            self._options,
+        )
+
+
 class Module(Node):
     """
     Container for workflow nodes with shared inputs and child nodes.
@@ -578,16 +672,33 @@ class Module(Node):
     Internally:
         - kwargs whose values are Node instances become child_nodes
         - everything else becomes inputs
+
+    Parameters
+    ----------
+    workflow_kind : WorkflowKind
+        Prefect orchestration mode propagated to workflow methods built
+        from this module.
+    **kwargs : Any
+        Shared child nodes and inputs available to workflow methods.
+
+    Raises
+    ------
+    TypeError
+        If ``workflow_kind`` is not a ``WorkflowKind`` enum member.
     """
 
-    def __init__(self, *, workflow_kind: WorkflowKind | str | None = WorkflowKind.DEFAULT, **kwargs: Any):
-        # Convert legacy string / None values to WorkflowKind enum
-        if workflow_kind is None:
-            self._workflow_kind = WorkflowKind.OFF
-        elif isinstance(workflow_kind, str) and not isinstance(workflow_kind, WorkflowKind):
-            self._workflow_kind = WorkflowKind(workflow_kind)
-        else:
-            self._workflow_kind = workflow_kind
+    def __init__(
+        self,
+        *,
+        workflow_kind: WorkflowKind = WorkflowKind.DEFAULT,
+        **kwargs: Any,
+    ):
+        if not isinstance(workflow_kind, WorkflowKind):
+            raise TypeError(
+                f"workflow_kind must be a WorkflowKind enum member, "
+                f"got {type(workflow_kind).__name__}"
+            )
+        self._workflow_kind = workflow_kind
         super().__init__(**kwargs)
         # validate abstract workflow implementations before wrapping
         self._validate_abstract_workflow_implementations()

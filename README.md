@@ -3,8 +3,9 @@
 [![CI](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml/badge.svg)](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/TARPS-group/prob-pipe/branch/main/graph/badge.svg)](https://codecov.io/gh/TARPS-group/prob-pipe)
 [![docs](https://img.shields.io/badge/docs-tarps--group.github.io%2Fprob--pipe-blue)](https://tarps-group.github.io/prob-pipe/)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20683559-blue)](https://doi.org/10.5281/zenodo.20683559)
 
-**[Installation Guide](#installation)** | **[Getting Started](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** | **[Full Documentation](https://tarps-group.github.io/prob-pipe/)**
+**[Installation Guide](#installation)** | **[Getting Started](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)** | **[Full Documentation](https://tarps-group.github.io/prob-pipe/)** | **[Help](https://tarps-group.github.io/prob-pipe/help/)**
 
 ProbPipe is a Python framework for building scalable probabilistic pipelines with automated uncertainty quantification.
 
@@ -108,7 +109,31 @@ plt.xlabel('Temperature (°F)'); plt.ylabel('P(O-ring damage)'); plt.legend()
 
 ## Installation
 
-Requires Python >= 3.12 (tested on 3.12 and 3.13).
+Requires Python >= 3.12 (tested on 3.12, 3.13, and 3.14). ProbPipe is not yet
+on PyPI, so installation is from source.
+
+### New to Python?
+
+You do **not** need an existing Python installation. [uv](https://docs.astral.sh/uv/)
+manages both Python and the environment for you. First
+[install uv](https://docs.astral.sh/uv/getting-started/installation/) (on
+macOS/Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`), then:
+
+```bash
+git clone https://github.com/TARPS-group/prob-pipe.git
+cd prob-pipe
+uv venv                 # create an isolated environment (uv fetches a compatible Python)
+uv pip install .        # install ProbPipe into it
+source .venv/bin/activate   # activate it; now `python` and `probpipe` are available
+```
+
+Then work through the
+**[Getting Started tutorial](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)**.
+(Prefer not to activate? Prefix commands with `uv run`, e.g. `uv run python`.)
+
+### Already have a Python environment?
+
+Install from source with pip into your active environment:
 
 ```bash
 git clone https://github.com/TARPS-group/prob-pipe.git
@@ -116,18 +141,23 @@ cd prob-pipe
 pip install .
 ```
 
-ProbPipe also installs cleanly with [uv](https://docs.astral.sh/uv/). For a lockfile-managed dev environment, run `uv sync` (see [CONTRIBUTING.md](CONTRIBUTING.md#installation)). To use `uv pip install` in place of the `pip install` examples below, first create and activate an environment with `uv venv && source .venv/bin/activate` — `uv pip` installs into the active (or an explicitly targeted) environment, not a global one.
+uv users can substitute `uv pip install .` (into an active `uv venv`), or
+`uv sync` for a lockfile-managed dev environment — see
+[CONTRIBUTING.md](CONTRIBUTING.md#installation).
+
+### Dependencies and optional extras
 
 Core dependencies: JAX, [BlackJAX](https://blackjax-devs.github.io/blackjax/), and TensorFlow Probability. JAX provides arrays and autodiff; BlackJAX is the default backend for gradient MCMC (`condition_on(model, data)` auto-dispatches to `blackjax_nuts`); TFP supplies the distribution implementations the wrappers in `probpipe.Normal`, `probpipe.Gamma`, etc. delegate to. ProbPipe uses [tfp-nightly](https://pypi.org/project/tfp-nightly/), which is the [recommended approach](https://github.com/tensorflow/probability/issues/1994#issuecomment-3129033043) for TFP on JAX since stable TFP releases are tied to TensorFlow and often lag behind JAX.
 
-Optional extras:
+Optional extras (append to the `pip install .` / `uv pip install .` above, e.g. `pip install ".[dev]"`):
 
 ```bash
-pip install .[dev]       # pytest, jupyter, matplotlib, graphviz
-pip install .[prefect]   # Prefect orchestration backend
-pip install .[stan]      # Stan models via BridgeStan + CmdStanPy
-pip install .[pymc]      # PyMC model integration
-pip install .[nutpie]    # nutpie Markov chain Monte Carlo (MCMC) sampler
+pip install ".[dev]"        # pytest, jupyter, matplotlib, graphviz
+pip install ".[prefect]"    # Prefect orchestration backend
+pip install ".[stan]"       # Stan models via BridgeStan + CmdStanPy
+pip install ".[pymc]"       # PyMC model integration
+pip install ".[nutpie]"     # nutpie Markov chain Monte Carlo (MCMC) sampler
+pip install ".[bayesflow]"  # BayesFlow amortized simulation-based inference (Python 3.12-3.13)
 ```
 
 ### Ray via Prefect
@@ -156,5 +186,24 @@ for setup details, deployment notes, and current support boundaries.
 - For a more detailed overview of ProbPipe, see the **[Getting Started Tutorial](https://tarps-group.github.io/prob-pipe/tutorials/getting_started/)**
 - For all the details of the ProbPipe API, see the **[Reference Documentation](https://tarps-group.github.io/prob-pipe/)**
 - For getting started as a ProbPipe developer, see the **[Contributing Guide](CONTRIBUTING.md)**.
+
+## Citing ProbPipe
+
+If you use ProbPipe in your research, please cite it:
+
+```bibtex
+@software{probpipe,
+  author  = {Huggins, Jonathan and Roberts, Andrew and Lim, Yongho and
+             Erozer, Can and Zhu, Jiaqiang},
+  title   = {{ProbPipe}: Probabilistic pipelines with automated uncertainty quantification},
+  year    = {2026},
+  version = {0.1.0},
+  doi     = {10.5281/zenodo.20683559},
+  url     = {https://github.com/TARPS-group/prob-pipe}
+}
+```
+
+See the **[citation page](https://tarps-group.github.io/prob-pipe/cite/)** for
+version-specific DOIs and how to cite the inference backends ProbPipe builds on.
 
 

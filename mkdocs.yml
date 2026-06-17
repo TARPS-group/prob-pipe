@@ -111,3 +111,5 @@ nav:
     - Provenance: api/provenance.md
     - Extending ProbPipe: api/extending.md
     - Internals: api/internals.md
+  - Cite: cite.md
+  - Help: help.md

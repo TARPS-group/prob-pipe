@@ -368,7 +368,7 @@ class SequentialJointDistribution(
 
         return total
 
-    def _log_prob(self, value: dict[str, ArrayLike]) -> Array:
+    def _log_prob(self, value: Record | dict[str, ArrayLike]) -> Array:
         """Evaluate the normalized log-density.
 
         For an unconditioned joint, this is the full joint log p(x).
@@ -393,7 +393,7 @@ class SequentialJointDistribution(
             )
         return self._eval_log_prob(value, components="unconditioned")
 
-    def _unnormalized_log_prob(self, value: dict[str, ArrayLike]) -> Array:
+    def _unnormalized_log_prob(self, value: Record | dict[str, ArrayLike]) -> Array:
         """Evaluate the (possibly unnormalized) log-density.
 
         For an unconditioned joint, this equals the full joint log p(x).

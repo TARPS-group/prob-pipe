@@ -53,7 +53,7 @@ from ..core.record import Record
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 if TYPE_CHECKING:
-    from ..modeling._likelihood import ConditionallyIndependentLikelihood
+    from ..core.protocols import ConditionallyIndependentLikelihood
 
 __all__ = ["MinibatchedDistribution"]
 
@@ -195,8 +195,7 @@ class MinibatchedDistribution(
         with_replacement: bool = False,
         name: str | None = None,
     ):
-        # Lazy import: inference can't import modeling at module load.
-        from ..modeling._likelihood import ConditionallyIndependentLikelihood
+        from ..core.protocols import ConditionallyIndependentLikelihood
 
         if not isinstance(prior, SupportsLogProb):
             raise TypeError(

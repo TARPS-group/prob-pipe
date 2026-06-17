@@ -447,12 +447,12 @@ def _convert_to_empirical(source, key, **kw):
 def _convert_to_kde(source, key, **kw):
     """Convert any distribution to a KDEDistribution.
 
-    For a ``RecordEmpiricalDistribution`` source the stored samples
-    and weights are reused directly: single-field empiricals pass the
-    field's stacked array straight to KDE; multi-field empiricals
-    pass ``source.flat_samples`` (the ``(n, total_dim)`` flat-matrix
-    view) so KDE sees one row per sample with all parameters
-    concatenated. Other sources fall back to drawing fresh samples.
+    For a ``RecordEmpiricalDistribution`` source (including its
+    subclasses such as :class:`~probpipe.inference.ApproximateDistribution`),
+    the stored samples, weights, and ``record_template`` are reused
+    directly via :meth:`KDEDistribution.from_empirical` — which
+    preserves named-field structure end-to-end. Other sources fall
+    back to drawing fresh samples (single-field auto-template).
 
     Raises
     ------
@@ -471,17 +471,10 @@ def _convert_to_kde(source, key, **kw):
     name = kw.get("name") or source.name
 
     if isinstance(source, RecordEmpiricalDistribution):
-        # Single-field: pass the field array directly so KDE keeps the
-        # original event shape. Multi-field: collapse to the
-        # ``(n, total_dim)`` flat-matrix view.
-        if len(source.samples.fields) == 1:
-            field = source.samples.fields[0]
-            arr = source.samples[field]
-        else:
-            arr = source.flat_samples
-        r = KDEDistribution(
-            arr, weights=source._w, bandwidth=bandwidth, name=name,
-        )
+        # Single-field and multi-field paths both route through
+        # ``from_empirical``, which threads the source's
+        # ``record_template`` so KDE preserves named fields (issue #267).
+        r = KDEDistribution.from_empirical(source, bandwidth=bandwidth, name=name)
         r.with_source(_mm_provenance(source))
         return r
 

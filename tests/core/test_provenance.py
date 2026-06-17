@@ -393,6 +393,12 @@ def _count_dag_entries(dot) -> tuple[int, int]:
 
 class TestProvenanceDag:
 
+    @pytest.fixture(autouse=True)
+    def _require_graphviz(self):
+        # provenance_dag() builds a graphviz.Digraph; skip this class's
+        # tests when the optional graphviz package is not installed.
+        pytest.importorskip("graphviz")
+
     def test_basic_dag_has_correct_node_and_edge_count(self):
         base = Normal(loc=0.0, scale=1.0, name="base")
         td = TransformedDistribution(base, tfb.Exp(), name="positive")

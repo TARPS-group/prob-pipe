@@ -793,6 +793,51 @@ class TestProtocolConversion:
         assert len(result.source.parents) == 1
         assert result.source.parents[0].name == "posterior"
 
+    def test_multi_field_empirical_preserves_template_through_kde(self):
+        """Multi-field RecordEmpirical → KDE preserves the named template
+        (issue #267). Regression: previously the converter passed
+        ``flat_samples`` to KDE without the template, so the resulting
+        KDE collapsed to a single-field auto-template keyed by ``name``.
+        """
+        from probpipe import Record
+        from probpipe.distributions.kde import KDEDistribution
+
+        n = 200
+        rec = Record(
+            intercept=jax.random.normal(jax.random.PRNGKey(0), (n,)),
+            slope=jax.random.normal(jax.random.PRNGKey(1), (n,)),
+        )
+        emp = RecordEmpiricalDistribution(rec)
+        result = converter_registry.convert(emp, SupportsLogProb)
+        assert isinstance(result, KDEDistribution)
+        assert result.record_template.fields == ("intercept", "slope")
+
+    def test_approximate_distribution_preserves_template_through_kde(self):
+        """``ApproximateDistribution`` (inherits from RecordEmpirical) →
+        KDE must preserve the parameter-field structure so that
+        :class:`IncrementalConditioner` updates beyond batch 1 don't
+        collapse to a flat ``posterior`` field (issue #267).
+        """
+        from probpipe.core.record import NumericRecordTemplate
+        from probpipe.distributions.kde import KDEDistribution
+        from probpipe.inference._approximate_distribution import (
+            ApproximateDistribution,
+        )
+
+        n_draws = 100
+        chain_intercept = jax.random.normal(jax.random.PRNGKey(0), (n_draws,))
+        chain_slope = jax.random.normal(jax.random.PRNGKey(1), (n_draws,))
+        # Stack into per-chain (num_draws, total_dim) layout
+        chains = [jnp.stack([chain_intercept, chain_slope], axis=-1)]
+        approx = ApproximateDistribution(
+            chains,
+            name="posterior",
+            record_template=NumericRecordTemplate(intercept=(), slope=()),
+        )
+        result = converter_registry.convert(approx, SupportsLogProb)
+        assert isinstance(result, KDEDistribution)
+        assert result.record_template.fields == ("intercept", "slope")
+
 
 # ---------------------------------------------------------------------------
 # KDEDistribution

@@ -22,8 +22,8 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from ..custom_types import Array, PRNGKey
 from .._utils import _auto_key
+from ..custom_types import Array, PRNGKey
 from .distribution import Distribution, RandomFunction
 from .node import workflow_function
 from .protocols import (
@@ -40,19 +40,19 @@ from .protocols import (
 )
 
 __all__ = [
-    "sample",
-    "log_prob",
-    "prob",
-    "unnormalized_log_prob",
-    "unnormalized_prob",
-    "mean",
-    "variance",
+    "condition_on",
     "cov",
     "expectation",
+    "from_distribution",
+    "log_prob",
+    "mean",
+    "prob",
     "random_log_prob",
     "random_unnormalized_log_prob",
-    "condition_on",
-    "from_distribution",
+    "sample",
+    "unnormalized_log_prob",
+    "unnormalized_prob",
+    "variance",
 ]
 
 
@@ -93,50 +93,117 @@ def sample(
     return dist._sample(key, sample_shape)
 
 
+# -- keyword value form shared by the density ops ---------------------------
+#
+# Each density op accepts either a positional ``value`` or named field kwargs
+# packed into one draw via ``dist._pack_value`` (single-field → the bare
+# value; multi-field → a ``Record``). The ops stay plain WorkflowFunctions and
+# resolve this in their body — exactly as ``condition_on`` resolves its named
+# data kwargs from ``**kwargs``. Per-call controls use ``with_options`` (the
+# WorkflowFunction control path).
+
+
+def _resolve_value(
+    op_name: str,
+    dist: Any,
+    value: Any,
+    field_kwargs: dict[str, Any],
+    *,
+    allow_none: bool = False,
+) -> Any:
+    """Resolve a density op's value from the positional or keyword form.
+
+    Keyword form packs ``field_kwargs`` into a single draw via
+    ``dist._pack_value``; the positional form passes ``value`` through.
+    Passing both is an error. With ``allow_none=False`` (default) a missing
+    value also errors; ``allow_none=True`` (the ``random_*`` ops) lets
+    ``value=None`` through so the bare random function is returned.
+
+    A distribution field whose name collides with the op's own ``value`` or
+    ``dist`` parameter cannot be addressed by the keyword form (it binds to the
+    parameter). For a multi-field distribution, pass a positional ``Record``
+    (``log_prob(d, Record(value=...))``); for a single-field one, pass the bare
+    positional value (``log_prob(d, v)`` — a scalar ``_log_prob`` does not
+    accept a ``Record``). This mirrors ``condition_on``'s ``observed``.
+    """
+    if field_kwargs:
+        if value is not None:
+            raise TypeError(
+                f"{op_name}: pass either a positional value or field kwargs, "
+                f"not both."
+            )
+        return dist._pack_value(**field_kwargs)
+    if value is None and not allow_none:
+        raise TypeError(
+            f"{op_name}: a value is required — pass it positionally or as "
+            f"field keyword arguments."
+        )
+    return value
+
+
 @workflow_function
-def log_prob(dist: SupportsLogProb, value: Any) -> Array:
-    """Evaluate the normalized log-density at *value*."""
+def log_prob(dist: SupportsLogProb, value: Any = None, **field_kwargs: Any) -> Array:
+    """Evaluate the normalized log-density at *value*.
+
+    Two call forms: positional ``log_prob(dist, value)`` (a single draw, or a
+    batched form that broadcasts), or keyword ``log_prob(dist, field=..., ...)``
+    built into one draw via :meth:`Distribution._pack_value` (single-field →
+    the bare value; multi-field → a ``Record``). Use the positional form for
+    batched evaluation; per-call controls use ``log_prob.with_options(...)``.
+    """
     if not isinstance(dist, SupportsLogProb):
         raise TypeError(
             f"{type(dist).__name__} does not support log_prob"
         )
-    return dist._log_prob(value)
+    return dist._log_prob(_resolve_value("log_prob", dist, value, field_kwargs))
 
 
 @workflow_function
-def prob(dist: SupportsLogProb, value: Any) -> Array:
-    """Evaluate the density at *value* (``exp(log_prob)``)."""
+def prob(dist: SupportsLogProb, value: Any = None, **field_kwargs: Any) -> Array:
+    """Evaluate the density at *value* (``exp(log_prob)``).
+
+    See :func:`log_prob` for the positional and keyword call forms.
+    """
     if not isinstance(dist, SupportsLogProb):
         raise TypeError(
             f"{type(dist).__name__} does not support prob "
             f"(missing _log_prob method)"
         )
+    value = _resolve_value("prob", dist, value, field_kwargs)
     return jnp.exp(dist._log_prob(value))
 
 
 @workflow_function
 def unnormalized_log_prob(
-    dist: SupportsUnnormalizedLogProb, value: Any,
+    dist: SupportsUnnormalizedLogProb, value: Any = None, **field_kwargs: Any,
 ) -> Array:
-    """Evaluate the unnormalized log-density at *value*."""
+    """Evaluate the unnormalized log-density at *value*.
+
+    See :func:`log_prob` for the positional and keyword call forms.
+    """
     if not isinstance(dist, SupportsUnnormalizedLogProb):
         raise TypeError(
             f"{type(dist).__name__} does not support unnormalized_log_prob "
             f"(missing _unnormalized_log_prob method)"
         )
+    value = _resolve_value("unnormalized_log_prob", dist, value, field_kwargs)
     return dist._unnormalized_log_prob(value)
 
 
 @workflow_function
 def unnormalized_prob(
-    dist: SupportsUnnormalizedLogProb, value: Any,
+    dist: SupportsUnnormalizedLogProb, value: Any = None, **field_kwargs: Any,
 ) -> Array:
-    """Evaluate the unnormalized density at *value* (``exp(unnormalized_log_prob)``)."""
+    """Evaluate the unnormalized density at *value* — ``exp(unnormalized_log_prob)``.
+
+    See :func:`log_prob` for the positional and keyword call forms.
+    """
     if not isinstance(dist, SupportsUnnormalizedLogProb):
         raise TypeError(
             f"{type(dist).__name__} does not support unnormalized_prob "
             f"(missing _unnormalized_log_prob method)"
         )
+    value = _resolve_value("unnormalized_prob", dist, value, field_kwargs)
     return jnp.exp(dist._unnormalized_log_prob(value))
 
 
@@ -216,6 +283,7 @@ def expectation(
 def random_log_prob(
     dist: SupportsRandomLogProb,
     value: Any = None,
+    **field_kwargs: Any,
 ) -> RandomFunction | Distribution:
     """Return the random (normalized) log-density of a random measure.
 
@@ -224,11 +292,11 @@ def random_log_prob(
     distribution over scalars at every input.
 
     When *value* is omitted, returns that callable as a
-    :class:`~probpipe.core._random_functions.RandomFunction`. When
-    *value* is provided, returns the ``Distribution[Array]`` over
-    ``log D(value)`` directly — equivalent to
-    ``random_log_prob(dist)(value)``. The two-argument form mirrors
-    :func:`log_prob` for non-random distributions.
+    :class:`~probpipe.core._random_functions.RandomFunction`. When *value* is
+    provided (positionally, or built from field kwargs via
+    :meth:`Distribution._pack_value`), returns the ``Distribution[Array]`` over
+    ``log D(value)`` directly — equivalent to ``random_log_prob(dist)(value)``.
+    The positional and keyword forms mirror :func:`log_prob`.
 
     Concrete subclasses implement a single method
     ``_random_log_prob()`` returning a ``RandomFunction``; the optional
@@ -239,6 +307,9 @@ def random_log_prob(
             f"{type(dist).__name__} does not support random_log_prob "
             f"(does not implement SupportsRandomLogProb)"
         )
+    value = _resolve_value(
+        "random_log_prob", dist, value, field_kwargs, allow_none=True
+    )
     rf = dist._random_log_prob()
     return rf if value is None else rf(value)
 
@@ -247,6 +318,7 @@ def random_log_prob(
 def random_unnormalized_log_prob(
     dist: SupportsRandomUnnormalizedLogProb,
     value: Any = None,
+    **field_kwargs: Any,
 ) -> RandomFunction | Distribution:
     """Return the random unnormalized log-density of a random measure.
 
@@ -256,12 +328,12 @@ def random_unnormalized_log_prob(
     scalars at every input.
 
     When *value* is omitted, returns that callable as a
-    :class:`~probpipe.core._random_functions.RandomFunction`. When
-    *value* is provided, returns the ``Distribution[Array]`` over
+    :class:`~probpipe.core._random_functions.RandomFunction`. When *value* is
+    provided (positionally, or built from field kwargs via
+    :meth:`Distribution._pack_value`), returns the ``Distribution[Array]`` over
     ``log D̃(value)`` directly — equivalent to
-    ``random_unnormalized_log_prob(dist)(value)``. The two-argument
-    form mirrors :func:`unnormalized_log_prob` for non-random
-    distributions.
+    ``random_unnormalized_log_prob(dist)(value)``. The positional and keyword
+    forms mirror :func:`unnormalized_log_prob`.
 
     Concrete subclasses implement a single method
     ``_random_unnormalized_log_prob()`` returning a ``RandomFunction``;
@@ -273,6 +345,9 @@ def random_unnormalized_log_prob(
             f"{type(dist).__name__} does not support random_unnormalized_log_prob "
             f"(does not implement SupportsRandomUnnormalizedLogProb)"
         )
+    value = _resolve_value(
+        "random_unnormalized_log_prob", dist, value, field_kwargs, allow_none=True
+    )
     rf = dist._random_unnormalized_log_prob()
     return rf if value is None else rf(value)
 
@@ -287,13 +362,35 @@ def _split_data_kwargs(
     any kwarg whose name matches a component name is data (conditioning
     target); everything else is an inference parameter.
 
+    Guards against case-mismatched field names: a kwarg that matches a field
+    only up to case (e.g. ``x=`` when the field is ``X``) is almost certainly a
+    mistyped data field. Routed to ``inference_kwargs`` it would be silently
+    ignored downstream (e.g. by NUTS) — a wrong result with no error — so it
+    raises a :class:`TypeError` with the correct casing instead. Unknown
+    kwargs that are *not* a case-variant of any field stay inference
+    parameters (the inference layer validates those).
+
     Returns ``(data_kwargs, inference_kwargs)``.
     """
-    comp_names = frozenset(
-        dist.fields if hasattr(dist, 'fields') else ()
-    )
-    data_kwargs = {k: v for k, v in kwargs.items() if k in comp_names}
-    inference_kwargs = {k: v for k, v in kwargs.items() if k not in comp_names}
+    comp_names = tuple(dist.fields) if hasattr(dist, 'fields') else ()
+    comp_set = frozenset(comp_names)
+    by_lower = {name.lower(): name for name in comp_names}
+
+    data_kwargs: dict[str, Any] = {}
+    inference_kwargs: dict[str, Any] = {}
+    for k, v in kwargs.items():
+        if k in comp_set:
+            data_kwargs[k] = v
+            continue
+        canonical = by_lower.get(k.lower())
+        if canonical is not None:
+            raise TypeError(
+                f"condition_on: keyword argument {k!r} does not match a field "
+                f"of {type(dist).__name__}, but {canonical!r} does (case "
+                f"differs) — did you mean {canonical}=...? "
+                f"Fields: {comp_names}."
+            )
+        inference_kwargs[k] = v
     return data_kwargs, inference_kwargs
 
 
@@ -314,8 +411,9 @@ def condition_on(
         condition_on(model, y_obs)
 
         # Named data kwargs — bundled into Record(X=..., y=...):
-        condition_on(model, X=bootstrap["X"], y=bootstrap["y"],
-                     n_broadcast_samples=16)
+        condition_on.with_options(n_broadcast_samples=16)(
+            model, X=bootstrap["X"], y=bootstrap["y"],
+        )
 
     When named data kwargs are distribution views from the same parent,
     the workflow function broadcasting machinery samples the parent once

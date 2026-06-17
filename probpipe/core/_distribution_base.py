@@ -114,6 +114,50 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
             )
         self._name = name
 
+    # -- keyword-form value construction ------------------------------------
+
+    def _pack_value(self, **field_kwargs: Any) -> Any:
+        """Build a single draw of this distribution's value type ``T`` from
+        named field kwargs — the adapter behind the keyword form of the
+        log_prob-family ops (``log_prob(dist, field=value, ...)``).
+
+        Delegates field validation and ``Record`` construction to the general
+        :func:`~probpipe.core.record._pack_fields` (also exposed object-style
+        as :meth:`~probpipe.core.record.RecordTemplate.pack`) and layers this
+        distribution's value-type convention on top:
+
+        * **single field** → the bare field value (``T = Array``), so a
+          scalar distribution's ``_log_prob`` still receives a raw array.
+        * **multiple fields** → the :class:`~probpipe.core.record.Record`
+          built from the named fields (``T = Record``).
+
+        Distributions whose ``_log_prob`` consumes a Record but splits it
+        internally (e.g. ``SimpleModel`` → ``(params, data)``) keep this
+        default and do the split in ``_log_prob``. Override only when the
+        value type is neither a bare array nor a flat Record (e.g.
+        ``StanModel``'s single ``parameters=`` flat array).
+
+        Builds exactly one draw (``sample_shape == ()``). Batched
+        evaluation does not go through kwargs — pass the batch positionally
+        and let ``WorkflowFunction`` broadcasting handle it.
+
+        Raises
+        ------
+        TypeError
+            If the distribution has no named fields, or the kwargs do not
+            match its fields exactly (missing or unexpected names).
+        """
+        from .record import _pack_fields
+        fields = getattr(self, "fields", None)
+        if not fields:
+            raise TypeError(
+                f"{type(self).__name__} does not support the keyword form of "
+                f"the log_prob-family ops (it has no named fields); pass a "
+                f"positional value."
+            )
+        rec = _pack_fields(fields, field_kwargs, owner=type(self).__name__)
+        return field_kwargs[fields[0]] if len(fields) == 1 else rec
+
     # -- approximation tracking ---------------------------------------------
 
     @property

@@ -1,10 +1,47 @@
+# Wait for all three uploads (`unit` + `bayesflow` + `stan`) before reporting, so
+# main doesn't briefly show a partial union (e.g. the fast BayesFlow-only ~59%)
+# in the gap before the slower legs' uploads land. `wait_for_ci` still finalizes
+# a PR that skips the gated BayesFlow / Stan legs and uploads only `unit` (those
+# flags carried forward).
+codecov:
+  notify:
+    after_n_builds: 3
+    wait_for_ci: true
+
 coverage:
   status:
     project:
       default:
+        # Informational on PRs: a targeted PR uploads only a partial report
+        # (the changed-files test subset), so Codecov's project number is not
+        # authoritative here and must not gate. The real project floor (88%)
+        # is enforced in-CI on the full-suite run — `pytest --cov-fail-under`
+        # in .github/workflows/ci.yml, which fires on pushes to main and on
+        # foundational PRs. `informational` makes this status report-only.
+        informational: true
         # Allow small drops during large refactors. Absolute coverage
         # should still land in the 80s.
         threshold: 2%
     patch:
       default:
+        # Enforced on every PR. The main test job uploads coverage of exactly
+        # the changed files (targeted run), so patch — "did you cover your new
+        # lines" — is a meaningful, accurate gate even on targeted PRs.
         target: 70%
+
+# Carry each flag's coverage forward from the base commit when a PR doesn't
+# upload it, so the project number stays sane and Codecov stops reporting
+# "HEAD has N uploads less than BASE":
+#   - unit: the main pytest suite (probpipe, minus the BayesFlow backend and
+#     Stan's compiled-model paths).
+#   - bayesflow: the keras-on-jax BayesFlow leg, which only runs when
+#     BayesFlow-relevant files change (see the bayesflow job's gating).
+#   - stan: the BridgeStan leg (StanModel's compile-backed tests), which only
+#     runs when Stan-relevant files change (see the stan job's gating).
+flags:
+  unit:
+    carryforward: true
+  bayesflow:
+    carryforward: true
+  stan:
+    carryforward: true

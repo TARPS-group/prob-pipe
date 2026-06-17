@@ -62,6 +62,15 @@ m = mean(dist)
 m = dist._mean()
 ```
 
+The density ops (`log_prob` and its family) also accept the value by **named
+fields** — `log_prob(model, intercept=0.0, X=X_obs, y=y_obs)` — packed into one
+draw via `Distribution._pack_value` / the public `RecordTemplate.pack`
+(single-field → the bare value; multi-field → a `Record`), the same shape as
+`condition_on`'s named data kwargs. Because `dist` and `value` are ordinary
+parameters, a distribution field whose name is exactly `value` or `dist` is
+*reserved*: address it positionally (the bare value for a single-field
+distribution, or a `Record` for a multi-field one), not by keyword.
+
 ### 1.3 Implementation functions
 
 Each op has a private implementation function named `_<op>_impl`:
@@ -92,6 +101,14 @@ condition_on_nutpie = WorkflowFunction(
     func=_condition_on_nutpie_impl, name="condition_on_nutpie"
 )
 ```
+
+Exception: functions whose return value is a model *component* rather than a
+`Record`/`Distribution` are deliberately **plain functions** — the workflow
+result boundary coerces returns into `Record`/`Distribution`, which would wrap
+and break such components. Examples: the learned-likelihood factories
+`learn_amortized_likelihood` / `learn_amortized_ratio`; precedent: the
+de-workflowed `rwmh` / `elliptical_slice`. Note the rationale in a comment at
+the definition site.
 
 ### 1.5 Classes
 
@@ -130,11 +147,18 @@ Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
 ``PyMCNutsMethod``.  Factory functions that return parameterized instances
 (e.g., ``TFPNutsMethod() -> _TFPGradientMethod``) use the same naming.
 
-### 1.8 Reserved parameter names
+### 1.8 Workflow option namespace
 
-`WorkflowFunction` reserves the parameter names `seed`, `n_broadcast_samples`,
-and `include_inputs` internally. Use `random_seed` instead when defining
-functions that accept a PRNG seed.
+`WorkflowFunction` keeps ProbPipe controls separate from wrapped-function
+kwargs. Use `@workflow_function(...)` for definition-time controls
+such as `dispatch`, `seed`, and `n_broadcast_samples`, and use
+`workflow.with_options(...)(...)` for one-call overrides such as
+`seed`, `n_broadcast_samples`, and `include_inputs`.
+
+Ordinary workflow calls should treat keyword arguments as user-function
+inputs. Wrapped functions may use names such as `seed`,
+`n_broadcast_samples`, and `include_inputs` when those names are part of
+their own domain API.
 
 ### 1.9 The `num_atoms` / `replicate_size` property convention
 
@@ -226,6 +250,28 @@ WF-output classes (`BroadcastDistribution`, `_RecordMarginal`,
 `_MixtureMarginal`, `_ListMarginal`) inherit the constraint from
 their bases and aren't directly parametrised; if you add a new such
 class, verify non-iterability via the parent class's contract.
+
+### 1.12 Naming accuracy
+
+Names describe what the object *is*, not its history or one of its
+uses:
+
+- **Semantic accuracy.** A class representing a joint model is not a
+  `*Posterior`; a distribution is not a `*LogDensity`; a helper that
+  imports and returns a module is not adequately described by
+  `_ensure_*` alone. If documenting a class honestly requires saying
+  what it is *not*, rename it.
+- **Ecosystem alignment.** Where numpy/JAX have an established
+  convention (`shape`, `__len__` over the leading axis, `size` as the
+  total element count), follow it rather than inventing a parallel
+  vocabulary.
+- **Symmetry.** Paired APIs get symmetric names — e.g.,
+  `as_flat_distribution` / `as_record_distribution` produce
+  `FlattenedDistributionView` / `NumericRecordDistributionView`.
+- **Rename sweeps are complete.** Renaming a symbol includes every
+  analogous symbol (fixing `_ensure_bayesflow` means fixing
+  `_ensure_cmdstanpy` too), the test files named after the old symbol,
+  and the docs that mention it.
 
 ---
 
@@ -417,7 +463,8 @@ def _ensure_nutpie():
 ```
 
 For test files, use `pytest.importorskip("nutpie")` or mock-based
-approaches with `patch.dict(sys.modules)`.
+approaches with `patch.dict(sys.modules)`; see §8.4 for the per-backend
+testing patterns (e.g. the BridgeStan probe-compile fixture for Stan).
 
 ### 4.5 `Callable` and other ABCs
 
@@ -471,6 +518,11 @@ ArrayLike: TypeAlias = jnp.ndarray | list | tuple | float | int
 PRNGKey: TypeAlias = jax.Array
 ```
 
+These conventions are checked (advisorily) by pyright in CI — see
+[CONTRIBUTING.md § Type checking](CONTRIBUTING.md#type-checking). The
+check does not gate merges yet, but new code should type-check cleanly
+under the project's `basic` pyright mode where practical.
+
 ---
 
 ## 6. Subpackage Dependencies
@@ -513,6 +565,9 @@ inference/    (imports core/, custom_types)
 >
 > - `inference/` → `modeling/` (lazy imports for model-type dispatch in
 >   `_tfp_mcmc`, `_nutpie`, `_cmdstan_method`, `_pymc_method`)
+> - `inference/` → `distributions/` (lazy imports: prior-type dispatch on
+>   distribution classes in `_blackjax_ess`, `bijector_for` constraint
+>   reparameterization in `_bayesflow_posteriors`)
 >
 > These use lazy (in-function) imports to avoid circular imports at
 > module load time.  Do not add new reverse edges without discussion.
@@ -536,9 +591,16 @@ class SupportsFoo(Protocol):
 ### 7.2 Protocol hierarchy
 
 - `SupportsLogProb` extends `SupportsUnnormalizedLogProb`.
-- All other protocols (`SupportsSampling`, `SupportsMean`,
+- All other capability protocols (`SupportsSampling`, `SupportsMean`,
   `SupportsVariance`, `SupportsCovariance`, `SupportsExpectation`,
   `SupportsConditioning`) are standalone.
+- The likelihood / simulator protocols `Likelihood`,
+  `ConditionallyIndependentLikelihood` (extends `Likelihood`), and
+  `GenerativeLikelihood` also live in `core/protocols.py`. They type model
+  components — log-density, per-datum log-density, and data generation —
+  rather than distribution capabilities, so they are *not* named `Supports*`
+  (they describe what a likelihood/simulator *is*, not a capability a
+  distribution *supports*).
 
 ### 7.3 Implementing protocols
 
@@ -591,13 +653,63 @@ distribution families.
 - `pytest.importorskip("pymc")` for tests requiring optional packages.
 - `patch.dict(sys.modules, ...)` for mock-based isolation of optional
   backends.
-- Stan/nutpie tests use `object.__new__()` + manual attribute setting to
-  avoid requiring compiled models.
+- nutpie tests use `object.__new__()` + manual attribute setting to avoid
+  requiring compiled models.
+- Stan tests compile real programs through BridgeStan, gated by a fixture
+  that `importorskip`s `bridgestan` and probes the C++ toolchain, and run in
+  the dedicated `stan` CI job (`--extra stan`). StanModel's backend-free tests
+  (the parameter-name parser, the bridgestan-missing import guard, and the
+  CmdStan import shim) need no compiled model and run in the main matrix.
 
 ### 8.5 Test runner
 
 Tests run in parallel via `pytest-xdist` (`-n auto --dist worksteal`).
 Disable for debugging: `pytest -p no:xdist -o "addopts="`.
+
+### 8.6 Numerical correctness and tolerances
+
+Tests of mathematical behavior (distributions, inference, learned
+estimators, linear algebra) must validate against an **independent
+baseline** — never the code path under test:
+
+- an analytic result (conjugate posteriors, known moments);
+- an exact reference computation run through the same pipeline (e.g.,
+  judging a learned likelihood by comparing its NUTS posterior against
+  NUTS run with the *true* likelihood on the same model — this isolates
+  the component's error from sampler and prior effects);
+- a known invariant (support membership, symmetry, positive
+  definiteness, simplex sums, `log_prob`/`prob` consistency);
+- central finite differences for gradients.
+
+Checking `mean(d) == d.loc` only verifies passthrough; it is not a
+correctness test. Where the claim is distributional, check **both
+location and spread** (e.g., posterior mean *and* std against the
+analytic values), not just point recovery.
+
+**Tolerances are measured, not guessed.** For stochastic or trained
+components, run the test's exact configuration across several seeds
+(3–4 is typically enough), then set the bound to cover the observed
+spread with roughly 2–3× margin. Seed everything that can be seeded —
+training, simulation, sampling — so a given environment is exactly
+reproducible; the margin exists only for cross-platform and
+library-version numerical drift, not for RNG variation.
+
+**Document the measured range in a comment next to the assertion**, so
+the bound reads as calibrated rather than arbitrary, and anyone
+tightening it later knows the baseline:
+
+```python
+# Observed across training seeds: mean err 0.05-0.10 post-std,
+# std ratios 0.99-1.11.
+assert mean_err < 0.3
+assert 0.85 < ratio < 1.25
+```
+
+Use `np.testing.assert_allclose` (with explicit `atol`/`rtol`) for
+numerical comparisons rather than bare `assert` with hand-rolled
+tolerance arithmetic — its failure output shows the offending values.
+Flag both failure directions when choosing bounds: too loose masks
+bugs; too tight is flaky on other platforms.
 
 ---
 

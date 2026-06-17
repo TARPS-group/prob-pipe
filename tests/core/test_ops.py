@@ -234,6 +234,12 @@ class TestConditionOn:
         conditioned = ops.condition_on(joint, x=jnp.array(2.0))
         assert conditioned.fields == ("y",)
 
+    def test_condition_case_mismatched_kwarg_raises(self, joint):
+        """A case-mismatched data kwarg (`X` when the field is `x`) raises
+        loudly via condition_on rather than being silently ignored (#228)."""
+        with pytest.raises(TypeError, match="did you mean x"):
+            ops.condition_on(joint, X=jnp.array(2.0))
+
     def test_condition_sequential(self):
         sjd = SequentialJointDistribution(
             x=Normal(0, 1, name="x"),
@@ -357,4 +363,28 @@ class TestSplitDataKwargs:
             dist, {"num_results": 100},
         )
         assert data == {}
+        assert set(inference.keys()) == {"num_results"}
+
+    def test_case_mismatched_field_raises(self):
+        """A kwarg matching a field only up to case is a mistyped data field —
+        raise with the correct casing rather than silently routing it to
+        inference params (issue #228)."""
+        from probpipe.core.ops import _split_data_kwargs
+        dist = ProductDistribution(
+            X=Normal(0.0, 1.0, name="X"), y=Normal(0.0, 1.0, name="y")
+        )
+        with pytest.raises(TypeError, match="did you mean X"):
+            _split_data_kwargs(dist, {"x": jnp.array(1.0)})
+
+    def test_non_case_variant_kwarg_stays_inference(self):
+        """An unknown kwarg that is *not* a case-variant of any field is a
+        genuine inference parameter — no false positive."""
+        from probpipe.core.ops import _split_data_kwargs
+        dist = ProductDistribution(
+            X=Normal(0.0, 1.0, name="X"), y=Normal(0.0, 1.0, name="y")
+        )
+        data, inference = _split_data_kwargs(
+            dist, {"X": jnp.array(1.0), "num_results": 100},
+        )
+        assert set(data.keys()) == {"X"}
         assert set(inference.keys()) == {"num_results"}

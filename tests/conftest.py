@@ -1,7 +1,7 @@
-import pytest
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import probpipe
 from probpipe import EmpiricalDistribution, ProvenanceMode
@@ -59,3 +59,21 @@ def cov_matrix(dim):
     A = A.at[0, 1].set(0.3)
     A = A.at[1, 0].set(0.3)
     return A
+
+
+@pytest.fixture(scope="module")
+def _stan_toolchain(tmp_path_factory):
+    """Skip Stan integration tests unless BridgeStan can compile here.
+
+    Compiling a trivial, data-free probe separates a missing C++ toolchain
+    (a legitimate skip) from a real construction failure (a bug that must
+    surface, not skip). Shared by the BridgeStan-backed tests in
+    tests/modeling/ and tests/inference/.
+    """
+    bridgestan = pytest.importorskip("bridgestan")
+    probe = tmp_path_factory.mktemp("stan_probe") / "probe.stan"
+    probe.write_text("parameters { real x; } model { x ~ normal(0, 1); }")
+    try:
+        bridgestan.StanModel(str(probe))
+    except Exception as exc:
+        pytest.skip(f"Stan compilation unavailable: {exc}")

@@ -6,17 +6,113 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel superseded runs on PR pushes (saves CI minutes during iteration).
+# Pushes to main keep running — never cancel work that gates the merged history.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # Advisory ruff lint. Annotates PRs with violations but does NOT gate
+  # merges (continue-on-error). ProbPipe carries a backlog from a
+  # previously-unenforced linter, and several large refactors are in
+  # flight; advisory mode surfaces issues without blocking that work or
+  # forcing a repo-wide cleanup sweep. To enforce later: drop
+  # continue-on-error and scope to changed files. The ruff version is
+  # read from .pre-commit-config.yaml (single source of truth) so this job
+  # can't drift from the pre-commit pin that `pre-commit autoupdate` bumps;
+  # keep uv.lock's ruff in sync too for local `uv run ruff`. `ruff format`
+  # is intentionally not run (its style conflicts with the conventions in
+  # CONTRIBUTING.md).
+  lint:
+    name: lint (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      # Blocking: validates .pre-commit-config.yaml structure (all hooks, not
+      # just ruff) so a corrupted config can't slip through while the ruff
+      # check itself stays advisory. Cheap — it does not run any hook.
+      - name: Validate pre-commit config
+        run: uvx pre-commit validate-config
+
+      - name: Resolve ruff version from .pre-commit-config.yaml
+        id: ruffver
+        run: |
+          set -euo pipefail
+          # Single source of truth for the pin lives in the pre-commit config.
+          ver=$(grep -A2 'astral-sh/ruff-pre-commit' .pre-commit-config.yaml \
+                  | sed -nE 's/^[[:space:]]*rev:[[:space:]]*v?([0-9][0-9.]*).*/\1/p' | head -1)
+          test -n "$ver"   # fail loudly if the rev can't be parsed
+          echo "ruff=$ver" >> "$GITHUB_OUTPUT"
+          echo "Resolved ruff $ver from .pre-commit-config.yaml"
+
+      - name: Ruff check (advisory — does not gate merges)
+        continue-on-error: true
+        run: uvx "ruff@${{ steps.ruffver.outputs.ruff }}" check . --output-format=github
+
+  # Advisory pyright type check. Reports but does NOT gate merges
+  # (continue-on-error). The source carries a type-debt baseline (much of
+  # it JAX/TFP untyped-attribute noise), so enforcing now would block
+  # unrelated work; advisory surfaces it without forcing a cleanup. Syncs
+  # the full dependency env first so imports resolve against the real
+  # jax/tfp/pymc. Config + scope live in pyrightconfig.json. To enforce
+  # later: drop continue-on-error and tighten typeCheckingMode.
+  #
+  # Pyright runs as an ephemeral `uv run --with` tool rather than a locked
+  # [dev] dependency: that keeps its per-platform Node binaries out of
+  # uv.lock. The version is pinned here (and referenced in CONTRIBUTING.md)
+  # for a reproducible baseline; `[nodejs]` bundles the Node runtime so CI
+  # doesn't depend on a runtime download. The final summary line is lifted
+  # into the job summary so the count is visible without opening the log.
+  typecheck:
+    name: typecheck (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev --extra nutpie --extra pymc
+
+      - name: Pyright (advisory — does not gate merges)
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          uv run --frozen --with 'pyright[nodejs]==1.1.410' pyright | tee pyright-output.txt
+
+      - name: Surface pyright summary
+        if: always()
+        run: |
+          {
+            echo "### Pyright (advisory — does not gate merges)"
+            echo '```'
+            grep -E '[0-9]+ error' pyright-output.txt | tail -n 1 || echo "no summary line found"
+            echo '```'
+            echo "_Full report in the \"Pyright\" step log above. Type checking is advisory; see CONTRIBUTING.md § Type checking._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.12", "3.13", "3.14"]
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0   # need full history for git diff
 
@@ -67,66 +163,11 @@ jobs:
             echo "run_all=false" >> "$GITHUB_OUTPUT"
             echo "No .py files changed — skipping tests."
           else
-            # Write an import-graph expander: given changed source files, it
-            # uses AST parsing to find all probpipe modules that *transitively*
-            # depend on them, so a change to provenance.py also runs
-            # tests/test_record.py (because record.py imports provenance.py).
-            cat > /tmp/expand_deps.py << 'PYEOF'
-          import ast, sys
-          from pathlib import Path
-          from collections import defaultdict
-
-          def file_to_module(p):
-              return str(Path(p).with_suffix('')).replace('/', '.')
-
-          def module_to_file(m):
-              path = m.replace('.', '/')
-              for candidate in [path + '.py', path + '/__init__.py']:
-                  if Path(candidate).exists():
-                      return candidate
-              return None
-
-          # Build reverse import graph: module -> {modules that directly import it}
-          rdeps = defaultdict(set)
-          for fpath in Path('probpipe').rglob('*.py'):
-              importer = file_to_module(str(fpath))
-              try:
-                  tree = ast.parse(fpath.read_text())
-              except Exception:
-                  continue
-              for node in ast.walk(tree):
-                  if isinstance(node, ast.ImportFrom):
-                      lvl = node.level or 0
-                      if lvl == 0:
-                          if not node.module or not node.module.startswith('probpipe'):
-                              continue
-                          imported = node.module
-                      else:
-                          parts = importer.split('.')
-                          base = parts[:-lvl] if lvl < len(parts) else []
-                          imported = '.'.join(base + node.module.split('.')) if node.module else '.'.join(base)
-                      rdeps[imported].add(importer)
-                  elif isinstance(node, ast.Import):
-                      for alias in node.names:
-                          if alias.name.startswith('probpipe'):
-                              rdeps[alias.name].add(importer)
-
-          # BFS: expand changed source files to all transitively dependent modules
-          changed_sources = [f for f in sys.argv[1:] if f.startswith('probpipe')]
-          seen = set(file_to_module(f) for f in changed_sources)
-          queue = list(seen)
-          while queue:
-              m = queue.pop(0)
-              for dep in rdeps.get(m, []):
-                  if dep not in seen:
-                      seen.add(dep)
-                      queue.append(dep)
-
-          for m in sorted(seen):
-              f = module_to_file(m)
-              if f:
-                  print(f)
-          PYEOF
+            # Expand changed source files to their transitively-dependent
+            # modules via the shared, unit-tested import-graph builder
+            # (scripts/ci/import_graph.py; tests in tests/ci/) — so a change to
+            # provenance.py also runs tests/core/. Replaces the former inline
+            # heredoc (issue #266).
 
             # Split CHANGED into test files (include directly) and source
             # files (expand via import graph before mapping to test folders).
@@ -145,7 +186,7 @@ jobs:
             # Root-level modules (probpipe/_utils.py) map to test files at
             # tests/ root only (not descending into subfolders).
             if [ -n "$CHANGED_SOURCE" ]; then
-              EXPANDED=$(python3 /tmp/expand_deps.py $CHANGED_SOURCE)
+              EXPANDED=$(python3 scripts/ci/import_graph.py expand $CHANGED_SOURCE)
               echo "Expanded source files (via import graph):"
               echo "$EXPANDED"
               HAS_ROOT_CHANGE=false
@@ -180,7 +221,7 @@ jobs:
           fi
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
@@ -189,50 +230,162 @@ jobs:
         # in uv.lock. --frozen makes the resolver fail if the lockfile is
         # out of sync, so CI never silently drifts from the committed pins.
         # --python pins the interpreter to the matrix leg: uv fetches a managed
-        # CPython when the runner lacks it, so the "3.13" leg genuinely runs
-        # 3.13. (setup-uv's python-version input was silently ignored on @v3,
-        # which let both legs fall back to the system 3.12.) [pymc] is included
-        # so pymc 6 is exercised on both matrix legs.
+        # CPython when the runner lacks it, so the "3.13" and "3.14" legs
+        # genuinely run those versions. (setup-uv's python-version input was
+        # silently ignored on @v3, which let every leg fall back to the system
+        # 3.12.) [pymc] is included so pymc 6 is exercised on all matrix legs.
         run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra nutpie --extra pymc
 
       - name: Run tests (changed files only)
         if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'false'
+        # A targeted run executes a subset of tests but still measures
+        # --cov=probpipe (the whole package), so a global coverage floor
+        # would always fail here. The floor is enforced on the full-suite
+        # run below; keep partial runs exempt with --cov-fail-under=0.
         run: |
-          uv run pytest ${{ steps.changed.outputs.test_files }} --cov-report=xml --cov-report=html
+          uv run pytest ${{ steps.changed.outputs.test_files }} --cov-fail-under=0 --cov-report=xml --cov-report=html
 
       - name: Run tests (full suite)
         if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'true'
+        # The 88% coverage floor is enforced here (full suite only): a
+        # foundational change or any push to main runs every test, so the
+        # whole-package measurement is meaningful. This overrides the
+        # --cov-fail-under=0 in pyproject's addopts.
         run: |
-          uv run pytest --cov-report=xml --cov-report=html
+          uv run pytest --cov-fail-under=88 --cov-report=xml --cov-report=html
 
       - name: Upload coverage reports to Codecov
-        if: matrix.python-version == '3.12' && steps.changed.outputs.run_all == 'true'
-        uses: codecov/codecov-action@v5
+        # Upload on 3.12 for BOTH the targeted and full-suite paths (gated only
+        # on the test step having run). The targeted run covers exactly the
+        # changed files — which is what Codecov *patch* coverage needs — so the
+        # patch gate is accurate even on targeted PRs. The full-suite path
+        # additionally gives the authoritative *project* number. Tagged `unit`
+        # so the flag carries forward when a PR doesn't run it (see codecov.yml).
+        if: matrix.python-version == '3.12' && steps.changed.outputs.skip != 'true'
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: TARPS-group/prob-pipe
+          flags: unit
 
       - name: Upload coverage HTML report
         if: always() && matrix.python-version == '3.12' && steps.changed.outputs.run_all == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-html
           path: htmlcov/
 
-  notebooks:
-    # Execute every docs/examples notebook to keep the reference set
-    # honest against the current codebase. Separate job so the
-    # ~10-15 min notebook pass does not gate the unit-test matrix.
-    # Skipped when neither example notebooks nor probpipe source files change.
+  bayesflow:
+    # Amortized SBI backend (keras-on-jax). BayesFlow 2.x caps Python <3.14, so
+    # this leg runs on 3.12 & 3.13 only — kept separate from the main matrix so
+    # a future 3.14 entry there is unaffected by the cap.
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    env:
+      KERAS_BACKEND: jax
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0   # need full history for git diff
 
-      - name: Check if notebooks or source files changed
-        id: nb_check
+      - name: Check if BayesFlow-relevant files changed
+        id: bf_check
+        # Gate the leg with the same logic the test job uses for RUN_ALL: run
+        # on pushes to main, on foundational changes (deps / this workflow),
+        # or when a BayesFlow file itself changed. Otherwise skip — and the
+        # `bayesflow` coverage flag carries forward from base (codecov.yml),
+        # so a skipped leg doesn't drag the coverage union down.
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          # Globs, not single files: the BayesFlow backend is being split into
+          # multiple modules (NLE/NRE), so match the whole family.
+          CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
+            -- 'probpipe/inference/_bayesflow*.py' 'tests/inference/test_bayesflow*.py' || true)
+          CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
+          RUN_BF=false
+          if [ "${{ github.event_name }}" = "push" ]; then
+            RUN_BF=true
+          else
+            # Same foundational set as the test job's RUN_ALL — these can affect
+            # the test environment or the public surface, so they run every leg.
+            for f in $CHANGED_ALL; do
+              case "$f" in
+                pyproject.toml|uv.lock|setup.cfg|setup.py|tests/conftest.py|probpipe/__init__.py|.github/workflows/ci.yml)
+                  RUN_BF=true ;;
+              esac
+            done
+            [ -n "$CHANGED" ] && RUN_BF=true
+          fi
+          if [ "$RUN_BF" = "true" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Running the BayesFlow leg."
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No BayesFlow-relevant changes — skipping (coverage flag carries forward)."
+          fi
+
+      - name: Install uv
+        if: steps.bf_check.outputs.skip != 'true'
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        if: steps.bf_check.outputs.skip != 'true'
+        # Versions (jax/jaxlib/tfp-nightly/keras/bayesflow) are pinned in uv.lock;
+        # --frozen fails if the lockfile drifts. --python pins the interpreter to
+        # the matrix leg. The bayesflow extra is locked behind a python_version
+        # < 3.14 marker (BayesFlow caps <3.14), so it resolves only on these legs.
+        run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra nutpie --extra bayesflow
+
+      - name: Run BayesFlow backend tests
+        if: steps.bf_check.outputs.skip != 'true'
+        # Glob to pick up the split BayesFlow test files (NLE/NRE) as they land.
+        run: uv run pytest tests/inference/test_bayesflow*.py --cov-report=xml
+
+      - name: Upload coverage reports to Codecov
+        # The main test job does not install [bayesflow], so its run measures
+        # the _bayesflow_* modules as uncovered. Upload this leg under the
+        # `bayesflow` flag so Codecov's union counts them toward coverage. 3.12
+        # only, matching the test job's upload.
+        if: steps.bf_check.outputs.skip != 'true' && matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: TARPS-group/prob-pipe
+          flags: bayesflow
+
+  stan:
+    # BridgeStan backend. StanModel's behaviour tests compile real Stan
+    # programs (needs a C++ toolchain — ubuntu-latest provides one). Kept
+    # separate from the main matrix so the per-model compile cost stays out of
+    # every leg: the main matrix runs StanModel's pure tests (the name parser,
+    # the bridgestan-missing guard, the CmdStan import shim) and skips the
+    # compile-backed ones (gated by the _stan_toolchain fixture). One leg only —
+    # BridgeStan is a C++/ctypes backend, so behaviour doesn't vary by Python
+    # version and the compile cost is paid per leg.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # need full history for git diff
+
+      - name: Check if Stan-relevant files changed
+        id: stan_check
+        # Same gating shape as the bayesflow leg: run on pushes to main, on
+        # foundational changes (deps / this workflow), or when a Stan file
+        # itself changed. Otherwise skip — the `stan` coverage flag carries
+        # forward from base (codecov.yml), so a skipped leg doesn't drag the
+        # union down.
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="origin/${{ github.base_ref }}"
@@ -240,7 +393,115 @@ jobs:
             BASE="${{ github.event.before }}"
           fi
           CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
-            -- 'docs/examples/*.ipynb' 'probpipe/' || true)
+            -- 'probpipe/modeling/_stan.py' 'tests/modeling/test_stan_model.py' || true)
+          CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
+          RUN_STAN=false
+          if [ "${{ github.event_name }}" = "push" ]; then
+            RUN_STAN=true
+          else
+            for f in $CHANGED_ALL; do
+              case "$f" in
+                pyproject.toml|uv.lock|setup.cfg|setup.py|tests/conftest.py|probpipe/__init__.py|.github/workflows/ci.yml)
+                  RUN_STAN=true ;;
+              esac
+            done
+            [ -n "$CHANGED" ] && RUN_STAN=true
+          fi
+          if [ "$RUN_STAN" = "true" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Running the Stan leg."
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No Stan-relevant changes — skipping (coverage flag carries forward)."
+          fi
+
+      - name: Install uv
+        if: steps.stan_check.outputs.skip != 'true'
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Cache the BridgeStan build
+        # BridgeStan downloads its C++ sources and builds the Stan math + TBB
+        # static libs under ~/.bridgestan on the first compile (minutes). Cache
+        # it so only a cold cache pays that; per-model compiles are then seconds.
+        # The key rotates on every uv.lock change, but restore-keys falls back to
+        # the latest prior build, so an unrelated dependency bump reuses the
+        # existing libs (no rebuild). Only a bridgestan version bump rebuilds —
+        # under its own ~/.bridgestan/<version>/ subdir, so a stale restore can't
+        # mismatch.
+        if: steps.stan_check.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.bridgestan
+          key: bridgestan-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: bridgestan-${{ runner.os }}-
+
+      - name: Install dependencies
+        if: steps.stan_check.outputs.skip != 'true'
+        # Versions are pinned in uv.lock; --frozen fails if the lockfile drifts.
+        # The `stan` extra brings bridgestan (and cmdstanpy); dev+nutpie match
+        # the other backend legs' base.
+        run: uv sync --frozen --python 3.12 --extra dev --extra nutpie --extra stan
+
+      - name: Run StanModel tests (real BridgeStan)
+        if: steps.stan_check.outputs.skip != 'true'
+        # -n 0 disables xdist so the module-scoped model fixtures compile once,
+        # not once per worker. The suite is small; serial is fine.
+        run: uv run pytest tests/modeling/test_stan_model.py -n 0 --cov-report=xml
+
+      - name: Upload coverage reports to Codecov
+        # The main test job doesn't install [stan], so it measures _stan.py as
+        # (mostly) uncovered. Upload this leg under the `stan` flag so Codecov's
+        # union counts the real-backend coverage.
+        if: steps.stan_check.outputs.skip != 'true'
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: TARPS-group/prob-pipe
+          flags: stan
+
+  notebooks:
+    # Execute the docs notebooks to keep the reference set honest against the
+    # current codebase. Two parallel legs: `examples` (lean — dev+nutpie) and
+    # `tutorials` (the SBI backends — bayesflow+pymc). Splitting roughly halves
+    # the wall-clock vs one serial pass (~8 min each, on par with the test
+    # matrix) and spares the examples the ~200 MB pymc/bayesflow install (no
+    # example imports them in code). Separate from the unit-test matrix either
+    # way. Skipped per-leg when no notebook in its dir or probpipe source changes.
+    name: notebooks (${{ matrix.group }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: examples
+            dir: docs/examples
+            extras: --extra dev --extra nutpie
+          - group: tutorials
+            dir: docs/tutorials
+            extras: --extra dev --extra nutpie --extra bayesflow --extra pymc
+    runs-on: ubuntu-latest
+    env:
+      KERAS_BACKEND: jax   # bayesflow tutorials run keras on the JAX backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # need full history for git diff
+
+      - name: Check if notebooks or source files changed
+        id: nb_check
+        run: |
+          # Fail fast if a leg's directory is misconfigured (a typo or a future
+          # rename would otherwise glob/find empty and silently skip the leg).
+          test -d "${{ matrix.dir }}" || { echo "::error::notebook dir '${{ matrix.dir }}' not found"; exit 1; }
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
+            -- '${{ matrix.dir }}/*.ipynb' 'probpipe/' || true)
           CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
 
           # A dependency bump in pyproject.toml or uv.lock touches no notebook
@@ -262,152 +523,29 @@ jobs:
           # Check RUN_ALL_NB before the empty-CHANGED skip, so a foundational
           # change with no notebook/source edits still runs every notebook.
           if [ "$RUN_ALL_NB" = "true" ]; then
-            NOTEBOOKS=$(find docs/examples -maxdepth 1 -name '*.ipynb' | sort | tr '\n' ' ' | xargs)
+            NOTEBOOKS=$(find ${{ matrix.dir }} -maxdepth 1 -name '*.ipynb' | sort)
             if [ -z "$NOTEBOOKS" ]; then
               echo "skip=true" >> "$GITHUB_OUTPUT"
-              echo "No example notebooks found — skipping notebook CI."
+              echo "No notebooks found — skipping notebook CI."
             else
               echo "skip=false" >> "$GITHUB_OUTPUT"
-              echo "notebooks=$NOTEBOOKS" >> "$GITHUB_OUTPUT"
+              # Newline-delimited (multiline) output so paths are never word-split.
+              { echo "notebooks<<NBEOF"; echo "$NOTEBOOKS"; echo "NBEOF"; } >> "$GITHUB_OUTPUT"
               echo "Foundational change detected — executing ALL notebooks:"
               echo "$NOTEBOOKS"
             fi
           elif [ -z "$CHANGED" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "No docs/examples notebook or probpipe source changes — skipping notebook CI."
+            echo "No notebook or probpipe source changes — skipping notebook CI."
           else
             echo "Changes detected:"
             echo "$CHANGED"
 
-            cat > /tmp/affected_notebooks.py << 'PYEOF'
-          import ast, json, sys
-          from pathlib import Path
-          from collections import defaultdict
-
-          def file_to_module(p):
-              return str(Path(p).with_suffix('')).replace('/', '.')
-
-          def module_to_file(m):
-              path = m.replace('.', '/')
-              for candidate in [path + '.py', path + '/__init__.py']:
-                  if Path(candidate).exists():
-                      return candidate
-              return None
-
-          rdeps = defaultdict(set)
-          for fpath in Path('probpipe').rglob('*.py'):
-              importer = file_to_module(str(fpath))
-              try:
-                  tree = ast.parse(fpath.read_text())
-              except Exception:
-                  continue
-              for node in ast.walk(tree):
-                  if isinstance(node, ast.ImportFrom):
-                      lvl = node.level or 0
-                      if lvl == 0:
-                          if not node.module or not node.module.startswith('probpipe'):
-                              continue
-                          imported = node.module
-                      else:
-                          parts = importer.split('.')
-                          base = parts[:-lvl] if lvl < len(parts) else []
-                          imported = '.'.join(base + node.module.split('.')) if node.module else '.'.join(base)
-                      rdeps[imported].add(importer)
-                  elif isinstance(node, ast.Import):
-                      for alias in node.names:
-                          if alias.name.startswith('probpipe'):
-                              rdeps[alias.name].add(importer)
-
-          # Build symbol definition map: name -> module where it is actually
-          # defined. Non-__init__ files take priority (they are the true
-          # definition sites); __init__ files are a fallback for anything
-          # defined directly inside a package init.
-          sym_defs = {}
-          for fpath in Path('probpipe').rglob('*.py'):
-              if fpath.name == '__init__.py':
-                  continue
-              mod = file_to_module(str(fpath))
-              try:
-                  tree = ast.parse(fpath.read_text())
-              except Exception:
-                  continue
-              for node in ast.walk(tree):
-                  if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-                      sym_defs.setdefault(node.name, mod)
-                  elif isinstance(node, ast.Assign):
-                      for target in node.targets:
-                          if isinstance(target, ast.Name):
-                              sym_defs.setdefault(target.id, mod)
-
-          changed_nbs = [f for f in sys.argv[1:] if f.startswith('docs/examples/') and f.endswith('.ipynb') and Path(f).exists()]
-          changed_sources = [f for f in sys.argv[1:] if f.startswith('probpipe/')]
-
-          seen = set(file_to_module(f) for f in changed_sources)
-          queue = list(seen)
-          while queue:
-              m = queue.pop(0)
-              for dep in rdeps.get(m, []):
-                  if dep not in seen and dep.split('.')[-1] != '__init__':
-                      seen.add(dep)
-                      queue.append(dep)
-          affected_mods = seen
-
-          def notebook_affected(nb_path):
-              nb = json.loads(Path(nb_path).read_text())
-              nb_resolved = set()
-              for cell in nb.get('cells', []):
-                  if cell.get('cell_type') != 'code':
-                      continue
-                  source = ''.join(cell.get('source', []))
-                  try:
-                      tree = ast.parse(source)
-                  except SyntaxError:
-                      continue
-                  for node in ast.walk(tree):
-                      if isinstance(node, ast.ImportFrom):
-                          if node.level != 0 or not node.module or not node.module.startswith('probpipe'):
-                              continue
-                          src_mod = node.module
-                          src_file = module_to_file(src_mod)
-                          if src_file and src_file.endswith('__init__.py'):
-                              # e.g. "from probpipe import WorkflowFunction, Normal"
-                              # Resolve each name to where it is actually defined.
-                              for alias in node.names:
-                                  if alias.name == '*':
-                                      nb_resolved.add(src_mod)
-                                  elif alias.name in sym_defs:
-                                      nb_resolved.add(sym_defs[alias.name])
-                                  else:
-                                      nb_resolved.add(src_mod)
-                          else:
-                              # e.g. "from probpipe.core.node import WorkflowFunction"
-                              # Module is already the definition site.
-                              nb_resolved.add(src_mod)
-                      elif isinstance(node, ast.Import):
-                          for alias in node.names:
-                              if alias.name.startswith('probpipe'):
-                                  # "import probpipe" — bare module import,
-                                  # can't resolve symbols statically; treat as
-                                  # matching anything under that prefix.
-                                  nb_resolved.add(alias.name)
-              for nb_mod in nb_resolved:
-                  for af_mod in affected_mods:
-                      if af_mod == nb_mod or af_mod.startswith(nb_mod + '.'):
-                          return True
-              return False
-
-          to_run = set(changed_nbs)
-          if affected_mods:
-              for nb_path in sorted(Path('docs/examples').glob('*.ipynb')):
-                  nb_str = str(nb_path)
-                  if nb_str not in to_run and notebook_affected(nb_str):
-                      to_run.add(nb_str)
-
-          for nb in sorted(to_run):
-              print(nb)
-          PYEOF
-
-            NOTEBOOKS=$(python3 /tmp/affected_notebooks.py $CHANGED)
+            # Select notebooks under this leg's dir affected by the changed
+            # files, via the same shared import-graph builder the test job uses
+            # (scripts/ci/import_graph.py; tests in tests/ci/). Replaces the
+            # former inline heredoc (issue #266).
+            NOTEBOOKS=$(python3 scripts/ci/import_graph.py notebooks "${{ matrix.dir }}" $CHANGED)
             echo "Notebooks to run:"
             echo "$NOTEBOOKS"
 
@@ -415,16 +553,16 @@ jobs:
               echo "skip=true" >> "$GITHUB_OUTPUT"
               echo "No affected notebooks — skipping notebook CI."
             else
-              NOTEBOOKS_SPACE=$(echo "$NOTEBOOKS" | tr '\n' ' ' | xargs)
               echo "skip=false" >> "$GITHUB_OUTPUT"
-              echo "notebooks=$NOTEBOOKS_SPACE" >> "$GITHUB_OUTPUT"
-              echo "Will execute: $NOTEBOOKS_SPACE"
+              # Newline-delimited (multiline) output so paths are never word-split.
+              { echo "notebooks<<NBEOF"; echo "$NOTEBOOKS"; echo "NBEOF"; } >> "$GITHUB_OUTPUT"
+              echo "Will execute:"; echo "$NOTEBOOKS"
             fi
           fi
 
       - name: Install uv
         if: steps.nb_check.outputs.skip != 'true'
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
@@ -433,16 +571,21 @@ jobs:
         # Dependency versions are pinned in uv.lock. --frozen fails if the
         # lockfile is out of sync, so CI never silently drifts. --python pins
         # the interpreter (setup-uv's python-version input was ignored on @v3).
-        # [pymc] is intentionally not installed for the notebook job (matches
-        # the previous pip-based setup).
-        run: uv sync --frozen --python 3.12 --extra dev --extra nutpie
+        # Per-leg extras (matrix.extras): the examples leg needs only
+        # dev+nutpie; the tutorials leg adds the SBI backends bayesflow+pymc.
+        run: uv sync --frozen --python 3.12 ${{ matrix.extras }}
 
-      - name: Execute affected docs/examples notebooks
+      - name: Execute affected notebooks
         if: steps.nb_check.outputs.skip != 'true'
+        # Read the list via an env var (not spliced into the script) and iterate
+        # with read, so notebook paths are never word-split or shell-injected.
+        env:
+          NB_LIST: ${{ steps.nb_check.outputs.notebooks }}
         run: |
           set -euo pipefail
-          for nb in ${{ steps.nb_check.outputs.notebooks }}; do
+          while IFS= read -r nb; do
+            [ -z "$nb" ] && continue
             echo "--- executing $nb ---"
             uv run python -m nbconvert --to notebook --execute \
               --ExecutePreprocessor.timeout=900 --output /tmp/out.ipynb "$nb"
-          done
+          done <<< "$NB_LIST"

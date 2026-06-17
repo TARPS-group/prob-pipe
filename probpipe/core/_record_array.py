@@ -16,10 +16,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..custom_types import ArrayLike
+from ..custom_types import Array
 from ._numeric_record import _NUMERIC_DTYPE_KINDS, NumericRecord
 from .provenance import Provenance
-from .record import Record, RecordTemplate, _spec_size
+from .record import _PATH_SEP, Record, RecordTemplate, _spec_size
 
 __all__ = [
     "RecordArray",
@@ -157,7 +157,23 @@ class RecordArray(Record):
     # -- Field access -------------------------------------------------------
 
     def __getitem__(self, key: str | int) -> Any:
+        """Index a field by name, or extract one element by integer batch index.
+
+        A string ``key`` selects a field; slash-delimited paths descend into
+        nested record fields (``arr["outer/a"]``, per the path convention). An
+        integer ``key`` returns the element at that flat batch index as a
+        (possibly nested) ``Record``. A missing field -- or a path that descends
+        into a leaf -- raises ``KeyError``; a non-str/int key raises ``TypeError``.
+        """
         if isinstance(key, str):
+            if _PATH_SEP in key:
+                head, _, rest = key.partition(_PATH_SEP)
+                if head not in self._store:
+                    raise KeyError(key)
+                try:
+                    return self._store[head][rest]
+                except (KeyError, TypeError) as e:
+                    raise KeyError(key) from e
             if key not in self._store:
                 raise KeyError(key)
             return self._store[key]
@@ -189,12 +205,27 @@ class RecordArray(Record):
     """
 
     def _get_record(self, index: int) -> Record:
-        """Extract a single Record at a flat batch index."""
+        """Extract a single Record at a flat batch index.
+
+        Nested record fields (a co-batched ``RecordArray`` or a plain
+        ``Record`` with batch-shaped leaves) are descended recursively so
+        the element is itself a (nested) record, not indexed by the raw
+        batch tuple.
+        """
         nd_index = np.unravel_index(index, self._batch_shape)
-        fields: dict[str, Any] = {}
-        for name in self._store:
-            fields[name] = self._store[name][nd_index]
-        return self._record_cls(fields)
+
+        def _elem(val: Record | Array) -> Record | Array:
+            if isinstance(val, RecordArray):
+                return val._get_record(index)
+            if isinstance(val, Record):
+                # A NumericRecord requires NumericRecord children, so a plain-Record
+                # nested field (the pre-canonical shape) is promoted; a non-numeric
+                # parent keeps the child's own type.
+                cls = NumericRecord if isinstance(self, NumericRecordArray) else type(val)
+                return cls({k: _elem(val[k]) for k in val.fields})
+            return val[nd_index]
+
+        return self._record_cls({name: _elem(self._store[name]) for name in self._store})
 
     def __contains__(self, name: str) -> bool:
         return name in self._store
@@ -420,16 +451,25 @@ class NumericRecordArray(RecordArray):
     def flatten(self) -> jnp.ndarray:
         """Flatten event dimensions into a single trailing axis.
 
-        Returns array of shape ``(*batch_shape, flat_event_size)``.
+        Returns array of shape ``(*batch_shape, flat_event_size)``. Nested
+        record fields are flattened depth-first in field order, matching
+        :meth:`unflatten` and :meth:`NumericRecord.flatten`.
         """
         n_batch = len(self._batch_shape)
-        parts = []
-        for name in self._store:
-            val = self._store[name]
-            event_shape = val.shape[n_batch:]
-            field_size = prod(event_shape)
-            new_shape = self._batch_shape + (field_size,)
-            parts.append(jnp.reshape(val, new_shape))
+
+        def _flat_field(val: Any) -> jnp.ndarray:
+            # A nested record-array field (from unflatten, or a batched _sample)
+            # carries the same batch axis and flattens its own leaves.
+            if isinstance(val, RecordArray):
+                return val.flatten()
+            # A nested plain Record whose leaves still carry the batch axis
+            # (a non-canonical batched draw): flatten each leaf and concatenate.
+            if isinstance(val, Record):
+                return jnp.concatenate(
+                    [_flat_field(val[f]) for f in val.fields], axis=-1)
+            return jnp.reshape(val, self._batch_shape + (prod(val.shape[n_batch:]),))
+
+        parts = [_flat_field(self._store[name]) for name in self._store]
         return jnp.concatenate(parts, axis=-1)
 
     @classmethod
@@ -442,6 +482,11 @@ class NumericRecordArray(RecordArray):
     ) -> NumericRecordArray:
         """Reconstruct from a flat array.
 
+        The inverse of :meth:`flatten`: nested ``RecordTemplate`` specs are
+        rebuilt recursively, so a template with nested fields yields nested
+        ``NumericRecordArray`` fields, matching the depth-first leaf order
+        ``flatten`` uses.
+
         Parameters
         ----------
         flat : array
@@ -450,6 +495,12 @@ class NumericRecordArray(RecordArray):
             Structural description providing field names and event shapes.
         batch_shape : tuple of int, optional
             If not provided, inferred as ``flat.shape[:-1]``.
+
+        Returns
+        -------
+        NumericRecordArray
+            Array of the template's structure with the given ``batch_shape``;
+            nested template fields become nested ``NumericRecordArray`` fields.
         """
         if batch_shape is None:
             batch_shape = flat.shape[:-1]
