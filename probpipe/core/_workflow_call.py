@@ -9,9 +9,8 @@ broadcast planning, execution, or result coercion.
 from __future__ import annotations
 
 import inspect
-import warnings
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from typing import Any, get_type_hints
 
 
@@ -32,11 +31,6 @@ class WorkflowCallOptions:
     n_broadcast_samples: int | None = None
     include_inputs: bool | None = None
     seed: int | None = None
-
-
-WORKFLOW_CALL_OPTION_NAMES = frozenset(
-    field.name for field in fields(WorkflowCallOptions)
-)
 
 
 @dataclass(frozen=True)
@@ -118,31 +112,18 @@ def bind_call_inputs(
     default_n_broadcast_samples: int,
     default_include_inputs: bool,
     options: WorkflowCallOptions | None = None,
-    warn_legacy_overrides: bool = False,
 ) -> tuple[dict[str, Any], WorkflowCallOverrides]:
     """Bind user inputs and resolve workflow controls.
 
-    Legacy call-time controls are consumed from ``call_inputs`` only when
-    they cannot bind to the wrapped function. Explicit ``options`` are the
-    preferred control plane and take precedence.
+    Call inputs bind exactly like the wrapped Python function. Workflow
+    controls come only from explicit ``options`` or construction defaults.
     """
-    raw_inputs = dict(call_inputs)
-
-    legacy_options = _pop_legacy_workflow_options(
-        info,
-        raw_inputs,
-        warn=warn_legacy_overrides,
-    )
     explicit_options = options if options is not None else WorkflowCallOptions()
 
     def resolve_option(name: str, default: Any = None) -> Any:
         explicit_value = getattr(explicit_options, name)
         if explicit_value is not None:
             return explicit_value
-
-        legacy_value = getattr(legacy_options, name)
-        if legacy_value is not None:
-            return legacy_value
 
         return default
 
@@ -158,7 +139,7 @@ def bind_call_inputs(
         seed=resolve_option("seed"),
     )
 
-    bound = info.signature.bind_partial(*args, **raw_inputs)
+    bound = info.signature.bind_partial(*args, **call_inputs)
     bound_inputs = _flatten_bound_inputs(info.signature, bound)
 
     return bound_inputs, overrides
@@ -230,7 +211,6 @@ def resolve_workflow_call(
     default_n_broadcast_samples: int,
     default_include_inputs: bool,
     options: WorkflowCallOptions | None = None,
-    warn_legacy_overrides: bool = False,
 ) -> ResolvedWorkflowCall:
     """Resolve one ``WorkflowFunction`` call into values plus overrides."""
     bound_inputs, overrides = bind_call_inputs(
@@ -240,7 +220,6 @@ def resolve_workflow_call(
         default_n_broadcast_samples=default_n_broadcast_samples,
         default_include_inputs=default_include_inputs,
         options=options,
-        warn_legacy_overrides=warn_legacy_overrides,
     )
     values = resolve_workflow_values(
         info,
@@ -259,40 +238,6 @@ def _get_type_hints(func: Callable[..., Any]) -> dict[str, Any]:
         return get_type_hints(func)
     localns = {param.__name__: param for param in type_params}
     return get_type_hints(func, localns=localns)
-
-
-def _pop_legacy_workflow_options(
-    info: WorkflowSignatureInfo,
-    raw_inputs: dict[str, Any],
-    *,
-    warn: bool,
-) -> WorkflowCallOptions:
-    consumed: dict[str, Any] = {}
-    for name in WORKFLOW_CALL_OPTION_NAMES:
-        if name not in raw_inputs:
-            continue
-        if _can_bind_as_user_input(info, name):
-            continue
-        consumed[name] = raw_inputs.pop(name)
-
-    if consumed and warn:
-        names = ", ".join(sorted(consumed))
-        warnings.warn(
-            "Passing WorkflowFunction options as call kwargs is deprecated "
-            f"for {names}; use workflow.with_options(...)(...) instead.",
-            DeprecationWarning,
-            stacklevel=6,
-        )
-
-    return WorkflowCallOptions(
-        n_broadcast_samples=consumed.get("n_broadcast_samples"),
-        include_inputs=consumed.get("include_inputs"),
-        seed=consumed.get("seed"),
-    )
-
-
-def _can_bind_as_user_input(info: WorkflowSignatureInfo, name: str) -> bool:
-    return name in info.signature.parameters or info.has_var_keyword
 
 
 def _validate_required_values(

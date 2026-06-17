@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import warnings
-
 import jax.numpy as jnp
+import pytest
 
 from probpipe import BroadcastDistribution, Normal, WorkflowFunction, workflow_function
 
@@ -23,42 +22,19 @@ def test_workflow_function_decorator_sets_construction_defaults():
     assert result.num_atoms == 7
 
 
-def test_workflow_function_decorator_options_do_not_warn():
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-
-        @workflow_function(n_broadcast_samples=5, dispatch="sequential", seed=0)
-        def identity(x):
-            return x
-
-    result = identity(Normal(loc=0.0, scale=1.0, name="x"))
-    assert not any(
-        issubclass(warning.category, DeprecationWarning)
-        for warning in caught
-    )
-    assert result.num_atoms == 5
-
-
 def test_workflow_function_has_no_options_alias():
     assert not hasattr(workflow_function, "options")
 
 
-def test_bare_decorator_forms_do_not_warn():
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+def test_bare_decorator_forms_wrap_functions():
+    @workflow_function
+    def bare(x):
+        return x
 
-        @workflow_function
-        def bare(x):
-            return x
+    @workflow_function()
+    def bare_parentheses(x):
+        return x
 
-        @workflow_function()
-        def bare_parentheses(x):
-            return x
-
-    assert not any(
-        issubclass(warning.category, DeprecationWarning)
-        for warning in caught
-    )
     assert bare(1.0)["bare"] == 1.0
     assert bare_parentheses(2.0)["bare_parentheses"] == 2.0
 
@@ -130,7 +106,7 @@ def test_with_options_seed_is_separate_from_user_seed_parameter():
     assert jnp.allclose(first.samples["marginal"], base.samples["marginal"] + 7.0)
 
 
-def test_formerly_reserved_names_are_user_parameters():
+def test_workflow_control_names_are_user_parameters():
     @workflow_function
     def collect(seed, n_broadcast_samples, include_inputs, name, dispatch):
         return f"{seed}:{n_broadcast_samples}:{include_inputs}:{name}:{dispatch}"
@@ -146,7 +122,7 @@ def test_formerly_reserved_names_are_user_parameters():
     assert result["collect"] == "1:2:True:model:local"
 
 
-def test_var_keyword_receives_formerly_reserved_names():
+def test_var_keyword_receives_workflow_control_names():
     seen = []
 
     def identity(x, **kwargs):
@@ -161,26 +137,20 @@ def test_var_keyword_receives_formerly_reserved_names():
     )
     normal = Normal(loc=0.0, scale=1.0, name="x")
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        result = wf.with_options(n_broadcast_samples=5)(
-            x=normal,
-            seed=42,
-            n_broadcast_samples=99,
-            include_inputs=True,
-        )
+    result = wf.with_options(n_broadcast_samples=5)(
+        x=normal,
+        seed=42,
+        n_broadcast_samples=99,
+        include_inputs=True,
+    )
 
     assert result.num_atoms == 5
-    assert not any(
-        issubclass(warning.category, DeprecationWarning)
-        for warning in caught
-    )
     assert seen == [
         {"seed": 42, "n_broadcast_samples": 99, "include_inputs": True},
     ] * 5
 
 
-def test_legacy_call_time_override_warns_when_name_cannot_bind():
+def test_unbindable_call_time_control_name_is_rejected():
     def identity(x):
         return x
 
@@ -191,22 +161,11 @@ def test_legacy_call_time_override_warns_when_name_cannot_bind():
         seed=0,
     )
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        result = wf(Normal(loc=0.0, scale=1.0, name="x"), n_broadcast_samples=6)
-
-    legacy_warnings = [
-        warning
-        for warning in caught
-        if issubclass(warning.category, DeprecationWarning)
-    ]
-    assert len(legacy_warnings) == 1
-    assert "with_options" in str(legacy_warnings[0].message)
-    assert legacy_warnings[0].filename.endswith("test_workflow_options_namespace.py")
-    assert result.num_atoms == 6
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        wf(Normal(loc=0.0, scale=1.0, name="x"), n_broadcast_samples=6)
 
 
-def test_bindable_formerly_reserved_name_does_not_warn_or_override():
+def test_bindable_workflow_control_name_does_not_override():
     def identity(x, n_broadcast_samples):
         return x + n_broadcast_samples
 
@@ -218,12 +177,6 @@ def test_bindable_formerly_reserved_name_does_not_warn_or_override():
     )
     normal = Normal(loc=0.0, scale=1.0, name="x")
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        result = wf(x=normal, n_broadcast_samples=4)
+    result = wf(x=normal, n_broadcast_samples=4)
 
     assert result.num_atoms == 5
-    assert not any(
-        issubclass(warning.category, DeprecationWarning)
-        for warning in caught
-    )

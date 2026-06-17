@@ -234,18 +234,20 @@ class TestProbAndUnnormalizedKwargForm:
         )
 
 
-class TestFormerlyReservedFieldNames:
-    """Controls live only on ``with_options``, so a field whose name matches a
-    former WF control (``seed`` / ``n_broadcast_samples`` / ``include_inputs``)
-    is an ordinary field: construction does not warn, and the keyword form
-    addresses it (issue #228)."""
+class TestWorkflowControlFieldNames:
+    """Workflow control names are ordinary distribution fields.
+
+    Per-call controls live only on ``with_options``, so fields named
+    ``seed``, ``n_broadcast_samples``, or ``include_inputs`` can be addressed
+    through the keyword value form.
+    """
 
     @pytest.mark.parametrize("name", ["seed", "n_broadcast_samples", "include_inputs"])
-    def test_construction_does_not_warn(self, name):
+    def test_construction_does_not_warn_for_control_names(self, name):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             Normal(0.0, 1.0, name=name)
-        assert not any("reserved" in str(w.message).lower() for w in caught)
+        assert not caught
 
     @pytest.mark.parametrize("name", ["seed", "n_broadcast_samples", "include_inputs"])
     def test_keyword_form_addresses_the_field(self, name):
@@ -264,13 +266,9 @@ class TestControlsViaWithOptions:
         "control",
         [{"seed": 3}, {"n_broadcast_samples": 8}, {"include_inputs": True}],
     )
-    def test_with_options_does_not_deprecation_warn(self, control):
+    def test_with_options_accepts_controls(self, control):
         d = Normal(0.0, 1.0, name="x")
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            log_prob.with_options(**control)(d, 1.5)
-        deps = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert not deps, [str(w.message) for w in deps]
+        log_prob.with_options(**control)(d, 1.5)
 
     def test_op_is_its_own_workflow_function(self):
         # No wrapper: log_prob *is* a WorkflowFunction, so with_options is its
@@ -335,10 +333,10 @@ class _FieldlessRandomMeasure(Distribution):
 
 class TestRandomMeasureKwargForm:
     """The random_*_log_prob ops keep `value` optional (return the
-    RandomFunction) and apply controls via with_options without deprecation.
-    The keyword form routes to `_pack_value`; since random measures carry no
-    named `fields` yet, it raises a clear "no named fields" error — full
-    RandomMeasure field support is #228 PR 4."""
+    RandomFunction) and apply controls via with_options. The keyword form
+    routes to `_pack_value`; since random measures carry no named `fields` yet,
+    it raises a clear "no named fields" error — full RandomMeasure field
+    support is #228 PR 4."""
 
     @staticmethod
     def _measure():
@@ -349,14 +347,10 @@ class TestRandomMeasureKwargForm:
         lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
         return MinibatchedDistribution(prior, lik, Record(X=X, y=y), batch_size=2)
 
-    def test_value_omitted_returns_callable_no_deprecation(self):
+    def test_value_omitted_returns_callable_with_options(self):
         m = self._measure()
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            rf = random_unnormalized_log_prob.with_options(seed=0)(m)
+        rf = random_unnormalized_log_prob.with_options(seed=0)(m)
         assert callable(rf)
-        deps = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-        assert not deps, [str(w.message) for w in deps]
 
     @pytest.mark.parametrize("op", [random_log_prob, random_unnormalized_log_prob])
     def test_kwarg_form_raises_no_named_fields(self, op):
