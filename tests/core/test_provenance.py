@@ -379,6 +379,32 @@ class TestProvenanceAncestors:
         assert isinstance(ancestors[0], ParentInfo)
         assert ancestors[0].obj is n
 
+    def test_diamond_no_duplicates(self):
+        """Shared ancestor in a diamond DAG appears exactly once.
+
+        Diamond shape:
+              X
+             / \\
+            A   B
+             \\ /
+              C
+        A and B are both derived from X. C is derived from both A and B.
+        provenance_ancestors(C) should contain X exactly once.
+        """
+        X = Normal(loc=0.0, scale=1.0, name="X")
+        A = Normal(loc=0.0, scale=1.0, name="A")
+        B = Normal(loc=0.0, scale=1.0, name="B")
+        C = Normal(loc=0.0, scale=1.0, name="C")
+
+        A.with_source(Provenance.create("op", parents=[X]))
+        B.with_source(Provenance.create("op", parents=[X]))
+        C.with_source(Provenance.create("op", parents=[A, B]))
+
+        ancestors = provenance_ancestors(C)
+        names = [a.name for a in ancestors]
+        assert names.count("X") == 1, f"X appeared {names.count('X')} times: {names}"
+        assert set(names) == {"A", "B", "X"}
+
 
 # ===========================================================================
 # 9. provenance_dag
@@ -441,6 +467,32 @@ class TestProvenanceDag:
         ancestors = provenance_ancestors(result)
         assert any(a.obj is td for a in ancestors)
         assert any(a.obj is base for a in ancestors)
+
+    def test_diamond_dag_no_duplicate_nodes(self):
+        """Shared ancestor in a diamond renders as a single node, not two."""
+        X = Normal(loc=0.0, scale=1.0, name="X")
+        A = Normal(loc=0.0, scale=1.0, name="A")
+        B = Normal(loc=0.0, scale=1.0, name="B")
+
+        A.with_source(Provenance.create("op", parents=[X]))
+        B.with_source(Provenance.create("op", parents=[X]))
+
+        # Build a joint whose provenance has both A and B as parents.
+        # We test on A or B themselves since provenance_dag only accepts
+        # a single root; verify via ancestors that X is deduplicated.
+        # For the dag test, we use A since it's the simpler traversal.
+        # The real diamond requires a root C; approximate by checking
+        # ancestors of a manually-sourced C.
+        C = Normal(loc=0.0, scale=1.0, name="C")
+        C.with_source(Provenance.create("op", parents=[A, B]))
+
+        dag = provenance_dag(C)
+        # C + A + B + X = 4 nodes. X must appear only once despite
+        # being reachable via both A and B.
+        num_nodes, num_edges = _count_dag_entries(dag)
+        assert num_nodes == 4, f"Expected 4 nodes, got {num_nodes}"
+        # Edges: C←A, C←B, A←X, B←X = 4 edges
+        assert num_edges == 4, f"Expected 4 edges, got {num_edges}"
 
 
 # ===========================================================================

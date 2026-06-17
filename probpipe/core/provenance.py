@@ -181,6 +181,22 @@ class Provenance:
 # Graph utilities
 # ---------------------------------------------------------------------------
 
+def _parent_key(p: Any) -> Any:
+    """Stable dedup key for a parent node.
+
+    Uses live-object identity in FULL mode (``p.obj`` is set), and a
+    ``(type_name, name, id(source))`` tuple in LIGHTWEIGHT mode.  The
+    parent's ``.source`` Provenance node is the same object on every path
+    to the same ancestor, so its id is stable even though each path holds
+    a distinct ``ParentInfo`` instance.
+    """
+    if isinstance(p, ParentInfo):
+        if p.obj is not None:
+            return id(p.obj)
+        return (p.type_name, p.name, id(p.source))
+    return id(p)
+
+
 def provenance_ancestors(node: "ProvenanceNode") -> list[Any]:
     """Return all ancestor nodes reachable via provenance chains.
 
@@ -191,17 +207,16 @@ def provenance_ancestors(node: "ProvenanceNode") -> list[Any]:
     Returns :class:`ParentInfo` descriptors for workflow steps created
     under :attr:`ProvenanceMode.LIGHTWEIGHT` or :attr:`ProvenanceMode.FULL`.
     In FULL mode, the live parent object is accessible via
-    ``ancestor.obj``.  Live objects are returned directly for provenance
-    sites not yet migrated to :class:`ParentInfo`.
+    ``ancestor.obj``.
     """
-    visited: set[int] = {id(node)}
+    visited: set = {id(node)}
     ancestors: list = []
     queue: list = []
 
     def _enqueue(p: Any) -> None:
-        pid = id(p)
-        if pid not in visited:
-            visited.add(pid)
+        key = _parent_key(p)
+        if key not in visited:
+            visited.add(key)
             queue.append(p)
             ancestors.append(p)
 
@@ -211,8 +226,6 @@ def provenance_ancestors(node: "ProvenanceNode") -> list[Any]:
 
     while queue:
         current = queue.pop(0)
-        # Both ParentInfo (.source field) and live objects (.source property)
-        # expose .source — traverse uniformly.
         current_source = current.source
         if current_source is not None:
             for p in current_source.parents:
@@ -242,27 +255,35 @@ def provenance_dag(dist: "Distribution"):
     dot = Digraph(comment="Provenance DAG")
     dot.attr(rankdir="BT")  # bottom-to-top: parents below children
 
-    visited: set[int] = set()
+    visited: set = set()
 
     def _label(type_name: str, name: str) -> str:
         return f"{type_name}\n'{name}'" if name else type_name
 
+    def _stable_nid(p: Any) -> str:
+        """Graphviz node ID that is the same for all ParentInfo of the same ancestor."""
+        key = _parent_key(p)
+        if isinstance(key, tuple):
+            return ":".join(str(x) for x in key)
+        return str(key)
+
     def _visit_parent(p: Any, child_nid: str, operation: str) -> None:
         """Render a parent (ParentInfo or live object) and recurse."""
-        pid = str(id(p))
-        if id(p) not in visited:
-            visited.add(id(p))
+        key = _parent_key(p)
+        nid = _stable_nid(p)
+        if key not in visited:
+            visited.add(key)
             if isinstance(p, ParentInfo):
-                dot.node(pid, _label(p.type_name, p.name))
+                dot.node(nid, _label(p.type_name, p.name))
                 if p.source is not None:
                     for pp in p.source.parents:
-                        _visit_parent(pp, pid, p.source.operation)
+                        _visit_parent(pp, nid, p.source.operation)
             else:
-                dot.node(pid, _label(type(p).__name__, p.name or ""))
+                dot.node(nid, _label(type(p).__name__, p.name or ""))
                 if p.source is not None:
                     for pp in p.source.parents:
-                        _visit_parent(pp, pid, p.source.operation)
-        dot.edge(pid, child_nid, label=operation)
+                        _visit_parent(pp, nid, p.source.operation)
+        dot.edge(nid, child_nid, label=operation)
 
     def _visit_dist(d: "Distribution") -> str:
         nid = str(id(d))
