@@ -1,0 +1,55 @@
+# Metapackage for ProbPipe. This distribution ships NO code — it is
+# the friendly `probpipe` name that pins the minimal `probpipe-core` and adds the
+# inference backends the docs use, so `pip install probpipe` runs every example
+# and tutorial. For a minimal install, use `probpipe-core` (+ extras) instead.
+# The import package is `probpipe` either way.
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "probpipe"
+version = "0.1.0"   # kept in lockstep with probpipe-core (the == pin below)
+description = "Probabilistic data-processing pipelines, with the PyMC, nutpie, and BayesFlow inference backends included"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [
+  { name = "ProbPipe Development Team", email = "huggins@bu.edu" },
+]  # Full contributor list in the AUTHORS file (repository root)
+dependencies = [
+  # Bundle the backends the docs use by pulling probpipe-core's own extras, so
+  # their version constraints stay single-sourced in the root pyproject (no
+  # drift). The set is the docs' import closure plus deliberate picks: PyMC and
+  # BayesFlow are required to *run* the tutorials (unguarded imports), nutpie is
+  # the fast NUTS backend. `pyabc` joins once its SMC-ABC backend lands — it is
+  # only used in a guarded, self-skipping notebook section, so the docs run
+  # without it today.
+  #
+  # Exact `==` pin: one repo builds two coordinated dists (the jax/jaxlib model);
+  # a CI version-sync guard (follow-up) keeps it equal to probpipe-core's version.
+  "probpipe-core[pymc,nutpie]==0.1.0",
+  # BayesFlow caps Python <3.14 while core spans 3.12-3.14, so it is marker-guarded:
+  # `pip install probpipe` still resolves on 3.14, just without neural SBI there.
+  "probpipe-core[bayesflow]==0.1.0; python_version < '3.14'",
+]
+
+# Re-export only the user-facing extras NOT already bundled above, so
+# `pip install "probpipe[<extra>]"` works for them. pymc / nutpie / bayesflow are
+# bundled above already, so re-exporting them would be redundant. Minimal installs
+# add any backend via `probpipe-core[<extra>]`.
+[project.optional-dependencies]
+prefect = ["probpipe-core[prefect]"]
+viz = ["probpipe-core[viz]"]
+stan = ["probpipe-core[stan]"]
+
+[project.urls]
+"Repository" = "https://github.com/TARPS-group/prob-pipe"
+"Documentation" = "https://tarps-group.github.io/prob-pipe/"
+"Changelog" = "https://github.com/TARPS-group/prob-pipe/blob/main/CHANGELOG.md"
+
+# Code-less metapackage: no import package ships here (the `probpipe` import
+# package lives in probpipe-core). The empty packages list disables setuptools
+# auto-discovery so the build produces a metadata-only wheel.
+[tool.setuptools]
+packages = []

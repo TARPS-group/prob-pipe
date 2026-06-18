@@ -628,10 +628,12 @@ class TestBayesFlowMethods:
         assert (r > 0).all()        # forward bijector (Exp) keeps every draw in support
 
     def test_adapter_internal_names_avoid_collisions(self):
-        """No reserved field names: theta fields are re-keyed to internal adapter
-        names, so even fields named like BayesFlow's own keys ("observation",
-        "inference_variables") train and condition, with draws returned under the
-        user's names."""
+        """Theta fields are re-keyed away from BayesFlow adapter internals.
+
+        Fields named like BayesFlow's own keys (``"observation"``,
+        ``"inference_variables"``) train and condition, with draws returned
+        under the user's names.
+        """
         prior = ProductDistribution(
             Normal(loc=0.0, scale=1.0, name="observation"),
             Normal(loc=0.0, scale=1.0, name="inference_variables"),

@@ -112,19 +112,9 @@ class TestWorkflowCallHelpers:
 
         assert call.values == {"x": 1.0, "kwargs": {"scale": 2.0}}
 
-    def test_legacy_options_are_not_function_inputs_when_unbindable(self, identity_func):
-        call = _resolve_call(
-            identity_func,
-            "value",
-            n_broadcast_samples=6,
-            include_inputs=True,
-            seed=123,
-        )
-
-        assert call.values == {"x": "value"}
-        assert call.overrides.n_broadcast_samples == 6
-        assert call.overrides.include_inputs is True
-        assert call.overrides.seed == 123
+    def test_unbindable_workflow_control_name_raises_like_python(self, identity_func):
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            _resolve_call(identity_func, "value", n_broadcast_samples=6)
 
     def test_workflow_option_names_bind_when_declared(self):
         def identity(x, n_broadcast_samples, include_inputs, seed):

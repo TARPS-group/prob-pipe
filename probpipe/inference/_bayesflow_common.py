@@ -64,7 +64,7 @@ def _import_bayesflow() -> ModuleType:
     except ImportError as e:
         raise ImportError(
             "BayesFlow is required for the amortized SBI learners: "
-            "pip install probpipe[bayesflow]"
+            "pip install 'probpipe-core[bayesflow]'"
         ) from e
     if keras.backend.backend() != "jax":
         # ``setdefault`` cannot re-bind an already-imported keras, so a process

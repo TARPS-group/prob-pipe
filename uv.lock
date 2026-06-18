@@ -3307,7 +3307,7 @@ wheels = [
 ]
 
 [[package]]
-name = "probpipe"
+name = "probpipe-core"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -3381,7 +3381,7 @@ requires-dist = [
     { name = "nbformat", marker = "extra == 'dev'" },
     { name = "nutpie", marker = "extra == 'nutpie'", specifier = ">=0.12" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3" },
-    { name = "probpipe", extras = ["prefect", "viz", "docs"], marker = "extra == 'dev'" },
+    { name = "probpipe-core", extras = ["prefect", "viz", "docs"], marker = "extra == 'dev'" },
     { name = "pymc", marker = "extra == 'pymc'", specifier = ">=6" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7" },
     { name = "pytest-cov", marker = "extra == 'dev'" },

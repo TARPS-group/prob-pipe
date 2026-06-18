@@ -430,7 +430,6 @@ class WorkflowFunction(Node):
             default_n_broadcast_samples=self._n_broadcast_samples,
             default_include_inputs=self._include_inputs,
             options=options,
-            warn_legacy_overrides=True,
         )
         if call.overrides.seed is not None:
             self._key = jax.random.PRNGKey(call.overrides.seed)
