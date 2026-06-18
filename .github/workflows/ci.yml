@@ -479,7 +479,7 @@ jobs:
             extras: --extra dev --extra nutpie
           - group: tutorials
             dir: docs/tutorials
-            extras: --extra dev --extra nutpie --extra bayesflow --extra pymc --extra pyabc
+            extras: --extra dev --extra nutpie --extra bayesflow --extra pymc
     runs-on: ubuntu-latest
     env:
       KERAS_BACKEND: jax   # bayesflow tutorials run keras on the JAX backend
