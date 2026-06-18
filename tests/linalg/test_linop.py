@@ -153,6 +153,12 @@ def test_sum_propagation_and_matmat():
     # sum dtype matches promoted
     assert s.dtype == jnp.result_type(d1.dtype, d2.dtype)
 
+    x_col = jnp.ones((2, 1))
+    assert s.matmat(x_col).shape == (2, 1)
+    assert approx(s.matmat(x_col), s.to_dense() @ x_col)
+    assert s.rmatmat(x_col).shape == (2, 1)
+    assert approx(s.rmatmat(x_col), s.to_dense().T @ x_col)
+
 
 def test_product_dtype_promotion_and_diagonal_product_flag():
     d1 = DiagonalLinOp(jnp.array([1.0, 2.0]))

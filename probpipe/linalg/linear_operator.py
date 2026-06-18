@@ -383,9 +383,6 @@ class SumLinOp(LinOp):
             return self.to_dense() @ X
 
         # General path: sum per-op matmat (respects structured/sparse ops)
-        if X.shape[1] == 1:
-            return self.matvec(X)
-        
         arr = jnp.zeros((self.shape[0], X.shape[1]), dtype=self.dtype)
         for op in self.ops:
             arr = arr + op.matmat(X)
@@ -399,9 +396,6 @@ class SumLinOp(LinOp):
             return self.to_dense().T @ X
 
         # General path: sum per-op matmat (respects structured/sparse ops)
-        if X.shape[1] == 1:
-            return self.rmatvec(X)
-        
         arr = jnp.zeros((self.shape[1], X.shape[1]), dtype=self.dtype)
         for op in self.ops:
             arr = arr + op.rmatmat(X)
