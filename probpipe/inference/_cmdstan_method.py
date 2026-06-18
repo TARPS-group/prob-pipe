@@ -20,7 +20,7 @@ def _import_cmdstanpy():
     except ImportError as e:
         raise ImportError(
             "cmdstanpy is required for Stan sampling. "
-            "Install it with: pip install probpipe[stan]"
+            "Install it with: pip install probpipe-core[stan]"
         ) from e
 
 

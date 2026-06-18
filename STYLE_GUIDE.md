@@ -4,8 +4,9 @@ This document defines the coding conventions for the ProbPipe project.
 It is intended for contributors and AI assistants working on the codebase.
 
 > **Spelling:** Always write **ProbPipe** — not "probpipe", "prob-pipe",
-> "Probpipe", or "PROBPIPE". The Python package name `probpipe` (lowercase,
-> no hyphen) appears only in import statements and file paths.
+> "Probpipe", or "PROBPIPE". The lowercase forms `probpipe` and `probpipe-core`
+> are reserved for the Python import package (in import statements and file
+> paths) and the distribution names (in `pip install` commands).
 
 ---
 
@@ -458,7 +459,7 @@ def _ensure_nutpie():
         return nutpie
     except ImportError:
         raise ImportError(
-            "nutpie is required: pip install probpipe[nutpie]"
+            "nutpie is required: pip install probpipe-core[nutpie]"
         ) from None
 ```
 
