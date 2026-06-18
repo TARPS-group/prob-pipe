@@ -7,11 +7,10 @@ from __future__ import annotations
 
 from types import MappingProxyType
 
-import jax
 import jax.numpy as jnp
 
-from .._dtype import _as_float_array, _promote_floats
-from ..core._record_distribution import RecordDistribution, _build_record_template
+from .._dtype import _promote_floats
+from ..core._record_distribution import _build_record_template
 from ..core.distribution import (
     NumericRecordDistribution,
     _mc_expectation,
@@ -219,7 +218,7 @@ class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb
 
     def _condition_on_impl(
         self, observed_leaves: dict[KeyPath, ArrayLike],
-    ) -> "JointGaussian":
+    ) -> JointGaussian:
         """Condition on observed component values using exact Gaussian formulas.
 
         Returns a new :class:`JointGaussian` over the remaining (unobserved)
@@ -280,10 +279,16 @@ class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb
         Sigma_uo = self._cov_mat[jnp.ix_(u_idx, o_idx)]
         Sigma_oo = self._cov_mat[jnp.ix_(o_idx, o_idx)]
 
-        # Gaussian conditioning: mu_u|o = mu_u + Sigma_uo @ Sigma_oo^{-1} @ (o - mu_o)
-        Sigma_oo_inv = jnp.linalg.inv(Sigma_oo)
-        cond_mean = mu_u + Sigma_uo @ Sigma_oo_inv @ (o_vals - mu_o)
-        cond_cov = Sigma_uu - Sigma_uo @ Sigma_oo_inv @ Sigma_uo.T
+        # Gaussian conditioning:
+        #   mu_u|o = mu_u + Sigma_uo Sigma_oo^{-1} (o - mu_o)
+        #   Sigma_u|o = Sigma_uu - Sigma_uo Sigma_oo^{-1} Sigma_ou
+        #
+        # Use solves instead of forming Sigma_oo^{-1}; this is both faster
+        # and numerically more stable.
+        solved_delta = jnp.linalg.solve(Sigma_oo, o_vals - mu_o)
+        solved_cross_cov = jnp.linalg.solve(Sigma_oo, Sigma_uo.T)
+        cond_mean = mu_u + Sigma_uo @ solved_delta
+        cond_cov = Sigma_uu - Sigma_uo @ solved_cross_cov
         # Symmetrise for numerical stability
         cond_cov = (cond_cov + cond_cov.T) / 2
 

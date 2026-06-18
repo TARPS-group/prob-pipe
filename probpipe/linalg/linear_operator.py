@@ -8,19 +8,21 @@ This file contains:
 """
 from __future__ import annotations
 
-from typing import Any, Iterable, FrozenSet, TypeAlias
+from abc import ABC, abstractmethod
+from collections.abc import Iterable
+from typing import Any, TypeAlias
+
 import jax.numpy as jnp
 import jax.scipy.linalg as jsla
-from abc import ABC, abstractmethod
-import math
 
-from ..custom_types import Array, ArrayLike
 from .._array_utils import (
-    _ensure_real_scalar,
-    _ensure_vector,
     _ensure_matrix,
+    _ensure_real_scalar,
     _ensure_square_matrix,
+    _ensure_vector,
 )
+from ..custom_types import Array, ArrayLike
+
 
 class LinAlgError(Exception):
     """Linear algebra error (e.g., singular matrix, non-positive-definite)."""
@@ -68,7 +70,7 @@ def _as_linear_operator(A: LinOpLike) -> LinOp:
             raise TypeError(
                 f"Could not convert A to linear operator\n"
                 f"DenseLinOp error: {e}"
-            )
+            ) from e
 
 
 # -----------------------------------------------------------------------------
@@ -221,7 +223,7 @@ class LinOp(ABC):
         return flag in self._flags
 
     @property
-    def flags(self) -> FrozenSet[str]:
+    def flags(self) -> frozenset[str]:
         """Return frozenset of current flags (read-only view)."""
         return frozenset(self._flags)
 
@@ -726,7 +728,7 @@ class RootLinOp(LinOp):
     
     def diag(self) -> Array:
         if isinstance(self.root, DiagonalLinOp):
-            return self.root.diagonal
+            return self.root.diagonal ** 2
 
         S = self.root.to_dense()
         return jnp.einsum('ij,ij->i', S, S)
@@ -757,6 +759,32 @@ class CholeskyLinOp(RootLinOp):
         super().__init__(root)
         self.add_flag("positive_definite")
 
+    def matvec(self, x: ArrayLike) -> Array:
+        if self.root.lower:
+            return self.root.matvec(self.root.rmatvec(x))
+        return self.root.rmatvec(self.root.matvec(x))
+
+    def rmatvec(self, x: ArrayLike) -> Array:
+        return self.matvec(x)
+
+    def matmat(self, X: ArrayLike) -> Array:
+        if self.root.lower:
+            return self.root.matmat(self.root.rmatmat(X))
+        return self.root.rmatmat(self.root.matmat(X))
+
+    def rmatmat(self, X: ArrayLike) -> Array:
+        return self.matmat(X)
+
+    def diag(self) -> Array:
+        S = self.root.to_dense()
+        axis = 1 if self.root.lower else 0
+        return jnp.sum(S ** 2, axis=axis)
+
+    def to_dense(self) -> Array:
+        S = self.root.to_dense()
+        if self.root.lower:
+            return S @ S.T
+        return S.T @ S
 
     def solve(self, b: ArrayLike, **kwargs) -> Array:
         """Linear solve using forward backward triangular substitution
@@ -770,16 +798,18 @@ class CholeskyLinOp(RootLinOp):
         b = _ensure_matrix(b, num_rows=self._n)
 
         S = self.root.to_dense()
-        y = jsla.solve_triangular(S, b, lower=self.root.lower)
-        return jsla.solve_triangular(S.T, y, lower=not self.root.lower)
+        if self.root.lower:
+            y = jsla.solve_triangular(S, b, lower=True)
+            return jsla.solve_triangular(S.T, y, lower=False)
+        y = jsla.solve_triangular(S.T, b, lower=True)
+        return jsla.solve_triangular(S, y, lower=False)
     
 
     def cholesky(self, lower: bool = True, **kwargs) -> TriangularLinOp:
         cholesky_factor = self.root
         if lower == cholesky_factor.lower:
             return cholesky_factor
-        else:
-            return cholesky_factor.T
+        return TriangularLinOp(cholesky_factor.to_dense().T, lower=lower)
         
     def to_cholesky_representation(self, lower: bool = True, **kwargs) -> CholeskyLinOp:
         """ Returns a copy of `self` """

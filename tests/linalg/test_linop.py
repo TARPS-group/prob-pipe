@@ -3,8 +3,16 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe.linalg.linear_operator import (
-    DenseLinOp, DiagonalLinOp, TriangularLinOp, TransposedLinOp,
-    ProductLinOp, SumLinOp, ScaledLinOp, ALLOWED_FLAGS, LinAlgError,
+    CholeskyLinOp,
+    DenseLinOp,
+    DiagonalLinOp,
+    LinAlgError,
+    ProductLinOp,
+    RootLinOp,
+    ScaledLinOp,
+    SumLinOp,
+    TransposedLinOp,
+    TriangularLinOp,
 )
 
 
@@ -84,6 +92,13 @@ def test_diagonal_matvec_solve_cholesky_flags():
     assert "positive_definite" in d.flags
 
 
+def test_root_linop_diag_matches_dense_for_diagonal_root():
+    root = DiagonalLinOp(jnp.array([2.0, 3.0]))
+    op = RootLinOp(root)
+
+    assert approx(op.diag(), jnp.diag(op.to_dense()))
+
+
 def test_triangular_solve_and_flags():
     L = jnp.array([[1.0, 0.0], [2.0, 3.0]])
     tri = TriangularLinOp(L, lower=True)
@@ -95,6 +110,24 @@ def test_triangular_solve_and_flags():
     # test rmatvec equivalence
     v = jnp.array([1.0, 2.0])
     assert approx(tri.rmatvec(v), L.T @ v)
+
+
+def test_cholesky_upper_factor_preserves_operator():
+    lower = TriangularLinOp(jnp.array([[2.0, 0.0], [1.0, 3.0]]), lower=True)
+    op = CholeskyLinOp(lower)
+    expected = lower.to_dense() @ lower.to_dense().T
+
+    upper = op.cholesky(lower=False)
+    assert isinstance(upper, TriangularLinOp)
+    assert not upper.lower
+    assert approx(upper.to_dense(), lower.to_dense().T)
+
+    upper_rep = op.to_cholesky_representation(lower=False)
+    assert isinstance(upper_rep, CholeskyLinOp)
+    assert approx(upper_rep.to_dense(), expected)
+
+    b = jnp.array([1.0, 2.0])
+    assert approx(upper_rep.solve(b), jnp.linalg.solve(expected, b))
 
 
 def test_transpose_flags_and_behavior():
