@@ -7,12 +7,22 @@ import probpipe
 from probpipe import EmpiricalDistribution, ProvenanceMode
 
 
-@pytest.fixture
-def full_provenance_mode():
-    """Switch to FULL provenance mode and restore the default after the test."""
-    probpipe.provenance_config.mode = ProvenanceMode.FULL
+@pytest.fixture(autouse=True)
+def _reset_provenance_config():
+    """Always restore provenance_config to defaults after each test.
+
+    Under pytest-xdist, a test that sets the mode and raises before its own
+    cleanup would otherwise leak the mode into subsequent tests on that worker.
+    """
     yield
     probpipe.provenance_config.reset()
+
+
+@pytest.fixture
+def full_provenance_mode():
+    """Switch to FULL provenance mode for the duration of a test."""
+    probpipe.provenance_config.mode = ProvenanceMode.FULL
+    yield
 
 
 @pytest.fixture

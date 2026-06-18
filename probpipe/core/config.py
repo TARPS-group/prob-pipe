@@ -220,6 +220,33 @@ class ProvenanceMode(Enum):
 
 
 # ---------------------------------------------------------------------------
+# Environment-variable override for ProvenanceMode
+# ---------------------------------------------------------------------------
+
+_PROVENANCE_MODE_ENV_VAR = "PROBPIPE_PROVENANCE_MODE"
+
+
+def _initial_provenance_mode() -> ProvenanceMode:
+    """Resolve the initial ``mode`` from the environment.
+
+    Reads ``PROBPIPE_PROVENANCE_MODE`` (case-insensitive).  Unset →
+    ``LIGHTWEIGHT``.  Unknown values raise ``ValueError`` so deployment-config
+    typos surface loudly rather than silently falling back to ``LIGHTWEIGHT``.
+    """
+    raw = os.environ.get(_PROVENANCE_MODE_ENV_VAR)
+    if raw is None:
+        return ProvenanceMode.LIGHTWEIGHT
+    try:
+        return ProvenanceMode(raw.lower())
+    except ValueError as e:
+        valid = ", ".join(repr(m.value) for m in ProvenanceMode)
+        raise ValueError(
+            f"{_PROVENANCE_MODE_ENV_VAR}={raw!r} is not a valid ProvenanceMode. "
+            f"Expected one of: {valid}."
+        ) from e
+
+
+# ---------------------------------------------------------------------------
 # ProvenanceConfig singleton
 # ---------------------------------------------------------------------------
 
@@ -233,14 +260,18 @@ class ProvenanceConfig:
         from probpipe import ProvenanceMode
 
         probpipe.provenance_config.mode = ProvenanceMode.FULL  # for debugging
+
+    The initial mode can also be set via the ``PROBPIPE_PROVENANCE_MODE``
+    environment variable (``full``, ``lightweight``, or ``off``,
+    case-insensitive).
     """
 
     def __init__(self) -> None:
         self.reset()
 
     def reset(self) -> None:
-        """Restore all settings to defaults."""
-        self._mode: ProvenanceMode = ProvenanceMode.LIGHTWEIGHT
+        """Restore all settings to defaults (re-reading the env var)."""
+        self._mode: ProvenanceMode = _initial_provenance_mode()
 
     @property
     def mode(self) -> ProvenanceMode:

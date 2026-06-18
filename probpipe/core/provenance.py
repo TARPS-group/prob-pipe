@@ -39,15 +39,18 @@ class ParentInfo:
     ----------
     type_name : str
         Class name of the parent (e.g. ``"EmpiricalDistribution"``).
-    name : str
-        Distribution or record name of the parent.
+    name : str or None
+        Distribution or record name of the parent.  ``None`` for unnamed
+        parents (uncommon; most framework objects carry a name).
     source : Provenance or None
         The parent's own provenance node.  Kept in both LIGHTWEIGHT and
         FULL modes so the ancestry DAG remains traversable without holding
-        the parent's data arrays alive.
+        the parent's data arrays alive.  Excluded from hashing (``Provenance``
+        holds an unhashable ``metadata`` dict) but included in equality so
+        that two descriptors for the same ancestor compare equal.
     fingerprint : str or None
-        Optional stable hash of the parent's inputs.  Reserved for future
-        use by the Prefect caching layer (PR 2).
+        Optional stable content hash of the parent's inputs.  Intended for
+        a future workflow-result caching layer; currently always ``None``.
     obj : ProvenanceNode or None
         The live parent object.  Set in FULL mode; ``None`` in LIGHTWEIGHT
         so the parent's data can be garbage-collected.  Excluded from
@@ -55,8 +58,8 @@ class ParentInfo:
     """
 
     type_name: str
-    name: str
-    source: Provenance | None = None
+    name: str | None
+    source: Provenance | None = field(default=None, hash=False)
     fingerprint: str | None = None
     obj: ProvenanceNode | None = field(default=None, compare=False)
 
@@ -92,23 +95,14 @@ class Provenance:
         """
         parent_dicts = []
         for p in self.parents:
-            if isinstance(p, ParentInfo):
-                entry: dict[str, Any] = {
-                    "type": p.type_name,
-                    "name": p.name,
-                }
-                if p.fingerprint is not None:
-                    entry["fingerprint"] = p.fingerprint
-                if recurse and p.source is not None:
-                    entry["source"] = p.source.to_dict(recurse=True)
-            else:
-                # Live object — transitional until all sites use ParentInfo
-                entry = {
-                    "type": type(p).__name__,
-                    "name": p.name,
-                }
-                if recurse and p.source is not None:
-                    entry["source"] = p.source.to_dict(recurse=True)
+            entry: dict[str, Any] = {
+                "type": p.type_name,
+                "name": p.name,
+            }
+            if p.fingerprint is not None:
+                entry["fingerprint"] = p.fingerprint
+            if recurse and p.source is not None:
+                entry["source"] = p.source.to_dict(recurse=True)
             parent_dicts.append(entry)
 
         safe_metadata = {}
@@ -204,10 +198,9 @@ def provenance_ancestors(node: "ProvenanceNode") -> list[Any]:
     returns a flat list of unique ancestors, ordered by discovery.
     The input *node* is **not** included in the result.
 
-    Returns :class:`ParentInfo` descriptors for workflow steps created
-    under :attr:`ProvenanceMode.LIGHTWEIGHT` or :attr:`ProvenanceMode.FULL`.
-    In FULL mode, the live parent object is accessible via
-    ``ancestor.obj``.
+    Returns :class:`ParentInfo` descriptors.  In FULL mode the live parent
+    object is accessible via ``ancestor.obj``; in LIGHTWEIGHT ``ancestor.obj``
+    is ``None``.
     """
     visited: set = {id(node)}
     ancestors: list = []
@@ -273,16 +266,10 @@ def provenance_dag(dist: "Distribution"):
         nid = _stable_nid(p)
         if key not in visited:
             visited.add(key)
-            if isinstance(p, ParentInfo):
-                dot.node(nid, _label(p.type_name, p.name))
-                if p.source is not None:
-                    for pp in p.source.parents:
-                        _visit_parent(pp, nid, p.source.operation)
-            else:
-                dot.node(nid, _label(type(p).__name__, p.name or ""))
-                if p.source is not None:
-                    for pp in p.source.parents:
-                        _visit_parent(pp, nid, p.source.operation)
+            dot.node(nid, _label(p.type_name, p.name))
+            if p.source is not None:
+                for pp in p.source.parents:
+                    _visit_parent(pp, nid, p.source.operation)
         dot.edge(nid, child_nid, label=operation)
 
     def _visit_dist(d: "Distribution") -> str:
