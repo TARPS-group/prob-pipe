@@ -99,6 +99,14 @@ def test_root_linop_diag_matches_dense_for_diagonal_root():
     assert approx(op.diag(), jnp.diag(op.to_dense()))
 
 
+def test_root_linop_diag_matches_dense_for_full_root():
+    S = jnp.array([[1.0, 2.0], [3.0, 4.0]])
+    op = RootLinOp(DenseLinOp(S))
+    expected = S @ S.T
+
+    assert approx(op.diag(), jnp.diag(expected))
+
+
 def test_triangular_solve_and_flags():
     L = jnp.array([[1.0, 0.0], [2.0, 3.0]])
     tri = TriangularLinOp(L, lower=True)
@@ -113,18 +121,32 @@ def test_triangular_solve_and_flags():
 
 
 def test_cholesky_upper_factor_preserves_operator():
-    lower = TriangularLinOp(jnp.array([[2.0, 0.0], [1.0, 3.0]]), lower=True)
+    lower_matrix = jnp.array([[2.0, 0.0], [1.0, 3.0]])
+    lower = TriangularLinOp(lower_matrix, lower=True)
     op = CholeskyLinOp(lower)
-    expected = lower.to_dense() @ lower.to_dense().T
+    expected = lower_matrix @ lower_matrix.T
 
     upper = op.cholesky(lower=False)
     assert isinstance(upper, TriangularLinOp)
     assert not upper.lower
-    assert approx(upper.to_dense(), lower.to_dense().T)
+    assert approx(upper.to_dense(), lower_matrix.T)
+
+    x = jnp.array([1.0, -2.0])
+    X = jnp.array([[1.0, 2.0], [-2.0, 0.5]])
+    assert approx(op.matvec(x), expected @ x)
+    assert approx(op.rmatvec(x), expected.T @ x)
+    assert approx(op.matmat(X), expected @ X)
+    assert approx(op.rmatmat(X), expected.T @ X)
+    assert approx(op.diag(), jnp.diag(expected))
 
     upper_rep = op.to_cholesky_representation(lower=False)
     assert isinstance(upper_rep, CholeskyLinOp)
     assert approx(upper_rep.to_dense(), expected)
+    assert approx(upper_rep.matvec(x), expected @ x)
+    assert approx(upper_rep.rmatvec(x), expected.T @ x)
+    assert approx(upper_rep.matmat(X), expected @ X)
+    assert approx(upper_rep.rmatmat(X), expected.T @ X)
+    assert approx(upper_rep.diag(), jnp.diag(expected))
 
     b = jnp.array([1.0, 2.0])
     assert approx(upper_rep.solve(b), jnp.linalg.solve(expected, b))

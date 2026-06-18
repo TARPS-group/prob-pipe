@@ -740,8 +740,11 @@ class RootLinOp(LinOp):
 
 
 class CholeskyLinOp(RootLinOp):
-    """A positive definite linear operator A represented by its lower 
-       L or upper L.T Cholesky factor such that A = L @ L.T"""
+    """Positive-definite operator represented by a Cholesky factor.
+
+    A lower root ``L`` represents ``A = L @ L.T``; an upper root ``U``
+    represents ``A = U.T @ U``.
+    """
 
     def __init__(self, root: TriangularLinOp) -> None:
         if not isinstance(root, TriangularLinOp):
@@ -754,27 +757,33 @@ class CholeskyLinOp(RootLinOp):
         self.add_flag("positive_definite")
 
     def matvec(self, x: ArrayLike) -> Array:
+        """Return ``A @ x`` for the represented SPD operator."""
         if self.root.lower:
             return self.root.matvec(self.root.rmatvec(x))
         return self.root.rmatvec(self.root.matvec(x))
 
     def rmatvec(self, x: ArrayLike) -> Array:
+        """Return ``A.T @ x``; equal to ``A @ x`` for this symmetric operator."""
         return self.matvec(x)
 
     def matmat(self, X: ArrayLike) -> Array:
+        """Return ``A @ X`` without densifying the Cholesky factor."""
         if self.root.lower:
             return self.root.matmat(self.root.rmatmat(X))
         return self.root.rmatmat(self.root.matmat(X))
 
     def rmatmat(self, X: ArrayLike) -> Array:
+        """Return ``A.T @ X``; equal to ``A @ X`` for this symmetric operator."""
         return self.matmat(X)
 
     def diag(self) -> Array:
+        """Return the diagonal of the represented SPD operator."""
         S = self.root.to_dense()
         axis = 1 if self.root.lower else 0
         return jnp.sum(S ** 2, axis=axis)
 
     def to_dense(self) -> Array:
+        """Return the dense matrix represented by the Cholesky factor."""
         S = self.root.to_dense()
         if self.root.lower:
             return S @ S.T
@@ -782,9 +791,11 @@ class CholeskyLinOp(RootLinOp):
 
     def solve(self, b: ArrayLike, **kwargs) -> Array:
         """Linear solve using forward backward triangular substitution
-        
-        To compute A^{-1}b = (L @ L.T)^{-1}b first compute y = L^{-1}b
-        then L.T^{-1}y.
+
+        For lower roots, compute ``A^{-1} b = (L @ L.T)^{-1} b`` by
+        solving through ``L`` and then ``L.T``. For upper roots, compute
+        ``A^{-1} b = (U.T @ U)^{-1} b`` by solving through ``U.T`` and
+        then ``U``.
         """
         b = jnp.asarray(b)
         if b.ndim < 2:
