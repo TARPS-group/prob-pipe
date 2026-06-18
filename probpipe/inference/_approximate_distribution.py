@@ -364,6 +364,7 @@ def make_posterior(
     auxiliary: DataTree | None = None,
     record_template: RecordTemplate | None = None,
     field_order: list[str] | None = None,
+    weights: ArrayLike | Weights | None = None,
     **meta: Any,
 ) -> ApproximateDistribution:
     """Build an ApproximateDistribution with provenance.
@@ -388,6 +389,12 @@ def make_posterior(
         order may differ from the template's (e.g. a backend that sorts
         variable names) so columns are aligned to fields by name rather
         than position (see issue #233).
+    weights : array-like, :class:`~probpipe.Weights`, or None
+        Optional per-sample importance weights (across all chains),
+        forwarded to :class:`ApproximateDistribution`. Lets weighted
+        backends — e.g. SMC-ABC, which returns importance-weighted
+        particles — preserve their weights instead of resampling to an
+        equal-weight chain.
     **meta
         Additional metadata stored in provenance.
 
@@ -398,7 +405,7 @@ def make_posterior(
     """
     result = ApproximateDistribution(
         chains, name="posterior", record_template=record_template,
-        field_order=field_order,
+        field_order=field_order, weights=weights,
     )
 
     if auxiliary is not None:

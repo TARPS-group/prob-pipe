@@ -98,3 +98,10 @@ try:
     inference_method_registry.register(PyMCADVIMethod())
 except ImportError:
     pass
+
+try:
+    import pyabc  # noqa: F401  (gates registration on the [pyabc] extra)
+    from ._pyabc import PyABCSMCMethod
+    inference_method_registry.register(PyABCSMCMethod())
+except ImportError:
+    pass

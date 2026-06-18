@@ -84,7 +84,7 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --frozen --extra dev --extra nutpie --extra pymc
+        run: uv sync --frozen --extra dev --extra nutpie --extra pymc --extra pyabc
 
       - name: Pyright (advisory — does not gate merges)
         continue-on-error: true
@@ -234,7 +234,7 @@ jobs:
         # genuinely run those versions. (setup-uv's python-version input was
         # silently ignored on @v3, which let every leg fall back to the system
         # 3.12.) [pymc] is included so pymc 6 is exercised on all matrix legs.
-        run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra nutpie --extra pymc
+        run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra nutpie --extra pymc --extra pyabc
 
       - name: Run tests (changed files only)
         if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'false'
@@ -479,7 +479,7 @@ jobs:
             extras: --extra dev --extra nutpie
           - group: tutorials
             dir: docs/tutorials
-            extras: --extra dev --extra nutpie --extra bayesflow --extra pymc
+            extras: --extra dev --extra nutpie --extra bayesflow --extra pymc --extra pyabc
     runs-on: ubuntu-latest
     env:
       KERAS_BACKEND: jax   # bayesflow tutorials run keras on the JAX backend

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **pyabc SMC-ABC inference backend (#238).** A `pyabc_smcabc` method
+  (priority 6) for `SimpleGenerativeModel`: it derives a pyabc prior from the
+  model's TFP-backed marginals, runs SMC-ABC against the observed data, and
+  returns importance-weighted particles keyed by parameter name. Auto-dispatches
+  via `condition_on` for a pure generative model and handles 1-D parameters
+  natively. Ships as the `[pyabc]` extra (bundled by the `probpipe`
+  metapackage); `make_posterior` gains a `weights=` argument so weighted
+  particles flow through to the `ApproximateDistribution` without resampling.
+
 - **Two-distribution packaging: `probpipe-core` (minimal) and `probpipe`
   (core + all backends) (#237).** The root distribution is renamed `probpipe-core` (minimal JAX base —
   every inference backend is an optional extra), and a new code-less `probpipe`
