@@ -8,12 +8,20 @@ The registry auto-selects the best method, or the user overrides via
 
 from __future__ import annotations
 
-from ..core._registry import Method, MethodInfo, MethodRegistry  # noqa: F401 (re-export)
+from ..core._registry import (  # noqa: F401 (re-export)
+    MethodInfo,
+    UnaryDispatchMethod,
+    UnaryDispatchRegistry,
+)
 
 __all__ = ["InferenceMethod", "inference_method_registry"]
 
-# Re-export Method as InferenceMethod for clarity in type annotations.
-InferenceMethod = Method
+# Re-export UnaryDispatchMethod as InferenceMethod for clarity in type
+# annotations on inference-method classes.
+InferenceMethod = UnaryDispatchMethod
 
-# The singleton registry — plain MethodRegistry, no subclass needed.
-inference_method_registry: MethodRegistry[Method] = MethodRegistry()
+# The singleton registry — a plain UnaryDispatchRegistry, no subclass
+# needed.
+inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = (
+    UnaryDispatchRegistry()
+)

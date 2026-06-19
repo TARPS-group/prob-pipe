@@ -12,7 +12,15 @@ from ._registry import (
     InferenceMethod,
     inference_method_registry,
 )
-from ..core._registry import Method, MethodInfo, MethodRegistry
+from ..core._registry import (
+    BaseDispatchMethod,
+    BaseDispatchRegistry,
+    BinaryDispatchMethod,
+    BinaryDispatchRegistry,
+    MethodInfo,
+    UnaryDispatchMethod,
+    UnaryDispatchRegistry,
+)
 from ._blackjax_rwmh import rwmh
 from ._blackjax_ess import elliptical_slice
 from ._nutpie import condition_on_nutpie
@@ -29,9 +37,13 @@ from ._bayesflow_likelihoods import (
 
 __all__ = [
     "ApproximateDistribution",
-    "Method",
+    "BaseDispatchMethod",
+    "BaseDispatchRegistry",
+    "BinaryDispatchMethod",
+    "BinaryDispatchRegistry",
     "MethodInfo",
-    "MethodRegistry",
+    "UnaryDispatchMethod",
+    "UnaryDispatchRegistry",
     "InferenceMethod",
     "inference_method_registry",
     "rwmh",
