@@ -77,6 +77,13 @@ def _validate_to_log_weights(
                 f"log_weights shape {log_weights.shape} does not match "
                 f"number of items {n}."
             )
+        if jnp.any(jnp.isnan(log_weights)):
+            raise ValueError("log_weights must not contain NaN.")
+        total_log_weight = jax.scipy.special.logsumexp(log_weights)
+        if not jnp.isfinite(total_log_weight):
+            raise ValueError(
+                "log_weights must define a positive finite total weight."
+            )
         return log_weights, False
 
     return None, True
@@ -594,5 +601,4 @@ jax.tree_util.register_pytree_node(
     lambda w: w.tree_flatten(),
     lambda aux, children: Weights.tree_unflatten(aux, children),
 )
-
 
