@@ -100,6 +100,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Linear-algebra and Gaussian-conditioning edge cases on the algebra bug-fix
+  branch.** `RootLinOp.diag()` now squares diagonal roots; `CholeskyLinOp`
+  keeps lower-root (`L @ L.T`) and upper-root (`U.T @ U`) representations
+  consistent across `cholesky`, `to_cholesky_representation`, `matvec`,
+  `rmatvec`, `matmat`, `rmatmat`, `diag`, `to_dense`, and `solve`;
+  `JointGaussian.condition_on` uses linear solves instead of forming explicit
+  covariance inverses; and `SumLinOp.matmat` / `rmatmat` preserve the `(n, 1)`
+  matrix shape for single-column inputs.
+
+- **Invalid log-space weights are rejected before normalization.**
+  `Weights(log_weights=...)` now rejects `NaN` entries and zero-total-mass
+  inputs such as all `-inf`, avoiding downstream `nan` normalized weights while
+  still allowing individual `-inf` entries for zero-weight atoms.
+
 - **`StanModel` now works against a real BridgeStan backend.** Two bugs at the
   BridgeStan boundary were hidden by the mocked tests: construction passed a
   `data=` keyword that `bridgestan.StanModel.from_stan_file` does not accept,

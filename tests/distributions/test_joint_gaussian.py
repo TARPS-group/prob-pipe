@@ -297,6 +297,20 @@ class TestConditionOn:
         cond_var = variance(cond)
         np.testing.assert_allclose(float(cond_var["y"][0]), 0.36, atol=1e-5)
 
+    def test_conditioning_uses_linear_solve_not_explicit_inverse(self, monkeypatch):
+        def fail_inverse(_):
+            raise AssertionError("JointGaussian conditioning should not form an inverse")
+
+        monkeypatch.setattr(jnp.linalg, "inv", fail_inverse)
+
+        cov = jnp.array([[1.0, 0.4], [0.4, 2.0]])
+        jg = JointGaussian(mean=jnp.zeros(2), cov=cov, x=1, y=1)
+        cond = condition_on(jg, x=jnp.array([1.0]))
+
+        assert cond.fields == ("y",)
+        cond_mean = mean(cond)
+        np.testing.assert_allclose(float(cond_mean["y"][0]), 0.4, atol=1e-5)
+
     def test_conditional_covariance_schur_complement_3var(self):
         """Conditional covariance matches the Schur complement formula.
 
