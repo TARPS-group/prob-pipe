@@ -1,8 +1,8 @@
 # Pre-commit hooks for ProbPipe. Install once with `uvx pre-commit install`
 # (or `pre-commit install`); thereafter they run on staged files at commit time.
 #
-# Hooks only see the files you're changing, so they ratchet the codebase clean
-# file-by-file rather than demanding a big-bang cleanup. `ruff` here flags but
+# Hooks only see the files you're changing, so a commit is checked without
+# re-running over the whole tree. `ruff` here flags but
 # does NOT auto-fix (no `--fix`) — fixes stay intentional and reviewable. The
 # `ruff-format` hook DOES rewrite files (that is its job); notebooks are excluded
 # from formatting via `[tool.ruff.format]` in pyproject.toml.

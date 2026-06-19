@@ -13,17 +13,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Advisory ruff lint. Annotates PRs with violations but does NOT gate
-  # merges (continue-on-error). ProbPipe carries a backlog from a
-  # previously-unenforced linter, and several large refactors are in
-  # flight; advisory mode surfaces issues without blocking that work or
-  # forcing a repo-wide cleanup sweep. To enforce later: drop
-  # continue-on-error and scope to changed files. The ruff version is
-  # read from .pre-commit-config.yaml (single source of truth) so this job
-  # can't drift from the pre-commit pin that `pre-commit autoupdate` bumps;
-  # keep uv.lock's ruff in sync too for local `uv run ruff`. `ruff format
-  # --check` runs here too and IS blocking — the tree is autoformatted, so a
-  # misformatted file fails CI even while `ruff check` (lint) stays advisory.
+  # Ruff lint + format gate — both blocking. `ruff check` enforces a
+  # zero-violation tree and `ruff format --check` enforces the autoformat;
+  # a new lint violation or a misformatted file fails CI. Lint scope and
+  # rule selection live in pyproject.toml ([tool.ruff.lint]). The ruff
+  # version is read from .pre-commit-config.yaml (single source of truth) so
+  # this job can't drift from the pre-commit pin that `pre-commit autoupdate`
+  # bumps; keep uv.lock's ruff in sync too for local `uv run ruff`.
   lint:
     name: lint & format
     runs-on: ubuntu-latest
@@ -36,9 +32,9 @@ jobs:
         with:
           enable-cache: true
 
-      # Blocking: validates .pre-commit-config.yaml structure (all hooks, not
-      # just ruff) so a corrupted config can't slip through while the ruff
-      # check itself stays advisory. Cheap — it does not run any hook.
+      # Validates .pre-commit-config.yaml structure (all hooks, not just ruff)
+      # so a corrupted config can't slip through. Cheap — it does not run any
+      # hook.
       - name: Validate pre-commit config
         run: uvx pre-commit validate-config
 
@@ -53,8 +49,7 @@ jobs:
           echo "ruff=$ver" >> "$GITHUB_OUTPUT"
           echo "Resolved ruff $ver from .pre-commit-config.yaml"
 
-      - name: Ruff check (advisory — does not gate merges)
-        continue-on-error: true
+      - name: Ruff check (blocking)
         run: uvx "ruff@${{ steps.ruffver.outputs.ruff }}" check . --output-format=github
 
       - name: Ruff format check (blocking — the tree is autoformatted)

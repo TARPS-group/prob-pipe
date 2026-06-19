@@ -188,8 +188,9 @@ uv run ruff format .          # reformat the tree
 uv run ruff format --check .  # verify (this is what CI enforces)
 ```
 
-`ruff format --check` is a **blocking** CI step, so a misformatted file fails the
-build (`ruff check`, the linter, stays advisory). A few specifics: the line
+Both `ruff format --check` and `ruff check` (the linter) are **blocking** CI
+steps, so a misformatted file or a lint violation fails the build. A few
+specifics: the line
 length is 100 (`[tool.ruff]` in `pyproject.toml`); ruff keeps code on one line
 when it fits and explodes imports / call arguments one-item-per-line when it does
 not; string quotes normalize to double. Notebooks are excluded
@@ -226,34 +227,29 @@ uvx pre-commit install      # or: pre-commit install
 ```
 
 Thereafter `ruff` (lint + format) plus a few file-hygiene hooks run on your staged
-files at commit time. The hooks see only the files you're changing, so the
-codebase cleans up file-by-file rather than in one sweep. To run manually:
+files at commit time. The hooks see only the files you're changing, so a commit is
+checked without re-linting the whole tree. To run manually:
 
 ```bash
 uv run ruff check .              # lint the whole tree (uses the uv.lock-pinned ruff)
 uvx pre-commit run --all-files   # run every hook over everything
 ```
 
-A full `--all-files` run is **not** expected to be clean yet: the repo carries a
-lint and file-hygiene backlog that the hooks burn down file-by-file (see below),
-so it will report — and the fixer hooks will modify — pre-existing issues in
-files you did not touch. That is expected for now, not a regression.
+`ruff check .` and `ruff format --check .` are clean tree-wide. A full
+`--all-files` run may still surface pre-existing file-hygiene nits (trailing
+whitespace, end-of-file) in files you did not touch; the fixer hooks clean those
+as the relevant files are next edited.
 
-Two deliberate choices:
+Both `ruff check` (lint) and `ruff format` are enforced:
 
-- **`ruff check` (lint) is advisory in CI for now.** ProbPipe carries a lint
-  backlog from a period when ruff wasn't enforced, and several large
-  refactors are in flight. The `ruff check` step in the `lint & format` job
-  annotates PRs with violations but does not gate merges; it will become
-  blocking once the backlog is burned down. Locally, the pre-commit hook flags
-  issues on the
-  files you touch — fix them when practical; `git commit --no-verify`
-  bypasses it for a pre-existing-violation file you'd rather not clean in
-  an unrelated change.
+- **`ruff check` (lint) is blocking in CI.** The `lint & format` job runs
+  `ruff check .` over the whole tree, which is at zero violations; a new
+  violation fails the build. Rule selection and per-file ignores live in
+  `[tool.ruff.lint]` in `pyproject.toml`. The pre-commit hook flags the same
+  issues on your staged files at commit time.
 - **`ruff format` is enforced.** Formatting is owned by `ruff format` (see
   *Code formatting* above): `ruff format --check` is a blocking CI step and the
-  `ruff-format` pre-commit hook reformats on commit. `ruff check` (lint) is the
-  part that stays advisory.
+  `ruff-format` pre-commit hook reformats on commit.
 
 ### Type checking
 
@@ -353,8 +349,8 @@ GitHub Actions (`.github/workflows/ci.yml`):
   bayesflow leg — runs on pushes to main, foundational changes, or Stan-file
   changes
 - Coverage uploaded to Codecov
-- A `lint (advisory)` job runs `ruff check` and annotates PRs with
-  violations but does **not** gate merges yet (see *Linting & pre-commit*)
+- The `lint & format` job runs `ruff check` (lint) and `ruff format --check`;
+  both are **blocking** (see *Linting & pre-commit*)
 - Both the `test` and `notebooks` jobs choose what to run via a shared,
   unit-tested AST import-graph helper — `scripts/ci/import_graph.py` (tests
   in `tests/ci/`) — so a change to a source file also exercises the tests and
