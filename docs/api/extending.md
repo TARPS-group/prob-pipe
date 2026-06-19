@@ -9,7 +9,7 @@ the section on this page that covers it in detail.
 |---|---|---|
 | New distribution family | Subclass of [`Distribution`](#distribution-base-classes), `RecordDistribution`, `NumericRecordDistribution`, or `TFPDistribution` | (none — capability is detected by `isinstance` against the matching [protocol](#protocols)) |
 | New op support on an existing distribution | The matching underscore method (`_sample`, `_log_prob`, `_mean`, ...) on the class | (none — see [Protocols](#protocols) for which method backs which op) |
-| New inference method (custom sampler, optimiser, ...) | Subclass of `Method` declaring `supported_types`, `priority`, `check()`, and `execute()` | `inference_method_registry.register(...)` — see [Custom inference methods](#custom-inference-methods) |
+| New inference method (custom sampler, optimiser, ...) | Subclass of `InferenceMethod` declaring `supported_types`, `priority`, `check()`, and `execute()` | `inference_method_registry.register(...)` — see [Custom inference methods](#custom-inference-methods) |
 | New distribution-to-distribution converter | Subclass of `Converter` with `check()` / `convert()` | `converter_registry.register(...)` — see [Custom converters](#custom-converters) |
 | New canonical bijector for a `Constraint` | A factory returning a TFP bijector | `register_bijector(constraint_or_class, factory)` — see [Custom bijectors](#custom-bijectors) |
 | New auxiliary-metadata adapter (custom array-like) | `capture` and `restore` callables | `register_aux(leaf_type, capture, restore)` — see [Custom auxiliary metadata](#custom-auxiliary-metadata) |
@@ -70,9 +70,9 @@ itself, not an instance.
 
 ## Custom inference methods
 
-`Method` subclasses register with `inference_method_registry` and
-declare `supported_types`, a `priority`, and `check()` / `execute()`
-methods. When [`condition_on`](operations.md#conditioning) runs, the
+`InferenceMethod` subclasses register with
+`inference_method_registry` and declare `supported_types`, a
+`priority`, and `check()` / `execute()` methods. When [`condition_on`](operations.md#conditioning) runs, the
 registry tries methods in descending priority order and the first whose
 `check()` reports feasibility wins. The built-in methods table is on
 [Modeling and inference → Inference methods](inference.md#inference-methods).
@@ -90,8 +90,8 @@ against the alternatives.
   the registry walks every positive priority uniformly.
 - **`priority == 0`** — *opt-in only*: the registry skips the method
   during auto-dispatch. The method is reachable by name via
-  `method="..."`. This is the default; a `Method` subclass that doesn't
-  override `priority` gets opt-in behaviour automatically.
+  `method="..."`. This is the default; an `InferenceMethod` subclass
+  that doesn't override `priority` gets opt-in behaviour automatically.
 
 #### Selection criteria
 
@@ -141,10 +141,10 @@ intermediate guarantees that don't fit cleanly into a named tier.
 | 11–20 | *(reserved for methods with intermediate guarantees not covered by neighbouring tiers)* |
 | 1–10 | No asymptotic-to-exact guarantee in practice; quality bounded by intrinsic information loss (summary statistics, fixed tolerance, learned representations). |
 
-#### Setting `priority` on a `Method` subclass
+#### Setting `priority` on an `InferenceMethod` subclass
 
 ```python
-class MyNutsMethod(Method):
+class MyNutsMethod(InferenceMethod):
     @property
     def priority(self) -> int:
         # Tier 71-80 (self-tuning, broadly applicable).
@@ -157,9 +157,17 @@ sharp failure modes, or exists only for `method=` testing — leaves
 it from the auto-dispatch walk; users can still invoke it explicitly by
 name.
 
-::: probpipe.core._registry.MethodRegistry
+::: probpipe.core._registry.BaseDispatchRegistry
 
-::: probpipe.core._registry.Method
+::: probpipe.core._registry.UnaryDispatchRegistry
+
+::: probpipe.core._registry.BinaryDispatchRegistry
+
+::: probpipe.core._registry.BaseDispatchMethod
+
+::: probpipe.core._registry.UnaryDispatchMethod
+
+::: probpipe.core._registry.BinaryDispatchMethod
 
 ::: probpipe.core._registry.MethodInfo
 
@@ -187,7 +195,7 @@ new array-like type. See
 `DistributionArray` is the shape-indexed container produced by
 parameter-sweep workflow functions whose inner call returns a
 `Distribution`. `BroadcastDistribution` is the joint container produced
-by `@workflow_function` when `include_inputs=True`.
+by `WorkflowFunction` when called with `workflow.with_options(include_inputs=True)(...)`.
 
 ::: probpipe.DistributionArray
 

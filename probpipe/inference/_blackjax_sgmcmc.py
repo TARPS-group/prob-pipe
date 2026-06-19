@@ -1,6 +1,6 @@
 """BlackJAX-backed stochastic-gradient MCMC methods.
 
-Two :class:`~probpipe.core._registry.Method` subclasses registered with
+Two :class:`~probpipe.core._registry.UnaryDispatchMethod` subclasses registered with
 :data:`~probpipe.inference.inference_method_registry`:
 
 * ``blackjax_sgld`` — Stochastic Gradient Langevin Dynamics
@@ -107,7 +107,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         """Require SimpleModel + ConditionallyIndependentLikelihood + batch_size."""
-        from ..modeling._likelihood import ConditionallyIndependentLikelihood
+        from ..core.protocols import ConditionallyIndependentLikelihood
 
         if not is_simple_model(dist):
             return MethodInfo(

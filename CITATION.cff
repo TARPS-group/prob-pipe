@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+message: "If you use ProbPipe in your research, please cite it using the metadata below."
+title: "ProbPipe"
+abstract: "A Python framework for building scalable probabilistic pipelines with automated uncertainty quantification."
+type: software
+authors:
+  - given-names: Jonathan
+    family-names: Huggins
+    email: huggins@bu.edu
+    affiliation: Boston University
+  - given-names: Andrew
+    family-names: Roberts
+    email: arober@bu.edu
+    affiliation: Boston University
+  - given-names: Jiaqiang
+    family-names: Zhu
+    email: julian25@bu.edu
+    affiliation: Boston University
+  - given-names: Can
+    family-names: Erozer
+    email: caner@bu.edu
+    affiliation: Boston University
+  - given-names: Yongho
+    family-names: Lim
+    email: ylim2@bu.edu
+    affiliation: Boston University
+repository-code: "https://github.com/TARPS-group/prob-pipe"
+url: "https://tarps-group.github.io/prob-pipe/"
+license: Apache-2.0
+version: "0.1.0"
+date-released: "2026-06-13"
+# Zenodo concept DOI (all versions):
+doi: "10.5281/zenodo.20683559"

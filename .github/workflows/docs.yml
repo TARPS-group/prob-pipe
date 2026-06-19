@@ -13,18 +13,22 @@ permissions:
   deployments: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  # For pushes to main: keep the 'pages' group + no cancellation so back-to-back
+  # deploys serialize cleanly (gh-pages allows only one in-flight deploy).
+  # For PRs: scope by ref and cancel superseded builds — they only need to
+  # verify `mkdocs build --strict`, not race for a deploy slot.
+  group: ${{ github.event_name == 'pull_request' && format('docs-pr-{0}', github.ref) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           python-version: "3.12"
@@ -37,7 +41,7 @@ jobs:
 
       - name: Upload Pages artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
@@ -51,7 +55,7 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
       - name: Prune old gh-pages deployments
         env:

@@ -1,6 +1,6 @@
 """BlackJAX-backed gradient MCMC methods: NUTS and HMC.
 
-Two :class:`~probpipe.core._registry.Method` subclasses registered with
+Two :class:`~probpipe.core._registry.UnaryDispatchMethod` subclasses registered with
 :data:`~probpipe.inference.inference_method_registry`:
 
 * ``blackjax_nuts`` — No-U-Turn Sampler with window-adapted step size and

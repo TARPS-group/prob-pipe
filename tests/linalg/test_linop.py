@@ -3,8 +3,16 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe.linalg.linear_operator import (
-    DenseLinOp, DiagonalLinOp, TriangularLinOp, TransposedLinOp,
-    ProductLinOp, SumLinOp, ScaledLinOp, ALLOWED_FLAGS, LinAlgError,
+    CholeskyLinOp,
+    DenseLinOp,
+    DiagonalLinOp,
+    LinAlgError,
+    ProductLinOp,
+    RootLinOp,
+    ScaledLinOp,
+    SumLinOp,
+    TransposedLinOp,
+    TriangularLinOp,
 )
 
 
@@ -84,6 +92,21 @@ def test_diagonal_matvec_solve_cholesky_flags():
     assert "positive_definite" in d.flags
 
 
+def test_root_linop_diag_matches_dense_for_diagonal_root():
+    root = DiagonalLinOp(jnp.array([2.0, 3.0]))
+    op = RootLinOp(root)
+
+    assert approx(op.diag(), jnp.diag(op.to_dense()))
+
+
+def test_root_linop_diag_matches_dense_for_full_root():
+    S = jnp.array([[1.0, 2.0], [3.0, 4.0]])
+    op = RootLinOp(DenseLinOp(S))
+    expected = S @ S.T
+
+    assert approx(op.diag(), jnp.diag(expected))
+
+
 def test_triangular_solve_and_flags():
     L = jnp.array([[1.0, 0.0], [2.0, 3.0]])
     tri = TriangularLinOp(L, lower=True)
@@ -95,6 +118,38 @@ def test_triangular_solve_and_flags():
     # test rmatvec equivalence
     v = jnp.array([1.0, 2.0])
     assert approx(tri.rmatvec(v), L.T @ v)
+
+
+def test_cholesky_upper_factor_preserves_operator():
+    lower_matrix = jnp.array([[2.0, 0.0], [1.0, 3.0]])
+    lower = TriangularLinOp(lower_matrix, lower=True)
+    op = CholeskyLinOp(lower)
+    expected = lower_matrix @ lower_matrix.T
+
+    upper = op.cholesky(lower=False)
+    assert isinstance(upper, TriangularLinOp)
+    assert not upper.lower
+    assert approx(upper.to_dense(), lower_matrix.T)
+
+    x = jnp.array([1.0, -2.0])
+    X = jnp.array([[1.0, 2.0], [-2.0, 0.5]])
+    assert approx(op.matvec(x), expected @ x)
+    assert approx(op.rmatvec(x), expected.T @ x)
+    assert approx(op.matmat(X), expected @ X)
+    assert approx(op.rmatmat(X), expected.T @ X)
+    assert approx(op.diag(), jnp.diag(expected))
+
+    upper_rep = op.to_cholesky_representation(lower=False)
+    assert isinstance(upper_rep, CholeskyLinOp)
+    assert approx(upper_rep.to_dense(), expected)
+    assert approx(upper_rep.matvec(x), expected @ x)
+    assert approx(upper_rep.rmatvec(x), expected.T @ x)
+    assert approx(upper_rep.matmat(X), expected @ X)
+    assert approx(upper_rep.rmatmat(X), expected.T @ X)
+    assert approx(upper_rep.diag(), jnp.diag(expected))
+
+    b = jnp.array([1.0, 2.0])
+    assert approx(upper_rep.solve(b), jnp.linalg.solve(expected, b))
 
 
 def test_transpose_flags_and_behavior():
@@ -119,6 +174,12 @@ def test_sum_propagation_and_matmat():
     assert "diagonal" in s.flags and "symmetric" in s.flags
     # sum dtype matches promoted
     assert s.dtype == jnp.result_type(d1.dtype, d2.dtype)
+
+    x_col = jnp.ones((2, 1))
+    assert s.matmat(x_col).shape == (2, 1)
+    assert approx(s.matmat(x_col), s.to_dense() @ x_col)
+    assert s.rmatmat(x_col).shape == (2, 1)
+    assert approx(s.rmatmat(x_col), s.to_dense().T @ x_col)
 
 
 def test_product_dtype_promotion_and_diagonal_product_flag():

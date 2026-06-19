@@ -51,8 +51,17 @@ A few conventions keep PRs consistent; the PR template
   `docs(contributing): document PR conventions`. Common types are `feat`,
   `fix`, `refactor`, `perf`, `test`, `docs`, `chore`, and `ci`; the scope is
   the affected subpackage or area.
-- **Labels** — apply at least one `area:*` label for the affected subsystem,
-  plus `kind:breaking-change` if the PR changes a user-visible API.
+- **Description = final state.** The title and body describe the change as
+  it stands, and are updated whenever the scope shifts during review — a
+  stale description is a review blocker. No internal process jargon
+  ("Phase 1b", plan-file references, review-round narration): an outside
+  reader must be able to follow the description on its own. User-visible
+  changes get a CHANGELOG entry, and scratch planning artifacts
+  (`*_plan.md` files, references to local plan directories) never land on
+  the branch.
+- **Labels** — `area:*` labels are auto-applied from the changed paths (see
+  [Labels](#labels) below); set `kind:*` / `status:*` by hand, and always add
+  `kind:breaking-change` if the PR changes a user-visible API.
 - **Linked issue** — reference the plan/tracking issue (`Refs #N` on stage
   PRs, `Closes #N` on the final one). A small standalone fix that skipped the
   plan step (above) has no issue to link; leave that section and its checklist
@@ -72,6 +81,26 @@ Claude Code auto-generates branch names like
 open PRs to the new branch — it silently closes them
 (see [#157](https://github.com/TARPS-group/prob-pipe/pull/157) for an
 example). If you must rename after a PR is open, use the web UI.
+
+### Labels
+
+ProbPipe uses three label families:
+
+- **`area:*`** — the affected subsystem (`area:core`, `area:distributions`,
+  `area:records`, `area:inference`, `area:workflow`, `area:orchestration`,
+  `area:diagnostics`, `area:provenance`, `area:docs`,
+  `area:infrastructure`). On PRs these are **applied automatically** by
+  `.github/workflows/labeler.yml` from the changed file paths (mapping in
+  `.github/labeler.yml`), so a PR that touches several areas gets several
+  `area:*` labels. On *issues*, apply them by hand — the auto-labeler runs
+  on PRs only.
+- **`kind:*`** — the nature of the change (`kind:refactor`,
+  `kind:breaking-change`, `kind:deprecation`, `kind:tracking`). Always
+  human-set; paths cannot infer intent.
+- **`status:*`** — workflow state (`status:blocked`, `status:needs-design`,
+  `status:needs-review`). Human-set.
+
+`enhancement` and `documentation` remain the catch-all tags for issues.
 
 ---
 
@@ -95,7 +124,14 @@ uv sync --extra dev --extra nutpie --extra pymc   # + pymc backend
 
 The `pip install -e ".[dev]"` path still works for contributors with an
 existing pip-based setup, but uv is the recommended path. Optional backends
-not required for tests: `bridgestan`, `pymc`.
+not required to run the test suite locally (their tests skip when the backend
+is absent): `bridgestan`, `pymc`, `bayesflow` (amortized SBI; Python 3.12–3.13
+only). In CI, `bridgestan` and `bayesflow` are exercised in their own dedicated
+legs (the `stan` and `bayesflow` jobs).
+
+These commands build the **`probpipe-core`** distribution (the repository root);
+the friendly `probpipe` name is a separate code-less metapackage that bundles the
+backends — see *Package Structure* below.
 
 ### Running Tests
 
@@ -109,6 +145,18 @@ uv run pytest tests/test_foo.py -x -v      # single file, stop on first failure
 can also `source .venv/bin/activate` once per shell and then just type
 `pytest`.
 
+### Test quality
+
+- Correctness tests use the **tightest tolerances that pass reliably** —
+  a loose tolerance is a review flag, not a convenience.
+- Cover structured cases (multi-field Records, mixed scalar/vector
+  parameters), error paths, and **equivalence across dispatch paths**
+  (jax vs sequential) — path divergence has produced real
+  silently-wrong-results bugs.
+- Inference code gets a statistical sanity check (parameter estimates and
+  uncertainty roughly correct on a known target), not just shape
+  assertions.
+
 ### Coverage
 
 ```bash
@@ -116,6 +164,18 @@ uv run pytest --cov=probpipe --cov-report=term-missing
 ```
 
 Target: >90% on all modules.
+
+### Test quality for numerical code
+
+Coverage is necessary but not sufficient: tests of mathematical behavior
+must check correctness against an **independent baseline** (an analytic
+result, an exact reference computation, a known invariant, or finite
+differences for gradients) — and where the claim is distributional,
+check both location and spread. Tolerances on stochastic or trained
+components are **measured, not guessed**: run the test's configuration
+across a few seeds, bound the observed spread with modest margin, and
+document the measured range in a comment next to the assertion. Full
+conventions in [STYLE_GUIDE.md § 8.6](STYLE_GUIDE.md#86-numerical-correctness-and-tolerances).
 
 ### Code formatting
 
@@ -171,6 +231,91 @@ line.
 
 This applies equally to source files and notebook code cells.
 
+### Code comments & docstrings
+
+Comments state constraints and contracts the code cannot express — not
+the development process. Match the comment density of the surrounding
+code, and when in doubt, delete: an over-explained obvious line is worse
+than no comment.
+
+- **No process narration.** Never record provenance in code — which PR
+  or plan phase introduced a line, which review comment prompted it
+  ("addressed in review", "previously this was..."). Such comments are
+  noise the moment the PR merges. (Citing an issue that documents a
+  known limitation or a non-obvious rationale is fine — that is a
+  constraint, not history.)
+- **Describe what something *is*, not what it *isn't*.** Negative
+  documentation ("this is not a mixture") usually signals that the name
+  or design needs fixing instead.
+- **Public docstrings describe behavior and usage, not implementation
+  internals.** Internals discussion belongs on private helpers, or
+  nowhere.
+
+### Linting & pre-commit
+
+Linting uses [ruff](https://docs.astral.sh/ruff/) (configured in
+`pyproject.toml`). Install the pre-commit hooks once:
+
+```bash
+uvx pre-commit install      # or: pre-commit install
+```
+
+Thereafter `ruff` (lint) plus a few file-hygiene hooks run on your staged
+files at commit time. The hooks see only the files you're changing, so the
+codebase cleans up file-by-file rather than in one sweep. To run manually:
+
+```bash
+uv run ruff check .              # lint the whole tree (uses the uv.lock-pinned ruff)
+uvx pre-commit run --all-files   # run every hook over everything
+```
+
+A full `--all-files` run is **not** expected to be clean yet: the repo carries a
+lint and file-hygiene backlog that the hooks burn down file-by-file (see below),
+so it will report — and the fixer hooks will modify — pre-existing issues in
+files you did not touch. That is expected for now, not a regression.
+
+Two deliberate choices:
+
+- **`ruff check` is advisory in CI for now.** ProbPipe carries a lint
+  backlog from a period when ruff wasn't enforced, and several large
+  refactors are in flight. The CI `lint (advisory)` job annotates PRs with
+  violations but does not yet gate merges; it will become blocking once the
+  backlog is burned down. Locally, the pre-commit hook flags issues on the
+  files you touch — fix them when practical; `git commit --no-verify`
+  bypasses it for a pre-existing-violation file you'd rather not clean in
+  an unrelated change.
+- **`ruff format` is not used.** Its output conflicts with the horizontal
+  packing conventions in *Code formatting* above, so formatting stays
+  manual. Only `ruff check` runs.
+
+### Type checking
+
+Type checking uses [pyright](https://microsoft.github.io/pyright/)
+(configured in `pyrightconfig.json`, scoped to the `probpipe` package).
+Run it locally in the synced environment:
+
+```bash
+uv run --with 'pyright[nodejs]' pyright
+```
+
+CI pins a specific pyright version for a reproducible baseline, so a
+local run on a newer pyright may report a slightly different count — pin
+to match CI (`pyright[nodejs]==<version from ci.yml>`) if you need exact
+parity.
+
+Like ruff, **pyright is advisory in CI for now** — the `typecheck
+(advisory)` job reports type issues (and surfaces the count in the run's
+job summary) but does not gate merges. The source carries a type-debt
+baseline (much of it noise from JAX/TFP untyped attributes), so enforcing
+immediately would block unrelated work. The plan is to burn the baseline
+down, then tighten `typeCheckingMode` in `pyrightconfig.json` and make the
+gate blocking. New code should be clean under the current `basic` mode
+where practical.
+
+ProbPipe ships a `py.typed` marker, so the package's annotations are
+consumed by downstream users' type checkers — keeping the public surface
+well-typed is user-facing quality, not just an internal nicety.
+
 ### Documentation
 
 ```bash
@@ -180,6 +325,12 @@ uv run mkdocs serve            # local preview
 
 API docs use `mkdocstrings` directives in `docs/api/*.md` referencing
 fully-qualified Python paths.
+
+A behavior or API change and its documentation ship in the **same PR**:
+docstrings, the user-guide notebooks, README / `docs/index.md`, the
+CHANGELOG, and STYLE_GUIDE.md / CONTRIBUTING.md when conventions change.
+Examples and notebooks show idiomatic usage — never add a compat shim to
+keep an example running against an old API.
 
 ### Prefect orchestration
 
@@ -198,9 +349,11 @@ probpipe.prefect_config.workflow_kind = probpipe.WorkflowKind.TASK
 export PROBPIPE_WORKFLOW_KIND=task   # or flow / off / default
 ```
 
-Per-call overrides via `@workflow_function(workflow_kind="task")` and
-explicit `WorkflowFunction(..., workflow_kind=WorkflowKind.FLOW)`
-continue to work and are unaffected by either of the above.
+Per-workflow overrides via
+`@workflow_function(workflow_kind=probpipe.WorkflowKind.TASK)` and
+explicit `WorkflowFunction(..., workflow_kind=probpipe.WorkflowKind.FLOW)`
+are unaffected by either of the above. String aliases such as `"task"` /
+`"flow"` are not accepted; use `WorkflowKind` enum members explicitly.
 
 The off-by-default behaviour exists because the prior auto-detect path
 ("Prefect importable → tasks enabled") confused notebook and REPL
@@ -216,12 +369,30 @@ full rationale.
 
 GitHub Actions (`.github/workflows/ci.yml`):
 
-- Tests on Python 3.12 and 3.13
+- Tests on Python 3.12, 3.13, and 3.14
 - Installs via `uv sync --frozen` from `uv.lock` (single source of truth
   for pinned dependency versions, shared between local dev and CI)
-- Test job uses extras `dev,nutpie,pymc`; the notebooks job uses
-  `dev,nutpie` only (`bridgestan` is not included anywhere by default)
+- Test job uses extras `dev,nutpie,pymc`. The notebooks job is a two-leg
+  matrix that runs in parallel — an `examples` leg (`dev,nutpie`) for
+  `docs/examples` and a `tutorials` leg (`dev,nutpie,bayesflow,pymc`) for
+  `docs/tutorials` — each scoped to its own directory with independent
+  change detection, so an unrelated leg is skipped (`bridgestan` is installed
+  only in the `stan` leg, below)
+- A separate `bayesflow` leg (Python 3.12 and 3.13 only — BayesFlow caps
+  `<3.14`) syncs `dev,nutpie,bayesflow` and runs the amortized-SBI tests
+- A separate `stan` leg (Python 3.12) syncs `dev,nutpie,stan`, caches the
+  `~/.bridgestan` build, and runs StanModel's compile-backed tests against a
+  real BridgeStan backend; coverage uploads under a `stan` flag. Gated like the
+  bayesflow leg — runs on pushes to main, foundational changes, or Stan-file
+  changes
 - Coverage uploaded to Codecov
+- A `lint (advisory)` job runs `ruff check` and annotates PRs with
+  violations but does **not** gate merges yet (see *Linting & pre-commit*)
+- Both the `test` and `notebooks` jobs choose what to run via a shared,
+  unit-tested AST import-graph helper — `scripts/ci/import_graph.py` (tests
+  in `tests/ci/`) — so a change to a source file also exercises the tests and
+  notebooks that transitively import it. Edit that committed helper, not inline
+  workflow scripts.
 
 Docs build (`.github/workflows/docs.yml`) with `uv run mkdocs build --strict`.
 
@@ -261,6 +432,30 @@ a leading underscore (`_simple.py`, `_blackjax_rwmh.py`).  The package
 `probpipe` or from subpackage `__init__` modules, never from
 underscore modules directly.  See `probpipe/__init__.py` for the
 full public API surface.
+
+### Distributions: `probpipe-core` and `probpipe`
+
+The repository builds **two** distributions from one tree, both exposing the
+same `probpipe` import package above:
+
+- **`probpipe-core`** — the root `pyproject.toml`. The minimal distribution: the
+  JAX base only, with every inference backend an optional extra. This is what
+  `uv sync` / `pip install -e .` build, so it is the distribution you develop and
+  test against.
+- **`probpipe`** — a code-less metapackage in
+  `packaging/probpipe/pyproject.toml`. It pins `probpipe-core==<version>` and
+  adds the backends the docs exercise (`pymc`, `nutpie`, and marker-guarded
+  `bayesflow`), so `pip install probpipe` runs every example and tutorial. It
+  ships no modules of its own.
+
+The two versions move in lockstep: when bumping `version`, update **both**
+`pyproject.toml` files and keep the metapackage's `probpipe-core==` pin equal to
+the core version. Build each with:
+
+```bash
+uv build                      # probpipe-core (repository root)
+uv build packaging/probpipe   # probpipe (metapackage)
+```
 
 ---
 
@@ -371,7 +566,9 @@ full public API surface.
 | `WorkflowFunction` | Orchestration-aware function wrapper (Prefect off by default; see the Prefect-orchestration section above); groups views by parent for correlated broadcasting |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
-| `MethodRegistry` | Generic priority-based dispatch; used by the inference method registry |
+| `BaseDispatchRegistry` | Abstract base for priority-based registries: holds registration, priority management (incl. opt-in-only sentinel + override warnings), and the `check`/`execute` loop. Arity-specific subclasses override `_cache_key`, `_find_methods`, and `_format_key`. |
+| `UnaryDispatchRegistry` | Single-argument dispatch registry; dispatches on the type of the first positional argument. Used by the inference method registry. |
+| `BinaryDispatchRegistry` | Two-argument dispatch registry; dispatches on the joint type of the first two positional args via paired `((left_types,), (right_types,))` pre-filters. |
 | `ProbabilisticModel` | Base for models (extends `Distribution`; provides `fields`) |
 | `SimpleGenerativeModel` | Simulator-only model wrapper for SBI/ABC (prior + `GenerativeLikelihood`) |
 | `IncrementalConditioner` | Stateful `Module` for sequential Bayesian updating via `update()` / `update_all()` |
@@ -415,6 +612,19 @@ Built-in methods:
 | 0 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 | 0 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 
+**Amortized SBI dispatches two ways.** Trained amortized posterior estimators
+(`learn_amortized_posterior` → `BayesFlowModel`, the `[bayesflow]` extra)
+implement `SupportsConditioning` directly, so `condition_on(model, observed)` is
+a single forward pass through the trained network. Because `condition_on` checks
+`SupportsConditioning` *before* the inference-method registry, these estimators
+short-circuit it and register no method. The learned NLE/NRE likelihoods
+(`learn_amortized_likelihood` / `learn_amortized_ratio` → `BayesFlowLikelihood`
+/ `BayesFlowRatio`) take the opposite route: they are ordinary
+`ConditionallyIndependentLikelihood` components, so
+`SimpleModel(prior, learned)` + `condition_on` selects a sampler through the
+registry table above (typically `blackjax_nuts` — the learned scores are
+JAX-traceable) with no new registry entries.
+
 ### Converter priority system
 
 The `ConverterRegistry` dispatches conversions by trying registered
@@ -457,9 +667,11 @@ and `pandas.DataFrame`. Lookup walks the MRO of `type(obj)`, so
 registering a base class also covers its subclasses.
 
 This registry is **not** a behavioural-dispatch hierarchy — it has
-no priority system, no feasibility check, no `execute()`. Use
-`MethodRegistry` (inference) or `ConverterRegistry` (distribution
-conversion) when behaviour dispatch is needed.
+no priority system, no feasibility check, no `execute()`. Use a
+`BaseDispatchRegistry` subclass (`UnaryDispatchRegistry` for the
+inference registry, `BinaryDispatchRegistry` for two-argument dispatch)
+or `ConverterRegistry` (distribution conversion) when behaviour
+dispatch is needed.
 
 ### Constraint → Bijector registry
 
@@ -481,9 +693,10 @@ mirrors PyTorch's `constraint_registry` semantics.
 
 Like the aux registry, this is **not** a behavioural-dispatch
 hierarchy: there is no priority system or feasibility check. Reach
-for `MethodRegistry` / `ConverterRegistry` instead when dispatch
-needs to consider the input value, environment, or installed
-backends.
+for a `BaseDispatchRegistry` subclass (`UnaryDispatchRegistry` /
+`BinaryDispatchRegistry`) or `ConverterRegistry` instead when
+dispatch needs to consider the input value, environment, or
+installed backends.
 
 ### Generic vs Record-based pattern
 

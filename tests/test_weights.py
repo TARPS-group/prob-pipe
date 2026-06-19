@@ -43,6 +43,13 @@ class TestValidation:
         assert is_uniform is False
         npt.assert_allclose(log_w, jnp.array([-1.0, 0.0, -1.0]))
 
+    def test_log_weights_allow_negative_infinity_entries(self):
+        log_w, is_uniform = _validate_to_log_weights(
+            3, log_weights=jnp.array([0.0, -jnp.inf, -1.0])
+        )
+        assert is_uniform is False
+        npt.assert_allclose(log_w, jnp.array([0.0, -jnp.inf, -1.0]))
+
     def test_mutual_exclusivity(self):
         with pytest.raises(ValueError, match="either weights or log_weights"):
             _validate_to_log_weights(
@@ -71,6 +78,18 @@ class TestValidation:
         with pytest.raises(ValueError, match="shape"):
             _validate_to_log_weights(
                 3, log_weights=jnp.zeros(5)
+            )
+
+    def test_log_weights_all_negative_infinity_rejected(self):
+        with pytest.raises(ValueError, match="positive finite"):
+            _validate_to_log_weights(
+                3, log_weights=jnp.full(3, -jnp.inf)
+            )
+
+    def test_log_weights_nan_rejected(self):
+        with pytest.raises(ValueError, match="NaN"):
+            _validate_to_log_weights(
+                3, log_weights=jnp.array([0.0, jnp.nan, -1.0])
             )
 
 
@@ -190,6 +209,10 @@ class TestWeightsConstruction:
         assert w.is_uniform is False
         npt.assert_allclose(jnp.sum(w.normalized), 1.0, atol=1e-6)
 
+    def test_log_weights_allow_zero_mass_entries(self):
+        w = Weights(log_weights=jnp.array([0.0, -jnp.inf]))
+        npt.assert_allclose(w.normalized, jnp.array([1.0, 0.0]), atol=1e-6)
+
     def test_uniform_log_weights(self):
         w = Weights(n=5)
         npt.assert_allclose(w.log_normalized, jnp.full(5, -jnp.log(5.0)), atol=1e-6)
@@ -226,6 +249,10 @@ class TestWeightsConstruction:
     def test_zero_sum_rejected(self):
         with pytest.raises(ValueError, match="positive"):
             Weights(weights=jnp.zeros(3))
+
+    def test_all_negative_infinity_log_weights_rejected(self):
+        with pytest.raises(ValueError, match="positive finite"):
+            Weights(log_weights=jnp.array([-jnp.inf, -jnp.inf]))
 
 
 class TestWeightsProperties:

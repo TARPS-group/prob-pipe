@@ -1,7 +1,13 @@
-from importlib.metadata import version as _version
+from importlib.metadata import version as _version, PackageNotFoundError as _PackageNotFoundError
 import warnings as _warnings
 
-__version__ = _version("probpipe")
+# The importable ``probpipe`` package ships in the ``probpipe-core`` distribution
+# (the friendly ``probpipe`` name is a code-less metapackage over it), so the
+# version is read from ``probpipe-core``.
+try:
+    __version__ = _version("probpipe-core")
+except _PackageNotFoundError:  # pragma: no cover - source tree with no install
+    __version__ = "0.0.0+unknown"
 
 # Suppress known TFP-internal warnings that are harmless but noisy.
 # These are upstream issues in tfp-nightly's JAX substrate:
@@ -133,6 +139,12 @@ from probpipe.inference import (
     elliptical_slice,
     condition_on_nutpie,
     MinibatchedDistribution,
+    learn_amortized_posterior,
+    BayesFlowModel,
+    learn_amortized_likelihood,
+    learn_amortized_ratio,
+    BayesFlowLikelihood,
+    BayesFlowRatio,
 )
 from probpipe.modeling import ProbabilisticModel, SimpleModel, SimpleGenerativeModel
 from probpipe.validation import predictive_check
@@ -294,6 +306,12 @@ __all__ = [
     "elliptical_slice",
     "condition_on_nutpie",
     "MinibatchedDistribution",
+    "learn_amortized_posterior",
+    "BayesFlowModel",
+    "learn_amortized_likelihood",
+    "learn_amortized_ratio",
+    "BayesFlowLikelihood",
+    "BayesFlowRatio",
     # Validation
     "predictive_check",
     # Converters

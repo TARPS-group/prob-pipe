@@ -7,7 +7,285 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Two-distribution packaging: `probpipe-core` (minimal) and `probpipe`
+  (core + all backends) (#237).** The root distribution is renamed `probpipe-core` (minimal JAX base —
+  every inference backend is an optional extra), and a new code-less `probpipe`
+  metapackage (`packaging/probpipe/`) pins `probpipe-core` and bundles the
+  backends the docs exercise — PyMC, nutpie, and BayesFlow (marker-guarded
+  `python_version < "3.14"`) — so `pip install probpipe` runs every example and
+  tutorial (on Python 3.12–3.13; 3.14 omits BayesFlow until upstream lifts its
+  cap). The `probpipe` **import** name is unchanged in both. Extras not
+  already bundled (`prefect`, `viz`, `stan`) are re-exported on the metapackage,
+  so `pip install "probpipe[<extra>]"` works alongside
+  `pip install "probpipe-core[<extra>]"`. The package `authors` metadata is set
+  to the ProbPipe Development Team, with the full contributor list in `AUTHORS`.
+  Existing from-source installs should reinstall to pick up the renamed
+  distribution. (The `pyabc` SMC-ABC backend joins `probpipe` once it lands; CI
+  to build and publish both distributions follows in a separate PR.)
+
+- **Nested `ProductDistribution` support in the record layer (#262).**
+  `RecordArray` accepts slash-delimited paths in string indexing
+  (`arr["outer/a"]`) and integer-indexes a nested array into a nested record
+  element; `flatten` / `unflatten` recurse into nested record fields in
+  depth-first leaf order; and a batched draw from a nested `ProductDistribution`
+  is a canonical, flattenable nested record array.
+
+- **Citation metadata and a "Cite" / "Help" docs section.** A
+  `CITATION.cff` enables GitHub's "Cite this repository" button; the
+  README gains a "Citing ProbPipe" section with a BibTeX entry; and the
+  docs site adds a [Cite](https://tarps-group.github.io/prob-pipe/cite/)
+  page (software citation + how to cite the inference backends) and a
+  [Help](https://tarps-group.github.io/prob-pipe/help/) page (where to
+  ask questions / file issues). The Zenodo DOI is minted from the first
+  tagged release and is dropped into the BibTeX/CFF once available.
+
+- **"Open in Colab" badges on the tutorials.** Both tutorial notebooks
+  (Getting Started, Flexible Inference) gain an "Open in Colab" badge and a
+  guarded setup cell that, *only when run on Colab*, installs ProbPipe with
+  the extras the notebook uses (and, for Getting Started, fetches the
+  dataset). The cell is a no-op in local Jupyter, the docs build, and CI, so
+  notebook execution elsewhere is unaffected.
+
+- **Keyword form for the `log_prob`-family ops (#228).** `log_prob`, `prob`,
+  `unnormalized_log_prob`, `unnormalized_prob`, and the `random_*_log_prob`
+  ops accept named field arguments —
+  `log_prob(model, intercept=0.0, slope=0.5, X=X_obs, y=y_obs)` — built into a
+  single draw via `Distribution._pack_value` (single-field → the bare field
+  value; multi-field → a `Record`), whose general field validation and
+  `Record` building is the new public `RecordTemplate.pack`. The ops stay plain
+  `WorkflowFunction`s that resolve this in their body — the same shape as
+  `condition_on`'s named data kwargs — so the positional form (including
+  `value=`) is unchanged and still broadcasts, and per-call controls use
+  `with_options` (`log_prob.with_options(seed=0)(dist, value)`). The keyword
+  form is purely additive; the one case it cannot express is a distribution
+  whose field name collides with the op's own `value`/`dist` parameter — for a
+  multi-field distribution pass a positional `Record`, for a single-field one
+  the bare positional value (mirroring `condition_on`'s `observed`).
+
+- **`StanModel` participates in the `log_prob` keyword form with one field per
+  Stan parameter (#228).** `StanModel` and its unconstrained view gain a
+  `record_template` exposing one field per Stan parameter *block* — e.g.
+  `theta` for `vector[3] theta`, `L` for `matrix[2, 2] L` — with each block's
+  full multidimensional shape reconstructed from BridgeStan's flattened
+  parameter names. The keyword form assembles the flat parameter vector
+  BridgeStan consumes — `log_prob(model, mu=0.0, theta=theta_vec, L=chol)` —
+  placing each scalar by its parsed index so matrices pack in BridgeStan's
+  column-major order; a flat array may still be passed positionally.
+
 ### Changed
+
+- **`SupportsLogProb` / `SupportsUnnormalizedLogProb` are now generic in the
+  sample type (#228)** — `SupportsLogProb[T]`. Annotation-level only; runtime
+  behavior is unchanged.
+
+- **`StanModel.fields` now returns one name per Stan parameter block (#228)**
+  rather than one per scalar (`vector[3] theta` is the single field `theta`,
+  not `theta.1` / `theta.2` / `theta.3`). BridgeStan's flat, per-scalar names
+  remain available unchanged via `parameter_names`.
+
+- **Amortized SBI learners accept nested priors (#262).**
+  `learn_amortized_posterior` / `learn_amortized_likelihood` /
+  `learn_amortized_ratio` now train on nested `ProductDistribution` priors,
+  iterating the prior's numeric leaves; for NPE, per-leaf bijectors run at each
+  leaf's native event shape, and posterior draws come back under their nested
+  leaf names. Previously a nested prior was rejected up front.
+
+- **Install docs: a "New to Python?" two-route fork.** The README and docs
+  landing now split installation into a newcomer path (uv manages Python and
+  the environment — no prior Python needed) and an experienced-user pip path,
+  and note that ProbPipe installs from source (not yet on PyPI). The optional-
+  extras list also gains the previously-missing `bayesflow` extra.
+
+### Fixed
+
+- **Linear-algebra and Gaussian-conditioning edge cases on the algebra bug-fix
+  branch.** `RootLinOp.diag()` now squares diagonal roots; `CholeskyLinOp`
+  keeps lower-root (`L @ L.T`) and upper-root (`U.T @ U`) representations
+  consistent across `cholesky`, `to_cholesky_representation`, `matvec`,
+  `rmatvec`, `matmat`, `rmatmat`, `diag`, `to_dense`, and `solve`;
+  `JointGaussian.condition_on` uses linear solves instead of forming explicit
+  covariance inverses; and `SumLinOp.matmat` / `rmatmat` preserve the `(n, 1)`
+  matrix shape for single-column inputs.
+
+- **Invalid log-space weights are rejected before normalization.**
+  `Weights(log_weights=...)` now rejects `NaN` entries and zero-total-mass
+  inputs such as all `-inf`, avoiding downstream `nan` normalized weights while
+  still allowing individual `-inf` entries for zero-weight atoms.
+
+- **`StanModel` now works against a real BridgeStan backend.** Two bugs at the
+  BridgeStan boundary were hidden by the mocked tests: construction passed a
+  `data=` keyword that `bridgestan.StanModel.from_stan_file` does not accept,
+  and JAX arrays were handed to a ctypes interface that requires `float64`
+  NumPy arrays. Construction now goes through BridgeStan's supported
+  constructor — which takes the `.stan` path directly and serializes the data
+  dict — and every value crossing into `param_constrain` / `param_unconstrain`
+  / `log_density` is coerced to a `float64` ndarray, so `StanModel(stan_file)`
+  and `log_prob(stan_model, ...)` succeed end to end. The `stan` extra now pins
+  `bridgestan>=2.7` (the first release with that constructor), and a
+  compile-gated integration test guards this boundary against future drift.
+
+- **nutpie sampling of a `StanModel` keeps its construction-time data.** The
+  nutpie path rebuilt the BridgeStan model from the conditioning data alone,
+  dropping any data passed to `StanModel(file, data=...)` — so a model carrying
+  fixed data (sizes, covariates) failed on the missing variables when sampled
+  via nutpie, while the CmdStan path worked. The conditioning data is now merged
+  on top of the construction-time data (conditioning values override), matching
+  the CmdStan method.
+
+- **`condition_on` no longer silently ignores a case-mismatched data kwarg
+  (#228).** Passing `condition_on(model, x=...)` when the field is `X` used to
+  route `x` to the inference parameters, where it was silently dropped (e.g. by
+  NUTS) — a wrong result with no error. A kwarg that matches a field only up to
+  case now raises a `TypeError` with the correct casing (`did you mean X=...?`);
+  unknown kwargs that are *not* a case-variant of any field remain inference
+  parameters.
+
+- **Codecov no longer misreports coverage on targeted PRs (#261).**
+  On a PR that ran only the changed-files test path, the main test job
+  skipped its Codecov upload while the BayesFlow job still uploaded, so
+  Codecov computed project/patch from the BayesFlow report alone —
+  yielding spuriously low numbers and a "HEAD has 1 upload less than
+  BASE" warning even though every Actions job passed. Now: the main
+  test job uploads coverage on the targeted path too (tagged `unit`),
+  so **patch** coverage is accurate and stays an enforced PR gate;
+  Codecov **project** is `informational` on PRs (the real 88% floor is
+  enforced in-CI on the full-suite run via `--cov-fail-under`); the
+  BayesFlow leg is gated to run only on BayesFlow-relevant changes; and
+  per-flag `carryforward` keeps the project number sane when a flag
+  isn't uploaded.
+
+- **Package license metadata corrected to Apache-2.0 (was MIT).**
+  `pyproject.toml` declared `license = { text = "MIT" }` while the
+  repository's `LICENSE` is Apache License 2.0 — and the metadata field is
+  what PyPI displays. The field is now a PEP 639 SPDX expression
+  (`license = "Apache-2.0"` with `license-files = ["LICENSE", "AUTHORS"]`),
+  so built distributions carry `License-Expression: Apache-2.0` (core
+  metadata 2.4). The setuptools build floor rises from 61 to 77.0.3 — PEP
+  639 support landed in 77.0.0, which also deprecated the old
+  `license = { text = ... }` table form, and 77.0.3 relaxed the new
+  `license-files` validation from errors to warnings — and the redundant
+  `wheel` build requirement is dropped (`bdist_wheel` ships inside
+  setuptools since 70.1). Build-time changes only; runtime dependencies
+  are unchanged.
+
+### Added
+
+- **Contributor conventions for comments, naming, tests, and PR hygiene.**
+  CONTRIBUTING.md gains "Code comments & docstrings" (no process narration,
+  no negative documentation, public docstrings describe behavior) and "Test
+  quality" (tightest reliable tolerances, structured cases, dispatch-path
+  equivalence) sections, a description-equals-final-state PR rule, and a
+  docs-ship-with-the-change rule. STYLE_GUIDE.md gains §1.12 "Naming
+  accuracy" (semantic accuracy, ecosystem alignment, symmetry, complete
+  rename sweeps). The `review-pr` skill now checks all of these and reads
+  the convention docs from the PR's base ref.
+
+- **BayesFlow amortized-SBI backend (`[bayesflow]` extra).** New
+  `learn_amortized_posterior(prior, simulator, method="npe"|"fmpe"|"cmpe",
+  ...)` trains a jax-native (keras-on-JAX) amortized neural posterior
+  estimator — NPE (coupling flow), FMPE (flow matching), or CMPE
+  (consistency model) — and returns a `BayesFlowModel` bundling the joint
+  model (prior + simulator, exposed as properties) with the trained
+  estimator: `condition_on(model, observed)` draws from `p(theta | observed)`
+  in a single network forward pass (no MCMC). This restores the amortized
+  half of the SBI layer dropped with sbijax.
+  - Training simulates `(theta, y)` offline (`prior` drawn via the `sample`
+    op, `simulator.generate_data` for the data); the prior is used only to
+    draw `theta` and needs no TFP translation. The trained estimator is
+    amortized — the same instance conditions on any observation with no
+    retraining — and its draws are named via the prior's `record_template`.
+    The simulator receives the prior's native structured per-draw sample (named
+    fields), matching the `GenerativeLikelihood` contract, and keras training is
+    seeded for reproducibility.
+  - Continuous priors with constrained supports — including matrix- and
+    simplex-valued ones (positive, an interval, Dirichlet's simplex, Wishart's
+    positive-definite matrices, …) — are handled by per-field `bijector_for`
+    reparameterization applied at each field's native event shape: training runs
+    in the unconstrained space and draws are mapped back to the support (identity
+    for real-valued fields). NPE's coupling-flow minimum is counted in
+    unconstrained dimensions. Discrete priors have no smooth bijector and are
+    rejected with a clear error.
+  - Training seeds keras for reproducibility but snapshots and restores the
+    caller's global NumPy / Python RNG state, so a call does not perturb
+    unrelated random streams.
+  - The `[bayesflow]` extra is **Python 3.12–3.13 only** (BayesFlow 2.x caps
+    `<3.14`); keras runs on the JAX backend (`KERAS_BACKEND=jax`) — no
+    TensorFlow or PyTorch. The backend is imported lazily, so `import
+    probpipe` does not load keras.
+
+- **jax-native NLE and NRE (`[bayesflow]` extra).** New
+  `learn_amortized_likelihood(prior, simulator, ...)` (neural likelihood
+  estimation: a conditional coupling flow for `p(y | theta)`) and
+  `learn_amortized_ratio(...)` (neural ratio estimation: an NRE-C classifier
+  for the likelihood-to-evidence ratio) return `BayesFlowLikelihood` /
+  `BayesFlowRatio` — `ConditionallyIndependentLikelihood` components whose
+  `log_likelihood` is **jax.grad-transparent**, so
+  `SimpleModel(prior, learned)` + `condition_on` samples the posterior with
+  the existing BlackJAX/TFP NUTS machinery. No PyTorch: this replaces the
+  planned sbi-torch default path (verified by the Step-6a spike — gradients
+  finite-difference-exact and NUTS recovering analytic posteriors, including
+  discrete-observation + constrained-parameter cases for NRE).
+  - Per-row scores sum under conditional independence, so datasets of any
+    size work natively (NPE's conditioning shape is fixed at training time),
+    and `per_datum_log_likelihood` comes for free.
+  - The networks take raw constrained `theta` as *input* (no bijector
+    reparameterization needed on that side); discrete-valued parameter
+    fields are accepted. NLE's default coupling flow needs observations with
+    >= 2 dimensions and a reverse-differentiable density (adaptive-ODE
+    networks such as `FlowMatching` integrate `log_prob` with a dynamic-bound
+    `while_loop`, which JAX cannot reverse-differentiate); NRE's MLP
+    classifier has neither restriction and handles discrete observations.
+  - `learn_amortized_likelihood(dequantize=True)` supports integer-valued
+    observations via uniform dequantization (Theis et al. 2016; Ho et al.
+    2019, Flow++): training adds `U[0,1)` jitter to the simulated `y` and the
+    wrapper scores integer data at the unit-cell midpoint `y + 1/2`. Without
+    it, the continuous fit measurably overdisperses the posterior as
+    observations concentrate on few atoms.
+  - `BayesFlowRatio` values are log-ratios — valid for conditioning (the
+    evidence constant cancels) but not for absolute-likelihood uses (model
+    comparison, LOO/WAIC); the caveat is documented on the class.
+
+- **`ProductDistribution.supports`** — per-field support constraints (each
+  component's `support`), implementing the canonical `RecordDistribution`
+  accessor that previously raised `NotImplementedError`.
+
+- **Python 3.14 to the CI test matrix.** The matrix is now
+  `[3.12, 3.13, 3.14]`. `requires-python = ">=3.12"` is unchanged.
+- **Coverage floor enforced at 88%** on the full-suite CI run
+  (`--cov-fail-under=88`). The changed-files-only PR path and local
+  single-file runs are exempt (`--cov-fail-under=0`), since a global floor
+  is only meaningful when the whole suite executes. Current measured
+  coverage on `main` is ~91%; the floor is set conservatively within the
+  beta plan's ≥85–90% commitment to leave headroom for normal fluctuation.
+- **Concurrency cancellation on CI for PR pushes.** A new push to a PR
+  branch cancels the prior in-progress CI run. Pushes to `main` are
+  unaffected (no cancellation — the merge-history gate stays solid).
+  Same pattern added to the docs build (PR builds cancel; pages deploys
+  still serialize via the original `pages` group).
+- **PR auto-labeling.** `.github/workflows/labeler.yml` +
+  `.github/labeler.yml` apply `area:*` labels to PRs based on changed
+  file paths. `kind:*` and `status:*` labels are still applied by
+  humans.
+- **Dependabot for GitHub Actions.** `.github/dependabot.yml` opens
+  weekly PRs that bump pinned action versions (`actions/checkout`,
+  `astral-sh/setup-uv`, `codecov/codecov-action`, `actions/labeler`).
+  Auto-labeled `area:infrastructure`. Pip/uv dependency bumps are NOT
+  enabled — the JAX/TFP resolver interaction means lockfile updates
+  must be intentional.
+
+### Changed
+
+- **Pyright type checking (advisory).** A `typecheck (advisory)` CI job
+  runs [pyright](https://microsoft.github.io/pyright/) over the `probpipe`
+  package and reports type issues; it is **advisory for now** (does not
+  gate merges) while the type-debt baseline — largely JAX/TFP
+  untyped-attribute noise — is burned down. Config lives in
+  `pyrightconfig.json` (`basic` mode, `reportMissingTypeStubs` off). Run
+  locally with `uv run --with 'pyright[nodejs]' pyright`. To enforce
+  later: drop the job's `continue-on-error` and tighten
+  `typeCheckingMode`. See [CONTRIBUTING.md](CONTRIBUTING.md#type-checking).
 
 - **Dev tooling: migrated to [uv](https://docs.astral.sh/uv/) for
   environment + dependency management.** `uv.lock` is committed and used
@@ -17,6 +295,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   then `uv run pytest`. The pip path (`pip install -e ".[dev]"`) still
   works for contributors with an existing pip setup. See
   [CONTRIBUTING.md](CONTRIBUTING.md#installation).
+
+- **Ruff linting + pre-commit hooks.** A `lint (advisory)` CI job runs
+  `ruff check` and annotates PRs with violations; it is **advisory for
+  now** (does not gate merges) while the pre-existing lint backlog is
+  burned down and large refactors are in flight. A new
+  `.pre-commit-config.yaml` (install with `uvx pre-commit install`) runs
+  ruff plus file-hygiene hooks on staged files. The ruff config gains
+  ignores for ambiguous-unicode rules (`RUF001/2/3` — false positives on
+  mathematical notation) and per-file ignores for notebook
+  import/semicolon idioms (`E402`/`E702`). `ruff format` is intentionally
+  not adopted; its style conflicts with the documented formatting
+  conventions. See [CONTRIBUTING.md](CONTRIBUTING.md#linting--pre-commit).
 
 - **`pymc_nuts` reclaims multi-core sampling.** The method previously
   forced `cores=1` to avoid an `os.fork()` deadlock against JAX's worker
@@ -160,6 +450,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`WorkflowFunction` controls now live outside user call kwargs.**
+  `@workflow_function(...)` configures definition-time controls, and
+  `workflow.with_options(...)(...)` is the call-time override API for
+  `seed`, `n_broadcast_samples`, and `include_inputs`. Wrapped
+  functions may now declare and receive those names as ordinary
+  parameters. Passing those names as call kwargs no longer configures
+  ProbPipe controls; use `workflow.with_options(...)(...)` instead.
+- **`WorkflowFunction.workflow_kind` and `Module.workflow_kind` now require
+  `WorkflowKind` enum members.** String aliases such as `"task"` / `"flow"`
+  and `None` are no longer accepted and now raise `TypeError`; use
+  `WorkflowKind.TASK`, `WorkflowKind.FLOW`, or `WorkflowKind.OFF` explicitly.
+  The old `parallel=` / `vectorize=` keyword guard on `WorkflowFunction` was
+  also removed, so those names are no longer specially reserved by the
+  constructor.
 - **`tfp_rwmh` removed.** The hand-rolled Python-loop RWMH that sat
   behind ``method="tfp_rwmh"`` is gone; ``blackjax_rwmh`` is the only
   RWMH backend. Callers must rename ``method="tfp_rwmh"`` →
@@ -366,6 +670,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   where the user prepends the constant column to ``X`` themselves.
   Avoids the axis-position ambiguity of stacking the intercept slot
   into ``X``; matches the pattern in sklearn / statsmodels GLM APIs.
+
+- **Dispatch-registry hierarchy split: `BaseDispatchRegistry`,
+  `UnaryDispatchRegistry`, `BinaryDispatchRegistry`.** The
+  arity-independent logic (registration, priority management, opt-in
+  filtering, `check`/`execute` loop) lives on the new
+  `BaseDispatchRegistry` abstract base. `UnaryDispatchRegistry` is the
+  single-argument concrete subclass that replaces the previous
+  `MethodRegistry` and now backs the inference method registry.
+  `BinaryDispatchRegistry` adds two-argument dispatch on the joint type
+  of the first two positional args. `BaseDispatchMethod` /
+  `UnaryDispatchMethod` / `BinaryDispatchMethod` mirror the registry
+  split on the method side. The previous `Method` / `MethodRegistry`
+  aliases are removed — inference-method subclasses should subclass
+  `UnaryDispatchMethod` (or the `InferenceMethod` re-export from
+  `probpipe.inference`).
 
 - **Inference-method registry priorities re-anchored with a semantic
   convention (issue #189).**
@@ -631,8 +950,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Or via the new `PROBPIPE_WORKFLOW_KIND` environment variable
   (`off` / `task` / `flow` / `default`, case-insensitive), which is
-  read once at import time. Per-call overrides via
-  `@workflow_function(workflow_kind="task")` are unchanged.
+  read once at import time. Per-workflow overrides remain available via
+  `@workflow_function(workflow_kind=probpipe.WorkflowKind.TASK)`; string
+  aliases are no longer accepted in this release (see the
+  `workflow_kind` breaking entry above).
   Migration: production callers that relied on the implicit
   "Prefect importable → tasks enabled" path must add the one-line
   assignment or env var above.

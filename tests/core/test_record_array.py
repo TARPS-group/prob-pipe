@@ -305,6 +305,100 @@ class TestNumericRecordArrayFlatten:
 
 
 # ---------------------------------------------------------------------------
+# Nested-record flatten / slash indexing (issue #262)
+# ---------------------------------------------------------------------------
+
+
+class TestNumericRecordArrayNested:
+    """flatten() recurses into nested record fields, in depth-first leaf order,
+    and round-trips through unflatten; slash paths index leaves."""
+
+    @staticmethod
+    def _nested_tpl():
+        return RecordTemplate(outer=RecordTemplate(a=(), b=()), m=())
+
+    def test_flatten_nested_record_array_field(self):
+        # The unflatten / canonical-_sample shape: the nested field is itself a
+        # NumericRecordArray (exercises the RecordArray branch).
+        tpl = self._nested_tpl()
+        flat = jnp.arange(15.0).reshape(5, 3)  # columns = outer/a, outer/b, m
+        nra = NumericRecordArray.unflatten(flat, template=tpl, batch_shape=(5,))
+        assert isinstance(nra["outer"], NumericRecordArray)
+        np.testing.assert_allclose(nra.flatten(), flat)  # round-trips exactly
+
+    def test_flatten_nested_record_field(self):
+        # The pre-canonical shape: the nested field is a plain Record holding
+        # batch-shaped leaves (exercises the Record branch).
+        tpl = self._nested_tpl()
+        inner = Record(a=jnp.arange(5.0), b=jnp.arange(5.0) + 10)
+        nra = NumericRecordArray(
+            {"outer": inner, "m": jnp.arange(5.0) + 100},
+            batch_shape=(5,), template=tpl,
+        )
+        flat = nra.flatten()
+        assert flat.shape == (5, 3)
+        np.testing.assert_allclose(flat[:, 0], inner["a"])
+        np.testing.assert_allclose(flat[:, 1], inner["b"])
+        np.testing.assert_allclose(flat[:, 2], nra["m"])
+        # Integer-indexing descends the plain-Record nested field (the Record
+        # branch of _get_record), returning a nested record element.
+        elem = nra[2]
+        np.testing.assert_allclose(elem["outer"]["a"], inner["a"][2])
+        np.testing.assert_allclose(elem["outer"]["b"], inner["b"][2])
+
+    def test_flatten_nested_depth2_roundtrip(self):
+        tpl = RecordTemplate(
+            outer=RecordTemplate(deep=RecordTemplate(g=(), h=()), a=()), m=())
+        flat = jnp.arange(20.0).reshape(5, 4)  # outer/deep/g, outer/deep/h, outer/a, m
+        nra = NumericRecordArray.unflatten(flat, template=tpl, batch_shape=(5,))
+        np.testing.assert_allclose(nra.flatten(), flat)
+        np.testing.assert_allclose(nra["outer/deep/g"], flat[:, 0])
+
+    def test_flatten_nested_vector_leaf(self):
+        # A non-scalar (vector) leaf under nesting: flatten lays out its columns
+        # at the leaf's event size, in canonical leaf order, and round-trips.
+        tpl = RecordTemplate(outer=RecordTemplate(a=(2,), b=()), m=())
+        flat = jnp.arange(20.0).reshape(5, 4)  # outer/a (2), outer/b (1), m (1)
+        nra = NumericRecordArray.unflatten(flat, template=tpl, batch_shape=(5,))
+        assert np.asarray(nra["outer/a"]).shape == (5, 2)
+        np.testing.assert_allclose(nra["outer/a"], flat[:, 0:2])
+        np.testing.assert_allclose(nra["outer/b"], flat[:, 2])
+        np.testing.assert_allclose(nra["m"], flat[:, 3])
+        np.testing.assert_allclose(nra.flatten(), flat)
+
+    def test_getitem_slash_path(self):
+        tpl = self._nested_tpl()
+        nra = NumericRecordArray.unflatten(
+            jnp.arange(15.0).reshape(5, 3), template=tpl, batch_shape=(5,))
+        np.testing.assert_allclose(nra["outer/a"], nra["outer"]["a"])
+        with pytest.raises(KeyError):
+            nra["outer/missing"]    # leaf missing inside the sub-record
+        with pytest.raises(KeyError):
+            nra["nope/a"]           # head field not in the store
+        with pytest.raises(KeyError):
+            nra["m/x"]              # slash descends into a (scalar) leaf
+
+    def test_getitem_int_nested_element(self):
+        # Integer indexing of a nested record array descends into the nested
+        # field, returning a (nested) record element — not an indexing error.
+        tpl = self._nested_tpl()
+        nra = NumericRecordArray.unflatten(
+            jnp.arange(15.0).reshape(5, 3), template=tpl, batch_shape=(5,))
+        elem = nra[2]
+        assert isinstance(elem, Record)
+        np.testing.assert_allclose(elem["outer"]["a"], nra["outer"]["a"][2])
+        np.testing.assert_allclose(elem.flatten(), nra.flatten()[2])
+
+    def test_getitem_int_nested_multidim_batch(self):
+        tpl = self._nested_tpl()
+        nra = NumericRecordArray.unflatten(
+            jnp.arange(24.0).reshape(2, 4, 3), template=tpl, batch_shape=(2, 4))
+        elem = nra[5]  # flat index into the (2, 4) batch
+        np.testing.assert_allclose(
+            elem["outer"]["a"], np.asarray(nra["outer"]["a"]).reshape(-1)[5])
+
+
+# ---------------------------------------------------------------------------
 # NumericRecordArray mean / var
 # ---------------------------------------------------------------------------
 

@@ -27,26 +27,69 @@ ProbPipe provides a set of built-in **ops**, which are workflow functions that c
 
 ## Installation
 
-ProbPipe requires Python ≥ 3.12 (tested on 3.12 and 3.13).
+ProbPipe requires Python ≥ 3.12 (tested on 3.12, 3.13, and 3.14). ProbPipe is
+not yet on PyPI, so installation is from source.
+
+### New to Python?
+
+You do **not** need an existing Python installation. [uv](https://docs.astral.sh/uv/)
+manages both Python and the environment for you. First
+[install uv](https://docs.astral.sh/uv/getting-started/installation/) (on
+macOS/Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`), then:
 
 ```bash
 git clone https://github.com/TARPS-group/prob-pipe.git
 cd prob-pipe
-pip install .
+uv venv                 # create an isolated environment (uv fetches a compatible Python)
+uv pip install ".[pymc,nutpie,viz]"   # ProbPipe + the backends the tutorials use
+source .venv/bin/activate   # activate it; now `python` and `probpipe` are available
 ```
 
-ProbPipe also installs cleanly with [uv](https://docs.astral.sh/uv/). For a lockfile-managed dev environment, run `uv sync` (see [CONTRIBUTING.md](https://github.com/TARPS-group/prob-pipe/blob/main/CONTRIBUTING.md#installation)). To use `uv pip install` in place of the `pip install` examples below, first create and activate an environment with `uv venv && source .venv/bin/activate` — `uv pip` installs into the active (or an explicitly targeted) environment, not a global one.
+Then work through the [Getting Started tutorial](tutorials/getting_started.ipynb).
+(Prefer not to activate? Prefix commands with `uv run`, e.g. `uv run python`.)
+
+### Already have a Python environment?
+
+Install from source with pip into your active environment:
+
+```bash
+git clone https://github.com/TARPS-group/prob-pipe.git
+cd prob-pipe
+pip install ".[pymc,nutpie,viz]"   # ProbPipe + the backends the tutorials use
+```
+
+uv users can substitute `uv pip install ".[pymc,nutpie,viz]"` (into an active
+`uv venv`), or `uv sync` for a lockfile-managed dev environment (see
+[CONTRIBUTING.md](https://github.com/TARPS-group/prob-pipe/blob/main/CONTRIBUTING.md#installation)).
+Bare `pip install .` installs the minimal `probpipe-core` alone (add backends as
+extras — see below).
+
+### Two distributions: `probpipe` and `probpipe-core`
+
+ProbPipe ships as two distributions that share the same `probpipe` import name:
+
+| Install | What you get |
+|---|---|
+| `pip install probpipe` | **Recommended.** The minimal core plus the inference backends the docs use — PyMC, nutpie, and BayesFlow — so every example and tutorial runs out of the box (Python 3.12–3.13; see the 3.14 note below). |
+| `pip install probpipe-core` | **Minimal.** The JAX base only (JAX, BlackJAX, TFP, ArviZ); add backends as extras, e.g. `pip install "probpipe-core[pymc]"`. |
+
+`probpipe` already bundles PyMC, nutpie, and BayesFlow. Any remaining optional extra can be added on top with either name — `pip install "probpipe[prefect]"` (also `[viz]`, `[stan]`) — and `probpipe-core` users add any backend the same way, e.g. `pip install "probpipe-core[pymc]"`. On **Python 3.14** `probpipe` omits BayesFlow (its neural-SBI backend caps `<3.14`), so the neural-SBI sections of the *Flexible inference* tutorial are unavailable there until upstream lifts the cap; everything else runs.
+
+> Publishing to PyPI is pending; for now install from source as shown above (the repository root builds `probpipe-core` — add the extras you need).
+
+### Dependencies and optional extras
 
 Core dependencies: JAX and TensorFlow Probability. ProbPipe uses [tfp-nightly](https://pypi.org/project/tfp-nightly/), which is the [recommended approach](https://github.com/tensorflow/probability/issues/1994#issuecomment-3129033043) for TFP on JAX since stable TFP releases are tied to TensorFlow and often lag behind JAX.
 
-Optional extras:
+Optional extras (append to the `pip install .` / `uv pip install .` above, e.g. `pip install ".[dev]"`):
 
 ```bash
-pip install .[dev]       # pytest, jupyter, matplotlib, graphviz
-pip install .[prefect]   # Prefect orchestration backend
-pip install .[stan]      # Stan models via BridgeStan + CmdStanPy
-pip install .[pymc]      # PyMC model integration
-pip install .[nutpie]    # nutpie Markov chain Monte Carlo (MCMC) sampler
+pip install ".[dev]"        # pytest, jupyter, matplotlib, graphviz
+pip install ".[prefect]"    # Prefect orchestration backend
+pip install ".[stan]"       # Stan models via BridgeStan + CmdStanPy
+pip install ".[pymc]"       # PyMC model integration
+pip install ".[nutpie]"     # nutpie Markov chain Monte Carlo (MCMC) sampler
+pip install ".[bayesflow]"  # BayesFlow amortized simulation-based inference (Python 3.12-3.13)
 ```
 
 ### Ray via Prefect
