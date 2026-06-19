@@ -155,7 +155,7 @@ def _collect_observed_leaves(
         maps to a component distribution.
     """
     for key, obs_val in obs_tree.items():
-        path = prefix + (key,)
+        path = (*prefix, key)
         path_str = " > ".join(path)
 
         # Validate key exists
@@ -287,7 +287,7 @@ def _prune_leaves(tree: dict, remove_paths: set[KeyPath], prefix: tuple = ()) ->
     """
     result = {}
     for key, value in tree.items():
-        path = prefix + (key,)
+        path = (*prefix, key)
         if path in remove_paths:
             continue
         if isinstance(value, dict):

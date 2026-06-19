@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from typing import Any, TypeAlias
+from typing import Any
 
 import jax.numpy as jnp
 import jax.scipy.linalg as jsla
@@ -853,6 +853,6 @@ class DiagonalRootLinOp(DiagonalLinOp):
 # Type Aliases
 # -----------------------------------------------------------------------------
 
-LinOpLike: TypeAlias = LinOp | ArrayLike
-CholeskyFactor: TypeAlias = TriangularLinOp | DiagonalLinOp
-CholeskyRepresentation: TypeAlias = CholeskyLinOp | DiagonalRootLinOp
+type LinOpLike = LinOp | ArrayLike
+type CholeskyFactor = TriangularLinOp | DiagonalLinOp
+type CholeskyRepresentation = CholeskyLinOp | DiagonalRootLinOp

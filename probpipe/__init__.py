@@ -1,5 +1,6 @@
-from importlib.metadata import version as _version, PackageNotFoundError as _PackageNotFoundError
 import warnings as _warnings
+from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
+from importlib.metadata import version as _version
 
 # The importable ``probpipe`` package ships in the ``probpipe-core`` distribution
 # (the friendly ``probpipe`` name is a code-less metapackage over it), so the
@@ -25,343 +26,345 @@ _warnings.filterwarnings(
 )
 
 from probpipe._weights import Weights
-from probpipe.core.distribution import (
-    Distribution,
-    RecordDistribution,
-    NumericRecordDistribution,
-    FlatNumericRecordDistribution,
-    FlattenedDistributionView,
-    NumericRecordDistributionView,
-    EmpiricalDistribution,
-    RecordEmpiricalDistribution,
-    BroadcastDistribution,
-    BootstrapDistribution,
-    BootstrapReplicateDistribution,
-    RecordBootstrapReplicateDistribution,
-    DEFAULT_NUM_EVALUATIONS,
-    RETURN_APPROX_DIST,
-    set_default_num_evaluations,
-    set_return_approx_dist,
-    # Random functions
-    RandomFunction,
-    ArrayRandomFunction,
-    # Random measures
-    RandomMeasure,
-    NumericRandomMeasure,
+from probpipe.converters import (
+    ConversionInfo,
+    ConversionMethod,
+    Converter,
+    converter_registry,
 )
-from probpipe.core._distribution_array import DistributionArray
-from probpipe.distributions import (
-    # TFP base
-    TFPDistribution,
-    # Continuous
-    Normal,
-    Beta,
-    Gamma,
-    InverseGamma,
-    Exponential,
-    LogNormal,
-    StudentT,
-    Uniform,
-    Cauchy,
-    Laplace,
-    HalfNormal,
-    HalfCauchy,
-    Pareto,
-    TruncatedNormal,
-    # Discrete
-    Bernoulli,
-    Binomial,
-    Poisson,
-    Categorical,
-    NegativeBinomial,
-    # Multivariate
-    MultivariateNormal,
-    Dirichlet,
-    Multinomial,
-    Wishart,
-    VonMisesFisher,
-    # Transformed
-    TransformedDistribution,
-    bijector_for,
-    register_bijector,
-    # Joint
-    ProductDistribution,
-    SequentialJointDistribution,
-    JointEmpirical,
-    NumericJointEmpirical,
-    JointGaussian,
-    # Gaussian random functions
-    GaussianRandomFunction,
-    LinearBasisFunction,
-    # KDE
-    KDEDistribution,
-)
-from probpipe.core.record import (
-    Record,
-    EventTemplate,
-    NumericEventTemplate,
-    ArraySpec,
-    OpaqueSpec,
-    DistributionSpec,
-    FunctionSpec,
-    LeafSpec,
-)
-from probpipe.core._numeric_record import NumericRecord
-from probpipe.core._record_array import RecordArray, NumericRecordArray
 from probpipe.core._array_backend import (
     AuxHooks,
     aux_for,
     register_aux,
 )
-from probpipe.core.config import WorkflowKind, prefect_config, provenance_config, ProvenanceMode
-from probpipe.core.node import (
-    WorkflowFunction,
-    Module,
-    workflow_function,
-    workflow_method,
-    abstract_workflow_method,
-)
-from probpipe.core.provenance import ParentInfo, Provenance, provenance_ancestors, provenance_dag
+from probpipe.core._distribution_array import DistributionArray
+from probpipe.core._numeric_record import NumericRecord
+from probpipe.core._record_array import NumericRecordArray, RecordArray
+from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config, provenance_config
 from probpipe.core.constraints import (
     Constraint,
-    real,
-    positive,
-    non_negative,
-    non_negative_integer,
     boolean,
-    unit_interval,
-    simplex,
-    positive_definite,
-    sphere,
-    interval,
     greater_than,
     integer_interval,
+    interval,
+    non_negative,
+    non_negative_integer,
+    positive,
+    positive_definite,
+    real,
+    simplex,
+    sphere,
+    unit_interval,
+)
+from probpipe.core.distribution import (
+    DEFAULT_NUM_EVALUATIONS,
+    RETURN_APPROX_DIST,
+    ArrayRandomFunction,
+    BootstrapDistribution,
+    BootstrapReplicateDistribution,
+    BroadcastDistribution,
+    Distribution,
+    EmpiricalDistribution,
+    FlatNumericRecordDistribution,
+    FlattenedDistributionView,
+    NumericRandomMeasure,
+    NumericRecordDistribution,
+    NumericRecordDistributionView,
+    # Random functions
+    RandomFunction,
+    # Random measures
+    RandomMeasure,
+    RecordBootstrapReplicateDistribution,
+    RecordDistribution,
+    RecordEmpiricalDistribution,
+    set_default_num_evaluations,
+    set_return_approx_dist,
+)
+from probpipe.core.node import (
+    Module,
+    WorkflowFunction,
+    abstract_workflow_method,
+    workflow_function,
+    workflow_method,
+)
+from probpipe.core.protocols import (
+    SupportsArrayBackend,
+    SupportsConditioning,
+    SupportsCovariance,
+    SupportsExpectation,
+    SupportsLogProb,
+    SupportsMean,
+    SupportsRandomLogProb,
+    SupportsRandomUnnormalizedLogProb,
+    SupportsSampling,
+    SupportsUnnormalizedLogProb,
+    SupportsVariance,
+)
+from probpipe.core.provenance import ParentInfo, Provenance, provenance_ancestors, provenance_dag
+from probpipe.core.record import (
+    ArraySpec,
+    DistributionSpec,
+    EventTemplate,
+    FunctionSpec,
+    LeafSpec,
+    NumericEventTemplate,
+    OpaqueSpec,
+    Record,
 )
 from probpipe.core.transition import (
     iterate,
     with_conversion,
     with_resampling,
 )
-from probpipe.modeling import (
-    GLMLikelihood,
-    Likelihood,
-    ConditionallyIndependentLikelihood,
-    GenerativeLikelihood,
-    IncrementalConditioner,
+from probpipe.distributions import (
+    # Discrete
+    Bernoulli,
+    Beta,
+    Binomial,
+    Categorical,
+    Cauchy,
+    Dirichlet,
+    Exponential,
+    Gamma,
+    # Gaussian random functions
+    GaussianRandomFunction,
+    HalfCauchy,
+    HalfNormal,
+    InverseGamma,
+    JointEmpirical,
+    JointGaussian,
+    # KDE
+    KDEDistribution,
+    Laplace,
+    LinearBasisFunction,
+    LogNormal,
+    Multinomial,
+    # Multivariate
+    MultivariateNormal,
+    NegativeBinomial,
+    # Continuous
+    Normal,
+    NumericJointEmpirical,
+    Pareto,
+    Poisson,
+    # Joint
+    ProductDistribution,
+    SequentialJointDistribution,
+    StudentT,
+    # TFP base
+    TFPDistribution,
+    # Transformed
+    TransformedDistribution,
+    TruncatedNormal,
+    Uniform,
+    VonMisesFisher,
+    Wishart,
+    bijector_for,
+    register_bijector,
 )
-from probpipe.record import Design, FullFactorialDesign
 from probpipe.inference import (
     ApproximateDistribution,
-    inference_method_registry,
-    rwmh,
-    elliptical_slice,
-    condition_on_nutpie,
-    MinibatchedDistribution,
-    learn_amortized_posterior,
-    BayesFlowModel,
-    learn_amortized_likelihood,
-    learn_amortized_ratio,
     BayesFlowLikelihood,
+    BayesFlowModel,
     BayesFlowRatio,
+    MinibatchedDistribution,
+    condition_on_nutpie,
+    elliptical_slice,
+    inference_method_registry,
+    learn_amortized_likelihood,
+    learn_amortized_posterior,
+    learn_amortized_ratio,
+    rwmh,
 )
-from probpipe.modeling import ProbabilisticModel, SimpleModel, SimpleGenerativeModel
+from probpipe.modeling import (
+    ConditionallyIndependentLikelihood,
+    GenerativeLikelihood,
+    GLMLikelihood,
+    IncrementalConditioner,
+    Likelihood,
+    ProbabilisticModel,
+    SimpleGenerativeModel,
+    SimpleModel,
+)
+from probpipe.record import Design, FullFactorialDesign
 from probpipe.validation import predictive_check
-from probpipe.core.protocols import (
-    SupportsExpectation,
-    SupportsSampling,
-    SupportsUnnormalizedLogProb,
-    SupportsLogProb,
-    SupportsMean,
-    SupportsVariance,
-    SupportsCovariance,
-    SupportsRandomLogProb,
-    SupportsRandomUnnormalizedLogProb,
-    SupportsConditioning,
-    SupportsArrayBackend,
-)
-from probpipe.converters import (
-    converter_registry,
-    ConversionInfo,
-    ConversionMethod,
-    Converter,
-)
 
 __all__ = [
-    # Record
-    "Record",
-    "EventTemplate",
-    "NumericEventTemplate",
-    "ArraySpec",
-    "OpaqueSpec",
-    "DistributionSpec",
-    "FunctionSpec",
-    "LeafSpec",
-    "NumericRecord",
-    "RecordArray",
-    "NumericRecordArray",
-    # Array backend / aux registry
-    "AuxHooks",
-    "aux_for",
-    "register_aux",
-    # Weights
-    "Weights",
-    # Base classes
-    "Distribution",
-    "RecordDistribution",
-    "NumericRecordDistribution",
-    "FlatNumericRecordDistribution",
-    "FlattenedDistributionView",
-    "NumericRecordDistributionView",
-    "DistributionArray",
-    "TFPDistribution",
-    "EmpiricalDistribution",
-    "RecordEmpiricalDistribution",
-    "BroadcastDistribution",
-    "BootstrapDistribution",
-    "BootstrapReplicateDistribution",
-    "RecordBootstrapReplicateDistribution",
-    "ParentInfo",
-    "Provenance",
-    "ProvenanceMode",
-    "provenance_config",
-    # Constraints
-    "Constraint",
-    "real",
-    "positive",
-    "non_negative",
-    "non_negative_integer",
-    "boolean",
-    "unit_interval",
-    "simplex",
-    "positive_definite",
-    "sphere",
-    "interval",
-    "greater_than",
-    "integer_interval",
-    # Continuous
-    "Normal",
-    "Beta",
-    "Gamma",
-    "InverseGamma",
-    "Exponential",
-    "LogNormal",
-    "StudentT",
-    "Uniform",
-    "Cauchy",
-    "Laplace",
-    "HalfNormal",
-    "HalfCauchy",
-    "Pareto",
-    "TruncatedNormal",
-    # Discrete
-    "Bernoulli",
-    "Binomial",
-    "Poisson",
-    "Categorical",
-    "NegativeBinomial",
-    # Multivariate
-    "MultivariateNormal",
-    "Dirichlet",
-    "Multinomial",
-    "Wishart",
-    "VonMisesFisher",
-    # Transformed
-    "TransformedDistribution",
-    "bijector_for",
-    "register_bijector",
-    # Joint
-    "ProductDistribution",
-    "SequentialJointDistribution",
-    "JointEmpirical",
-    "NumericJointEmpirical",
-    "JointGaussian",
-    # Configuration
-    "WorkflowKind",
-    "prefect_config",
-    # WorkflowFunction
-    "WorkflowFunction",
-    "Module",
-    "workflow_function",
-    "workflow_method",
-    "abstract_workflow_method",
-    # Provenance
-    "provenance_ancestors",
-    "provenance_dag",
-    # Random functions
-    "RandomFunction",
-    "ArrayRandomFunction",
-    "GaussianRandomFunction",
-    "LinearBasisFunction",
-    # Random measures
-    "RandomMeasure",
-    "NumericRandomMeasure",
-    # KDE
-    "KDEDistribution",
-    # Protocols
-    "SupportsExpectation",
-    "SupportsSampling",
-    "SupportsUnnormalizedLogProb",
-    "SupportsLogProb",
-    "SupportsMean",
-    "SupportsVariance",
-    "SupportsCovariance",
-    "SupportsRandomLogProb",
-    "SupportsRandomUnnormalizedLogProb",
-    "SupportsConditioning",
-    "SupportsArrayBackend",
-    # Transition / iteration
-    "iterate",
-    "with_conversion",
-    "with_resampling",
-    # Modeling
-    "GLMLikelihood",
-    "Likelihood",
-    "ConditionallyIndependentLikelihood",
-    "GenerativeLikelihood",
-    "IncrementalConditioner",
-    "ProbabilisticModel",
-    "SimpleModel",
-    "SimpleGenerativeModel",
-    # Record-based designs
-    "Design",
-    "FullFactorialDesign",
     # Inference
     "ApproximateDistribution",
-    "inference_method_registry",
-    "rwmh",
-    "elliptical_slice",
-    "condition_on_nutpie",
-    "MinibatchedDistribution",
-    "learn_amortized_posterior",
-    "BayesFlowModel",
-    "learn_amortized_likelihood",
-    "learn_amortized_ratio",
+    "ArrayRandomFunction",
+    "ArraySpec",
+    # Array backend / aux registry
+    "AuxHooks",
     "BayesFlowLikelihood",
+    "BayesFlowModel",
     "BayesFlowRatio",
-    # Validation
-    "predictive_check",
-    # Converters
-    "converter_registry",
+    # Discrete
+    "Bernoulli",
+    "Beta",
+    "Binomial",
+    "BootstrapDistribution",
+    "BootstrapReplicateDistribution",
+    "BroadcastDistribution",
+    "Categorical",
+    "Cauchy",
+    "ConditionallyIndependentLikelihood",
+    # Constraints
+    "Constraint",
     "ConversionInfo",
     "ConversionMethod",
     "Converter",
+    # Record-based designs
+    "Design",
+    "Dirichlet",
+    # Base classes
+    "Distribution",
+    "DistributionArray",
+    "DistributionSpec",
+    "EmpiricalDistribution",
+    "EventTemplate",
+    "Exponential",
+    "FlatNumericRecordDistribution",
+    "FlattenedDistributionView",
+    "FullFactorialDesign",
+    "FunctionSpec",
+    # Modeling
+    "GLMLikelihood",
+    "Gamma",
+    "GaussianRandomFunction",
+    "GenerativeLikelihood",
+    "HalfCauchy",
+    "HalfNormal",
+    "IncrementalConditioner",
+    "InverseGamma",
+    "JointEmpirical",
+    "JointGaussian",
+    # KDE
+    "KDEDistribution",
+    "Laplace",
+    "LeafSpec",
+    "Likelihood",
+    "LinearBasisFunction",
+    "LogNormal",
+    "MinibatchedDistribution",
+    "Module",
+    "Multinomial",
+    # Multivariate
+    "MultivariateNormal",
+    "NegativeBinomial",
+    # Continuous
+    "Normal",
+    "NumericEventTemplate",
+    "NumericJointEmpirical",
+    "NumericRandomMeasure",
+    "NumericRecord",
+    "NumericRecordArray",
+    "NumericRecordDistribution",
+    "NumericRecordDistributionView",
+    "OpaqueSpec",
+    "ParentInfo",
+    "Pareto",
+    "Poisson",
+    "ProbabilisticModel",
+    # Joint
+    "ProductDistribution",
+    "Provenance",
+    "ProvenanceMode",
+    # Random functions
+    "RandomFunction",
+    # Random measures
+    "RandomMeasure",
+    # Record
+    "Record",
+    "RecordArray",
+    "RecordBootstrapReplicateDistribution",
+    "RecordDistribution",
+    "RecordEmpiricalDistribution",
+    "SequentialJointDistribution",
+    "SimpleGenerativeModel",
+    "SimpleModel",
+    "StudentT",
+    "SupportsArrayBackend",
+    "SupportsConditioning",
+    "SupportsCovariance",
+    # Protocols
+    "SupportsExpectation",
+    "SupportsLogProb",
+    "SupportsMean",
+    "SupportsRandomLogProb",
+    "SupportsRandomUnnormalizedLogProb",
+    "SupportsSampling",
+    "SupportsUnnormalizedLogProb",
+    "SupportsVariance",
+    "TFPDistribution",
+    # Transformed
+    "TransformedDistribution",
+    "TruncatedNormal",
+    "Uniform",
+    "VonMisesFisher",
+    # Weights
+    "Weights",
+    "Wishart",
+    # WorkflowFunction
+    "WorkflowFunction",
+    # Configuration
+    "WorkflowKind",
+    "abstract_workflow_method",
+    "aux_for",
+    "bijector_for",
+    "boolean",
+    "condition_on_nutpie",
+    # Converters
+    "converter_registry",
+    "elliptical_slice",
+    "greater_than",
+    "inference_method_registry",
+    "integer_interval",
+    "interval",
+    # Transition / iteration
+    "iterate",
+    "learn_amortized_likelihood",
+    "learn_amortized_posterior",
+    "learn_amortized_ratio",
+    "non_negative",
+    "non_negative_integer",
+    "positive",
+    "positive_definite",
+    # Validation
+    "predictive_check",
+    "prefect_config",
+    # Provenance
+    "provenance_ancestors",
+    "provenance_config",
+    "provenance_dag",
+    "real",
+    "register_aux",
+    "register_bijector",
+    "rwmh",
+    "simplex",
+    "sphere",
+    "unit_interval",
+    "with_conversion",
+    "with_resampling",
+    "workflow_function",
+    "workflow_method",
 ]
 
 # ---------------------------------------------------------------------------
 # Standalone operations (plain functions + WorkflowFunction wrappers)
 # ---------------------------------------------------------------------------
-from probpipe.core.ops import (  # noqa: E402
-    sample,
-    log_prob,
-    prob,
-    unnormalized_log_prob,
-    unnormalized_prob,
-    mean,
-    variance,
+from probpipe.core.ops import (
+    condition_on,
     cov,
     expectation,
+    from_distribution,
+    log_prob,
+    mean,
+    prob,
     random_log_prob,
     random_unnormalized_log_prob,
-    condition_on,
-    from_distribution,
+    sample,
+    unnormalized_log_prob,
+    unnormalized_prob,
+    variance,
 )

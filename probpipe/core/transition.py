@@ -19,6 +19,7 @@ Core API::
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -90,7 +91,8 @@ def iterate[T, S](
 
         # Auto-attach provenance if not already set
         if result.source is None:
-            try:
+            # write-once guard: re-sourcing an already-sourced result raises
+            with contextlib.suppress(RuntimeError):
                 result.with_source(
                     Provenance.create(
                         "iterate",
@@ -98,8 +100,6 @@ def iterate[T, S](
                         metadata={"step": i},
                     )
                 )
-            except RuntimeError:
-                pass  # write-once guard
 
         dists.append(result)
         current = result

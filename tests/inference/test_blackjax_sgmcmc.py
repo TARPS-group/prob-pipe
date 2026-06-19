@@ -80,7 +80,10 @@ class TestRegistry:
         ``priority=0`` and reachable only via
         ``method="blackjax_sghmc"``.
         """
-        get = lambda n: inference_method_registry.get_method(n).priority
+
+        def get(n):
+            return inference_method_registry.get_method(n).priority
+
         # SGLD below the auto-dispatch winner (BlackJAX NUTS) but
         # positive so a `method="blackjax_sgld"` request still reaches
         # it through the priority walk.

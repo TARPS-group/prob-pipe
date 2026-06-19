@@ -77,7 +77,7 @@ class TestContinuousGeneric:
 
     def test_sample_shape(self, continuous_dist, key):
         s = sample(continuous_dist, key=key, sample_shape=(5,))
-        assert s.shape == (5,) + continuous_dist.event_shape
+        assert s.shape == (5, *continuous_dist.event_shape)
 
     def test_log_prob_shape(self, continuous_dist, key):
         s = sample(continuous_dist, key=key, sample_shape=(5,))
@@ -255,7 +255,7 @@ class TestContinuousMoments:
 # ---------------------------------------------------------------------------
 
 
-from probpipe import prob  # noqa: E402
+from probpipe import prob
 
 
 class TestProb:

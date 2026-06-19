@@ -35,12 +35,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-logger = logging.getLogger(__name__)
-
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsSampling
 from ..core.record import EventTemplate, Record
 from ..custom_types import Array, ArrayLike
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "as_prng_key",
@@ -462,7 +462,7 @@ def build_mcmc_datatree(
         warmup_array = _stack(warmup_chains)
         n_chains, n_warmup = warmup_array.shape[:2]
         event_dims = [f"params_dim_{i}" for i in range(warmup_array.ndim - 2)]
-        dims = ["chain", "draw"] + event_dims
+        dims = ["chain", "draw", *event_dims]
         warmup_ds = xr.Dataset(
             {
                 "params": xr.DataArray(

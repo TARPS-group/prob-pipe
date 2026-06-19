@@ -385,7 +385,7 @@ class TestPytreeRegistration:
 
     def test_flatten_yields_batched_params_in_insertion_order(self):
         backend = self._backend()
-        leaves, treedef = jax.tree_util.tree_flatten(backend)
+        leaves, _treedef = jax.tree_util.tree_flatten(backend)
         # Two children: ``loc`` then ``scale`` — insertion order from
         # ``Normal._make_array_backend``. Both end up as ``(5,)``-
         # shaped arrays after the constructor's scalar broadcast.

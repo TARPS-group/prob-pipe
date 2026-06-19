@@ -472,7 +472,7 @@ def protocols_supported_by_all(
     tuple of ``SupportsFoo`` protocols to test against; get back the
     protocols that are satisfied by every leaf, in the given order.
     """
-    return tuple(p for p in candidates if all(isinstance(l, p) for l in leaves))
+    return tuple(p for p in candidates if all(isinstance(leaf, p) for leaf in leaves))
 
 
 # ---------------------------------------------------------------------------

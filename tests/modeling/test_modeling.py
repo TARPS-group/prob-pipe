@@ -34,7 +34,7 @@ class TestLazyImports:
         import probpipe.modeling as mod
 
         with pytest.raises(AttributeError, match="has no attribute"):
-            mod.NonExistent
+            _ = mod.NonExistent
 
 
 # ---------------------------------------------------------------------------

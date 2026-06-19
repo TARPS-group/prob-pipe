@@ -641,7 +641,7 @@ class TestDistributionABC:
                 return (1,)
 
             def _sample(self, key, sample_shape=()):
-                return jnp.zeros(sample_shape + (1,))
+                return jnp.zeros((*sample_shape, 1))
 
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
                 return _mc_expectation(
@@ -666,7 +666,7 @@ class TestDistributionABC:
                 return (1,)
 
             def _sample(self, key, sample_shape=()):
-                return jnp.zeros(sample_shape + (1,))
+                return jnp.zeros((*sample_shape, 1))
 
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
                 return _mc_expectation(
@@ -795,7 +795,7 @@ class TestDistributionCoverageGaps:
                 return ()
 
         s = Scalar(name="s")
-        with pytest.raises(NotImplementedError, match="Scalar.dtypes"):
+        with pytest.raises(NotImplementedError, match=r"Scalar.dtypes"):
             _ = s.dtypes
 
     def test_dtype_uniform_with_template(self):

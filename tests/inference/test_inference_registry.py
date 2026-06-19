@@ -1,7 +1,7 @@
 """Tests for the inference method registry."""
 
 import warnings
-from typing import Any
+from typing import Any, ClassVar
 
 import jax.numpy as jnp
 import numpy as np
@@ -340,7 +340,7 @@ class TestBuiltInPriorityAnchors:
     ``tfp_hmc`` are opt-in for bit-pattern regression.
     """
 
-    EXPECTED_PRIORITIES = {
+    EXPECTED_PRIORITIES: ClassVar[dict[str, int]] = {
         "nutpie_nuts": 88,
         "blackjax_nuts": 85,
         "cmdstan_nuts": 82,

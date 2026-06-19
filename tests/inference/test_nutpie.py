@@ -13,8 +13,8 @@ import pytest
 
 nutpie = pytest.importorskip("nutpie")
 
-from probpipe.inference import ApproximateDistribution  # noqa: E402
-from probpipe.inference._nutpie import (  # noqa: E402
+from probpipe.inference import ApproximateDistribution
+from probpipe.inference._nutpie import (
     _compile_for_nutpie,
     _extract_chains,
     condition_on_nutpie,
@@ -256,7 +256,7 @@ class TestNutpieStanIntegration:
 
 pm = pytest.importorskip("pymc")
 
-from probpipe.modeling import PyMCModel  # noqa: E402
+from probpipe.modeling import PyMCModel
 
 
 def _gaussian_pymc_fn(y=None):

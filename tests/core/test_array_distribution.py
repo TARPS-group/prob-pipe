@@ -294,15 +294,15 @@ class TestSupports:
         assert isinstance(result, dict)
         assert len(result) == 1
         # The single field's constraint should match .support
-        assert list(result.values())[0] == scalar_normal.support
-        assert list(result.values())[0] == real
+        assert next(iter(result.values())) == scalar_normal.support
+        assert next(iter(result.values())) == real
 
     def test_dtypes_is_per_field_dict(self, scalar_normal):
         """dtypes returns a per-field dict of dtypes."""
         result = scalar_normal.dtypes
         assert isinstance(result, dict)
         assert len(result) == 1
-        assert list(result.values())[0] == scalar_normal.dtype
+        assert next(iter(result.values())) == scalar_normal.dtype
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +358,7 @@ class TestCanonicalConvenience:
                 # template's per-field event shapes.
                 return NumericRecord(
                     a=jnp.zeros(sample_shape),
-                    b=jnp.zeros(sample_shape + (2,)),
+                    b=jnp.zeros((*sample_shape, 2)),
                 )
 
         return TwoField(name="two_field")
@@ -371,7 +371,7 @@ class TestCanonicalConvenience:
         (``dtype`` equals the single value in ``dtypes``).
         """
         assert scalar_normal.dtype == jnp.float32
-        assert scalar_normal.dtype == list(scalar_normal.dtypes.values())[0]
+        assert scalar_normal.dtype == next(iter(scalar_normal.dtypes.values()))
 
     def test_dtype_returns_none_when_dtypes_mixed(self, multi_leaf_dist):
         """Multi-leaf with mixed dtypes: ``dtype`` is ``None``."""

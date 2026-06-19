@@ -226,7 +226,6 @@ class TestAllCrossFamilyConversions:
             converter_registry.convert(mvn, Multinomial, check_support=False)
 
     def test_wishart_from_mvn(self):
-        mvn = MultivariateNormal(loc=jnp.array([1.0, 0.0]), cov=jnp.eye(2), name="z")
         # Wishart samples are matrices; use Wishart as source for itself
         w = Wishart(df=5.0, scale_tril=jnp.eye(2), name="w")
         result = converter_registry.convert(w, Wishart)
@@ -803,7 +802,7 @@ class TestProtocolConversion:
         emp = EmpiricalDistribution(["a", "b", "c"])
         with pytest.raises(
             TypeError,
-            match="generic .object-array. EmpiricalDistribution",
+            match=r"generic .object-array. EmpiricalDistribution",
         ):
             converter_registry.convert(emp, SupportsLogProb)
 

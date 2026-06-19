@@ -55,7 +55,7 @@ class TestGeneric:
 
     def test_sample_shape(self, discrete_dist, key):
         samples = sample(discrete_dist, key=key, sample_shape=(5,))
-        assert samples.shape == (5,) + discrete_dist.event_shape
+        assert samples.shape == (5, *discrete_dist.event_shape)
 
     def test_log_prob_shape(self, discrete_dist, key):
         samples = sample(discrete_dist, key=key, sample_shape=(5,))

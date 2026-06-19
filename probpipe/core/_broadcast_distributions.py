@@ -256,7 +256,7 @@ def _make_mixture_marginal(
 
     cache_key = tuple(active_protocols)
     if cache_key not in _mixture_class_cache:
-        bases = tuple(active_mixins) + (_MixtureMarginal,) + tuple(active_protocols)
+        bases = (*tuple(active_mixins), _MixtureMarginal, *tuple(active_protocols))
         cls_name = "_DynMixtureMarginal"
         _mixture_class_cache[cache_key] = type(cls_name, bases, {})
 
@@ -725,7 +725,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         self._output_distributions = output_distributions
 
         # Determine n from first broadcast arg
-        first_key = list(broadcast_args)[0]
+        first_key = next(iter(broadcast_args))
         first_arr = input_samples[first_key]
         n = first_arr.shape[0] if hasattr(first_arr, "shape") else len(first_arr)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
@@ -763,7 +763,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
 
     @property
     def fields(self) -> tuple[str, ...]:
-        return tuple(self._broadcast_args) + ("_output",)
+        return (*tuple(self._broadcast_args), "_output")
 
     def __getitem__(self, key: str):
         if key == "_output":

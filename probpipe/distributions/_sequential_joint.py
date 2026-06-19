@@ -87,7 +87,7 @@ def _sequential_class_for_components(components: dict) -> type:
         leaves,
         (SupportsLogProb, SupportsMean, SupportsVariance),
     )
-    all_numeric = all(isinstance(l, NumericRecordDistribution) for l in leaves)
+    all_numeric = all(isinstance(leaf, NumericRecordDistribution) for leaf in leaves)
 
     key = (frozenset(extra_bases), all_numeric)
     if key in _SEQUENTIAL_CLASS_CACHE:

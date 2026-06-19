@@ -410,7 +410,7 @@ class TestRecordBootstrapReplicateDistribution:
         assert not isinstance(emp, RecordEmpiricalDistribution)
         with pytest.raises(
             TypeError,
-            match="generic .object-array. EmpiricalDistribution",
+            match=r"generic .object-array. EmpiricalDistribution",
         ):
             RecordBootstrapReplicateDistribution(emp)
 

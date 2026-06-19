@@ -679,7 +679,9 @@ class BlackJAXRWMHMethod(InferenceMethod):
         log_prob_fn = None
         if is_simple_model(dist):
             lik = dist._likelihood
-            log_prob_fn = lambda params, d: lik.log_likelihood(params=params, data=d)
+
+            def log_prob_fn(params, d):
+                return lik.log_likelihood(params=params, data=d)
 
         random_seed = kwargs.get("random_seed", 0)
         init = kwargs.get("init")

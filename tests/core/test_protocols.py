@@ -663,7 +663,7 @@ class TestSimpleGenerativeModelSampling:
             likelihood=_L(),
         )
         assert isinstance(model, SupportsSampling)
-        params, data = model._sample(jax.random.PRNGKey(0))
+        _params, data = model._sample(jax.random.PRNGKey(0))
         assert data.shape == (3,)
 
 
