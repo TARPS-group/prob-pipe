@@ -20,8 +20,11 @@ from probpipe import (
     Normal,
     NumericRecord,
     NumericRecordArray,
+    ProvenanceMode,
     Record,
     RecordArray,
+    provenance_ancestors,
+    provenance_config,
     workflow_function,
 )
 from probpipe.core._distribution_base import Distribution
@@ -314,6 +317,41 @@ class TestProvenanceChain:
         assert any(p.obj is sweep for p in out.source.parents)
         assert any(p.obj is noise_dist for p in out.source.parents)
         assert out.source.metadata["k"] == 10
+
+    def test_pure_sweep_provenance_lightweight(self):
+        """Default LIGHTWEIGHT: the sweep output keeps a traversable source — a
+        ``ParentInfo`` with ``obj=None`` (so the parent array is GC-eligible) and
+        the lineage preserved via ``.source``."""
+        @workflow_function
+        def f(p: NumericRecord) -> float:
+            return p["x"]
+
+        sweep = NumericRecordArray.stack(
+            [NumericRecord(x=float(i)) for i in range(3)]
+        )
+        out = f(p=sweep)
+        assert out.source is not None
+        assert out.source.operation == "workflow.stack"
+        parent = out.source.parents[0]
+        assert parent.obj is None  # live ref dropped in LIGHTWEIGHT
+        assert parent.type_name == "NumericRecordArray"
+        assert any(
+            a.type_name == "NumericRecordArray" for a in provenance_ancestors(out)
+        )
+
+    def test_pure_sweep_provenance_off(self):
+        """OFF: the sweep output carries no provenance."""
+        provenance_config.mode = ProvenanceMode.OFF  # restored by the autouse fixture
+
+        @workflow_function
+        def f(p: NumericRecord) -> float:
+            return p["x"]
+
+        sweep = NumericRecordArray.stack(
+            [NumericRecord(x=float(i)) for i in range(3)]
+        )
+        out = f(p=sweep)
+        assert out.source is None
 
 
 # ---------------------------------------------------------------------------

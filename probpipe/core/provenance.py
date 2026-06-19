@@ -78,7 +78,7 @@ class Provenance:
 
     def __repr__(self) -> str:
         parent_names = ", ".join(
-            p.name or type(p).__name__ for p in self.parents
+            p.name or p.type_name for p in self.parents
         )
         return f"Provenance({self.operation!r}, parents=[{parent_names}])"
 
@@ -183,6 +183,10 @@ def _parent_key(p: Any) -> Any:
     parent's ``.source`` Provenance node is the same object on every path
     to the same ancestor, so its id is stable even though each path holds
     a distinct ``ParentInfo`` instance.
+
+    Two distinct *root* parents (``source is None``) that share a type and
+    name collapse to one key in LIGHTWEIGHT — an accepted limitation of
+    dropping object identity; FULL keeps them distinct via ``id(p.obj)``.
     """
     if isinstance(p, ParentInfo):
         if p.obj is not None:
