@@ -17,7 +17,6 @@ from probpipe import (
 )
 from probpipe.core._array_backend import aux_registry
 
-
 # ---------------------------------------------------------------------------
 # Registry lookup
 # ---------------------------------------------------------------------------

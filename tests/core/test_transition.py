@@ -7,16 +7,14 @@ import pytest
 from probpipe import (
     Distribution,
     EmpiricalDistribution,
+    IncrementalConditioner,
     MultivariateNormal,
     Provenance,
     iterate,
-    mean,
     with_conversion,
     with_resampling,
-    IncrementalConditioner,
 )
 from probpipe.core.node import WorkflowFunction
-
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers

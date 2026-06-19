@@ -18,12 +18,11 @@ import numpy as np
 
 from ..custom_types import Array
 from ._numeric_record import _NUMERIC_DTYPE_KINDS, NumericRecord
-from .provenance import Provenance
 from .record import _PATH_SEP, ArraySpec, EventTemplate, Record, _spec_size
 
 __all__ = [
-    "RecordArray",
     "NumericRecordArray",
+    "RecordArray",
     "_RecordArrayView",
 ]
 
@@ -94,9 +93,7 @@ class RecordArray(Record):
             )
         # Reorder to match the template so iteration order is canonical
         # regardless of kwarg order.
-        store: "OrderedDict[str, Any]" = OrderedDict(
-            (name, fields[name]) for name in template.fields
-        )
+        store: OrderedDict[str, Any] = OrderedDict((name, fields[name]) for name in template.fields)
         # Subclass validation hook. Runs after sort / name-check so
         # subclasses (e.g. NumericRecordArray) see a canonicalised view
         # of the leaves. Raises from ``_validate_fields`` propagate.
@@ -116,10 +113,10 @@ class RecordArray(Record):
     @classmethod
     def _validate_fields(
         cls,
-        store: "OrderedDict[str, Any]",
+        store: OrderedDict[str, Any],
         batch_shape: tuple[int, ...],
         template: EventTemplate,
-    ) -> "OrderedDict[str, Any]":
+    ) -> OrderedDict[str, Any]:
         """Hook for subclasses to validate / coerce leaves at construction.
 
         The base implementation is a no-op — ``RecordArray`` accepts any
@@ -179,7 +176,7 @@ class RecordArray(Record):
             return self._get_record(int(key))
         raise TypeError(f"key must be str or int, got {type(key).__name__}")
 
-    def view(self, field: str) -> "_RecordArrayView":
+    def view(self, field: str) -> _RecordArrayView:
         """Return a single-field view carrying parent identity.
 
         Unlike ``ra[field]`` (which returns the raw column), a view
@@ -386,10 +383,10 @@ class NumericRecordArray(RecordArray):
     @classmethod
     def _validate_fields(
         cls,
-        store: "OrderedDict[str, Any]",
+        store: OrderedDict[str, Any],
         batch_shape: tuple[int, ...],
         template: EventTemplate,
-    ) -> "OrderedDict[str, Any]":
+    ) -> OrderedDict[str, Any]:
         """Require numeric dtype and matching event shape on every leaf.
 
         Raises ``TypeError`` if a leaf is non-numeric, ``ValueError`` if
@@ -399,7 +396,7 @@ class NumericRecordArray(RecordArray):
         element is allowed to be a ``Record`` / ``NumericRecord`` /
         ``RecordArray`` and is validated at its own construction site.
         """
-        out: "OrderedDict[str, Any]" = OrderedDict()
+        out: OrderedDict[str, Any] = OrderedDict()
         for name, raw in store.items():
             spec = template[name]
             # Nested structure: skip numeric validation, let the nested
@@ -643,7 +640,7 @@ class _RecordArrayView(RecordArray):
         Name of the field to view. Must be present in ``parent``.
     """
 
-    __slots__ = ("_parent", "_field")
+    __slots__ = ("_field", "_parent")
 
     def __init__(self, parent: RecordArray, field: str):
         if field not in parent._store:
@@ -685,7 +682,7 @@ class _RecordArrayView(RecordArray):
         return tuple(getattr(self._store[self._field], "shape", ()))
 
     @property
-    def dtype(self) -> "jnp.dtype | None":
+    def dtype(self) -> jnp.dtype | None:
         return getattr(self._store[self._field], "dtype", None)
 
     @property

@@ -5,32 +5,30 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import (
-    Normal,
-    Beta,
-    Gamma,
     Bernoulli,
-    Categorical,
-    MultivariateNormal,
-    EmpiricalDistribution,
-    RecordEmpiricalDistribution,
+    Beta,
     BootstrapDistribution,
-    TransformedDistribution,
-    ProductDistribution,
-    SequentialJointDistribution,
+    EmpiricalDistribution,
+    Gamma,
     JointEmpirical,
     JointGaussian,
+    MultivariateNormal,
+    Normal,
+    ProductDistribution,
+    RecordEmpiricalDistribution,
+    SequentialJointDistribution,
+    TransformedDistribution,
 )
 from probpipe.core.protocols import (
+    SupportsConditioning,
+    SupportsCovariance,
     SupportsExpectation,
-    SupportsSampling,
-    SupportsUnnormalizedLogProb,
     SupportsLogProb,
     SupportsMean,
+    SupportsSampling,
+    SupportsUnnormalizedLogProb,
     SupportsVariance,
-    SupportsCovariance,
-    SupportsConditioning,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -277,7 +275,6 @@ class TestRecordDistributionViewDynamicProtocols:
         """Build a parent with an EventTemplate that supports only
         log_prob, and verify the view doesn't claim to be
         SupportsSampling / SupportsMean / SupportsVariance."""
-        from probpipe.core._distribution_base import Distribution
         from probpipe.core._record_distribution import (
             RecordDistribution,
             _RecordDistributionView,
@@ -332,8 +329,8 @@ class TestFlattenedDistributionViewDynamicProtocols:
     def test_flattened_view_over_sampling_only_base(self):
         """A sampling-only base produces a FlattenedDistributionView that isn't
         SupportsLogProb."""
-        import jax.numpy as jnp
         import jax
+
         from probpipe.core._numeric_record_distribution import (
             FlattenedDistributionView,
             NumericRecordDistribution,
@@ -362,6 +359,7 @@ class TestFlattenedDistributionViewDynamicProtocols:
         """A log-prob-only base produces a FlattenedDistributionView that isn't
         ``SupportsSampling`` (reverse direction of the sampling-only test)."""
         import jax.numpy as jnp
+
         from probpipe.core._numeric_record_distribution import (
             FlattenedDistributionView,
             NumericRecordDistribution,
@@ -411,7 +409,7 @@ class TestSampleReturnTypeConvention:
         assert dist._sample(k, (3, 4)).shape == (3, 4)
 
     def test_product_distribution_return_types(self):
-        from probpipe import NumericRecord, Record
+        from probpipe import Record
         from probpipe.core._record_array import NumericRecordArray
 
         dist = ProductDistribution(
@@ -446,6 +444,7 @@ class TestSampleReturnTypeConvention:
 
     def test_joint_empirical_return_types(self):
         import numpy as np
+
         from probpipe import Record
         from probpipe.core._record_array import NumericRecordArray
 
@@ -484,6 +483,7 @@ class TestMixtureSamplingDispatch:
 
     def test_array_components_stacked(self):
         import jax.numpy as jnp
+
         from probpipe.core._broadcast_distributions import _make_mixture_marginal
 
         comps = [Normal(loc=0.0, scale=1.0, name=f"c{i}") for i in range(3)]
@@ -493,9 +493,9 @@ class TestMixtureSamplingDispatch:
         assert s.shape == (4,)
 
     def test_record_components_stacked_as_record_array(self):
-        from probpipe.core._broadcast_distributions import _make_mixture_marginal
-        from probpipe.core._record_array import RecordArray, NumericRecordArray
         from probpipe import Record
+        from probpipe.core._broadcast_distributions import _make_mixture_marginal
+        from probpipe.core._record_array import NumericRecordArray, RecordArray
 
         comps = [
             ProductDistribution(
@@ -523,8 +523,9 @@ class TestTransformedDistributionDynamicProtocols:
     """TransformedDistribution inherits only protocols its base supports."""
 
     def test_over_full_tfp_base_has_all_protocols(self):
-        from probpipe import Normal, TransformedDistribution
         import tensorflow_probability.substrates.jax.bijectors as tfb
+
+        from probpipe import Normal
 
         td = TransformedDistribution(Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp())
         assert isinstance(td, SupportsSampling)
@@ -534,10 +535,11 @@ class TestTransformedDistributionDynamicProtocols:
 
     def test_over_log_prob_only_base_no_sampling(self):
         """A base with log_prob but no sampling → transform has no SupportsSampling."""
-        from probpipe import TransformedDistribution, NumericRecordDistribution
-        from probpipe.core.record import EventTemplate
         import tensorflow_probability.substrates.jax.bijectors as tfb
+
+        from probpipe import NumericRecordDistribution
         from probpipe.core.protocols import SupportsLogProb
+        from probpipe.core.record import EventTemplate
 
         class _LogProbOnly(NumericRecordDistribution, SupportsLogProb):
             _sampling_cost = "low"
@@ -611,8 +613,9 @@ class TestJointEmpiricalDispatch:
         assert isinstance(je, SupportsVariance)
 
     def test_numeric_rejects_non_numeric(self):
-        from probpipe import NumericJointEmpirical
         import numpy as np
+
+        from probpipe import NumericJointEmpirical
 
         with pytest.raises(TypeError, match="numeric"):
             NumericJointEmpirical(
@@ -624,6 +627,7 @@ class TestJointEmpiricalDispatch:
         """``JointEmpirical`` with object-dtype fields stays on the
         generic base class and must not claim the numeric protocols."""
         import numpy as np
+
         from probpipe import JointEmpirical, NumericJointEmpirical
 
         je = JointEmpirical(
@@ -646,7 +650,6 @@ class TestSimpleGenerativeModelSampling:
 
     def test_supports_sampling(self):
         from probpipe import Normal, SimpleGenerativeModel
-        from probpipe.modeling import GenerativeLikelihood
 
         class _L:
             def generate_data(self, params, num_observations, *, key):

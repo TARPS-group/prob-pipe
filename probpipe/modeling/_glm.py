@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from ..core.record import Record, EventTemplate
+from ..core.record import EventTemplate, Record
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = ["GLMLikelihood"]

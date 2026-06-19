@@ -21,7 +21,6 @@ from probpipe import (
 )
 from probpipe.core.protocols import _default_per_datum_log_likelihood
 
-
 # -- Protocol structure --------------------------------------------------------
 
 

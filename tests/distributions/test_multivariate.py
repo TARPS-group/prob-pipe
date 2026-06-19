@@ -6,15 +6,14 @@ import numpy as np
 import pytest
 import scipy.stats
 
+from probpipe import cov, log_prob, mean, sample, variance
+from probpipe.core.distribution import NumericRecordDistribution
 from probpipe.distributions import (
     Dirichlet,
     Multinomial,
-    Wishart,
     VonMisesFisher,
+    Wishart,
 )
-from probpipe.core.distribution import NumericRecordDistribution
-from probpipe import cov, log_prob, mean, sample, variance
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

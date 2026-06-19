@@ -17,10 +17,8 @@ from abc import abstractmethod
 from collections.abc import Callable
 from math import prod
 
-import jax
 import jax.numpy as jnp
 
-from .._utils import _auto_key
 from ..core._random_functions import ArrayRandomFunction
 from ..core.protocols import SupportsSampling
 from ..custom_types import Array, ArrayLike, PRNGKey

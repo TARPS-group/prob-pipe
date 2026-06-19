@@ -14,12 +14,10 @@ Registered at priority 100 so it is always tried first for ProbPipe types.
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import jax.numpy as jnp
 
-from ..custom_types import PRNGKey
 from .._utils import _auto_key
 from ..core.distribution import (
     Distribution,
@@ -61,8 +59,8 @@ def _point_estimate(x):
     or a single-field NumericRecord (the auto-wrap form returned by
     ``RecordEmpiricalDistribution._mean`` — numeric arrays auto-wrap
     as a single-field Record)."""
-    from ..core.distribution import BootstrapDistribution
     from ..core._numeric_record import NumericRecord
+    from ..core.distribution import BootstrapDistribution
 
     if isinstance(x, BootstrapDistribution):
         x = x._mean()

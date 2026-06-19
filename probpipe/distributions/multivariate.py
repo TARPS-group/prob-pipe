@@ -7,25 +7,25 @@ from __future__ import annotations
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from ._tfp_base import TFPDistribution
 from .._dtype import _as_float_array, _promote_floats
-from ..core.distribution import FlatNumericRecordDistribution
 from ..core.constraints import (
     Constraint,
-    real,
-    positive_definite,
-    simplex,
     non_negative_integer,
+    positive_definite,
+    real,
+    simplex,
     sphere,
 )
+from ..core.distribution import FlatNumericRecordDistribution
 from ..custom_types import Array, ArrayLike
+from ._tfp_base import TFPDistribution
 
 __all__ = [
-    "MultivariateNormal",
     "Dirichlet",
     "Multinomial",
-    "Wishart",
+    "MultivariateNormal",
     "VonMisesFisher",
+    "Wishart",
 ]
 
 

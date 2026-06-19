@@ -404,6 +404,7 @@ class TestParallelChainMap:
         the two on a single device).
         """
         import jax
+
         from probpipe.inference import _inference_utils as iu
 
         if jax.local_device_count() != 1:

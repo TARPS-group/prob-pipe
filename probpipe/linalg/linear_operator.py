@@ -30,13 +30,13 @@ class LinAlgError(Exception):
 
 
 __all__ = [
-    "LinOp",
+    "CholeskyLinOp",
     "DenseLinOp",
     "DiagonalLinOp",
+    "DiagonalRootLinOp",
+    "LinOp",
     "RootLinOp",
     "TriangularLinOp",
-    "CholeskyLinOp",
-    "DiagonalRootLinOp",
 ]
 
 

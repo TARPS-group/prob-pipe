@@ -2,25 +2,22 @@
 
 from __future__ import annotations
 
-import math
-
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from probpipe import (
+    ArrayRandomFunction,
     Distribution,
     DistributionArray,
-    Normal,
-    MultivariateNormal,
-    RandomFunction,
-    ArrayRandomFunction,
     GaussianRandomFunction,
     LinearBasisFunction,
+    MultivariateNormal,
+    Normal,
+    RandomFunction,
+    sample,
 )
-from probpipe import sample
-
 
 # ---------------------------------------------------------------------------
 # Dense ground-truth helpers

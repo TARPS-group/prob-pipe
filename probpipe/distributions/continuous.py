@@ -4,45 +4,36 @@ Continuous univariate distributions backed by TFP.
 
 from __future__ import annotations
 
-from typing import Any
-
-import jax
-import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from ._tfp_base import TFPDistribution
 from .._dtype import _as_float_array, _promote_floats
-from ..core.distribution import (
-    NumericRecordDistribution,
-    EmpiricalDistribution,
-)
-from ..core.provenance import Provenance
 from ..core.constraints import (
     Constraint,
-    real,
-    positive,
-    non_negative,
-    unit_interval,
-    interval,
     greater_than,
+    interval,
+    non_negative,
+    positive,
+    real,
+    unit_interval,
 )
-from ..custom_types import Array, ArrayLike, PRNGKey
+from ..custom_types import Array, ArrayLike
+from ._tfp_base import TFPDistribution
 
 __all__ = [
-    "Normal",
     "Beta",
-    "Gamma",
-    "InverseGamma",
-    "Exponential",
-    "LogNormal",
-    "StudentT",
-    "Uniform",
     "Cauchy",
-    "Laplace",
-    "HalfNormal",
+    "Exponential",
+    "Gamma",
     "HalfCauchy",
+    "HalfNormal",
+    "InverseGamma",
+    "Laplace",
+    "LogNormal",
+    "Normal",
     "Pareto",
+    "StudentT",
     "TruncatedNormal",
+    "Uniform",
 ]
 
 

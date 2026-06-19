@@ -8,8 +8,9 @@ always returns a new array.
 
 from __future__ import annotations
 
-import jax.numpy as jnp
 from typing import Any
+
+import jax.numpy as jnp
 
 from .custom_types import Array, ArrayLike
 
@@ -25,7 +26,7 @@ def _as_array(x: Any) -> Array:
         raise TypeError(
             f"Could not convert input to array.\n"
             f"Input type: {type(x).__name__}\n"
-            f"Input value: {repr(x)}\n"
+            f"Input value: {x!r}\n"
             f"Original error: {e}"
         ) from e
 

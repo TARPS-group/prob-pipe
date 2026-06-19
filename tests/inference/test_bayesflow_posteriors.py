@@ -20,9 +20,9 @@ import numpy as np
 import probpipe as pp
 from probpipe import (
     ApproximateDistribution,
+    EventTemplate,
     Normal,
     ProductDistribution,
-    EventTemplate,
     condition_on,
     learn_amortized_posterior,
 )

@@ -7,11 +7,12 @@ import pytest
 
 pm = pytest.importorskip("pymc")
 
+from contextlib import contextmanager
+from unittest.mock import patch
+
 import jax
 import jax.numpy as jnp
 import numpy as np
-from contextlib import contextmanager
-from unittest.mock import patch
 
 from probpipe import ApproximateDistribution
 from probpipe.core.record import ArraySpec

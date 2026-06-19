@@ -6,19 +6,18 @@ covers :class:`FullFactorialDesign`; other subclasses land in
 follow-up PRs.
 """
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from probpipe import (
+    FullFactorialDesign,
     NumericRecord,
     NumericRecordArray,
     Record,
     RecordArray,
     workflow_function,
 )
-from probpipe import FullFactorialDesign
 
 # Some assertions use NumericRecord / NumericRecordArray — these only
 # appear as WorkflowFunction outputs, not as Design types. A Design is

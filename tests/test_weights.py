@@ -1,10 +1,10 @@
 """Tests for probpipe._weights: Weights class and utility functions."""
 
-import pytest
 import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.testing as npt
+import pytest
 
 from probpipe._weights import (
     Weights,
@@ -12,12 +12,11 @@ from probpipe._weights import (
     normalize_weights,
     normalized_log_weights,
     uniform_weights,
+    weighted_choice,
+    weighted_covariance,
     weighted_mean,
     weighted_variance,
-    weighted_covariance,
-    weighted_choice,
 )
-
 
 # ---------------------------------------------------------------------------
 # _validate_to_log_weights
@@ -519,8 +518,8 @@ class TestFactoryDispatch:
 
     def test_bootstrap_from_empirical_returns_array_variant(self):
         from probpipe import (
-            EmpiricalDistribution,
             BootstrapReplicateDistribution,
+            EmpiricalDistribution,
             RecordBootstrapReplicateDistribution,
         )
 

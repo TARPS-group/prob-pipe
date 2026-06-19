@@ -16,14 +16,14 @@ import pytest
 
 from probpipe import (
     Dirichlet,
+    EventTemplate,
     FlatNumericRecordDistribution,
     MultivariateNormal,
     Normal,
+    NumericEventTemplate,
     NumericRecord,
     NumericRecordArray,
-    NumericEventTemplate,
     ProductDistribution,
-    EventTemplate,
     cov,
     expectation,
     log_prob,

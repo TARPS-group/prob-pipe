@@ -16,12 +16,12 @@ import pytest
 
 from probpipe import (
     ApproximateDistribution,
+    EventTemplate,
     MultivariateNormal,
     Normal,
     ProductDistribution,
     Record,
     RecordArray,
-    EventTemplate,
     mean,
     sample,
     variance,

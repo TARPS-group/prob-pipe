@@ -4,26 +4,24 @@ Transformed distributions via TFP bijectors.
 
 from __future__ import annotations
 
-from typing import Any
-
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.bijectors as tfb
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from ._tfp_base import TFPDistribution
-from ..core.distribution import (
-    NumericRecordDistribution,
-)
-from ..core.provenance import Provenance
 from ..core.constraints import (
     Constraint,
-    real,
     positive,
+    real,
     unit_interval,
 )
-from ..core.distribution import _mc_expectation
+from ..core.distribution import (
+    NumericRecordDistribution,
+    _mc_expectation,
+)
 from ..core.protocols import SupportsLogProb, SupportsMean, SupportsSampling, SupportsVariance
+from ..core.provenance import Provenance
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ._tfp_base import TFPDistribution
 
 __all__ = ["TransformedDistribution"]
 

@@ -52,7 +52,7 @@ from ._registry import InferenceMethod
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["rwmh", "BlackJAXRWMHMethod"]
+__all__ = ["BlackJAXRWMHMethod", "rwmh"]
 
 
 # ---------------------------------------------------------------------------

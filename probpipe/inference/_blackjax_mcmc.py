@@ -40,7 +40,11 @@ import jax.numpy as jnp
 import numpy as np
 from blackjax.mcmc.dynamic_hmc import (
     build_kernel as _dynamic_hmc_build_kernel,
+)
+from blackjax.mcmc.dynamic_hmc import (
     halton_trajectory_length,
+)
+from blackjax.mcmc.dynamic_hmc import (
     init as _dynamic_hmc_init,
 )
 
@@ -60,7 +64,7 @@ from ._inference_utils import (
 )
 from ._registry import InferenceMethod
 
-__all__ = ["BlackJAXNutsMethod", "BlackJAXHmcMethod"]
+__all__ = ["BlackJAXHmcMethod", "BlackJAXNutsMethod"]
 
 Algorithm = Literal["nuts", "hmc"]
 

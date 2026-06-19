@@ -7,16 +7,14 @@ import pytest
 import scipy.stats
 
 from probpipe import (
-    Normal,
-    MultivariateNormal,
-    RecordEmpiricalDistribution,
-    EmpiricalDistribution,
     BootstrapDistribution,
+    MultivariateNormal,
+    Normal,
     ProductDistribution,
+    RecordEmpiricalDistribution,
     SequentialJointDistribution,
 )
 from probpipe.core import ops
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -164,8 +162,8 @@ class TestMean:
 
     def test_raises_without_supports_mean(self):
         """mean op raises TypeError for distributions without SupportsMean."""
-        from probpipe.core.protocols import SupportsSampling, SupportsExpectation
-        from probpipe.core.distribution import _mc_expectation, NumericRecordDistribution
+        from probpipe.core.distribution import NumericRecordDistribution, _mc_expectation
+        from probpipe.core.protocols import SupportsExpectation, SupportsSampling
 
         class NoMeanDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"

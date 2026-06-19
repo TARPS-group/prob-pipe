@@ -37,7 +37,6 @@ from probpipe import (
 from probpipe.distributions._tfp_base import _allow_batched_tfp_init
 from probpipe.distributions.kde import KDEDistribution
 
-
 # ---------------------------------------------------------------------------
 # Rejection fires across the TFP family
 # ---------------------------------------------------------------------------

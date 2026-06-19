@@ -12,7 +12,6 @@ from typing import Any
 
 from ._registry import ConversionInfo, ConversionMethod, Converter
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

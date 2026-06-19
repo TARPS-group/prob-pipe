@@ -12,16 +12,15 @@ from typing import Any
 import pytest
 
 from probpipe.core._registry import (
+    OPT_IN_ONLY_PRIORITY,
     BaseDispatchMethod,
     BaseDispatchRegistry,
     BinaryDispatchMethod,
     BinaryDispatchRegistry,
     MethodInfo,
-    OPT_IN_ONLY_PRIORITY,
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
-
 
 # ---------------------------------------------------------------------------
 # Synthetic type hierarchy for dispatch tests

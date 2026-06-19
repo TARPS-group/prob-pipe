@@ -9,23 +9,20 @@ Covers:
 - condition_on → ApproximateDistribution
 """
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from probpipe import (
-    Likelihood,
     ApproximateDistribution,
+    EventTemplate,
     MultivariateNormal,
+    Record,
     SimpleModel,
     SupportsLogProb,
     SupportsSampling,
-    Record,
-    EventTemplate,
     condition_on,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test likelihood (plain class — satisfies Likelihood protocol)

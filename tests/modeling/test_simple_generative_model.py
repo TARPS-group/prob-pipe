@@ -1,7 +1,6 @@
 """Tests for SimpleGenerativeModel."""
 
 import jax
-import jax.numpy as jnp
 import pytest
 
 from probpipe import Normal, SimpleGenerativeModel
@@ -78,7 +77,6 @@ class TestProtocols:
     def test_is_supports_sampling(self, model):
         """SimpleGenerativeModel now advertises SupportsSampling (joint draw:
         sample prior, call likelihood.generate_data)."""
-        from probpipe.core.protocols import SupportsSampling
 
         assert isinstance(model, SupportsSampling)
 

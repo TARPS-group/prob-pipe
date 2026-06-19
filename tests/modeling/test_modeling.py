@@ -1,18 +1,16 @@
 """Tests for probpipe.modeling — Likelihood protocols, IncrementalConditioner, lazy imports."""
 
-import numpy as np
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
-from probpipe import MultivariateNormal, EmpiricalDistribution
+from probpipe import EmpiricalDistribution, MultivariateNormal
 from probpipe.modeling import (
     GenerativeLikelihood,
     IncrementalConditioner,
     Likelihood,
-    SimpleModel,
 )
-
 
 # ---------------------------------------------------------------------------
 # Lazy imports — probpipe.modeling.__getattr__ branches

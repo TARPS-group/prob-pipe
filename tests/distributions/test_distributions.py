@@ -6,15 +6,20 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    EmpiricalDistribution,
+    MultivariateNormal,
     NumericRecordDistribution,
+    Provenance,
     RecordEmpiricalDistribution,
     TFPDistribution,
-    EmpiricalDistribution,
-    Provenance,
-    MultivariateNormal,
+    cov,
+    from_distribution,
+    log_prob,
+    mean,
+    prob,
+    sample,
+    variance,
 )
-from probpipe import cov, from_distribution, log_prob, mean, prob, sample, variance
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -132,7 +137,6 @@ class TestMultivariateNormal:
 
     def test_mean_and_cov(self, gaussian, loc, cov_matrix, key):
         """Sample mean and cov from 50k draws must match analytical values."""
-        import scipy.stats
 
         draws = np.asarray(sample(gaussian, key=key, sample_shape=(50_000,)))
         np.testing.assert_allclose(draws.mean(0), np.asarray(loc), atol=0.02)
@@ -625,8 +629,8 @@ class TestDistributionABC:
 
     def test_mean_requires_supports_mean(self):
         """mean op raises TypeError for distributions without SupportsMean."""
-        from probpipe.core.protocols import SupportsSampling, SupportsExpectation
         from probpipe.core.distribution import _mc_expectation
+        from probpipe.core.protocols import SupportsExpectation, SupportsSampling
 
         class MinimalDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"
@@ -650,8 +654,8 @@ class TestDistributionABC:
 
     def test_variance_requires_supports_variance(self):
         """variance op raises TypeError for distributions without SupportsVariance."""
-        from probpipe.core.protocols import SupportsSampling, SupportsExpectation
         from probpipe.core.distribution import _mc_expectation
+        from probpipe.core.protocols import SupportsExpectation, SupportsSampling
 
         class MinimalDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"

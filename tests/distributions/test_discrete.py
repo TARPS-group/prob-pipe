@@ -6,15 +6,14 @@ import numpy as np
 import pytest
 import scipy.stats
 
+from probpipe import NumericRecordDistribution, log_prob, mean, sample, variance
 from probpipe.distributions import (
     Bernoulli,
     Binomial,
-    Poisson,
     Categorical,
     NegativeBinomial,
+    Poisson,
 )
-from probpipe import NumericRecordDistribution, log_prob, mean, sample, variance
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -7,7 +7,6 @@ import pytest
 
 from probpipe import Normal, Provenance, Record, provenance_ancestors
 
-
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------

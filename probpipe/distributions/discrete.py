@@ -4,34 +4,28 @@ Discrete distributions backed by TFP.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from ._tfp_base import TFPDistribution
 from .._dtype import _as_float_array, _promote_floats
-from .._utils import _auto_key
-from ..core.distribution import (
-    NumericRecordDistribution,
-    EmpiricalDistribution,
-)
-from ..core.provenance import Provenance
 from ..core.constraints import (
     Constraint,
     boolean,
-    non_negative_integer,
     integer_interval,
+    non_negative_integer,
 )
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ._tfp_base import TFPDistribution
 
 __all__ = [
     "Bernoulli",
     "Binomial",
-    "Poisson",
     "Categorical",
     "NegativeBinomial",
+    "Poisson",
 ]
 
 

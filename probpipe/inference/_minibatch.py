@@ -190,7 +190,7 @@ class MinibatchedDistribution(
     def __init__(
         self,
         prior: SupportsLogProb,
-        likelihood: "ConditionallyIndependentLikelihood",
+        likelihood: ConditionallyIndependentLikelihood,
         data: ArrayLike | Record | RecordArray,
         batch_size: int,
         *,
@@ -261,7 +261,7 @@ class MinibatchedDistribution(
         return self._prior
 
     @property
-    def likelihood(self) -> "ConditionallyIndependentLikelihood":
+    def likelihood(self) -> ConditionallyIndependentLikelihood:
         """The conditionally-independent likelihood."""
         return self._likelihood
 
@@ -338,7 +338,7 @@ class _FixedMinibatchDistribution(
     def __init__(
         self,
         prior: SupportsLogProb,
-        likelihood: "ConditionallyIndependentLikelihood",
+        likelihood: ConditionallyIndependentLikelihood,
         batch: Any,
         rescale_factor: float,
         *,
@@ -358,7 +358,7 @@ class _FixedMinibatchDistribution(
         return self._prior
 
     @property
-    def likelihood(self) -> "ConditionallyIndependentLikelihood":
+    def likelihood(self) -> ConditionallyIndependentLikelihood:
         """The CIL likelihood carried from the parent measure."""
         return self._likelihood
 

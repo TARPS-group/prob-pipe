@@ -16,7 +16,6 @@ The rule (codified in STYLE_GUIDE.md §1.11):
 
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
 import pytest
 
@@ -37,9 +36,6 @@ from probpipe import (
     ProductDistribution,
     Record,
     RecordArray,
-    RecordEmpiricalDistribution,
-    RecordBootstrapReplicateDistribution,
-    SimpleModel,
     TransformedDistribution,
 )
 

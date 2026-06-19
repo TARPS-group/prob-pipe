@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-import jax.numpy as jnp
-
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb
-from ..core.record import Record, EventTemplate
+from ..core.record import EventTemplate, Record
 from ..custom_types import Array
 from ._base import ProbabilisticModel
 from ._likelihood import Likelihood

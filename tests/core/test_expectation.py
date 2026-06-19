@@ -5,31 +5,31 @@ import jax.numpy as jnp
 import jax.scipy.special as jsp
 import numpy as np
 import pytest
+import tensorflow_probability.substrates.jax.bijectors as tfb
 
 import probpipe.core.distribution as dist_mod
 from probpipe import (
-    NumericRecord,
-    NumericRecordDistribution,
-    RecordEmpiricalDistribution,
-    EmpiricalDistribution,
-    BootstrapDistribution,
-    Normal,
-    Gamma,
-    Beta,
-    Exponential,
     Bernoulli,
-    Categorical,
+    Beta,
     Binomial,
-    from_distribution,
+    BootstrapDistribution,
+    Categorical,
+    EmpiricalDistribution,
+    Exponential,
+    Gamma,
+    Normal,
+    NumericRecord,
+    RecordEmpiricalDistribution,
     TransformedDistribution,
-    DEFAULT_NUM_EVALUATIONS,
+    expectation,
+    from_distribution,
+    mean,
+    sample,
     set_default_num_evaluations,
     set_return_approx_dist,
+    variance,
 )
-import tensorflow_probability.substrates.jax.bijectors as tfb
-from probpipe import expectation, log_prob, mean, sample, variance
 from probpipe.core.protocols import SupportsExpectation, compute_expectation
-
 
 # ---------------------------------------------------------------------------
 # BootstrapDistribution tests

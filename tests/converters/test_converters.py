@@ -4,42 +4,39 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
-    Normal,
-    Beta,
-    Gamma,
-    Exponential,
-    MultivariateNormal,
     Bernoulli,
-    Poisson,
+    Beta,
     Categorical,
-    RecordEmpiricalDistribution,
-    EmpiricalDistribution,
-    NumericRecordDistribution,
-    converter_registry,
     ConversionInfo,
     ConversionMethod,
     Converter,
+    EmpiricalDistribution,
+    Exponential,
+    Gamma,
+    MultivariateNormal,
+    Normal,
+    Poisson,
+    RecordEmpiricalDistribution,
+    converter_registry,
     from_distribution,
 )
 from probpipe.distributions.continuous import (
-    InverseGamma,
-    LogNormal,
-    StudentT,
-    Uniform,
     Cauchy,
-    Laplace,
-    HalfNormal,
     HalfCauchy,
+    HalfNormal,
+    InverseGamma,
+    Laplace,
+    LogNormal,
     Pareto,
+    StudentT,
     TruncatedNormal,
+    Uniform,
 )
 from probpipe.distributions.discrete import Binomial, NegativeBinomial
-from probpipe.distributions.multivariate import Dirichlet, Multinomial, Wishart, VonMisesFisher
-
+from probpipe.distributions.multivariate import Dirichlet, Multinomial, VonMisesFisher, Wishart
 
 # ---------------------------------------------------------------------------
 # Registry basics
@@ -426,7 +423,6 @@ class TestScipyConverter:
         np.testing.assert_allclose(float(result._rate), 0.5)  # rate = 1/scale
 
     def test_probpipe_to_scipy(self):
-        import scipy.stats as ss
         from scipy.stats._distn_infrastructure import rv_frozen
 
         n = Normal(loc=3.0, scale=1.0, name="x")
@@ -684,11 +680,11 @@ class TestEdgeCases:
 # ---------------------------------------------------------------------------
 
 from probpipe.core.protocols import (
-    SupportsLogProb,
-    SupportsSampling,
-    SupportsMean,
-    SupportsVariance,
     SupportsCovariance,
+    SupportsLogProb,
+    SupportsMean,
+    SupportsSampling,
+    SupportsVariance,
 )
 from probpipe.distributions.kde import KDEDistribution
 

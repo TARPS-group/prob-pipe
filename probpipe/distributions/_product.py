@@ -18,33 +18,32 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
-from ..custom_types import Array, ArrayLike, PRNGKey
+from ..core._distribution_base import Distribution
 from ..core._numeric_record_distribution import (
     NumericRecordDistribution,
     _mc_expectation,
 )
-from ..core.provenance import Provenance
-from ..core.record import Record
-from ..core._distribution_base import Distribution
 from ..core._record_distribution import (
     RecordDistribution,
-    _register_dynamic_subclass,
     _build_event_template,
+    _register_dynamic_subclass,
 )
 from ..core.protocols import (
-    protocols_supported_by_all,
     SupportsConditioning,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
+    protocols_supported_by_all,
 )
+from ..core.provenance import Provenance
+from ..core.record import Record
+from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
     _prune_leaves,
 )
-
 
 # ---------------------------------------------------------------------------
 # Dynamic protocol factory for ProductDistribution
@@ -513,7 +512,7 @@ class TFPProductDistribution(ProductDistribution):
         return tuple(self._tfp_dist.event_shape)
 
     @property
-    def dtypes(self) -> dict[str, "jnp.dtype"]:
+    def dtypes(self) -> dict[str, jnp.dtype]:
         """Per-field dtype — the TFP Blockwise's dtype spread
         across the auto-built single-field template."""
         return self._per_field_dict(self._tfp_dist.dtype)

@@ -8,7 +8,6 @@ import pytest
 from probpipe import NumericRecord, Record
 from probpipe.core.record import EventTemplate
 
-
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
@@ -145,7 +144,7 @@ class TestConstruction:
         that they consume the same frozenset."""
         from probpipe.core._numeric_record import _NUMERIC_DTYPE_KINDS
 
-        assert _NUMERIC_DTYPE_KINDS == frozenset("biufc")
+        assert frozenset("biufc") == _NUMERIC_DTYPE_KINDS
         # Import path is also the import path used by
         # NumericRecordArray._validate_fields (see _record_array.py).
         from probpipe.core import _record_array

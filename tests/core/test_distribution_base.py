@@ -8,10 +8,9 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    Normal,
     Gamma,
-    Record,
     MultivariateNormal,
+    Normal,
     RecordEmpiricalDistribution,
     TransformedDistribution,
 )
@@ -285,8 +284,9 @@ class TestRenamedTemplateRoundtrip:
         """Multi-field joints have explicit templates whose field
         names are independent of the distribution's name — renaming
         must not touch the template."""
-        from probpipe import JointGaussian
         import jax.numpy as jnp
+
+        from probpipe import JointGaussian
 
         jg = JointGaussian(
             mean=jnp.zeros(2),
@@ -305,6 +305,7 @@ class TestRenamedTemplateRoundtrip:
         metaclass invariant would be violated, since the non-numeric
         base has no auto-rebuild path)."""
         import numpy as np
+
         from probpipe import JointEmpirical
 
         je = JointEmpirical(

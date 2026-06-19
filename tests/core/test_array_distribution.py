@@ -2,23 +2,22 @@
 
 import jax
 import jax.numpy as jnp
-import math
 import numpy as np
 import pytest
 
 from probpipe import (
     Distribution,
     FlatNumericRecordDistribution,
+    FlattenedDistributionView,
+    MultivariateNormal,
+    Normal,
     NumericRecordDistribution,
     RecordEmpiricalDistribution,
-    FlattenedDistributionView,
-    Normal,
-    MultivariateNormal,
     from_distribution,
-    EmpiricalDistribution,
+    log_prob,
+    sample,
+    unnormalized_log_prob,
 )
-from probpipe import log_prob, sample, unnormalized_log_prob
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -459,11 +458,11 @@ class TestCanonicalConvenience:
         positionally; the first incompatible pair raises with both
         field names in the message.
         """
+        from probpipe import NumericRecord, positive, real
         from probpipe.core._numeric_record_distribution import (
             NumericRecordDistribution,
         )
         from probpipe.core.record import EventTemplate
-        from probpipe import NumericRecord, positive, real
 
         class TwoFieldSource(NumericRecordDistribution):
             @property

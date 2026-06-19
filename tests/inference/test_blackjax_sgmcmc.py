@@ -30,7 +30,6 @@ from probpipe.inference._blackjax_sgmcmc import (
 )
 from probpipe.inference._minibatch import MinibatchedDistribution
 
-
 # -- Fixtures ------------------------------------------------------------------
 
 

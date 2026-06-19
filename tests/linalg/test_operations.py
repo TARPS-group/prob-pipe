@@ -1,18 +1,16 @@
 # tests/linalg/test_operations.py
 import jax
 import jax.numpy as jnp
-import numpy as np
 import pytest
 
 from probpipe.linalg.linear_operator import (
+    CholeskyLinOp,
     DenseLinOp,
     DiagonalLinOp,
-    TriangularLinOp,
-    RootLinOp,
-    CholeskyLinOp,
     LinAlgError,
+    RootLinOp,
+    TriangularLinOp,
 )
-
 from probpipe.linalg.operations import (
     logdet,
     mah_dist_squared,
