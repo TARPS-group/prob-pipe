@@ -29,13 +29,9 @@ def key():
 @pytest.fixture(
     params=[
         pytest.param(lambda: Bernoulli(probs=0.7, name="x"), id="Bernoulli"),
-        pytest.param(
-            lambda: Binomial(total_count=10, probs=0.3, name="x"), id="Binomial"
-        ),
+        pytest.param(lambda: Binomial(total_count=10, probs=0.3, name="x"), id="Binomial"),
         pytest.param(lambda: Poisson(rate=5.0, name="x"), id="Poisson"),
-        pytest.param(
-            lambda: Categorical(probs=[0.2, 0.3, 0.5], name="x"), id="Categorical"
-        ),
+        pytest.param(lambda: Categorical(probs=[0.2, 0.3, 0.5], name="x"), id="Categorical"),
         pytest.param(
             lambda: NegativeBinomial(total_count=5, probs=0.4, name="x"),
             id="NegativeBinomial",
@@ -82,9 +78,7 @@ _NAMED_DISTS = {
     "Binomial": lambda name: Binomial(total_count=10, probs=0.3, name=name),
     "Poisson": lambda name: Poisson(rate=5.0, name=name),
     "Categorical": lambda name: Categorical(probs=[0.2, 0.3, 0.5], name=name),
-    "NegativeBinomial": lambda name: NegativeBinomial(
-        total_count=5, probs=0.4, name=name
-    ),
+    "NegativeBinomial": lambda name: NegativeBinomial(total_count=5, probs=0.4, name=name),
 }
 
 

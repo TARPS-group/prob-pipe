@@ -35,6 +35,7 @@ from typing import Any
 # WorkflowKind enum
 # ---------------------------------------------------------------------------
 
+
 class WorkflowKind(Enum):
     """Orchestration mode for ``WorkflowFunction`` instances.
 
@@ -93,6 +94,7 @@ def _initial_workflow_kind() -> WorkflowKind:
 # Task-runner auto-detection
 # ---------------------------------------------------------------------------
 
+
 def _auto_detect_task_runner() -> Any:
     """Return a task runner based on installed packages, or ``None``.
 
@@ -100,11 +102,13 @@ def _auto_detect_task_runner() -> Any:
     """
     try:
         from prefect_ray import RayTaskRunner
+
         return RayTaskRunner()
     except ImportError:
         pass
     try:
         from prefect_dask import DaskTaskRunner
+
         return DaskTaskRunner()
     except ImportError:
         pass
@@ -114,6 +118,7 @@ def _auto_detect_task_runner() -> Any:
 # ---------------------------------------------------------------------------
 # PrefectConfig singleton
 # ---------------------------------------------------------------------------
+
 
 class PrefectConfig:
     """Global Prefect orchestration settings.
@@ -157,8 +162,7 @@ class PrefectConfig:
     def workflow_kind(self, value: WorkflowKind) -> None:
         if not isinstance(value, WorkflowKind):
             raise TypeError(
-                f"workflow_kind must be a WorkflowKind enum member, "
-                f"got {type(value).__name__}"
+                f"workflow_kind must be a WorkflowKind enum member, got {type(value).__name__}"
             )
         self._workflow_kind = value
 
@@ -192,6 +196,7 @@ prefect_config = PrefectConfig()
 # ---------------------------------------------------------------------------
 # ProvenanceMode enum
 # ---------------------------------------------------------------------------
+
 
 class ProvenanceMode(Enum):
     """Controls how much history is retained in provenance chains.
@@ -250,6 +255,7 @@ def _initial_provenance_mode() -> ProvenanceMode:
 # ProvenanceConfig singleton
 # ---------------------------------------------------------------------------
 
+
 class ProvenanceConfig:
     """Global provenance tracking settings.
 
@@ -282,8 +288,7 @@ class ProvenanceConfig:
     def mode(self, value: ProvenanceMode) -> None:
         if not isinstance(value, ProvenanceMode):
             raise TypeError(
-                f"mode must be a ProvenanceMode enum member, "
-                f"got {type(value).__name__}"
+                f"mode must be a ProvenanceMode enum member, got {type(value).__name__}"
             )
         self._mode = value
 

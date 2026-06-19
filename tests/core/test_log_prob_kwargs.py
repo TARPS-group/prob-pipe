@@ -109,9 +109,7 @@ class TestKwargFormSimpleModel:
             def log_likelihood(self, params, data):
                 return jnp.asarray(0.0)
 
-        prior = ProductDistribution(
-            Normal(0.0, 1.0, name="a"), Normal(0.0, 1.0, name="b")
-        )
+        prior = ProductDistribution(Normal(0.0, 1.0, name="a"), Normal(0.0, 1.0, name="b"))
         model = SimpleModel(prior, _NoTemplateLikelihood(), name="m")
         with pytest.raises(TypeError, match="no named data fields"):
             log_prob(model, a=0.5, b=0.5)
@@ -130,9 +128,7 @@ class TestKwargFormSimpleModel:
                 # params is the bare scalar from the single-field prior
                 return -0.5 * jnp.sum((data["y"] - params) ** 2)
 
-        model = SimpleModel(
-            Normal(0.0, 1.0, name="theta"), _ScalarLikelihood(), name="m"
-        )
+        model = SimpleModel(Normal(0.0, 1.0, name="theta"), _ScalarLikelihood(), name="m")
         y = jnp.array([0.2, -0.1, 0.4])
         kw = log_prob(model, theta=0.5, y=y)
         rec = log_prob(model, Record(theta=0.5, y=y))
@@ -164,6 +160,7 @@ class TestStanViewsPackValue:
     @pytest.fixture(params=["StanModel", "_UnconstrainedStanView"])
     def stan_view(self, request):
         from probpipe.modeling import _stan
+
         names = ["mu", "theta.1", "theta.2", "theta.3"]
         base = object.__new__(_stan.StanModel)
         base._bs_model = self._FakeBS(names)
@@ -214,9 +211,7 @@ class TestProbAndUnnormalizedKwargForm:
 
     def test_unnormalized_log_prob_kwarg(self):
         d = Normal(0.0, 1.0, name="x")
-        assert jnp.allclose(
-            unnormalized_log_prob(d, x=1.2), unnormalized_log_prob(d, 1.2)
-        )
+        assert jnp.allclose(unnormalized_log_prob(d, x=1.2), unnormalized_log_prob(d, 1.2))
 
     def test_unnormalized_prob_kwarg(self):
         d = Normal(0.0, 1.0, name="x")
@@ -274,6 +269,7 @@ class TestControlsViaWithOptions:
         # No wrapper: log_prob *is* a WorkflowFunction, so with_options is its
         # own bound method — not a re-implementation.
         from probpipe.core.node import WorkflowFunction
+
         assert isinstance(log_prob, WorkflowFunction)
         assert log_prob.with_options.__self__ is log_prob
 
@@ -341,6 +337,7 @@ class TestRandomMeasureKwargForm:
     @staticmethod
     def _measure():
         import tensorflow_probability.substrates.jax.glm as tfp_glm
+
         X = jnp.eye(4)
         y = jnp.array([1.0, 0.0, 1.0, 0.0])
         prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="theta")

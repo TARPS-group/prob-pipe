@@ -24,14 +24,17 @@ class TestLazyImports:
 
     def test_stanmodel_lazy_load(self):
         from probpipe.modeling import StanModel
+
         assert StanModel is not None
 
     def test_pymcmodel_lazy_load(self):
         from probpipe.modeling import PyMCModel
+
         assert PyMCModel is not None
 
     def test_unknown_attr_raises(self):
         import probpipe.modeling as mod
+
         with pytest.raises(AttributeError, match="has no attribute"):
             mod.NonExistent
 
@@ -46,7 +49,7 @@ class MultivariateNormalLikelihood:
 
     def log_likelihood(self, params, data):
         residuals = data - params[None, :]
-        return -0.5 * jnp.sum(residuals ** 2)
+        return -0.5 * jnp.sum(residuals**2)
 
 
 class SimpleGenerativeLikelihood:
@@ -54,7 +57,7 @@ class SimpleGenerativeLikelihood:
 
     def log_likelihood(self, params, data):
         residuals = data - params[None, :]
-        return -0.5 * jnp.sum(residuals ** 2)
+        return -0.5 * jnp.sum(residuals**2)
 
     def generate_data(self, params, num_observations, *, key=None):
         if key is None:
@@ -232,6 +235,5 @@ class TestIncrementalConditioner:
             cond.update(X=X[s:e], y=y[s:e])
             posterior_mean = mean(cond.curr_posterior)
             assert posterior_mean.fields == ("intercept", "slope"), (
-                f"named fields lost after batch ending at {e}: "
-                f"got {posterior_mean.fields}"
+                f"named fields lost after batch ending at {e}: got {posterior_mean.fields}"
             )

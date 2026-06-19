@@ -43,9 +43,7 @@ def provenance_step(dist, value):
     field = dist.samples.fields[0]
     samples = dist.samples[field] + value
     new_dist = EmpiricalDistribution(samples, name=field)
-    new_dist.with_source(
-        Provenance("custom_step", parents=(dist,), metadata={"value": value})
-    )
+    new_dist.with_source(Provenance("custom_step", parents=(dist,), metadata={"value": value}))
     return new_dist
 
 
@@ -65,6 +63,7 @@ class TestIterate:
         still work.
         """
         from probpipe import DistributionArray
+
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0])
         assert isinstance(dists, DistributionArray)
         assert len(dists) == 3  # initial + 2 steps
@@ -116,12 +115,15 @@ class TestIterate:
 
     def test_callback_early_stop(self, initial):
         """Callback returning False truncates iteration."""
+
         def stop_after_one(i, dist):
             if i >= 1:
                 return False
 
         dists = iterate(
-            step_fn=shift_step, initial=initial, inputs=[1.0, 2.0, 3.0, 4.0],
+            step_fn=shift_step,
+            initial=initial,
+            inputs=[1.0, 2.0, 3.0, 4.0],
             callback=stop_after_one,
         )
         # initial + steps 0 and 1 (stops after callback for step 1)
@@ -135,6 +137,7 @@ class TestIterate:
 
     def test_bad_return_type(self, initial):
         """Non-Distribution return raises TypeError."""
+
         def bad_step(dist, inp):
             return "not a distribution"
 
@@ -304,7 +307,9 @@ class TestIncrementalConditioner:
         """update() conditions on a single data batch, updates state."""
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0, name="prior")
         conditioner = IncrementalConditioner(
-            prior, _SimpleLikelihood(), condition_fn=_mock_condition_fn,
+            prior,
+            _SimpleLikelihood(),
+            condition_fn=_mock_condition_fn,
         )
         assert conditioner.curr_posterior is prior
 
@@ -318,7 +323,9 @@ class TestIncrementalConditioner:
         """Successive update() calls chain posteriors."""
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0, name="prior")
         conditioner = IncrementalConditioner(
-            prior, _SimpleLikelihood(), condition_fn=_mock_condition_fn,
+            prior,
+            _SimpleLikelihood(),
+            condition_fn=_mock_condition_fn,
         )
         post1 = conditioner.update(data=jnp.ones((10, 2)))
         post2 = conditioner.update(data=jnp.ones((10, 2)) * 2.0)
@@ -329,9 +336,12 @@ class TestIncrementalConditioner:
         """update_all() iterates over batches, returns DistributionArray,
         updates state."""
         from probpipe import DistributionArray
+
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0, name="prior")
         conditioner = IncrementalConditioner(
-            prior, _SimpleLikelihood(), condition_fn=_mock_condition_fn,
+            prior,
+            _SimpleLikelihood(),
+            condition_fn=_mock_condition_fn,
         )
         batches = [jnp.ones((10, 2)) * i for i in [1.0, 2.0, 3.0]]
         dists = conditioner.update_all(data_batches=batches)
@@ -345,7 +355,9 @@ class TestIncrementalConditioner:
         """step property exposes the step function for use with iterate."""
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0, name="prior")
         conditioner = IncrementalConditioner(
-            prior, _SimpleLikelihood(), condition_fn=_mock_condition_fn,
+            prior,
+            _SimpleLikelihood(),
+            condition_fn=_mock_condition_fn,
         )
         assert isinstance(conditioner.step, WorkflowFunction)
 
@@ -364,10 +376,12 @@ class TestIncrementalConditioner:
 class TestNestability:
     def test_nested_iterate(self, initial):
         """A step function can call iterate internally."""
+
         def inner_step(dist, value):
             field = dist.samples.fields[0]
             return EmpiricalDistribution(
-                dist.samples[field] + value, name=field,
+                dist.samples[field] + value,
+                name=field,
             )
 
         def outer_step(dist, batch):

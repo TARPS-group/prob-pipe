@@ -59,7 +59,11 @@ def test_from_cmdstanpy_produces_arviz1x_datatree(tmp_path):
     y = rng.normal(1.0, 2.0, size=30)
     fit = model.sample(
         data={"N": int(y.size), "y": y.tolist()},
-        chains=2, iter_sampling=200, iter_warmup=200, seed=0, show_console=False,
+        chains=2,
+        iter_sampling=200,
+        iter_warmup=200,
+        seed=0,
+        show_console=False,
     )
 
     idata = azb.from_cmdstanpy(fit)

@@ -52,6 +52,7 @@ def normal_dist():
 # Helper functions for workflows
 # ---------------------------------------------------------------------------
 
+
 def add_one(x: jnp.ndarray) -> jnp.ndarray:
     return x + 1.0
 
@@ -67,6 +68,7 @@ def sum_xy(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
 # ---------------------------------------------------------------------------
 # workflow_kind=WorkflowKind.TASK with sequential dispatch
 # ---------------------------------------------------------------------------
+
 
 class TestPrefectTaskRowWise:
     """Exercises Prefect task execution via row-wise dispatch."""
@@ -94,7 +96,9 @@ class TestPrefectTaskRowWise:
         result = wf(x=normal_dist)
         # Mean should be ~2.0 (1.0 + 1.0)
         np.testing.assert_allclose(
-            float(jnp.mean(result.samples)), 2.0, atol=0.15,
+            float(jnp.mean(result.samples)),
+            2.0,
+            atol=0.15,
         )
 
     def test_multiple_broadcast_args(self, normal_dist):
@@ -114,6 +118,7 @@ class TestPrefectTaskRowWise:
 # ---------------------------------------------------------------------------
 # workflow_kind=WorkflowKind.FLOW with sequential dispatch
 # ---------------------------------------------------------------------------
+
 
 class TestPrefectFlowRowWise:
     """Exercises Prefect flow execution via row-wise dispatch."""
@@ -141,13 +146,16 @@ class TestPrefectFlowRowWise:
         result = wf(x=normal_dist)
         # Mean should be ~2.0 (1.0 * 2)
         np.testing.assert_allclose(
-            float(jnp.mean(result.samples)), 2.0, atol=0.15,
+            float(jnp.mean(result.samples)),
+            2.0,
+            atol=0.15,
         )
 
 
 # ---------------------------------------------------------------------------
 # workflow_kind=WorkflowKind.TASK with JAX dispatch
 # ---------------------------------------------------------------------------
+
 
 class TestPrefectTaskJax:
     """Exercises the Prefect-wrapped distribution-broadcast JAX path."""
@@ -174,13 +182,16 @@ class TestPrefectTaskJax:
         )
         result = wf(x=normal_dist)
         np.testing.assert_allclose(
-            float(jnp.mean(result.samples)), 2.0, atol=0.15,
+            float(jnp.mean(result.samples)),
+            2.0,
+            atol=0.15,
         )
 
 
 # ---------------------------------------------------------------------------
 # workflow_kind=WorkflowKind.FLOW with JAX dispatch
 # ---------------------------------------------------------------------------
+
 
 class TestPrefectFlowJax:
     """Exercises Prefect flow-wrapped jax.vmap path."""
@@ -207,13 +218,16 @@ class TestPrefectFlowJax:
         )
         result = wf(x=normal_dist)
         np.testing.assert_allclose(
-            float(jnp.mean(result.samples)), 2.0, atol=0.15,
+            float(jnp.mean(result.samples)),
+            2.0,
+            atol=0.15,
         )
 
 
 # ---------------------------------------------------------------------------
 # Provenance metadata
 # ---------------------------------------------------------------------------
+
 
 class TestPrefectProvenance:
     """Verify provenance includes orchestration info."""
@@ -261,6 +275,7 @@ class TestPrefectProvenance:
 # Non-broadcast calls with workflow_kind
 # ---------------------------------------------------------------------------
 
+
 class TestPrefectNonBroadcast:
     """When concrete args are passed, Prefect wrapping still applies."""
 
@@ -290,11 +305,13 @@ class TestPrefectNonBroadcast:
 # Import guard
 # ---------------------------------------------------------------------------
 
+
 class TestPrefectImportGuard:
     """When Prefect is not installed, workflow_kind should warn and fall back to OFF."""
 
     def test_task_warns_without_prefect(self, normal_dist, monkeypatch):
         import probpipe.core.node as node_mod
+
         monkeypatch.setattr(node_mod, "task", None)
         monkeypatch.setattr(node_mod, "flow", None)
 
@@ -311,6 +328,7 @@ class TestPrefectImportGuard:
 
     def test_flow_warns_without_prefect(self, normal_dist, monkeypatch):
         import probpipe.core.node as node_mod
+
         monkeypatch.setattr(node_mod, "task", None)
         monkeypatch.setattr(node_mod, "flow", None)
 
@@ -327,6 +345,7 @@ class TestPrefectImportGuard:
 
     def test_jax_warns_without_prefect(self, normal_dist, monkeypatch):
         import probpipe.core.node as node_mod
+
         monkeypatch.setattr(node_mod, "task", None)
         monkeypatch.setattr(node_mod, "flow", None)
 

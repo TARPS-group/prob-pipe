@@ -63,7 +63,9 @@ class Converter(ABC):
         ...
 
     @abstractmethod
-    def convert(self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any) -> Any:
+    def convert(
+        self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any
+    ) -> Any:
         """Perform the actual conversion.
 
         Returns an instance of *target_type* (or a compatible subclass).
@@ -132,8 +134,7 @@ class ConverterRegistry:
             if info.feasible:
                 return conv.convert(source, target_type, key=key, **kwargs)
         raise TypeError(
-            f"No converter registered for "
-            f"{type(source).__name__} -> {target_type.__name__}"
+            f"No converter registered for {type(source).__name__} -> {target_type.__name__}"
         )
 
     def is_distribution_type(self, obj: Any) -> bool:
@@ -147,10 +148,7 @@ class ConverterRegistry:
 
         if isinstance(obj, Distribution):
             return True
-        return any(
-            isinstance(obj, tuple(c.source_types()))
-            for c in self._converters
-        )
+        return any(isinstance(obj, tuple(c.source_types())) for c in self._converters)
 
     # -- internals ----------------------------------------------------------
 

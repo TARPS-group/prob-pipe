@@ -29,8 +29,8 @@ from probpipe.core.provenance import ParentInfo
 # 1. Provenance basics (dataclass, with_source, write-once)
 # ===========================================================================
 
-class TestProvenanceBasics:
 
+class TestProvenanceBasics:
     def test_provenance_fields(self):
         p = Provenance("test_op", metadata={"key": "val"})
         assert p.operation == "test_op"
@@ -65,6 +65,7 @@ class TestProvenanceBasics:
     def test_with_source_none_is_noop_record(self):
         """with_source(None) leaves a Record unchanged."""
         from probpipe import Record
+
         r = Record({"x": jnp.array(1.0)})
         result = r.with_source(None)
         assert result is r
@@ -75,8 +76,8 @@ class TestProvenanceBasics:
 # 2. ParentInfo hash and equality
 # ===========================================================================
 
-class TestParentInfoHashEq:
 
+class TestParentInfoHashEq:
     def test_hashable_without_source(self):
         """Root ParentInfo (source=None) is hashable."""
         p = ParentInfo(type_name="Normal", name="prior")
@@ -134,8 +135,8 @@ class TestParentInfoHashEq:
 # 3. from_distribution provenance
 # ===========================================================================
 
-class TestFromDistributionProvenance:
 
+class TestFromDistributionProvenance:
     def test_normal_from_distribution(self):
         src = Beta(alpha=2.0, beta=5.0, name="beta_src")
         converted = from_distribution(src, Normal)
@@ -159,8 +160,8 @@ class TestFromDistributionProvenance:
 # 3. TransformedDistribution provenance
 # ===========================================================================
 
-class TestTransformedDistributionProvenance:
 
+class TestTransformedDistributionProvenance:
     def test_transform_provenance_attached(self):
         base = Normal(loc=0.0, scale=1.0, name="base")
         td = TransformedDistribution(base, tfb.Exp())
@@ -191,8 +192,8 @@ class TestTransformedDistributionProvenance:
 # 4. Conditioning provenance
 # ===========================================================================
 
-class TestConditioningProvenance:
 
+class TestConditioningProvenance:
     def test_product_condition_on(self):
         joint = ProductDistribution(
             x=Normal(loc=0.0, scale=1.0, name="x"),
@@ -217,7 +218,10 @@ class TestConditioningProvenance:
 
     def test_gaussian_condition_on(self):
         jg = JointGaussian(
-            mean=jnp.zeros(2), cov=jnp.eye(2), x=1, y=1,
+            mean=jnp.zeros(2),
+            cov=jnp.eye(2),
+            x=1,
+            y=1,
         )
         cond = condition_on(jg, x=jnp.array([0.0]))
         assert cond.source.operation == "condition_on"
@@ -228,16 +232,15 @@ class TestConditioningProvenance:
 # 5. Broadcasting provenance
 # ===========================================================================
 
-class TestBroadcastingProvenance:
 
+class TestBroadcastingProvenance:
     def test_broadcast_loop_provenance(self, full_provenance_mode):
         n = Normal(loc=0.0, scale=1.0, name="input_normal")
 
         def identity(x: float) -> float:
             return x
 
-        wf = WorkflowFunction(func=identity, dispatch="sequential",
-                      n_broadcast_samples=20, seed=42)
+        wf = WorkflowFunction(func=identity, dispatch="sequential", n_broadcast_samples=20, seed=42)
         result = wf(x=n)
         assert hasattr(result, "samples")
         assert result.source is not None
@@ -256,8 +259,7 @@ class TestBroadcastingProvenance:
         def double(x: float) -> float:
             return 2.0 * x
 
-        wf = WorkflowFunction(func=double, dispatch="jax",
-                      n_broadcast_samples=20, seed=42)
+        wf = WorkflowFunction(func=double, dispatch="jax", n_broadcast_samples=20, seed=42)
         result = wf(x=n)
         assert hasattr(result, "samples")
         assert result.source is not None
@@ -271,8 +273,7 @@ class TestBroadcastingProvenance:
         def add(x: float, y: float) -> float:
             return x + y
 
-        wf = WorkflowFunction(func=add, dispatch="sequential",
-                      n_broadcast_samples=20, seed=42)
+        wf = WorkflowFunction(func=add, dispatch="sequential", n_broadcast_samples=20, seed=42)
         result = wf(x=a, y=b)
         assert result.source is not None
         assert len(result.source.parents) == 2
@@ -285,8 +286,7 @@ class TestBroadcastingProvenance:
         def add(a: float, b: float) -> float:
             return a + b
 
-        wf = WorkflowFunction(func=add, dispatch="sequential",
-                      n_broadcast_samples=20, seed=42)
+        wf = WorkflowFunction(func=add, dispatch="sequential", n_broadcast_samples=20, seed=42)
         result = wf(a=ed, b=n)
         assert hasattr(result, "samples")
         assert result.source is not None
@@ -297,8 +297,8 @@ class TestBroadcastingProvenance:
 # 6. Provenance chains (multi-step lineage)
 # ===========================================================================
 
-class TestProvenanceChains:
 
+class TestProvenanceChains:
     def test_two_step_chain(self):
         """from_distribution → condition_on creates a 2-step chain."""
         src = Beta(alpha=2.0, beta=5.0, name="prior")
@@ -323,8 +323,7 @@ class TestProvenanceChains:
         def log_val(x: float) -> float:
             return jnp.log(x)
 
-        wf = WorkflowFunction(func=log_val, dispatch="sequential",
-                      n_broadcast_samples=20, seed=42)
+        wf = WorkflowFunction(func=log_val, dispatch="sequential", n_broadcast_samples=20, seed=42)
         result = wf(x=td)
         # result → broadcast → td → transform → base
         assert result.source.operation == "broadcast"
@@ -340,8 +339,8 @@ class TestProvenanceChains:
 # 7. Serialization
 # ===========================================================================
 
-class TestSerialization:
 
+class TestSerialization:
     def test_to_dict_basic(self):
         p = Provenance("test_op", metadata={"key": "val"})
         d = p.to_dict()
@@ -418,8 +417,8 @@ class TestSerialization:
 # 8. provenance_ancestors
 # ===========================================================================
 
-class TestProvenanceAncestors:
 
+class TestProvenanceAncestors:
     def test_no_provenance_returns_empty(self):
         n = Normal(loc=0.0, scale=1.0, name="n")
         assert provenance_ancestors(n) == []
@@ -440,8 +439,7 @@ class TestProvenanceAncestors:
         def identity(x: float) -> float:
             return x
 
-        wf = WorkflowFunction(func=identity, dispatch="sequential",
-                      n_broadcast_samples=10, seed=42)
+        wf = WorkflowFunction(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=td)
         ancestors = provenance_ancestors(result)
         # result → td → base; both steps now produce ParentInfo in FULL mode.
@@ -458,8 +456,7 @@ class TestProvenanceAncestors:
         def add(x: float, y: float) -> float:
             return x + y
 
-        wf = WorkflowFunction(func=add, dispatch="sequential",
-                      n_broadcast_samples=10, seed=42)
+        wf = WorkflowFunction(func=add, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=n, y=n)
         ancestors = provenance_ancestors(result)
         # n appears as both args but dedup keeps only one ParentInfo for it
@@ -498,6 +495,7 @@ class TestProvenanceAncestors:
 # 9. provenance_dag
 # ===========================================================================
 
+
 def _count_dag_entries(dot) -> tuple[int, int]:
     """Count (nodes, edges) in a graphviz Digraph via its body list."""
     nodes = sum(1 for line in dot.body if "->" not in line and " [" in line)
@@ -506,7 +504,6 @@ def _count_dag_entries(dot) -> tuple[int, int]:
 
 
 class TestProvenanceDag:
-
     @pytest.fixture(autouse=True)
     def _require_graphviz(self):
         # provenance_dag() builds a graphviz.Digraph; skip this class's
@@ -543,8 +540,7 @@ class TestProvenanceDag:
         def identity(x: float) -> float:
             return x
 
-        wf = WorkflowFunction(func=identity, dispatch="sequential",
-                      n_broadcast_samples=10, seed=42)
+        wf = WorkflowFunction(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=td)
         dag = provenance_dag(result)
         # result <- td <- base : 3 nodes, 2 edges.
@@ -587,8 +583,8 @@ class TestProvenanceDag:
 # 10. ProvenanceMode behaviour
 # ===========================================================================
 
-class TestProvenanceModes:
 
+class TestProvenanceModes:
     def test_lightweight_is_default(self):
         assert probpipe.provenance_config.mode is ProvenanceMode.LIGHTWEIGHT
 
@@ -599,8 +595,7 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = WorkflowFunction(func=identity, dispatch="sequential",
-                      n_broadcast_samples=10, seed=42)
+        wf = WorkflowFunction(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=n)
         assert result.source is not None
         assert len(result.source.parents) == 1
@@ -616,8 +611,7 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = WorkflowFunction(func=identity, dispatch="sequential",
-                      n_broadcast_samples=10, seed=42)
+        wf = WorkflowFunction(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=n)
         parent = result.source.parents[0]
         assert parent is not n
@@ -633,8 +627,7 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = WorkflowFunction(func=identity, dispatch="sequential",
-                      n_broadcast_samples=10, seed=42)
+        wf = WorkflowFunction(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=n)
         ancestors = provenance_ancestors(result)
         assert len(ancestors) == 1
@@ -653,8 +646,7 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = WorkflowFunction(func=identity, dispatch="sequential",
-                      n_broadcast_samples=10, seed=42)
+        wf = WorkflowFunction(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=n)
         dag = provenance_dag(result)
         num_nodes, num_edges = _count_dag_entries(dag)
@@ -669,8 +661,7 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = WorkflowFunction(func=identity, dispatch="sequential",
-                      n_broadcast_samples=10, seed=42)
+        wf = WorkflowFunction(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=n)
         assert result.source is None
 
@@ -696,9 +687,7 @@ class TestProvenanceModes:
         del parent
         gc.collect()
 
-        assert ref() is None, (
-            "LIGHTWEIGHT provenance should not hold a strong ref to the parent"
-        )
+        assert ref() is None, "LIGHTWEIGHT provenance should not hold a strong ref to the parent"
 
     def test_full_mode_parent_is_retained(self, full_provenance_mode):
         """FULL mode keeps the parent alive via ParentInfo.obj."""
@@ -713,9 +702,7 @@ class TestProvenanceModes:
         del parent
         gc.collect()
 
-        assert ref() is not None, (
-            "FULL mode should retain the parent via ParentInfo.obj"
-        )
+        assert ref() is not None, "FULL mode should retain the parent via ParentInfo.obj"
 
     def test_off_mode_ancestors_empty(self):
         """In OFF mode provenance_ancestors returns an empty list."""
@@ -725,8 +712,7 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = WorkflowFunction(func=identity, dispatch="sequential",
-                      n_broadcast_samples=10, seed=42)
+        wf = WorkflowFunction(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=n)
         assert provenance_ancestors(result) == []
 
@@ -739,8 +725,7 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = WorkflowFunction(func=identity, dispatch="sequential",
-                      n_broadcast_samples=10, seed=42)
+        wf = WorkflowFunction(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=n)
         dag = provenance_dag(result)
         num_nodes, num_edges = _count_dag_entries(dag)

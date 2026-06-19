@@ -25,7 +25,8 @@ __all__ = ["ApproximateDistribution", "make_posterior"]
 
 
 def _column_permutation(
-    event_template: EventTemplate, field_order: list[str],
+    event_template: EventTemplate,
+    field_order: list[str],
 ) -> list[int]:
     """Column-index permutation mapping a *field_order*-laid-out flat chain
     into ``event_template.fields`` order.
@@ -323,8 +324,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             if include_warmup:
                 warmup = self.warmup_samples
                 if warmup is not None:
-                    parts = [jnp.concatenate([w, c], axis=0)
-                             for w, c in zip(warmup, parts)]
+                    parts = [jnp.concatenate([w, c], axis=0) for w, c in zip(warmup, parts)]
             samples = jnp.concatenate(parts, axis=0)
 
         # Honor any user-supplied template (single-field or multi-field).
@@ -333,6 +333,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         # under the previous numeric-array hierarchy.
         if getattr(self, "_user_template", False):
             from ..core._record_array import NumericRecordArray
+
             return NumericRecordArray.unflatten(samples, template=self.event_template)
         return samples
 
@@ -399,7 +400,9 @@ def make_posterior(
         Posterior with chain structure, auxiliary DataTree, and provenance.
     """
     result = ApproximateDistribution(
-        chains, name="posterior", event_template=event_template,
+        chains,
+        name="posterior",
+        event_template=event_template,
         field_order=field_order,
     )
 
@@ -407,6 +410,8 @@ def make_posterior(
         result._auxiliary = auxiliary
 
     result.with_source(
-        Provenance.create(algorithm, parents=list(parents), metadata={"algorithm": algorithm, **meta})
+        Provenance.create(
+            algorithm, parents=list(parents), metadata={"algorithm": algorithm, **meta}
+        )
     )
     return result

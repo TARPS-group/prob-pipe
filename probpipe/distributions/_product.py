@@ -81,7 +81,8 @@ def _product_class_for_components(components: dict) -> type:
     leaves = jax.tree.leaves(components)
 
     extra_bases = protocols_supported_by_all(
-        leaves, (SupportsLogProb, SupportsMean, SupportsVariance),
+        leaves,
+        (SupportsLogProb, SupportsMean, SupportsVariance),
     )
     all_tfp = all(hasattr(l, "_tfp_dist") for l in leaves)
     all_numeric = all(isinstance(l, NumericRecordDistribution) for l in leaves)
@@ -96,9 +97,7 @@ def _product_class_for_components(components: dict) -> type:
     # API on top of the generic ``ProductDistribution`` base. Listing
     # it before the protocol mixins keeps the MRO consistent with
     # standalone NRDs (numeric API → protocols → object).
-    numeric_mixin: tuple[type, ...] = (
-        (NumericRecordDistribution,) if all_numeric else ()
-    )
+    numeric_mixin: tuple[type, ...] = (NumericRecordDistribution,) if all_numeric else ()
     bases = (base, *numeric_mixin, *extra_bases)
 
     if bases == (base,):
@@ -125,7 +124,8 @@ def _resolve_nested_names(parent_key: str, d: dict) -> dict:
 
 
 def _merge_positional_and_keyword(
-    positional: tuple, keyword: dict,
+    positional: tuple,
+    keyword: dict,
 ) -> dict:
     """Merge positional distributions (keyed by .name) with keyword components."""
     components = {}
@@ -153,7 +153,8 @@ def _merge_positional_and_keyword(
 
 class ProductDistribution(
     RecordDistribution,
-    SupportsSampling, SupportsConditioning,
+    SupportsSampling,
+    SupportsConditioning,
 ):
     """Joint distribution with **independent** leaf components.
 
@@ -241,8 +242,7 @@ class ProductDistribution(
         for leaf in jax.tree.leaves(resolved):
             if not isinstance(leaf, Distribution):
                 raise TypeError(
-                    f"All leaf components must be Distribution instances, "
-                    f"got {type(leaf).__name__}"
+                    f"All leaf components must be Distribution instances, got {type(leaf).__name__}"
                 )
         self._components = resolved
         if name is None:
@@ -274,6 +274,7 @@ class ProductDistribution(
             case), otherwise a plain :class:`RecordArray`.
         """
         from ..core._record_array import NumericRecordArray, RecordArray
+
         names = list(self._components.keys())
         keys = jax.random.split(key, len(names))
         numeric = isinstance(self, NumericRecordDistribution)
@@ -285,8 +286,8 @@ class ProductDistribution(
                 # record-array (canonical, flattenable), not a plain Record.
                 sub_template = self.event_template[name] if sample_shape else None
                 fields[name] = _sample_nested(
-                    comp, subkey, sample_shape,
-                    template=sub_template, numeric=numeric)
+                    comp, subkey, sample_shape, template=sub_template, numeric=numeric
+                )
             else:
                 fields[name] = comp._sample(subkey, sample_shape)
         if sample_shape:
@@ -294,11 +295,13 @@ class ProductDistribution(
             # plain RecordArray which doesn't require numeric leaves.
             if isinstance(self, NumericRecordDistribution):
                 return NumericRecordArray(
-                    fields, batch_shape=sample_shape,
+                    fields,
+                    batch_shape=sample_shape,
                     template=self.event_template,
                 )
             return RecordArray(
-                fields, batch_shape=sample_shape,
+                fields,
+                batch_shape=sample_shape,
                 template=self.event_template,
             )
         return Record(fields)
@@ -316,6 +319,7 @@ class ProductDistribution(
         available there.
         """
         from ..core._record_array import RecordArray
+
         if isinstance(value, jnp.ndarray):
             if not isinstance(self, NumericRecordDistribution):
                 raise TypeError(
@@ -343,11 +347,13 @@ class ProductDistribution(
             value = {k: v for k, v in value.items()}
         if isinstance(value, Record):
             value = value.to_dict()
+
         # Recursively convert nested Record values to dicts
         def _to_dict(v):
             if isinstance(v, Record):
                 return v.to_dict()
             return v
+
         if isinstance(value, dict):
             value = {k: _to_dict(v) for k, v in value.items()}
         lp_tree = jax.tree.map(
@@ -370,7 +376,9 @@ class ProductDistribution(
         return _map_components(self._components, lambda d: d._variance())
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-        return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
+        return _mc_expectation(
+            self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
+        )
 
     # -- Component access (for backward compat) ----------------------------
 
@@ -407,15 +415,19 @@ class ProductDistribution(
         return self._condition_on_impl(observed_leaves)
 
     def _condition_on_impl(
-        self, observed_leaves: dict[KeyPath, ArrayLike],
+        self,
+        observed_leaves: dict[KeyPath, ArrayLike],
     ) -> ProductDistribution:
         new_components = _prune_leaves(self._components, set(observed_leaves.keys()))
         result = ProductDistribution(**new_components, name=self._name)
         conditioned_names = [" > ".join(path) for path in observed_leaves]
-        result.with_source(Provenance.create(
-            "condition_on", parents=[self],
-            metadata={"conditioned": conditioned_names},
-        ))
+        result.with_source(
+            Provenance.create(
+                "condition_on",
+                parents=[self],
+                metadata={"conditioned": conditioned_names},
+            )
+        )
         return result
 
     def __repr__(self) -> str:
@@ -527,11 +539,13 @@ def _sample_nested(components: dict, key, sample_shape, template=None, numeric=F
         if isinstance(comp, dict):
             sub_template = template[name] if template is not None else None
             fields[name] = _sample_nested(
-                comp, subkey, sample_shape, template=sub_template, numeric=numeric)
+                comp, subkey, sample_shape, template=sub_template, numeric=numeric
+            )
         else:
             fields[name] = comp._sample(subkey, sample_shape)
     if sample_shape and template is not None:
         from ..core._record_array import NumericRecordArray, RecordArray
+
         cls = NumericRecordArray if numeric else RecordArray
         return cls(fields, batch_shape=sample_shape, template=template)
     return Record(fields)
@@ -551,6 +565,7 @@ def _map_components(components: dict, fn) -> Record:
 # ---------------------------------------------------------------------------
 # Pytree registration
 # ---------------------------------------------------------------------------
+
 
 def _product_flatten(dist):
     """Flatten a ProductDistribution for JAX pytree registration.

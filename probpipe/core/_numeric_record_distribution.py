@@ -73,6 +73,7 @@ from .protocols import (
 # Sampling & expectation helpers
 # ---------------------------------------------------------------------------
 
+
 def _vmap_sample(
     dist: "NumericRecordDistribution",
     key: PRNGKey,
@@ -95,6 +96,7 @@ def _vmap_sample(
     sample_shape : tuple of int
         Shape prefix for independent draws.
     """
+
     def _one(k: PRNGKey) -> Any:
         return dist._sample(k, ())
 
@@ -150,6 +152,7 @@ def _mc_expectation(
 # ---------------------------------------------------------------------------
 # NumericRecordDistribution — RecordDistribution + numeric shape semantics
 # ---------------------------------------------------------------------------
+
 
 class NumericRecordDistribution(RecordDistribution):
     """Distribution over numeric arrays with Record support.
@@ -240,6 +243,7 @@ class NumericRecordDistribution(RecordDistribution):
         proceed).
         """
         from .record import EventTemplate
+
         tpl = getattr(self, "_event_template", None)
         if tpl is not None:
             return tpl
@@ -254,8 +258,7 @@ class NumericRecordDistribution(RecordDistribution):
             es = self.event_shape
         except NotImplementedError:
             raise TypeError(
-                f"{type(self).__name__} must declare event_shape or "
-                f"set _event_template explicitly."
+                f"{type(self).__name__} must declare event_shape or set _event_template explicitly."
             ) from None
         tpl = EventTemplate(**{name: es})
         object.__setattr__(self, "_event_template", tpl)
@@ -274,11 +277,7 @@ class NumericRecordDistribution(RecordDistribution):
         """
         clone = super().renamed(new_name)
         tpl = getattr(clone, "_event_template", None)
-        if (
-            tpl is not None
-            and len(tpl.fields) == 1
-            and tpl.fields[0] == self._name
-        ):
+        if tpl is not None and len(tpl.fields) == 1 and tpl.fields[0] == self._name:
             object.__setattr__(clone, "_event_template", None)
         return clone
 
@@ -345,7 +344,8 @@ class NumericRecordDistribution(RecordDistribution):
         return self.supports[self._single_field_name()]
 
     def _check_support_compatible(
-        self, source: "NumericRecordDistribution",
+        self,
+        source: "NumericRecordDistribution",
     ) -> None:
         """Raise ``ValueError`` if *source*'s per-field supports are
         incompatible with *self*'s (the target's) per-field supports.
@@ -375,9 +375,7 @@ class NumericRecordDistribution(RecordDistribution):
             for field_name, source_support in source_per_field.items():
                 if _supports_compatible(source_support, target_support):
                     continue
-                field_part = (
-                    f" field {field_name!r}" if multi_leaf_source else ""
-                )
+                field_part = f" field {field_name!r}" if multi_leaf_source else ""
                 raise ValueError(
                     f"Cannot convert {type(source).__name__}{field_part} "
                     f"(support={source_support}) to {type(self).__name__} "
@@ -399,7 +397,8 @@ class NumericRecordDistribution(RecordDistribution):
                 f"Pass check_support=False to override."
             )
         for (s_name, s_sup), (t_name, t_sup) in zip(
-            source_per_field.items(), target_per_field.items(),
+            source_per_field.items(),
+            target_per_field.items(),
         ):
             if _supports_compatible(s_sup, t_sup):
                 continue
@@ -468,10 +467,10 @@ class NumericRecordDistribution(RecordDistribution):
             td = jax.tree.structure(None)
         else:
             from ._numeric_record import NumericRecord
-            placeholder = NumericRecord(**{
-                name: jnp.zeros(tpl.field_event_shape(name))
-                for name in tpl.fields
-            })
+
+            placeholder = NumericRecord(
+                **{name: jnp.zeros(tpl.field_event_shape(name)) for name in tpl.fields}
+            )
             td = jax.tree.structure(placeholder)
         object.__setattr__(self, "_treedef", td)
         return td
@@ -495,13 +494,12 @@ class NumericRecordDistribution(RecordDistribution):
         numeric-leaf shapes; opaque leaves contribute zero.
         """
         from .record import NumericEventTemplate
+
         tpl = self.event_template
         if isinstance(tpl, NumericEventTemplate):
             return tpl.flat_size
         return sum(
-            prod(shape) if shape else 1
-            for shape in tpl.leaf_shapes.values()
-            if shape is not None
+            prod(shape) if shape else 1 for shape in tpl.leaf_shapes.values() if shape is not None
         )
 
     @staticmethod
@@ -517,6 +515,7 @@ class NumericRecordDistribution(RecordDistribution):
         from ._numeric_record import NumericRecord
         from ._record_array import NumericRecordArray
         from .record import Record
+
         if isinstance(value, (NumericRecordArray, NumericRecord)):
             return value.flatten()
         if isinstance(value, Record):
@@ -540,6 +539,7 @@ class NumericRecordDistribution(RecordDistribution):
         """
         from ._numeric_record import NumericRecord
         from ._record_array import NumericRecordArray
+
         flat = jnp.asarray(flat)
         if template is not None and len(template.fields) > 1:
             if flat.ndim < 2:
@@ -607,12 +607,14 @@ class NumericRecordDistribution(RecordDistribution):
         return f"{parts[0]}({', '.join(parts[1:])})"
 
 
-
 # ---------------------------------------------------------------------------
 # BootstrapDistribution
 # ---------------------------------------------------------------------------
 
-class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, SupportsMean, SupportsVariance):
+
+class BootstrapDistribution(
+    NumericRecordDistribution, SupportsSampling, SupportsMean, SupportsVariance
+):
     """Distribution over bootstrap-resampled means of a statistic.
 
     Given *n* evaluations ``f(x_1), ..., f(x_n)`` where ``x_i ~ P``,
@@ -648,7 +650,9 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
             raise ValueError("evaluations must have at least 1 dimension.")
         self._num_atoms = self._evaluations.shape[0]
         self._w = Weights(
-            n=self._num_atoms, weights=weights, log_weights=log_weights,
+            n=self._num_atoms,
+            weights=weights,
+            log_weights=log_weights,
         )
         if name is None:
             name = "bootstrap_dist"
@@ -692,6 +696,7 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         """Draw bootstrap resamples of the mean."""
+
         def _one_resample(k):
             idx = self._w.choice(k, shape=(self._num_atoms,))
             return jnp.mean(self._evaluations[idx], axis=0)
@@ -713,7 +718,10 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
         return_dist: bool | None = None,
     ) -> Any:
         return _mc_expectation(
-            self, f, key=key, num_evaluations=num_evaluations,
+            self,
+            f,
+            key=key,
+            num_evaluations=num_evaluations,
             return_dist=return_dist,
         )
 
@@ -723,10 +731,8 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
         return self._per_field_dict(real)
 
     def __repr__(self) -> str:
-        return (
-            f"BootstrapDistribution(num_atoms={self._num_atoms}, "
-            f"event_shape={self.event_shape})"
-        )
+        return f"BootstrapDistribution(num_atoms={self._num_atoms}, event_shape={self.event_shape})"
+
 
 # ---------------------------------------------------------------------------
 # FlatNumericRecordDistribution — the flat-shaped subset of NRD
@@ -815,6 +821,7 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
             If ``self.flat_size`` does not match ``template.flat_size``.
         """
         from .record import NumericEventTemplate
+
         if not isinstance(template, NumericEventTemplate):
             raise TypeError(
                 f"as_record_distribution requires a NumericEventTemplate, "
@@ -864,7 +871,8 @@ def _flattened_distribution_view_class_for_base(base: Distribution) -> type:
         def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
             pytree_samples = self._base._sample(key, sample_shape)
             return self._base.flatten_value(
-                pytree_samples, event_shape=self._base.event_shape,
+                pytree_samples,
+                event_shape=self._base.event_shape,
             )
 
         extra_methods["_sample"] = _sample
@@ -875,7 +883,8 @@ def _flattened_distribution_view_class_for_base(base: Distribution) -> type:
         def _log_prob(self, x: ArrayLike) -> Array:
             x = jnp.asarray(x)
             value = self._base.unflatten_value(
-                x, template=self._base.event_template,
+                x,
+                template=self._base.event_template,
             )
             return self._base._log_prob(value)
 
@@ -939,7 +948,10 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
         return_dist: bool | None = None,
     ) -> Any:
         return _mc_expectation(
-            self, f, key=key, num_evaluations=num_evaluations,
+            self,
+            f,
+            key=key,
+            num_evaluations=num_evaluations,
             return_dist=return_dist,
         )
 
@@ -956,7 +968,8 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
     def unflatten_sample(self, flat_sample: ArrayLike):
         """Convenience: unflatten a flat sample back to the pytree structure."""
         return self._base.unflatten_value(
-            jnp.asarray(flat_sample), template=self._base.event_template,
+            jnp.asarray(flat_sample),
+            template=self._base.event_template,
         )
 
     def __repr__(self) -> str:
@@ -999,12 +1012,18 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
     from ._record_array import NumericRecordArray
 
     protocols: set[str] = set()
-    if isinstance(base, SupportsSampling):    protocols.add("sample")
-    if isinstance(base, SupportsLogProb):     protocols.add("log_prob")
-    if isinstance(base, SupportsMean):        protocols.add("mean")
-    if isinstance(base, SupportsVariance):    protocols.add("variance")
-    if isinstance(base, SupportsCovariance):  protocols.add("cov")
-    if isinstance(base, SupportsExpectation): protocols.add("expectation")
+    if isinstance(base, SupportsSampling):
+        protocols.add("sample")
+    if isinstance(base, SupportsLogProb):
+        protocols.add("log_prob")
+    if isinstance(base, SupportsMean):
+        protocols.add("mean")
+    if isinstance(base, SupportsVariance):
+        protocols.add("variance")
+    if isinstance(base, SupportsCovariance):
+        protocols.add("cov")
+    if isinstance(base, SupportsExpectation):
+        protocols.add("expectation")
 
     extra_bases: list[type] = []
     extra_methods: dict[str, object] = {}
@@ -1015,13 +1034,16 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
         def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
             base_sample = self._base._sample(key, sample_shape)
             flat = self._base.flatten_value(
-                base_sample, event_shape=self._base.event_shape,
+                base_sample,
+                event_shape=self._base.event_shape,
             )
             tpl = self.event_template
             if sample_shape == ():
                 return NumericRecord.unflatten(flat, template=tpl)
             return NumericRecordArray.unflatten(
-                flat, template=tpl, batch_shape=sample_shape,
+                flat,
+                template=tpl,
+                batch_shape=sample_shape,
             )
 
         extra_methods["_sample"] = _sample
@@ -1035,7 +1057,8 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             else:
                 flat = jnp.asarray(x)
             value = self._base.unflatten_value(
-                flat, template=self._base.event_template,
+                flat,
+                template=self._base.event_template,
             )
             return self._base._log_prob(value)
 
@@ -1046,7 +1069,8 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
 
         def _mean(self):
             flat = self._base.flatten_value(
-                self._base._mean(), event_shape=self._base.event_shape,
+                self._base._mean(),
+                event_shape=self._base.event_shape,
             )
             return NumericRecord.unflatten(flat, template=self.event_template)
 
@@ -1057,7 +1081,8 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
 
         def _variance(self):
             flat = self._base.flatten_value(
-                self._base._variance(), event_shape=self._base.event_shape,
+                self._base._variance(),
+                event_shape=self._base.event_shape,
             )
             return NumericRecord.unflatten(flat, template=self.event_template)
 
@@ -1096,7 +1121,8 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             sample_key = key if key is not None else _auto_key()
             base_samples = self._base._sample(sample_key, sample_shape=(n,))
             flat_samples = self._base.flatten_value(
-                base_samples, event_shape=self._base.event_shape,
+                base_samples,
+                event_shape=self._base.event_shape,
             )
             template = self.event_template
 

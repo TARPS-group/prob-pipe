@@ -35,10 +35,12 @@ class TestConstruction:
     def test_bool_accepted(self):
         """Python ``bool`` is a numeric leaf (JAX treats it as dtype bool)."""
         import jax.numpy as jnp
+
         v = NumericRecord(flag=True)
         assert v["flag"].dtype == jnp.bool_
         # ``bool`` array fields also work.
         import numpy as np
+
         v2 = NumericRecord(mask=np.array([True, False, True]))
         assert v2["mask"].dtype == jnp.bool_
 
@@ -92,7 +94,9 @@ class TestConstruction:
         metadata."""
         xr = pytest.importorskip("xarray")
         da = xr.DataArray(
-            [1.0, 2.0, 3.0], dims=["time"], coords={"time": [10, 20, 30]},
+            [1.0, 2.0, 3.0],
+            dims=["time"],
+            coords={"time": [10, 20, 30]},
         )
         nr = NumericRecord(y=da)
         assert isinstance(nr["y"], jnp.ndarray)
@@ -140,10 +144,12 @@ class TestConstruction:
         the two validation sites drift silently — this test pins down
         that they consume the same frozenset."""
         from probpipe.core._numeric_record import _NUMERIC_DTYPE_KINDS
+
         assert _NUMERIC_DTYPE_KINDS == frozenset("biufc")
         # Import path is also the import path used by
         # NumericRecordArray._validate_fields (see _record_array.py).
         from probpipe.core import _record_array
+
         assert _record_array._NUMERIC_DTYPE_KINDS is _NUMERIC_DTYPE_KINDS
 
 
@@ -189,6 +195,7 @@ class TestFlattenUnflatten:
 
     def test_roundtrip_nested_template(self):
         from probpipe.core.record import NumericEventTemplate
+
         inner_tpl = NumericEventTemplate(x=(), y=(2,))
         outer_tpl = NumericEventTemplate(params=inner_tpl, z=(3,))
         flat = jnp.arange(6.0)  # x=0, y=[1,2], z=[3,4,5]

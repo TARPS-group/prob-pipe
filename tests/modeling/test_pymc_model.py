@@ -84,7 +84,7 @@ class TestPyMCModel:
         assert "y" in names
 
     def test_supports_named_components(self, model):
-        assert hasattr(model, 'fields')
+        assert hasattr(model, "fields")
         assert len(model.fields) > 0
 
     def test_repr(self, model):
@@ -180,8 +180,14 @@ class TestPyMCModel:
 
         data = np.random.randn(50)
         result = condition_on(
-            model, {"y": data}, method="pymc_nuts",
-            num_results=50, num_warmup=50, num_chains=2, cores=2, random_seed=0,
+            model,
+            {"y": data},
+            method="pymc_nuts",
+            num_results=50,
+            num_warmup=50,
+            num_chains=2,
+            cores=2,
+            random_seed=0,
         )
         assert isinstance(result, ApproximateDistribution)
         assert result.num_chains == 2
@@ -202,8 +208,13 @@ class TestPyMCModel:
         data = np.random.randn(50)
         with _captured_pm_sample_kwargs() as captured:
             result = condition_on(
-                model, {"y": data}, method="pymc_nuts",
-                num_results=20, num_warmup=10, num_chains=2, cores=2,
+                model,
+                {"y": data},
+                method="pymc_nuts",
+                num_results=20,
+                num_warmup=10,
+                num_chains=2,
+                cores=2,
                 random_seed=0,
             )
 
@@ -230,12 +241,16 @@ class TestPyMCModel:
             _captured_pm_sample_kwargs() as captured,
         ):
             _ = condition_on(
-                model, {"y": data}, method="pymc_nuts",
-                num_results=20, num_warmup=10, random_seed=0,
+                model,
+                {"y": data},
+                method="pymc_nuts",
+                num_results=20,
+                num_warmup=10,
+                random_seed=0,
             )
 
-        assert captured["chains"] == 4               # the documented default
-        assert captured["cores"] == 4                # min(num_chains=4, cpu_count=4)
+        assert captured["chains"] == 4  # the documented default
+        assert captured["cores"] == 4  # min(num_chains=4, cpu_count=4)
         assert captured["mp_ctx"] == "spawn"
 
     def test_single_core_default_skips_spawn(self, model):
@@ -252,8 +267,12 @@ class TestPyMCModel:
             _captured_pm_sample_kwargs() as captured,
         ):
             _ = condition_on(
-                model, {"y": data}, method="pymc_nuts",
-                num_results=20, num_warmup=10, random_seed=0,
+                model,
+                {"y": data},
+                method="pymc_nuts",
+                num_results=20,
+                num_warmup=10,
+                random_seed=0,
             )
 
         assert captured["cores"] == 1
@@ -267,10 +286,11 @@ class TestEventTemplate:
 
     def test_mixed_scalar_and_vector_rvs(self):
         """Each free RV becomes one field with its event shape."""
+
         def model_fn(y=None):
             with pm.Model() as m:
-                pm.Normal("intercept", 0, 1)             # scalar
-                pm.Normal("slope", 0, 1, shape=3)        # shape (3,)
+                pm.Normal("intercept", 0, 1)  # scalar
+                pm.Normal("slope", 0, 1, shape=3)  # shape (3,)
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
@@ -281,6 +301,7 @@ class TestEventTemplate:
 
     def test_observed_rvs_excluded(self):
         """Observed variables are not part of the parameter template."""
+
         def model_fn(y=None):
             with pm.Model() as m:
                 pm.Normal("mu", 0, 1)
@@ -315,10 +336,12 @@ class TestEventTemplate:
         # Template built from a data-conditioned build picks up the real
         # shape — and the instance carries no cached state afterward.
         N = 50
-        conditioned = model._pymc_model(data={
-            "X": np.zeros(N, dtype=np.float32),
-            "y": np.zeros(N, dtype=np.float32),
-        })
+        conditioned = model._pymc_model(
+            data={
+                "X": np.zeros(N, dtype=np.float32),
+                "y": np.zeros(N, dtype=np.float32),
+            }
+        )
         names = model._conditioned_param_names(conditioned)
         tpl_c = model._event_template_for(conditioned, names)
         assert tpl_c.fields == ("intercept", "alpha")
@@ -341,9 +364,13 @@ class TestEventTemplate:
         y = rng.normal(size=N).astype(np.float32)
         model = PyMCModel(per_observation_effect_model_fn)
         result = condition_on(
-            model, {"X": X, "y": y},
+            model,
+            {"X": X, "y": y},
             method="pymc_nuts",
-            num_results=20, num_warmup=10, num_chains=1, random_seed=0,
+            num_results=20,
+            num_warmup=10,
+            num_chains=1,
+            random_seed=0,
         )
         draws = result.draws()
         assert draws.fields == ("intercept", "alpha")
@@ -366,16 +393,19 @@ class TestEventTemplate:
 
         def model_fn(y=None):
             with pm.Model() as m:
-                intercept = pm.Normal("intercept", 0, 1)      # scalar, defined first
-                pm.Normal("alpha", 0, 1, shape=3)             # shape (3,), sorts first
+                intercept = pm.Normal("intercept", 0, 1)  # scalar, defined first
+                pm.Normal("alpha", 0, 1, shape=3)  # shape (3,), sorts first
                 pm.Normal("y", mu=intercept, sigma=1.0, observed=y)
             return m
 
         y = np.zeros(8, dtype=np.float32)
         result = condition_on(
-            PyMCModel(model_fn), {"y": y},
+            PyMCModel(model_fn),
+            {"y": y},
             method="pymc_advi",
-            num_iterations=200, num_results=25, random_seed=0,
+            num_iterations=200,
+            num_results=25,
+            random_seed=0,
         )
         assert result.algorithm == "pymc_advi"
         draws = result.draws()
@@ -392,9 +422,10 @@ class TestEventTemplate:
         data-conditioned build. ProbPipe does not support such dynamic
         random variables; the template builder must refuse cleanly.
         """
+
         def model_fn(y=None):
             with pm.Model() as m:
-                if y is None:                       # no-data build only
+                if y is None:  # no-data build only
                     pm.Normal("ghost", 0, 1)
                 mu = pm.Normal("mu", 0, 1)
                 pm.Normal("y", mu=mu, sigma=1.0, observed=y)
@@ -415,16 +446,17 @@ class TestEventTemplate:
         explicit check it would be omitted from the template and filtered
         out of the chain, silently vanishing from the posterior.
         """
+
         def model_fn(y=None):
             with pm.Model() as m:
                 mu = pm.Normal("mu", 0, 1)
-                if y is not None:                   # conditioned build only
+                if y is not None:  # conditioned build only
                     pm.Normal("extra", 0, 1)
                 pm.Normal("y", mu=mu, sigma=1.0, observed=y)
             return m
 
         model = PyMCModel(model_fn)
-        assert model.parameter_names == ("mu",)     # extra absent at construction
+        assert model.parameter_names == ("mu",)  # extra absent at construction
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         with pytest.raises(ValueError, match="dynamic random variables"):
             model._conditioned_param_names(conditioned)
@@ -438,6 +470,7 @@ class TestEventTemplate:
         omitted it is a free RV. Conditioning on ``y`` alone must yield a
         posterior over both ``mu`` and ``X``.
         """
+
         def model_fn(X=None, y=None):
             with pm.Model() as m:
                 mu = pm.Normal("mu", 0, 1)
@@ -470,9 +503,13 @@ class TestEventTemplate:
 
         model = PyMCModel(model_fn)
         result = condition_on(
-            model, {"y": np.zeros(5, dtype=np.float32)},
+            model,
+            {"y": np.zeros(5, dtype=np.float32)},
             method="pymc_nuts",
-            num_results=20, num_warmup=10, num_chains=1, random_seed=0,
+            num_results=20,
+            num_warmup=10,
+            num_chains=1,
+            random_seed=0,
         )
         assert set(result.draws().fields) == {"mu", "X"}
 
@@ -497,14 +534,18 @@ class TestEventTemplate:
 
         model = PyMCModel(model_fn)
         result = condition_on(
-            model, {"y": np.zeros(5, dtype=np.float32)},
+            model,
+            {"y": np.zeros(5, dtype=np.float32)},
             method="pymc_nuts",
-            num_results=200, num_warmup=200, num_chains=1, random_seed=0,
+            num_results=200,
+            num_warmup=200,
+            num_chains=1,
+            random_seed=0,
         )
         draws = result.draws()
         assert set(draws.fields) == {"mu", "X"}
-        assert float(jnp.mean(jnp.asarray(draws["mu"]))) > 50.0    # ~ +100
-        assert float(jnp.mean(jnp.asarray(draws["X"]))) < -50.0    # ~ -100
+        assert float(jnp.mean(jnp.asarray(draws["mu"]))) > 50.0  # ~ +100
+        assert float(jnp.mean(jnp.asarray(draws["X"]))) < -50.0  # ~ -100
 
     def test_pymc_nuts_multiparam_field_order_realigned(self):
         """End-to-end check of the name-keyed wiring (issue #233): the
@@ -530,9 +571,13 @@ class TestEventTemplate:
 
         model = PyMCModel(model_fn)
         result = condition_on(
-            model, {"y": np.zeros(5, dtype=np.float32)},
+            model,
+            {"y": np.zeros(5, dtype=np.float32)},
             method="pymc_nuts",
-            num_results=200, num_warmup=200, num_chains=1, random_seed=0,
+            num_results=200,
+            num_warmup=200,
+            num_chains=1,
+            random_seed=0,
         )
         draws = result.draws()
         # Declared order, not nutpie/pymc's alphabetical data_vars order.
@@ -561,9 +606,13 @@ class TestEventTemplate:
         model = PyMCModel(model_fn)
         with pytest.raises(ValueError, match="dynamic random variables"):
             condition_on(
-                model, {"y": np.zeros(5, dtype=np.float32)},
+                model,
+                {"y": np.zeros(5, dtype=np.float32)},
                 method="pymc_nuts",
-                num_results=5, num_warmup=5, num_chains=1, random_seed=0,
+                num_results=5,
+                num_warmup=5,
+                num_chains=1,
+                random_seed=0,
             )
 
     def test_non_concrete_shape_rejected(self):
@@ -629,6 +678,7 @@ class TestRecordDataUnpacking:
     def test_record_input_unpacked_by_field_name(self):
         """A ``Record(X=..., y=...)`` populates both observed slots."""
         from probpipe import Record
+
         rng = np.random.RandomState(0)
         N = 20
         X = np.asarray(rng.randn(N))[:, None].astype(np.float32)
@@ -662,6 +712,7 @@ class TestRecordDataUnpacking:
         user-facing Record API free of NumPy-shaped friction.
         """
         from probpipe import Record
+
         X = jnp.ones((5, 2), dtype=jnp.float32)  # JAX array
         y = jnp.zeros(5, dtype=jnp.float32)
         model = PyMCModel(self._xy_model)

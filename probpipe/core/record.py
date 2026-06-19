@@ -443,6 +443,7 @@ class Record:
         # Lazy import to avoid the module-level circular dep:
         # _numeric_record.py imports Record from this module.
         from ._numeric_record import NumericRecord
+
         return NumericRecord.from_record(self)
 
     # -- Coercion -----------------------------------------------------------
@@ -523,8 +524,7 @@ class Record:
         only = next(iter(self._store.values()))
         if not callable(only):
             raise TypeError(
-                f"{type(self).__name__} single field is not callable "
-                f"(got {type(only).__name__})."
+                f"{type(self).__name__} single field is not callable (got {type(only).__name__})."
             )
         return only(*args, **kwargs)
 
@@ -603,8 +603,7 @@ class ArraySpec:
         shape = tuple(self.shape)
         if not all(isinstance(d, int) and d >= 0 for d in shape):
             raise TypeError(
-                f"ArraySpec.shape must be a tuple of non-negative ints, "
-                f"got {self.shape!r}"
+                f"ArraySpec.shape must be a tuple of non-negative ints, got {self.shape!r}"
             )
         object.__setattr__(self, "shape", shape)
 
@@ -721,8 +720,7 @@ def _pack_fields(
             parts.append(f"unexpected {extra}")
         prefix = f"{owner}: " if owner else ""
         raise TypeError(
-            f"{prefix}expected exactly the fields {tuple(fields)} — "
-            f"{'; '.join(parts)}."
+            f"{prefix}expected exactly the fields {tuple(fields)} — {'; '.join(parts)}."
         )
     return Record(**{f: field_kwargs[f] for f in fields})
 
@@ -831,9 +829,7 @@ class EventTemplate:
         source: Mapping[str, _FieldSpecInput]
         if _dict is not None:
             if field_specs:
-                raise ValueError(
-                    "Cannot pass both positional dict and keyword arguments"
-                )
+                raise ValueError("Cannot pass both positional dict and keyword arguments")
             source = _dict
         else:
             source = field_specs
@@ -1003,6 +999,7 @@ class EventTemplate:
         target_cls = cls
         if cls is EventTemplate:
             from ._numeric_record import NumericRecord
+
             if isinstance(record, NumericRecord):
                 target_cls = NumericEventTemplate
         n_batch = len(batch_shape)

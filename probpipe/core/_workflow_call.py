@@ -58,8 +58,7 @@ def make_signature_info(
     hints = _get_type_hints(func)
     param_names = tuple(p for p in signature.parameters if p != "self")
     has_var_keyword = any(
-        p.kind == inspect.Parameter.VAR_KEYWORD
-        for p in signature.parameters.values()
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()
     )
     return WorkflowSignatureInfo(
         signature=signature,

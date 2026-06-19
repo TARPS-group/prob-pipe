@@ -165,17 +165,10 @@ def execute_sweep_rows(
     require_jax_traceable: Callable[[dict[str, Any], list[str]], None],
 ) -> Any:
     """Execute pure sweep rows through JAX vmap or row-wise execution."""
-    has_dist_array = any(
-        isinstance(values[name], DistributionArray) for name in array_args
-    )
-    has_view = any(
-        isinstance(values[name], _RecordArrayView) for name in array_args
-    )
+    has_dist_array = any(isinstance(values[name], DistributionArray) for name in array_args)
+    has_view = any(isinstance(values[name], _RecordArrayView) for name in array_args)
     jax_supported = not (
-        has_dist_array
-        or has_view
-        or len(plan.array_groups) > 1
-        or len(array_args) > 1
+        has_dist_array or has_view or len(plan.array_groups) > 1 or len(array_args) > 1
     )
     if requested_dispatch == "jax" and not jax_supported:
         raise ValueError(
@@ -237,9 +230,7 @@ def execute_sweep_rows_jax(
         array_value = values[name]
         n_batch = len(array_value.batch_shape)
         vmap_input[name] = {
-            field: array_value[field].reshape(
-                (n_total, *array_value[field].shape[n_batch:])
-            )
+            field: array_value[field].reshape((n_total, *array_value[field].shape[n_batch:]))
             for field in array_value.fields
         }
     return jax.vmap(single_call)(vmap_input)
@@ -260,10 +251,7 @@ def make_sweep_provenance(
     """
     regime = "nested" if dist_args else "stack"
     array_candidates = [values[name] for name in array_args]
-    dist_candidates = [
-        values[name] for name in dist_args
-        if isinstance(values[name], Distribution)
-    ]
+    dist_candidates = [values[name] for name in dist_args if isinstance(values[name], Distribution)]
     return Provenance.create(
         f"workflow.{regime}",
         parents=array_candidates + dist_candidates,

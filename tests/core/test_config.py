@@ -11,7 +11,6 @@ from probpipe.core.config import (
 
 
 class TestProvenanceModeEnvVar:
-
     def test_unset_defaults_to_lightweight(self, monkeypatch):
         monkeypatch.delenv(_PROVENANCE_MODE_ENV_VAR, raising=False)
         assert _initial_provenance_mode() is ProvenanceMode.LIGHTWEIGHT
@@ -36,6 +35,7 @@ class TestProvenanceModeEnvVar:
     def test_reset_re_reads_env_var(self, monkeypatch):
         """ProvenanceConfig.reset() picks up a changed env var."""
         import probpipe
+
         monkeypatch.setenv(_PROVENANCE_MODE_ENV_VAR, "off")
         probpipe.provenance_config.reset()
         assert probpipe.provenance_config.mode is ProvenanceMode.OFF

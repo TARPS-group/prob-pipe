@@ -31,6 +31,7 @@ from probpipe.core.config import (
 # WorkflowKind enum
 # ---------------------------------------------------------------------------
 
+
 class TestWorkflowKindEnum:
     """Verify enum has the expected members and values."""
 
@@ -62,6 +63,7 @@ class TestWorkflowKindEnum:
 # ---------------------------------------------------------------------------
 # PrefectConfig singleton
 # ---------------------------------------------------------------------------
+
 
 class TestPrefectConfigDefaults:
     """Verify default values and reset behavior."""
@@ -116,6 +118,7 @@ class TestTaskRunnerAutoDetection:
     def test_returns_none_when_nothing_installed(self, monkeypatch):
         # Block both runner imports
         import builtins
+
         real_import = builtins.__import__
 
         monkeypatch.delitem(sys.modules, "prefect_ray", raising=False)
@@ -168,6 +171,7 @@ class TestTaskRunnerAutoDetection:
     def test_resolve_with_no_explicit_runner(self, monkeypatch):
         # When no explicit runner and no runner packages, resolve returns None
         import builtins
+
         real_import = builtins.__import__
 
         monkeypatch.delitem(sys.modules, "prefect_ray", raising=False)
@@ -186,6 +190,7 @@ class TestTaskRunnerAutoDetection:
 # ---------------------------------------------------------------------------
 # effective_workflow_kind resolution
 # ---------------------------------------------------------------------------
+
 
 class TestEffectiveWorkflowKind:
     """Test the resolution logic on WorkflowFunction instances."""
@@ -228,9 +233,13 @@ class TestEffectiveWorkflowKind:
             return x
 
         wf = WorkflowFunction(
-            func=noop, workflow_kind=WorkflowKind.TASK, dispatch="sequential", seed=0,
+            func=noop,
+            workflow_kind=WorkflowKind.TASK,
+            dispatch="sequential",
+            seed=0,
         )
         import probpipe.core.node as node_mod
+
         if node_mod.task is not None:
             assert wf.effective_workflow_kind is WorkflowKind.TASK
 
@@ -244,13 +253,17 @@ class TestEffectiveWorkflowKind:
             return x
 
         wf = WorkflowFunction(
-            func=noop, workflow_kind=WorkflowKind.OFF, dispatch="sequential", seed=0,
+            func=noop,
+            workflow_kind=WorkflowKind.OFF,
+            dispatch="sequential",
+            seed=0,
         )
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
     def test_explicit_task_warns_without_prefect(self, monkeypatch):
         """Per-instance TASK + Prefect missing → warning + OFF."""
         import probpipe.core.node as node_mod
+
         monkeypatch.setattr(node_mod, "task", None)
         monkeypatch.setattr(node_mod, "flow", None)
 
@@ -260,7 +273,10 @@ class TestEffectiveWorkflowKind:
             return x
 
         wf = WorkflowFunction(
-            func=noop, workflow_kind=WorkflowKind.TASK, dispatch="sequential", seed=0,
+            func=noop,
+            workflow_kind=WorkflowKind.TASK,
+            dispatch="sequential",
+            seed=0,
         )
         with pytest.warns(UserWarning, match="Prefect is not installed"):
             kind = wf.effective_workflow_kind
@@ -269,6 +285,7 @@ class TestEffectiveWorkflowKind:
     def test_global_task_falls_back_without_prefect(self, monkeypatch):
         """Global TASK + Prefect missing → OFF (graceful)."""
         import probpipe.core.node as node_mod
+
         monkeypatch.setattr(node_mod, "task", None)
         monkeypatch.setattr(node_mod, "flow", None)
 
@@ -293,6 +310,7 @@ class TestEffectiveWorkflowKind:
 
         wf = WorkflowFunction(func=noop, dispatch="sequential", seed=0)
         import probpipe.core.node as node_mod
+
         if node_mod.task is not None:
             assert wf.effective_workflow_kind is WorkflowKind.FLOW
 
@@ -309,6 +327,7 @@ class TestEffectiveWorkflowKind:
 
         prefect_config.workflow_kind = WorkflowKind.FLOW
         import probpipe.core.node as node_mod
+
         if node_mod.task is not None:
             assert wf.effective_workflow_kind is WorkflowKind.FLOW
 
@@ -316,6 +335,7 @@ class TestEffectiveWorkflowKind:
 # ---------------------------------------------------------------------------
 # Strict constructor workflow_kind validation
 # ---------------------------------------------------------------------------
+
 
 class TestWorkflowKindConstructorValidation:
     """Verify constructors reject old-style workflow_kind values."""
@@ -365,6 +385,7 @@ class TestWorkflowKindConstructorValidation:
 # Module inherits global config
 # ---------------------------------------------------------------------------
 
+
 class TestModuleInheritsConfig:
     """Module with DEFAULT propagates global config to children."""
 
@@ -413,6 +434,7 @@ class TestModuleInheritsConfig:
 # ---------------------------------------------------------------------------
 # PROBPIPE_WORKFLOW_KIND environment variable
 # ---------------------------------------------------------------------------
+
 
 class TestEnvVarOverride:
     """The ``PROBPIPE_WORKFLOW_KIND`` env var sets the initial workflow_kind."""

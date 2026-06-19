@@ -96,6 +96,7 @@ def _view_class_for_parent(parent: Distribution) -> type[_RecordDistributionView
             # over draws for just this field. Requires the parent to
             # expose ``draws()`` (all ApproximateDistribution subclasses do).
             return self._field_draws().mean(axis=0)
+
         extra_methods["_mean"] = _mean
 
     if "variance" in protocols:
@@ -106,6 +107,7 @@ def _view_class_for_parent(parent: Distribution) -> type[_RecordDistributionView
             if isinstance(v, Record):
                 return v[self._key]
             return self._field_draws().var(axis=0)
+
         extra_methods["_variance"] = _variance
 
     if "log_prob" in protocols:
@@ -115,9 +117,8 @@ def _view_class_for_parent(parent: Distribution) -> type[_RecordDistributionView
             components = getattr(self._parent, "_components", None)
             if components is not None and self._key in components:
                 return components[self._key]._log_prob(value)
-            raise NotImplementedError(
-                f"_log_prob not available for view {self._key!r}"
-            )
+            raise NotImplementedError(f"_log_prob not available for view {self._key!r}")
+
         extra_methods["_log_prob"] = _log_prob
 
     if "cov" in protocols:
@@ -127,9 +128,8 @@ def _view_class_for_parent(parent: Distribution) -> type[_RecordDistributionView
             c = self._parent._cov()
             if isinstance(c, Record):
                 return c[self._key]
-            raise NotImplementedError(
-                f"_cov not available for view {self._key!r}"
-            )
+            raise NotImplementedError(f"_cov not available for view {self._key!r}")
+
         extra_methods["_cov"] = _cov
 
     if not extra_bases:
@@ -183,10 +183,7 @@ class _RecordDistributionView(Distribution):
         # (metaclass-enforced on every ``RecordDistribution`` instance).
         template = parent.event_template
         if key not in template:
-            raise KeyError(
-                f"No field {key!r} in event_template "
-                f"(available: {template.fields})"
-            )
+            raise KeyError(f"No field {key!r} in event_template (available: {template.fields})")
         # Bypass Distribution.__init__ validation (view name comes from
         # the field key, not a user-supplied argument).
         self._name = key
@@ -249,6 +246,7 @@ class _RecordDistributionView(Distribution):
     def _extract(self, structured: Any) -> Array:
         """Extract this field from a parent sample (Record, NumericRecordArray, or flat array)."""
         from ._record_array import RecordArray
+
         if isinstance(structured, (Record, RecordArray)):
             return structured[self._key]
         # Flat array — unflatten via the parent's static unflatten_value.
@@ -262,7 +260,8 @@ class _RecordDistributionView(Distribution):
                 f"implement unflatten_value."
             )
         result = unflatten(
-            jnp.asarray(structured), template=self._parent.event_template,
+            jnp.asarray(structured),
+            template=self._parent.event_template,
         )
         if isinstance(result, (Record, RecordArray)):
             return result[self._key]
@@ -280,19 +279,18 @@ class _RecordDistributionView(Distribution):
         expose ``draws()``.
         """
         from ._record_array import NumericRecordArray, RecordArray
+
         draws = self._parent.draws()
         if isinstance(draws, (Record, RecordArray)):
             return jnp.asarray(draws[self._key])
         result = NumericRecordArray.unflatten(
-            jnp.asarray(draws), template=self._parent.event_template,
+            jnp.asarray(draws),
+            template=self._parent.event_template,
         )
         return jnp.asarray(result[self._key])
 
     def __repr__(self) -> str:
-        return (
-            f"_RecordDistributionView(parent={type(self._parent).__name__}, "
-            f"field={self._key!r})"
-        )
+        return f"_RecordDistributionView(parent={type(self._parent).__name__}, field={self._key!r})"
 
 
 # ---------------------------------------------------------------------------
@@ -356,8 +354,7 @@ class _RecordDistributionMeta(_DistributionMeta):
             tpl = instance.event_template
         except (TypeError, NotImplementedError) as exc:
             raise TypeError(
-                f"{cls.__name__}.__init__ left event_template "
-                f"unresolved: {exc}"
+                f"{cls.__name__}.__init__ left event_template unresolved: {exc}"
             ) from exc
         if tpl is None:
             raise TypeError(
@@ -504,7 +501,6 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
         return len(self.shape)
 
 
-
 # ---------------------------------------------------------------------------
 # JAX PyTree registration helpers
 # ---------------------------------------------------------------------------
@@ -520,13 +516,15 @@ def _register_dynamic_subclass(cls: type) -> type:
     capturing the top-level key order explicitly so insertion order
     survives the round-trip (JAX's dict treedef is sorted).
     """
+
     def _flatten(dist: Any) -> tuple[list[Any], tuple[Any, str, tuple[str, ...]]]:
         leaves = jax.tree.leaves(dist._components)
         treedef = jax.tree.structure(dist._components)
         return leaves, (treedef, dist._name, tuple(dist._components.keys()))
 
     def _unflatten(
-        aux: tuple[Any, str, tuple[str, ...]], children: list[Any],
+        aux: tuple[Any, str, tuple[str, ...]],
+        children: list[Any],
     ) -> Any:
         treedef, name, key_order = aux
         components = jax.tree.unflatten(treedef, children)

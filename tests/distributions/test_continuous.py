@@ -200,9 +200,9 @@ class TestNormalDist:
 _SCIPY_EQUIVALENTS = {
     "Normal": _scipy.norm(loc=0.0, scale=1.0),
     "Beta": _scipy.beta(a=2.0, b=5.0),
-    "Gamma": _scipy.gamma(a=3.0, scale=1.0),        # scipy scale = 1 / rate
+    "Gamma": _scipy.gamma(a=3.0, scale=1.0),  # scipy scale = 1 / rate
     "InverseGamma": _scipy.invgamma(a=3.0, scale=1.0),
-    "Exponential": _scipy.expon(scale=0.5),         # scipy scale = 1 / rate
+    "Exponential": _scipy.expon(scale=0.5),  # scipy scale = 1 / rate
     "LogNormal": _scipy.lognorm(s=1.0, scale=1.0),  # s = sigma, scale = exp(loc)
     "StudentT": _scipy.t(df=5.0, loc=0.0, scale=1.0),
     "Uniform": _scipy.uniform(loc=0.0, scale=1.0),  # scipy scale = high - low
@@ -221,8 +221,10 @@ class TestContinuousMoments:
         cls, kwargs = _CONTINUOUS_DISTS[name]
         scipy_dist = _SCIPY_EQUIVALENTS[name]
         np.testing.assert_allclose(
-            float(mean(cls(**kwargs))), float(scipy_dist.mean()),
-            rtol=1e-5, atol=1e-6,
+            float(mean(cls(**kwargs))),
+            float(scipy_dist.mean()),
+            rtol=1e-5,
+            atol=1e-6,
         )
 
     @pytest.mark.parametrize("name", list(_SCIPY_EQUIVALENTS))
@@ -230,8 +232,10 @@ class TestContinuousMoments:
         cls, kwargs = _CONTINUOUS_DISTS[name]
         scipy_dist = _SCIPY_EQUIVALENTS[name]
         np.testing.assert_allclose(
-            float(variance(cls(**kwargs))), float(scipy_dist.var()),
-            rtol=1e-5, atol=1e-6,
+            float(variance(cls(**kwargs))),
+            float(scipy_dist.var()),
+            rtol=1e-5,
+            atol=1e-6,
         )
 
     @pytest.mark.parametrize("name", list(_SCIPY_EQUIVALENTS))
@@ -277,6 +281,7 @@ class TestProb:
     def test_prob_equals_exp_logprob(self, key):
         """prob(dist, x) must equal exp(log_prob(dist, x))."""
         from probpipe import log_prob as log_prob_op
+
         d = Normal(loc=0.0, scale=1.0, name="x")
         xs = jnp.array([-1.0, 0.5, 1.2])
         np.testing.assert_allclose(

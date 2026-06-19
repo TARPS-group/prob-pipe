@@ -133,10 +133,10 @@ class TestSampling:
         rec_draw = rec._sample(key)
         flat_draw = mvn4._sample(key)
         ref = NumericRecord.unflatten(flat_draw, template=split_template)
-        np.testing.assert_allclose(jnp.asarray(rec_draw["intercept"]),
-                                   jnp.asarray(ref["intercept"]))
-        np.testing.assert_allclose(jnp.asarray(rec_draw["slope"]),
-                                   jnp.asarray(ref["slope"]))
+        np.testing.assert_allclose(
+            jnp.asarray(rec_draw["intercept"]), jnp.asarray(ref["intercept"])
+        )
+        np.testing.assert_allclose(jnp.asarray(rec_draw["slope"]), jnp.asarray(ref["slope"]))
 
     def test_chain_flatten_then_lift_on_product(self):
         """``ProductDistribution.as_flat_distribution().as_record_distribution(...)``
@@ -186,7 +186,9 @@ class TestLogProb:
         key = jax.random.PRNGKey(5)
         flat_xs = mvn4._sample(key, sample_shape=(10,))
         rec_xs = NumericRecordArray.unflatten(
-            flat_xs, template=split_template, batch_shape=(10,),
+            flat_xs,
+            template=split_template,
+            batch_shape=(10,),
         )
         lp_rec = jnp.asarray(log_prob(rec, rec_xs))
         lp_flat = jnp.asarray(log_prob(mvn4, flat_xs))
@@ -201,15 +203,13 @@ class TestMoments:
         rec = mvn4.as_record_distribution(template=split_template)
         m = mean(rec)
         np.testing.assert_allclose(jnp.asarray(m["intercept"]), 1.0, rtol=1e-5)
-        np.testing.assert_allclose(jnp.asarray(m["slope"]),
-                                   jnp.array([-1.0, 2.0, 0.5]), rtol=1e-5)
+        np.testing.assert_allclose(jnp.asarray(m["slope"]), jnp.array([-1.0, 2.0, 0.5]), rtol=1e-5)
 
     def test_variance_unflattens(self, mvn4, split_template):
         rec = mvn4.as_record_distribution(template=split_template)
         v = variance(rec)
         np.testing.assert_allclose(jnp.asarray(v["intercept"]), 0.5, rtol=1e-5)
-        np.testing.assert_allclose(jnp.asarray(v["slope"]),
-                                   jnp.array([1.0, 1.5, 2.0]), rtol=1e-5)
+        np.testing.assert_allclose(jnp.asarray(v["slope"]), jnp.array([1.0, 1.5, 2.0]), rtol=1e-5)
 
     def test_cov_stays_flat(self, mvn4, split_template):
         """cov(rec) is the same (event_size, event_size) matrix as cov(source)."""
@@ -232,14 +232,17 @@ class TestMoments:
             return r["intercept"] ** 2 + jnp.sum(r["slope"] ** 2)
 
         est = expectation(
-            rec, f, key=jax.random.PRNGKey(0),
-            num_evaluations=5000, return_dist=False,
+            rec,
+            f,
+            key=jax.random.PRNGKey(0),
+            num_evaluations=5000,
+            return_dist=False,
         )
         # E[X^2] = loc^2 + var per coordinate. 5k samples puts MC SE
         # around ~0.15 for these parameters; atol=0.2 stays meaningful.
         loc = jnp.array([1.0, -1.0, 2.0, 0.5])
         var = jnp.array([0.5, 1.0, 1.5, 2.0])
-        analytic = float(jnp.sum(loc ** 2 + var))
+        analytic = float(jnp.sum(loc**2 + var))
         np.testing.assert_allclose(float(jnp.asarray(est)), analytic, atol=0.2)
 
 
@@ -379,5 +382,3 @@ class TestLiftFromOtherFlatParametrics:
         draw = sample(rec, key=jax.random.PRNGKey(0))
         # Simplex invariant must survive the lift.
         np.testing.assert_allclose(float(jnp.sum(draw["probs"])), 1.0, rtol=1e-5)
-
-

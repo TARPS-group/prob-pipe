@@ -27,6 +27,7 @@ __all__ = [
 # ParentInfo descriptor
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class ParentInfo:
     """Descriptor for a provenance parent, used in all non-OFF modes.
@@ -68,6 +69,7 @@ class ParentInfo:
 # Provenance dataclass
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class Provenance:
     """Tracks how a distribution was created."""
@@ -77,9 +79,7 @@ class Provenance:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __repr__(self) -> str:
-        parent_names = ", ".join(
-            p.name or p.type_name for p in self.parents
-        )
+        parent_names = ", ".join(p.name or p.type_name for p in self.parents)
         return f"Provenance({self.operation!r}, parents=[{parent_names}])"
 
     # -- Serialization -----------------------------------------------------
@@ -175,6 +175,7 @@ class Provenance:
 # Graph utilities
 # ---------------------------------------------------------------------------
 
+
 def _parent_key(p: Any) -> Any:
     """Stable dedup key for a parent node.
 
@@ -245,8 +246,7 @@ def provenance_dag(dist: "Distribution"):
         from graphviz import Digraph
     except ImportError:
         raise ImportError(
-            "graphviz is required for provenance_dag(). "
-            "Install it with: pip install graphviz"
+            "graphviz is required for provenance_dag(). Install it with: pip install graphviz"
         )
 
     dot = Digraph(comment="Provenance DAG")

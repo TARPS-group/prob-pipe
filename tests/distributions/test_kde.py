@@ -29,6 +29,7 @@ from probpipe.distributions.kde import KDEDistribution
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def two_field_template():
     return EventTemplate(intercept=(), slope=())
@@ -44,10 +45,13 @@ def flat_samples():
 # Constructor + validation
 # ---------------------------------------------------------------------------
 
+
 class TestEventTemplateConstructor:
     def test_multi_field_template_preserved(self, two_field_template, flat_samples):
         kde = KDEDistribution(
-            flat_samples, event_template=two_field_template, name="post",
+            flat_samples,
+            event_template=two_field_template,
+            name="post",
         )
         assert kde.event_template is two_field_template
         assert kde.event_template.fields == ("intercept", "slope")
@@ -62,7 +66,9 @@ class TestEventTemplateConstructor:
         (the existing single-field behaviour is the baseline)."""
         single = EventTemplate(theta=(2,))
         kde = KDEDistribution(
-            flat_samples, event_template=single, name="post",
+            flat_samples,
+            event_template=single,
+            name="post",
         )
         # Single-field template still gets stored — but the special-case
         # multi-field path isn't taken.
@@ -79,10 +85,13 @@ class TestEventTemplateConstructor:
 # _sample round-trip
 # ---------------------------------------------------------------------------
 
+
 class TestSampleRoundTrip:
     def test_sample_scalar_returns_numeric_record(self, two_field_template, flat_samples):
         kde = KDEDistribution(
-            flat_samples, event_template=two_field_template, name="post",
+            flat_samples,
+            event_template=two_field_template,
+            name="post",
         )
         s = kde._sample(jax.random.PRNGKey(0), ())
         assert isinstance(s, _NumericRecord)
@@ -90,7 +99,9 @@ class TestSampleRoundTrip:
 
     def test_sample_batched_returns_record_array(self, two_field_template, flat_samples):
         kde = KDEDistribution(
-            flat_samples, event_template=two_field_template, name="post",
+            flat_samples,
+            event_template=two_field_template,
+            name="post",
         )
         s = kde._sample(jax.random.PRNGKey(1), (8,))
         assert isinstance(s, NumericRecordArray)
@@ -110,10 +121,13 @@ class TestSampleRoundTrip:
 # _log_prob dual input
 # ---------------------------------------------------------------------------
 
+
 class TestLogProbDualInput:
     def test_structured_and_flat_inputs_agree(self, two_field_template, flat_samples):
         kde = KDEDistribution(
-            flat_samples, event_template=two_field_template, name="post",
+            flat_samples,
+            event_template=two_field_template,
+            name="post",
         )
         nr = NumericRecord(intercept=jnp.array(0.5), slope=jnp.array(-0.3))
         lp_struct = kde._log_prob(nr)
@@ -123,7 +137,9 @@ class TestLogProbDualInput:
     def test_record_accepted(self, two_field_template, flat_samples):
         """Plain Record (not NumericRecord) also accepted."""
         kde = KDEDistribution(
-            flat_samples, event_template=two_field_template, name="post",
+            flat_samples,
+            event_template=two_field_template,
+            name="post",
         )
         rec = Record(intercept=jnp.array(0.5), slope=jnp.array(-0.3))
         lp = kde._log_prob(rec)
@@ -133,29 +149,35 @@ class TestLogProbDualInput:
         """A NumericRecordArray input is flattened to (batch, d) and the
         TFP mixture log-prob returns a (batch,) array."""
         kde = KDEDistribution(
-            flat_samples, event_template=two_field_template, name="post",
+            flat_samples,
+            event_template=two_field_template,
+            name="post",
         )
         # Build a 3-row NumericRecordArray
         nra = NumericRecordArray(
-            {"intercept": jnp.array([0.5, 0.6, 0.7]),
-             "slope": jnp.array([-0.3, -0.4, -0.5])},
+            {"intercept": jnp.array([0.5, 0.6, 0.7]), "slope": jnp.array([-0.3, -0.4, -0.5])},
             batch_shape=(3,),
             template=NumericEventTemplate(intercept=(), slope=()),
         )
         lp = kde._log_prob(nra)
         assert lp.shape == (3,)
         # Matches the flat form
-        lp_flat = kde._log_prob(jnp.stack([
-            jnp.array([0.5, -0.3]),
-            jnp.array([0.6, -0.4]),
-            jnp.array([0.7, -0.5]),
-        ]))
+        lp_flat = kde._log_prob(
+            jnp.stack(
+                [
+                    jnp.array([0.5, -0.3]),
+                    jnp.array([0.6, -0.4]),
+                    jnp.array([0.7, -0.5]),
+                ]
+            )
+        )
         assert jnp.allclose(lp, lp_flat)
 
 
 # ---------------------------------------------------------------------------
 # from_empirical factory
 # ---------------------------------------------------------------------------
+
 
 class TestFromEmpirical:
     def test_multi_field_record_empirical(self, two_field_template):
@@ -187,7 +209,8 @@ class TestFromEmpirical:
     def test_rejects_non_record_empirical(self):
         """Generic (object-array) EmpiricalDistribution is rejected."""
         emp_generic = EmpiricalDistribution(
-            np.array([{"a": 1}, {"a": 2}], dtype=object), name="x",
+            np.array([{"a": 1}, {"a": 2}], dtype=object),
+            name="x",
         )
         with pytest.raises(TypeError, match="RecordEmpiricalDistribution"):
             KDEDistribution.from_empirical(emp_generic)

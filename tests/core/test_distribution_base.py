@@ -22,8 +22,10 @@ from probpipe.distributions.kde import KDEDistribution
 
 def _make_transformed():
     import tensorflow_probability.substrates.jax.bijectors as tfb
+
     return TransformedDistribution(
-        Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp(),
+        Normal(loc=0.0, scale=1.0, name="x"),
+        tfb.Exp(),
     )
 
 
@@ -128,7 +130,9 @@ class TestRenamedSampling:
         n2 = n.renamed("z")
         x = jnp.asarray(1.23)
         np.testing.assert_allclose(
-            float(n._log_prob(x)), float(n2._log_prob(x)), atol=1e-6,
+            float(n._log_prob(x)),
+            float(n2._log_prob(x)),
+            atol=1e-6,
         )
 
     def test_event_shape_matches(self):
@@ -165,24 +169,29 @@ class TestNoBatchShape:
 
     def test_no_batch_shape_on_base_class(self):
         from probpipe import Distribution
+
         assert not hasattr(Distribution, "batch_shape")
 
     @pytest.mark.parametrize(
-        "make_dist", _NO_BATCH_SHAPE_DISTS,
+        "make_dist",
+        _NO_BATCH_SHAPE_DISTS,
     )
     def test_no_batch_shape_on_instance(self, make_dist):
         dist = make_dist()
         assert not hasattr(dist, "batch_shape"), (
-            f"{type(dist).__name__} unexpectedly exposes a "
-            f"batch_shape attribute."
+            f"{type(dist).__name__} unexpectedly exposes a batch_shape attribute."
         )
 
     def test_distribution_array_keeps_batch_shape(self):
         """Container types are unaffected: ``DistributionArray``
         retains its own ``batch_shape`` (the array's outer shape)."""
         from probpipe import DistributionArray
+
         da = DistributionArray.from_batched_params(
-            Normal, loc=jnp.zeros(5), scale=1.0, name="x",
+            Normal,
+            loc=jnp.zeros(5),
+            scale=1.0,
+            name="x",
         )
         assert da.batch_shape == (5,)
 
@@ -280,7 +289,10 @@ class TestRenamedTemplateRoundtrip:
         import jax.numpy as jnp
 
         jg = JointGaussian(
-            mean=jnp.zeros(2), cov=jnp.eye(2), x=1, y=1,
+            mean=jnp.zeros(2),
+            cov=jnp.eye(2),
+            x=1,
+            y=1,
         )
         original_fields = jg.event_template.fields
         clone = jg.renamed("renamed_jg")

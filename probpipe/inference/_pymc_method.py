@@ -16,6 +16,7 @@ class PyMCNutsMethod(InferenceMethod):
 
     def __init__(self) -> None:
         from ..modeling._pymc import PyMCModel
+
         self._model_type = PyMCModel
 
     @property
@@ -36,8 +37,9 @@ class PyMCNutsMethod(InferenceMethod):
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         if not isinstance(dist, self._model_type):
-            return MethodInfo(feasible=False, method_name=self.name,
-                              description="Requires PyMCModel")
+            return MethodInfo(
+                feasible=False, method_name=self.name, description="Requires PyMCModel"
+            )
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
@@ -77,9 +79,15 @@ class PyMCNutsMethod(InferenceMethod):
         chains = extract_chain_columns(trace, order, num_chains)
 
         return make_posterior(
-            chains, parents=(dist,), algorithm="pymc_nuts",
-            auxiliary=trace, event_template=event_template, field_order=order,
-            num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
+            chains,
+            parents=(dist,),
+            algorithm="pymc_nuts",
+            auxiliary=trace,
+            event_template=event_template,
+            field_order=order,
+            num_results=num_results,
+            num_warmup=num_warmup,
+            num_chains=num_chains,
         )
 
 
@@ -88,6 +96,7 @@ class PyMCADVIMethod(InferenceMethod):
 
     def __init__(self) -> None:
         from ..modeling._pymc import PyMCModel
+
         self._model_type = PyMCModel
 
     @property
@@ -110,8 +119,9 @@ class PyMCADVIMethod(InferenceMethod):
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         if not isinstance(dist, self._model_type):
-            return MethodInfo(feasible=False, method_name=self.name,
-                              description="Requires PyMCModel")
+            return MethodInfo(
+                feasible=False, method_name=self.name, description="Requires PyMCModel"
+            )
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
@@ -138,7 +148,11 @@ class PyMCADVIMethod(InferenceMethod):
         algorithm = f"pymc_{vi_method}"
 
         return make_posterior(
-            chains, parents=(dist,), algorithm=algorithm,
-            auxiliary=trace, event_template=event_template, field_order=order,
+            chains,
+            parents=(dist,),
+            algorithm=algorithm,
+            auxiliary=trace,
+            event_template=event_template,
+            field_order=order,
             num_iterations=num_iterations,
         )

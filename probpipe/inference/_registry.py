@@ -22,6 +22,4 @@ InferenceMethod = UnaryDispatchMethod
 
 # The singleton registry — a plain UnaryDispatchRegistry, no subclass
 # needed.
-inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = (
-    UnaryDispatchRegistry()
-)
+inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = UnaryDispatchRegistry()

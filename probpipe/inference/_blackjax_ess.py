@@ -88,7 +88,10 @@ def _gaussian_prior_params(prior: Distribution) -> tuple[Array, Array] | None:
     priors (which have no ``_sample`` to draw the auxiliary from).
     """
     from ..distributions import (
-        JointGaussian, MultivariateNormal, Normal, ProductDistribution,
+        JointGaussian,
+        MultivariateNormal,
+        Normal,
+        ProductDistribution,
     )
 
     if isinstance(prior, MultivariateNormal):
@@ -104,7 +107,7 @@ def _gaussian_prior_params(prior: Distribution) -> tuple[Array, Array] | None:
     if isinstance(prior, Normal):
         loc = jnp.atleast_1d(jnp.asarray(prior.loc))
         scale = jnp.atleast_1d(jnp.asarray(prior.scale))
-        return loc, jnp.diag(scale ** 2)
+        return loc, jnp.diag(scale**2)
 
     if isinstance(prior, ProductDistribution):
         locs: list[Array] = []
@@ -143,7 +146,9 @@ def _run_ess_chains(
     Returns ``(chains, warmup_chains_or_None, sample_stats_dict)``.
     """
     sampler = blackjax.elliptical_slice(
-        loglikelihood_fn, mean=prior_mean, cov=prior_cov,
+        loglikelihood_fn,
+        mean=prior_mean,
+        cov=prior_cov,
     )
     key = jax.random.PRNGKey(random_seed)
     chain_keys = jax.random.split(key, num_chains)
@@ -159,11 +164,12 @@ def _run_ess_chains(
         if num_warmup > 0:
             warmup_keys = jax.random.split(warmup_key, num_warmup)
             state, (warmup_positions, warmup_subiter) = jax.lax.scan(
-                step, state, warmup_keys,
+                step,
+                state,
+                warmup_keys,
             )
         else:
-            warmup_positions = jnp.empty((0, init_position.shape[0]),
-                                         dtype=init_position.dtype)
+            warmup_positions = jnp.empty((0, init_position.shape[0]), dtype=init_position.dtype)
             warmup_subiter = jnp.empty((0,), dtype=jnp.int32)
 
         sample_keys = jax.random.split(sample_key, num_results)
@@ -172,10 +178,7 @@ def _run_ess_chains(
 
     positions_all, warmups_all, subiter_all = parallel_chain_map(run_one_chain, chain_keys)
     chains = [positions_all[c] for c in range(num_chains)]
-    warmups = (
-        [warmups_all[c] for c in range(num_chains)]
-        if num_warmup > 0 else None
-    )
+    warmups = [warmups_all[c] for c in range(num_chains)] if num_warmup > 0 else None
     sample_stats = {"subiter": np.asarray(subiter_all)}
     return chains, warmups, sample_stats
 
@@ -232,10 +235,7 @@ def elliptical_slice(
     likelihood = model._likelihood
     gp = _gaussian_prior_params(prior)
     if gp is None:
-        raise TypeError(
-            "elliptical_slice requires a Gaussian prior; "
-            f"got {type(prior).__name__}"
-        )
+        raise TypeError(f"elliptical_slice requires a Gaussian prior; got {type(prior).__name__}")
     if data is None:
         raise TypeError("elliptical_slice requires observed data")
 
@@ -247,17 +247,27 @@ def elliptical_slice(
     loglikelihood_fn = build_likelihood_flat(prior, likelihood, data)
 
     chains, warmups, sample_stats = _run_ess_chains(
-        loglikelihood_fn, init_state, prior_mean, prior_cov,
-        num_results=num_results, num_warmup=num_warmup,
-        num_chains=num_chains, random_seed=random_seed,
+        loglikelihood_fn,
+        init_state,
+        prior_mean,
+        prior_cov,
+        num_results=num_results,
+        num_warmup=num_warmup,
+        num_chains=num_chains,
+        random_seed=random_seed,
     )
 
     auxiliary = build_mcmc_datatree(chains, sample_stats, warmup_chains=warmups)
     event_template = extract_event_template(model)
     return make_posterior(
-        chains, parents=(prior,), algorithm="elliptical_slice",
-        auxiliary=auxiliary, event_template=event_template,
-        num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
+        chains,
+        parents=(prior,),
+        algorithm="elliptical_slice",
+        auxiliary=auxiliary,
+        event_template=event_template,
+        num_results=num_results,
+        num_warmup=num_warmup,
+        num_chains=num_chains,
     )
 
 
@@ -288,7 +298,8 @@ class BlackJAXESSMethod(InferenceMethod):
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         if not is_simple_model(dist):
             return MethodInfo(
-                feasible=False, method_name=self.name,
+                feasible=False,
+                method_name=self.name,
                 description=(
                     "ESS requires a SimpleModel; bare "
                     "SupportsUnnormalizedLogProb has no prior/likelihood "
@@ -299,20 +310,20 @@ class BlackJAXESSMethod(InferenceMethod):
         gp = _gaussian_prior_params(prior)
         if gp is None:
             return MethodInfo(
-                feasible=False, method_name=self.name,
-                description=(
-                    "ESS requires a Gaussian prior; got "
-                    f"{type(prior).__name__}"
-                ),
+                feasible=False,
+                method_name=self.name,
+                description=(f"ESS requires a Gaussian prior; got {type(prior).__name__}"),
             )
         if observed is None:
             return MethodInfo(
-                feasible=False, method_name=self.name,
+                feasible=False,
+                method_name=self.name,
                 description="ESS requires observed data for the likelihood",
             )
         if isinstance(observed, dict):
             return MethodInfo(
-                feasible=False, method_name=self.name,
+                feasible=False,
+                method_name=self.name,
                 description="Does not support dict-based conditioning",
             )
         # The runner traces the BlackJAX ESS step under ``lax.scan``;
@@ -324,18 +335,22 @@ class BlackJAXESSMethod(InferenceMethod):
             loglikelihood_fn = build_likelihood_flat(prior, likelihood, observed)
             if not is_jax_traceable(loglikelihood_fn, flat_init):
                 return MethodInfo(
-                    feasible=False, method_name=self.name,
+                    feasible=False,
+                    method_name=self.name,
                     description="Log-likelihood is not JAX-traceable",
                 )
         except Exception as e:
             return MethodInfo(
-                feasible=False, method_name=self.name, description=str(e),
+                feasible=False,
+                method_name=self.name,
+                description=str(e),
             )
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         return elliptical_slice(
-            dist, observed,
+            dist,
+            observed,
             num_results=kwargs.get("num_results", 1000),
             num_warmup=kwargs.get("num_warmup", 500),
             num_chains=kwargs.get("num_chains", 1),

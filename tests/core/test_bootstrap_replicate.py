@@ -182,6 +182,7 @@ class TestSampleableSource:
 
     def _normal(self):
         from probpipe import Normal
+
         return Normal(loc=0.0, scale=1.0, name="x")
 
     def test_construction_keeps_generic_base(self):
@@ -266,7 +267,9 @@ class TestProperties:
         assert dist.is_uniform is True
 
     def test_is_uniform_from_weighted_empirical(self):
-        emp = EmpiricalDistribution(jnp.ones((5, 2)), weights=jnp.array([1., 2., 3., 4., 5.]), name="x")
+        emp = EmpiricalDistribution(
+            jnp.ones((5, 2)), weights=jnp.array([1.0, 2.0, 3.0, 4.0, 5.0]), name="x"
+        )
         dist = BootstrapReplicateDistribution(emp, name="x")
         assert dist.is_uniform is False
 
@@ -275,7 +278,7 @@ class TestProperties:
         np.testing.assert_allclose(dist.weights, jnp.ones(5) / 5)
 
     def test_weights_from_weighted_empirical(self):
-        weights = jnp.array([1., 2., 3.])
+        weights = jnp.array([1.0, 2.0, 3.0])
         emp = EmpiricalDistribution(jnp.ones((3, 2)), weights=weights, name="x")
         dist = BootstrapReplicateDistribution(emp, name="x")
         assert dist.weights is not None
@@ -371,6 +374,7 @@ class TestExpectation:
 class TestRecordBootstrapReplicateDistribution:
     def test_support(self):
         from probpipe.core.constraints import real
+
         dist = RecordBootstrapReplicateDistribution(jnp.ones((5, 2)), name="x")
         assert dist.support == real
 
@@ -402,10 +406,12 @@ class TestRecordBootstrapReplicateDistribution:
         bubble up).
         """
         from probpipe.core._empirical import RecordEmpiricalDistribution
+
         emp = EmpiricalDistribution(["a", "b", "c"])
         assert not isinstance(emp, RecordEmpiricalDistribution)
         with pytest.raises(
-            TypeError, match="generic .object-array. EmpiricalDistribution",
+            TypeError,
+            match="generic .object-array. EmpiricalDistribution",
         ):
             RecordBootstrapReplicateDistribution(emp)
 
@@ -462,6 +468,7 @@ class TestValuesEmpiricalDistribution:
 
     def test_dispatch(self, values_data):
         from probpipe.core._empirical import RecordEmpiricalDistribution
+
         emp = EmpiricalDistribution(values_data, name="x")
         assert isinstance(emp, RecordEmpiricalDistribution)
 
@@ -505,6 +512,7 @@ class TestValuesEmpiricalDistribution:
 
     def test_getitem_returns_view(self, values_data):
         from probpipe.core._record_distribution import _RecordDistributionView
+
         emp = EmpiricalDistribution(values_data, name="x")
         view = emp["X"]
         assert isinstance(view, _RecordDistributionView)
@@ -550,12 +558,14 @@ class TestValuesBootstrapReplicateDistribution:
 
     def test_dispatch_from_empirical(self, values_data):
         from probpipe.core._empirical import RecordBootstrapReplicateDistribution
+
         emp = EmpiricalDistribution(values_data, name="x")
         boot = BootstrapReplicateDistribution(emp, name="x")
         assert isinstance(boot, RecordBootstrapReplicateDistribution)
 
     def test_dispatch_from_values(self, values_data):
         from probpipe.core._empirical import RecordBootstrapReplicateDistribution
+
         boot = BootstrapReplicateDistribution(values_data, name="x")
         assert isinstance(boot, RecordBootstrapReplicateDistribution)
 
@@ -594,6 +604,7 @@ class TestValuesBootstrapReplicateDistribution:
 
     def test_getitem_returns_view(self, bootstrap):
         from probpipe.core._record_distribution import _RecordDistributionView
+
         view = bootstrap["X"]
         assert isinstance(view, _RecordDistributionView)
 

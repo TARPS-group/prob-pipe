@@ -83,8 +83,7 @@ def sample(
     """
     if not isinstance(dist, SupportsSampling):
         raise TypeError(
-            f"{type(dist).__name__} does not support sampling "
-            f"(does not implement SupportsSampling)"
+            f"{type(dist).__name__} does not support sampling (does not implement SupportsSampling)"
         )
     if isinstance(sample_shape, int):
         sample_shape = (sample_shape,)
@@ -128,15 +127,11 @@ def _resolve_value(
     """
     if field_kwargs:
         if value is not None:
-            raise TypeError(
-                f"{op_name}: pass either a positional value or field kwargs, "
-                f"not both."
-            )
+            raise TypeError(f"{op_name}: pass either a positional value or field kwargs, not both.")
         return dist._pack_value(**field_kwargs)
     if value is None and not allow_none:
         raise TypeError(
-            f"{op_name}: a value is required — pass it positionally or as "
-            f"field keyword arguments."
+            f"{op_name}: a value is required — pass it positionally or as field keyword arguments."
         )
     return value
 
@@ -152,9 +147,7 @@ def log_prob(dist: SupportsLogProb, value: Any = None, **field_kwargs: Any) -> A
     batched evaluation; per-call controls use ``log_prob.with_options(...)``.
     """
     if not isinstance(dist, SupportsLogProb):
-        raise TypeError(
-            f"{type(dist).__name__} does not support log_prob"
-        )
+        raise TypeError(f"{type(dist).__name__} does not support log_prob")
     return dist._log_prob(_resolve_value("log_prob", dist, value, field_kwargs))
 
 
@@ -165,17 +158,16 @@ def prob(dist: SupportsLogProb, value: Any = None, **field_kwargs: Any) -> Array
     See :func:`log_prob` for the positional and keyword call forms.
     """
     if not isinstance(dist, SupportsLogProb):
-        raise TypeError(
-            f"{type(dist).__name__} does not support prob "
-            f"(missing _log_prob method)"
-        )
+        raise TypeError(f"{type(dist).__name__} does not support prob (missing _log_prob method)")
     value = _resolve_value("prob", dist, value, field_kwargs)
     return jnp.exp(dist._log_prob(value))
 
 
 @workflow_function
 def unnormalized_log_prob(
-    dist: SupportsUnnormalizedLogProb, value: Any = None, **field_kwargs: Any,
+    dist: SupportsUnnormalizedLogProb,
+    value: Any = None,
+    **field_kwargs: Any,
 ) -> Array:
     """Evaluate the unnormalized log-density at *value*.
 
@@ -192,7 +184,9 @@ def unnormalized_log_prob(
 
 @workflow_function
 def unnormalized_prob(
-    dist: SupportsUnnormalizedLogProb, value: Any = None, **field_kwargs: Any,
+    dist: SupportsUnnormalizedLogProb,
+    value: Any = None,
+    **field_kwargs: Any,
 ) -> Array:
     """Evaluate the unnormalized density at *value* — ``exp(unnormalized_log_prob)``.
 
@@ -226,8 +220,7 @@ def mean(dist: SupportsMean) -> Any:
     """
     if not isinstance(dist, SupportsMean):
         raise TypeError(
-            f"{type(dist).__name__} does not support mean "
-            f"(does not implement SupportsMean)"
+            f"{type(dist).__name__} does not support mean (does not implement SupportsMean)"
         )
     return dist._mean()
 
@@ -240,8 +233,7 @@ def variance(dist: SupportsVariance) -> Any:
     """
     if not isinstance(dist, SupportsVariance):
         raise TypeError(
-            f"{type(dist).__name__} does not support variance "
-            f"(does not implement SupportsVariance)"
+            f"{type(dist).__name__} does not support variance (does not implement SupportsVariance)"
         )
     return dist._variance()
 
@@ -271,11 +263,12 @@ def expectation(
 ) -> Any:
     """Compute E[f(X)] where X ~ dist."""
     if not isinstance(dist, SupportsExpectation):
-        raise TypeError(
-            f"{type(dist).__name__} does not support expectation"
-        )
+        raise TypeError(f"{type(dist).__name__} does not support expectation")
     return dist._expectation(
-        f, key=key, num_evaluations=num_evaluations, return_dist=return_dist,
+        f,
+        key=key,
+        num_evaluations=num_evaluations,
+        return_dist=return_dist,
     )
 
 
@@ -307,9 +300,7 @@ def random_log_prob(
             f"{type(dist).__name__} does not support random_log_prob "
             f"(does not implement SupportsRandomLogProb)"
         )
-    value = _resolve_value(
-        "random_log_prob", dist, value, field_kwargs, allow_none=True
-    )
+    value = _resolve_value("random_log_prob", dist, value, field_kwargs, allow_none=True)
     rf = dist._random_log_prob()
     return rf if value is None else rf(value)
 
@@ -372,7 +363,7 @@ def _split_data_kwargs(
 
     Returns ``(data_kwargs, inference_kwargs)``.
     """
-    comp_names = tuple(dist.fields) if hasattr(dist, 'fields') else ()
+    comp_names = tuple(dist.fields) if hasattr(dist, "fields") else ()
     comp_set = frozenset(comp_names)
     by_lower = {name.lower(): name for name in comp_names}
 
@@ -462,9 +453,7 @@ def condition_on(
                     f"data kwargs ({', '.join(data_kwargs)})"
                 )
             observed = Record(data_kwargs)
-        return inference_method_registry.execute(
-            dist, observed, method=method, **inference_kwargs
-        )
+        return inference_method_registry.execute(dist, observed, method=method, **inference_kwargs)
 
     # Exact conditioning (conjugate updates, joint marginalization, etc.)
     # All kwargs pass through to _condition_on — it handles its own
@@ -511,6 +500,7 @@ def from_distribution(
         Additional keyword arguments passed to the converter.
     """
     from ..converters import converter_registry
+
     if key is None:
         key = _auto_key()
     return converter_registry.convert(

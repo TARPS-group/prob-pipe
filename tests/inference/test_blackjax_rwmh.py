@@ -50,7 +50,9 @@ def iso_gaussian():
 def aniso_gaussian():
     """A 2-D anisotropic ``N(0, diag(1, 4))`` — analytic stds [1, 2]."""
     return MultivariateNormal(
-        loc=jnp.zeros(2), cov=jnp.diag(jnp.array([1.0, 4.0])), name="z",
+        loc=jnp.zeros(2),
+        cov=jnp.diag(jnp.array([1.0, 4.0])),
+        name="z",
     )
 
 
@@ -100,7 +102,7 @@ class TestProductionSigma:
         d = 2
         sigma = np.asarray(_production_sigma(cov, d))
         proposal_cov = sigma @ sigma.T
-        expected = (2.38 ** 2 / d) * np.asarray(cov)
+        expected = (2.38**2 / d) * np.asarray(cov)
         np.testing.assert_allclose(proposal_cov, expected, atol=1e-4)
 
     def test_rgg_scale_value(self):
@@ -140,15 +142,21 @@ class TestAdaptiveWarmup:
         # N(0, diag(1, 4)) — adapt should fit the elongation and produce
         # sample stds close to [1, 2].
         result = rwmh(
-            dist=aniso_gaussian, num_results=4000, num_warmup=1500,
-            num_chains=2, random_seed=7,
+            dist=aniso_gaussian,
+            num_results=4000,
+            num_warmup=1500,
+            num_chains=2,
+            random_seed=7,
         )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains], axis=0,
+            [np.asarray(c) for c in result.chains],
+            axis=0,
         )
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.15)
         np.testing.assert_allclose(
-            draws.std(0, ddof=1), [1.0, 2.0], rtol=0.15,
+            draws.std(0, ddof=1),
+            [1.0, 2.0],
+            rtol=0.15,
         )
 
     def test_accept_rate_in_operating_range(self):
@@ -156,11 +164,16 @@ class TestAdaptiveWarmup:
         # finite-d adaptation (no dual-averaging) lands in roughly
         # [0.10, 0.65] — small enough to mix, large enough not to stick.
         dist = MultivariateNormal(
-            loc=jnp.zeros(5), cov=jnp.eye(5), name="z",
+            loc=jnp.zeros(5),
+            cov=jnp.eye(5),
+            name="z",
         )
         result = rwmh(
-            dist=dist, num_results=2000, num_warmup=1000,
-            num_chains=1, random_seed=3,
+            dist=dist,
+            num_results=2000,
+            num_warmup=1000,
+            num_chains=1,
+            random_seed=3,
         )
         accept_rate = result.source.metadata["accept_rate"]
         assert 0.10 < accept_rate < 0.65, f"unexpected accept_rate {accept_rate}"
@@ -176,8 +189,12 @@ class TestAdaptiveWarmup:
         near one.
         """
         result = rwmh(
-            dist=iso_gaussian, num_results=400, num_warmup=100,
-            step_size=0.01, adapt=False, random_seed=0,
+            dist=iso_gaussian,
+            num_results=400,
+            num_warmup=100,
+            step_size=0.01,
+            adapt=False,
+            random_seed=0,
         )
         assert result.source.metadata["step_size"] == 0.01
         assert result.source.metadata["adapt"] is False
@@ -194,8 +211,11 @@ class TestAdaptiveWarmup:
         """
         tiny_chol = jnp.eye(2) * 1e-2
         result = rwmh(
-            dist=iso_gaussian, num_results=400, num_warmup=50,
-            proposal_cov=tiny_chol, random_seed=0,
+            dist=iso_gaussian,
+            num_results=400,
+            num_warmup=50,
+            proposal_cov=tiny_chol,
+            random_seed=0,
         )
         assert result.num_draws == 400
         assert result.source.metadata["accept_rate"] > 0.9
@@ -205,8 +225,11 @@ class TestAdaptiveWarmup:
         a second proof the supplied cov is actually used."""
         huge_chol = jnp.eye(2) * 50.0
         result = rwmh(
-            dist=iso_gaussian, num_results=400, num_warmup=50,
-            proposal_cov=huge_chol, random_seed=0,
+            dist=iso_gaussian,
+            num_results=400,
+            num_warmup=50,
+            proposal_cov=huge_chol,
+            random_seed=0,
         )
         assert result.source.metadata["accept_rate"] < 0.1
 
@@ -217,8 +240,11 @@ class TestNumWarmupZeroWarning:
     def test_warns_when_adapt_true_and_no_warmup(self, iso_gaussian):
         with pytest.warns(UserWarning, match="num_warmup=0"):
             rwmh(
-                dist=iso_gaussian, num_results=50, num_warmup=0,
-                adapt=True, random_seed=0,
+                dist=iso_gaussian,
+                num_results=50,
+                num_warmup=0,
+                adapt=True,
+                random_seed=0,
             )
 
     def test_no_warning_when_adapt_false(self, iso_gaussian):
@@ -227,8 +253,11 @@ class TestNumWarmupZeroWarning:
         with warnings.catch_warnings():
             warnings.simplefilter("error", UserWarning)
             rwmh(
-                dist=iso_gaussian, num_results=50, num_warmup=0,
-                adapt=False, random_seed=0,
+                dist=iso_gaussian,
+                num_results=50,
+                num_warmup=0,
+                adapt=False,
+                random_seed=0,
             )
 
     def test_no_warning_when_proposal_cov_given(self, iso_gaussian):
@@ -237,8 +266,12 @@ class TestNumWarmupZeroWarning:
         with warnings.catch_warnings():
             warnings.simplefilter("error", UserWarning)
             rwmh(
-                dist=iso_gaussian, num_results=50, num_warmup=0,
-                adapt=True, proposal_cov=jnp.eye(2) * 0.5, random_seed=0,
+                dist=iso_gaussian,
+                num_results=50,
+                num_warmup=0,
+                adapt=True,
+                proposal_cov=jnp.eye(2) * 0.5,
+                random_seed=0,
             )
 
     def test_bad_proposal_cov_shape_raises_valueerror(self, iso_gaussian):
@@ -249,8 +282,11 @@ class TestNumWarmupZeroWarning:
         """
         with pytest.raises(ValueError, match=r"proposal_cov must be a square"):
             rwmh(
-                dist=iso_gaussian, num_results=50, num_warmup=20,
-                proposal_cov=jnp.eye(3), random_seed=0,
+                dist=iso_gaussian,
+                num_results=50,
+                num_warmup=20,
+                proposal_cov=jnp.eye(3),
+                random_seed=0,
             )
 
 
@@ -259,6 +295,7 @@ class TestWindowSizing:
 
     def test_zero_warmup_returns_empty(self):
         from probpipe.inference._blackjax_rwmh import _window_sizes
+
         assert _window_sizes(0, n_windows=4) == []
 
     def test_short_warmup_collapses_to_single_window(self):
@@ -267,6 +304,7 @@ class TestWindowSizing:
         Avoids degenerate cov fits from too-few-sample windows.
         """
         from probpipe.inference._blackjax_rwmh import _window_sizes
+
         assert _window_sizes(20, n_windows=4) == [20]
         assert _window_sizes(40, n_windows=4) == [40]
 
@@ -274,6 +312,7 @@ class TestWindowSizing:
         """The 50-step threshold (= 2 * _MIN_STEPS_PER_WINDOW): 49 still
         collapses to one window, 50 is the first to split."""
         from probpipe.inference._blackjax_rwmh import _window_sizes
+
         # 49 // 25 == 1 → single window.
         assert _window_sizes(49, n_windows=4) == [49]
         # 50 // 25 == 2 → at least two windows.
@@ -281,6 +320,7 @@ class TestWindowSizing:
 
     def test_moderate_warmup_uses_three_windows(self):
         from probpipe.inference._blackjax_rwmh import _window_sizes
+
         # 80 steps / 25 = 3 max windows, clamped from 4 requested.
         sizes = _window_sizes(80, n_windows=4)
         assert len(sizes) == 3
@@ -290,6 +330,7 @@ class TestWindowSizing:
 
     def test_long_warmup_uses_all_windows(self):
         from probpipe.inference._blackjax_rwmh import _window_sizes
+
         sizes = _window_sizes(1000, n_windows=4)
         assert len(sizes) == 4
         assert sum(sizes) == 1000
@@ -315,17 +356,24 @@ class TestWindowedWarmup:
         # 5-D with a 30x stretch in the last dim.
         true_stds = jnp.array([1.0, 1.0, 1.0, 1.0, 30.0])
         dist = MultivariateNormal(
-            loc=jnp.zeros(5), cov=jnp.diag(true_stds ** 2), name="z",
+            loc=jnp.zeros(5),
+            cov=jnp.diag(true_stds**2),
+            name="z",
         )
         result = rwmh(
-            dist=dist, num_results=4000, num_warmup=3000,
-            num_chains=1, random_seed=11,
+            dist=dist,
+            num_results=4000,
+            num_warmup=3000,
+            num_chains=1,
+            random_seed=11,
         )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains], axis=0,
+            [np.asarray(c) for c in result.chains],
+            axis=0,
         )
         np.testing.assert_allclose(
-            draws.std(0, ddof=1), np.asarray(true_stds),
+            draws.std(0, ddof=1),
+            np.asarray(true_stds),
             rtol=0.15,
         )
 
@@ -335,17 +383,24 @@ class TestWindowedWarmup:
         still run end-to-end and recover the moderate ``N(0, diag(1, 4))``
         target's per-dim stds."""
         result = rwmh(
-            dist=aniso_gaussian, num_results=4000, num_warmup=1500,
-            num_chains=2, n_windows=1, random_seed=7,
+            dist=aniso_gaussian,
+            num_results=4000,
+            num_warmup=1500,
+            num_chains=2,
+            n_windows=1,
+            random_seed=7,
         )
         assert result.num_draws == 4000
         assert result.source.metadata["n_windows"] == 1
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains], axis=0,
+            [np.asarray(c) for c in result.chains],
+            axis=0,
         )
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.2)
         np.testing.assert_allclose(
-            draws.std(0, ddof=1), [1.0, 2.0], rtol=0.2,
+            draws.std(0, ddof=1),
+            [1.0, 2.0],
+            rtol=0.2,
         )
 
 
@@ -382,7 +437,7 @@ class _NumpyLogProbDist(NumericRecordDistribution, SupportsLogProb):
         if np.any(np.abs(v) > 50):
             return jnp.asarray(-np.inf)
         prec = np.asarray(self.precision)
-        return jnp.asarray(-0.5 * float(np.sum(prec * v ** 2)))
+        return jnp.asarray(-0.5 * float(np.sum(prec * v**2)))
 
     def _prob(self, value):
         return jnp.exp(self._log_prob(value))
@@ -410,22 +465,31 @@ class TestEagerFallback:
     def test_runs_end_to_end(self):
         dist = _NumpyLogProbDist(name="np_dist")
         result = rwmh(
-            dist=dist, num_results=400, num_warmup=200,
-            num_chains=2, random_seed=42,
+            dist=dist,
+            num_results=400,
+            num_warmup=200,
+            num_chains=2,
+            random_seed=42,
         )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains], axis=0,
+            [np.asarray(c) for c in result.chains],
+            axis=0,
         )
         # Standard normal target — sample mean ~ 0, sample sd ~ 1.
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.3)
         np.testing.assert_allclose(
-            draws.std(0, ddof=1), [1.0, 1.0], rtol=0.3,
+            draws.std(0, ddof=1),
+            [1.0, 1.0],
+            rtol=0.3,
         )
 
     def test_accept_rate_positive(self):
         dist = _NumpyLogProbDist(name="np_dist")
         result = rwmh(
-            dist=dist, num_results=400, num_warmup=200, random_seed=42,
+            dist=dist,
+            num_results=400,
+            num_warmup=200,
+            random_seed=42,
         )
         assert result.source.metadata["accept_rate"] > 0.10
 
@@ -455,15 +519,21 @@ class TestFastEagerEquivalence:
     def test_fast_path_recovers_aniso(self, aniso_gaussian):
         # Confirm we are exercising the fast path: the traceable target.
         from probpipe.inference._inference_utils import is_jax_traceable
+
         assert is_jax_traceable(
-            aniso_gaussian._unnormalized_log_prob, jnp.zeros(2),
+            aniso_gaussian._unnormalized_log_prob,
+            jnp.zeros(2),
         )
         result = rwmh(
-            dist=aniso_gaussian, num_results=4000, num_warmup=1500,
-            num_chains=2, random_seed=7,
+            dist=aniso_gaussian,
+            num_results=4000,
+            num_warmup=1500,
+            num_chains=2,
+            random_seed=7,
         )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains], axis=0,
+            [np.asarray(c) for c in result.chains],
+            axis=0,
         )
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.2)
         np.testing.assert_allclose(draws.std(0, ddof=1), _ANISO_STD, rtol=0.15)
@@ -471,6 +541,7 @@ class TestFastEagerEquivalence:
     def test_eager_path_recovers_aniso(self):
         # Confirm we are exercising the eager path: the non-traceable target.
         from probpipe.inference._inference_utils import is_jax_traceable
+
         dist = _NumpyAnisoLogProbDist(name="np_aniso")
         assert not is_jax_traceable(dist._unnormalized_log_prob, jnp.zeros(2))
         # Lighter counts than the fast path: the Python loop is ~100x
@@ -478,11 +549,15 @@ class TestFastEagerEquivalence:
         # std error here is ~10% and the worst-case mean offset ~0.25,
         # so the bands below carry comfortable MC margin.
         result = rwmh(
-            dist=dist, num_results=600, num_warmup=300,
-            num_chains=2, random_seed=7,
+            dist=dist,
+            num_results=600,
+            num_warmup=300,
+            num_chains=2,
+            random_seed=7,
         )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains], axis=0,
+            [np.asarray(c) for c in result.chains],
+            axis=0,
         )
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.4)
         np.testing.assert_allclose(draws.std(0, ddof=1), _ANISO_STD, rtol=0.2)

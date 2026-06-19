@@ -31,6 +31,7 @@ from probpipe.core.record import Record
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def normal_x():
     return Normal(loc=0.0, scale=1.0, name="x")
@@ -62,8 +63,8 @@ def joint_xz(normal_x, mvn_z):
 # 1. TestProductDistribution
 # ===========================================================================
 
-class TestProductDistribution:
 
+class TestProductDistribution:
     def test_construction_normal_components(self, normal_x, normal_y):
         joint = ProductDistribution(x=normal_x, y=normal_y)
         assert isinstance(joint, ProductDistribution)
@@ -125,9 +126,7 @@ class TestProductDistribution:
         key = jax.random.PRNGKey(4)
         s = sample(joint_xy, key=key)
         lp_joint = log_prob(joint_xy, s)
-        lp_sum = jnp.asarray(log_prob(normal_x, s["x"])) + jnp.asarray(
-            log_prob(normal_y, s["y"])
-        )
+        lp_sum = jnp.asarray(log_prob(normal_x, s["x"])) + jnp.asarray(log_prob(normal_y, s["y"]))
         np.testing.assert_allclose(float(lp_joint), float(lp_sum), atol=1e-5)
 
     def test_log_prob_batch(self, joint_xy):
@@ -184,8 +183,7 @@ class TestProductDistribution:
     def test_supports_per_field(self):
         """``supports`` maps each field to its component's support constraint
         (heterogeneous constraints preserved per field)."""
-        joint = ProductDistribution(Gamma(2.0, 1.0, name="g"),
-                                    Normal(loc=0.0, scale=1.0, name="x"))
+        joint = ProductDistribution(Gamma(2.0, 1.0, name="g"), Normal(loc=0.0, scale=1.0, name="x"))
         sup = joint.supports
         assert set(sup.keys()) == {"g", "x"}
         assert sup["g"] == joint.components["g"].support
@@ -198,20 +196,23 @@ class TestProductDistribution:
         ``leaf_shapes`` -- so every value is a leaf Constraint."""
         joint = ProductDistribution(
             name="joint",
-            outer={"a": Normal(loc=0.0, scale=1.0, name="a"),
-                   "deep": {"g": Gamma(2.0, 1.0, name="g")}},
+            outer={
+                "a": Normal(loc=0.0, scale=1.0, name="a"),
+                "deep": {"g": Gamma(2.0, 1.0, name="g")},
+            },
             m=Normal(loc=0.0, scale=1.0, name="m"),
         )
         sup = joint.supports
         assert set(sup.keys()) == set(joint.event_template.leaf_shapes.keys())
         assert "outer/deep/g" in sup
         assert sup["outer/deep/g"] != sup["outer/a"]  # positive vs real
-        assert sup["outer/a"] == sup["m"]             # both real
+        assert sup["outer/a"] == sup["m"]  # both real
 
 
 # ===========================================================================
 # 2. TestFlattenUnflatten
 # ===========================================================================
+
 
 class TestFlattenUnflatten:
     """Test flatten_value / unflatten_value (inherited from RecordDistribution)."""
@@ -235,7 +236,8 @@ class TestFlattenUnflatten:
         flat = joint_xy.flatten_value(s)
         assert flat.shape == (2,)
         recovered = joint_xy.unflatten_value(
-            flat, template=joint_xy.event_template,
+            flat,
+            template=joint_xy.event_template,
         )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
@@ -248,7 +250,8 @@ class TestFlattenUnflatten:
         flat = joint_xz.flatten_value(s)
         assert flat.shape == (4,)
         recovered = joint_xz.unflatten_value(
-            flat, template=joint_xz.event_template,
+            flat,
+            template=joint_xz.event_template,
         )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
@@ -261,17 +264,18 @@ class TestFlattenUnflatten:
         flat = joint_xy.flatten_value(s)
         assert flat.shape == (2,)
         recovered = joint_xy.unflatten_value(
-            flat, template=joint_xy.event_template,
+            flat,
+            template=joint_xy.event_template,
         )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(recovered["x"], s["x"], atol=1e-6)
         np.testing.assert_allclose(recovered["y"], s["y"], atol=1e-6)
 
 
-
 # ===========================================================================
 # 3b. TestNestedSampleFlatten (issue #262)
 # ===========================================================================
+
 
 class TestNestedSampleFlatten:
     """A batched draw from a nested ProductDistribution is a canonical, nested
@@ -282,13 +286,16 @@ class TestNestedSampleFlatten:
     def nested(self):
         return ProductDistribution(
             name="joint",
-            outer={"a": Normal(loc=0.0, scale=1.0, name="a"),
-                   "b": Normal(loc=2.0, scale=0.5, name="b")},
+            outer={
+                "a": Normal(loc=0.0, scale=1.0, name="a"),
+                "b": Normal(loc=2.0, scale=0.5, name="b"),
+            },
             m=Normal(loc=-1.0, scale=1.0, name="m"),
         )
 
     def test_batched_nested_field_is_record_array(self, nested):
         from probpipe.core._record_array import NumericRecordArray
+
         s = sample(nested, key=jax.random.PRNGKey(0), sample_shape=(6,))
         assert isinstance(s, NumericRecordArray)
         assert isinstance(s["outer"], NumericRecordArray)  # not a plain Record
@@ -300,6 +307,7 @@ class TestNestedSampleFlatten:
 
     def test_batched_nested_flatten_roundtrip(self, nested):
         from probpipe.core._record_array import NumericRecordArray
+
         s = sample(nested, key=jax.random.PRNGKey(1), sample_shape=(6,))
         leaves = list(nested.event_template.numeric_leaf_shapes)
         flat = s.flatten()
@@ -311,8 +319,7 @@ class TestNestedSampleFlatten:
         for i, leaf in enumerate(leaves):
             np.testing.assert_allclose(flat[:, i], s[leaf], atol=1e-6)
         # Secondary: the columns round-trip back to the same leaves via unflatten.
-        rec = NumericRecordArray.unflatten(
-            flat, template=nested.event_template, batch_shape=(6,))
+        rec = NumericRecordArray.unflatten(flat, template=nested.event_template, batch_shape=(6,))
         for leaf in leaves:
             np.testing.assert_allclose(rec[leaf], s[leaf], atol=1e-6)
 
@@ -322,14 +329,18 @@ class TestNestedSampleFlatten:
         # (the else branch of _sample_nested); such a field is not flattenable.
         from probpipe import JointEmpirical
         from probpipe.core._record_array import NumericRecordArray, RecordArray
+
         je = JointEmpirical(
             labels=np.array(["a", "b", "c"], dtype=object),
-            ids=np.array([0, 1, 2]), name="je",
+            ids=np.array([0, 1, 2]),
+            name="je",
         )
         joint = ProductDistribution(
             name="joint",
-            outer={"a": Normal(loc=0.0, scale=1.0, name="a"),
-                   "b": Normal(loc=2.0, scale=0.5, name="b")},
+            outer={
+                "a": Normal(loc=0.0, scale=1.0, name="a"),
+                "b": Normal(loc=2.0, scale=0.5, name="b"),
+            },
             je=je,
         )
         assert not isinstance(joint, NumericRecordDistribution)
@@ -343,8 +354,8 @@ class TestNestedSampleFlatten:
 # 4. TestDistributionView (RecordDistributionView for ProductDistribution)
 # ===========================================================================
 
-class TestDistributionView:
 
+class TestDistributionView:
     def test_view_type(self, joint_xy):
         view = joint_xy["x"]
         assert isinstance(view, _RecordDistributionView)
@@ -391,14 +402,12 @@ class TestDistributionView:
         assert "'x'" in r
 
 
-
-
 # ===========================================================================
 # 7. TestConditionOn
 # ===========================================================================
 
-class TestConditionOn:
 
+class TestConditionOn:
     def test_condition_on_removes_conditioned_component(self, joint_xy):
         cond = condition_on(joint_xy, x=jnp.array(2.0))
         assert "x" not in cond.components
@@ -447,12 +456,14 @@ class TestConditionOn:
 # 10. TestBroadcastingReconnection
 # ===========================================================================
 
+
 class TestBroadcastingReconnection:
     """Test that _RecordDistributionViews from the same parent are sampled jointly."""
 
     @staticmethod
     def _make_add_workflow(backend="sequential"):
         """Create a workflow that adds two arrays."""
+
         def add(a: float, b: float) -> float:
             return a + b
 
@@ -512,9 +523,7 @@ class TestBroadcastingReconnection:
         result = wf(a=view_x, b=view_x)
         assert hasattr(result, "samples")
         # a and b are the same samples, so a - b = 0 for every sample
-        np.testing.assert_allclose(
-            np.array(result.samples), 0.0, atol=1e-5
-        )
+        np.testing.assert_allclose(np.array(result.samples), 0.0, atol=1e-5)
 
     def test_mix_of_view_and_independent(self):
         """Mix of _RecordDistributionView and independent Normal both work."""
@@ -579,17 +588,15 @@ class TestBroadcastingReconnection:
         )
         result = wf(a=view_x, b=view_x)
         assert hasattr(result, "samples")
-        np.testing.assert_allclose(
-            np.array(result.samples), 0.0, atol=1e-5
-        )
+        np.testing.assert_allclose(np.array(result.samples), 0.0, atol=1e-5)
 
 
 # ===========================================================================
 # 11. TestPytreeRegistration
 # ===========================================================================
 
-class TestPytreeRegistration:
 
+class TestPytreeRegistration:
     def test_tree_flatten_unflatten_roundtrip(self, normal_x, normal_y):
         joint = ProductDistribution(x=normal_x, y=normal_y, name="rt")
         children, aux = jax.tree_util.tree_flatten(joint)
@@ -627,18 +634,21 @@ class TestPytreeRegistration:
 # 11. Dynamic protocol support
 # ===========================================================================
 
+
 class TestProductProtocolDuckTyping:
     """ProductDistribution dynamically includes protocols based on components."""
 
     def test_all_log_prob_components(self):
         """All Normal components → isinstance SupportsLogProb True."""
         from probpipe import SupportsLogProb
+
         joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
         assert isinstance(joint, SupportsLogProb)
 
     def test_all_mean_variance_components(self):
         """All Normal components → isinstance SupportsMean/SupportsVariance True."""
         from probpipe import SupportsMean, SupportsVariance
+
         joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
         assert isinstance(joint, SupportsMean)
         assert isinstance(joint, SupportsVariance)
@@ -646,6 +656,7 @@ class TestProductProtocolDuckTyping:
     def test_mixed_no_log_prob(self):
         """Component lacking SupportsLogProb → product lacks it too."""
         from probpipe import BootstrapDistribution, SupportsLogProb
+
         boot = BootstrapDistribution(jnp.array([1.0, 2.0, 3.0]), name="y")
         joint = ProductDistribution(x=Normal(0, 1, name="x"), y=boot)
         assert not isinstance(joint, SupportsLogProb)
@@ -653,12 +664,14 @@ class TestProductProtocolDuckTyping:
     def test_always_supports_sampling(self):
         """ProductDistribution always supports SupportsSampling."""
         from probpipe import SupportsSampling
+
         joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
         assert isinstance(joint, SupportsSampling)
 
     def test_always_supports_conditioning(self):
         """ProductDistribution always supports SupportsConditioning."""
         from probpipe import SupportsConditioning
+
         joint = ProductDistribution(x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"))
         assert isinstance(joint, SupportsConditioning)
 
@@ -676,7 +689,8 @@ class TestProductProtocolDuckTyping:
         exposes the numeric API.
         """
         joint = ProductDistribution(
-            x=Normal(0, 1, name="x"), y=Normal(1, 2, name="y"),
+            x=Normal(0, 1, name="x"),
+            y=Normal(1, 2, name="y"),
         )
         assert isinstance(joint, NumericRecordDistribution)
         # Numeric API is available.
@@ -742,6 +756,7 @@ class TestProductProtocolDuckTyping:
 # 12. Additional coverage
 # ===========================================================================
 
+
 class TestSingleComponent:
     """ProductDistribution with one component."""
 
@@ -786,11 +801,15 @@ class TestSingleComponent:
 
         # 1-D vector (canonical RWMH / NUTS shape: flat parameter vector).
         np.testing.assert_allclose(
-            float(joint._log_prob(jnp.array([0.5]))), lp_ref, atol=1e-6,
+            float(joint._log_prob(jnp.array([0.5]))),
+            lp_ref,
+            atol=1e-6,
         )
         # Scalar (defensive — some kernels pass a 0-d array).
         np.testing.assert_allclose(
-            float(joint._log_prob(jnp.array(0.5))), lp_ref, atol=1e-6,
+            float(joint._log_prob(jnp.array(0.5))),
+            lp_ref,
+            atol=1e-6,
         )
         # Batched: (B, event_size). Each row's log-prob matches the
         # reference at the corresponding scalar.
@@ -815,7 +834,6 @@ class TestLogProbBatchValues:
 
 
 class TestEmptyComponentsValidation:
-
     def test_raises_on_empty(self):
         with pytest.raises(ValueError, match="at least one"):
             ProductDistribution()
@@ -933,12 +951,12 @@ class TestPositionalAndAutoRename:
         key = jax.random.PRNGKey(123)
         s_orig = original._sample(key, (5000,))
         s_renamed = renamed._sample(key, (5000,))
-        np.testing.assert_allclose(np.asarray(s_orig), np.asarray(s_renamed),
-                                   atol=1e-6)
+        np.testing.assert_allclose(np.asarray(s_orig), np.asarray(s_renamed), atol=1e-6)
 
     def test_rename_traversable_via_provenance_ancestors(self, full_provenance_mode):
         """The original distribution is in the renamed component's ancestors."""
         from probpipe.core.provenance import provenance_ancestors
+
         original = Normal(loc=0.0, scale=1.0, name="x")
         joint = ProductDistribution(renamed_x=original)
         renamed = joint.components["renamed_x"]
@@ -946,7 +964,6 @@ class TestPositionalAndAutoRename:
 
 
 class TestDistributionViewFromDistribution:
-
     def test_from_distribution_raises(self, joint_xy):
         with pytest.raises(TypeError):
             from_distribution(Normal(loc=0.0, scale=1.0, name="x"), _RecordDistributionView)
@@ -985,6 +1002,7 @@ class TestEnumerateWithDistributionViews:
 # 8. TestNestedProductDistribution
 # ===========================================================================
 
+
 class TestNestedProductDistribution:
     """Tests for ProductDistribution with nested dict components.
 
@@ -1002,8 +1020,10 @@ class TestNestedProductDistribution:
     @pytest.fixture
     def nested_joint(self):
         return ProductDistribution(
-            physics={"force": Normal(loc=0.0, scale=1.0, name="force"),
-                     "mass": Gamma(concentration=2.0, rate=1.0, name="mass")},
+            physics={
+                "force": Normal(loc=0.0, scale=1.0, name="force"),
+                "mass": Gamma(concentration=2.0, rate=1.0, name="mass"),
+            },
             observation=Normal(loc=0.0, scale=0.1, name="observation"),
         )
 
@@ -1109,7 +1129,8 @@ class TestNestedProductDistribution:
         flat = nested_joint.flatten_value(s)
         assert flat.shape == (3,)
         recovered = nested_joint.unflatten_value(
-            flat, template=nested_joint.event_template,
+            flat,
+            template=nested_joint.event_template,
         )
         assert isinstance(recovered, Record)
         # Check all leaves match
@@ -1159,18 +1180,14 @@ class TestNestedProductDistribution:
 
     def test_condition_on_all_leaves_in_group(self, nested_joint):
         """Conditioning on all components under a dict removes it."""
-        cond = condition_on(nested_joint,
-            physics={"force": jnp.array(1.0), "mass": jnp.array(2.0)}
-        )
+        cond = condition_on(nested_joint, physics={"force": jnp.array(1.0), "mass": jnp.array(2.0)})
         assert "physics" not in cond._components
         assert "observation" in cond._components
         assert cond.event_size == 1
 
     def test_condition_on_single_nested_leaf(self, nested_joint):
         """Condition on one component, keeping the sibling."""
-        cond = condition_on(nested_joint,
-            physics={"force": jnp.array(1.0)}
-        )
+        cond = condition_on(nested_joint, physics={"force": jnp.array(1.0)})
         # physics dict still exists but only contains mass
         assert "physics" in cond._components
         assert isinstance(cond._components["physics"], dict)
@@ -1181,9 +1198,7 @@ class TestNestedProductDistribution:
 
     def test_condition_on_nested_leaf_sample(self, nested_joint):
         """Samples from conditioned nested joint should exclude conditioned leaf."""
-        cond = condition_on(nested_joint,
-            physics={"force": jnp.array(1.0)}
-        )
+        cond = condition_on(nested_joint, physics={"force": jnp.array(1.0)})
         key = jax.random.PRNGKey(50)
         s = sample(cond, key=key, sample_shape=(5,))
         assert isinstance(s, (Record, RecordArray))
@@ -1197,9 +1212,7 @@ class TestNestedProductDistribution:
 
     def test_condition_on_nested_leaf_log_prob(self, nested_joint):
         """Log-prob should work on conditioned nested joint."""
-        cond = condition_on(nested_joint,
-            physics={"force": jnp.array(1.0)}
-        )
+        cond = condition_on(nested_joint, physics={"force": jnp.array(1.0)})
         key = jax.random.PRNGKey(51)
         s = sample(cond, key=key)
         lp = log_prob(cond, s)
@@ -1207,7 +1220,8 @@ class TestNestedProductDistribution:
 
     def test_condition_on_multiple_leaves_across_groups(self, nested_joint):
         """Condition on leaves from different groups simultaneously."""
-        cond = condition_on(nested_joint,
+        cond = condition_on(
+            nested_joint,
             physics={"force": jnp.array(1.0)},
             observation=jnp.array(0.5),
         )
@@ -1219,9 +1233,7 @@ class TestNestedProductDistribution:
 
     def test_condition_on_positional_dict(self, nested_joint):
         """Condition using a positional dict instead of kwargs."""
-        cond = condition_on(nested_joint,
-            {"physics": {"force": jnp.array(1.0)}}
-        )
+        cond = condition_on(nested_joint, {"physics": {"force": jnp.array(1.0)}})
         assert "physics" in cond._components
         assert "mass" in cond._components["physics"]
         assert "force" not in cond._components["physics"]
@@ -1229,7 +1241,8 @@ class TestNestedProductDistribution:
     def test_condition_on_positional_and_kwargs_exclusive(self, nested_joint):
         """Cannot mix positional dict and kwargs."""
         with pytest.raises(TypeError, match="either a positional dict or keyword"):
-            condition_on(nested_joint,
+            condition_on(
+                nested_joint,
                 {"physics": {"force": jnp.array(1.0)}},
                 observation=jnp.array(0.5),
             )
@@ -1242,30 +1255,25 @@ class TestNestedProductDistribution:
     def test_condition_on_leaf_with_dict_raises(self, nested_joint):
         """Passing a dict for a component distribution should raise TypeError."""
         with pytest.raises(TypeError, match="component distribution"):
-            condition_on(nested_joint,
-                observation={"sub": jnp.array(1.0)}
-            )
+            condition_on(nested_joint, observation={"sub": jnp.array(1.0)})
 
     def test_condition_on_unknown_nested_key_raises(self, nested_joint):
         """Unknown key inside a nested dict should raise KeyError."""
         with pytest.raises(KeyError, match="not found"):
-            condition_on(nested_joint,
-                physics={"nonexistent": jnp.array(1.0)}
-            )
+            condition_on(nested_joint, physics={"nonexistent": jnp.array(1.0)})
 
     def test_condition_on_all_raises(self, nested_joint):
         """Conditioning on all leaves should raise ValueError."""
         with pytest.raises(ValueError, match="Cannot condition on all"):
-            condition_on(nested_joint,
+            condition_on(
+                nested_joint,
                 physics={"force": jnp.array(1.0), "mass": jnp.array(2.0)},
                 observation=jnp.array(0.5),
             )
 
     def test_condition_on_provenance(self, nested_joint):
         """Conditioned distribution should have provenance."""
-        cond = condition_on(nested_joint,
-            physics={"force": jnp.array(1.0)}
-        )
+        cond = condition_on(nested_joint, physics={"force": jnp.array(1.0)})
         assert cond.source is not None
         assert cond.source.operation == "condition_on"
 
@@ -1331,15 +1339,17 @@ class TestNestedProductDistribution:
 # 9. TestNestedWithMVN
 # ===========================================================================
 
+
 class TestNestedWithMVN:
     """Nested dicts where some leaves are multivariate (non-scalar event)."""
 
     @pytest.fixture
     def nested_mvn(self):
         return ProductDistribution(
-            group={"position": MultivariateNormal(
-                        loc=jnp.zeros(2), cov=jnp.eye(2), name="position"),
-                   "scale": Normal(loc=1.0, scale=0.1, name="scale")},
+            group={
+                "position": MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="position"),
+                "scale": Normal(loc=1.0, scale=0.1, name="scale"),
+            },
             label=Normal(loc=0.0, scale=1.0, name="label"),
         )
 
@@ -1369,7 +1379,8 @@ class TestNestedWithMVN:
         assert flat.shape == (4,)
 
         recovered = nested_mvn.unflatten_value(
-            flat, template=nested_mvn.event_template,
+            flat,
+            template=nested_mvn.event_template,
         )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(

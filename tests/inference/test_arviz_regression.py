@@ -30,10 +30,12 @@ def frozen_idata():
     mu = rng.normal(0.0, 1.0, (nchain, ndraw)) + 0.05 * np.arange(nchain)[:, None]
     sigma = np.abs(rng.normal(1.0, 0.2, (nchain, ndraw)))
     loglik = {"y": rng.normal(-2.0, 0.5, (nchain, ndraw, nobs))}
-    return azb.from_dict({
-        "posterior": {"mu": mu, "sigma": sigma},
-        "log_likelihood": loglik,
-    })
+    return azb.from_dict(
+        {
+            "posterior": {"mu": mu, "sigma": sigma},
+            "log_likelihood": loglik,
+        }
+    )
 
 
 # -- The load-bearing default-drift tripwire ----------------------------------

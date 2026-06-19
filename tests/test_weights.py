@@ -23,6 +23,7 @@ from probpipe._weights import (
 # _validate_to_log_weights
 # ---------------------------------------------------------------------------
 
+
 class TestValidation:
     def test_uniform(self):
         log_w, is_uniform = _validate_to_log_weights(5)
@@ -30,16 +31,12 @@ class TestValidation:
         assert is_uniform is True
 
     def test_from_weights(self):
-        log_w, is_uniform = _validate_to_log_weights(
-            3, weights=jnp.array([1.0, 2.0, 1.0])
-        )
+        log_w, is_uniform = _validate_to_log_weights(3, weights=jnp.array([1.0, 2.0, 1.0]))
         assert is_uniform is False
         assert log_w.shape == (3,)
 
     def test_from_log_weights(self):
-        log_w, is_uniform = _validate_to_log_weights(
-            3, log_weights=jnp.array([-1.0, 0.0, -1.0])
-        )
+        log_w, is_uniform = _validate_to_log_weights(3, log_weights=jnp.array([-1.0, 0.0, -1.0]))
         assert is_uniform is False
         npt.assert_allclose(log_w, jnp.array([-1.0, 0.0, -1.0]))
 
@@ -64,38 +61,29 @@ class TestValidation:
 
     def test_negative_weights(self):
         with pytest.raises(ValueError, match="non-negative"):
-            _validate_to_log_weights(
-                3, weights=jnp.array([1.0, -1.0, 1.0])
-            )
+            _validate_to_log_weights(3, weights=jnp.array([1.0, -1.0, 1.0]))
 
     def test_zero_sum_weights(self):
         with pytest.raises(ValueError, match="positive"):
-            _validate_to_log_weights(
-                3, weights=jnp.zeros(3)
-            )
+            _validate_to_log_weights(3, weights=jnp.zeros(3))
 
     def test_log_weights_shape_mismatch(self):
         with pytest.raises(ValueError, match="shape"):
-            _validate_to_log_weights(
-                3, log_weights=jnp.zeros(5)
-            )
+            _validate_to_log_weights(3, log_weights=jnp.zeros(5))
 
     def test_log_weights_all_negative_infinity_rejected(self):
         with pytest.raises(ValueError, match="positive finite"):
-            _validate_to_log_weights(
-                3, log_weights=jnp.full(3, -jnp.inf)
-            )
+            _validate_to_log_weights(3, log_weights=jnp.full(3, -jnp.inf))
 
     def test_log_weights_nan_rejected(self):
         with pytest.raises(ValueError, match="NaN"):
-            _validate_to_log_weights(
-                3, log_weights=jnp.array([0.0, jnp.nan, -1.0])
-            )
+            _validate_to_log_weights(3, log_weights=jnp.array([0.0, jnp.nan, -1.0]))
 
 
 # ---------------------------------------------------------------------------
 # Utility functions
 # ---------------------------------------------------------------------------
+
 
 class TestUtilities:
     def test_normalize_weights(self):
@@ -185,6 +173,7 @@ class TestWeightedChoice:
 # Weights class
 # ---------------------------------------------------------------------------
 
+
 class TestWeightsConstruction:
     def test_uniform_via_n(self):
         w = Weights(n=5)
@@ -266,9 +255,7 @@ class TestWeightsProperties:
     def test_log_normalized(self):
         w = Weights(log_weights=jnp.array([-1.0, 0.0, -1.0]))
         log_n = w.log_normalized
-        npt.assert_allclose(
-            jax.scipy.special.logsumexp(log_n), 0.0, atol=1e-6
-        )
+        npt.assert_allclose(jax.scipy.special.logsumexp(log_n), 0.0, atol=1e-6)
 
     def test_ess_uniform(self):
         w = Weights(n=10)
@@ -497,30 +484,36 @@ class TestWeightsEquality:
 # Factory dispatch tests
 # ---------------------------------------------------------------------------
 
+
 class TestFactoryDispatch:
     def test_empirical_numeric_returns_array_variant(self):
         from probpipe import EmpiricalDistribution, RecordEmpiricalDistribution
+
         dist = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
         assert isinstance(dist, RecordEmpiricalDistribution)
 
     def test_empirical_numpy_numeric_returns_array_variant(self):
         from probpipe import EmpiricalDistribution, RecordEmpiricalDistribution
+
         dist = EmpiricalDistribution(np.array([1.0, 2.0, 3.0]), name="x")
         assert isinstance(dist, RecordEmpiricalDistribution)
 
     def test_empirical_object_stays_generic(self):
         from probpipe import EmpiricalDistribution, RecordEmpiricalDistribution
+
         dist = EmpiricalDistribution(["hello", "world"], name="x")
         assert not isinstance(dist, RecordEmpiricalDistribution)
         assert isinstance(dist, EmpiricalDistribution)
 
     def test_empirical_numpy_object_stays_generic(self):
         from probpipe import EmpiricalDistribution, RecordEmpiricalDistribution
+
         dist = EmpiricalDistribution(np.array(["a", "b"], dtype=object), name="x")
         assert not isinstance(dist, RecordEmpiricalDistribution)
 
     def test_bootstrap_numeric_returns_array_variant(self):
         from probpipe import BootstrapReplicateDistribution, RecordBootstrapReplicateDistribution
+
         dist = BootstrapReplicateDistribution(jnp.ones((5, 2)), name="x")
         assert isinstance(dist, RecordBootstrapReplicateDistribution)
 
@@ -530,17 +523,20 @@ class TestFactoryDispatch:
             BootstrapReplicateDistribution,
             RecordBootstrapReplicateDistribution,
         )
+
         emp = EmpiricalDistribution(jnp.ones((5, 2)), name="x")
         dist = BootstrapReplicateDistribution(emp, name="x")
         assert isinstance(dist, RecordBootstrapReplicateDistribution)
 
     def test_bootstrap_object_stays_generic(self):
         from probpipe import BootstrapReplicateDistribution, RecordBootstrapReplicateDistribution
+
         dist = BootstrapReplicateDistribution(["a", "b", "c"], name="x")
         assert not isinstance(dist, RecordBootstrapReplicateDistribution)
 
     def test_subclass_not_redirected(self):
         from probpipe import RecordEmpiricalDistribution
+
         dist = RecordEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
         assert type(dist) is RecordEmpiricalDistribution
 
@@ -549,9 +545,11 @@ class TestFactoryDispatch:
 # sample_shape tests
 # ---------------------------------------------------------------------------
 
+
 class TestSampleShape:
     def test_default_single_axis(self):
         from probpipe import RecordEmpiricalDistribution
+
         samples = jnp.ones((100, 3))
         dist = RecordEmpiricalDistribution(samples, name="x")
         assert dist.num_atoms == 100
@@ -559,6 +557,7 @@ class TestSampleShape:
 
     def test_explicit_1d_sample_shape(self):
         from probpipe import RecordEmpiricalDistribution
+
         samples = jnp.ones((100, 3))
         dist = RecordEmpiricalDistribution(samples, sample_shape=(100,), name="x")
         assert dist.num_atoms == 100
@@ -566,6 +565,7 @@ class TestSampleShape:
 
     def test_2d_sample_shape(self):
         from probpipe import RecordEmpiricalDistribution
+
         samples = jnp.ones((10, 5, 3))
         dist = RecordEmpiricalDistribution(samples, sample_shape=(10, 5), name="x")
         assert dist.num_atoms == 50
@@ -573,12 +573,14 @@ class TestSampleShape:
 
     def test_sample_shape_mismatch_raises(self):
         from probpipe import RecordEmpiricalDistribution
+
         samples = jnp.ones((10, 3))
         with pytest.raises(ValueError, match="do not match"):
             RecordEmpiricalDistribution(samples, sample_shape=(20,), name="x")
 
     def test_moments_with_sample_shape(self):
         from probpipe import RecordEmpiricalDistribution, mean, variance
+
         key = jax.random.PRNGKey(0)
         samples = jax.random.normal(key, (10, 5, 2))
         dist = RecordEmpiricalDistribution(samples, sample_shape=(10, 5), name="x")

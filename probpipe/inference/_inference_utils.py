@@ -65,8 +65,11 @@ __all__ = [
 # Chain extraction
 # ---------------------------------------------------------------------------
 
+
 def extract_chain_columns(
-    trace: Any, names: list[str], num_chains: int,
+    trace: Any,
+    names: list[str],
+    num_chains: int,
 ) -> list[Array]:
     """Per-chain flat sample matrices from an ArviZ-like trace.
 
@@ -140,6 +143,7 @@ def posterior_var_order(trace: Any, keep: Iterable[str]) -> list[str]:
 # JAX-traceability probe
 # ---------------------------------------------------------------------------
 
+
 def is_jax_traceable(fn: Callable, init_state: jnp.ndarray) -> bool:
     """Probe whether *fn* can be traced by JAX at *init_state*.
 
@@ -169,6 +173,7 @@ def as_prng_key(seed: int | Array) -> Array:
 # ---------------------------------------------------------------------------
 # Initial-state heuristics
 # ---------------------------------------------------------------------------
+
 
 def get_init_state(
     dist: Distribution,
@@ -210,6 +215,7 @@ def get_init_state(
     target_dtype = getattr(prior, "dtype", None)
     if not isinstance(target_dtype, jnp.dtype):
         from .._dtype import _default_float_dtype
+
         target_dtype = _default_float_dtype()
 
     if init is not None:
@@ -222,20 +228,25 @@ def get_init_state(
             s = prior._sample(key, sample_shape=())
             if isinstance(s, Record):
                 from ..core._numeric_record import NumericRecord
+
                 if not isinstance(s, NumericRecord):
                     s = NumericRecord.from_record(s)
                 s = s.flatten()
             return jnp.atleast_1d(jnp.asarray(s, dtype=target_dtype))
         except Exception:
             logger.debug(
-                "get_init_state: prior._sample failed for %r; falling "
-                "back to Uniform(-2, 2)", prior, exc_info=True,
+                "get_init_state: prior._sample failed for %r; falling back to Uniform(-2, 2)",
+                prior,
+                exc_info=True,
             )
 
     if hasattr(prior, "event_shape"):
         return jax.random.uniform(
-            key, shape=prior.event_shape,
-            minval=-2.0, maxval=2.0, dtype=target_dtype,
+            key,
+            shape=prior.event_shape,
+            minval=-2.0,
+            maxval=2.0,
+            dtype=target_dtype,
         )
 
     raise ValueError(
@@ -249,9 +260,11 @@ def get_init_state(
 # SimpleModel detection and prior extraction
 # ---------------------------------------------------------------------------
 
+
 def is_simple_model(dist: Distribution) -> bool:
     """Check whether *dist* is a SimpleModel (lazy import for circularity)."""
     from ..modeling._simple import SimpleModel
+
     return isinstance(dist, SimpleModel)
 
 
@@ -276,8 +289,10 @@ def extract_event_template(dist: Distribution) -> EventTemplate | None:
 # Target log-density construction
 # ---------------------------------------------------------------------------
 
+
 def build_target_log_prob(
-    dist: Distribution, observed: ArrayLike | Record | None,
+    dist: Distribution,
+    observed: ArrayLike | Record | None,
 ) -> Callable[[Any], Array]:
     """Build a ``target_log_prob_fn(params)`` from *dist* and *observed*.
 
@@ -302,11 +317,13 @@ def build_target_log_prob(
     its own input types).
     """
     if is_simple_model(dist):
+
         def target_log_prob_fn(params):
             lp = dist._prior._log_prob(params)
             if observed is not None:
                 lp = lp + dist._likelihood.log_likelihood(
-                    params=params, data=observed,
+                    params=params,
+                    data=observed,
                 )
             return lp
 
@@ -319,7 +336,8 @@ def build_target_log_prob(
 
 
 def build_target_log_prob_flat(
-    dist: Distribution, observed: ArrayLike | Record | None,
+    dist: Distribution,
+    observed: ArrayLike | Record | None,
     *,
     init: ArrayLike | None = None,
     random_seed: int | Array = 0,
@@ -446,12 +464,15 @@ def build_mcmc_datatree(
         n_chains, n_warmup = warmup_array.shape[:2]
         event_dims = [f"params_dim_{i}" for i in range(warmup_array.ndim - 2)]
         dims = ["chain", "draw"] + event_dims
-        warmup_ds = xr.Dataset({
-            "params": xr.DataArray(
-                warmup_array, dims=dims,
-                coords={"chain": np.arange(n_chains), "draw": np.arange(n_warmup)},
-            ),
-        })
+        warmup_ds = xr.Dataset(
+            {
+                "params": xr.DataArray(
+                    warmup_array,
+                    dims=dims,
+                    coords={"chain": np.arange(n_chains), "draw": np.arange(n_warmup)},
+                ),
+            }
+        )
         dt["warmup"] = xr.DataTree(dataset=warmup_ds)
 
     return dt
@@ -482,6 +503,7 @@ def run_chain_scan(
     Used by both the NUTS / HMC and the RWMH / ESS backends; the
     contract is identical because BlackJAX samplers share it.
     """
+
     def one_step(state, step_key):
         state, info = sampler.step(step_key, state)
         return state, (state.position, info)

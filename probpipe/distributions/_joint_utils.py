@@ -41,9 +41,7 @@ def _normalize_key(key) -> KeyPath:
         return (key,)
     if isinstance(key, tuple) and all(isinstance(k, str) for k in key):
         return key
-    raise TypeError(
-        f"Component key must be a string or tuple of strings, got {key!r}"
-    )
+    raise TypeError(f"Component key must be a string or tuple of strings, got {key!r}")
 
 
 def _walk_pytree(tree, key_path: KeyPath):
@@ -74,9 +72,7 @@ def _walk_pytree(tree, key_path: KeyPath):
                 f"key path prefix; remaining key: {k!r}"
             )
         if k not in node:
-            raise KeyError(
-                f"Key {k!r} not found. Available: {tuple(node.keys())}"
-            )
+            raise KeyError(f"Key {k!r} not found. Available: {tuple(node.keys())}")
         node = node[k]
     return node
 
@@ -117,9 +113,7 @@ def _component_key_paths(components) -> tuple:
     paths_and_leaves = jax.tree_util.tree_leaves_with_path(components)
     key_paths = []
     for path, _leaf in paths_and_leaves:
-        str_path = tuple(
-            k.key if hasattr(k, "key") else str(k) for k in path
-        )
+        str_path = tuple(k.key if hasattr(k, "key") else str(k) for k in path)
         key_paths.append(str_path)
     return tuple(key_paths)
 
@@ -127,6 +121,7 @@ def _component_key_paths(components) -> tuple:
 # ---------------------------------------------------------------------------
 # Conditioning argument parser (module-level helper)
 # ---------------------------------------------------------------------------
+
 
 def _collect_observed_leaves(
     obs_tree: dict,
@@ -252,8 +247,7 @@ def _parse_condition_args(
     """
     if observed is not None and kwargs:
         raise TypeError(
-            "condition_on() accepts either a positional dict or keyword "
-            "arguments, not both."
+            "condition_on() accepts either a positional dict or keyword arguments, not both."
         )
     tree = observed if observed is not None else kwargs
     if not tree:
@@ -265,8 +259,7 @@ def _parse_condition_args(
 
     # Check we're not conditioning on everything
     all_leaf_paths = set(
-        p if isinstance(p, tuple) else (p,)
-        for p in _component_key_paths(joint._components)
+        p if isinstance(p, tuple) else (p,) for p in _component_key_paths(joint._components)
     )
     conditioned_paths = set(observed_leaves.keys())
     if conditioned_paths >= all_leaf_paths:
@@ -312,5 +305,3 @@ def _prune_leaves(tree: dict, remove_paths: set[KeyPath], prefix: tuple = ()) ->
 # ---------------------------------------------------------------------------
 # Batched flatten / unflatten for Record with known event_shapes
 # ---------------------------------------------------------------------------
-
-

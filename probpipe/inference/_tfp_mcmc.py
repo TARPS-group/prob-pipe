@@ -144,20 +144,26 @@ class _TFPGradientMethod(InferenceMethod):
         # selecting a gradient-based method that would fail at execute() time.
         # The cost is ~one JAX trace, cached by JAX on subsequent calls.
         if not isinstance(dist, SupportsUnnormalizedLogProb):
-            return MethodInfo(feasible=False, method_name=self.name,
-                              description="Requires SupportsUnnormalizedLogProb")
+            return MethodInfo(
+                feasible=False,
+                method_name=self.name,
+                description="Requires SupportsUnnormalizedLogProb",
+            )
         try:
             target = build_target_log_prob(dist, observed)
             init = get_init_state(
-                dist, kwargs.get("init"),
+                dist,
+                kwargs.get("init"),
                 random_seed=kwargs.get("random_seed", 0),
             )
             if not is_jax_traceable(target, init):
-                return MethodInfo(feasible=False, method_name=self.name,
-                                  description="Log-prob is not JAX-traceable")
+                return MethodInfo(
+                    feasible=False,
+                    method_name=self.name,
+                    description="Log-prob is not JAX-traceable",
+                )
         except Exception as e:
-            return MethodInfo(feasible=False, method_name=self.name,
-                              description=str(e))
+            return MethodInfo(feasible=False, method_name=self.name, description=str(e))
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
@@ -165,7 +171,9 @@ class _TFPGradientMethod(InferenceMethod):
         target = build_target_log_prob(dist, observed)
         prior = get_prior(dist)
         init = get_init_state(
-            dist, kwargs.get("init"), random_seed=random_seed,
+            dist,
+            kwargs.get("init"),
+            random_seed=random_seed,
         )
         event_template = extract_event_template(dist)
 
@@ -174,7 +182,8 @@ class _TFPGradientMethod(InferenceMethod):
         num_chains = kwargs.get("num_chains", 1)
 
         chains, sample_stats = _run_tfp_chains(
-            target, init,
+            target,
+            init,
             algorithm=self._algorithm,
             num_results=num_results,
             num_warmup=num_warmup,
@@ -184,9 +193,14 @@ class _TFPGradientMethod(InferenceMethod):
         )
         auxiliary = build_mcmc_datatree(chains, sample_stats)
         return make_posterior(
-            chains, parents=(prior,), algorithm=self._method_name,
-            auxiliary=auxiliary, event_template=event_template,
-            num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
+            chains,
+            parents=(prior,),
+            algorithm=self._method_name,
+            auxiliary=auxiliary,
+            event_template=event_template,
+            num_results=num_results,
+            num_warmup=num_warmup,
+            num_chains=num_chains,
         )
 
 

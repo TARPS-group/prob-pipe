@@ -83,9 +83,7 @@ class RecordArray(Record):
     ):
         if _dict is not None:
             if fields:
-                raise ValueError(
-                    "Cannot pass both positional dict and keyword arguments"
-                )
+                raise ValueError("Cannot pass both positional dict and keyword arguments")
             fields = _dict
         if not fields:
             raise ValueError("RecordArray requires at least one field")
@@ -179,9 +177,7 @@ class RecordArray(Record):
             return self._store[key]
         if isinstance(key, (int, np.integer)):
             return self._get_record(int(key))
-        raise TypeError(
-            f"key must be str or int, got {type(key).__name__}"
-        )
+        raise TypeError(f"key must be str or int, got {type(key).__name__}")
 
     def view(self, field: str) -> "_RecordArrayView":
         """Return a single-field view carrying parent identity.
@@ -361,10 +357,7 @@ class RecordArray(Record):
             else:
                 field_parts.append(f"{name}=...")
         cls_name = type(self).__name__
-        return (
-            f"{cls_name}(batch_shape={self._batch_shape}, "
-            f"{', '.join(field_parts)})"
-        )
+        return f"{cls_name}(batch_shape={self._batch_shape}, {', '.join(field_parts)})"
 
 
 # ---------------------------------------------------------------------------
@@ -425,8 +418,7 @@ class NumericRecordArray(RecordArray):
             kind = getattr(raw.dtype, "kind", None)
             if kind not in _NUMERIC_DTYPE_KINDS:
                 raise TypeError(
-                    f"NumericRecordArray: field {name!r} has non-numeric "
-                    f"dtype {raw.dtype!r}"
+                    f"NumericRecordArray: field {name!r} has non-numeric dtype {raw.dtype!r}"
                 )
             event_shape = spec.shape if isinstance(spec, ArraySpec) else ()
             expected = tuple(batch_shape) + event_shape
@@ -465,8 +457,7 @@ class NumericRecordArray(RecordArray):
             # A nested plain Record whose leaves still carry the batch axis
             # (a non-canonical batched draw): flatten each leaf and concatenate.
             if isinstance(val, Record):
-                return jnp.concatenate(
-                    [_flat_field(val[f]) for f in val.fields], axis=-1)
+                return jnp.concatenate([_flat_field(val[f]) for f in val.fields], axis=-1)
             return jnp.reshape(val, self._batch_shape + (prod(val.shape[n_batch:]),))
 
         parts = [_flat_field(self._store[name]) for name in self._store]
@@ -513,7 +504,9 @@ class NumericRecordArray(RecordArray):
             chunk = flat[..., offset : offset + size]
             if isinstance(spec, EventTemplate):
                 fields[name] = cls.unflatten(
-                    chunk, template=spec, batch_shape=batch_shape,
+                    chunk,
+                    template=spec,
+                    batch_shape=batch_shape,
                 )
             else:
                 # ArraySpec leaf — ``_spec_size`` above rejects every other
@@ -532,13 +525,11 @@ class NumericRecordArray(RecordArray):
         axis: int = 0,
     ) -> NumericRecordArray | Any:
         """Apply a reduction function over a batch axis."""
-        new_batch = self._batch_shape[:axis] + self._batch_shape[axis + 1:]
+        new_batch = self._batch_shape[:axis] + self._batch_shape[axis + 1 :]
         fields = {name: fn(self._store[name], axis) for name in self._store}
         if not new_batch:
             return NumericRecord(fields)
-        return NumericRecordArray(
-            fields, batch_shape=new_batch, template=self._template
-        )
+        return NumericRecordArray(fields, batch_shape=new_batch, template=self._template)
 
     def mean(self, axis: int = 0) -> Any:
         """Mean over a batch axis.
@@ -657,8 +648,7 @@ class _RecordArrayView(RecordArray):
     def __init__(self, parent: RecordArray, field: str):
         if field not in parent._store:
             raise KeyError(
-                f"field {field!r} not in parent "
-                f"{type(parent).__name__}(fields={parent.fields})"
+                f"field {field!r} not in parent {type(parent).__name__}(fields={parent.fields})"
             )
         leaf_spec = parent.template[field]
         store = OrderedDict([(field, parent._store[field])])
@@ -798,9 +788,7 @@ def _numeric_record_array_unflatten(
     )
 
 
-jax.tree_util.register_pytree_node(
-    RecordArray, _record_array_flatten, _record_array_unflatten
-)
+jax.tree_util.register_pytree_node(RecordArray, _record_array_flatten, _record_array_unflatten)
 jax.tree_util.register_pytree_node(
     NumericRecordArray, _record_array_flatten, _numeric_record_array_unflatten
 )

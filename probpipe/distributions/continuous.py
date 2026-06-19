@@ -88,7 +88,6 @@ class Normal(TFPDistribution):
         return real
 
 
-
 # ---------------------------------------------------------------------------
 # Beta
 # ---------------------------------------------------------------------------
@@ -129,7 +128,6 @@ class Beta(TFPDistribution):
     @property
     def support(self) -> Constraint:
         return unit_interval
-
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +172,6 @@ class Gamma(TFPDistribution):
         return positive
 
 
-
 # ---------------------------------------------------------------------------
 # InverseGamma
 # ---------------------------------------------------------------------------
@@ -201,9 +198,7 @@ class InverseGamma(TFPDistribution):
         name: str,
     ):
         _, (self._concentration, self._scale) = _promote_floats(concentration, scale)
-        self._tfp_dist = tfd.InverseGamma(
-            concentration=self._concentration, scale=self._scale
-        )
+        self._tfp_dist = tfd.InverseGamma(concentration=self._concentration, scale=self._scale)
         super().__init__(name=name)
 
     @property
@@ -217,7 +212,6 @@ class InverseGamma(TFPDistribution):
     @property
     def support(self) -> Constraint:
         return positive
-
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +247,6 @@ class Exponential(TFPDistribution):
     @property
     def support(self) -> Constraint:
         return positive
-
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +289,6 @@ class LogNormal(TFPDistribution):
     @property
     def support(self) -> Constraint:
         return positive
-
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +340,6 @@ class StudentT(TFPDistribution):
         return real
 
 
-
 # ---------------------------------------------------------------------------
 # Uniform
 # ---------------------------------------------------------------------------
@@ -389,7 +380,6 @@ class Uniform(TFPDistribution):
     @property
     def support(self) -> Constraint:
         return interval(self._low, self._high)
-
 
 
 # ---------------------------------------------------------------------------
@@ -434,7 +424,6 @@ class Cauchy(TFPDistribution):
         return real
 
 
-
 # ---------------------------------------------------------------------------
 # Laplace
 # ---------------------------------------------------------------------------
@@ -477,7 +466,6 @@ class Laplace(TFPDistribution):
         return real
 
 
-
 # ---------------------------------------------------------------------------
 # HalfNormal
 # ---------------------------------------------------------------------------
@@ -511,7 +499,6 @@ class HalfNormal(TFPDistribution):
     @property
     def support(self) -> Constraint:
         return non_negative
-
 
 
 # ---------------------------------------------------------------------------
@@ -556,7 +543,6 @@ class HalfCauchy(TFPDistribution):
         return greater_than(self._loc)
 
 
-
 # ---------------------------------------------------------------------------
 # Pareto
 # ---------------------------------------------------------------------------
@@ -583,9 +569,7 @@ class Pareto(TFPDistribution):
         name: str,
     ):
         _, (self._concentration, self._scale) = _promote_floats(concentration, scale)
-        self._tfp_dist = tfd.Pareto(
-            concentration=self._concentration, scale=self._scale
-        )
+        self._tfp_dist = tfd.Pareto(concentration=self._concentration, scale=self._scale)
         super().__init__(name=name)
 
     @property
@@ -599,7 +583,6 @@ class Pareto(TFPDistribution):
     @property
     def support(self) -> Constraint:
         return greater_than(self._scale)
-
 
 
 # ---------------------------------------------------------------------------
@@ -633,9 +616,7 @@ class TruncatedNormal(TFPDistribution):
         *,
         name: str,
     ):
-        _, (self._loc, self._scale, self._low, self._high) = _promote_floats(
-            loc, scale, low, high
-        )
+        _, (self._loc, self._scale, self._low, self._high) = _promote_floats(loc, scale, low, high)
         self._tfp_dist = tfd.TruncatedNormal(
             loc=self._loc, scale=self._scale, low=self._low, high=self._high
         )
@@ -660,4 +641,3 @@ class TruncatedNormal(TFPDistribution):
     @property
     def support(self) -> Constraint:
         return interval(self._low, self._high)
-
