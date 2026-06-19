@@ -126,9 +126,7 @@ class NumericRecord(Record):
         # ``__slots__`` + the ``__setattr__`` guard holds.
         if _dict is not None:
             if fields:
-                raise ValueError(
-                    "Cannot pass both positional dict and keyword arguments"
-                )
+                raise ValueError("Cannot pass both positional dict and keyword arguments")
             raw_fields = _dict
         else:
             raw_fields = fields
@@ -252,10 +250,12 @@ class NumericRecord(Record):
         ``TypeError`` on non-coercible leaves. Nested ``Record``
         children recurse, preserving structure.
         """
-        return cls({
-            field_name: cls.from_record(val) if isinstance(val, Record) else val
-            for field_name, val in record._store.items()
-        })
+        return cls(
+            {
+                field_name: cls.from_record(val) if isinstance(val, Record) else val
+                for field_name, val in record._store.items()
+            }
+        )
 
     # -- Conversion back to native backends --------------------------------
 
@@ -399,13 +399,9 @@ def _unpickle_numeric_record(store: dict, name: str, source) -> NumericRecord:
 # ---------------------------------------------------------------------------
 
 
-def _numeric_record_unflatten(
-    aux: tuple[str, ...], children: list
-) -> NumericRecord:
+def _numeric_record_unflatten(aux: tuple[str, ...], children: list) -> NumericRecord:
     """Unflatten NumericRecord from JAX pytree traversal."""
     return NumericRecord(dict(zip(aux, children)))
 
 
-jax.tree_util.register_pytree_node(
-    NumericRecord, _record_flatten, _numeric_record_unflatten
-)
+jax.tree_util.register_pytree_node(NumericRecord, _record_flatten, _numeric_record_unflatten)

@@ -62,9 +62,12 @@ def _transformed_class_for_base(base: NumericRecordDistribution) -> type:
 
     signature = (supports_sample, supports_log_prob, supports_mean, supports_variance)
     key = frozenset(
-        name for name, flag in zip(
-            ("sample", "log_prob", "mean", "variance"), signature,
-        ) if flag
+        name
+        for name, flag in zip(
+            ("sample", "log_prob", "mean", "variance"),
+            signature,
+        )
+        if flag
     )
     if key in _TRANSFORMED_CLASS_CACHE:
         return _TRANSFORMED_CLASS_CACHE[key]
@@ -95,11 +98,8 @@ def _transformed_class_for_base(base: NumericRecordDistribution) -> type:
             if self._tfp_transformed is not None:
                 return self._tfp_transformed.log_prob(x)
             raw = self._bijector.inverse(x)
-            return (
-                self._base._log_prob(raw)
-                + self._bijector.inverse_log_det_jacobian(
-                    x, event_ndims=len(self.event_shape)
-                )
+            return self._base._log_prob(raw) + self._bijector.inverse_log_det_jacobian(
+                x, event_ndims=len(self.event_shape)
             )
 
         extra_methods["_log_prob"] = _log_prob
@@ -196,11 +196,13 @@ class TransformedDistribution(NumericRecordDistribution):
 
         self._approximate = base.is_approximate
 
-        self.with_source(Provenance.create(
-            "transform",
-            parents=[base],
-            metadata={"bijector": type(bijector).__name__},
-        ))
+        self.with_source(
+            Provenance.create(
+                "transform",
+                parents=[base],
+                metadata={"bijector": type(bijector).__name__},
+            )
+        )
 
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
@@ -223,9 +225,7 @@ class TransformedDistribution(NumericRecordDistribution):
     def event_shape(self) -> tuple[int, ...]:
         if self._tfp_transformed is not None:
             return tuple(self._tfp_transformed.event_shape)
-        return tuple(
-            self._bijector.forward_event_shape(self._base.event_shape)
-        )
+        return tuple(self._bijector.forward_event_shape(self._base.event_shape))
 
     @property
     def dtypes(self) -> dict[str, jnp.dtype]:
@@ -268,7 +268,10 @@ class TransformedDistribution(NumericRecordDistribution):
         return_dist=None,
     ):
         return _mc_expectation(
-            self, f, key=key, num_evaluations=num_evaluations,
+            self,
+            f,
+            key=key,
+            num_evaluations=num_evaluations,
             return_dist=return_dist,
         )
 

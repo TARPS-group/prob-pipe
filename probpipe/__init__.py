@@ -114,7 +114,13 @@ from probpipe.core._array_backend import (
     register_aux,
 )
 from probpipe.core.config import WorkflowKind, prefect_config, provenance_config, ProvenanceMode
-from probpipe.core.node import WorkflowFunction, Module, workflow_function, workflow_method, abstract_workflow_method
+from probpipe.core.node import (
+    WorkflowFunction,
+    Module,
+    workflow_function,
+    workflow_method,
+    abstract_workflow_method,
+)
 from probpipe.core.provenance import ParentInfo, Provenance, provenance_ancestors, provenance_dag
 from probpipe.core.constraints import (
     Constraint,
@@ -137,8 +143,11 @@ from probpipe.core.transition import (
     with_resampling,
 )
 from probpipe.modeling import (
-    GLMLikelihood, Likelihood, ConditionallyIndependentLikelihood,
-    GenerativeLikelihood, IncrementalConditioner,
+    GLMLikelihood,
+    Likelihood,
+    ConditionallyIndependentLikelihood,
+    GenerativeLikelihood,
+    IncrementalConditioner,
 )
 from probpipe.record import Design, FullFactorialDesign
 from probpipe.inference import (

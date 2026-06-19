@@ -26,8 +26,8 @@ from probpipe.core.node import WorkflowFunction
 # Construction
 # ---------------------------------------------------------------------------
 
-class TestConstruction:
 
+class TestConstruction:
     def test_basic_construction(self):
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0, name="z"),
@@ -94,8 +94,8 @@ class TestConstruction:
 # Sampling
 # ---------------------------------------------------------------------------
 
-class TestSampling:
 
+class TestSampling:
     def test_sample_returns_values(self):
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0, name="z"),
@@ -146,8 +146,8 @@ class TestSampling:
 # log_prob
 # ---------------------------------------------------------------------------
 
-class TestLogProb:
 
+class TestLogProb:
     def test_log_prob_shape(self):
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0, name="z"),
@@ -180,10 +180,9 @@ class TestLogProb:
         lp = log_prob(joint, value)
 
         # Independent baseline: scipy.stats.norm.logpdf
-        expected = (
-            scipy.stats.norm.logpdf(float(z_val), loc=0.0, scale=1.0)
-            + scipy.stats.norm.logpdf(float(x_val), loc=float(z_val), scale=0.5)
-        )
+        expected = scipy.stats.norm.logpdf(
+            float(z_val), loc=0.0, scale=1.0
+        ) + scipy.stats.norm.logpdf(float(x_val), loc=float(z_val), scale=0.5)
         np.testing.assert_allclose(float(lp), expected, atol=1e-5)
 
     def test_log_prob_three_components(self):
@@ -209,8 +208,8 @@ class TestLogProb:
 # DistributionView
 # ---------------------------------------------------------------------------
 
-class TestDistributionView:
 
+class TestDistributionView:
     def test_getitem_returns_view(self):
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0, name="z"),
@@ -242,8 +241,8 @@ class TestDistributionView:
 # Conditioning
 # ---------------------------------------------------------------------------
 
-class TestConditionOn:
 
+class TestConditionOn:
     def test_condition_on_removes_conditioned_component(self):
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0, name="z"),
@@ -375,9 +374,8 @@ class TestConditionOn:
         lp = unnormalized_log_prob(cond, value)
         assert jnp.isfinite(lp)
         # Should be log p(z=0) + log p(x=1|z=0) (unnormalized conditional)
-        expected = (
-            scipy.stats.norm.logpdf(0.0, loc=0.0, scale=1.0)
-            + scipy.stats.norm.logpdf(1.0, loc=0.0, scale=0.5)
+        expected = scipy.stats.norm.logpdf(0.0, loc=0.0, scale=1.0) + scipy.stats.norm.logpdf(
+            1.0, loc=0.0, scale=0.5
         )
         np.testing.assert_allclose(float(lp), expected, atol=1e-5)
 
@@ -423,8 +421,8 @@ class TestConditionOn:
 # Flatten / Unflatten
 # ---------------------------------------------------------------------------
 
-class TestFlattenUnflatten:
 
+class TestFlattenUnflatten:
     def test_flatten_roundtrip(self):
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0, name="z"),
@@ -443,8 +441,8 @@ class TestFlattenUnflatten:
 # Broadcasting reconnection
 # ---------------------------------------------------------------------------
 
-class TestBroadcastingReconnection:
 
+class TestBroadcastingReconnection:
     def test_views_from_sequential_joint_loop(self):
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0, name="z"),
@@ -463,9 +461,7 @@ class TestBroadcastingReconnection:
         result = wf(a=joint["z"], b=joint["x"])
         assert hasattr(result, "samples")
         # z and x are jointly sampled, x ≈ z, so a - b ≈ 0
-        np.testing.assert_allclose(
-            np.array(result.samples), 0.0, atol=0.15
-        )
+        np.testing.assert_allclose(np.array(result.samples), 0.0, atol=0.15)
 
     def test_views_from_sequential_joint_reject_jax(self):
         """Explicit ``dispatch="jax"`` is rejected for sequential-joint views.
@@ -520,17 +516,15 @@ class TestBroadcastingReconnection:
         )
         result = wf(a=joint["z"], b=joint["x"])
         assert hasattr(result, "samples")
-        np.testing.assert_allclose(
-            np.array(result.samples), 0.0, atol=0.15
-        )
+        np.testing.assert_allclose(np.array(result.samples), 0.0, atol=0.15)
 
 
 # ---------------------------------------------------------------------------
 # Repr
 # ---------------------------------------------------------------------------
 
-class TestRepr:
 
+class TestRepr:
     def test_repr_includes_callable(self):
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0, name="z"),

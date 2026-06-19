@@ -13,6 +13,7 @@ The rule (codified in STYLE_GUIDE.md §1.11):
   samples on ``.samples`` / ``.draws()`` with ``.n`` reporting the
   count; parametric distributions do not have ``.n``.
 """
+
 from __future__ import annotations
 
 import jax
@@ -51,8 +52,11 @@ def _make_transformed():
     enough to warrant deferring.
     """
     import tensorflow_probability.substrates.jax.bijectors as tfb
+
     return TransformedDistribution(
-        Normal(loc=0.0, scale=1.0, name="base"), tfb.Exp(), name="td",
+        Normal(loc=0.0, scale=1.0, name="base"),
+        tfb.Exp(),
+        name="td",
     )
 
 
@@ -69,7 +73,9 @@ DISTRIBUTIONS = [
     pytest.param(lambda: Gamma(concentration=2.0, rate=1.0, name="x"), id="Gamma"),
     pytest.param(
         lambda: MultivariateNormal(
-            loc=jnp.zeros(3), cov=jnp.eye(3), name="x",
+            loc=jnp.zeros(3),
+            cov=jnp.eye(3),
+            name="x",
         ),
         id="MultivariateNormal",
     ),
@@ -90,19 +96,22 @@ DISTRIBUTIONS = [
     ),
     pytest.param(
         lambda: EmpiricalDistribution(
-            jnp.zeros((10, 3)), name="theta",
+            jnp.zeros((10, 3)),
+            name="theta",
         ),
         id="RecordEmpiricalDistribution",
     ),
     pytest.param(
         lambda: BootstrapReplicateDistribution(
-            jnp.zeros((10, 2)), name="obs",
+            jnp.zeros((10, 2)),
+            name="obs",
         ),
         id="RecordBootstrapReplicateDistribution",
     ),
     pytest.param(
         lambda: BootstrapReplicateDistribution(
-            Normal(loc=0.0, scale=1.0, name="x"), replicate_size=5,
+            Normal(loc=0.0, scale=1.0, name="x"),
+            replicate_size=5,
         ),
         id="BootstrapReplicateDistribution_sampleable",
     ),
@@ -123,6 +132,7 @@ DISTRIBUTIONS = [
 def _make_minibatched_distribution():
     """Build a MinibatchedDistribution at parametrise time."""
     import tensorflow_probability.substrates.jax.glm as tfp_glm
+
     X = jnp.eye(4)
     y = jnp.array([1.0, 0.0, 1.0, 0.0])
     prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="theta")
@@ -174,6 +184,7 @@ def test_numeric_record_iterates_field_names():
 
 def test_record_array_iterates_field_names():
     from probpipe.core.record import EventTemplate
+
     ra = RecordArray(
         a=jnp.zeros((5,)),
         b=jnp.zeros((5,)),
@@ -185,6 +196,7 @@ def test_record_array_iterates_field_names():
 
 def test_numeric_record_array_iterates_field_names():
     from probpipe.core.record import NumericEventTemplate
+
     nra = NumericRecordArray(
         a=jnp.zeros((4,)),
         b=jnp.zeros((4,)),

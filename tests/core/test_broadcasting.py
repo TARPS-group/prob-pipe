@@ -22,6 +22,7 @@ def key():
 # Basic broadcasting (loop backend) - default returns marginal
 # ---------------------------------------------------------------------------
 
+
 class TestBroadcastingBasic:
     def test_returns_marginal_by_default(self):
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
@@ -31,7 +32,7 @@ class TestBroadcastingBasic:
         g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
-        assert hasattr(result, 'samples')
+        assert hasattr(result, "samples")
         assert result.num_atoms == 50
 
     def test_output_values_correct(self):
@@ -48,7 +49,9 @@ class TestBroadcastingBasic:
         def compute_norm(x: jnp.ndarray) -> float:
             return float(jnp.linalg.norm(x))
 
-        w = WorkflowFunction(func=compute_norm, n_broadcast_samples=20, dispatch="sequential", seed=2)
+        w = WorkflowFunction(
+            func=compute_norm, n_broadcast_samples=20, dispatch="sequential", seed=2
+        )
         mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="x")
         result = w(x=mvn)
         assert not isinstance(result, BroadcastDistribution)
@@ -77,7 +80,7 @@ class TestBroadcastingBasic:
         # Positional with distribution triggers broadcasting
         g = Normal(loc=0.0, scale=0.1, name="x")
         result = add(g, y=jnp.array(1.0))
-        assert hasattr(result, 'samples')
+        assert hasattr(result, "samples")
         assert result.num_atoms == 30
 
     def test_no_input_samples_by_default(self):
@@ -87,7 +90,7 @@ class TestBroadcastingBasic:
         w = WorkflowFunction(func=double_it, n_broadcast_samples=20, dispatch="sequential", seed=0)
         g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g)
-        assert not hasattr(result, 'input_samples')
+        assert not hasattr(result, "input_samples")
 
 
 class TestBroadcastingMultipleArgs:
@@ -237,6 +240,7 @@ class TestNoBroadcasting:
 # Empirical enumeration
 # ---------------------------------------------------------------------------
 
+
 class TestBroadcastingEnumeration:
     def test_single_empirical(self):
         def identity(x: jnp.ndarray) -> jnp.ndarray:
@@ -264,12 +268,17 @@ class TestBroadcastingEnumeration:
 
     def test_greedy_cutoff(self):
         """When product exceeds budget, largest empiricals are sampled instead."""
+
         def sum_three(a: jnp.ndarray, b: jnp.ndarray, c: jnp.ndarray) -> jnp.ndarray:
             return a + b + c
 
-        ed_small = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), name="x")          # n=2
-        ed_medium = EmpiricalDistribution(jnp.arange(5).reshape(-1, 1).astype(jnp.float32), name="x")  # n=5
-        ed_large = EmpiricalDistribution(jnp.arange(20).reshape(-1, 1).astype(jnp.float32), name="x")  # n=20
+        ed_small = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), name="x")  # n=2
+        ed_medium = EmpiricalDistribution(
+            jnp.arange(5).reshape(-1, 1).astype(jnp.float32), name="x"
+        )  # n=5
+        ed_large = EmpiricalDistribution(
+            jnp.arange(20).reshape(-1, 1).astype(jnp.float32), name="x"
+        )  # n=20
 
         w = WorkflowFunction(func=sum_three, n_broadcast_samples=50, dispatch="sequential", seed=9)
         result = w(a=ed_small, b=ed_medium, c=ed_large)
@@ -290,6 +299,7 @@ class TestBroadcastingEnumeration:
 
     def test_enumeration_input_samples_aligned(self):
         """Input samples should be aligned with output samples when include_inputs=True."""
+
         def identity(x: jnp.ndarray) -> jnp.ndarray:
             return x
 
@@ -310,6 +320,7 @@ class TestBroadcastingEnumeration:
 # Non-numeric results
 # ---------------------------------------------------------------------------
 
+
 class TestBroadcastingNonNumeric:
     def test_string_results(self):
         def describe(x: jnp.ndarray) -> str:
@@ -327,6 +338,7 @@ class TestBroadcastingNonNumeric:
 # ---------------------------------------------------------------------------
 # JAX vmap backend
 # ---------------------------------------------------------------------------
+
 
 class TestBroadcastingJAX:
     def test_basic_vmap(self):
@@ -383,6 +395,7 @@ class TestBroadcastingJAX:
 
     def test_vmap_input_samples(self):
         """include_inputs=True preserves input-output alignment for vmap."""
+
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
@@ -394,9 +407,7 @@ class TestBroadcastingJAX:
         assert result.input_samples["x"].shape[0] == 30
         # Output should be 2x input
         marginal = result.marginalize()
-        np.testing.assert_allclose(
-            marginal.samples, result.input_samples["x"] * 2, atol=1e-5
-        )
+        np.testing.assert_allclose(marginal.samples, result.input_samples["x"] * 2, atol=1e-5)
 
 
 # ---------------------------------------------------------------------------
@@ -454,7 +465,10 @@ class TestAutoDispatch:
             return jnp.asarray(joint["x"] + joint["y"])
 
         w = WorkflowFunction(
-            func=consume, n_broadcast_samples=10, dispatch="auto", seed=32,
+            func=consume,
+            n_broadcast_samples=10,
+            dispatch="auto",
+            seed=32,
         )
         joint = ProductDistribution(
             x=Normal(loc=0.0, scale=1.0, name="x"),
@@ -472,6 +486,7 @@ class TestAutoDispatch:
 # ---------------------------------------------------------------------------
 # Seed / key management
 # ---------------------------------------------------------------------------
+
 
 class TestSeedManagement:
     def test_different_seeds_give_different_results(self):
@@ -505,13 +520,19 @@ class TestSeedManagement:
 # include_inputs argument
 # ---------------------------------------------------------------------------
 
+
 class TestIncludeInputsArgument:
     def test_include_inputs_at_construction(self):
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = WorkflowFunction(func=double_it, n_broadcast_samples=20, dispatch="sequential",
-                             seed=0, include_inputs=True)
+        w = WorkflowFunction(
+            func=double_it,
+            n_broadcast_samples=20,
+            dispatch="sequential",
+            seed=0,
+            include_inputs=True,
+        )
         g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g)
         assert isinstance(result, BroadcastDistribution)
@@ -536,7 +557,7 @@ class TestIncludeInputsArgument:
         g = Normal(loc=1.0, scale=0.5, name="x")
         result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
-        assert not hasattr(result, 'input_samples')
+        assert not hasattr(result, "input_samples")
 
     def test_include_inputs_has_named_components(self):
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
@@ -555,6 +576,7 @@ class TestIncludeInputsArgument:
 # ---------------------------------------------------------------------------
 # Named components (require include_inputs=True)
 # ---------------------------------------------------------------------------
+
 
 class TestNamedComponents:
     def test_fields(self):
@@ -588,7 +610,7 @@ class TestNamedComponents:
         g = Normal(loc=1.0, scale=0.5, name="x")
         result = w.with_options(include_inputs=True)(x=g)
         out = result["_output"]
-        assert hasattr(out, 'samples')
+        assert hasattr(out, "samples")
 
 
 # ---------------------------------------------------------------------------
@@ -611,66 +633,81 @@ class TestDispatchConsistency:
 
     def _run(self, mode, func, **kwargs):
         w = WorkflowFunction(
-            func=func, n_broadcast_samples=kwargs.pop("n_broadcast_samples", 100),
-            dispatch=mode, seed=0,
+            func=func,
+            n_broadcast_samples=kwargs.pop("n_broadcast_samples", 100),
+            dispatch=mode,
+            seed=0,
         )
         return w(**kwargs)
 
     def test_two_empiricals_cartesian_all_modes(self):
         """Cartesian enumeration of two small empiricals must give the
         exact same samples and weights in every backend."""
+
         def add_them(a, b):
             return a + b
 
         ed1 = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), name="x")
         ed2 = EmpiricalDistribution(jnp.array([[10.0], [20.0], [30.0]]), name="x")
 
-        results = {
-            m: self._run(m, add_them, a=ed1, b=ed2)
-            for m in self.ROWWISE_DISPATCH_MODES
-        }
+        results = {m: self._run(m, add_them, a=ed1, b=ed2) for m in self.ROWWISE_DISPATCH_MODES}
         # Same size (2 x 3 = 6) in every mode - regression guard.
         for mode, r in results.items():
             assert r.num_atoms == 6, f"{mode}: expected n=6, got {r.num_atoms}"
+
         # Same sample set (order may differ; compare sorted).
         def _samples_array(d):
             return d.samples[d.samples.fields[0]]
+
         ref = sorted(_samples_array(results["sequential"]).ravel().tolist())
         for mode in ("auto", "thread"):
             got = sorted(_samples_array(results[mode]).ravel().tolist())
             np.testing.assert_allclose(
-                got, ref,
+                got,
+                ref,
                 err_msg=f"{mode} samples diverged from sequential: {got} vs {ref}",
             )
         # Weights: uniform 1/6 in every mode (inputs unweighted).
         for mode, r in results.items():
-            np.testing.assert_allclose(r.weights, jnp.full(6, 1 / 6), atol=1e-5,
-                                        err_msg=f"{mode} weights diverged")
+            np.testing.assert_allclose(
+                r.weights, jnp.full(6, 1 / 6), atol=1e-5, err_msg=f"{mode} weights diverged"
+            )
 
     def test_weighted_empiricals_preserve_weights_all_modes(self):
         """Exact empirical weights survive the product in every backend."""
+
         def add_them(a, b):
             return a + b
 
         ed1 = EmpiricalDistribution(
-            jnp.array([[1.0], [2.0]]), weights=jnp.array([0.8, 0.2]), name="x")
+            jnp.array([[1.0], [2.0]]), weights=jnp.array([0.8, 0.2]), name="x"
+        )
         ed2 = EmpiricalDistribution(
-            jnp.array([[10.0], [20.0]]), weights=jnp.array([0.25, 0.75]), name="x")
-        expected_weights = sorted([
-            0.8 * 0.25, 0.8 * 0.75, 0.2 * 0.25, 0.2 * 0.75,
-        ])
+            jnp.array([[10.0], [20.0]]), weights=jnp.array([0.25, 0.75]), name="x"
+        )
+        expected_weights = sorted(
+            [
+                0.8 * 0.25,
+                0.8 * 0.75,
+                0.2 * 0.25,
+                0.2 * 0.75,
+            ]
+        )
         for mode in self.ROWWISE_DISPATCH_MODES:
             r = self._run(mode, add_them, a=ed1, b=ed2)
             assert r.num_atoms == 4
             got = sorted(np.asarray(r.weights).tolist())
             np.testing.assert_allclose(
-                got, expected_weights, atol=1e-5,
+                got,
+                expected_weights,
+                atol=1e-5,
                 err_msg=f"{mode} weights diverged: {got} vs {expected_weights}",
             )
 
     def test_mixed_empirical_and_parametric_count_all_modes(self):
         """Mixed empirical + continuous: total evaluations (k combos x reps)
         must match across backends even though the sampled values differ."""
+
         def add_them(a, b):
             return a + b
 
@@ -687,11 +724,11 @@ class TestDispatchConsistency:
         """When a single empirical exceeds the sample budget, every
         backend falls back to resampling and returns exactly
         ``n_broadcast_samples`` evaluations."""
+
         def identity(x):
             return x
 
-        big = EmpiricalDistribution(
-            jnp.arange(200).reshape(-1, 1).astype(jnp.float32), name="x")
+        big = EmpiricalDistribution(jnp.arange(200).reshape(-1, 1).astype(jnp.float32), name="x")
         for mode in self.SAMPLE_DISPATCH_MODES:
             r = self._run(mode, identity, x=big, n_broadcast_samples=20)
             assert r.num_atoms == 20, f"{mode}: expected n=20, got {r.num_atoms}"
@@ -700,6 +737,7 @@ class TestDispatchConsistency:
         """Without empirical inputs every backend samples the full
         budget (values differ - different RNG paths - but count is
         identical)."""
+
         def add_them(a, b):
             return a + b
 

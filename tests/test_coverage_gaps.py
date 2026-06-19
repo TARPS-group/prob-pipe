@@ -353,7 +353,10 @@ class TestCovarianceRequiresProtocol:
 
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
                 return _mc_expectation(
-                    self, f, key=key, num_evaluations=num_evaluations,
+                    self,
+                    f,
+                    key=key,
+                    num_evaluations=num_evaluations,
                     return_dist=return_dist,
                 )
 

@@ -93,10 +93,7 @@ def _index_record(record_data: Record, idx) -> NumericRecord:
     Returns a :class:`NumericRecord` so single-field results expose the
     ``__jax_array__`` / ``__float__`` shims at downstream call sites.
     """
-    return NumericRecord({
-        f: jnp.asarray(record_data[f])[idx]
-        for f in record_data.fields
-    })
+    return NumericRecord({f: jnp.asarray(record_data[f])[idx] for f in record_data.fields})
 
 
 def _fieldwise_op(record_data: Record, op: Callable) -> NumericRecord:
@@ -106,10 +103,7 @@ def _fieldwise_op(record_data: Record, op: Callable) -> NumericRecord:
     lets single-field consumers use ``jnp.asarray(result)`` /
     ``float(result)`` directly via the existing single-field shims.
     """
-    return NumericRecord({
-        f: op(jnp.asarray(record_data[f]))
-        for f in record_data.fields
-    })
+    return NumericRecord({f: op(jnp.asarray(record_data[f])) for f in record_data.fields})
 
 
 def _wrap_numeric_array_as_record(
@@ -440,7 +434,9 @@ class RecordEmpiricalDistribution(
                     f"{type(samples).__name__}"
                 )
             samples, name = _wrap_numeric_array_as_record(
-                samples, name=name, sample_shape=sample_shape,
+                samples,
+                name=name,
+                sample_shape=sample_shape,
                 role="RecordEmpiricalDistribution",
             )
         elif sample_shape is not None:
@@ -483,10 +479,9 @@ class RecordEmpiricalDistribution(
         # to that rule.
         cached = getattr(self, "_samples_record", None)
         if cached is None:
-            cached = NumericRecord({
-                f: jnp.asarray(self._record_data[f])
-                for f in self._record_data.fields
-            })
+            cached = NumericRecord(
+                {f: jnp.asarray(self._record_data[f]) for f in self._record_data.fields}
+            )
             object.__setattr__(self, "_samples_record", cached)
         return cached
 
@@ -571,24 +566,17 @@ class RecordEmpiricalDistribution(
         raises on multi-field.
         """
         return {
-            f: tuple(jnp.asarray(self._record_data[f]).shape[1:])
-            for f in self._record_data.fields
+            f: tuple(jnp.asarray(self._record_data[f]).shape[1:]) for f in self._record_data.fields
         }
 
     @property
     def dtypes(self) -> dict[str, jnp.dtype]:
-        return {
-            f: jnp.asarray(self._record_data[f]).dtype
-            for f in self._record_data.fields
-        }
+        return {f: jnp.asarray(self._record_data[f]).dtype for f in self._record_data.fields}
 
     @property
     def dim(self) -> int:
         """Flat dimensionality of a single Record draw."""
-        return sum(
-            max(1, prod(shape))
-            for shape in self.event_shapes.values()
-        )
+        return sum(max(1, prod(shape)) for shape in self.event_shapes.values())
 
     @property
     def support(self) -> Constraint:
@@ -674,8 +662,10 @@ class RecordEmpiricalDistribution(
             if key is None:
                 key = _auto_key()
             idx = jax.random.choice(
-                key, self._num_atoms,
-                shape=(num_evaluations,), replace=False,
+                key,
+                self._num_atoms,
+                shape=(num_evaluations,),
+                replace=False,
             )
             f_vals = jnp.stack([f(_row(int(i))) for i in idx])
             sub_w = self._w.subsample(idx)
@@ -786,7 +776,8 @@ class BootstrapReplicateDistribution[T](
             default_replicate_size = replicate_size
             self._init_bootstrap_state(
                 default_replicate_size,
-                replicate_size=replicate_size, name=name,
+                replicate_size=replicate_size,
+                name=name,
             )
             return
 
@@ -800,8 +791,7 @@ class BootstrapReplicateDistribution[T](
             self._data = source
             if self._data.ndim == 0:
                 raise ValueError(
-                    "source must have at least 1 dimension (the leading axis "
-                    "that gets resampled)."
+                    "source must have at least 1 dimension (the leading axis that gets resampled)."
                 )
             if len(self._data) == 0:
                 raise ValueError("source must be a non-empty sequence.")
@@ -815,7 +805,8 @@ class BootstrapReplicateDistribution[T](
             default_replicate_size = len(self._data)
         self._init_bootstrap_state(
             default_replicate_size,
-            replicate_size=replicate_size, name=name,
+            replicate_size=replicate_size,
+            name=name,
         )
 
     def _init_bootstrap_state(
@@ -830,9 +821,7 @@ class BootstrapReplicateDistribution[T](
             self._replicate_size = default_replicate_size
         else:
             if replicate_size < 1:
-                raise ValueError(
-                    f"replicate_size must be positive, got {replicate_size}"
-                )
+                raise ValueError(f"replicate_size must be positive, got {replicate_size}")
             self._replicate_size = replicate_size
         if name is None:
             name = "bootstrap"
@@ -843,11 +832,7 @@ class BootstrapReplicateDistribution[T](
             # ``source_size`` is the actual source size. Fall back to
             # ``default_replicate_size`` when the caller didn't pass it
             # (matches the old behaviour where source size == default).
-            self._source_size = (
-                source_size
-                if source_size is not None
-                else default_replicate_size
-            )
+            self._source_size = source_size if source_size is not None else default_replicate_size
         self._approximate = True
 
     # -- properties ---------------------------------------------------------
@@ -1045,7 +1030,9 @@ class RecordBootstrapReplicateDistribution(
             # error instead of an ``_as_float_array(object_arr)``
             # TypeError later.
             sample_dtype = getattr(
-                source.samples, "dtype", type(source.samples).__name__,
+                source.samples,
+                "dtype",
+                type(source.samples).__name__,
             )
             raise TypeError(
                 f"RecordBootstrapReplicateDistribution does not accept "
@@ -1057,7 +1044,8 @@ class RecordBootstrapReplicateDistribution(
             )
         elif _is_numeric_array(source):
             wrapped, field_name = _wrap_numeric_array_as_record(
-                source, name=name,
+                source,
+                name=name,
                 role="RecordBootstrapReplicateDistribution",
             )
             self._record_data = wrapped
@@ -1078,13 +1066,15 @@ class RecordBootstrapReplicateDistribution(
         self._data = self._record_data
         self._init_bootstrap_state(
             default_replicate_size,
-            replicate_size=replicate_size, name=name,
+            replicate_size=replicate_size,
+            name=name,
             source_size=default_replicate_size,
         )
         # Replicate produces (n, *event_shape) per field; advertise that
         # via the event_template.
         self._event_template = _event_template_from_data(
-            self._record_data, leading_shape=(self._replicate_size,),
+            self._record_data,
+            leading_shape=(self._replicate_size,),
         )
 
     # -- shape ---------------------------------------------------------------
@@ -1099,10 +1089,7 @@ class RecordBootstrapReplicateDistribution(
 
     @property
     def dtypes(self) -> dict[str, jnp.dtype]:
-        return {
-            f: jnp.asarray(self._record_data[f]).dtype
-            for f in self._record_data.fields
-        }
+        return {f: jnp.asarray(self._record_data[f]).dtype for f in self._record_data.fields}
 
     @property
     def event_shape(self) -> tuple[int, ...]:
@@ -1176,8 +1163,7 @@ class RecordBootstrapReplicateDistribution(
     def obs_shapes(self) -> dict[str, tuple[int, ...]]:
         """Per-field observation event shapes (replicate axis stripped)."""
         return {
-            f: tuple(jnp.asarray(self._record_data[f]).shape[1:])
-            for f in self._record_data.fields
+            f: tuple(jnp.asarray(self._record_data[f]).shape[1:]) for f in self._record_data.fields
         }
 
     @property
@@ -1186,10 +1172,7 @@ class RecordBootstrapReplicateDistribution(
 
         Sum across fields of ``n * max(1, prod(obs_event_shape))``.
         """
-        return sum(
-            self._replicate_size * max(1, prod(shape))
-            for shape in self.obs_shapes.values()
-        )
+        return sum(self._replicate_size * max(1, prod(shape)) for shape in self.obs_shapes.values())
 
     @property
     def support(self) -> Constraint:

@@ -19,9 +19,7 @@ from probpipe.core._workflow_plan import build_broadcast_plan
 
 
 def _numeric_record_array(field: str, values: range) -> NumericRecordArray:
-    return NumericRecordArray.stack(
-        [NumericRecord(**{field: float(value)}) for value in values]
-    )
+    return NumericRecordArray.stack([NumericRecord(**{field: float(value)}) for value in values])
 
 
 def _unexpected_distribution_broadcast(*args, **kwargs):
@@ -35,10 +33,7 @@ def _require_not_called(*args, **kwargs):
 class TestSliceSweepValues:
     def test_views_from_same_parent_zip(self):
         parent = NumericRecordArray.stack(
-            [
-                NumericRecord(x=float(i), y=float(10 + i))
-                for i in range(3)
-            ]
+            [NumericRecord(x=float(i), y=float(10 + i)) for i in range(3)]
         )
         values = {"x": parent.view("x"), "y": parent.view("y")}
         plan = build_broadcast_plan(values=values, hints={})
@@ -52,10 +47,11 @@ class TestSliceSweepValues:
             for i in range(plan.n_sweep)
         ]
 
-        assert [
-            (float(row["x"]), float(row["y"]))
-            for row in observed
-        ] == [(0.0, 10.0), (1.0, 11.0), (2.0, 12.0)]
+        assert [(float(row["x"]), float(row["y"])) for row in observed] == [
+            (0.0, 10.0),
+            (1.0, 11.0),
+            (2.0, 12.0),
+        ]
 
     def test_arrays_from_different_parents_use_row_major_product(self):
         values = {
@@ -73,10 +69,7 @@ class TestSliceSweepValues:
             for i in range(plan.n_sweep)
         ]
 
-        assert [
-            (float(row["a"]["a"]), float(row["b"]["b"]))
-            for row in observed
-        ] == [
+        assert [(float(row["a"]["a"]), float(row["b"]["b"])) for row in observed] == [
             (0.0, 0.0),
             (0.0, 1.0),
             (0.0, 2.0),
@@ -132,10 +125,7 @@ class TestExecuteSweep:
 
         def fake_execute_many(request):
             seen["request"] = request
-            return [
-                request.func(**call_values)
-                for call_values in request.call_value_list
-            ]
+            return [request.func(**call_values) for call_values in request.call_value_list]
 
         monkeypatch.setattr(
             _workflow_sweep._workflow_execution,
@@ -219,9 +209,7 @@ class TestExecuteSweep:
             return BroadcastDistribution(
                 input_samples={"noise": jnp.asarray([0.0])},
                 output_samples=jnp.asarray([loc]),
-                output_distributions=[
-                    Normal(loc=loc, scale=1.0, name=f"row_{int(loc)}")
-                ],
+                output_distributions=[Normal(loc=loc, scale=1.0, name=f"row_{int(loc)}")],
                 weights=None,
                 broadcast_args=["noise"],
             )

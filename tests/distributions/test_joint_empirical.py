@@ -26,8 +26,8 @@ from probpipe.core.node import WorkflowFunction
 # Construction
 # ---------------------------------------------------------------------------
 
-class TestConstruction:
 
+class TestConstruction:
     def test_basic_construction(self):
         je = JointEmpirical(
             x=jnp.array([1.0, 2.0, 3.0]),
@@ -110,8 +110,8 @@ class TestConstruction:
 # Sampling
 # ---------------------------------------------------------------------------
 
-class TestSampling:
 
+class TestSampling:
     def test_sample_returns_values(self):
         je = JointEmpirical(
             x=jnp.array([1.0, 2.0, 3.0]),
@@ -167,7 +167,9 @@ class TestSampling:
         s = sample(je, key=key, sample_shape=(50_000,))
         # MC std ~ sqrt(0.01*0.99*100^2) / sqrt(50_000) ~ 0.044
         np.testing.assert_allclose(
-            float(jnp.mean(s["x"])), 99.0, atol=0.15,
+            float(jnp.mean(s["x"])),
+            99.0,
+            atol=0.15,
         )
 
 
@@ -175,8 +177,8 @@ class TestSampling:
 # Views
 # ---------------------------------------------------------------------------
 
-class TestViews:
 
+class TestViews:
     def test_getitem_returns_view(self):
         je = JointEmpirical(
             x=jnp.array([1.0, 2.0]),
@@ -208,8 +210,8 @@ class TestViews:
 # Moments
 # ---------------------------------------------------------------------------
 
-class TestMoments:
 
+class TestMoments:
     def test_mean_uniform(self):
         je = JointEmpirical(
             x=jnp.array([1.0, 3.0]),
@@ -238,10 +240,10 @@ class TestMoments:
         np.testing.assert_allclose(v["x"], 1.0, atol=1e-5)
 
 
-
 # ---------------------------------------------------------------------------
 # LogProb
 # ---------------------------------------------------------------------------
+
 
 class TestLogProb:
     """Empirical distributions deliberately do **not** implement
@@ -252,13 +254,12 @@ class TestLogProb:
 
     def test_does_not_claim_log_prob(self):
         from probpipe import SupportsLogProb
-        je = JointEmpirical(x=jnp.array([1.0, 2.0, 3.0]),
-                            y=jnp.array([4.0, 5.0, 6.0]))
+
+        je = JointEmpirical(x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([4.0, 5.0, 6.0]))
         assert not isinstance(je, SupportsLogProb)
 
     def test_log_prob_op_raises(self):
-        je = JointEmpirical(x=jnp.array([1.0, 2.0, 3.0]),
-                            y=jnp.array([4.0, 5.0, 6.0]))
+        je = JointEmpirical(x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([4.0, 5.0, 6.0]))
         s = sample(je, key=jax.random.PRNGKey(0))
         with pytest.raises(TypeError, match="log_prob"):
             log_prob(je, s)
@@ -268,8 +269,8 @@ class TestLogProb:
 # Flatten / Unflatten
 # ---------------------------------------------------------------------------
 
-class TestFlattenUnflatten:
 
+class TestFlattenUnflatten:
     def test_flatten_roundtrip(self):
         je = JointEmpirical(
             a=jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]),
@@ -288,8 +289,8 @@ class TestFlattenUnflatten:
 # Conditioning
 # ---------------------------------------------------------------------------
 
-class TestConditionOn:
 
+class TestConditionOn:
     def test_condition_on_removes_component(self):
         """Conditioning removes the specified component."""
         je = JointEmpirical(
@@ -315,7 +316,7 @@ class TestConditionOn:
         """Row-wise correlation is preserved after conditioning."""
         x = jnp.array([10.0, 20.0, 30.0])
         y = jnp.array([100.0, 200.0, 300.0])  # y = 10 * x
-        z = jnp.array([1.0, 2.0, 3.0])        # z = x / 10
+        z = jnp.array([1.0, 2.0, 3.0])  # z = x / 10
         je = JointEmpirical(x=x, y=y, z=z)
         cond = condition_on(je, x=jnp.array(0.0))  # remove x
         s = sample(cond, key=jax.random.PRNGKey(1), sample_shape=(100,))
@@ -382,8 +383,8 @@ class TestConditionOn:
 # Broadcasting
 # ---------------------------------------------------------------------------
 
-class TestBroadcasting:
 
+class TestBroadcasting:
     def test_views_in_workflow(self):
         je = JointEmpirical(
             x=jnp.array([1.0, 2.0, 3.0]),

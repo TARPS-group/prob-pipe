@@ -213,16 +213,19 @@ class TestImmutability:
 
     def test_replace_preserves_numeric_record(self):
         from probpipe import NumericRecord
+
         nr = NumericRecord(a=1.0, b=2.0)
         assert type(nr.replace(a=3.0)) is NumericRecord
 
     def test_merge_preserves_numeric_record(self):
         from probpipe import NumericRecord
+
         nr = NumericRecord(a=1.0)
         assert type(nr.merge(NumericRecord(b=2.0))) is NumericRecord
 
     def test_without_preserves_numeric_record(self):
         from probpipe import NumericRecord
+
         nr = NumericRecord(a=1.0, b=2.0)
         assert type(nr.without("a")) is NumericRecord
 
@@ -410,6 +413,7 @@ class TestConversion:
 
     def test_to_numeric_returns_numeric_record(self):
         from probpipe import NumericRecord
+
         v = Record(a=1.0, b=jnp.array([2.0, 3.0]))
         nr = v.to_numeric()
         assert isinstance(nr, NumericRecord)
@@ -423,7 +427,9 @@ class TestConversion:
         """
         xr = pytest.importorskip("xarray")
         da = xr.DataArray(
-            [1.0, 2.0, 3.0], dims=["time"], coords={"time": [10, 20, 30]},
+            [1.0, 2.0, 3.0],
+            dims=["time"],
+            coords={"time": [10, 20, 30]},
             attrs={"units": "m"},
         )
         back = Record(y=da).to_numeric().to_native()
@@ -436,6 +442,7 @@ class TestConversion:
         recurse into nested non-NumericRecord children (regression for
         the divergence flagged in PR-A review)."""
         from probpipe import NumericRecord
+
         outer = Record(inner=Record(a=1.0), z=2.0)
         nr = outer.to_numeric()
         assert isinstance(nr, NumericRecord)
@@ -483,7 +490,7 @@ class TestEnsure:
 class TestLeafOps:
     def test_map(self):
         v = Record(a=2.0, b=3.0)
-        v2 = v.map(lambda x: x ** 2)
+        v2 = v.map(lambda x: x**2)
         assert v2["a"] == 4.0
         assert v2["b"] == 9.0
 
@@ -496,6 +503,7 @@ class TestLeafOps:
         """``map`` on a NumericRecord returns a NumericRecord as long as
         the mapped values remain numeric (validated by ``__init__``)."""
         from probpipe import NumericRecord
+
         nr = NumericRecord(a=1.0, b=2.0)
         out = nr.map(lambda x: x * 2)
         assert type(out) is NumericRecord
@@ -504,6 +512,7 @@ class TestLeafOps:
         """A map that returns a string violates the NumericRecord
         invariant and must fail loudly at reconstruction."""
         from probpipe import NumericRecord
+
         nr = NumericRecord(a=1.0, b=2.0)
         with pytest.raises(TypeError, match="numeric"):
             nr.map(lambda x: "not numeric")
@@ -582,6 +591,7 @@ class TestReprAndEquality:
     def test_eq_type_strict(self):
         """Record == NumericRecord is False even with identical fields."""
         from probpipe import NumericRecord
+
         r = Record(a=1.0, b=2.0)
         nr = NumericRecord(a=1.0, b=2.0)
         assert r != nr
@@ -708,21 +718,15 @@ class TestProvenance:
 
     def test_provenance_ancestors_walks_through_distribution(self):
         prior = Normal(loc=0.0, scale=1.0, name="prior")
-        r = Record(theta=1.0).with_source(
-            Provenance("draw", parents=(prior,))
-        )
+        r = Record(theta=1.0).with_source(Provenance("draw", parents=(prior,)))
         ancestors = provenance_ancestors(r)
         assert len(ancestors) == 1
         assert ancestors[0] is prior
 
     def test_provenance_ancestors_walks_nested_records(self):
         prior = Normal(loc=0.0, scale=1.0, name="prior")
-        middle = Record(theta=1.0).with_source(
-            Provenance("draw", parents=(prior,))
-        )
-        outer = Record(result=2.0).with_source(
-            Provenance("transform", parents=(middle,))
-        )
+        middle = Record(theta=1.0).with_source(Provenance("draw", parents=(prior,)))
+        outer = Record(result=2.0).with_source(Provenance("transform", parents=(middle,)))
         ancestors = provenance_ancestors(outer)
         names = [getattr(a, "name", None) for a in ancestors]
         assert names == [middle.name, "prior"]
@@ -734,6 +738,7 @@ class TestEventTemplatePack:
 
     def test_pack_builds_record_in_field_order(self):
         from probpipe.core.record import EventTemplate
+
         tpl = EventTemplate(a=(), b=(3,))
         # kwargs out of order — pack keys the Record in template field order
         rec = tpl.pack(b=jnp.ones(3), a=jnp.array(0.5))
@@ -744,10 +749,12 @@ class TestEventTemplatePack:
 
     def test_pack_missing_field_raises(self):
         from probpipe.core.record import EventTemplate
+
         with pytest.raises(TypeError, match="missing"):
             EventTemplate(a=(), b=()).pack(a=0.5)
 
     def test_pack_unexpected_field_raises(self):
         from probpipe.core.record import EventTemplate
+
         with pytest.raises(TypeError, match="unexpected"):
             EventTemplate(a=(), b=()).pack(a=0.5, b=0.4, c=1.0)

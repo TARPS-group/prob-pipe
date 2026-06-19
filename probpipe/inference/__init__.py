@@ -25,14 +25,17 @@ from ._blackjax_rwmh import rwmh
 from ._blackjax_ess import elliptical_slice
 from ._nutpie import condition_on_nutpie
 from ._minibatch import MinibatchedDistribution
+
 # Amortized SBI (optional ``[bayesflow]`` extra). keras/bayesflow load lazily on
 # first call, so these eager imports stay cheap; the trained artifacts dispatch
 # via ``SupportsConditioning`` (NPE) or plug into ``SimpleModel`` as
 # ``Likelihood`` components (NLE/NRE) -- no inference-registry methods needed.
 from ._bayesflow_posteriors import BayesFlowModel, learn_amortized_posterior
 from ._bayesflow_likelihoods import (
-    BayesFlowLikelihood, BayesFlowRatio,
-    learn_amortized_likelihood, learn_amortized_ratio,
+    BayesFlowLikelihood,
+    BayesFlowRatio,
+    learn_amortized_likelihood,
+    learn_amortized_ratio,
 )
 
 __all__ = [
@@ -94,18 +97,21 @@ inference_method_registry.register(BlackJAXSGHMCMethod())
 
 try:
     from ._nutpie import NutpieNutsMethod
+
     inference_method_registry.register(NutpieNutsMethod())
 except ImportError:
     pass
 
 try:
     from ._cmdstan_method import CmdStanNutsMethod
+
     inference_method_registry.register(CmdStanNutsMethod())
 except ImportError:
     pass
 
 try:
     from ._pymc_method import PyMCNutsMethod, PyMCADVIMethod
+
     inference_method_registry.register(PyMCNutsMethod())
     inference_method_registry.register(PyMCADVIMethod())
 except ImportError:

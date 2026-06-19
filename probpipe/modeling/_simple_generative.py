@@ -121,10 +121,7 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsSampl
             return self._prior
         if key == "data":
             return self._likelihood
-        raise KeyError(
-            f"Unknown component: {key!r}; "
-            f"available: {self.fields}"
-        )
+        raise KeyError(f"Unknown component: {key!r}; available: {self.fields}")
 
     # -- ProbabilisticModel interface ---------------------------------------
 

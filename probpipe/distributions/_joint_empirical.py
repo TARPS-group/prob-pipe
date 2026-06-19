@@ -218,7 +218,9 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
         return Record(self._resample_rows(key, sample_shape))
 
     def _resample_rows(
-        self, key: PRNGKey, sample_shape: tuple[int, ...],
+        self,
+        key: PRNGKey,
+        sample_shape: tuple[int, ...],
     ) -> dict[str, Any]:
         """Draw ``prod(sample_shape)`` row indices and slice each field.
 
@@ -238,9 +240,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
                     # Non-numeric object arrays don't always support reshape.
                     result[cname] = drawn
             else:
-                result[cname] = (
-                    drawn[0] if drawn.shape and drawn.shape[0] == 1 else drawn
-                )
+                result[cname] = drawn[0] if drawn.shape and drawn.shape[0] == 1 else drawn
         return result
 
     # -- Conditioning -------------------------------------------------------
@@ -272,9 +272,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
         observed_names = {path[0] for path in observed_leaves}
 
         remaining_samples = {
-            cname: arr
-            for cname, arr in self._joint_samples.items()
-            if cname not in observed_names
+            cname: arr for cname, arr in self._joint_samples.items() if cname not in observed_names
         }
         if not remaining_samples:
             raise ValueError(
@@ -287,10 +285,13 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
             weights=self._w,
             name=self._name,
         )
-        result.with_source(Provenance.create(
-            "condition_on", parents=[self],
-            metadata={"conditioned": list(observed_names)},
-        ))
+        result.with_source(
+            Provenance.create(
+                "condition_on",
+                parents=[self],
+                metadata={"conditioned": list(observed_names)},
+            )
+        )
         return result
 
 
@@ -300,8 +301,10 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
 
 
 class NumericJointEmpirical(
-    JointEmpirical, NumericRecordDistribution,
-    SupportsMean, SupportsVariance,
+    JointEmpirical,
+    NumericRecordDistribution,
+    SupportsMean,
+    SupportsVariance,
 ):
     """Joint empirical where every field is a numeric array.
 
@@ -350,7 +353,10 @@ class NumericJointEmpirical(
             coerced[cname] = _as_float_array(arr)
 
         super().__init__(
-            weights=weights, log_weights=log_weights, name=name, **coerced,
+            weights=weights,
+            log_weights=log_weights,
+            name=name,
+            **coerced,
         )
 
     def _build_component_dists(self) -> dict[str, NumericRecordDistribution]:
@@ -363,10 +369,12 @@ class NumericJointEmpirical(
 
     def _sample_joint_rows(self, key: PRNGKey, sample_shape: tuple[int, ...]):
         from ..core._record_array import NumericRecordArray
+
         result = self._resample_rows(key, sample_shape)
         if sample_shape:
             return NumericRecordArray(
-                result, batch_shape=sample_shape,
+                result,
+                batch_shape=sample_shape,
                 template=self.event_template,
             )
         return Record(result)
@@ -382,19 +390,17 @@ class NumericJointEmpirical(
 
     def _mean(self) -> Record:
         """Per-component weighted means."""
-        return Record({
-            cname: self._w.mean(arr)
-            for cname, arr in self._joint_samples.items()
-        })
+        return Record({cname: self._w.mean(arr) for cname, arr in self._joint_samples.items()})
 
     def _variance(self) -> Record:
         """Per-component weighted variances."""
-        return Record({
-            cname: self._w.variance(arr)
-            for cname, arr in self._joint_samples.items()
-        })
+        return Record({cname: self._w.variance(arr) for cname, arr in self._joint_samples.items()})
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
         return _mc_expectation(
-            self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist,
+            self,
+            f,
+            key=key,
+            num_evaluations=num_evaluations,
+            return_dist=return_dist,
         )

@@ -25,25 +25,44 @@ from ._registry import ConversionInfo, ConversionMethod, Converter
 # TFP → ProbPipe mapping: (ProbPipe class, parameter extractor)
 # ---------------------------------------------------------------------------
 
+
 def _build_tfp_to_probpipe() -> dict[type, tuple[str, callable]]:
     """Build mapping lazily to avoid circular imports."""
     from ..distributions.continuous import (
-        Normal, Beta, Gamma, InverseGamma, Exponential, LogNormal,
-        StudentT, Uniform, Cauchy, Laplace, HalfNormal, HalfCauchy,
+        Normal,
+        Beta,
+        Gamma,
+        InverseGamma,
+        Exponential,
+        LogNormal,
+        StudentT,
+        Uniform,
+        Cauchy,
+        Laplace,
+        HalfNormal,
+        HalfCauchy,
         Pareto,
     )
     from ..distributions.discrete import (
-        Bernoulli, Binomial, Poisson, Categorical, NegativeBinomial,
+        Bernoulli,
+        Binomial,
+        Poisson,
+        Categorical,
+        NegativeBinomial,
     )
     from ..distributions.multivariate import (
-        MultivariateNormal, Dirichlet,
+        MultivariateNormal,
+        Dirichlet,
     )
 
     return {
         tfd.Normal: (Normal, lambda d: {"loc": d.loc, "scale": d.scale}),
         tfd.Beta: (Beta, lambda d: {"alpha": d.concentration1, "beta": d.concentration0}),
         tfd.Gamma: (Gamma, lambda d: {"concentration": d.concentration, "rate": d.rate}),
-        tfd.InverseGamma: (InverseGamma, lambda d: {"concentration": d.concentration, "scale": d.scale}),
+        tfd.InverseGamma: (
+            InverseGamma,
+            lambda d: {"concentration": d.concentration, "scale": d.scale},
+        ),
         tfd.Exponential: (Exponential, lambda d: {"rate": d.rate}),
         tfd.LogNormal: (LogNormal, lambda d: {"loc": d.loc, "scale": d.scale}),
         tfd.StudentT: (StudentT, lambda d: {"df": d.df, "loc": d.loc, "scale": d.scale}),
@@ -63,7 +82,7 @@ def _build_tfp_to_probpipe() -> dict[type, tuple[str, callable]]:
         ),
         tfd.MultivariateNormalDiag: (
             MultivariateNormal,
-            lambda d: {"loc": d.loc, "cov": jnp.diag(d.scale.diag ** 2)},
+            lambda d: {"loc": d.loc, "cov": jnp.diag(d.scale.diag**2)},
         ),
     }
 
@@ -88,7 +107,9 @@ def _build_probpipe_to_tfp() -> dict[str, callable]:
         "Poisson": lambda d: tfd.Poisson(rate=d._rate),
         "Categorical": lambda d: tfd.Categorical(probs=d._probs),
         "Dirichlet": lambda d: tfd.Dirichlet(concentration=d._concentration),
-        "MultivariateNormal": lambda d: tfd.MultivariateNormalTriL(loc=d.loc, scale_tril=d._scale_tril),
+        "MultivariateNormal": lambda d: tfd.MultivariateNormalTriL(
+            loc=d.loc, scale_tril=d._scale_tril
+        ),
     }
 
 
@@ -126,50 +147,70 @@ class TFPConverter(Converter):
 
     def check(self, source: Any, target_type: type) -> ConversionInfo:
         # Case 1: TFP -> ProbPipe
-        if isinstance(source, tfd.Distribution) and not isinstance(source, NumericRecordDistribution):
+        if isinstance(source, tfd.Distribution) and not isinstance(
+            source, NumericRecordDistribution
+        ):
             if self._is_probpipe_target(target_type):
                 src_cls = type(source)
                 if src_cls in self._tfp_map:
                     pp_cls, _ = self._tfp_map[src_cls]
                     if target_type is pp_cls or issubclass(pp_cls, target_type):
                         return ConversionInfo(
-                            feasible=True, method=ConversionMethod.EXACT,
+                            feasible=True,
+                            method=ConversionMethod.EXACT,
                             estimated_time=0.0,
-                            source_type=src_cls, target_type=target_type,
+                            source_type=src_cls,
+                            target_type=target_type,
                             description=f"Extract parameters from {src_cls.__name__}",
                         )
                     # Known TFP -> natural ProbPipe -> requested ProbPipe
                     return ConversionInfo(
-                        feasible=True, method=ConversionMethod.MOMENT_MATCH,
+                        feasible=True,
+                        method=ConversionMethod.MOMENT_MATCH,
                         estimated_time=0.1,
-                        source_type=src_cls, target_type=target_type,
+                        source_type=src_cls,
+                        target_type=target_type,
                         description=f"TFP {src_cls.__name__} -> ProbPipe -> {target_type.__name__}",
                     )
                 # Unknown TFP type -> sample fallback
-                if issubclass(target_type, (NumericRecordDistribution, RecordEmpiricalDistribution)):
+                if issubclass(
+                    target_type, (NumericRecordDistribution, RecordEmpiricalDistribution)
+                ):
                     return ConversionInfo(
-                        feasible=True, method=ConversionMethod.SAMPLE,
+                        feasible=True,
+                        method=ConversionMethod.SAMPLE,
                         estimated_time=0.2,
-                        source_type=src_cls, target_type=target_type,
+                        source_type=src_cls,
+                        target_type=target_type,
                         description=f"Sample {src_cls.__name__} -> RecordEmpiricalDistribution",
                     )
 
         # Case 2: ProbPipe -> TFP
-        if isinstance(source, NumericRecordDistribution) and isinstance(target_type, type) and issubclass(target_type, tfd.Distribution):
+        if (
+            isinstance(source, NumericRecordDistribution)
+            and isinstance(target_type, type)
+            and issubclass(target_type, tfd.Distribution)
+        ):
             src_name = type(source).__name__
             if src_name in self._pp_map:
                 return ConversionInfo(
-                    feasible=True, method=ConversionMethod.EXACT,
+                    feasible=True,
+                    method=ConversionMethod.EXACT,
                     estimated_time=0.0,
-                    source_type=type(source), target_type=target_type,
+                    source_type=type(source),
+                    target_type=target_type,
                     description=f"Extract parameters from ProbPipe {src_name}",
                 )
 
         return ConversionInfo(feasible=False)
 
-    def convert(self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any) -> Any:
+    def convert(
+        self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any
+    ) -> Any:
         # Case 1: TFP -> ProbPipe
-        if isinstance(source, tfd.Distribution) and not isinstance(source, NumericRecordDistribution):
+        if isinstance(source, tfd.Distribution) and not isinstance(
+            source, NumericRecordDistribution
+        ):
             if self._is_probpipe_target(target_type):
                 src_cls = type(source)
                 if src_cls in self._tfp_map:
@@ -182,6 +223,7 @@ class TFPConverter(Converter):
                         return pp_dist
                     # Chain: TFP -> natural ProbPipe -> target ProbPipe
                     from ._registry import converter_registry
+
                     return converter_registry.convert(pp_dist, target_type, key=key, **kwargs)
 
                 # Unknown TFP: sample -> RecordEmpiricalDistribution
@@ -195,6 +237,7 @@ class TFPConverter(Converter):
                 if issubclass(target_type, RecordEmpiricalDistribution):
                     return emp
                 from ._registry import converter_registry
+
                 return converter_registry.convert(emp, target_type, key=key, **kwargs)
 
         # Case 2: ProbPipe -> TFP
@@ -205,7 +248,9 @@ class TFPConverter(Converter):
                 return fn(source)
             raise TypeError(f"Cannot convert {src_name} to TFP distribution")
 
-        raise TypeError(f"TFPConverter cannot handle {type(source).__name__} -> {target_type.__name__}")
+        raise TypeError(
+            f"TFPConverter cannot handle {type(source).__name__} -> {target_type.__name__}"
+        )
 
     @property
     def priority(self) -> int:

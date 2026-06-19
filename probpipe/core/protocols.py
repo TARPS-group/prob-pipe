@@ -71,6 +71,7 @@ if TYPE_CHECKING:
 # Decorator for default moment implementations via expectation
 # ---------------------------------------------------------------------------
 
+
 def compute_expectation(method):
     """Decorator providing a default moment implementation via ``expectation``.
 
@@ -98,12 +99,12 @@ def compute_expectation(method):
 # Expectation & sampling
 # ---------------------------------------------------------------------------
 
+
 @runtime_checkable
 class SupportsExpectation(Protocol):
     """Distribution that can compute ``E[f(X)]``."""
 
-    def _expectation(self, f: Any, *, key: Any, num_evaluations: Any,
-                     return_dist: Any) -> Any: ...
+    def _expectation(self, f: Any, *, key: Any, num_evaluations: Any, return_dist: Any) -> Any: ...
 
 
 @runtime_checkable
@@ -165,6 +166,7 @@ class SupportsSampling(Protocol):
 # Density evaluation
 # ---------------------------------------------------------------------------
 
+
 @runtime_checkable
 class SupportsUnnormalizedLogProb[T](Protocol):
     """Distribution with an unnormalized log-density.
@@ -207,6 +209,7 @@ class SupportsLogProb[T](SupportsUnnormalizedLogProb[T], Protocol):
 # ---------------------------------------------------------------------------
 # Moment protocols
 # ---------------------------------------------------------------------------
+
 
 @runtime_checkable
 class SupportsMean(Protocol):
@@ -267,6 +270,7 @@ class SupportsCovariance(Protocol):
 # Random-measure protocols
 # ---------------------------------------------------------------------------
 
+
 @runtime_checkable
 class SupportsRandomLogProb(Protocol):
     """Distribution over distributions with a random (normalized) log-density.
@@ -306,6 +310,7 @@ class SupportsRandomUnnormalizedLogProb(Protocol):
 # ---------------------------------------------------------------------------
 # Conditioning
 # ---------------------------------------------------------------------------
+
 
 @runtime_checkable
 class SupportsConditioning(Protocol):
@@ -457,7 +462,8 @@ class SupportsArrayBackend(Protocol):
 
 
 def protocols_supported_by_all(
-    leaves: list, candidates: tuple[type, ...],
+    leaves: list,
+    candidates: tuple[type, ...],
 ) -> tuple[type, ...]:
     """Return the subset of *candidates* that every leaf satisfies.
 
@@ -555,6 +561,7 @@ def _default_per_datum_log_likelihood(
     broadcasting overhead inside ``log_likelihood``).
     """
     import jax
+
     batch = jax.tree.map(lambda x: x[None, ...], datum)
     return likelihood.log_likelihood(params, batch)
 
@@ -570,8 +577,11 @@ class GenerativeLikelihood[P, D](Protocol):
     """
 
     def generate_data(
-        self, params: P, num_observations: int,
-        *, key: PRNGKey | None = None,
+        self,
+        params: P,
+        num_observations: int,
+        *,
+        key: PRNGKey | None = None,
     ) -> D:
         """Generate ``num_observations`` synthetic data points from ``params``.
 

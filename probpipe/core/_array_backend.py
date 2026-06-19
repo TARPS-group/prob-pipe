@@ -32,6 +32,7 @@ hierarchy. If you need backend-specific reductions or device
 placement, convert to the appropriate type yourself; this module
 only handles round-trip metadata.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -169,7 +170,9 @@ def _register_xarray() -> None:
         # so xarray sees the original dims and attrs.
         coords = {
             k: xr.DataArray(
-                v["values"], dims=v["dims"], attrs=v.get("attrs", {}),
+                v["values"],
+                dims=v["dims"],
+                attrs=v.get("attrs", {}),
             )
             for k, v in aux["coords"].items()
         }
@@ -236,9 +239,7 @@ def _register_pandas() -> None:
         return df.astype(aux["dtypes"])
 
     register_aux(pd.Series, capture=_series_capture, restore=_series_restore)
-    register_aux(
-        pd.DataFrame, capture=_frame_capture, restore=_frame_restore
-    )
+    register_aux(pd.DataFrame, capture=_frame_capture, restore=_frame_restore)
 
 
 _register_xarray()

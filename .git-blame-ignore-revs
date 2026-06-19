@@ -1,0 +1,7 @@
+# Commits to ignore in `git blame` (mechanical, repo-wide changes).
+# Enable locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub applies it automatically.
+
+# style: adopt ruff format and reformat the source tree
+9946d1ecd005606c474a4c01327eb7e22002d001

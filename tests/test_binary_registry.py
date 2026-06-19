@@ -27,14 +27,18 @@ from probpipe.core._registry import (
 # Synthetic type hierarchy for dispatch tests
 # ---------------------------------------------------------------------------
 
+
 class Left:
     pass
+
 
 class LeftSub(Left):
     pass
 
+
 class Right:
     pass
+
 
 class RightSub(Right):
     pass
@@ -43,6 +47,7 @@ class RightSub(Right):
 # ---------------------------------------------------------------------------
 # Stub binary method
 # ---------------------------------------------------------------------------
+
 
 class FakeBinaryMethod(BinaryDispatchMethod):
     """Configurable stub for binary-registry tests."""
@@ -85,8 +90,8 @@ class FakeBinaryMethod(BinaryDispatchMethod):
 # Class hierarchy
 # ---------------------------------------------------------------------------
 
-class TestPublicAPI:
 
+class TestPublicAPI:
     def test_unary_is_subclass_of_base_method(self):
         assert issubclass(UnaryDispatchMethod, BaseDispatchMethod)
 
@@ -101,12 +106,20 @@ class TestPublicAPI:
 
     def test_default_priority_is_opt_in_only(self):
         """BaseDispatchMethod.priority defaults to OPT_IN_ONLY_PRIORITY."""
+
         class Bare(BinaryDispatchMethod):
             @property
-            def name(self): return "bare"
-            def supported_types(self): return ((object,), (object,))
-            def check(self, *a, **kw): return MethodInfo(feasible=True)
-            def execute(self, *a, **kw): return "ran"
+            def name(self):
+                return "bare"
+
+            def supported_types(self):
+                return ((object,), (object,))
+
+            def check(self, *a, **kw):
+                return MethodInfo(feasible=True)
+
+            def execute(self, *a, **kw):
+                return "ran"
 
         assert Bare().priority == OPT_IN_ONLY_PRIORITY
 
@@ -115,8 +128,8 @@ class TestPublicAPI:
 # BinaryDispatchRegistry — basic registration and dispatch
 # ---------------------------------------------------------------------------
 
-class TestBinaryDispatchRegistry:
 
+class TestBinaryDispatchRegistry:
     def test_register_and_list(self):
         reg = BinaryDispatchRegistry()
         reg.register(FakeBinaryMethod("low", priority=10))
@@ -143,9 +156,11 @@ class TestBinaryDispatchRegistry:
 
     def test_execute_dispatches_on_joint_types(self):
         reg = BinaryDispatchRegistry()
-        reg.register(FakeBinaryMethod(
-            "lr", left_types=(Left,), right_types=(Right,), priority=10, result="lr"
-        ))
+        reg.register(
+            FakeBinaryMethod(
+                "lr", left_types=(Left,), right_types=(Right,), priority=10, result="lr"
+            )
+        )
         assert reg.execute(Left(), Right()) == "lr"
 
     def test_execute_by_name_override(self):
@@ -171,9 +186,7 @@ class TestBinaryDispatchRegistry:
 
     def test_check_returns_feasible_for_matching_types(self):
         reg = BinaryDispatchRegistry()
-        reg.register(FakeBinaryMethod(
-            "m", left_types=(Left,), right_types=(Right,), priority=10
-        ))
+        reg.register(FakeBinaryMethod("m", left_types=(Left,), right_types=(Right,), priority=10))
         info = reg.check(Left(), Right())
         assert info.feasible
 
@@ -193,37 +206,37 @@ class TestBinaryDispatchRegistry:
 # Type pre-filter: subclass matching and both-slot requirement
 # ---------------------------------------------------------------------------
 
-class TestTypePreFilter:
 
+class TestTypePreFilter:
     def test_subclass_matches_left(self):
         """A method supporting Left also fires for LeftSub (subclass of Left)."""
         reg = BinaryDispatchRegistry()
-        reg.register(FakeBinaryMethod(
-            "m", left_types=(Left,), right_types=(Right,), priority=10, result="ok"
-        ))
+        reg.register(
+            FakeBinaryMethod(
+                "m", left_types=(Left,), right_types=(Right,), priority=10, result="ok"
+            )
+        )
         assert reg.execute(LeftSub(), Right()) == "ok"
 
     def test_subclass_matches_right(self):
         reg = BinaryDispatchRegistry()
-        reg.register(FakeBinaryMethod(
-            "m", left_types=(Left,), right_types=(Right,), priority=10, result="ok"
-        ))
+        reg.register(
+            FakeBinaryMethod(
+                "m", left_types=(Left,), right_types=(Right,), priority=10, result="ok"
+            )
+        )
         assert reg.execute(Left(), RightSub()) == "ok"
 
     def test_wrong_left_type_excluded(self):
         """A method does not fire when the left arg type does not match."""
         reg = BinaryDispatchRegistry()
-        reg.register(FakeBinaryMethod(
-            "m", left_types=(Left,), right_types=(Right,), priority=10
-        ))
+        reg.register(FakeBinaryMethod("m", left_types=(Left,), right_types=(Right,), priority=10))
         with pytest.raises(TypeError):
             reg.execute(Right(), Right())  # Right is not a subclass of Left
 
     def test_wrong_right_type_excluded(self):
         reg = BinaryDispatchRegistry()
-        reg.register(FakeBinaryMethod(
-            "m", left_types=(Left,), right_types=(Right,), priority=10
-        ))
+        reg.register(FakeBinaryMethod("m", left_types=(Left,), right_types=(Right,), priority=10))
         with pytest.raises(TypeError):
             reg.execute(Left(), Left())  # Left is not a subclass of Right
 
@@ -245,6 +258,7 @@ class TestTypePreFilter:
 # ---------------------------------------------------------------------------
 # Opt-in-only priority (OPT_IN_ONLY_PRIORITY = 0)
 # ---------------------------------------------------------------------------
+
 
 class TestOptInOnlyPriority:
     """Priority 0 = opt-in only: skipped during auto-dispatch."""
@@ -287,8 +301,8 @@ class TestOptInOnlyPriority:
 # set_priorities
 # ---------------------------------------------------------------------------
 
-class TestSetPriorities:
 
+class TestSetPriorities:
     def test_reorders_methods(self):
         reg = BinaryDispatchRegistry()
         reg.register(FakeBinaryMethod("a", priority=10))
@@ -334,8 +348,8 @@ class TestSetPriorities:
 # Cache invalidation
 # ---------------------------------------------------------------------------
 
-class TestCacheInvalidation:
 
+class TestCacheInvalidation:
     def test_cache_invalidated_on_register(self):
         """A method registered after a dispatch call is still found."""
         reg = BinaryDispatchRegistry()
@@ -361,6 +375,7 @@ class TestCacheInvalidation:
 # ---------------------------------------------------------------------------
 # Argument-count guards on check / execute
 # ---------------------------------------------------------------------------
+
 
 class TestArgumentCountGuards:
     """No-arg and single-arg dispatch must fail with a clear error."""
@@ -393,8 +408,8 @@ class TestArgumentCountGuards:
 # Registration guards
 # ---------------------------------------------------------------------------
 
-class TestRegistrationGuards:
 
+class TestRegistrationGuards:
     def test_empty_name_rejected(self):
         reg = BinaryDispatchRegistry()
         with pytest.raises(ValueError, match="non-empty"):

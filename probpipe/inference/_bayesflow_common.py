@@ -101,9 +101,7 @@ def _validate_learn_inputs(
     """Shared train-time validation for the amortized learners; returns the
     prior's record template. Raises before any simulation runs."""
     if sim_backend not in ("jax", "sequential"):
-        raise ValueError(
-            f"Unknown sim_backend: {sim_backend!r}. Supported: 'jax', 'sequential'."
-        )
+        raise ValueError(f"Unknown sim_backend: {sim_backend!r}. Supported: 'jax', 'sequential'.")
     for _name, _val in counts:
         if not isinstance(_val, (int, np.integer)):
             raise TypeError(f"{_name} must be an integer, got {type(_val).__name__}.")

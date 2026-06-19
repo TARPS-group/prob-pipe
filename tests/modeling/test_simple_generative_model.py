@@ -79,6 +79,7 @@ class TestProtocols:
         """SimpleGenerativeModel now advertises SupportsSampling (joint draw:
         sample prior, call likelihood.generate_data)."""
         from probpipe.core.protocols import SupportsSampling
+
         assert isinstance(model, SupportsSampling)
 
     def test_simulator_is_generative_likelihood(self, simulator):

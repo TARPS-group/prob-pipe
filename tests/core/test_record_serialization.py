@@ -34,6 +34,7 @@ from probpipe.core.record import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def roundtrip(obj):
     return pickle.loads(pickle.dumps(obj))
 
@@ -73,6 +74,7 @@ def test_record_immutability_after_unpickle():
 
 def test_record_provenance_preserved():
     from probpipe.core.provenance import Provenance
+
     r = Record(x=jnp.array(1.0))
     r.with_source(Provenance(operation="test_op", metadata={"k": "v"}))
     assert r._source is not None

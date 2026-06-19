@@ -25,8 +25,8 @@ from probpipe.core.node import WorkflowFunction
 # Construction
 # ---------------------------------------------------------------------------
 
-class TestConstruction:
 
+class TestConstruction:
     def test_basic_construction(self):
         jg = JointGaussian(
             mean=jnp.array([0.0, 1.0]),
@@ -107,13 +107,14 @@ class TestConstruction:
 # Sampling
 # ---------------------------------------------------------------------------
 
-class TestSampling:
 
+class TestSampling:
     def test_sample_returns_values(self):
         jg = JointGaussian(
             mean=jnp.array([0.0, 1.0]),
             cov=jnp.eye(2),
-            x=1, y=1,
+            x=1,
+            y=1,
         )
         key = jax.random.PRNGKey(0)
         s = sample(jg, key=key)
@@ -126,7 +127,8 @@ class TestSampling:
         jg = JointGaussian(
             mean=jnp.array([0.0, 1.0]),
             cov=jnp.eye(2),
-            x=1, y=1,
+            x=1,
+            y=1,
         )
         key = jax.random.PRNGKey(1)
         s = sample(jg, key=key, sample_shape=(10,))
@@ -158,13 +160,14 @@ class TestSampling:
 # log_prob
 # ---------------------------------------------------------------------------
 
-class TestLogProb:
 
+class TestLogProb:
     def test_log_prob_shape(self):
         jg = JointGaussian(
             mean=jnp.array([0.0, 1.0]),
             cov=jnp.eye(2),
-            x=1, y=1,
+            x=1,
+            y=1,
         )
         key = jax.random.PRNGKey(10)
         s = sample(jg, key=key, sample_shape=(5,))
@@ -174,9 +177,7 @@ class TestLogProb:
     def test_log_prob_matches_mvn(self):
         """log_prob should match a full MultivariateNormal."""
         m = jnp.array([1.0, 2.0, 3.0])
-        c = jnp.array([[2.0, 0.5, 0.1],
-                        [0.5, 1.0, 0.3],
-                        [0.1, 0.3, 1.5]])
+        c = jnp.array([[2.0, 0.5, 0.1], [0.5, 1.0, 0.3], [0.1, 0.3, 1.5]])
         jg = JointGaussian(mean=m, cov=c, a=1, b=2)
         mvn = MultivariateNormal(loc=m, cov=c, name="z")
 
@@ -193,8 +194,8 @@ class TestLogProb:
 # Moments
 # ---------------------------------------------------------------------------
 
-class TestMoments:
 
+class TestMoments:
     def test_mean(self):
         m = jnp.array([1.0, 2.0, 3.0])
         jg = JointGaussian(mean=m, cov=jnp.eye(3), a=1, b=2)
@@ -216,13 +217,14 @@ class TestMoments:
 # Views
 # ---------------------------------------------------------------------------
 
-class TestViews:
 
+class TestViews:
     def test_marginal_is_mvn(self):
         jg = JointGaussian(
             mean=jnp.array([0.0, 1.0, 2.0]),
             cov=jnp.eye(3),
-            a=1, bc=2,
+            a=1,
+            bc=2,
         )
         assert isinstance(jg.components["a"], MultivariateNormal)
         assert isinstance(jg.components["bc"], MultivariateNormal)
@@ -231,27 +233,21 @@ class TestViews:
         jg = JointGaussian(
             mean=jnp.array([5.0, 10.0, 15.0]),
             cov=jnp.eye(3),
-            x=1, yz=2,
+            x=1,
+            yz=2,
         )
-        np.testing.assert_allclose(
-            mean(jg.components["x"]), jnp.array([5.0]), atol=1e-6
-        )
-        np.testing.assert_allclose(
-            mean(jg.components["yz"]), jnp.array([10.0, 15.0]), atol=1e-6
-        )
+        np.testing.assert_allclose(mean(jg.components["x"]), jnp.array([5.0]), atol=1e-6)
+        np.testing.assert_allclose(mean(jg.components["yz"]), jnp.array([10.0, 15.0]), atol=1e-6)
 
     def test_marginal_cov_correct(self):
-        cov = jnp.array([[2.0, 0.5, 0.1],
-                          [0.5, 1.0, 0.3],
-                          [0.1, 0.3, 1.5]])
+        cov = jnp.array([[2.0, 0.5, 0.1], [0.5, 1.0, 0.3], [0.1, 0.3, 1.5]])
         jg = JointGaussian(
             mean=jnp.zeros(3),
             cov=cov,
-            x=1, yz=2,
+            x=1,
+            yz=2,
         )
-        np.testing.assert_allclose(
-            jg.components["x"].cov, jnp.array([[2.0]]), atol=1e-5
-        )
+        np.testing.assert_allclose(jg.components["x"].cov, jnp.array([[2.0]]), atol=1e-5)
         np.testing.assert_allclose(
             jg.components["yz"].cov, jnp.array([[1.0, 0.3], [0.3, 1.5]]), atol=1e-5
         )
@@ -261,8 +257,8 @@ class TestViews:
 # condition_on
 # ---------------------------------------------------------------------------
 
-class TestConditionOn:
 
+class TestConditionOn:
     def test_basic_conditioning(self):
         """Condition x=1 → should get a JointGaussian with only y."""
         cov = jnp.array([[1.0, 0.5], [0.5, 1.0]])
@@ -321,14 +317,15 @@ class TestConditionOn:
         mu = np.array([0.0, 1.0, -1.0])
         # 3x3 positive-definite covariance with nontrivial cross terms
         cov_np = np.array(
-            [[1.00, 0.30, 0.20],
-             [0.30, 2.00, 0.50],
-             [0.20, 0.50, 1.50]],
+            [[1.00, 0.30, 0.20], [0.30, 2.00, 0.50], [0.20, 0.50, 1.50]],
             dtype=np.float32,
         )
         jg = JointGaussian(
-            mean=jnp.asarray(mu), cov=jnp.asarray(cov_np),
-            a=1, b=1, c=1,
+            mean=jnp.asarray(mu),
+            cov=jnp.asarray(cov_np),
+            a=1,
+            b=1,
+            c=1,
         )
 
         # Condition on c = 0.5.
@@ -343,10 +340,14 @@ class TestConditionOn:
         # ProbPipe stores per-component marginal variance, so compare diagonals.
         cond_var = variance(cond)
         np.testing.assert_allclose(
-            float(cond_var["a"][0]), expected_cond_cov[0, 0], atol=1e-5,
+            float(cond_var["a"][0]),
+            expected_cond_cov[0, 0],
+            atol=1e-5,
         )
         np.testing.assert_allclose(
-            float(cond_var["b"][0]), expected_cond_cov[1, 1], atol=1e-5,
+            float(cond_var["b"][0]),
+            expected_cond_cov[1, 1],
+            atol=1e-5,
         )
 
     def test_conditional_mean_vs_scipy(self):
@@ -354,14 +355,15 @@ class TestConditionOn:
         reasoning via the Gaussian formula computed with numpy."""
         mu = np.array([0.5, -0.3, 1.2])
         cov_np = np.array(
-            [[1.0, 0.2, 0.1],
-             [0.2, 1.5, 0.4],
-             [0.1, 0.4, 0.8]],
+            [[1.0, 0.2, 0.1], [0.2, 1.5, 0.4], [0.1, 0.4, 0.8]],
             dtype=np.float32,
         )
         jg = JointGaussian(
-            mean=jnp.asarray(mu), cov=jnp.asarray(cov_np),
-            x=1, y=1, z=1,
+            mean=jnp.asarray(mu),
+            cov=jnp.asarray(cov_np),
+            x=1,
+            y=1,
+            z=1,
         )
         # Condition on y = 2.0
         y_obs = 2.0
@@ -384,7 +386,9 @@ class TestConditionOn:
         jg = JointGaussian(
             mean=jnp.array([0.0, 1.0, 2.0, 3.0]),
             cov=jnp.eye(4),
-            a=1, b=1, c=2,
+            a=1,
+            b=1,
+            c=2,
         )
         cond = condition_on(jg, a=jnp.array([0.0]))
         assert cond.event_shapes == {"b": (1,), "c": (2,)}
@@ -395,7 +399,9 @@ class TestConditionOn:
         jg = JointGaussian(
             mean=jnp.array([0.0, 1.0, 2.0, 3.0]),
             cov=jnp.eye(4),
-            a=1, b=1, c=2,
+            a=1,
+            b=1,
+            c=2,
         )
         cond = condition_on(jg, a=jnp.array([0.0]), c=jnp.array([2.0, 3.0]))
         assert cond.event_shapes == {"b": (1,)}
@@ -442,13 +448,14 @@ class TestConditionOn:
 # Flatten / Unflatten
 # ---------------------------------------------------------------------------
 
-class TestFlattenUnflatten:
 
+class TestFlattenUnflatten:
     def test_flatten_roundtrip(self):
         jg = JointGaussian(
             mean=jnp.array([0.0, 1.0, 2.0]),
             cov=jnp.eye(3),
-            a=1, bc=2,
+            a=1,
+            bc=2,
         )
         key = jax.random.PRNGKey(30)
         s = sample(jg, key=key, sample_shape=(5,))
@@ -463,8 +470,8 @@ class TestFlattenUnflatten:
 # Broadcasting
 # ---------------------------------------------------------------------------
 
-class TestBroadcasting:
 
+class TestBroadcasting:
     def test_views_in_workflow(self):
         cov = jnp.array([[1.0, 0.9], [0.9, 1.0]])
         jg = JointGaussian(mean=jnp.zeros(2), cov=cov, x=1, y=1)
@@ -488,13 +495,14 @@ class TestBroadcasting:
 # Repr
 # ---------------------------------------------------------------------------
 
-class TestRepr:
 
+class TestRepr:
     def test_repr(self):
         jg = JointGaussian(
             mean=jnp.zeros(3),
             cov=jnp.eye(3),
-            x=1, yz=2,
+            x=1,
+            yz=2,
             name="my_gauss",
         )
         r = repr(jg)

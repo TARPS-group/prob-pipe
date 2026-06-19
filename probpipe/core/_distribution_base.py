@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy as _copy
 from abc import ABC, abstractmethod
+
 # ``_ProtocolMeta`` is technically private (leading underscore in
 # ``typing``), but it's the only way to compose a custom metaclass with
 # ``@runtime_checkable`` protocols without a metaclass conflict.  The
@@ -109,9 +110,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
 
     def __init__(self, *, name: str):
         if not isinstance(name, str) or not name:
-            raise TypeError(
-                f"{type(self).__name__} requires a non-empty name= argument"
-            )
+            raise TypeError(f"{type(self).__name__} requires a non-empty name= argument")
         self._name = name
 
     # -- keyword-form value construction ------------------------------------
@@ -148,6 +147,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
             match its fields exactly (missing or unexpected names).
         """
         from .record import _pack_fields
+
         fields = getattr(self, "fields", None)
         if not fields:
             raise TypeError(
@@ -277,8 +277,12 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         # subpackage and importing at module top would create a cycle
         # (DistributionArray inherits from Distribution).
         from ._distribution_array import DistributionArray
+
         return DistributionArray.from_batched_params(
-            cls, name=name, batch_shape=batch_shape, **batched_params,
+            cls,
+            name=name,
+            batch_shape=batch_shape,
+            **batched_params,
         )
 
     # -- repr ---------------------------------------------------------------

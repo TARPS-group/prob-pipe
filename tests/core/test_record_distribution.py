@@ -89,7 +89,8 @@ class TestSingleFieldShapeShim:
             _ = multi_field_dist.ndim
 
     def test_error_message_mentions_event_shapes_not_dtypes(
-        self, multi_field_dist,
+        self,
+        multi_field_dist,
     ):
         """The error message points users at ``.event_shapes`` only.
         ``.dtypes`` is only defined on ``NumericRecordDistribution``

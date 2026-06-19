@@ -34,6 +34,7 @@ def __getattr__(name: str):
         return getattr(_base, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
 # -- _record_distribution ---------------------------------------------------
 from ._record_distribution import (
     RecordDistribution,

@@ -77,6 +77,14 @@ markers = [
 target-version = "py312"
 line-length = 100
 
+[tool.ruff.format]
+# Formatting is owned by ruff format (Black-style, at the line-length above).
+# quote-style normalizes string quotes to double; notebooks are excluded so the
+# docs' tutorial cells keep their compact, hand-curated layout (they are still
+# linted — see the per-file-ignores below).
+quote-style = "double"
+exclude = ["*.ipynb"]
+
 [tool.ruff.lint]
 select = [
   "E",    # pycodestyle errors

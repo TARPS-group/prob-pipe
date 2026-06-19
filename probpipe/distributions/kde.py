@@ -229,7 +229,4 @@ class KDEDistribution(TFPDistribution):
         )
 
     def __repr__(self) -> str:
-        return (
-            f"KDEDistribution(num_atoms={self.num_atoms}, "
-            f"event_shape={self.event_shape})"
-        )
+        return f"KDEDistribution(num_atoms={self.num_atoms}, event_shape={self.event_shape})"

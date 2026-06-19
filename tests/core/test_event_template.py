@@ -319,6 +319,7 @@ class TestFromRecord:
 
     def test_roundtrip_flat_size(self):
         from probpipe.core._numeric_record import NumericRecord
+
         r = NumericRecord(a=1.0, b=jnp.zeros(4), c=jnp.zeros((2, 3)))
         tpl = EventTemplate.from_record(r)
         # Auto-promoted to NumericEventTemplate because the input was a
@@ -333,6 +334,7 @@ class TestFromRecord:
         that needs ``flat_size`` keeps working without the caller having
         to name the subclass explicitly."""
         from probpipe.core._numeric_record import NumericRecord
+
         r = NumericRecord(a=1.0, b=jnp.zeros(2))
         tpl = EventTemplate.from_record(r)
         assert isinstance(tpl, NumericEventTemplate)
@@ -360,6 +362,7 @@ class TestFromRecord:
         """The opposite end of the list-leaf story: wrapping the list
         in ``np.asarray`` produces a numeric template entry."""
         import numpy as np
+
         r = Record(xs=np.asarray([1.0, 2.0, 3.0]))
         tpl = EventTemplate.from_record(r)
         assert tpl["xs"] == ArraySpec((3,))
@@ -467,9 +470,7 @@ class TestLeafSpecs:
         assert DistributionSpec(inner_template=inner) == DistributionSpec(inner_template=inner)
         assert FunctionSpec(
             input_template=EventTemplate(x=()), output_template=EventTemplate(y=())
-        ) == FunctionSpec(
-            input_template=EventTemplate(x=()), output_template=EventTemplate(y=())
-        )
+        ) == FunctionSpec(input_template=EventTemplate(x=()), output_template=EventTemplate(y=()))
 
     def test_array_and_opaque_specs_are_distinct(self):
         assert ArraySpec(()) != OpaqueSpec()
@@ -553,9 +554,7 @@ class TestAutoPromotionSpecs:
 
     def test_numeric_rejects_distribution_spec(self):
         with pytest.raises(TypeError, match="non-numeric"):
-            NumericEventTemplate(
-                x=(), d=DistributionSpec(inner_template=EventTemplate(a=()))
-            )
+            NumericEventTemplate(x=(), d=DistributionSpec(inner_template=EventTemplate(a=())))
 
     def test_numeric_rejects_function_spec(self):
         with pytest.raises(TypeError, match="non-numeric"):

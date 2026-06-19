@@ -108,14 +108,16 @@ def _index_along_leading(data: Any, indices: Array) -> Any:
     """
     if isinstance(data, Record):
         # Covers Record and RecordArray (the latter via subclass).
-        return Record({
-            f: jnp.asarray(data[f])[indices] for f in data.fields
-        })
+        return Record({f: jnp.asarray(data[f])[indices] for f in data.fields})
     return jnp.asarray(data)[indices]
 
 
 def _draw_indices(
-    key: PRNGKey, n: int, batch_size: int, *, with_replacement: bool,
+    key: PRNGKey,
+    n: int,
+    batch_size: int,
+    *,
+    with_replacement: bool,
 ) -> Array:
     """Draw ``batch_size`` indices uniformly from ``range(n)``."""
     if with_replacement:
@@ -214,9 +216,7 @@ class MinibatchedDistribution(
         # Validate data + batch_size.
         n = _data_size(data)
         if batch_size < 1 or batch_size > n:
-            raise ValueError(
-                f"batch_size must be in [1, len(data)={n}]; got {batch_size}."
-            )
+            raise ValueError(f"batch_size must be in [1, len(data)={n}]; got {batch_size}.")
 
         self._prior = prior
         self._likelihood = likelihood
@@ -275,7 +275,9 @@ class MinibatchedDistribution(
     def _draw_one(self, key: PRNGKey) -> _FixedMinibatchDistribution:
         """Draw one minibatch and return the corresponding fixed-minibatch target."""
         indices = _draw_indices(
-            key, self._n, self._batch_size,
+            key,
+            self._n,
+            self._batch_size,
             with_replacement=self._with_replacement,
         )
         batch = _index_along_leading(self._data, indices)
@@ -373,14 +375,13 @@ class _FixedMinibatchDistribution(
     def _unnormalized_log_prob(self, theta: Any) -> Array:
         """Stochastic-surrogate unnormalized log-density at ``theta``."""
         per_datum = jax.vmap(
-            self._likelihood.per_datum_log_likelihood, in_axes=(None, 0),
+            self._likelihood.per_datum_log_likelihood,
+            in_axes=(None, 0),
         )(theta, self._batch)
         return self._prior._log_prob(theta) + self._rescale_factor * jnp.sum(per_datum)
 
     def __repr__(self) -> str:
-        return (
-            f"_FixedMinibatchDistribution(rescale_factor={self._rescale_factor:.3g})"
-        )
+        return f"_FixedMinibatchDistribution(rescale_factor={self._rescale_factor:.3g})"
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +424,9 @@ class _RandomMinibatchLogProb(
     # -- SupportsSampling (returns a callable) ------------------------------
 
     def _sample(
-        self, key: PRNGKey, sample_shape: tuple[int, ...] = (),
+        self,
+        key: PRNGKey,
+        sample_shape: tuple[int, ...] = (),
     ) -> Callable[[Any], Array]:
         """Return a deterministic ``theta -> log~D_B(theta)`` callable.
 
@@ -473,9 +476,12 @@ class _MinibatchLogProbAtPoint(Distribution[Array], SupportsSampling):
         self._theta = theta
 
     def _sample(
-        self, key: PRNGKey, sample_shape: tuple[int, ...] = (),
+        self,
+        key: PRNGKey,
+        sample_shape: tuple[int, ...] = (),
     ) -> Array:
         """Draw minibatched log-density values at the fixed ``theta``."""
+
         def _one_draw(k: PRNGKey) -> Array:
             inner = self._measure._draw_one(k)
             return inner._unnormalized_log_prob(self._theta)

@@ -81,9 +81,7 @@ def _make_inference_network(
         return bf.networks.FlowMatching()
     if method == "cmpe":
         return bf.networks.ConsistencyModel(total_steps=total_steps)
-    raise ValueError(
-        f"Unknown amortized SBI method: {method!r}. Supported: 'npe', 'fmpe', 'cmpe'."
-    )
+    raise ValueError(f"Unknown amortized SBI method: {method!r}. Supported: 'npe', 'fmpe', 'cmpe'.")
 
 
 def _build_adapter(bf: ModuleType, internal_keys: tuple[str, ...]) -> Adapter:
@@ -253,10 +251,7 @@ class BayesFlowModel(Distribution, SupportsConditioning):
         )
 
     def __repr__(self) -> str:
-        return (
-            f"BayesFlowModel(method={self._method!r}, "
-            f"num_results={self._num_results})"
-        )
+        return f"BayesFlowModel(method={self._method!r}, num_results={self._num_results})"
 
 
 # ---------------------------------------------------------------------------
@@ -366,9 +361,16 @@ def learn_amortized_posterior(
             f"Unknown amortized SBI method: {method!r}. Supported: 'npe', 'fmpe', 'cmpe'."
         )
     event_template = _validate_learn_inputs(
-        prior, simulator, caller="learn_amortized_posterior", sim_backend=sim_backend,
-        counts=(("num_simulations", num_simulations), ("batch_size", batch_size),
-                ("epochs", epochs), ("num_results", num_results)),
+        prior,
+        simulator,
+        caller="learn_amortized_posterior",
+        sim_backend=sim_backend,
+        counts=(
+            ("num_simulations", num_simulations),
+            ("batch_size", batch_size),
+            ("epochs", epochs),
+            ("num_results", num_results),
+        ),
     )
     # Per numeric leaf (slash paths for a nested prior; == fields for a flat
     # one). supports / bijectors are leaf-keyed, so this serves both uniformly.
@@ -388,8 +390,12 @@ def learn_amortized_posterior(
     with _isolated_keras_seeding(random_seed):
         key = jax.random.PRNGKey(random_seed)
         named, y = _simulate_offline(
-            prior, simulator, num_simulations, key,
-            sim_backend=sim_backend, bijectors=bijectors,
+            prior,
+            simulator,
+            num_simulations,
+            key,
+            sim_backend=sim_backend,
+            bijectors=bijectors,
         )
         # Re-key theta leaves to positional internal names so user field names
         # never enter BayesFlow's key namespace (no collision with the
@@ -410,6 +416,12 @@ def learn_amortized_posterior(
         approximator.fit(dataset=dataset, epochs=epochs, **fit_kwargs)
 
     return BayesFlowModel(
-        approximator, prior, simulator, method=method, data_dim=int(y.shape[-1]),
-        num_results=num_results, random_seed=random_seed, bijectors=bijectors,
+        approximator,
+        prior,
+        simulator,
+        method=method,
+        data_dim=int(y.shape[-1]),
+        num_results=num_results,
+        random_seed=random_seed,
+        bijectors=bijectors,
     )

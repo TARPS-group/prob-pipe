@@ -176,9 +176,7 @@ class DistributionArray[T](Distribution[T]):
         # their approximation status; if any component is approximate
         # (a _MixtureMarginal or RecordEmpiricalDistribution), so is
         # the stack.
-        self._approximate = any(
-            getattr(c, "is_approximate", False) for c in components
-        )
+        self._approximate = any(getattr(c, "is_approximate", False) for c in components)
 
     # -- public batched-construction factory --------------------------------
 
@@ -300,17 +298,10 @@ class DistributionArray[T](Distribution[T]):
         components = []
         n = prod(batch_shape)
         for flat in range(n):
-            multi = (
-                np.unravel_index(flat, batch_shape) if batch_shape else ()
-            )
+            multi = np.unravel_index(flat, batch_shape) if batch_shape else ()
             multi_t = tuple(int(x) for x in multi)
-            cell_params = {
-                k: _slice_leading_axes(v, multi_t)
-                for k, v in batched_params.items()
-            }
-            components.append(
-                dist_cls(name=f"{name}_{flat}", **cell_params)
-            )
+            cell_params = {k: _slice_leading_axes(v, multi_t) for k, v in batched_params.items()}
+            components.append(dist_cls(name=f"{name}_{flat}", **cell_params))
         return cls(components, batch_shape=batch_shape, name=name)
 
     # -- backend-delegated constructor --------------------------------------
@@ -384,9 +375,7 @@ class DistributionArray[T](Distribution[T]):
         if self._components is None:
             assert self._backend is not None  # invariant
             n = prod(self._batch_shape)
-            self._components = tuple(
-                self._backend.cell(i) for i in range(n)
-            )
+            self._components = tuple(self._backend.cell(i) for i in range(n))
         return self._components
 
     @property
@@ -474,13 +463,8 @@ class DistributionArray[T](Distribution[T]):
         # ``np.ravel_multi_index`` rejects negative indices, so wrap
         # them into the positive range first (``dists[-1]`` is a
         # common pattern — e.g. "last posterior in an iterate output").
-        if all(
-            isinstance(k, (int, np.integer)) or hasattr(k, "__index__")
-            for k in key_tuple
-        ):
-            indices = tuple(
-                int(k) % dim for k, dim in zip(key_tuple, bshape)
-            )
+        if all(isinstance(k, (int, np.integer)) or hasattr(k, "__index__") for k in key_tuple):
+            indices = tuple(int(k) % dim for k, dim in zip(key_tuple, bshape))
             flat = int(np.ravel_multi_index(indices, bshape))
             if self._backend is not None:
                 return self._backend.cell(flat)
@@ -584,7 +568,8 @@ class DistributionArray[T](Distribution[T]):
 
 
 def _infer_batch_shape(
-    batched_params: dict, declared: tuple[int, ...] | None,
+    batched_params: dict,
+    declared: tuple[int, ...] | None,
 ) -> tuple[int, ...]:
     """Return the broadcast shape of array-valued entries in
     ``batched_params``, or ``declared`` if explicitly supplied.

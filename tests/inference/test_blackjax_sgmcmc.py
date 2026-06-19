@@ -41,10 +41,9 @@ def logistic_problem():
     true_theta = jnp.array([1.0, -0.5])
     X = jax.random.normal(jax.random.PRNGKey(0), (N, P))
     logits = X @ true_theta
-    y = (
-        jax.random.uniform(jax.random.PRNGKey(1), (N,))
-        < jax.nn.sigmoid(logits)
-    ).astype(jnp.float32)
+    y = (jax.random.uniform(jax.random.PRNGKey(1), (N,)) < jax.nn.sigmoid(logits)).astype(
+        jnp.float32
+    )
 
     prior = MultivariateNormal(loc=jnp.zeros(P), cov=jnp.eye(P), name="theta")
     # No-intercept logistic regression: prior dims pair 1-to-1 with X columns.
@@ -52,8 +51,11 @@ def logistic_problem():
     model = SimpleModel(prior=prior, likelihood=lik)
     data = Record(X=X, y=y)
     return {
-        "model": model, "data": data, "true_theta": true_theta,
-        "N": N, "P": P,
+        "model": model,
+        "data": data,
+        "true_theta": true_theta,
+        "N": N,
+        "P": P,
     }
 
 
@@ -102,7 +104,10 @@ class TestGradEstimatorCorrectness:
         model = logistic_problem["model"]
         data = logistic_problem["data"]
         measure = MinibatchedDistribution(
-            model.prior, model.likelihood, data, batch_size=20,
+            model.prior,
+            model.likelihood,
+            data,
+            batch_size=20,
         )
         grad_estimator = _build_grad_estimator(measure)
         theta = jnp.array([0.13, -0.21])
@@ -121,7 +126,8 @@ class TestGradEstimatorCorrectness:
 
         def manual_log_density(t):
             per_datum = jax.vmap(
-                model.likelihood.per_datum_log_likelihood, in_axes=(None, 0),
+                model.likelihood.per_datum_log_likelihood,
+                in_axes=(None, 0),
             )(t, batch)
             return model.prior._log_prob(t) + rescale_factor * jnp.sum(per_datum)
 
@@ -139,28 +145,42 @@ class TestReproducibility:
 
     def test_same_seed_produces_identical_chain(self, logistic_problem):
         kwargs = dict(
-            batch_size=20, num_results=50, num_warmup=10,
-            step_size=1e-3, random_seed=123,
+            batch_size=20,
+            num_results=50,
+            num_warmup=10,
+            step_size=1e-3,
+            random_seed=123,
         )
         post1 = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"], logistic_problem["data"], **kwargs,
+            logistic_problem["model"],
+            logistic_problem["data"],
+            **kwargs,
         )
         post2 = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"], logistic_problem["data"], **kwargs,
+            logistic_problem["model"],
+            logistic_problem["data"],
+            **kwargs,
         )
         np.testing.assert_array_equal(post1.flat_samples, post2.flat_samples)
 
     def test_different_seeds_produce_different_chains(self, logistic_problem):
         kwargs = dict(
-            batch_size=20, num_results=50, num_warmup=10, step_size=1e-3,
+            batch_size=20,
+            num_results=50,
+            num_warmup=10,
+            step_size=1e-3,
         )
         post1 = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"], logistic_problem["data"],
-            random_seed=1, **kwargs,
+            logistic_problem["model"],
+            logistic_problem["data"],
+            random_seed=1,
+            **kwargs,
         )
         post2 = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"], logistic_problem["data"],
-            random_seed=2, **kwargs,
+            logistic_problem["model"],
+            logistic_problem["data"],
+            random_seed=2,
+            **kwargs,
         )
         # Chains should differ somewhere — not just identical
         assert not jnp.allclose(post1.flat_samples, post2.flat_samples)
@@ -179,6 +199,7 @@ class TestCheck:
 
     def test_rejects_non_factorisable_likelihood(self):
         """SimpleModel + bare Likelihood (no per_datum) is rejected."""
+
         class _BareLikelihood:
             def log_likelihood(self, params, data):
                 return jnp.asarray(0.0)
@@ -192,14 +213,16 @@ class TestCheck:
     def test_requires_batch_size_kwarg(self, logistic_problem):
         """Missing ``batch_size=`` returns ``feasible=False`` with hint."""
         info = BlackJAXSGLDMethod().check(
-            logistic_problem["model"], logistic_problem["data"],
+            logistic_problem["model"],
+            logistic_problem["data"],
         )
         assert not info.feasible
         assert "batch_size" in info.description
 
     def test_feasible_for_well_formed_input(self, logistic_problem):
         info = BlackJAXSGLDMethod().check(
-            logistic_problem["model"], logistic_problem["data"],
+            logistic_problem["model"],
+            logistic_problem["data"],
             batch_size=20,
         )
         assert info.feasible
@@ -220,34 +243,40 @@ class TestConvergence:
 
     def test_sgld_recovers_logistic_coefficients(self, logistic_problem):
         post = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"], logistic_problem["data"],
-            batch_size=40, num_results=5000, num_warmup=1000,
-            step_size=1e-3, random_seed=42,
+            logistic_problem["model"],
+            logistic_problem["data"],
+            batch_size=40,
+            num_results=5000,
+            num_warmup=1000,
+            step_size=1e-3,
+            random_seed=42,
         )
         assert post.flat_samples.shape == (5000, 2)
         assert jnp.all(jnp.isfinite(post.flat_samples))
         # Non-mixing guard: a stuck chain near init would have ~zero std.
         per_coord_std = np.asarray(jnp.std(post.flat_samples, axis=0))
-        assert per_coord_std.min() > 0.05, (
-            f"Chain looks stuck — per-coord std: {per_coord_std}"
-        )
+        assert per_coord_std.min() > 0.05, f"Chain looks stuck — per-coord std: {per_coord_std}"
         sample_mean = np.asarray(jnp.mean(post.flat_samples, axis=0))
         true = np.asarray(logistic_problem["true_theta"])
         np.testing.assert_allclose(sample_mean, true, atol=0.3)
 
     def test_sghmc_recovers_logistic_coefficients(self, logistic_problem):
         post = BlackJAXSGHMCMethod().execute(
-            logistic_problem["model"], logistic_problem["data"],
-            batch_size=40, num_results=5000, num_warmup=1000,
-            step_size=2e-3, num_integration_steps=4,
-            alpha=0.05, beta=0.0, random_seed=42,
+            logistic_problem["model"],
+            logistic_problem["data"],
+            batch_size=40,
+            num_results=5000,
+            num_warmup=1000,
+            step_size=2e-3,
+            num_integration_steps=4,
+            alpha=0.05,
+            beta=0.0,
+            random_seed=42,
         )
         assert post.flat_samples.shape == (5000, 2)
         assert jnp.all(jnp.isfinite(post.flat_samples))
         per_coord_std = np.asarray(jnp.std(post.flat_samples, axis=0))
-        assert per_coord_std.min() > 0.05, (
-            f"Chain looks stuck — per-coord std: {per_coord_std}"
-        )
+        assert per_coord_std.min() > 0.05, f"Chain looks stuck — per-coord std: {per_coord_std}"
         sample_mean = np.asarray(jnp.mean(post.flat_samples, axis=0))
         true = np.asarray(logistic_problem["true_theta"])
         np.testing.assert_allclose(sample_mean, true, atol=0.3)
@@ -259,9 +288,13 @@ class TestConvergence:
 class TestConditionOnDispatch:
     def test_sgld_via_condition_on(self, logistic_problem):
         post = condition_on(
-            logistic_problem["model"], logistic_problem["data"],
-            method="blackjax_sgld", batch_size=40,
-            num_results=1000, num_warmup=200, step_size=1e-3,
+            logistic_problem["model"],
+            logistic_problem["data"],
+            method="blackjax_sgld",
+            batch_size=40,
+            num_results=1000,
+            num_warmup=200,
+            step_size=1e-3,
             random_seed=7,
         )
         assert isinstance(post, ApproximateDistribution)
@@ -270,18 +303,26 @@ class TestConditionOnDispatch:
     def test_chain_shape_is_num_results_by_event_shape(self, logistic_problem):
         """`post.flat_samples` is `(num_results, *event_shape)` for a single chain."""
         post = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"], logistic_problem["data"],
-            batch_size=20, num_results=100, num_warmup=0,
-            step_size=1e-3, random_seed=1,
+            logistic_problem["model"],
+            logistic_problem["data"],
+            batch_size=20,
+            num_results=100,
+            num_warmup=0,
+            step_size=1e-3,
+            random_seed=1,
         )
         assert post.flat_samples.shape == (100, logistic_problem["P"])
 
     def test_warmup_discards_initial_samples(self, logistic_problem):
         """``num_warmup=N`` drops the first N samples; ``num_results`` retained."""
         post = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"], logistic_problem["data"],
-            batch_size=20, num_results=300, num_warmup=700,
-            step_size=1e-3, random_seed=3,
+            logistic_problem["model"],
+            logistic_problem["data"],
+            batch_size=20,
+            num_results=300,
+            num_warmup=700,
+            step_size=1e-3,
+            random_seed=3,
         )
         assert post.flat_samples.shape == (300, 2)
 
@@ -289,9 +330,14 @@ class TestConditionOnDispatch:
         """``init=`` overrides the prior-sampled default."""
         init = jnp.array([2.5, -1.5])
         post = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"], logistic_problem["data"],
-            batch_size=20, num_results=50, num_warmup=0,
-            step_size=1e-4, random_seed=0, init=init,
+            logistic_problem["model"],
+            logistic_problem["data"],
+            batch_size=20,
+            num_results=50,
+            num_warmup=0,
+            step_size=1e-4,
+            random_seed=0,
+            init=init,
         )
         # With a tiny step size, the very first retained sample should
         # sit close to `init` (it's at most one Langevin step away).
@@ -314,10 +360,14 @@ class TestConditionOnDispatch:
         ``MinibatchedDistribution`` tests.
         """
         post = condition_on(
-            logistic_problem["model"], logistic_problem["data"],
+            logistic_problem["model"],
+            logistic_problem["data"],
             method="blackjax_sgld",
-            batch_size=20, num_results=100, num_warmup=0,
-            step_size=1e-3, random_seed=4,
+            batch_size=20,
+            num_results=100,
+            num_warmup=0,
+            step_size=1e-3,
+            random_seed=4,
             with_replacement=True,
         )
         # No exception + finite, correctly-shaped chain == kwarg accepted

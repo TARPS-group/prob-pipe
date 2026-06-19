@@ -9,8 +9,13 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    MultivariateNormal, Normal, ProductDistribution, SimpleModel, GLMLikelihood,
-    condition_on, mean,
+    MultivariateNormal,
+    Normal,
+    ProductDistribution,
+    SimpleModel,
+    GLMLikelihood,
+    condition_on,
+    mean,
 )
 from probpipe.core._registry import (
     MethodInfo,
@@ -24,6 +29,7 @@ from probpipe.modeling._likelihood import Likelihood
 # ---------------------------------------------------------------------------
 # Shared test helper
 # ---------------------------------------------------------------------------
+
 
 class FakeMethod(UnaryDispatchMethod):
     """Configurable stub for registry tests."""
@@ -56,10 +62,12 @@ class FakeMethod(UnaryDispatchMethod):
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def simple_model():
     """A simple Poisson regression model."""
     import tensorflow_probability.substrates.jax.glm as tfp_glm
+
     X = np.asarray(np.linspace(-1, 1, 20))[:, None].astype(np.float32)
     prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), name="beta")
     return SimpleModel(prior, GLMLikelihood(tfp_glm.Poisson(), X))
@@ -74,8 +82,8 @@ def data():
 # Generic UnaryDispatchRegistry tests
 # ---------------------------------------------------------------------------
 
-class TestUnaryDispatchRegistry:
 
+class TestUnaryDispatchRegistry:
     def test_register_and_list(self):
         reg = UnaryDispatchRegistry()
         reg.register(FakeMethod("low", 10))
@@ -129,8 +137,8 @@ class TestUnaryDispatchRegistry:
 # Inference method registry tests
 # ---------------------------------------------------------------------------
 
-class TestInferenceMethodRegistry:
 
+class TestInferenceMethodRegistry:
     def test_methods_registered(self):
         methods = inference_method_registry.list_methods()
         assert "tfp_nuts" in methods
@@ -161,16 +169,23 @@ class TestInferenceMethodRegistry:
     def test_method_override(self, simple_model, data):
         """method= should override auto-selection."""
         posterior = condition_on(
-            simple_model, data, method="blackjax_rwmh",
-            num_results=50, num_warmup=20, random_seed=0,
+            simple_model,
+            data,
+            method="blackjax_rwmh",
+            num_results=50,
+            num_warmup=20,
+            random_seed=0,
         )
         assert posterior.algorithm == "blackjax_rwmh"
 
     def test_condition_on_default(self, simple_model, data):
         """Default condition_on should work through the registry."""
         posterior = condition_on(
-            simple_model, data,
-            num_results=50, num_warmup=20, random_seed=0,
+            simple_model,
+            data,
+            num_results=50,
+            num_warmup=20,
+            random_seed=0,
         )
         assert mean(posterior).shape == (2,)
 
@@ -181,9 +196,7 @@ class TestInferenceMethodRegistry:
     def test_infeasible_method_raises(self):
         """Requesting a method that can't handle the dist raises TypeError."""
         with pytest.raises(TypeError):
-            inference_method_registry.execute(
-                "not_a_distribution", None, method="tfp_nuts"
-            )
+            inference_method_registry.execute("not_a_distribution", None, method="tfp_nuts")
 
     def test_bare_log_prob_distribution(self):
         """A bare SupportsLogProb distribution can be conditioned via registry.
@@ -195,8 +208,11 @@ class TestInferenceMethodRegistry:
         """
         prior = Normal(loc=0.0, scale=1.0, name="x")
         posterior = condition_on(
-            prior, method="tfp_nuts",
-            num_results=50, num_warmup=20, random_seed=0,
+            prior,
+            method="tfp_nuts",
+            num_results=50,
+            num_warmup=20,
+            random_seed=0,
         )
         assert mean(posterior).ndim <= 1
 
@@ -214,6 +230,7 @@ class TestInferenceMethodRegistry:
 # ---------------------------------------------------------------------------
 # Opt-in-only sentinel (priority == 0)
 # ---------------------------------------------------------------------------
+
 
 class TestOptInOnlyPriority:
     """Priority 0 = opt-in only: skipped during auto-dispatch."""
@@ -233,16 +250,21 @@ class TestOptInOnlyPriority:
 
     def test_default_priority_is_opt_in(self):
         """A UnaryDispatchMethod subclass without a priority override defaults to opt-in."""
+
         class Bare(UnaryDispatchMethod):
             @property
             def name(self):
                 return "bare"
+
             def supported_types(self):
                 return (object,)
+
             def check(self, *a, **kw):
                 return MethodInfo(feasible=True, method_name="bare")
+
             def execute(self, *a, **kw):
                 return "ran"
+
         reg = UnaryDispatchRegistry()
         reg.register(Bare())
         # Auto-dispatch skips it.
@@ -272,8 +294,8 @@ class TestOptInOnlyPriority:
 # set_priorities zero-crossing warning
 # ---------------------------------------------------------------------------
 
-class TestSetPrioritiesZeroCrossingWarning:
 
+class TestSetPrioritiesZeroCrossingWarning:
     def test_warn_when_demoting_to_opt_in(self):
         reg = UnaryDispatchRegistry()
         reg.register(FakeMethod("a", p=50))
@@ -292,8 +314,8 @@ class TestSetPrioritiesZeroCrossingWarning:
         # Crossings of the 50 break are documentary; they should not warn.
         with warnings.catch_warnings():
             warnings.simplefilter("error", UserWarning)
-            reg.set_priorities(a=10)   # exact -> inexact
-            reg.set_priorities(a=80)   # inexact -> exact
+            reg.set_priorities(a=10)  # exact -> inexact
+            reg.set_priorities(a=80)  # inexact -> exact
 
     def test_no_warn_when_staying_zero(self):
         reg = UnaryDispatchRegistry()
@@ -306,6 +328,7 @@ class TestSetPrioritiesZeroCrossingWarning:
 # ---------------------------------------------------------------------------
 # Built-in priority anchors (issue #189)
 # ---------------------------------------------------------------------------
+
 
 class TestBuiltInPriorityAnchors:
     """Priority anchors per issue #189, with the BlackJAX MCMC migration.
@@ -344,22 +367,18 @@ class TestBuiltInPriorityAnchors:
         # use ``BaseDispatchRegistry._effective_priority(method)``.
         for name, expected in self.EXPECTED_PRIORITIES.items():
             if name not in inference_method_registry.list_methods():
-                continue   # optional backend not installed
+                continue  # optional backend not installed
             actual = inference_method_registry.get_method(name).priority
-            assert actual == expected, (
-                f"{name} priority is {actual}, expected {expected}"
-            )
+            assert actual == expected, f"{name} priority is {actual}, expected {expected}"
 
     def test_exact_above_inexact(self):
         """Every exact-tier (>50) priority outranks every inexact-tier (<=50)."""
         registered = set(inference_method_registry.list_methods())
         exact_priorities = [
-            p for n, p in self.EXPECTED_PRIORITIES.items()
-            if n in registered and p > 50
+            p for n, p in self.EXPECTED_PRIORITIES.items() if n in registered and p > 50
         ]
         inexact_priorities = [
-            p for n, p in self.EXPECTED_PRIORITIES.items()
-            if n in registered and 0 < p <= 50
+            p for n, p in self.EXPECTED_PRIORITIES.items() if n in registered and 0 < p <= 50
         ]
         if exact_priorities and inexact_priorities:
             assert min(exact_priorities) > max(inexact_priorities)
@@ -381,7 +400,7 @@ class _UnnormalizedTarget:
     def _unnormalized_log_prob(self, value):
         # Standard normal up to an unknown additive constant. The missing
         # log normalizer is irrelevant for accept/reject.
-        return -0.5 * jnp.sum(value ** 2)
+        return -0.5 * jnp.sum(value**2)
 
     def _mean(self):
         return jnp.zeros(2)
@@ -396,7 +415,7 @@ class _NormalizedTarget:
     """
 
     def _log_prob(self, value):
-        return -0.5 * jnp.sum(value ** 2) - jnp.log(2 * jnp.pi)
+        return -0.5 * jnp.sum(value**2) - jnp.log(2 * jnp.pi)
 
     def _mean(self):
         return jnp.zeros(2)
@@ -454,7 +473,10 @@ class TestUnnormalizedLogProbInference:
 
         dist = _make_unnormalized_distribution()
         posterior = condition_on(
-            dist, num_results=200, num_warmup=100, random_seed=0,
+            dist,
+            num_results=200,
+            num_warmup=100,
+            random_seed=0,
         )
         assert isinstance(posterior, ApproximateDistribution)
         # Standard normal: posterior mean ~0, std ~1 (loose tolerance —
@@ -468,8 +490,12 @@ class TestUnnormalizedLogProbInference:
 
         dist = _make_unnormalized_distribution()
         posterior = condition_on(
-            dist, method="blackjax_rwmh",
-            num_results=200, num_warmup=100, step_size=0.5, random_seed=0,
+            dist,
+            method="blackjax_rwmh",
+            num_results=200,
+            num_warmup=100,
+            step_size=0.5,
+            random_seed=0,
         )
         assert isinstance(posterior, ApproximateDistribution)
 
@@ -484,7 +510,10 @@ class TestUnnormalizedLogProbInference:
 
         dist = _make_normalized_distribution()
         posterior = condition_on(
-            dist, num_results=100, num_warmup=50, random_seed=0,
+            dist,
+            num_results=100,
+            num_warmup=50,
+            random_seed=0,
         )
         assert isinstance(posterior, ApproximateDistribution)
 
@@ -493,8 +522,12 @@ class TestUnnormalizedLogProbInference:
 
         dist = _make_normalized_distribution()
         posterior = condition_on(
-            dist, method="blackjax_rwmh",
-            num_results=100, num_warmup=50, step_size=0.5, random_seed=0,
+            dist,
+            method="blackjax_rwmh",
+            num_results=100,
+            num_warmup=50,
+            step_size=0.5,
+            random_seed=0,
         )
         assert isinstance(posterior, ApproximateDistribution)
 

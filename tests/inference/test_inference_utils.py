@@ -54,8 +54,7 @@ class _GaussianMeanLikelihood(Likelihood):
         mu = jnp.reshape(jnp.asarray(params), ())
         s = self.scale
         return jnp.sum(
-            -0.5 * ((jnp.asarray(data) - mu) / s) ** 2
-            - jnp.log(s) - 0.5 * jnp.log(2 * jnp.pi)
+            -0.5 * ((jnp.asarray(data) - mu) / s) ** 2 - jnp.log(s) - 0.5 * jnp.log(2 * jnp.pi)
         )
 
 
@@ -76,7 +75,8 @@ class TestBuildTargetLogProbFlat:
         observed = jnp.zeros((4,))
         target_record = build_target_log_prob(small_model, observed)
         target_flat, flat_init, template = build_target_log_prob_flat(
-            small_model, observed,
+            small_model,
+            observed,
         )
         # Round-trip: unflatten the flat init back to a Record and confirm
         # the two callables agree.
@@ -84,12 +84,14 @@ class TestBuildTargetLogProbFlat:
         np.testing.assert_allclose(
             float(target_flat(flat_init)),
             float(target_record(record_init)),
-            rtol=0, atol=1e-6,
+            rtol=0,
+            atol=1e-6,
         )
 
     def test_flat_init_dim_matches_template_flat_size(self, small_model):
         _, flat_init, template = build_target_log_prob_flat(
-            small_model, observed=None,
+            small_model,
+            observed=None,
         )
         # Both fields are scalar Normals: flat_size == 2.
         assert flat_init.shape == (template.flat_size,) == (2,)
@@ -109,6 +111,7 @@ class TestBuildTargetLogProbFlat:
         for hand-rolled distributions that don't carry a Record-shaped
         prior.
         """
+
         class _FlatGaussian:
             event_shape = (2,)
 
@@ -116,12 +119,14 @@ class TestBuildTargetLogProbFlat:
                 return -0.5 * jnp.sum(jnp.asarray(x) ** 2)
 
         target_flat, flat_init, template = build_target_log_prob_flat(
-            _FlatGaussian(), observed=None,
+            _FlatGaussian(),
+            observed=None,
         )
         assert template is None
         assert flat_init.shape == (2,)
         np.testing.assert_allclose(
-            float(target_flat(jnp.asarray([1.0, -1.0]))), -1.0,
+            float(target_flat(jnp.asarray([1.0, -1.0]))),
+            -1.0,
         )
 
 
@@ -207,7 +212,10 @@ class TestRunChainScan:
         num_results = 5
         init = _FakeState(jnp.zeros(event_shape))
         positions, infos = run_chain_scan(
-            _FakeSampler(), init, num_results, jax.random.PRNGKey(0),
+            _FakeSampler(),
+            init,
+            num_results,
+            jax.random.PRNGKey(0),
         )
         # Positions: (num_results, *event_shape).
         assert positions.shape == (num_results, *event_shape)
@@ -218,7 +226,10 @@ class TestRunChainScan:
         # Each step adds one, starting from zeros, so row i == i + 1.
         init = _FakeState(jnp.zeros((2,)))
         positions, _ = run_chain_scan(
-            _FakeSampler(), init, 4, jax.random.PRNGKey(0),
+            _FakeSampler(),
+            init,
+            4,
+            jax.random.PRNGKey(0),
         )
         expected = np.arange(1, 5)[:, None] * np.ones((1, 2))
         np.testing.assert_allclose(np.asarray(positions), expected)
@@ -229,7 +240,7 @@ class TestIsJaxTraceable:
 
     def test_traceable_fn(self):
         init = jnp.array([1.0, 2.0])
-        assert is_jax_traceable(lambda x: jnp.sum(x ** 2), init) is True
+        assert is_jax_traceable(lambda x: jnp.sum(x**2), init) is True
 
     def test_non_traceable_fn(self):
         # ``float(np.asarray(x))`` forces concretisation of a traced value,
@@ -254,7 +265,9 @@ class TestBuildLikelihoodFlat:
     def test_returns_scalar_log_likelihood(self, gaussian_model):
         data = jnp.array([1.0, -1.0, 0.5])
         llf = build_likelihood_flat(
-            gaussian_model._prior, gaussian_model._likelihood, data,
+            gaussian_model._prior,
+            gaussian_model._likelihood,
+            data,
         )
         assert callable(llf)
         out = llf(jnp.array([0.3]))
@@ -264,15 +277,19 @@ class TestBuildLikelihoodFlat:
     def test_matches_independent_gaussian(self, gaussian_model):
         data = jnp.array([1.0, -1.0, 0.5])
         llf = build_likelihood_flat(
-            gaussian_model._prior, gaussian_model._likelihood, data,
+            gaussian_model._prior,
+            gaussian_model._likelihood,
+            data,
         )
         mu, scale = 0.3, 2.0
         expected = np.sum(
-            -0.5 * ((np.asarray(data) - mu) / scale) ** 2
-            - np.log(scale) - 0.5 * np.log(2 * np.pi)
+            -0.5 * ((np.asarray(data) - mu) / scale) ** 2 - np.log(scale) - 0.5 * np.log(2 * np.pi)
         )
         np.testing.assert_allclose(
-            float(llf(jnp.array([mu]))), expected, rtol=0, atol=1e-5,
+            float(llf(jnp.array([mu]))),
+            expected,
+            rtol=0,
+            atol=1e-5,
         )
 
 
@@ -331,7 +348,7 @@ class TestGetInitState:
         prior = Normal(loc=0.0, scale=1.0, name="x")
         assert isinstance(prior, SupportsSampling)
         out = get_init_state(prior, init=None, random_seed=0)
-        assert out.shape == (1,)            # scalar Normal -> length-1 vector
+        assert out.shape == (1,)  # scalar Normal -> length-1 vector
         assert bool(jnp.all(jnp.isfinite(out)))
 
     def test_stan_uniform_fallback(self):
@@ -391,6 +408,7 @@ class TestParallelChainMap:
 
         if jax.local_device_count() != 1:
             import pytest as _pytest
+
             _pytest.skip(
                 "test requires the default 1-device CPU; got "
                 f"{jax.local_device_count()} — set XLA_FLAGS in your shell?"
@@ -444,7 +462,10 @@ class TestParallelChainMap:
         env["XLA_FLAGS"] = "--xla_force_host_platform_device_count=4"
         result = subprocess.run(
             [sys.executable, "-c", script],
-            env=env, capture_output=True, text=True, timeout=120,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         assert result.returncode == 0, (
             f"subprocess failed: stdout={result.stdout!r} stderr={result.stderr!r}"

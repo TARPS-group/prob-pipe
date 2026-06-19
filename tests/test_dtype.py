@@ -45,8 +45,7 @@ def _run_x64(snippet: str) -> str:
     )
     if result.returncode != 0:
         raise AssertionError(
-            f"x64 subprocess failed:\nSTDOUT:\n{result.stdout}\n"
-            f"STDERR:\n{result.stderr}"
+            f"x64 subprocess failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
         )
     return result.stdout.strip()
 

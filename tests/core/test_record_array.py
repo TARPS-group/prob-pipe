@@ -126,7 +126,8 @@ class TestRecordArrayAccess:
         tpl = EventTemplate(x=(3,))
         ra = RecordArray(
             x=jnp.arange(30.0).reshape(10, 3),
-            batch_shape=(10,), template=tpl,
+            batch_shape=(10,),
+            template=tpl,
         )
         assert type(ra[0]) is Record
 
@@ -135,11 +136,13 @@ class TestRecordArrayAccess:
         the numeric invariant survives slicing (fix for PR #123 review
         comment #4)."""
         from probpipe import NumericRecord
+
         tpl = EventTemplate(x=(3,), y=())
         nra = NumericRecordArray(
             x=jnp.arange(30.0).reshape(10, 3),
             y=jnp.arange(10.0),
-            batch_shape=(10,), template=tpl,
+            batch_shape=(10,),
+            template=tpl,
         )
         elem = nra[0]
         assert type(elem) is NumericRecord
@@ -283,9 +286,7 @@ class TestNumericRecordArrayFlatten:
     def test_unflatten_explicit_batch(self):
         tpl = EventTemplate(a=(), b=(2,))
         flat = jnp.zeros((4, 5, 3))
-        nra = NumericRecordArray.unflatten(
-            flat, template=tpl, batch_shape=(4, 5)
-        )
+        nra = NumericRecordArray.unflatten(flat, template=tpl, batch_shape=(4, 5))
         assert nra.batch_shape == (4, 5)
         assert nra["a"].shape == (4, 5)
         assert nra["b"].shape == (4, 5, 2)
@@ -333,7 +334,8 @@ class TestNumericRecordArrayNested:
         inner = Record(a=jnp.arange(5.0), b=jnp.arange(5.0) + 10)
         nra = NumericRecordArray(
             {"outer": inner, "m": jnp.arange(5.0) + 100},
-            batch_shape=(5,), template=tpl,
+            batch_shape=(5,),
+            template=tpl,
         )
         flat = nra.flatten()
         assert flat.shape == (5, 3)
@@ -347,8 +349,7 @@ class TestNumericRecordArrayNested:
         np.testing.assert_allclose(elem["outer"]["b"], inner["b"][2])
 
     def test_flatten_nested_depth2_roundtrip(self):
-        tpl = EventTemplate(
-            outer=EventTemplate(deep=EventTemplate(g=(), h=()), a=()), m=())
+        tpl = EventTemplate(outer=EventTemplate(deep=EventTemplate(g=(), h=()), a=()), m=())
         flat = jnp.arange(20.0).reshape(5, 4)  # outer/deep/g, outer/deep/h, outer/a, m
         nra = NumericRecordArray.unflatten(flat, template=tpl, batch_shape=(5,))
         np.testing.assert_allclose(nra.flatten(), flat)
@@ -369,21 +370,23 @@ class TestNumericRecordArrayNested:
     def test_getitem_slash_path(self):
         tpl = self._nested_tpl()
         nra = NumericRecordArray.unflatten(
-            jnp.arange(15.0).reshape(5, 3), template=tpl, batch_shape=(5,))
+            jnp.arange(15.0).reshape(5, 3), template=tpl, batch_shape=(5,)
+        )
         np.testing.assert_allclose(nra["outer/a"], nra["outer"]["a"])
         with pytest.raises(KeyError):
-            nra["outer/missing"]    # leaf missing inside the sub-record
+            nra["outer/missing"]  # leaf missing inside the sub-record
         with pytest.raises(KeyError):
-            nra["nope/a"]           # head field not in the store
+            nra["nope/a"]  # head field not in the store
         with pytest.raises(KeyError):
-            nra["m/x"]              # slash descends into a (scalar) leaf
+            nra["m/x"]  # slash descends into a (scalar) leaf
 
     def test_getitem_int_nested_element(self):
         # Integer indexing of a nested record array descends into the nested
         # field, returning a (nested) record element — not an indexing error.
         tpl = self._nested_tpl()
         nra = NumericRecordArray.unflatten(
-            jnp.arange(15.0).reshape(5, 3), template=tpl, batch_shape=(5,))
+            jnp.arange(15.0).reshape(5, 3), template=tpl, batch_shape=(5,)
+        )
         elem = nra[2]
         assert isinstance(elem, Record)
         np.testing.assert_allclose(elem["outer"]["a"], nra["outer"]["a"][2])
@@ -392,10 +395,10 @@ class TestNumericRecordArrayNested:
     def test_getitem_int_nested_multidim_batch(self):
         tpl = self._nested_tpl()
         nra = NumericRecordArray.unflatten(
-            jnp.arange(24.0).reshape(2, 4, 3), template=tpl, batch_shape=(2, 4))
+            jnp.arange(24.0).reshape(2, 4, 3), template=tpl, batch_shape=(2, 4)
+        )
         elem = nra[5]  # flat index into the (2, 4) batch
-        np.testing.assert_allclose(
-            elem["outer"]["a"], np.asarray(nra["outer"]["a"]).reshape(-1)[5])
+        np.testing.assert_allclose(elem["outer"]["a"], np.asarray(nra["outer"]["a"]).reshape(-1)[5])
 
 
 # ---------------------------------------------------------------------------
@@ -519,18 +522,14 @@ class TestRecordArrayPyTree:
 class TestRepr:
     def test_record_array_repr(self):
         tpl = EventTemplate(x=(3,))
-        ra = RecordArray(
-            x=jnp.zeros((5, 3)), batch_shape=(5,), template=tpl
-        )
+        ra = RecordArray(x=jnp.zeros((5, 3)), batch_shape=(5,), template=tpl)
         r = repr(ra)
         assert "RecordArray" in r
         assert "batch_shape=(5,)" in r
 
     def test_numeric_record_array_repr(self):
         tpl = EventTemplate(x=())
-        nra = NumericRecordArray(
-            x=jnp.zeros(5), batch_shape=(5,), template=tpl
-        )
+        nra = NumericRecordArray(x=jnp.zeros(5), batch_shape=(5,), template=tpl)
         r = repr(nra)
         assert "NumericRecordArray" in r
 
@@ -560,10 +559,8 @@ class TestEquality:
         assert a != b
 
     def test_unequal_template(self):
-        a = RecordArray(x=jnp.zeros(3), batch_shape=(3,),
-                        template=EventTemplate(x=()))
-        b = RecordArray(x=jnp.zeros((3, 2)), batch_shape=(3,),
-                        template=EventTemplate(x=(2,)))
+        a = RecordArray(x=jnp.zeros(3), batch_shape=(3,), template=EventTemplate(x=()))
+        b = RecordArray(x=jnp.zeros((3, 2)), batch_shape=(3,), template=EventTemplate(x=(2,)))
         assert a != b
 
     def test_recordarray_not_equal_to_numeric_recordarray(self):
@@ -582,7 +579,8 @@ class TestEquality:
         tpl = EventTemplate(x=())
         ra = RecordArray(
             x=jnp.array([jnp.nan, 1.0, jnp.nan]),
-            batch_shape=(3,), template=tpl,
+            batch_shape=(3,),
+            template=tpl,
         )
         assert ra == ra
 
@@ -635,7 +633,9 @@ class TestNumericRecordArrayValidation:
         tpl = EventTemplate(x=(2,))
         with pytest.raises(TypeError, match="numeric"):
             NumericRecordArray(
-                {"x": ["a", "b"]}, batch_shape=(), template=tpl,
+                {"x": ["a", "b"]},
+                batch_shape=(),
+                template=tpl,
             )
 
     def test_rejects_object_dtype_array(self):
@@ -650,7 +650,8 @@ class TestNumericRecordArrayValidation:
         with pytest.raises(ValueError, match="shape"):
             NumericRecordArray(
                 {"x": jnp.zeros((5, 2))},  # expected (5, 3)
-                batch_shape=(5,), template=tpl,
+                batch_shape=(5,),
+                template=tpl,
             )
 
     def test_tree_map_to_string_rejected(self):
@@ -658,7 +659,9 @@ class TestNumericRecordArrayValidation:
         unflatten time rather than produce a corrupt NumericRecordArray."""
         tpl = EventTemplate(x=())
         nra = NumericRecordArray(
-            x=jnp.arange(3.0), batch_shape=(3,), template=tpl,
+            x=jnp.arange(3.0),
+            batch_shape=(3,),
+            template=tpl,
         )
         with pytest.raises(TypeError, match="numeric"):
             jax.tree.map(lambda x: "hi", nra)
@@ -666,7 +669,9 @@ class TestNumericRecordArrayValidation:
     def test_accepts_numpy_leaf_and_coerces_to_jnp(self):
         tpl = EventTemplate(x=())
         nra = NumericRecordArray(
-            x=np.arange(3.0), batch_shape=(3,), template=tpl,
+            x=np.arange(3.0),
+            batch_shape=(3,),
+            template=tpl,
         )
         assert isinstance(nra["x"], jnp.ndarray)
 
@@ -679,7 +684,8 @@ class TestNumericRecordArrayValidation:
         with pytest.raises(TypeError, match="non-numeric dtype"):
             NumericRecordArray(
                 {"x": np.array([{"a": 1}, {"b": 2}], dtype=object)},
-                batch_shape=(2,), template=tpl,
+                batch_shape=(2,),
+                template=tpl,
             )
 
     def test_rejects_numpy_string_dtype_batch(self):
@@ -687,7 +693,8 @@ class TestNumericRecordArrayValidation:
         with pytest.raises(TypeError, match="non-numeric dtype"):
             NumericRecordArray(
                 {"x": np.array(["a", "b"])},  # dtype='<U1'
-                batch_shape=(2,), template=tpl,
+                batch_shape=(2,),
+                template=tpl,
             )
 
     def test_nested_template_field_allowed(self):
@@ -696,6 +703,7 @@ class TestNumericRecordArrayValidation:
         the numeric-dtype check. This is how nested ProductDistributions
         materialise samples."""
         from probpipe import Record
+
         inner_tpl = EventTemplate(x=(), y=())
         outer_tpl = EventTemplate(physics=inner_tpl, obs=(3,))
         inner = Record(x=1.0, y=2.0)
@@ -720,9 +728,7 @@ class TestProvenance:
 
     @pytest.fixture
     def ra(self):
-        return NumericRecordArray.stack(
-            [NumericRecord(x=float(i), y=2.0 * i) for i in range(3)]
-        )
+        return NumericRecordArray.stack([NumericRecord(x=float(i), y=2.0 * i) for i in range(3)])
 
     def test_initial_source_is_none(self, ra):
         assert ra.source is None
@@ -738,9 +744,7 @@ class TestProvenance:
             ra.with_source(Provenance("second", parents=()))
 
     def test_eq_ignores_source(self, ra):
-        ra2 = NumericRecordArray.stack(
-            [NumericRecord(x=float(i), y=2.0 * i) for i in range(3)]
-        )
+        ra2 = NumericRecordArray.stack([NumericRecord(x=float(i), y=2.0 * i) for i in range(3)])
         ra.with_source(Provenance("a", parents=()))
         ra2.with_source(Provenance("b", parents=()))
         assert ra == ra2
@@ -792,8 +796,7 @@ class TestHierarchy:
         validation — must still ``isinstance`` as a ``Record``."""
         tpl = EventTemplate(label=None, value=())
         ra = RecordArray(
-            {"label": np.asarray(["a", "b", "c"], dtype=object),
-             "value": jnp.arange(3.0)},
+            {"label": np.asarray(["a", "b", "c"], dtype=object), "value": jnp.arange(3.0)},
             batch_shape=(3,),
             template=tpl,
         )
@@ -803,9 +806,7 @@ class TestHierarchy:
     def test_numericrecordarray_is_record(self):
         """The ``NumericRecordArray`` subclass inherits through the
         chain NumericRecordArray → RecordArray → Record."""
-        ra = NumericRecordArray.stack(
-            [NumericRecord(x=float(i)) for i in range(3)]
-        )
+        ra = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
         assert isinstance(ra, NumericRecordArray)
         assert isinstance(ra, RecordArray)
         assert isinstance(ra, Record)
@@ -828,9 +829,7 @@ class TestHierarchy:
         assert mro.index("Record") < mro.index("object")
 
     def test_source_slot_inherited_from_record(self):
-        ra = NumericRecordArray.stack(
-            [NumericRecord(x=float(i)) for i in range(2)]
-        )
+        ra = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(2)])
         # Record defines the ``_source`` slot; RecordArray should
         # *not* redeclare it (that would raise a layout conflict on
         # construction). Confirm the attribute works end-to-end.
@@ -842,15 +841,14 @@ class TestHierarchy:
         """RecordArray uses Record's ``_name`` slot for its stored name,
         not a separate property on RecordArray. The default name is
         derived from the class name + fields at construction time."""
-        ra = NumericRecordArray.stack(
-            [NumericRecord(x=float(i)) for i in range(2)]
-        )
+        ra = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(2)])
         assert "numericrecordarray" in ra.name.lower()
 
     def test_custom_name_kwarg_honored(self):
         """RecordArray accepts a ``name=`` kwarg at construction,
         matching Record's API."""
         from probpipe.core.record import EventTemplate
+
         tpl = EventTemplate(x=())
         ra = NumericRecordArray(
             {"x": jnp.arange(3.0)},
@@ -873,16 +871,12 @@ class TestSingleFieldCoercion:
     """
 
     def test_np_asarray_single_field(self):
-        nra = NumericRecordArray.stack(
-            [NumericRecord(result=float(i)) for i in range(4)]
-        )
+        nra = NumericRecordArray.stack([NumericRecord(result=float(i)) for i in range(4)])
         arr = np.asarray(nra)
         np.testing.assert_allclose(arr, [0.0, 1.0, 2.0, 3.0])
 
     def test_jnp_asarray_single_field(self):
-        nra = NumericRecordArray.stack(
-            [NumericRecord(result=float(i)) for i in range(4)]
-        )
+        nra = NumericRecordArray.stack([NumericRecord(result=float(i)) for i in range(4)])
         arr = jnp.asarray(nra)
         assert isinstance(arr, jnp.ndarray)
         np.testing.assert_allclose(arr, [0.0, 1.0, 2.0, 3.0])
@@ -897,8 +891,6 @@ class TestSingleFieldCoercion:
     # ``float()`` / ``int()`` / ``bool()`` are deliberately not exposed
     # on NumericRecordArray — the value isn't scalar.
     def test_float_not_supported(self):
-        nra = NumericRecordArray.stack(
-            [NumericRecord(result=float(i)) for i in range(4)]
-        )
+        nra = NumericRecordArray.stack([NumericRecord(result=float(i)) for i in range(4)])
         with pytest.raises(TypeError):
             float(nra)

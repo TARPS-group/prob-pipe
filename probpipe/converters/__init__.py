@@ -7,7 +7,13 @@ conversion** – passing a ``@runtime_checkable`` protocol (e.g.,
 ``SupportsLogProb``) as the target to ``converter_registry.convert()``.
 """
 
-from ._registry import Converter, ConverterRegistry, ConversionInfo, ConversionMethod, converter_registry
+from ._registry import (
+    Converter,
+    ConverterRegistry,
+    ConversionInfo,
+    ConversionMethod,
+    converter_registry,
+)
 
 # -- register built-in converters -------------------------------------------
 
@@ -20,6 +26,7 @@ converter_registry.register(TFPConverter())
 # Optionally register scipy converter
 try:
     from ._scipy import ScipyConverter, _HAS_SCIPY
+
     if _HAS_SCIPY:
         converter_registry.register(ScipyConverter())
 except ImportError:

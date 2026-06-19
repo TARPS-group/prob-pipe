@@ -42,9 +42,7 @@ class TestRecordArrayDetection:
         def f(p: NumericRecord) -> float:
             return p["x"]
 
-        ra = NumericRecordArray.stack(
-            [NumericRecord(x=float(i)) for i in range(4)]
-        )
+        ra = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(4)])
         out = f(p=ra)
         assert out.batch_shape == (4,)
 
@@ -56,9 +54,7 @@ class TestRecordArrayDetection:
         def f(ra: NumericRecordArray):
             return ra["x"].sum()
 
-        ra = NumericRecordArray.stack(
-            [NumericRecord(x=float(i)) for i in range(4)]
-        )
+        ra = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(4)])
         out = f(ra=ra)
         # Single inner call - output is the unwrapped float result.
         assert float(out) == 6.0
@@ -73,8 +69,7 @@ class TestRecordArrayDetection:
             return p["x"]
 
         tpl = EventTemplate(x=())
-        scalar_ra = NumericRecordArray({"x": jnp.asarray(7.0)},
-                                       batch_shape=(), template=tpl)
+        scalar_ra = NumericRecordArray({"x": jnp.asarray(7.0)}, batch_shape=(), template=tpl)
         # No broadcasting - one call with the batch_shape=() RecordArray
         # passed through.
         out = f(p=scalar_ra)
@@ -89,12 +84,8 @@ class TestRecordArrayDetection:
         def f(a: NumericRecord, b: NumericRecord) -> float:
             return a["x"] + b["y"]
 
-        a = NumericRecordArray.stack(
-            [NumericRecord(x=float(i)) for i in range(3)]
-        )
-        b = NumericRecordArray.stack(
-            [NumericRecord(y=float(i)) for i in range(5)]
-        )
+        a = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
+        b = NumericRecordArray.stack([NumericRecord(y=float(i)) for i in range(5)])
         out = f(a=a, b=b)
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (3, 5)
@@ -184,10 +175,12 @@ class TestDistributionOnlyPath:
             return x * 2
 
         from probpipe.core._broadcast_distributions import _RecordMarginal
+
         out = f(x=Normal(loc=2.0, scale=0.1, name="x"))
         assert isinstance(out, _RecordMarginal)
         # Mean of 2 * N(2, 0.1) is ~4.
         from probpipe import mean as pmean
+
         assert abs(float(pmean(out)) - 4.0) < 0.1
 
 
@@ -204,9 +197,7 @@ class TestNestedSweepPlusDistribution:
 
     @pytest.fixture
     def sweep(self):
-        return NumericRecordArray.stack(
-            [NumericRecord(bias=float(i)) for i in range(3)]
-        )
+        return NumericRecordArray.stack([NumericRecord(bias=float(i)) for i in range(3)])
 
     def test_scalar_inner_gives_distribution_array(self, sweep):
         @workflow_function(n_broadcast_samples=50, dispatch="sequential")
@@ -218,6 +209,7 @@ class TestNestedSweepPlusDistribution:
         assert out.batch_shape == (3,)
         # Per-row mean ≈ bias + 0
         from probpipe import mean as pmean
+
         means = pmean(out)
         np.testing.assert_allclose(means, [0.0, 1.0, 2.0], atol=0.2)
 
@@ -270,12 +262,8 @@ class TestDispatch:
         def f(a: NumericRecord, b: NumericRecord) -> float:
             return a["x"] + b["y"]
 
-        a = NumericRecordArray.stack(
-            [NumericRecord(x=float(i)) for i in range(3)]
-        )
-        b = NumericRecordArray.stack(
-            [NumericRecord(y=float(i)) for i in range(5)]
-        )
+        a = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
+        b = NumericRecordArray.stack([NumericRecord(y=float(i)) for i in range(5)])
 
         with pytest.raises(ValueError, match="single plain RecordArray sweep"):
             f(a=a, b=b)
@@ -292,9 +280,7 @@ class TestProvenanceChain:
         def f(p: NumericRecord) -> float:
             return p["x"]
 
-        sweep = NumericRecordArray.stack(
-            [NumericRecord(x=float(i)) for i in range(3)]
-        )
+        sweep = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
         out = f(p=sweep)
         assert out.source is not None
         assert out.source.operation == "workflow.stack"
@@ -308,9 +294,7 @@ class TestProvenanceChain:
         def f(p: NumericRecord, noise: float) -> float:
             return p["x"] + noise
 
-        sweep = NumericRecordArray.stack(
-            [NumericRecord(x=float(i)) for i in range(3)]
-        )
+        sweep = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
         noise_dist = Normal(loc=0.0, scale=1.0, name="noise")
         out = f(p=sweep, noise=noise_dist)
         assert out.source.operation == "workflow.nested"
@@ -322,22 +306,19 @@ class TestProvenanceChain:
         """Default LIGHTWEIGHT: the sweep output keeps a traversable source — a
         ``ParentInfo`` with ``obj=None`` (so the parent array is GC-eligible) and
         the lineage preserved via ``.source``."""
+
         @workflow_function
         def f(p: NumericRecord) -> float:
             return p["x"]
 
-        sweep = NumericRecordArray.stack(
-            [NumericRecord(x=float(i)) for i in range(3)]
-        )
+        sweep = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
         out = f(p=sweep)
         assert out.source is not None
         assert out.source.operation == "workflow.stack"
         parent = out.source.parents[0]
         assert parent.obj is None  # live ref dropped in LIGHTWEIGHT
         assert parent.type_name == "NumericRecordArray"
-        assert any(
-            a.type_name == "NumericRecordArray" for a in provenance_ancestors(out)
-        )
+        assert any(a.type_name == "NumericRecordArray" for a in provenance_ancestors(out))
 
     def test_pure_sweep_provenance_off(self):
         """OFF: the sweep output carries no provenance."""
@@ -347,9 +328,7 @@ class TestProvenanceChain:
         def f(p: NumericRecord) -> float:
             return p["x"]
 
-        sweep = NumericRecordArray.stack(
-            [NumericRecord(x=float(i)) for i in range(3)]
-        )
+        sweep = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
         out = f(p=sweep)
         assert out.source is None
 
@@ -380,12 +359,9 @@ class TestMultiDimensionalBatch:
     def sweep_2d(self):
         """3 x 2 sweep over (r, k)."""
         from probpipe.core.record import EventTemplate
-        r_values = jnp.array([[1.0, 1.0],
-                              [2.0, 2.0],
-                              [3.0, 3.0]])
-        k_values = jnp.array([[10.0, 20.0],
-                              [10.0, 20.0],
-                              [10.0, 20.0]])
+
+        r_values = jnp.array([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]])
+        k_values = jnp.array([[10.0, 20.0], [10.0, 20.0], [10.0, 20.0]])
         tpl = EventTemplate(r=(), k=())
         return NumericRecordArray(
             {"r": r_values, "k": k_values},
@@ -403,9 +379,7 @@ class TestMultiDimensionalBatch:
         assert out.batch_shape == (3, 2)
         np.testing.assert_allclose(
             out["f"],
-            [[10.0, 20.0],
-             [20.0, 40.0],
-             [30.0, 60.0]],
+            [[10.0, 20.0], [20.0, 40.0], [30.0, 60.0]],
         )
 
     def test_2d_sweep_record_output(self, sweep_2d):
@@ -438,6 +412,7 @@ class TestMultiDimensionalBatch:
         """Nested regime: each sweep cell marginalises over the MC
         draws; output is a DistributionArray matching the sweep's
         batch_shape."""
+
         @workflow_function(n_broadcast_samples=10, dispatch="sequential")
         def f(p: NumericRecord, noise: float) -> float:
             return p["r"] * p["k"] + noise
@@ -455,7 +430,9 @@ class TestMultiDimensionalBatch:
         vals = jnp.arange(24.0).reshape(shape)
         tpl = EventTemplate(v=())
         sweep = NumericRecordArray(
-            {"v": vals}, batch_shape=shape, template=tpl,
+            {"v": vals},
+            batch_shape=shape,
+            template=tpl,
         )
 
         @workflow_function
@@ -479,8 +456,6 @@ class TestAutoWrapFieldName:
         def my_scalar_fn(p: NumericRecord) -> float:
             return p["x"] * 2
 
-        sweep = NumericRecordArray.stack(
-            [NumericRecord(x=float(i)) for i in range(3)]
-        )
+        sweep = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
         out = my_scalar_fn(p=sweep)
         assert out.fields == ("my_scalar_fn",)

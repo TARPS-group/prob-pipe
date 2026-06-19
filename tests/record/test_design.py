@@ -53,10 +53,12 @@ class TestFullFactorial:
         """
         ff = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
         np.testing.assert_allclose(
-            np.asarray(ff["r"]), [1.5, 1.5, 1.8, 1.8, 2.0, 2.0],
+            np.asarray(ff["r"]),
+            [1.5, 1.5, 1.8, 1.8, 2.0, 2.0],
         )
         np.testing.assert_allclose(
-            np.asarray(ff["K"]), [60., 80., 60., 80., 60., 80.],
+            np.asarray(ff["K"]),
+            [60.0, 80.0, 60.0, 80.0, 60.0, 80.0],
         )
 
     def test_single_marginal_edge_case(self):
@@ -71,7 +73,8 @@ class TestFullFactorial:
         """String marginals produce ``dtype=object`` columns; the
         design falls back to the permissive ``RecordArray`` base."""
         ff = FullFactorialDesign(
-            method=["nutpie", "pymc"], scale=[0.5, 1.0],
+            method=["nutpie", "pymc"],
+            scale=[0.5, 1.0],
         )
         assert isinstance(ff, RecordArray)
         assert not isinstance(ff, NumericRecordArray)
@@ -79,12 +82,15 @@ class TestFullFactorial:
         # Insertion order: method outer, scale inner.
         assert list(ff["method"]) == ["nutpie", "nutpie", "pymc", "pymc"]
         np.testing.assert_allclose(
-            np.asarray(ff["scale"]), [0.5, 1.0, 0.5, 1.0],
+            np.asarray(ff["scale"]),
+            [0.5, 1.0, 0.5, 1.0],
         )
 
     def test_three_axes_shape_and_count(self):
         ff = FullFactorialDesign(
-            a=[1, 2, 3], b=[10, 20], c=[100, 200, 300, 400],
+            a=[1, 2, 3],
+            b=[10, 20],
+            c=[100, 200, 300, 400],
         )
         assert ff.batch_shape == (3 * 2 * 4,)
 
@@ -216,16 +222,20 @@ class TestDesignAsSweep:
 
         @workflow_function
         def label(p: Record):
-            return f'{p["method"]}-{float(p["scale"]):.1f}'
+            return f"{p['method']}-{float(p['scale']):.1f}"
 
         ff = FullFactorialDesign(
-            method=["nutpie", "pymc"], scale=[0.5, 1.0],
+            method=["nutpie", "pymc"],
+            scale=[0.5, 1.0],
         )
         out = label(p=ff)
         assert isinstance(out, RecordArray)
         assert out.batch_shape == (4,)
         assert list(out["label"]) == [
-            "nutpie-0.5", "nutpie-1.0", "pymc-0.5", "pymc-1.0",
+            "nutpie-0.5",
+            "nutpie-1.0",
+            "pymc-0.5",
+            "pymc-1.0",
         ]
 
 
@@ -241,6 +251,7 @@ class TestSelectAll:
         ``WorkflowFunction`` zip rather than cartesian-product — the
         mechanism behind ``f(**design.select_all()) ≡ f(p=design)``."""
         from probpipe.core._record_array import _RecordArrayView
+
         ff = FullFactorialDesign(r=[1.5, 1.8], K=[60.0, 80.0])
         cols = ff.select_all()
         assert set(cols) == {"r", "K"}

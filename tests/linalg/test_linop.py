@@ -19,6 +19,7 @@ from probpipe.linalg.linear_operator import (
 def approx(a, b, tol=1e-5):
     return jnp.allclose(a, b, atol=tol, rtol=0)
 
+
 class TestDenseLinOp:
     @classmethod
     def setup_class(cls):
