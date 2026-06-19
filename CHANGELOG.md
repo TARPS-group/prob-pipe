@@ -9,6 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`ProvenanceMode` enum and `provenance_config` singleton for lineage-tracking
+  control.** Three modes are available: `FULL` retains live references to every
+  parent distribution (good for interactive debugging); `LIGHTWEIGHT` (the new
+  default) stores only `ParentInfo` descriptors — type name, distribution name,
+  and the parent's own provenance chain — so parent data arrays are free to be
+  garbage-collected once a workflow step completes; `OFF` skips provenance
+  entirely for minimum overhead.  The mode is set once at startup:
+  ```python
+  import probpipe
+  from probpipe import ProvenanceMode
+  probpipe.provenance_config.mode = ProvenanceMode.FULL  # for debugging
+  ```
+
+- **`ParentInfo` descriptor** (new public export).  A frozen dataclass carrying
+  `type_name`, `name`, `source` (the parent's own `Provenance`, kept in all
+  non-OFF modes so the ancestry DAG remains traversable), `fingerprint`
+  (reserved for a future caching layer), and `obj` (the live parent object,
+  set only in FULL mode).
+
+- **`Provenance.create()` factory classmethod.**  Centralises mode-checking:
+  reads `provenance_config.mode`, wraps each parent in a `ParentInfo`, and
+  returns `None` in OFF mode.  All ~15 provenance assembly sites in the
+  codebase now route through this single entry point, so mode behavior is
+  uniform everywhere.
+
+### Changed
+
+- **`provenance_ancestors()` now returns `ParentInfo` descriptors, not live
+  Distribution objects (breaking change).**  Under the previous always-live
+  model, every element of the returned list was a `Distribution` or `Record`
+  that could be sampled, inspected, etc.  Under the new LIGHTWEIGHT default,
+  elements are `ParentInfo` instances:
+  ```python
+  # Before
+  ancestor = provenance_ancestors(result)[0]   # Distribution
+  ancestor.sample(key, (10,))                  # worked
+
+  # After (LIGHTWEIGHT default)
+  ancestor = provenance_ancestors(result)[0]   # ParentInfo
+  ancestor.name                                # "prior"
+  ancestor.obj                                 # None — parent may be GC'd
+
+  # To restore live-object access, opt in to FULL mode
+  probpipe.provenance_config.mode = ProvenanceMode.FULL
+  ancestor = provenance_ancestors(result)[0]
+  ancestor.obj                                 # live Distribution
+  ancestor.obj.sample(key, (10,))              # works
+  ```
+  Code that checks `x in provenance_ancestors(result)` or accesses
+  `.samples` / `.log_prob` on ancestors needs to be updated — either
+  switch to FULL mode, or use `ancestor.name` / `ancestor.type_name` for
+  identity checks.
 - **Two-distribution packaging: `probpipe-core` (minimal) and `probpipe`
   (core + all backends) (#237).** The root distribution is renamed `probpipe-core` (minimal JAX base —
   every inference backend is an optional extra), and a new code-less `probpipe`

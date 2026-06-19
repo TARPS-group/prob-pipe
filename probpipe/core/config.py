@@ -1,18 +1,32 @@
-"""Global Prefect orchestration configuration for ProbPipe.
+"""Global configuration for ProbPipe orchestration and provenance.
 
-Provides a ``WorkflowKind`` enum and a ``PrefectConfig`` singleton
-(``prefect_config``) that controls how ``WorkflowFunction`` instances
-dispatch work.  Users import from the top-level package::
+Provides:
+- ``WorkflowKind`` enum and ``PrefectConfig`` singleton (``prefect_config``)
+  controlling how ``WorkflowFunction`` instances dispatch work.
+- ``ProvenanceMode`` enum and ``ProvenanceConfig`` singleton
+  (``provenance_config``) controlling how much lineage history is retained.
+
+Users import from the top-level package::
 
     import probpipe
-    from probpipe import WorkflowKind
+    from probpipe import WorkflowKind, ProvenanceMode
 
     probpipe.prefect_config.workflow_kind = WorkflowKind.TASK
+    probpipe.provenance_config.mode = ProvenanceMode.FULL
 """
 
 from __future__ import annotations
 
 import os
+
+__all__ = [
+    "WorkflowKind",
+    "PrefectConfig",
+    "prefect_config",
+    "ProvenanceMode",
+    "ProvenanceConfig",
+    "provenance_config",
+]
 from enum import Enum
 from typing import Any
 
@@ -173,3 +187,106 @@ class PrefectConfig:
 
 # Module-level singleton
 prefect_config = PrefectConfig()
+
+
+# ---------------------------------------------------------------------------
+# ProvenanceMode enum
+# ---------------------------------------------------------------------------
+
+class ProvenanceMode(Enum):
+    """Controls how much history is retained in provenance chains.
+
+    Members
+    -------
+    FULL
+        Store live references to parent Distribution / Record /
+        RecordArray objects.  The entire ancestry chain stays in memory
+        as long as the final result is alive.  Good for debugging and
+        small test workflows where full graph traversal is useful.
+    LIGHTWEIGHT
+        Store only lightweight :class:`~probpipe.core.provenance.ParentInfo`
+        descriptors — type name, distribution name, and an optional
+        fingerprint.  Parent objects are free to be garbage-collected once
+        a workflow step completes.  This is the default and scales to
+        larger workflows.
+    OFF
+        Attach no provenance at all.  Minimises overhead when lineage
+        tracking is not needed.
+    """
+
+    FULL = "full"
+    LIGHTWEIGHT = "lightweight"
+    OFF = "off"
+
+
+# ---------------------------------------------------------------------------
+# Environment-variable override for ProvenanceMode
+# ---------------------------------------------------------------------------
+
+_PROVENANCE_MODE_ENV_VAR = "PROBPIPE_PROVENANCE_MODE"
+
+
+def _initial_provenance_mode() -> ProvenanceMode:
+    """Resolve the initial ``mode`` from the environment.
+
+    Reads ``PROBPIPE_PROVENANCE_MODE`` (case-insensitive).  Unset →
+    ``LIGHTWEIGHT``.  Unknown values raise ``ValueError`` so deployment-config
+    typos surface loudly rather than silently falling back to ``LIGHTWEIGHT``.
+    """
+    raw = os.environ.get(_PROVENANCE_MODE_ENV_VAR)
+    if raw is None:
+        return ProvenanceMode.LIGHTWEIGHT
+    try:
+        return ProvenanceMode(raw.lower())
+    except ValueError as e:
+        valid = ", ".join(repr(m.value) for m in ProvenanceMode)
+        raise ValueError(
+            f"{_PROVENANCE_MODE_ENV_VAR}={raw!r} is not a valid ProvenanceMode. "
+            f"Expected one of: {valid}."
+        ) from e
+
+
+# ---------------------------------------------------------------------------
+# ProvenanceConfig singleton
+# ---------------------------------------------------------------------------
+
+class ProvenanceConfig:
+    """Global provenance tracking settings.
+
+    Controls how much lineage history ``WorkflowFunction`` retains when
+    assembling provenance for each result.  Set once at application startup::
+
+        import probpipe
+        from probpipe import ProvenanceMode
+
+        probpipe.provenance_config.mode = ProvenanceMode.FULL  # for debugging
+
+    The initial mode can also be set via the ``PROBPIPE_PROVENANCE_MODE``
+    environment variable (``full``, ``lightweight``, or ``off``,
+    case-insensitive).
+    """
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        """Restore all settings to defaults (re-reading the env var)."""
+        self._mode: ProvenanceMode = _initial_provenance_mode()
+
+    @property
+    def mode(self) -> ProvenanceMode:
+        """Current global provenance tracking mode."""
+        return self._mode
+
+    @mode.setter
+    def mode(self, value: ProvenanceMode) -> None:
+        if not isinstance(value, ProvenanceMode):
+            raise TypeError(
+                f"mode must be a ProvenanceMode enum member, "
+                f"got {type(value).__name__}"
+            )
+        self._mode = value
+
+
+# Module-level singleton
+provenance_config = ProvenanceConfig()

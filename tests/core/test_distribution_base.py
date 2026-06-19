@@ -84,7 +84,8 @@ class TestRenamedProvenance:
     def test_source_parents(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
         n2 = n.renamed("y")
-        assert n2.source.parents == (n,)
+        assert len(n2.source.parents) == 1
+        assert n2.source.parents[0].name == "x"
 
     def test_source_metadata(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
@@ -92,14 +93,14 @@ class TestRenamedProvenance:
         assert n2.source.metadata["old_name"] == "x"
         assert n2.source.metadata["new_name"] == "y"
 
-    def test_rename_chain_preserves_ancestry(self):
+    def test_rename_chain_preserves_ancestry(self, full_provenance_mode):
         """a.renamed("b").renamed("c") keeps a in the ancestor DAG."""
         a = Normal(loc=0.0, scale=1.0, name="a")
         b = a.renamed("b")
         c = b.renamed("c")
         ancestors = provenance_ancestors(c)
-        assert a in ancestors
-        assert b in ancestors
+        assert any(anc.obj is a for anc in ancestors)
+        assert any(anc.obj is b for anc in ancestors)
 
     def test_original_source_not_mutated(self):
         """Renaming does not alter the original's source."""

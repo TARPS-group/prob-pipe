@@ -51,7 +51,7 @@ def _mm_provenance(source, mean_result=None, var_result=None):
         metadata["mean_bootstrap"] = mean_result
     if isinstance(var_result, BootstrapDistribution):
         metadata["var_bootstrap"] = var_result
-    return Provenance("from_distribution", parents=(source,), metadata=metadata)
+    return Provenance.create("from_distribution", parents=[source], metadata=metadata)
 
 
 def _point_estimate(x):

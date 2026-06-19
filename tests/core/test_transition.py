@@ -84,7 +84,8 @@ class TestIterate:
         assert dist.source is not None
         assert dist.source.operation == "iterate"
         assert dist.source.metadata["step"] == 0
-        assert dist.source.parents == (initial,)
+        assert len(dist.source.parents) == 1
+        assert dist.source.parents[0].name == initial.name
 
     def test_provenance_preserved(self, initial):
         """Provenance set by step function is not overwritten."""
@@ -96,9 +97,9 @@ class TestIterate:
     def test_provenance_chain(self, initial):
         """Each step's provenance points to the previous distribution."""
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0, 3.0])
-        assert dists[1].source.parents == (initial,)
-        assert dists[2].source.parents == (dists[1],)
-        assert dists[3].source.parents == (dists[2],)
+        assert dists[1].source.parents[0].name == initial.name
+        assert dists[2].source.parents[0].name == dists[1].name
+        assert dists[3].source.parents[0].name == dists[2].name
 
     def test_callback(self, initial):
         """Callback receives correct (index, dist) pairs."""

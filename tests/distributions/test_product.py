@@ -860,7 +860,8 @@ class TestPositionalAndAutoRename:
         comp = joint.components["growth_rate"]
         assert comp.source is not None
         assert comp.source.operation == "renamed"
-        assert comp.source.parents == (n,)
+        assert len(comp.source.parents) == 1
+        assert comp.source.parents[0].name == "x"
         assert comp.source.metadata["old_name"] == "x"
         assert comp.source.metadata["new_name"] == "growth_rate"
 
@@ -902,7 +903,8 @@ class TestPositionalAndAutoRename:
         assert n2.name == "y"
         assert n.name == "x"  # original unchanged
         assert n2.source.operation == "renamed"
-        assert n2.source.parents == (n,)
+        assert len(n2.source.parents) == 1
+        assert n2.source.parents[0].name == "x"
         # Sampling still works
         s = n2._sample(jax.random.PRNGKey(0), (10,))
         assert s.shape == (10,)
@@ -934,13 +936,13 @@ class TestPositionalAndAutoRename:
         np.testing.assert_allclose(np.asarray(s_orig), np.asarray(s_renamed),
                                    atol=1e-6)
 
-    def test_rename_traversable_via_provenance_ancestors(self):
+    def test_rename_traversable_via_provenance_ancestors(self, full_provenance_mode):
         """The original distribution is in the renamed component's ancestors."""
         from probpipe.core.provenance import provenance_ancestors
         original = Normal(loc=0.0, scale=1.0, name="x")
         joint = ProductDistribution(renamed_x=original)
         renamed = joint.components["renamed_x"]
-        assert original in provenance_ancestors(renamed)
+        assert any(a.obj is original for a in provenance_ancestors(renamed))
 
 
 class TestDistributionViewFromDistribution:

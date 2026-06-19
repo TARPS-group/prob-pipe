@@ -196,9 +196,9 @@ class TransformedDistribution(NumericRecordDistribution):
 
         self._approximate = base.is_approximate
 
-        self.with_source(Provenance(
+        self.with_source(Provenance.create(
             "transform",
-            parents=(base,),
+            parents=[base],
             metadata={"bijector": type(bijector).__name__},
         ))
 

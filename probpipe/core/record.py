@@ -198,8 +198,11 @@ class Record:
         """Provenance describing how this Record was created, or ``None``."""
         return self._source
 
-    def with_source(self, source: Provenance) -> Record:
+    def with_source(self, source: Provenance | None) -> Record:
         """Attach provenance to this Record (write-once).
+
+        Passing ``None`` (e.g. the result of ``Provenance.create()`` under
+        :attr:`ProvenanceMode.OFF`) is a no-op.
 
         Mirrors ``Distribution.with_source`` — `_source` is set once and
         subsequent calls raise. Semantic transformations (``replace``,
@@ -216,6 +219,8 @@ class Record:
         ``tree_unflatten`` therefore drops the source; re-attach it on
         the reconstructed Record if you need to preserve the chain.
         """
+        if source is None:
+            return self
         if self._source is not None:
             raise RuntimeError(
                 f"Source already set on {self!r}. "

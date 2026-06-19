@@ -405,6 +405,6 @@ def make_posterior(
         result._auxiliary = auxiliary
 
     result.with_source(
-        Provenance(algorithm, parents=parents, metadata={"algorithm": algorithm, **meta})
+        Provenance.create(algorithm, parents=list(parents), metadata={"algorithm": algorithm, **meta})
     )
     return result

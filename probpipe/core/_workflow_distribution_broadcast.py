@@ -234,13 +234,17 @@ def _make_broadcast_provenance(
     n_broadcast_samples: int,
     workflow_name: str,
     func: Callable[..., Any],
-) -> Provenance:
-    parents = tuple(
-        values[name] for name in broadcast_args if isinstance(values[name], Distribution)
-    )
-    return Provenance(
+) -> Provenance | None:
+    seen: set[int] = set()
+    candidates = []
+    for name in broadcast_args:
+        v = values[name]
+        if isinstance(v, Distribution) and id(v) not in seen:
+            seen.add(id(v))
+            candidates.append(v)
+    return Provenance.create(
         "broadcast",
-        parents=parents,
+        parents=candidates,
         metadata={
             "dispatch": dispatch,
             "orchestrate": workflow_kind.value,
