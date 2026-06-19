@@ -32,7 +32,7 @@ viz = ["graphviz", "matplotlib"]
 docs = [
   "mkdocs-material",
   "mkdocstrings[python]",
-  "mkdocs-jupyter>=0.25.1,<0.26",
+  "mkdocs-jupyter<0.26",
 ]
 # bridgestan 2.7 is the first release whose StanModel constructor takes a
 # .stan path directly and serializes a data dict (deprecating from_stan_file).
