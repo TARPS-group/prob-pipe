@@ -25,8 +25,8 @@ The in-place wrappers write MCMC summaries under::
 
     _auxiliary/diagnostics/mcmc/
 
-The pure ops are useful for the new DiagnosticsModule direction where
-diagnostics are pure operations returning ProbPipe ``Record`` objects.
+The pure ops are useful for workflows where diagnostics are pure operations
+returning ProbPipe ``Record`` objects.
 """
 from __future__ import annotations
 
@@ -105,7 +105,7 @@ def _check_arviz_stats() -> None:
             raise ImportError(
                 "ArviZ is required for MCMC diagnostics; arviz-stats is "
                 "preferred for ArviZ 1.x statistics. "
-                "Install with: pip install probpipe[diagnostics]"
+                "Install with: pip install arviz arviz-stats"
             ) from exc
 
 

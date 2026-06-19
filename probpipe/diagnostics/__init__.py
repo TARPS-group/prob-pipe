@@ -32,13 +32,6 @@ data and raw diagnostic inputs. ``posterior._auxiliary["diagnostics"]`` contains
 ProbPipe-computed summaries, results, warnings, and metadata exposed through
 ``posterior.diagnostics``.
 
-Unified diagnostic workflow
----------------------------
-
-::
-
-    from probpipe.diagnostics import DiagnosticsModule
-
 Diagnostic accessors
 --------------------
 
@@ -70,17 +63,6 @@ exposed as ``posterior.arviz_data``. For backward compatibility,
 from __future__ import annotations
 
 __all__: list[str] = []
-
-
-# ── Unified diagnostics workflow ──────────────────────────────────────────
-try:
-    from .diagnostics_workflow import DiagnosticsModule
-
-    __all__ += [
-        "DiagnosticsModule",
-    ]
-except ImportError:
-    pass
 
 
 # ── MCMC diagnostics ──────────────────────────────────────────────────────

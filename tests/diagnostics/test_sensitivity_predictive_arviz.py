@@ -5,7 +5,6 @@ import builtins
 import importlib
 import importlib.util
 import sys
-import types
 from unittest.mock import MagicMock, patch
 
 import jax
@@ -193,25 +192,14 @@ def test_arviz_bridge_import_sets_xarray_none_when_missing(monkeypatch):
 def test_diagnostics_init_optional_import_paths(monkeypatch):
     import probpipe.diagnostics as diagnostics
 
-    fake_workflow = types.ModuleType("probpipe.diagnostics.diagnostics_workflow")
-
-    class _FakeDiagnosticsModule:
-        pass
-
-    fake_workflow.DiagnosticsModule = _FakeDiagnosticsModule
-    monkeypatch.setitem(
-        sys.modules,
-        "probpipe.diagnostics.diagnostics_workflow",
-        fake_workflow,
-    )
     reloaded = importlib.reload(diagnostics)
-    assert reloaded.DiagnosticsModule is _FakeDiagnosticsModule
+    assert not hasattr(reloaded, "DiagnosticsModule")
+    assert "DiagnosticsModule" not in reloaded.__all__
 
     monkeypatch.setitem(sys.modules, "probpipe.diagnostics.views", None)
     reloaded = importlib.reload(diagnostics)
     assert "DiagnosticsView" in reloaded.__all__
 
-    monkeypatch.delitem(sys.modules, "probpipe.diagnostics.diagnostics_workflow", raising=False)
     monkeypatch.delitem(sys.modules, "probpipe.diagnostics.views", raising=False)
     importlib.import_module("probpipe.diagnostics.views")
     importlib.reload(diagnostics)

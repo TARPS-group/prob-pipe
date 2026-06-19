@@ -30,12 +30,12 @@ def check_arviz_installed() -> None:
     except ImportError:
         raise ImportError(
             "ArviZ is required for diagnostics. "
-            "Install with: pip install probpipe[diagnostics]"
+            "Install with: pip install arviz xarray"
         )
     if xr is None:
         raise ImportError(
             "xarray is required for diagnostics. "
-            "Install with: pip install probpipe[diagnostics]"
+            "Install with: pip install xarray"
         )
 
 
@@ -119,7 +119,7 @@ def to_arviz_dataset(
     """
     if xr is None:
         raise ImportError(
-            "xarray is required. pip install probpipe[diagnostics]"
+            "xarray is required. Install with: pip install xarray"
         )
 
     # ── ApproximateDistribution: delegate to the canonical builder ────────────
