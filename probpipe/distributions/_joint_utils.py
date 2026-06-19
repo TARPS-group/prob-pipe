@@ -8,13 +8,10 @@ used by :class:`ProductDistribution`, :class:`SequentialJointDistribution`,
 from __future__ import annotations
 
 import jax
-import jax.numpy as jnp
 
-from ..custom_types import ArrayLike
 from ..core._numeric_record_distribution import NumericRecordDistribution
-from ..core.record import Record
 from ..core._record_distribution import RecordDistribution
-
+from ..custom_types import ArrayLike
 
 # ---------------------------------------------------------------------------
 # Key-path helpers

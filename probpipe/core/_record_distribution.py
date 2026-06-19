@@ -31,7 +31,7 @@ from .protocols import (
 from .record import ArraySpec, EventTemplate, Record
 
 if TYPE_CHECKING:
-    from ._numeric_record_distribution import FlattenedDistributionView
+    pass
 
 
 __all__ = ["RecordDistribution", "_RecordDistributionView"]
@@ -174,11 +174,11 @@ class _RecordDistributionView(Distribution):
     _sampling_cost = "low"
     _preferred_orchestration = None
 
-    def __new__(cls, parent: "RecordDistribution", key: str) -> "_RecordDistributionView":
+    def __new__(cls, parent: RecordDistribution, key: str) -> _RecordDistributionView:
         actual_cls = _view_class_for_parent(parent)
         return object.__new__(actual_cls)
 
-    def __init__(self, parent: "RecordDistribution", key: str) -> None:
+    def __init__(self, parent: RecordDistribution, key: str) -> None:
         # ``parent.event_template`` is contractually non-``None``
         # (metaclass-enforced on every ``RecordDistribution`` instance).
         template = parent.event_template
@@ -229,7 +229,7 @@ class _RecordDistributionView(Distribution):
         return self.event_shape
 
     @property
-    def dtype(self) -> "jnp.dtype | None":
+    def dtype(self) -> jnp.dtype | None:
         """Dtype of a single draw, if the parent exposes ``dtypes``."""
         dtypes = getattr(self._parent, "dtypes", None)
         if isinstance(dtypes, dict):

@@ -3,56 +3,39 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import pytest
-from probpipe import from_distribution
+
 from probpipe import (
-    NumericRecordDistribution,
     RecordEmpiricalDistribution,
-    EmpiricalDistribution,
-    Provenance,
-)
-from probpipe.distributions import (
-    MultivariateNormal,
-    Normal,
-    Beta,
-    Gamma,
-    InverseGamma,
-    Exponential,
-    LogNormal,
-    StudentT,
-    Uniform,
-    Cauchy,
-    Laplace,
-    HalfNormal,
-    HalfCauchy,
-    Pareto,
-    TruncatedNormal,
-    Bernoulli,
-    Binomial,
-    Poisson,
-    Categorical,
-    NegativeBinomial,
-    Dirichlet,
-    Multinomial,
-    Wishart,
-    VonMisesFisher,
+    from_distribution,
 )
 from probpipe.core.constraints import (
-    Constraint,
-    real,
-    positive,
-    non_negative,
-    non_negative_integer,
+    _supports_compatible,
     boolean,
-    unit_interval,
-    simplex,
-    positive_definite,
-    sphere,
-    interval,
     greater_than,
     integer_interval,
-    _supports_compatible,
+    interval,
+    non_negative,
+    non_negative_integer,
+    positive,
+    positive_definite,
+    real,
+    simplex,
+    sphere,
+    unit_interval,
 )
-
+from probpipe.distributions import (
+    Bernoulli,
+    Beta,
+    Binomial,
+    Dirichlet,
+    Gamma,
+    MultivariateNormal,
+    Normal,
+    Poisson,
+    Uniform,
+    VonMisesFisher,
+    Wishart,
+)
 
 # ── Section 1: Constraint tests ──────────────────────────────────────────────
 

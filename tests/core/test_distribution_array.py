@@ -33,7 +33,6 @@ from probpipe.core._distribution_array import (
     _make_distribution_array,
 )
 
-
 # ---------------------------------------------------------------------------
 # Construction & invariants
 # ---------------------------------------------------------------------------
@@ -211,7 +210,8 @@ class TestContainerSurface:
         ``_flat_component`` / ``components`` for the single cell.
         Fully-joint GRF predictions with no extra batch axes return
         a 0-d DA."""
-        from probpipe import DistributionArray, MultivariateNormal as _MVN
+        from probpipe import DistributionArray
+        from probpipe import MultivariateNormal as _MVN
 
         da = DistributionArray.from_batched_params(
             _MVN,
@@ -230,7 +230,8 @@ class TestContainerSurface:
         """``len(np.zeros(()))`` raises ``TypeError``; so does
         ``len(da)`` on a 0-d ``DistributionArray``. ``da.size``
         still works."""
-        from probpipe import DistributionArray, MultivariateNormal as _MVN
+        from probpipe import DistributionArray
+        from probpipe import MultivariateNormal as _MVN
 
         da = DistributionArray.from_batched_params(
             _MVN,
@@ -663,7 +664,7 @@ class TestFromBatchedParams:
     """Public entry point that dispatches on ``SupportsArrayBackend``."""
 
     def test_normal_uses_tfp_backend(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
         from probpipe.distributions._tfp_base import _TFPArrayBackend
 
         da = DistributionArray.from_batched_params(
@@ -679,7 +680,7 @@ class TestFromBatchedParams:
         assert len(da) == 5
 
     def test_per_cell_name_auto_suffix(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
 
         da = DistributionArray.from_batched_params(
             Normal,
@@ -692,7 +693,7 @@ class TestFromBatchedParams:
         assert da[2].name == "weights_2"
 
     def test_per_cell_params_correctly_sliced(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
 
         da = DistributionArray.from_batched_params(
             Normal,
@@ -710,7 +711,7 @@ class TestFromBatchedParams:
             )
 
     def test_scalar_param_broadcasts_through_cells(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
 
         da = DistributionArray.from_batched_params(
             Normal,
@@ -722,7 +723,7 @@ class TestFromBatchedParams:
             assert float(da[i].scale) == 2.5
 
     def test_inferred_batch_shape_uses_broadcast(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
 
         # Both arrays imply batch_shape=(4,) — broadcast convention.
         da = DistributionArray.from_batched_params(
@@ -734,7 +735,7 @@ class TestFromBatchedParams:
         assert da.batch_shape == (4,)
 
     def test_explicit_batch_shape_honored(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
 
         da = DistributionArray.from_batched_params(
             Normal,
@@ -749,7 +750,7 @@ class TestFromBatchedParams:
         assert da[1, 2].name == "g_5"
 
     def test_no_array_params_requires_explicit_batch_shape(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
 
         with pytest.raises(ValueError, match="batch_shape"):
             DistributionArray.from_batched_params(
@@ -763,7 +764,7 @@ class TestFromBatchedParams:
         """MVN-style classes need explicit ``batch_shape`` because
         their per-param event ranks differ (``loc`` is
         ``(*batch, d)``, ``scale_tril`` is ``(*batch, d, d)``)."""
-        from probpipe import MultivariateNormal, DistributionArray
+        from probpipe import DistributionArray, MultivariateNormal
         from probpipe.distributions._tfp_base import _TFPArrayBackend
 
         d = 3
@@ -782,7 +783,7 @@ class TestFromBatchedParams:
     def test_inference_punts_on_event_rank_mismatch(self):
         """Without explicit ``batch_shape``, MVN-style heterogeneous
         event-rank params raise a clear ``ValueError``."""
-        from probpipe import MultivariateNormal, DistributionArray
+        from probpipe import DistributionArray, MultivariateNormal
 
         d = 3
         with pytest.raises(ValueError, match="batch_shape"):
@@ -837,8 +838,9 @@ class TestFromBatchedParams:
         against TFP's own batched form (which is what
         ``_TFPArrayBackend`` wraps internally anyway).
         """
-        from probpipe import Normal, DistributionArray
         import tensorflow_probability.substrates.jax.distributions as tfd
+
+        from probpipe import DistributionArray, Normal
 
         loc = jnp.array([0.5, -1.2, 3.7, 0.0])
         scale = jnp.array([0.1, 0.2, 0.3, 0.4])
@@ -863,7 +865,7 @@ class TestFromBatchedParams:
         )
 
     def test_iteration_matches_indexing(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
 
         da = DistributionArray.from_batched_params(
             Normal,
@@ -885,7 +887,7 @@ class TestDistributionFromBatchedParamsAlias:
     """Ergonomic per-class alias on Distribution[T]."""
 
     def test_alias_dispatches_to_distribution_array_factory(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
         from probpipe.distributions._tfp_base import _TFPArrayBackend
 
         da = Normal.from_batched_params(
@@ -899,7 +901,7 @@ class TestDistributionFromBatchedParamsAlias:
         assert da[0].name == "x_0"
 
     def test_alias_matches_classmethod_call(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
 
         loc = jnp.arange(4.0)
         scale = jnp.linspace(0.1, 0.4, 4)
@@ -925,14 +927,14 @@ class TestDistributionFromBatchedParamsAlias:
             assert float(a.scale) == float(f.scale)
 
     def test_alias_inherited_by_all_distribution_subclasses(self):
-        from probpipe.core._distribution_base import Distribution
         from probpipe import (
-            Normal,
             Beta,
+            EmpiricalDistribution,
             Gamma,
             MultivariateNormal,
-            EmpiricalDistribution,
+            Normal,
         )
+        from probpipe.core._distribution_base import Distribution
 
         # Every Distribution subclass inherits the alias.
         for cls in (Distribution, Normal, Beta, Gamma, MultivariateNormal, EmpiricalDistribution):

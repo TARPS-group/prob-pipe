@@ -22,7 +22,6 @@ from ._distribution_base import (
     set_return_approx_dist,
 )
 
-
 # Mutable globals: delegate attribute access to _distribution_base so that
 # mutations via set_default_num_evaluations / set_return_approx_dist are
 # visible through this facade module.
@@ -36,51 +35,50 @@ def __getattr__(name: str):
 
 
 # -- _record_distribution ---------------------------------------------------
-from ._record_distribution import (
-    RecordDistribution,
-    _RecordDistributionView,
+# -- _broadcast_distributions -----------------------------------------------
+from ._broadcast_distributions import (
+    BroadcastDistribution,
+    MarginalizedBroadcastDistribution,
+    _ListMarginal,
+    _make_marginal,
+    _make_mixture_marginal,
+    _MixtureMarginal,
+    _RecordMarginal,
+)
+
+# -- _empirical -------------------------------------------------------------
+from ._empirical import (
+    BootstrapReplicateDistribution,
+    EmpiricalDistribution,
+    RecordBootstrapReplicateDistribution,
+    RecordEmpiricalDistribution,
 )
 
 # -- _numeric_record_distribution ---------------------------------------------------
 from ._numeric_record_distribution import (
-    NumericRecordDistribution,
-    FlatNumericRecordDistribution,
     BootstrapDistribution,
+    FlatNumericRecordDistribution,
     FlattenedDistributionView,
+    NumericRecordDistribution,
     NumericRecordDistributionView,
     _mc_expectation,
     _vmap_sample,
 )
 
-# -- _empirical -------------------------------------------------------------
-from ._empirical import (
-    EmpiricalDistribution,
-    RecordEmpiricalDistribution,
-    BootstrapReplicateDistribution,
-    RecordBootstrapReplicateDistribution,
-)
-
-# -- _broadcast_distributions -----------------------------------------------
-from ._broadcast_distributions import (
-    BroadcastDistribution,
-    MarginalizedBroadcastDistribution,
-    _RecordMarginal,
-    _ListMarginal,
-    _MixtureMarginal,
-    _make_marginal,
-    _make_mixture_marginal,
-)
-
 # -- _random_functions ------------------------------------------------------
 from ._random_functions import (
-    RandomFunction,
     ArrayRandomFunction,
+    RandomFunction,
 )
 
 # -- _random_measures -------------------------------------------------------
 from ._random_measures import (
-    RandomMeasure,
     NumericRandomMeasure,
+    RandomMeasure,
+)
+from ._record_distribution import (
+    RecordDistribution,
+    _RecordDistributionView,
 )
 
 __all__ = [

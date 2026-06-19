@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import pytest
 
 from probpipe import (
+    ArrayRandomFunction,
     Distribution,
-    DistributionArray,
     Normal,
     RandomFunction,
-    ArrayRandomFunction,
+    log_prob,
+    sample,
 )
-from probpipe import log_prob, sample
 
 # Test fixtures construct ``Normal`` from batched arrays; the rejection
 # in ``TFPDistribution.__init__`` (PR-C.2) makes that a user-facing
@@ -22,7 +21,6 @@ from probpipe import log_prob, sample
 # library-internal code paths (RandomFunction subclasses), so the
 # bypass is appropriate.
 from probpipe.distributions._tfp_base import _allow_batched_tfp_init
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

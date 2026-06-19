@@ -14,18 +14,15 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 
-from ..custom_types import Array, ArrayLike, PRNGKey
+from ..core._record_distribution import (
+    RecordDistribution,
+    _build_event_template,
+)
 from ..core.distribution import (
     Distribution,
     NumericRecordDistribution,
     _mc_expectation,
 )
-from ..core._record_distribution import (
-    RecordDistribution,
-    _build_event_template,
-)
-from ..core.record import Record
-from ..core.provenance import Provenance
 from ..core.protocols import (
     SupportsConditioning,
     SupportsLogProb,
@@ -34,6 +31,9 @@ from ..core.protocols import (
     SupportsVariance,
     protocols_supported_by_all,
 )
+from ..core.provenance import Provenance
+from ..core.record import Record
+from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
@@ -432,7 +432,7 @@ class SequentialJointDistribution(
     def _condition_on_impl(
         self,
         observed_leaves: dict[KeyPath, ArrayLike],
-    ) -> "SequentialJointDistribution":
+    ) -> SequentialJointDistribution:
         """Condition on observed component values.
 
         The resulting distribution is sampleable as long as every conditioned

@@ -7,18 +7,24 @@ import jax.numpy as jnp
 import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
-from probpipe.distributions import (
-    TransformedDistribution,
-    Normal,
-    MultivariateNormal,
+from probpipe import (
+    EmpiricalDistribution,
+    NumericRecordDistribution,
+    log_prob,
+    mean,
+    sample,
+    variance,
 )
-from probpipe import NumericRecordDistribution, EmpiricalDistribution
 from probpipe.core.constraints import (
-    real,
     positive,
+    real,
     unit_interval,
 )
-from probpipe import log_prob, mean, sample, variance
+from probpipe.distributions import (
+    MultivariateNormal,
+    Normal,
+    TransformedDistribution,
+)
 
 
 @pytest.fixture

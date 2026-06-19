@@ -9,7 +9,7 @@ Provides:
 from __future__ import annotations
 
 import copy as _copy
-from abc import ABC, abstractmethod
+from abc import ABC
 
 # ``_ProtocolMeta`` is technically private (leading underscore in
 # ``typing``), but it's the only way to compose a custom metaclass with
@@ -18,18 +18,14 @@ from abc import ABC, abstractmethod
 # ecosystem (Pydantic, attrs, etc.). If a future Python release renames
 # it, the metaclass would need to switch to whatever new base ``typing``
 # exposes; the conflict-avoidance constraint itself doesn't change.
-from typing import TYPE_CHECKING, Any, _ProtocolMeta  # noqa: PLC2701
+from typing import TYPE_CHECKING, Any, _ProtocolMeta
 
 if TYPE_CHECKING:
     from xarray import DataTree
 
     from ._distribution_array import DistributionArray
-    from .record import EventTemplate
 
-import jax
-import jax.numpy as jnp
 
-from ..custom_types import PRNGKey
 from .provenance import Provenance
 
 # ---------------------------------------------------------------------------
@@ -250,7 +246,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         name: str,
         batch_shape: tuple[int, ...] | None = None,
         **batched_params,
-    ) -> "DistributionArray":
+    ) -> DistributionArray:
         """Class-method alias for :meth:`DistributionArray.from_batched_params`.
 
         Lets users write the ergonomic per-class form::

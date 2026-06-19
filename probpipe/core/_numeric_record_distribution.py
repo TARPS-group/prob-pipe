@@ -39,8 +39,9 @@ express a vectorized batch of structured random variables.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import prod
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .record import NumericEventTemplate
@@ -50,7 +51,7 @@ import jax.numpy as jnp
 
 from .._dtype import _as_float_array
 from .._utils import _auto_key
-from .._weights import Weights, weighted_mean, weighted_variance
+from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from . import _distribution_base as _base
 from ._distribution_base import Distribution
@@ -75,7 +76,7 @@ from .protocols import (
 
 
 def _vmap_sample(
-    dist: "NumericRecordDistribution",
+    dist: NumericRecordDistribution,
     key: PRNGKey,
     sample_shape: tuple[int, ...] = (),
 ) -> Any:
@@ -112,7 +113,7 @@ def _vmap_sample(
 
 
 def _mc_expectation(
-    dist: "NumericRecordDistribution",
+    dist: NumericRecordDistribution,
     f: Callable[[Any], Any],
     *,
     key: PRNGKey | None = None,
@@ -264,7 +265,7 @@ class NumericRecordDistribution(RecordDistribution):
         object.__setattr__(self, "_event_template", tpl)
         return tpl
 
-    def renamed(self, new_name: str) -> "NumericRecordDistribution":
+    def renamed(self, new_name: str) -> NumericRecordDistribution:
         """Return a renamed copy, regenerating an auto-built template.
 
         Extends :meth:`Distribution.renamed`. When the cached template
@@ -345,7 +346,7 @@ class NumericRecordDistribution(RecordDistribution):
 
     def _check_support_compatible(
         self,
-        source: "NumericRecordDistribution",
+        source: NumericRecordDistribution,
     ) -> None:
         """Raise ``ValueError`` if *source*'s per-field supports are
         incompatible with *self*'s (the target's) per-field supports.

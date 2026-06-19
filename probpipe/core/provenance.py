@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
     ProvenanceNode = Distribution | Record | RecordArray
 
-from .config import ProvenanceMode, provenance_config  # noqa: E402
+from .config import ProvenanceMode, provenance_config
 
 __all__ = [
     "ParentInfo",
@@ -196,7 +196,7 @@ def _parent_key(p: Any) -> Any:
     return id(p)
 
 
-def provenance_ancestors(node: "ProvenanceNode") -> list[Any]:
+def provenance_ancestors(node: ProvenanceNode) -> list[Any]:
     """Return all ancestor nodes reachable via provenance chains.
 
     Traverses ``node.source.parents`` recursively (breadth-first) and
@@ -232,7 +232,7 @@ def provenance_ancestors(node: "ProvenanceNode") -> list[Any]:
     return ancestors
 
 
-def provenance_dag(dist: "Distribution"):
+def provenance_dag(dist: Distribution):
     """Build a Graphviz ``Digraph`` of the provenance chain rooted at *dist*.
 
     Each node is labelled with its type and name.  Edges point from parent
@@ -276,7 +276,7 @@ def provenance_dag(dist: "Distribution"):
                     _visit_parent(pp, nid, p.source.operation)
         dot.edge(nid, child_nid, label=operation)
 
-    def _visit_dist(d: "Distribution") -> str:
+    def _visit_dist(d: Distribution) -> str:
         nid = str(id(d))
         if id(d) in visited:
             return nid

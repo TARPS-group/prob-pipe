@@ -6,6 +6,7 @@ single place to change if the backend ever needs to swap.
 """
 
 from __future__ import annotations
+
 from typing import TypeAlias
 
 import jax

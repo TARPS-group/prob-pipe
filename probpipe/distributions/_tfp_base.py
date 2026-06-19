@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
-from typing import Any, Callable, Iterator
+from collections.abc import Callable, Iterator
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -31,7 +32,6 @@ from ..core.protocols import (
     SupportsVariance,
 )
 from ..custom_types import Array, ArrayLike, PRNGKey
-
 
 # ---------------------------------------------------------------------------
 # Internal bypass for the batched-parameters rejection
@@ -239,7 +239,7 @@ class TFPDistribution(
         name: str,
         batch_shape: tuple[int, ...],
         **batched_params: Any,
-    ) -> "_TFPArrayBackend":
+    ) -> _TFPArrayBackend:
         """Construct a fused TFP-batched backend for ``DistributionArray``.
 
         Inherited automatically by every concrete TFP-backed distribution
@@ -503,7 +503,7 @@ class _TFPArrayBackend:
         return children, aux
 
     @classmethod
-    def tree_unflatten(cls, aux, children) -> "_TFPArrayBackend":
+    def tree_unflatten(cls, aux, children) -> _TFPArrayBackend:
         """Reconstruct the backend without re-running the
         ``__init__`` shape sanity check.
 

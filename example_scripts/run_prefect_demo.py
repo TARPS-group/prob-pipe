@@ -36,27 +36,25 @@ import numpy as np
 import pandas as pd
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
+# ---------------------------------------------------------------------------
+# 1. Configure Prefect globally
+# ---------------------------------------------------------------------------
+from prefect.task_runners import ThreadPoolTaskRunner
+
 import probpipe
 from probpipe import (
-    Record,
+    BootstrapReplicateDistribution,
+    EmpiricalDistribution,
+    GLMLikelihood,
     Normal,
     ProductDistribution,
-    EmpiricalDistribution,
-    BootstrapReplicateDistribution,
-    GLMLikelihood,
+    Record,
     SimpleModel,
     WorkflowKind,
     condition_on,
     mean,
     workflow_function,
 )
-
-
-# ---------------------------------------------------------------------------
-# 1. Configure Prefect globally
-# ---------------------------------------------------------------------------
-
-from prefect.task_runners import ThreadPoolTaskRunner
 
 probpipe.prefect_config.workflow_kind = WorkflowKind.TASK
 probpipe.prefect_config.task_runner = ThreadPoolTaskRunner()

@@ -6,24 +6,23 @@ import numpy as np
 import pytest
 import scipy.stats as _scipy
 
-from probpipe.distributions import (
-    Normal,
-    Beta,
-    Gamma,
-    InverseGamma,
-    Exponential,
-    LogNormal,
-    StudentT,
-    Uniform,
-    Cauchy,
-    Laplace,
-    HalfNormal,
-    HalfCauchy,
-    Pareto,
-    TruncatedNormal,
-)
 from probpipe import NumericRecordDistribution, log_prob, mean, sample, variance
-
+from probpipe.distributions import (
+    Beta,
+    Cauchy,
+    Exponential,
+    Gamma,
+    HalfCauchy,
+    HalfNormal,
+    InverseGamma,
+    Laplace,
+    LogNormal,
+    Normal,
+    Pareto,
+    StudentT,
+    TruncatedNormal,
+    Uniform,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures

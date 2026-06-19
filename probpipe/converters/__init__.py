@@ -7,17 +7,15 @@ conversion** – passing a ``@runtime_checkable`` protocol (e.g.,
 ``SupportsLogProb``) as the target to ``converter_registry.convert()``.
 """
 
+# -- register built-in converters -------------------------------------------
+from ._probpipe import ProbPipeConverter
 from ._registry import (
-    Converter,
-    ConverterRegistry,
     ConversionInfo,
     ConversionMethod,
+    Converter,
+    ConverterRegistry,
     converter_registry,
 )
-
-# -- register built-in converters -------------------------------------------
-
-from ._probpipe import ProbPipeConverter
 from ._tfp import TFPConverter
 
 converter_registry.register(ProbPipeConverter())
@@ -25,7 +23,7 @@ converter_registry.register(TFPConverter())
 
 # Optionally register scipy converter
 try:
-    from ._scipy import ScipyConverter, _HAS_SCIPY
+    from ._scipy import _HAS_SCIPY, ScipyConverter
 
     if _HAS_SCIPY:
         converter_registry.register(ScipyConverter())
@@ -34,18 +32,18 @@ except ImportError:
 
 # -- register protocol converter with built-in resolvers --------------------
 
-from ._protocol import ProtocolConverter, _resolve_target_for_log_prob
 from ..core.protocols import SupportsLogProb
+from ._protocol import ProtocolConverter, _resolve_target_for_log_prob
 
 _protocol_converter = ProtocolConverter(converter_registry)
 _protocol_converter.register_protocol_target(SupportsLogProb, _resolve_target_for_log_prob)
 converter_registry.register(_protocol_converter)
 
 __all__ = [
-    "ConverterRegistry",
     "ConversionInfo",
     "ConversionMethod",
     "Converter",
+    "ConverterRegistry",
     "ProtocolConverter",
     "converter_registry",
 ]

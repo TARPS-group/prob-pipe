@@ -8,14 +8,13 @@ Also included are more specialized operations like `mah_dist_squared()`
 that are not in one-to-one correspondence with `LinOp` methods.
 """
 
+from typing import Any
+
 import jax.numpy as jnp
-from .linear_operator import LinAlgError
-from typing import Any, TypeAlias
 
+from .._array_utils import _ensure_matrix
 from ..custom_types import Array, ArrayLike
-from .._array_utils import _is_array, _ensure_matrix
-from .linear_operator import _as_linear_operator, LinOpLike, CholeskyFactor
-
+from .linear_operator import CholeskyFactor, LinAlgError, LinOpLike, _as_linear_operator
 
 # -----------------------------------------------------------------------------
 # Expose LinOp methods as functions

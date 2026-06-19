@@ -17,14 +17,14 @@ from ._simple import SimpleModel
 from ._simple_generative import SimpleGenerativeModel
 
 __all__ = [
-    "GLMLikelihood",
-    "Likelihood",
     "ConditionallyIndependentLikelihood",
+    "GLMLikelihood",
     "GenerativeLikelihood",
     "IncrementalConditioner",
+    "Likelihood",
     "ProbabilisticModel",
-    "SimpleModel",
     "SimpleGenerativeModel",
+    "SimpleModel",
 ]
 
 # Optional backends — available when their dependencies are installed.

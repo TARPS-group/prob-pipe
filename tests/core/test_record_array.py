@@ -16,7 +16,6 @@ from probpipe import (
 )
 from probpipe.core.record import EventTemplate
 
-
 # ---------------------------------------------------------------------------
 # RecordArray construction
 # ---------------------------------------------------------------------------

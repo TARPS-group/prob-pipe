@@ -125,8 +125,8 @@ class DistributionArray[T](Distribution[T]):
     # lazily; the literal-array constructor sets it directly.
     # ``_backend`` is ``None`` for the literal path and set by
     # :meth:`_from_backend`.
-    _components: "tuple[Distribution, ...] | None"
-    _backend: "_DistributionArrayBackend | None"
+    _components: tuple[Distribution, ...] | None
+    _backend: _DistributionArrayBackend | None
 
     def __init__(
         self,
@@ -188,7 +188,7 @@ class DistributionArray[T](Distribution[T]):
         name: str,
         batch_shape: tuple[int, ...] | None = None,
         **batched_params,
-    ) -> "DistributionArray":
+    ) -> DistributionArray:
         """Construct a ``DistributionArray`` of homogeneous components.
 
         The recommended way to build a ``DistributionArray`` whose
@@ -285,7 +285,7 @@ class DistributionArray[T](Distribution[T]):
         name: str,
         batch_shape: tuple[int, ...],
         batched_params: dict,
-    ) -> "DistributionArray":
+    ) -> DistributionArray:
         """Build by constructing one ``dist_cls`` instance per cell.
 
         Used by :meth:`from_batched_params` for any ``dist_cls`` that
@@ -309,10 +309,10 @@ class DistributionArray[T](Distribution[T]):
     @classmethod
     def _from_backend(
         cls,
-        backend: "_DistributionArrayBackend",
+        backend: _DistributionArrayBackend,
         *,
         name: str | None = None,
-    ) -> "DistributionArray":
+    ) -> DistributionArray:
         """Construct a backend-delegated ``DistributionArray``.
 
         Storage refactor entry point: when a homogeneous batched form

@@ -18,11 +18,9 @@ from probpipe import (
     Normal,
 )
 from probpipe.core._record_distribution import (
-    RecordDistribution,
     _RecordDistributionView,
 )
 from probpipe.distributions.joint import ProductDistribution
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

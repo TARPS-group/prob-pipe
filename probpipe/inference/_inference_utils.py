@@ -39,9 +39,8 @@ logger = logging.getLogger(__name__)
 
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsSampling
-from ..core.record import Record, EventTemplate
+from ..core.record import EventTemplate, Record
 from ..custom_types import Array, ArrayLike
-
 
 __all__ = [
     "as_prng_key",
@@ -50,13 +49,13 @@ __all__ = [
     "build_target_log_prob",
     "build_target_log_prob_flat",
     "extract_chain_columns",
-    "posterior_var_order",
+    "extract_event_template",
     "get_init_state",
     "get_prior",
-    "extract_event_template",
     "is_jax_traceable",
     "is_simple_model",
     "parallel_chain_map",
+    "posterior_var_order",
     "run_chain_scan",
 ]
 
@@ -440,7 +439,7 @@ def build_mcmc_datatree(
     chains: list[Array],
     sample_stats: dict[str, np.ndarray] | None = None,
     warmup_chains: list[Array] | None = None,
-) -> "DataTree":
+) -> DataTree:
     """Build an arviz-convention DataTree from MCMC chains + diagnostics.
 
     Groups: ``posterior``, ``sample_stats`` (if provided), ``warmup``

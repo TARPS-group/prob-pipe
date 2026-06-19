@@ -14,7 +14,6 @@ from probpipe.core.record import (
     OpaqueSpec,
 )
 
-
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
@@ -361,7 +360,6 @@ class TestFromRecord:
     def test_list_leaf_after_asarray_is_numeric(self):
         """The opposite end of the list-leaf story: wrapping the list
         in ``np.asarray`` produces a numeric template entry."""
-        import numpy as np
 
         r = Record(xs=np.asarray([1.0, 2.0, 3.0]))
         tpl = EventTemplate.from_record(r)

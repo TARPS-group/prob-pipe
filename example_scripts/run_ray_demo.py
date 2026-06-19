@@ -67,27 +67,25 @@ import numpy as np
 import pandas as pd
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
+# ---------------------------------------------------------------------------
+# 1. Configure Prefect to use RayTaskRunner
+# ---------------------------------------------------------------------------
+from prefect_ray import RayTaskRunner
+
 import probpipe
 from probpipe import (
-    Record,
+    BootstrapReplicateDistribution,
+    EmpiricalDistribution,
+    GLMLikelihood,
     Normal,
     ProductDistribution,
-    EmpiricalDistribution,
-    BootstrapReplicateDistribution,
-    GLMLikelihood,
+    Record,
     SimpleModel,
     WorkflowKind,
     condition_on,
     mean,
     workflow_function,
 )
-
-
-# ---------------------------------------------------------------------------
-# 1. Configure Prefect to use RayTaskRunner
-# ---------------------------------------------------------------------------
-
-from prefect_ray import RayTaskRunner
 
 # ``address="auto"`` attaches to the persistent Ray head you launched with
 # ``ray start --head`` (see Usage above). Without that head, each flow would

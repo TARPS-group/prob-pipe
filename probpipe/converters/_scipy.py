@@ -10,7 +10,6 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from .._utils import _auto_key
 from ..core.distribution import (
     NumericRecordDistribution,
     RecordEmpiricalDistribution,
@@ -31,14 +30,14 @@ except ImportError:
 def _build_scipy_to_probpipe() -> dict[type, tuple[str, callable]]:
     """Build scipy.stats type → (ProbPipe class, kwargs extractor)."""
     from ..distributions.continuous import (
-        Normal,
         Beta,
-        Gamma,
-        Exponential,
-        LogNormal,
-        Uniform,
         Cauchy,
+        Exponential,
+        Gamma,
         Laplace,
+        LogNormal,
+        Normal,
+        Uniform,
     )
 
     if not _HAS_SCIPY:

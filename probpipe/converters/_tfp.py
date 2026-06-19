@@ -11,7 +11,6 @@ from typing import Any
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from ..custom_types import PRNGKey
 from .._utils import _auto_key
 from ..core.distribution import (
     NumericRecordDistribution,
@@ -19,7 +18,6 @@ from ..core.distribution import (
 )
 from ..core.provenance import Provenance
 from ._registry import ConversionInfo, ConversionMethod, Converter
-
 
 # ---------------------------------------------------------------------------
 # TFP → ProbPipe mapping: (ProbPipe class, parameter extractor)
@@ -29,30 +27,28 @@ from ._registry import ConversionInfo, ConversionMethod, Converter
 def _build_tfp_to_probpipe() -> dict[type, tuple[str, callable]]:
     """Build mapping lazily to avoid circular imports."""
     from ..distributions.continuous import (
-        Normal,
         Beta,
-        Gamma,
-        InverseGamma,
+        Cauchy,
         Exponential,
+        Gamma,
+        HalfCauchy,
+        HalfNormal,
+        InverseGamma,
+        Laplace,
         LogNormal,
+        Normal,
+        Pareto,
         StudentT,
         Uniform,
-        Cauchy,
-        Laplace,
-        HalfNormal,
-        HalfCauchy,
-        Pareto,
     )
     from ..distributions.discrete import (
         Bernoulli,
-        Binomial,
-        Poisson,
         Categorical,
-        NegativeBinomial,
+        Poisson,
     )
     from ..distributions.multivariate import (
-        MultivariateNormal,
         Dirichlet,
+        MultivariateNormal,
     )
 
     return {

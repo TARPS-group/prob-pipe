@@ -6,15 +6,12 @@ import numpy as np
 import pytest
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from probpipe import Normal, MultivariateNormal, GLMLikelihood, predictive_check
+from probpipe import GLMLikelihood, MultivariateNormal, Normal, predictive_check
 from probpipe.core.distribution import EmpiricalDistribution
 from probpipe.validation import predictive_check as pc_direct
 from probpipe.validation._predictive_check import (
-    _predictive_check_batched,
-    _predictive_check_loop,
     _supports_key_arg,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helper: JAX-based generative likelihood

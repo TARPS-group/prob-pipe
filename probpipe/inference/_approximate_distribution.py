@@ -10,11 +10,10 @@ if TYPE_CHECKING:
 import jax.numpy as jnp
 
 from .._weights import Weights
-from ..core._record_distribution import _RecordDistributionView
 from ..core.distribution import Distribution, RecordEmpiricalDistribution
 from ..core.provenance import Provenance
 from ..core.record import ArraySpec, EventTemplate, OpaqueSpec, Record, _spec_size
-from ..custom_types import Array, ArrayLike, PRNGKey
+from ..custom_types import Array, ArrayLike
 
 __all__ = ["ApproximateDistribution", "make_posterior"]
 

@@ -75,7 +75,7 @@ class KDEDistribution(TFPDistribution):
         *,
         log_weights: ArrayLike | Weights | None = None,
         bandwidth: ArrayLike | None = None,
-        event_template: "EventTemplate | None" = None,
+        event_template: EventTemplate | None = None,
         name: str | None = None,
     ):
         samples = _as_float_array(samples)
@@ -192,7 +192,7 @@ class KDEDistribution(TFPDistribution):
         *,
         bandwidth: ArrayLike | None = None,
         name: str | None = None,
-    ) -> "KDEDistribution":
+    ) -> KDEDistribution:
         """Build a KDE from a :class:`RecordEmpiricalDistribution` source.
 
         Reuses the source's stored samples, weights, and record template,

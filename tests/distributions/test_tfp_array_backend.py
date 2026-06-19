@@ -26,7 +26,6 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 from probpipe import Beta, Gamma, MultivariateNormal, Normal
 from probpipe.distributions._tfp_base import _TFPArrayBackend
 
-
 # ---------------------------------------------------------------------------
 # Construction + minimum surface
 # ---------------------------------------------------------------------------

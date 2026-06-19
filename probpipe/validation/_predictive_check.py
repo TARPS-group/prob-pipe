@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
-
-import numpy as np
+from collections.abc import Callable
+from typing import Any
 
 import jax
-import jax.numpy as jnp
+import numpy as np
 
+from .._utils import _auto_key
 from ..core.distribution import RecordEmpiricalDistribution
 from ..core.node import workflow_function
 from ..core.protocols import SupportsSampling
 from ..custom_types import PRNGKey
-from .._utils import _auto_key
 from ..modeling._likelihood import GenerativeLikelihood  # needed for type hint resolution
 
 __all__ = ["predictive_check"]

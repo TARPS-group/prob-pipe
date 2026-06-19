@@ -217,7 +217,6 @@ def with_resampling(
     :class:`~probpipe.core.distribution.EmpiricalDistribution` type.
     """
     import jax
-    import jax.numpy as jnp
 
     inner_name = _step_fn_name(step_fn)
     call_count = 0

@@ -52,7 +52,7 @@ from ._registry import InferenceMethod
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["elliptical_slice", "BlackJAXESSMethod"]
+__all__ = ["BlackJAXESSMethod", "elliptical_slice"]
 
 
 # ---------------------------------------------------------------------------

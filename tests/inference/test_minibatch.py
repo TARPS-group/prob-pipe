@@ -34,7 +34,6 @@ from probpipe.inference._minibatch import (
     _RandomMinibatchLogProb,
 )
 
-
 # -- Fixtures ------------------------------------------------------------------
 
 
@@ -229,7 +228,7 @@ class TestInnerDraw:
         per-minibatch surrogate regardless of which container type the
         user passes.
         """
-        from probpipe import NumericRecordArray, NumericEventTemplate
+        from probpipe import NumericEventTemplate, NumericRecordArray
 
         X, y = regression_data
         n = X.shape[0]

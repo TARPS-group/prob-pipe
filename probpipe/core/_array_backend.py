@@ -44,8 +44,8 @@ import numpy as np
 
 __all__ = [
     "AuxHooks",
-    "register_aux",
     "aux_for",
+    "register_aux",
 ]
 
 
@@ -146,7 +146,7 @@ def _register_xarray() -> None:
     except ImportError:
         return
 
-    def _capture(leaf: "xr.DataArray") -> dict[str, Any]:
+    def _capture(leaf: xr.DataArray) -> dict[str, Any]:
         # Capture each coord's full ``(dims, values, attrs)`` triple so
         # multi-dim coords and per-coord attrs survive the round-trip
         # — not just the values aligned with the coord's own name.
@@ -165,7 +165,7 @@ def _register_xarray() -> None:
             "name": leaf.name,
         }
 
-    def _restore(arr: jax.Array, aux: dict[str, Any]) -> "xr.DataArray":
+    def _restore(arr: jax.Array, aux: dict[str, Any]) -> xr.DataArray:
         # Rebuild each coord as a ``DataArray(values, dims=…, attrs=…)``
         # so xarray sees the original dims and attrs.
         coords = {
@@ -206,14 +206,14 @@ def _register_pandas() -> None:
     except ImportError:
         return
 
-    def _series_capture(leaf: "pd.Series") -> dict[str, Any]:
+    def _series_capture(leaf: pd.Series) -> dict[str, Any]:
         return {
             "index": leaf.index,
             "name": leaf.name,
             "dtype": leaf.dtype,
         }
 
-    def _series_restore(arr: jax.Array, aux: dict[str, Any]) -> "pd.Series":
+    def _series_restore(arr: jax.Array, aux: dict[str, Any]) -> pd.Series:
         return pd.Series(
             np.asarray(arr),
             index=aux["index"],
@@ -221,14 +221,14 @@ def _register_pandas() -> None:
             dtype=aux["dtype"],
         )
 
-    def _frame_capture(leaf: "pd.DataFrame") -> dict[str, Any]:
+    def _frame_capture(leaf: pd.DataFrame) -> dict[str, Any]:
         return {
             "index": leaf.index,
             "columns": leaf.columns,
             "dtypes": leaf.dtypes.to_dict(),
         }
 
-    def _frame_restore(arr: jax.Array, aux: dict[str, Any]) -> "pd.DataFrame":
+    def _frame_restore(arr: jax.Array, aux: dict[str, Any]) -> pd.DataFrame:
         df = pd.DataFrame(
             np.asarray(arr),
             index=aux["index"],

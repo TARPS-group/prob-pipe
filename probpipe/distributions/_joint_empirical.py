@@ -26,9 +26,6 @@ from math import prod
 from types import MappingProxyType
 from typing import Any
 
-import jax.numpy as jnp
-import numpy as np
-
 from .._dtype import _as_float_array
 from .._utils import _is_numeric_array
 from .._weights import Weights
@@ -45,7 +42,7 @@ from ..core.protocols import (
     SupportsVariance,
 )
 from ..core.provenance import Provenance
-from ..core.record import Record, EventTemplate
+from ..core.record import EventTemplate, Record
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
@@ -249,7 +246,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
         observed_leaves = _parse_condition_args(self, observed, kwargs)
         return self._condition_on_impl(observed_leaves)
 
-    def _condition_on_impl(self, observed_leaves: dict[KeyPath, ArrayLike]) -> "JointEmpirical":
+    def _condition_on_impl(self, observed_leaves: dict[KeyPath, ArrayLike]) -> JointEmpirical:
         """Remove conditioned components and return a new JointEmpirical.
 
         Since ``JointEmpirical`` stores raw sample arrays keyed by name,

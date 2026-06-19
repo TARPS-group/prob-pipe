@@ -18,10 +18,10 @@ from .custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = [
     "Weights",
+    "weighted_choice",
+    "weighted_covariance",
     "weighted_mean",
     "weighted_variance",
-    "weighted_covariance",
-    "weighted_choice",
 ]
 
 
@@ -330,7 +330,7 @@ class Weights:
     that ``-inf`` values may be present.
     """
 
-    __slots__ = ("_n", "_log_weights", "_is_uniform", "_cache")
+    __slots__ = ("_cache", "_is_uniform", "_log_weights", "_n")
 
     def __init__(
         self,

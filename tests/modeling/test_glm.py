@@ -1,6 +1,5 @@
 """Tests for GLMLikelihood."""
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -8,15 +7,15 @@ import scipy.stats
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import (
+    EventTemplate,
     GLMLikelihood,
     MultivariateNormal,
-    SimpleModel,
     Record,
-    EventTemplate,
+    SimpleModel,
     condition_on,
     mean,
 )
-from probpipe.modeling import Likelihood, GenerativeLikelihood
+from probpipe.modeling import GenerativeLikelihood, Likelihood
 
 
 def _sigmoid(x):
@@ -253,9 +252,9 @@ class TestIncrementalConditionerAutoConvert:
 
     def test_auto_convert_to_kde(self):
         """update() should work without a custom condition_fn."""
-        from probpipe.modeling import IncrementalConditioner
-        from probpipe.inference import ApproximateDistribution
         from probpipe.core.protocols import SupportsLogProb
+        from probpipe.inference import ApproximateDistribution
+        from probpipe.modeling import IncrementalConditioner
 
         X = np.asarray(np.linspace(-1, 1, 20))[:, None].astype(float)
         lik = GLMLikelihood(tfp_glm.Poisson(), X)

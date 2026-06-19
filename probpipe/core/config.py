@@ -20,16 +20,15 @@ from __future__ import annotations
 import os
 
 __all__ = [
-    "WorkflowKind",
     "PrefectConfig",
-    "prefect_config",
-    "ProvenanceMode",
     "ProvenanceConfig",
+    "ProvenanceMode",
+    "WorkflowKind",
+    "prefect_config",
     "provenance_config",
 ]
 from enum import Enum
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # WorkflowKind enum

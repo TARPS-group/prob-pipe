@@ -13,7 +13,6 @@ import textwrap
 
 import jax
 import jax.numpy as jnp
-import pytest
 
 
 def _run_x64(snippet: str) -> str:
@@ -56,8 +55,8 @@ def _run_x64(snippet: str) -> str:
 
 
 def test_x32_default_normal_is_float32():
-    from probpipe.distributions.continuous import Normal
     import probpipe.core.ops as ops
+    from probpipe.distributions.continuous import Normal
 
     n = Normal(loc=0.0, scale=1.0, name="n")
     assert n.dtype == jnp.float32

@@ -1,11 +1,10 @@
 """Tests for ProvenanceConfig env-var initialisation."""
 
-import os
 import pytest
 
 from probpipe.core.config import (
-    ProvenanceMode,
     _PROVENANCE_MODE_ENV_VAR,
+    ProvenanceMode,
     _initial_provenance_mode,
 )
 

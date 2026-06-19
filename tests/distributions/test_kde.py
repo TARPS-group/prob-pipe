@@ -15,10 +15,10 @@ import pytest
 
 from probpipe import (
     EmpiricalDistribution,
-    NumericRecord,
-    NumericEventTemplate,
-    Record,
     EventTemplate,
+    NumericEventTemplate,
+    NumericRecord,
+    Record,
 )
 from probpipe.core._empirical import RecordEmpiricalDistribution
 from probpipe.core._numeric_record import NumericRecord as _NumericRecord

@@ -64,7 +64,7 @@ from .protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-from .record import Record, EventTemplate
+from .record import EventTemplate, Record
 
 # ---------------------------------------------------------------------------
 # Shared helpers

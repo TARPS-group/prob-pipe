@@ -6,20 +6,19 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    NumericRecordDistribution,
-    RecordBootstrapReplicateDistribution,
     BootstrapDistribution,
+    BootstrapReplicateDistribution,
     Distribution,
     EmpiricalDistribution,
-    BootstrapReplicateDistribution,
+    NumericRecordDistribution,
+    Record,
+    RecordBootstrapReplicateDistribution,
     SupportsExpectation,
     SupportsSampling,
-    Record,
     expectation,
     sample,
 )
 from probpipe.core.record import ArraySpec
-
 
 # ---------------------------------------------------------------------------
 # Construction

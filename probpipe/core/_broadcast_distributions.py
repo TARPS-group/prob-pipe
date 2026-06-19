@@ -26,14 +26,13 @@ from ._empirical import (
     RecordEmpiricalDistribution,
 )
 from ._record_array import RecordArray
-from ._record_distribution import RecordDistribution
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
 )
-from .record import Record, EventTemplate
+from .record import EventTemplate, Record
 
 # ---------------------------------------------------------------------------
 # MarginalizedBroadcastDistribution — output marginal of a broadcast
@@ -445,7 +444,7 @@ def _make_stack(
         aggregate types. The error lists the observed types.
     """
     from ._distribution_array import _make_distribution_array
-    from .record import Record, EventTemplate
+    from .record import Record
 
     # Resolve batch_shape vs. n. Exactly one must be provided.
     if batch_shape is None and n is None:

@@ -33,7 +33,7 @@ from ..custom_types import ArrayLike
 from ._array_backend import aux_for
 from .record import ArraySpec, EventTemplate, Record, _record_flatten, _spec_size
 
-__all__ = ["NumericRecord", "_is_numeric_leaf", "_NUMERIC_DTYPE_KINDS"]
+__all__ = ["_NUMERIC_DTYPE_KINDS", "NumericRecord", "_is_numeric_leaf"]
 
 
 # Scalar types accepted as numeric leaves. ``bool`` is intentionally
@@ -110,7 +110,7 @@ class NumericRecord(Record):
     ``__slots__`` + ``__setattr__`` guard on the base class.
     """
 
-    __slots__ = ("_flat_size", "_aux")
+    __slots__ = ("_aux", "_flat_size")
 
     def __init__(
         self,

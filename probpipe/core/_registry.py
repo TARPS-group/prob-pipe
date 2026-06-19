@@ -35,14 +35,14 @@ from dataclasses import dataclass
 from typing import Any
 
 __all__ = [
+    "OPT_IN_ONLY_PRIORITY",
     "BaseDispatchMethod",
-    "UnaryDispatchMethod",
-    "BinaryDispatchMethod",
     "BaseDispatchRegistry",
-    "UnaryDispatchRegistry",
+    "BinaryDispatchMethod",
     "BinaryDispatchRegistry",
     "MethodInfo",
-    "OPT_IN_ONLY_PRIORITY",
+    "UnaryDispatchMethod",
+    "UnaryDispatchRegistry",
 ]
 
 # Priority value for methods that should not auto-dispatch. The registry

@@ -707,6 +707,7 @@ class TestProductProtocolDuckTyping:
         flat-representable.
         """
         import numpy as np
+
         from probpipe import JointEmpirical, Normal
 
         # Object-dtype JointEmpirical stays on the non-numeric base.
@@ -737,6 +738,7 @@ class TestProductProtocolDuckTyping:
         non-numeric leaves behind ``{...}``.
         """
         import numpy as np
+
         from probpipe import JointEmpirical, Normal
 
         je = JointEmpirical(

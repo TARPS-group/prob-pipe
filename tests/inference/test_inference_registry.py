@@ -3,17 +3,16 @@
 import warnings
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from probpipe import (
+    GLMLikelihood,
     MultivariateNormal,
     Normal,
     ProductDistribution,
     SimpleModel,
-    GLMLikelihood,
     condition_on,
     mean,
 )
@@ -24,7 +23,6 @@ from probpipe.core._registry import (
 )
 from probpipe.inference import inference_method_registry
 from probpipe.modeling._likelihood import Likelihood
-
 
 # ---------------------------------------------------------------------------
 # Shared test helper

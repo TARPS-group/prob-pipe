@@ -53,13 +53,10 @@ import functools
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     ClassVar,
     Protocol,
     runtime_checkable,
 )
-
-import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
 
@@ -376,7 +373,7 @@ class _DistributionArrayBackend(Protocol):
     @property
     def event_shape(self) -> tuple[int, ...]: ...
 
-    def cell(self, index: int | tuple[int, ...]) -> "Distribution":
+    def cell(self, index: int | tuple[int, ...]) -> Distribution:
         """Fabricate a scalar ``Distribution`` for the cell at ``index``."""
         ...
 
@@ -598,20 +595,20 @@ class GenerativeLikelihood[P, D](Protocol):
 
 
 __all__ = [
-    "compute_expectation",
-    "SupportsExpectation",
-    "SupportsSampling",
-    "SupportsUnnormalizedLogProb",
-    "SupportsLogProb",
-    "SupportsMean",
-    "SupportsVariance",
-    "SupportsCovariance",
-    "SupportsRandomLogProb",
-    "SupportsRandomUnnormalizedLogProb",
-    "SupportsConditioning",
-    "SupportsArrayBackend",
-    "Likelihood",
     "ConditionallyIndependentLikelihood",
     "GenerativeLikelihood",
+    "Likelihood",
+    "SupportsArrayBackend",
+    "SupportsConditioning",
+    "SupportsCovariance",
+    "SupportsExpectation",
+    "SupportsLogProb",
+    "SupportsMean",
+    "SupportsRandomLogProb",
+    "SupportsRandomUnnormalizedLogProb",
+    "SupportsSampling",
+    "SupportsUnnormalizedLogProb",
+    "SupportsVariance",
+    "compute_expectation",
     "protocols_supported_by_all",
 ]

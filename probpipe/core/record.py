@@ -171,7 +171,7 @@ class Record:
         names if not provided.
     """
 
-    __slots__ = ("_store", "_name", "_source")
+    __slots__ = ("_name", "_source", "_store")
 
     def __init__(
         self,
@@ -420,7 +420,7 @@ class Record:
                 result[name] = val
         return result
 
-    def to_numeric(self) -> "NumericRecord":  # type: ignore[name-defined]
+    def to_numeric(self) -> NumericRecord:  # type: ignore[name-defined]
         """Convert to a :class:`NumericRecord` with every leaf a ``jax.Array``.
 
         Per-field metadata that ``jnp.asarray`` would drop (xarray
