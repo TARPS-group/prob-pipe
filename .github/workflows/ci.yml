@@ -21,11 +21,11 @@ jobs:
   # continue-on-error and scope to changed files. The ruff version is
   # read from .pre-commit-config.yaml (single source of truth) so this job
   # can't drift from the pre-commit pin that `pre-commit autoupdate` bumps;
-  # keep uv.lock's ruff in sync too for local `uv run ruff`. `ruff format`
-  # is intentionally not run (its style conflicts with the conventions in
-  # CONTRIBUTING.md).
+  # keep uv.lock's ruff in sync too for local `uv run ruff`. `ruff format
+  # --check` runs here too and IS blocking — the tree is autoformatted, so a
+  # misformatted file fails CI even while `ruff check` (lint) stays advisory.
   lint:
-    name: lint (advisory)
+    name: lint & format
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -56,6 +56,9 @@ jobs:
       - name: Ruff check (advisory — does not gate merges)
         continue-on-error: true
         run: uvx "ruff@${{ steps.ruffver.outputs.ruff }}" check . --output-format=github
+
+      - name: Ruff format check (blocking — the tree is autoformatted)
+        run: uvx "ruff@${{ steps.ruffver.outputs.ruff }}" format --check .
 
   # Advisory pyright type check. Reports but does NOT gate merges
   # (continue-on-error). The source carries a type-debt baseline (much of

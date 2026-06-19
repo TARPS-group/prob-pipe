@@ -36,6 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Adopt `ruff format` for code formatting.** Formatting is now owned by
+  `ruff format` (Black-style) rather than the previous manual horizontal-packing
+  conventions: the source tree was reformatted in one mechanical sweep (recorded
+  in `.git-blame-ignore-revs`), a `ruff-format` pre-commit hook reformats on
+  commit, and `ruff format --check` is a **blocking** CI step (the `ruff check`
+  lint stays advisory). Notebooks are excluded so the docs' tutorial cells keep
+  their hand layout; string quotes normalize to double. See
+  [CONTRIBUTING.md § Code formatting](CONTRIBUTING.md#code-formatting).
+
 - **`provenance_ancestors()` now returns `ParentInfo` descriptors, not live
   Distribution objects (breaking change).**  Under the previous always-live
   model, every element of the returned list was a `Distribution` or `Record`

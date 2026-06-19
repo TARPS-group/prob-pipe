@@ -179,57 +179,22 @@ conventions in [STYLE_GUIDE.md § 8.6](STYLE_GUIDE.md#86-numerical-correctness-a
 
 ### Code formatting
 
-Keep Python code compact horizontally. The hard upper bound is 100
-chars per line; the soft target is 80–100. **Do not introduce line
-breaks that aren't needed to stay within that range** — multi-name
-imports should be packed per line rather than spread one name per
-line, and short function calls should stay on one line.
+Formatting is owned by **`ruff format`** (Black-style) — don't hand-format
+Python. The `ruff-format` pre-commit hook reformats on commit; run it directly
+with:
 
-```python
-# Avoid — over-vertical:
-from probpipe import (
-    Normal,
-    Beta,
-    Gamma,
-    sample,
-    log_prob,
-)
-
-# Prefer — packed (drop the parens when the whole import fits one line):
-from probpipe import Normal, Beta, Gamma, sample, log_prob
+```bash
+uv run ruff format .          # reformat the tree
+uv run ruff format --check .  # verify (this is what CI enforces)
 ```
 
-Same idea applies to *where* you break a function call, container
-literal, or import — prefer keeping the first argument on the opener
-line and aligning subsequent lines under it, rather than breaking
-right after the open paren / bracket / brace. Break after `(` only
-when the opener line is already long enough that aligned continuation
-would have too little horizontal room.
-
-```python
-# Avoid — gratuitous break after `(`:
-result = expectation(
-    n, lambda x: jnp.sin(x),
-    key=jax.random.PRNGKey(10),
-)
-
-# Prefer — first arg on opener line, continuation aligned:
-result = expectation(n, lambda x: jnp.sin(x),
-                     key=jax.random.PRNGKey(10))
-
-# OK to break after `(` when the opener is already long:
-result = some.deeply.nested.module.function_with_long_name(
-    arg1, arg2, kwarg=value,
-)
-```
-
-The exception is constructions where each kwarg's value is itself a
-meaningful sub-expression — `MultivariateNormal(loc=..., cov=...)`,
-`xr.DataArray(data, dims=..., coords=...)`, etc. Per-kwarg vertical
-layout helps readability there even when the call would fit on one
-line.
-
-This applies equally to source files and notebook code cells.
+`ruff format --check` is a **blocking** CI step, so a misformatted file fails the
+build (`ruff check`, the linter, stays advisory). A few specifics: the line
+length is 100 (`[tool.ruff]` in `pyproject.toml`); ruff keeps code on one line
+when it fits and explodes imports / call arguments one-item-per-line when it does
+not; string quotes normalize to double. Notebooks are excluded
+(`[tool.ruff.format] exclude` in `pyproject.toml`), so the docs' tutorial cells
+keep their compact, hand-curated layout.
 
 ### Code comments & docstrings
 
@@ -260,7 +225,7 @@ Linting uses [ruff](https://docs.astral.sh/ruff/) (configured in
 uvx pre-commit install      # or: pre-commit install
 ```
 
-Thereafter `ruff` (lint) plus a few file-hygiene hooks run on your staged
+Thereafter `ruff` (lint + format) plus a few file-hygiene hooks run on your staged
 files at commit time. The hooks see only the files you're changing, so the
 codebase cleans up file-by-file rather than in one sweep. To run manually:
 
@@ -276,17 +241,19 @@ files you did not touch. That is expected for now, not a regression.
 
 Two deliberate choices:
 
-- **`ruff check` is advisory in CI for now.** ProbPipe carries a lint
+- **`ruff check` (lint) is advisory in CI for now.** ProbPipe carries a lint
   backlog from a period when ruff wasn't enforced, and several large
-  refactors are in flight. The CI `lint (advisory)` job annotates PRs with
-  violations but does not yet gate merges; it will become blocking once the
-  backlog is burned down. Locally, the pre-commit hook flags issues on the
+  refactors are in flight. The `ruff check` step in the `lint & format` job
+  annotates PRs with violations but does not gate merges; it will become
+  blocking once the backlog is burned down. Locally, the pre-commit hook flags
+  issues on the
   files you touch — fix them when practical; `git commit --no-verify`
   bypasses it for a pre-existing-violation file you'd rather not clean in
   an unrelated change.
-- **`ruff format` is not used.** Its output conflicts with the horizontal
-  packing conventions in *Code formatting* above, so formatting stays
-  manual. Only `ruff check` runs.
+- **`ruff format` is enforced.** Formatting is owned by `ruff format` (see
+  *Code formatting* above): `ruff format --check` is a blocking CI step and the
+  `ruff-format` pre-commit hook reformats on commit. `ruff check` (lint) is the
+  part that stays advisory.
 
 ### Type checking
 
