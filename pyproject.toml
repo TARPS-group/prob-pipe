@@ -100,6 +100,8 @@ ignore = [
   "E501",   # line too long (handled by formatter)
   "B905",   # zip without strict= (not always needed)
   "SIM108", # ternary operator (readability preference)
+  "SIM102", # collapsible nested if — a guard plus its body often reads clearer
+            # split than as one long `and` chain (readability preference)
   # Ambiguous-unicode rules fire constantly on legitimate mathematical
   # notation in a Bayesian-stats codebase — Greek letters, en-dashes,
   # →, ×, ≤, etc. in docstrings/comments/strings are intentional, not
@@ -110,11 +112,21 @@ ignore = [
   "RUF003", # ambiguous character in a comment
 ]
 
+# Notebooks are hand-curated teaching material — excluded from formatting (see
+# [tool.ruff.format]) and executed in CI (which catches real errors), so per-cell
+# lint style enforcement adds friction without much value; skip them here too.
+exclude = ["*.ipynb"]
+
 [tool.ruff.lint.per-file-ignores]
-# Notebooks legitimately import after narrative/setup cells (E402) and use
-# semicolons to group plotting calls on one line (E702) — both idiomatic in
-# example notebooks, not errors.
-"*.ipynb" = ["E402", "E702"]
+# Re-export facades: unused-import (F401) is the point, and __init__ /
+# distribution.py set up warnings/registration or interleave a delegating
+# __getattr__ before importing, so module imports aren't all at the top (E402).
+"__init__.py" = ["F401", "E402"]
+"probpipe/core/distribution.py" = ["E402"]
+# Demo scripts and tests legitimately import after setup (sys.path / env) or a
+# pytest.importorskip(...) guard, so E402 there is expected.
+"example_scripts/*" = ["E402"]
+"tests/**" = ["E402"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["probpipe"]

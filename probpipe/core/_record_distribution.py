@@ -14,7 +14,7 @@ whose ``event_template`` is set.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -29,10 +29,6 @@ from .protocols import (
     SupportsVariance,
 )
 from .record import ArraySpec, EventTemplate, Record
-
-if TYPE_CHECKING:
-    pass
-
 
 __all__ = ["RecordDistribution", "_RecordDistributionView"]
 

@@ -252,7 +252,7 @@ def _predictive_check_loop(
 ) -> np.ndarray:
     """Fallback: sequential predictive check in a Python loop."""
     stats = []
-    for i in range(num_replications):
+    for _i in range(num_replications):
         key, subkey = jax.random.split(key)
         params_i = distribution._sample(subkey, ())
         y_rep = generative_likelihood.generate_data(params_i, num_observations)

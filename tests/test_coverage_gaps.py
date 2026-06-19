@@ -347,7 +347,7 @@ class TestCovarianceRequiresProtocol:
                 return (2,)
 
             def _sample(self, key, sample_shape=()):
-                return jax.random.normal(key, sample_shape + (2,))
+                return jax.random.normal(key, (*sample_shape, 2))
 
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
                 return _mc_expectation(

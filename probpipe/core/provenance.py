@@ -244,10 +244,10 @@ def provenance_dag(dist: Distribution):
     """
     try:
         from graphviz import Digraph
-    except ImportError:
+    except ImportError as e:
         raise ImportError(
             "graphviz is required for provenance_dag(). Install it with: pip install graphviz"
-        )
+        ) from e
 
     dot = Digraph(comment="Provenance DAG")
     dot.attr(rankdir="BT")  # bottom-to-top: parents below children

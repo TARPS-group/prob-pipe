@@ -49,50 +49,50 @@ from .multivariate import (
 from .transformed import TransformedDistribution
 
 __all__ = [
-    # TFP base
-    "TFPDistribution",
-    # Univariate continuous
-    "Normal",
-    "Beta",
-    "Gamma",
-    "InverseGamma",
-    "Exponential",
-    "LogNormal",
-    "StudentT",
-    "Uniform",
-    "Cauchy",
-    "Laplace",
-    "HalfNormal",
-    "HalfCauchy",
-    "Pareto",
-    "TruncatedNormal",
+    "ArrayRandomFunction",
     # Discrete
     "Bernoulli",
+    "Beta",
     "Binomial",
-    "Poisson",
     "Categorical",
-    "NegativeBinomial",
-    # Transformed
-    "TransformedDistribution",
-    "bijector_for",
-    "register_bijector",
-    # Joint
-    "ProductDistribution",
-    "SequentialJointDistribution",
-    "JointEmpirical",
-    "NumericJointEmpirical",
-    "JointGaussian",
-    # Multivariate
-    "MultivariateNormal",
+    "Cauchy",
     "Dirichlet",
-    "Multinomial",
-    "Wishart",
-    "VonMisesFisher",
-    # Random functions
-    "RandomFunction",
-    "ArrayRandomFunction",
+    "Exponential",
+    "Gamma",
     "GaussianRandomFunction",
-    "LinearBasisFunction",
+    "HalfCauchy",
+    "HalfNormal",
+    "InverseGamma",
+    "JointEmpirical",
+    "JointGaussian",
     # KDE
     "KDEDistribution",
+    "Laplace",
+    "LinearBasisFunction",
+    "LogNormal",
+    "Multinomial",
+    # Multivariate
+    "MultivariateNormal",
+    "NegativeBinomial",
+    # Univariate continuous
+    "Normal",
+    "NumericJointEmpirical",
+    "Pareto",
+    "Poisson",
+    # Joint
+    "ProductDistribution",
+    # Random functions
+    "RandomFunction",
+    "SequentialJointDistribution",
+    "StudentT",
+    # TFP base
+    "TFPDistribution",
+    # Transformed
+    "TransformedDistribution",
+    "TruncatedNormal",
+    "Uniform",
+    "VonMisesFisher",
+    "Wishart",
+    "bijector_for",
+    "register_bijector",
 ]

@@ -82,43 +82,43 @@ from ._record_distribution import (
 )
 
 __all__ = [
-    # Base
-    "Distribution",
     # Global settings
-    "DEFAULT_NUM_EVALUATIONS",
-    "RETURN_APPROX_DIST",
-    "set_default_num_evaluations",
-    "set_return_approx_dist",
-    # Helpers
-    "_vmap_sample",
-    "_mc_expectation",
-    # Record distribution
-    "RecordDistribution",
-    "_RecordDistributionView",
-    # Array hierarchy
-    "NumericRecordDistribution",
-    "FlatNumericRecordDistribution",
+    "DEFAULT_NUM_EVALUATIONS",  # noqa: F822 — served dynamically via module __getattr__
+    "RETURN_APPROX_DIST",  # noqa: F822 — served dynamically via module __getattr__
+    "ArrayRandomFunction",
     "BootstrapDistribution",
-    "FlattenedDistributionView",
-    "NumericRecordDistributionView",
-    # Empirical
-    "EmpiricalDistribution",
-    "RecordEmpiricalDistribution",
     # Bootstrap replicate
     "BootstrapReplicateDistribution",
-    "RecordBootstrapReplicateDistribution",
-    # Random functions
-    "RandomFunction",
-    "ArrayRandomFunction",
-    # Random measures
-    "RandomMeasure",
-    "NumericRandomMeasure",
     # Broadcast
     "BroadcastDistribution",
+    # Base
+    "Distribution",
+    # Empirical
+    "EmpiricalDistribution",
+    "FlatNumericRecordDistribution",
+    "FlattenedDistributionView",
     "MarginalizedBroadcastDistribution",
-    "_RecordMarginal",
-    "_MixtureMarginal",
+    "NumericRandomMeasure",
+    # Array hierarchy
+    "NumericRecordDistribution",
+    "NumericRecordDistributionView",
+    # Random functions
+    "RandomFunction",
+    # Random measures
+    "RandomMeasure",
+    "RecordBootstrapReplicateDistribution",
+    # Record distribution
+    "RecordDistribution",
+    "RecordEmpiricalDistribution",
     "_ListMarginal",
+    "_MixtureMarginal",
+    "_RecordDistributionView",
+    "_RecordMarginal",
     "_make_marginal",
     "_make_mixture_marginal",
+    "_mc_expectation",
+    # Helpers
+    "_vmap_sample",
+    "set_default_num_evaluations",
+    "set_return_approx_dist",
 ]

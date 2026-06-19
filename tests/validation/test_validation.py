@@ -1,5 +1,7 @@
 """Tests for probpipe.validation module."""
 
+from typing import ClassVar
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -63,7 +65,7 @@ class NumpyGaussianLikelihood:
 class CategoricalLikelihood:
     """Generative likelihood that produces lists of category labels."""
 
-    _categories = ["cat", "dog", "fish"]
+    _categories: ClassVar[list[str]] = ["cat", "dog", "fish"]
 
     def __init__(self, rng_seed=0):
         self._rng = np.random.default_rng(rng_seed)

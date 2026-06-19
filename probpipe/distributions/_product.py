@@ -83,8 +83,8 @@ def _product_class_for_components(components: dict) -> type:
         leaves,
         (SupportsLogProb, SupportsMean, SupportsVariance),
     )
-    all_tfp = all(hasattr(l, "_tfp_dist") for l in leaves)
-    all_numeric = all(isinstance(l, NumericRecordDistribution) for l in leaves)
+    all_tfp = all(hasattr(leaf, "_tfp_dist") for leaf in leaves)
+    all_numeric = all(isinstance(leaf, NumericRecordDistribution) for leaf in leaves)
 
     key = (frozenset(extra_bases), all_tfp, all_numeric)
     if key in _PRODUCT_CLASS_CACHE:
@@ -481,7 +481,7 @@ class TFPProductDistribution(ProductDistribution):
         from tensorflow_probability.substrates.jax import distributions as tfd
 
         tfp_dists = []
-        for comp_name in self._components.keys():
+        for comp_name in self._components:
             comp = self._components[comp_name]
             if isinstance(comp, dict):
                 for sub_leaf in jax.tree.leaves(comp):
@@ -494,7 +494,7 @@ class TFPProductDistribution(ProductDistribution):
         if all_same_type and all_scalar:
             exemplar = tfp_dists[0]
             stacked_params = {}
-            for pname, pval in exemplar.parameters.items():
+            for pname, _pval in exemplar.parameters.items():
                 if pname in _TFP_PARAM_SKIP:
                     continue
                 vals = [d.parameters[pname] for d in tfp_dists]

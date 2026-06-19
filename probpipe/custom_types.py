@@ -7,24 +7,22 @@ single place to change if the backend ever needs to swap.
 
 from __future__ import annotations
 
-from typing import TypeAlias
-
 import jax
 import jax.numpy as jnp
 
 # ---------------------------------------------------------------------------
 # Array types
 # ---------------------------------------------------------------------------
-Array: TypeAlias = jnp.ndarray
-ArrayLike: TypeAlias = jnp.ndarray | list | tuple | float | int
+type Array = jnp.ndarray
+type ArrayLike = jnp.ndarray | list | tuple | float | int
 
 # ---------------------------------------------------------------------------
 # Scalar numeric types
 # ---------------------------------------------------------------------------
-Float: TypeAlias = jnp.floating
-Number: TypeAlias = jnp.floating | jnp.integer
+type Float = jnp.floating
+type Number = jnp.floating | jnp.integer
 
 # ---------------------------------------------------------------------------
 # Random state
 # ---------------------------------------------------------------------------
-PRNGKey: TypeAlias = jax.Array  # JAX PRNG key
+type PRNGKey = jax.Array  # JAX PRNG key

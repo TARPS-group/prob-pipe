@@ -610,7 +610,7 @@ class TestUnhashable:
         tpl = EventTemplate(x=())
         ra = RecordArray(x=jnp.zeros(3), batch_shape=(3,), template=tpl)
         with pytest.raises(TypeError, match="unhashable"):
-            {ra: 1}
+            _ = {ra: 1}
 
 
 # ---------------------------------------------------------------------------

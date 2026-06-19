@@ -108,7 +108,7 @@ from __future__ import annotations
 from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from math import prod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
@@ -117,6 +117,11 @@ import numpy as np
 from ..custom_types import ArrayLike
 from .constraints import Constraint
 from .provenance import Provenance
+
+if TYPE_CHECKING:
+    # Annotation-only back-reference: NumericRecord lives in _numeric_record,
+    # which imports Record from here — TYPE_CHECKING avoids the runtime cycle.
+    from ._numeric_record import NumericRecord
 
 __all__ = [
     "ArraySpec",
@@ -420,7 +425,7 @@ class Record:
                 result[name] = val
         return result
 
-    def to_numeric(self) -> NumericRecord:  # type: ignore[name-defined]
+    def to_numeric(self) -> NumericRecord:
         """Convert to a :class:`NumericRecord` with every leaf a ``jax.Array``.
 
         Per-field metadata that ``jnp.asarray`` would drop (xarray

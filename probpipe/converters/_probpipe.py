@@ -14,6 +14,7 @@ Registered at priority 100 so it is always tried first for ProbPipe types.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 import jax.numpy as jnp
@@ -683,10 +684,8 @@ class ProbPipeConverter(Converter):
         if check_support:
             check = getattr(result, "_check_support_compatible", None)
             if check is not None:
-                try:
+                with contextlib.suppress(AttributeError):
                     check(source)
-                except AttributeError:
-                    pass
 
         # Mark approximate if source is approximate or conversion used sampling
         if source.is_approximate or not isinstance(source, target_type):

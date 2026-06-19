@@ -455,7 +455,7 @@ class NumericRecordArray(RecordArray):
             # (a non-canonical batched draw): flatten each leaf and concatenate.
             if isinstance(val, Record):
                 return jnp.concatenate([_flat_field(val[f]) for f in val.fields], axis=-1)
-            return jnp.reshape(val, self._batch_shape + (prod(val.shape[n_batch:]),))
+            return jnp.reshape(val, (*self._batch_shape, prod(val.shape[n_batch:])))
 
         parts = [_flat_field(self._store[name]) for name in self._store]
         return jnp.concatenate(parts, axis=-1)

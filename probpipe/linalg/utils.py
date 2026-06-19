@@ -50,13 +50,13 @@ def add_diag_jitter(
             if jitter_arr.shape != (n,):
                 raise ValueError(
                     f"add_diag_jitter: jitter must be scalar or shape ({n},). Got {jitter_arr.shape}."
-                )
+                ) from None
             if jnp.iscomplexobj(jitter_arr):
-                raise ValueError("add_diag_jitter: jitter contains complex values.")
+                raise ValueError("add_diag_jitter: jitter contains complex values.") from None
         else:
             raise ValueError(
                 f"add_diag_jitter: jitter must be scalar or 1D array. Got ndim={jitter_arr.ndim}."
-            )
+            ) from None
 
     # Add jitter to diagonal (JAX arrays are immutable; always returns new array)
     idx = jnp.arange(n)

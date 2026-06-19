@@ -77,7 +77,7 @@ class TestGeneric:
 
     def test_sample_shape(self, multivariate_dist, key):
         samples = sample(multivariate_dist, key=key, sample_shape=(5,))
-        expected = (5,) + multivariate_dist.event_shape
+        expected = (5, *multivariate_dist.event_shape)
         assert samples.shape == expected
 
     def test_log_prob_shape(self, multivariate_dist, key):
