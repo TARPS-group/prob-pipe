@@ -37,7 +37,7 @@ from probpipe import (
     unnormalized_prob,
 )
 from probpipe.core.distribution import Distribution
-from probpipe.core.record import RecordTemplate
+from probpipe.core.record import EventTemplate
 
 
 class TestKwargFormScalar:
@@ -124,7 +124,7 @@ class TestKwargFormSimpleModel:
         Record) in _split_log_prob_value — exercises the len(fields) == 1 branch."""
 
         class _ScalarLikelihood:
-            data_template = RecordTemplate(y=())
+            data_template = EventTemplate(y=())
 
             def log_likelihood(self, params, data):
                 # params is the bare scalar from the single-field prior

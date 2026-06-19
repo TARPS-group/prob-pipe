@@ -65,7 +65,7 @@ m = dist._mean()
 
 The density ops (`log_prob` and its family) also accept the value by **named
 fields** — `log_prob(model, intercept=0.0, X=X_obs, y=y_obs)` — packed into one
-draw via `Distribution._pack_value` / the public `RecordTemplate.pack`
+draw via `Distribution._pack_value` / the public `EventTemplate.pack`
 (single-field → the bare value; multi-field → a `Record`), the same shape as
 `condition_on`'s named data kwargs. Because `dist` and `value` are ordinary
 parameters, a distribution field whose name is exactly `value` or `dist` is
@@ -194,7 +194,7 @@ or a whole resampled replicate (use `replicate_size`).
 
 ### 1.10 Record field iteration and path access
 
-`Record`, `RecordTemplate`, `RecordArray`, and every Record-based
+`Record`, `EventTemplate`, `RecordArray`, and every Record-based
 distribution iterate fields in **insertion order** — the order
 keyword arguments were passed to the constructor (or the order of
 the input dict). Code must not rely on an alphabetical or sorted
@@ -210,7 +210,7 @@ record["params/intercept"]   # same as record["params", "intercept"]
 "params/intercept" in record # same as record["params", "intercept"] not raising
 ```
 
-`RecordTemplate.leaf_shapes` keys nested fields with the same `/`
+`EventTemplate.leaf_shapes` keys nested fields with the same `/`
 separator, so paths round-trip with `Record.__getitem__`.
 
 When adding new Record-based containers, follow these conventions:

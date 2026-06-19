@@ -29,7 +29,7 @@ from ..core._distribution_base import Distribution
 from ..core._record_distribution import (
     RecordDistribution,
     _register_dynamic_subclass,
-    _build_record_template,
+    _build_event_template,
 )
 from ..core.protocols import (
     protocols_supported_by_all,
@@ -248,7 +248,7 @@ class ProductDistribution(
         if name is None:
             name = "product(" + ",".join(resolved.keys()) + ")"
         super().__init__(name=name)
-        self._record_template = _build_record_template(self._components)
+        self._event_template = _build_event_template(self._components)
 
     def __reduce__(self):
         return (_unpickle_product_distribution, (dict(self._components), self._name))
@@ -283,7 +283,7 @@ class ProductDistribution(
             if isinstance(comp, dict):
                 # Pass the sub-template so a batched nested draw is a nested
                 # record-array (canonical, flattenable), not a plain Record.
-                sub_template = self.record_template[name] if sample_shape else None
+                sub_template = self.event_template[name] if sample_shape else None
                 fields[name] = _sample_nested(
                     comp, subkey, sample_shape,
                     template=sub_template, numeric=numeric)
@@ -295,11 +295,11 @@ class ProductDistribution(
             if isinstance(self, NumericRecordDistribution):
                 return NumericRecordArray(
                     fields, batch_shape=sample_shape,
-                    template=self.record_template,
+                    template=self.event_template,
                 )
             return RecordArray(
                 fields, batch_shape=sample_shape,
-                template=self.record_template,
+                template=self.event_template,
             )
         return Record(fields)
 
@@ -331,13 +331,13 @@ class ProductDistribution(
             flat = jnp.asarray(value)
             if flat.ndim == 0:
                 flat = flat[None]
-            value = self.unflatten_value(flat, template=self.record_template)
+            value = self.unflatten_value(flat, template=self.event_template)
             # Single-field templates return a raw array (preserving the
             # "single-leaf returns raw" contract on the static method);
             # the tree-map below expects a per-field structure, so
             # re-key it under the lone field name.
             if isinstance(value, jnp.ndarray):
-                (field_name,) = self.record_template.fields
+                (field_name,) = self.event_template.fields
                 value = {field_name: value}
         if isinstance(value, RecordArray):
             value = {k: v for k, v in value.items()}
@@ -386,7 +386,7 @@ class ProductDistribution(
         """Per-leaf support constraints -- each leaf component's ``support``.
 
         Nested components are keyed by slash-delimited paths
-        (``"outer/a"``), matching ``RecordTemplate.leaf_shapes``, so every
+        (``"outer/a"``), matching ``EventTemplate.leaf_shapes``, so every
         value is a ``Constraint``."""
         out: dict = {}
 

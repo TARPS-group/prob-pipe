@@ -23,7 +23,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._record_array import RecordArray
-from ..core.record import RecordTemplate
+from ..core.record import EventTemplate
 
 __all__ = ["Design", "FullFactorialDesign"]
 
@@ -188,7 +188,7 @@ class FullFactorialDesign(Design):
         RecordArray.__init__(
             self, fields,
             batch_shape=(n_total,),
-            template=RecordTemplate(template_spec),
+            template=EventTemplate(template_spec),
             name=f"FullFactorialDesign({','.join(names)})",
         )
         object.__setattr__(self, "_marginals", dict(marginals))

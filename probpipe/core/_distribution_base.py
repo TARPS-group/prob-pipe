@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from xarray import DataTree
 
     from ._distribution_array import DistributionArray
-    from .record import RecordTemplate
+    from .record import EventTemplate
 
 import jax
 import jax.numpy as jnp
@@ -123,7 +123,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
 
         Delegates field validation and ``Record`` construction to the general
         :func:`~probpipe.core.record._pack_fields` (also exposed object-style
-        as :meth:`~probpipe.core.record.RecordTemplate.pack`) and layers this
+        as :meth:`~probpipe.core.record.EventTemplate.pack`) and layers this
         distribution's value-type convention on top:
 
         * **single field** → the bare field value (``T = Array``), so a
@@ -219,7 +219,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         operation and points to the original as parent.
 
         ``RecordDistribution`` overrides this to also reset its cached
-        ``_record_template`` so the auto-build path regenerates with
+        ``_event_template`` so the auto-build path regenerates with
         the new name.
         """
         clone = _copy.copy(self)

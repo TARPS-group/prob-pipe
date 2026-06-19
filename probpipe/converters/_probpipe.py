@@ -449,7 +449,7 @@ def _convert_to_kde(source, key, **kw):
 
     For a ``RecordEmpiricalDistribution`` source (including its
     subclasses such as :class:`~probpipe.inference.ApproximateDistribution`),
-    the stored samples, weights, and ``record_template`` are reused
+    the stored samples, weights, and ``event_template`` are reused
     directly via :meth:`KDEDistribution.from_empirical` — which
     preserves named-field structure end-to-end. Other sources fall
     back to drawing fresh samples (single-field auto-template).
@@ -473,7 +473,7 @@ def _convert_to_kde(source, key, **kw):
     if isinstance(source, RecordEmpiricalDistribution):
         # Single-field and multi-field paths both route through
         # ``from_empirical``, which threads the source's
-        # ``record_template`` so KDE preserves named fields (issue #267).
+        # ``event_template`` so KDE preserves named fields (issue #267).
         r = KDEDistribution.from_empirical(source, bandwidth=bandwidth, name=name)
         r.with_source(_mm_provenance(source))
         return r

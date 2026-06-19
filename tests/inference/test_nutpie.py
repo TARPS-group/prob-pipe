@@ -69,7 +69,7 @@ class TestCompileForNutpie:
 
     def test_pymc_path(self):
         """Models with _pymc_model use nutpie.compile_pymc_model and
-        return the conditioned build for record_template derivation."""
+        return the conditioned build for event_template derivation."""
         model = MagicMock(spec=[])
         model._pymc_model = MagicMock(return_value="pm_model")
         with patch.object(nutpie, "compile_pymc_model",
@@ -294,7 +294,7 @@ class TestNutpieIntegration:
         y_bar = float(y_obs.mean())
         post_mean = 5.0 * y_bar / (1.0 / 100.0 + 5.0)
         post_sd = np.sqrt(1.0 / (1.0 / 100.0 + 5.0))
-        # PyMCModel now provides a record_template (one field per PyMC RV),
+        # PyMCModel now provides an event_template (one field per PyMC RV),
         # so draws() returns a NumericRecordArray keyed by RV name. The
         # only parameter is `mu`, with event_shape ().
         draws = result.draws()

@@ -127,7 +127,7 @@ class TestEventShapesUniformDict:
         fields, and event shapes reflect that single field."""
         samples = np.random.randn(100, 3)
         dist = EmpiricalDistribution(samples, name="x")
-        assert dist.record_template is not None
+        assert dist.event_template is not None
         assert dist.fields == ("x",)
         assert dist.event_shapes == {"x": (3,)}
         # Single-field shortcut.

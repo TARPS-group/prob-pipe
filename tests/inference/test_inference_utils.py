@@ -105,7 +105,7 @@ class TestBuildTargetLogProbFlat:
         For a bare ``SupportsLogProb`` whose ``_unnormalized_log_prob``
         already takes a flat array, ``build_target_log_prob_flat``
         passes the callable through verbatim and returns
-        ``record_template=None``. This is the path BlackJAX MCMC uses
+        ``event_template=None``. This is the path BlackJAX MCMC uses
         for hand-rolled distributions that don't carry a Record-shaped
         prior.
         """

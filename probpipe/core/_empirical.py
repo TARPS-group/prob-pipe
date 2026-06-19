@@ -64,18 +64,18 @@ from .protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-from .record import Record, RecordTemplate
+from .record import Record, EventTemplate
 
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
 
 
-def _record_template_from_data(
+def _event_template_from_data(
     record_data: Record,
     leading_shape: tuple[int, ...] = (),
-) -> RecordTemplate:
-    """Build a ``RecordTemplate`` from stored Record data.
+) -> EventTemplate:
+    """Build a ``EventTemplate`` from stored Record data.
 
     Strips the first dimension (sample axis) from each field to get
     event shapes, optionally prepending ``leading_shape``.
@@ -84,7 +84,7 @@ def _record_template_from_data(
     for fname in record_data.fields:
         arr = jnp.asarray(record_data[fname])
         specs[fname] = (*leading_shape, *arr.shape[1:])
-    return RecordTemplate(specs)
+    return EventTemplate(specs)
 
 
 def _index_record(record_data: Record, idx) -> NumericRecord:
@@ -385,7 +385,7 @@ class RecordEmpiricalDistribution(
     ``name=`` so the field's identity is unambiguous downstream.
 
     Inherits :class:`NumericRecordDistribution` shape semantics
-    (``record_template``, ``event_shapes``, ``event_size``,
+    (``event_template``, ``event_shapes``, ``event_size``,
     ``batch_shape``) plus exact weighted moments
     (``mean``, ``variance``, ``cov``) over each field.
 
@@ -458,7 +458,7 @@ class RecordEmpiricalDistribution(
         # call Distribution.__init__ directly for name registration.
         Distribution.__init__(self, name=name)
         self._approximate = True
-        self._record_template = _record_template_from_data(samples)
+        self._event_template = _event_template_from_data(samples)
 
     # -- properties ---------------------------------------------------------
 
@@ -986,7 +986,7 @@ class RecordBootstrapReplicateDistribution(
     applied jointly across fields.
 
     Inherits :class:`NumericRecordDistribution` shape semantics
-    (``record_template``, ``event_shapes``, ...). A bare numeric array
+    (``event_template``, ``event_shapes``, ...). A bare numeric array
     source auto-wraps as a single-field Record keyed by ``name`` —
     matching the migration path for the previous
     ``ArrayBootstrapReplicateDistribution(arr)`` form.
@@ -1082,8 +1082,8 @@ class RecordBootstrapReplicateDistribution(
             source_size=default_replicate_size,
         )
         # Replicate produces (n, *event_shape) per field; advertise that
-        # via the record_template.
-        self._record_template = _record_template_from_data(
+        # via the event_template.
+        self._event_template = _event_template_from_data(
             self._record_data, leading_shape=(self._replicate_size,),
         )
 

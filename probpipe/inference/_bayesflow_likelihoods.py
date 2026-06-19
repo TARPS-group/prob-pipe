@@ -327,14 +327,14 @@ def _train_offline(
     jitter is added to the simulated observations after simulation (the
     simulator stays untouched). Returns ``(approximator, d_y)``.
     """
-    record_template = _validate_learn_inputs(
+    event_template = _validate_learn_inputs(
         prior, simulator, caller=caller, sim_backend=sim_backend,
         counts=(("num_simulations", num_simulations), ("batch_size", batch_size),
                 ("epochs", epochs)),
     )
     # Numeric leaves (slash paths for a nested prior; == fields for a flat one).
     # NLE/NRE feed raw theta to the network, so no bijectors -- just the keying.
-    leaf_keys = tuple(record_template.numeric_leaf_shapes)
+    leaf_keys = tuple(event_template.numeric_leaf_shapes)
 
     bf = _import_bayesflow()
     with _isolated_keras_seeding(random_seed):

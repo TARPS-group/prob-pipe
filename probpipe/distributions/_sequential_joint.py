@@ -21,7 +21,7 @@ from ..core.distribution import (
     _mc_expectation,
 )
 from ..core._record_distribution import (
-    RecordDistribution, _build_record_template,
+    RecordDistribution, _build_event_template,
 )
 from ..core.record import Record
 from ..core.provenance import Provenance
@@ -225,7 +225,7 @@ class SequentialJointDistribution(
 
         # Build _components dict from resolved prototypes (for shape introspection)
         self._components = resolved
-        self._record_template = _build_record_template(self._components)
+        self._event_template = _build_event_template(self._components)
 
         # Reparent to the dynamic subclass whose protocol bases match the
         # resolved components' capabilities. Done after component
@@ -272,7 +272,7 @@ class SequentialJointDistribution(
 
     # ``fields`` / ``event_shapes`` are inherited from
     # :class:`RecordDistribution` (one entry per top-level field,
-    # delegated to ``record_template``); ``flatten_value`` /
+    # delegated to ``event_template``); ``flatten_value`` /
     # ``unflatten_value`` are inherited from
     # :class:`NumericRecordDistribution` when every leaf is numeric
     # (the dynamic class factory adds the mixin) — otherwise they
@@ -327,7 +327,7 @@ class SequentialJointDistribution(
         if sample_shape:
             return NumericRecordArray(
                 fields, batch_shape=sample_shape,
-                template=self.record_template,
+                template=self.event_template,
             )
         return Record(fields)
 
@@ -488,7 +488,7 @@ class SequentialJointDistribution(
 
         # Expose only unconditioned components
         result._components = unconditioned_pre
-        result._record_template = _build_record_template(unconditioned_pre)
+        result._event_template = _build_event_template(unconditioned_pre)
 
         result.with_source(Provenance(
             "condition_on", parents=(self,),

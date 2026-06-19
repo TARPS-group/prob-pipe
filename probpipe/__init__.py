@@ -96,7 +96,16 @@ from probpipe.distributions import (
     # KDE
     KDEDistribution,
 )
-from probpipe.core.record import Record, RecordTemplate, NumericRecordTemplate
+from probpipe.core.record import (
+    Record,
+    EventTemplate,
+    NumericEventTemplate,
+    ArraySpec,
+    OpaqueSpec,
+    DistributionSpec,
+    FunctionSpec,
+    LeafSpec,
+)
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._record_array import RecordArray, NumericRecordArray
 from probpipe.core._array_backend import (
@@ -171,8 +180,13 @@ from probpipe.converters import (
 __all__ = [
     # Record
     "Record",
-    "RecordTemplate",
-    "NumericRecordTemplate",
+    "EventTemplate",
+    "NumericEventTemplate",
+    "ArraySpec",
+    "OpaqueSpec",
+    "DistributionSpec",
+    "FunctionSpec",
+    "LeafSpec",
     "NumericRecord",
     "RecordArray",
     "NumericRecordArray",

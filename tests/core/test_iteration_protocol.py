@@ -173,22 +173,22 @@ def test_numeric_record_iterates_field_names():
 
 
 def test_record_array_iterates_field_names():
-    from probpipe.core.record import RecordTemplate
+    from probpipe.core.record import EventTemplate
     ra = RecordArray(
         a=jnp.zeros((5,)),
         b=jnp.zeros((5,)),
         batch_shape=(5,),
-        template=RecordTemplate(a=(), b=()),
+        template=EventTemplate(a=(), b=()),
     )
     assert list(iter(ra)) == ["a", "b"]
 
 
 def test_numeric_record_array_iterates_field_names():
-    from probpipe.core.record import NumericRecordTemplate
+    from probpipe.core.record import NumericEventTemplate
     nra = NumericRecordArray(
         a=jnp.zeros((4,)),
         b=jnp.zeros((4,)),
         batch_shape=(4,),
-        template=NumericRecordTemplate(a=(), b=()),
+        template=NumericEventTemplate(a=(), b=()),
     )
     assert list(iter(nra)) == ["a", "b"]

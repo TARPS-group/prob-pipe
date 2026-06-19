@@ -19,7 +19,7 @@ import numpy as np
 from ..custom_types import Array
 from ._numeric_record import _NUMERIC_DTYPE_KINDS, NumericRecord
 from .provenance import Provenance
-from .record import _PATH_SEP, Record, RecordTemplate, _spec_size
+from .record import _PATH_SEP, ArraySpec, EventTemplate, Record, _spec_size
 
 __all__ = [
     "RecordArray",
@@ -54,7 +54,7 @@ class RecordArray(Record):
     ----------
     batch_shape : tuple of int
         Shape of the batch dimensions.
-    template : RecordTemplate
+    template : EventTemplate
         Structural description of each element.
     name : str, optional
         Human-readable name for provenance / introspection. Defaults
@@ -77,7 +77,7 @@ class RecordArray(Record):
         /,
         *,
         batch_shape: tuple[int, ...],
-        template: RecordTemplate,
+        template: EventTemplate,
         name: str | None = None,
         **fields: Any,
     ):
@@ -120,7 +120,7 @@ class RecordArray(Record):
         cls,
         store: "OrderedDict[str, Any]",
         batch_shape: tuple[int, ...],
-        template: RecordTemplate,
+        template: EventTemplate,
     ) -> "OrderedDict[str, Any]":
         """Hook for subclasses to validate / coerce leaves at construction.
 
@@ -150,7 +150,7 @@ class RecordArray(Record):
         return self._batch_shape
 
     @property
-    def template(self) -> RecordTemplate:
+    def template(self) -> EventTemplate:
         """Structural description of each element."""
         return self._template
 
@@ -288,14 +288,14 @@ class RecordArray(Record):
     # -- Factory methods ----------------------------------------------------
 
     @classmethod
-    def stack(cls, records: list[Record], *, template: RecordTemplate | None = None) -> RecordArray:
+    def stack(cls, records: list[Record], *, template: EventTemplate | None = None) -> RecordArray:
         """Stack a list of Records into a RecordArray with batch_shape=(n,).
 
         Parameters
         ----------
         records : list of Record
             Records with consistent field structure.
-        template : RecordTemplate, optional
+        template : EventTemplate, optional
             If not provided, inferred from the first record.
 
         Notes
@@ -308,7 +308,7 @@ class RecordArray(Record):
         if not records:
             raise ValueError("Cannot stack empty list of Records")
         if template is None:
-            template = RecordTemplate.from_record(records[0])
+            template = EventTemplate.from_record(records[0])
         fields: dict[str, Any] = {}
         for name in template.fields:
             field_vals = [r[name] for r in records]
@@ -395,14 +395,14 @@ class NumericRecordArray(RecordArray):
         cls,
         store: "OrderedDict[str, Any]",
         batch_shape: tuple[int, ...],
-        template: RecordTemplate,
+        template: EventTemplate,
     ) -> "OrderedDict[str, Any]":
         """Require numeric dtype and matching event shape on every leaf.
 
         Raises ``TypeError`` if a leaf is non-numeric, ``ValueError`` if
         its shape is not ``(*batch_shape, *event_shape)`` for the
         corresponding template entry. Fields whose template spec is a
-        nested ``RecordTemplate`` are forwarded as-is — the nested
+        nested ``EventTemplate`` are forwarded as-is — the nested
         element is allowed to be a ``Record`` / ``NumericRecord`` /
         ``RecordArray`` and is validated at its own construction site.
         """
@@ -411,7 +411,7 @@ class NumericRecordArray(RecordArray):
             spec = template[name]
             # Nested structure: skip numeric validation, let the nested
             # type enforce its own invariant.
-            if isinstance(spec, RecordTemplate):
+            if isinstance(spec, EventTemplate):
                 out[name] = raw
                 continue
             # Batched numeric leaves must expose dtype + shape. Plain
@@ -428,7 +428,7 @@ class NumericRecordArray(RecordArray):
                     f"NumericRecordArray: field {name!r} has non-numeric "
                     f"dtype {raw.dtype!r}"
                 )
-            event_shape = () if spec is None else tuple(spec)
+            event_shape = spec.shape if isinstance(spec, ArraySpec) else ()
             expected = tuple(batch_shape) + event_shape
             actual = tuple(raw.shape)
             if actual != expected:
@@ -477,12 +477,12 @@ class NumericRecordArray(RecordArray):
         cls,
         flat: jnp.ndarray,
         *,
-        template: RecordTemplate,
+        template: EventTemplate,
         batch_shape: tuple[int, ...] | None = None,
     ) -> NumericRecordArray:
         """Reconstruct from a flat array.
 
-        The inverse of :meth:`flatten`: nested ``RecordTemplate`` specs are
+        The inverse of :meth:`flatten`: nested ``EventTemplate`` specs are
         rebuilt recursively, so a template with nested fields yields nested
         ``NumericRecordArray`` fields, matching the depth-first leaf order
         ``flatten`` uses.
@@ -491,7 +491,7 @@ class NumericRecordArray(RecordArray):
         ----------
         flat : array
             Shape ``(*batch_shape, flat_event_size)``.
-        template : RecordTemplate
+        template : EventTemplate
             Structural description providing field names and event shapes.
         batch_shape : tuple of int, optional
             If not provided, inferred as ``flat.shape[:-1]``.
@@ -511,12 +511,15 @@ class NumericRecordArray(RecordArray):
             spec = template[name]
             size = _spec_size(spec)
             chunk = flat[..., offset : offset + size]
-            if isinstance(spec, RecordTemplate):
+            if isinstance(spec, EventTemplate):
                 fields[name] = cls.unflatten(
                     chunk, template=spec, batch_shape=batch_shape,
                 )
             else:
-                fields[name] = jnp.reshape(chunk, batch_shape + spec)
+                # ArraySpec leaf — ``_spec_size`` above rejects every other
+                # leaf kind, so the spec is necessarily an ArraySpec here.
+                assert isinstance(spec, ArraySpec)
+                fields[name] = jnp.reshape(chunk, batch_shape + spec.shape)
             offset += size
 
         return cls(fields, batch_shape=batch_shape, template=template)
@@ -659,7 +662,7 @@ class _RecordArrayView(RecordArray):
             )
         leaf_spec = parent.template[field]
         store = OrderedDict([(field, parent._store[field])])
-        template = RecordTemplate({field: leaf_spec})
+        template = EventTemplate({field: leaf_spec})
         # Populate RecordArray state directly — data was validated at
         # the parent's construction.
         object.__setattr__(self, "_store", store)
@@ -762,7 +765,7 @@ def _unpickle_numeric_record_array(
 
 def _record_array_flatten(
     ra: RecordArray,
-) -> tuple[list, tuple[tuple[str, ...], tuple[int, ...], RecordTemplate]]:
+) -> tuple[list, tuple[tuple[str, ...], tuple[int, ...], EventTemplate]]:
     """Flatten RecordArray for JAX pytree."""
     children = [ra._store[name] for name in ra._store]
     aux = (ra.fields, ra._batch_shape, ra._template)
@@ -770,7 +773,7 @@ def _record_array_flatten(
 
 
 def _record_array_unflatten(
-    aux: tuple[tuple[str, ...], tuple[int, ...], RecordTemplate],
+    aux: tuple[tuple[str, ...], tuple[int, ...], EventTemplate],
     children: list,
 ) -> RecordArray:
     """Unflatten RecordArray from JAX pytree."""
@@ -783,7 +786,7 @@ def _record_array_unflatten(
 
 
 def _numeric_record_array_unflatten(
-    aux: tuple[tuple[str, ...], tuple[int, ...], RecordTemplate],
+    aux: tuple[tuple[str, ...], tuple[int, ...], EventTemplate],
     children: list,
 ) -> NumericRecordArray:
     """Unflatten NumericRecordArray from JAX pytree."""

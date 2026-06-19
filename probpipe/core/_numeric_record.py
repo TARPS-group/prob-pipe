@@ -31,7 +31,7 @@ import numpy as np
 
 from ..custom_types import ArrayLike
 from ._array_backend import aux_for
-from .record import Record, RecordTemplate, _record_flatten, _spec_size
+from .record import ArraySpec, EventTemplate, Record, _record_flatten, _spec_size
 
 __all__ = ["NumericRecord", "_is_numeric_leaf", "_NUMERIC_DTYPE_KINDS"]
 
@@ -214,7 +214,7 @@ class NumericRecord(Record):
         cls,
         flat: jnp.ndarray,
         *,
-        template: RecordTemplate,
+        template: EventTemplate,
     ) -> NumericRecord:
         """Reconstruct a ``NumericRecord`` from a flat array.
 
@@ -222,7 +222,7 @@ class NumericRecord(Record):
         ----------
         flat : array
             1-D array of concatenated scalars.
-        template : RecordTemplate
+        template : EventTemplate
             Provides field names and shapes for reconstruction.
         """
         fields: dict[str, jnp.ndarray | NumericRecord] = {}
@@ -232,10 +232,13 @@ class NumericRecord(Record):
             spec = template[field_name]
             size = _spec_size(spec)
             chunk = flat[offset : offset + size]
-            if isinstance(spec, RecordTemplate):
+            if isinstance(spec, EventTemplate):
                 fields[field_name] = cls.unflatten(chunk, template=spec)
             else:
-                fields[field_name] = chunk.reshape(spec)
+                # ArraySpec leaf — ``_spec_size`` above rejects every other
+                # leaf kind, so the spec is necessarily an ArraySpec here.
+                assert isinstance(spec, ArraySpec)
+                fields[field_name] = chunk.reshape(spec.shape)
             offset += size
 
         return cls(fields)

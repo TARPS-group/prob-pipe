@@ -33,7 +33,7 @@ from .protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-from .record import Record, RecordTemplate
+from .record import Record, EventTemplate
 
 # ---------------------------------------------------------------------------
 # MarginalizedBroadcastDistribution — output marginal of a broadcast
@@ -77,7 +77,7 @@ class _RecordMarginal(RecordEmpiricalDistribution):
         super().__init__(samples, weights=weights, log_weights=log_weights, name=name)
         if template is not None:
             # Preserve the exact template the RecordArray carried.
-            self._record_template = template
+            self._event_template = template
 
     def __repr__(self):
         return (
@@ -449,7 +449,7 @@ def _make_stack(
         aggregate types. The error lists the observed types.
     """
     from ._distribution_array import _make_distribution_array
-    from .record import Record, RecordTemplate
+    from .record import Record, EventTemplate
 
     # Resolve batch_shape vs. n. Exactly one must be provided.
     if batch_shape is None and n is None:
@@ -550,7 +550,7 @@ def _make_stack(
             return RecordArray(
                 fields,
                 batch_shape=batch_shape,
-                template=RecordTemplate(tpl_spec),
+                template=EventTemplate(tpl_spec),
             )
 
         # All Distributions → stacked DistributionArray, shaped to
@@ -574,7 +574,7 @@ def _make_stack(
             from ._record_array import NumericRecordArray
             event_shape = tuple(stacked.shape[1:])
             reshaped = stacked.reshape(batch_shape + event_shape)
-            tpl = RecordTemplate(**{field_name: event_shape})
+            tpl = EventTemplate(**{field_name: event_shape})
             return NumericRecordArray(
                 {field_name: reshaped},
                 batch_shape=batch_shape,
@@ -585,7 +585,7 @@ def _make_stack(
         # numpy object-dtype array of the opaque outputs.
         try:
             object_array = np.asarray(outs, dtype=object).reshape(batch_shape)
-            tpl = RecordTemplate(**{field_name: None})
+            tpl = EventTemplate(**{field_name: None})
             return RecordArray(
                 {field_name: object_array},
                 batch_shape=batch_shape,
@@ -613,7 +613,7 @@ def _make_stack(
         from ._record_array import NumericRecordArray
         event_shape = tuple(inner_outputs.shape[1:])
         reshaped = inner_outputs.reshape(batch_shape + event_shape)
-        tpl = RecordTemplate(**{field_name: event_shape})
+        tpl = EventTemplate(**{field_name: event_shape})
         return NumericRecordArray(
             {field_name: reshaped},
             batch_shape=batch_shape,
@@ -632,7 +632,7 @@ def _make_stack(
         resolved = [inner_outputs[f] for f in inner_outputs.fields]
         if all(hasattr(v, "shape") and v.shape[:1] == (n_total,) for v in resolved):
             event_shapes = tuple(v.shape[1:] for v in resolved)
-            tpl = RecordTemplate(**dict(zip(inner_outputs.fields, event_shapes)))
+            tpl = EventTemplate(**dict(zip(inner_outputs.fields, event_shapes)))
             reshaped_fields = {
                 fname: v.reshape(batch_shape + v.shape[1:])
                 for fname, v in zip(inner_outputs.fields, resolved)

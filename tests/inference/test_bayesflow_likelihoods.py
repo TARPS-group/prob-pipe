@@ -171,7 +171,7 @@ class TestSurrogateContract:
         (the MCMC helper passes flat vectors; predictive paths pass records)."""
         flat = jnp.array([0.4, -0.3])
         record = NumericRecordArray.unflatten(
-            flat, template=_prior().record_template, batch_shape=())
+            flat, template=_prior().event_template, batch_shape=())
         y_row = jnp.array([0.6, -0.1])
         np.testing.assert_allclose(
             float(nle.log_likelihood(flat, y_row)),

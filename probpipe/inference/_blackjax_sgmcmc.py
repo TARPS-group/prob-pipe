@@ -175,12 +175,12 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
         # ``check()`` rejects any non-SimpleModel target, and a
         # SimpleModel prior is always a RecordDistribution, so
-        # ``record_template`` is guaranteed here.
+        # ``event_template`` is guaranteed here.
         chain = jnp.stack(positions, axis=0)
-        record_template = prior.record_template
+        event_template = prior.event_template
         return make_posterior(
             [chain], parents=(prior,), algorithm=self._method_name,
-            auxiliary=None, record_template=record_template,
+            auxiliary=None, event_template=event_template,
             num_results=num_results, num_warmup=num_warmup, num_chains=1,
         )
 

@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 from probpipe import ApproximateDistribution
+from probpipe.core.record import ArraySpec
 from probpipe.modeling import PyMCModel
 
 
@@ -259,8 +260,8 @@ class TestPyMCModel:
         assert captured["mp_ctx"] is None
 
 
-class TestRecordTemplate:
-    """``PyMCModel.record_template`` exposes the free-RV layout that
+class TestEventTemplate:
+    """``PyMCModel.event_template`` exposes the free-RV layout that
     inference methods thread through to the resulting posterior.
     """
 
@@ -273,10 +274,10 @@ class TestRecordTemplate:
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        tpl = PyMCModel(model_fn).record_template
+        tpl = PyMCModel(model_fn).event_template
         assert tpl.fields == ("intercept", "slope")
-        assert tpl["intercept"] == ()
-        assert tpl["slope"] == (3,)
+        assert tpl["intercept"] == ArraySpec(())
+        assert tpl["slope"] == ArraySpec((3,))
 
     def test_observed_rvs_excluded(self):
         """Observed variables are not part of the parameter template."""
@@ -286,17 +287,17 @@ class TestRecordTemplate:
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        tpl = PyMCModel(model_fn).record_template
+        tpl = PyMCModel(model_fn).event_template
         assert tpl.fields == ("mu",)
         assert "y" not in tpl.fields
 
     def test_data_dependent_shape_reflects_conditioned_build(self):
-        """``_record_template_for(model)`` reports the data-conditioned
+        """``_event_template_for(model)`` reports the data-conditioned
         shape for an RV whose shape depends on data size, while the bare
-        ``record_template`` property reports the declared (no-data)
+        ``event_template`` property reports the declared (no-data)
         shape (issue #224).
 
-        The inference paths call ``_record_template_for`` with the model
+        The inference paths call ``_event_template_for`` with the model
         they build from data, so the template matches the chain. The
         property cannot know the conditioned shape without data, so it
         stays at the declared sentinel — and, crucially, holds no
@@ -305,10 +306,10 @@ class TestRecordTemplate:
         """
         model = PyMCModel(per_observation_effect_model_fn)
         # Declared (no-data) property: sentinel (1,) for alpha.
-        tpl = model.record_template
+        tpl = model.event_template
         assert tpl.fields == ("intercept", "alpha")
-        assert tpl["intercept"] == ()
-        assert tpl["alpha"] == (1,)
+        assert tpl["intercept"] == ArraySpec(())
+        assert tpl["alpha"] == ArraySpec((1,))
         assert model.event_shape == (1 + 1,)
 
         # Template built from a data-conditioned build picks up the real
@@ -319,12 +320,12 @@ class TestRecordTemplate:
             "y": np.zeros(N, dtype=np.float32),
         })
         names = model._conditioned_param_names(conditioned)
-        tpl_c = model._record_template_for(conditioned, names)
+        tpl_c = model._event_template_for(conditioned, names)
         assert tpl_c.fields == ("intercept", "alpha")
-        assert tpl_c["alpha"] == (N,)
+        assert tpl_c["alpha"] == ArraySpec((N,))
         assert not hasattr(model, "_last_conditioned_model")
         # Property still reports the declared shape (no hidden mutation).
-        assert model.record_template["alpha"] == (1,)
+        assert model.event_template["alpha"] == ArraySpec((1,))
 
     def test_data_dependent_shape_inference_recovers_correct_layout(self):
         """End-to-end: NUTS with a per-observation effect produces a
@@ -446,13 +447,13 @@ class TestRecordTemplate:
 
         model = PyMCModel(model_fn)
         # Declared template excludes observed names entirely.
-        assert model.record_template.fields == ("mu",)
+        assert model.event_template.fields == ("mu",)
 
         # Condition on y only — X is left free and should be inferred.
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         names = model._conditioned_param_names(conditioned)
         assert set(names) == {"mu", "X"}
-        tpl = model._record_template_for(conditioned, names)
+        tpl = model._event_template_for(conditioned, names)
         assert set(tpl.fields) == {"mu", "X"}
 
     def test_partial_conditioning_via_inference(self):
@@ -585,10 +586,10 @@ class TestRecordTemplate:
             return m
 
         with pytest.raises(ValueError, match="non-concrete shape"):
-            _ = PyMCModel(model_fn).record_template
+            _ = PyMCModel(model_fn).event_template
 
     def test_event_shape_rejects_non_concrete_shape(self):
-        """``event_shape`` derives from ``record_template``, so it rejects
+        """``event_shape`` derives from ``event_template``, so it rejects
         a non-concrete free-RV shape rather than silently under-counting.
         """
         import pytensor.tensor as pt

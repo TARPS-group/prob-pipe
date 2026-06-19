@@ -434,7 +434,7 @@ class TestFlattenUnflatten:
         s = sample(joint, key=key, sample_shape=(5,))
         flat = joint.flatten_value(s)
         assert flat.shape == (5, 2)
-        unflat = joint.unflatten_value(flat, template=joint.record_template)
+        unflat = joint.unflatten_value(flat, template=joint.event_template)
         np.testing.assert_allclose(unflat["z"], s["z"], atol=1e-6)
         np.testing.assert_allclose(unflat["x"], s["x"], atol=1e-6)
 

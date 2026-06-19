@@ -7,7 +7,7 @@ import pytest
 import scipy.stats
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from probpipe import GLMLikelihood, MultivariateNormal, SimpleModel, Record, RecordTemplate, condition_on, mean
+from probpipe import GLMLikelihood, MultivariateNormal, SimpleModel, Record, EventTemplate, condition_on, mean
 from probpipe.modeling import Likelihood, GenerativeLikelihood
 
 
@@ -175,7 +175,7 @@ class TestGLMLikelihoodDataTemplate:
 
     def test_data_template_fields(self, poisson_lik):
         tpl = poisson_lik.data_template
-        assert isinstance(tpl, RecordTemplate)
+        assert isinstance(tpl, EventTemplate)
         assert tpl.fields == ("X", "y")
 
     def test_data_template_integrates_with_simple_model(self, poisson_lik):
@@ -235,8 +235,8 @@ class TestGLMLikelihoodWithValues:
                                    dtype=float))
         posterior = condition_on(model, data, num_results=50, num_warmup=25, random_seed=0)
         assert mean(posterior).shape == (2,)
-        # Prior has no record_template, so draws are raw arrays.
-        # Named draws require prior._record_template to be set.
+        # Prior has no event_template, so draws are raw arrays.
+        # Named draws require prior._event_template to be set.
         draws = posterior.draws()
         flat = posterior.flatten_value(draws, event_shape=posterior.event_shape)
         assert flat.shape == (50, 2)

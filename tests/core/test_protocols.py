@@ -259,17 +259,17 @@ class TestRecordDistributionViewDynamicProtocols:
     """A view over a field must only claim protocols its parent supports."""
 
     def test_view_over_log_prob_only_parent_is_not_sampling(self):
-        """Build a parent with a RecordTemplate that supports only
+        """Build a parent with an EventTemplate that supports only
         log_prob, and verify the view doesn't claim to be
         SupportsSampling / SupportsMean / SupportsVariance."""
         from probpipe.core._distribution_base import Distribution
         from probpipe.core._record_distribution import (
             RecordDistribution, _RecordDistributionView,
         )
-        from probpipe.core.record import RecordTemplate
+        from probpipe.core.record import EventTemplate
 
         class _LogProbOnlyParent(RecordDistribution, SupportsLogProb):
-            record_template = RecordTemplate(x=(), y=())
+            event_template = EventTemplate(x=(), y=())
 
             def __init__(self):
                 self._name = "lp_only"
@@ -319,10 +319,10 @@ class TestFlattenedDistributionViewDynamicProtocols:
         from probpipe.core._numeric_record_distribution import (
             FlattenedDistributionView, NumericRecordDistribution,
         )
-        from probpipe.core.record import RecordTemplate
+        from probpipe.core.record import EventTemplate
 
         class _SampleOnlyBase(NumericRecordDistribution, SupportsSampling):
-            record_template = RecordTemplate(x=())
+            event_template = EventTemplate(x=())
 
             def __init__(self):
                 self._name = "sample_only"
@@ -346,10 +346,10 @@ class TestFlattenedDistributionViewDynamicProtocols:
         from probpipe.core._numeric_record_distribution import (
             FlattenedDistributionView, NumericRecordDistribution,
         )
-        from probpipe.core.record import RecordTemplate
+        from probpipe.core.record import EventTemplate
 
         class _LogProbOnlyBase(NumericRecordDistribution, SupportsLogProb):
-            record_template = RecordTemplate(x=())
+            event_template = EventTemplate(x=())
 
             def __init__(self):
                 self._name = "lpo_base"
@@ -507,14 +507,14 @@ class TestTransformedDistributionDynamicProtocols:
     def test_over_log_prob_only_base_no_sampling(self):
         """A base with log_prob but no sampling → transform has no SupportsSampling."""
         from probpipe import TransformedDistribution, NumericRecordDistribution
-        from probpipe.core.record import RecordTemplate
+        from probpipe.core.record import EventTemplate
         import tensorflow_probability.substrates.jax.bijectors as tfb
         from probpipe.core.protocols import SupportsLogProb
 
         class _LogProbOnly(NumericRecordDistribution, SupportsLogProb):
             _sampling_cost = "low"
             _preferred_orchestration = None
-            record_template = RecordTemplate(x=())
+            event_template = EventTemplate(x=())
 
             def __init__(self):
                 self._name = "lpo"

@@ -10,7 +10,7 @@ from types import MappingProxyType
 import jax.numpy as jnp
 
 from .._dtype import _promote_floats
-from ..core._record_distribution import _build_record_template
+from ..core._record_distribution import _build_event_template
 from ..core.distribution import (
     NumericRecordDistribution,
     _mc_expectation,
@@ -112,7 +112,7 @@ class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb
 
         self._components = components
         self._component_slices = slices  # still needed for Gaussian conditioning
-        self._record_template = _build_record_template(self._components)
+        self._event_template = _build_event_template(self._components)
         self._total_dim = total_dim  # still needed for Gaussian conditioning
 
     @property
@@ -137,7 +137,7 @@ class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb
 
     @property
     def dtypes(self) -> dict[str, jnp.dtype]:
-        """Per-field dtype, aligned with ``record_template.fields``.
+        """Per-field dtype, aligned with ``event_template.fields``.
 
         Every field shares the (float) dtype of the mean / covariance
         arrays — ``_promote_floats`` in ``__init__`` casts both to a
@@ -173,7 +173,7 @@ class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb
         if sample_shape:
             return NumericRecordArray(
                 result, batch_shape=sample_shape,
-                template=self.record_template,
+                template=self.event_template,
             )
         return Record(result)
 
