@@ -13,9 +13,9 @@ The Record family
 |-------------------------------------------------------------|-----------------------------------------------------------------------------------------|
 | :class:`Record`                                             | Single structured value; fields may be arrays, scalars, strings, xarray, nested Record. |
 | :class:`~probpipe.NumericRecord` (subclass)                 | Single structured value; every leaf is a ``jax.Array`` (post-construction invariant).   |
-| :class:`~probpipe.RecordArray`                              | Batch of ``Record`` elements sharing a :class:`RecordTemplate`.                         |
+| :class:`~probpipe.RecordArray`                              | Batch of ``Record`` elements sharing a :class:`EventTemplate`.                         |
 | :class:`~probpipe.NumericRecordArray` (subclass)            | Batch of :class:`~probpipe.NumericRecord` elements with ``flatten`` / ``mean`` / ``var``. |
-| :class:`RecordTemplate`                                     | Structural skeleton: field names, per-field leaf shapes or ``None`` for opaque leaves.  |
+| :class:`EventTemplate`                                     | Structural skeleton: field names, per-field leaf shapes or ``None`` for opaque leaves.  |
 
 **When to reach for which:**
 
@@ -36,7 +36,7 @@ The Record family
   single element (``Record`` from ``RecordArray``, ``NumericRecord``
   from ``NumericRecordArray``); field indexing returns the batched
   array.
-* Use :class:`RecordTemplate` whenever you need to round-trip
+* Use :class:`EventTemplate` whenever you need to round-trip
   unflatten → flatten without an example instance, or describe the
   expected structure of a distribution's sample.
 
@@ -76,7 +76,7 @@ nested ``Record``, anything. Implications:
   :class:`~probpipe.NumericRecord`, which coerces at construction.
 
 A side effect of the no-coercion policy: Python ``list`` / ``tuple``
-leaves have no ``.shape`` or ``.dtype``, so :meth:`RecordTemplate.from_record`
+leaves have no ``.shape`` or ``.dtype``, so :meth:`EventTemplate.from_record`
 sees them as opaque (``None``) — even if they contain numbers.
 Wrap numeric lists in ``np.asarray`` or ``jnp.asarray`` before
 storing them if you want a numeric template entry.
@@ -99,27 +99,38 @@ Field ordering
 
 Fields iterate in **insertion order** (the order keyword arguments are
 passed, or the order of the input ``dict``). The ``/`` character is
-reserved as a path separator on nested ``Record``s and ``RecordTemplate``s
+reserved as a path separator on nested ``Record``s and ``EventTemplate``s
 and is rejected at construction.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping
+from dataclasses import dataclass
 from math import prod
-from typing import Any, Callable, TypeAlias
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import ArrayLike
+from .constraints import Constraint
 from .provenance import Provenance
 
-__all__ = ["Record", "RecordTemplate", "NumericRecordTemplate"]
+__all__ = [
+    "ArraySpec",
+    "DistributionSpec",
+    "EventTemplate",
+    "FunctionSpec",
+    "LeafSpec",
+    "NumericEventTemplate",
+    "OpaqueSpec",
+    "Record",
+]
 
 # A field value: nested ``Record`` or anything else (stored as-is).
-_FieldValue: TypeAlias = "Any"
+type _FieldValue = Any
 
 # Separator for nested-path access (``record["a/b/c"]``); reserved in
 # field names.
@@ -180,7 +191,6 @@ class Record:
             _check_no_path_sep(field_name)
         store = dict(fields)
         object.__setattr__(self, "_store", store)
-        # Auto-generate name from field names if not provided
         if name is None:
             name = "record(" + ",".join(store.keys()) + ")"
         object.__setattr__(self, "_name", name)
@@ -499,11 +509,9 @@ class Record:
 
     # -- Call-forwarding shim for single-field Records ----------------------
     #
-    # Mirrors the single-field ``__jax_array__`` / ``__float__`` etc.
-    # shims on ``NumericRecord``: when a WorkflowFunction wraps a
-    # callable return as ``Record({fn_name: callable})``, the caller
-    # can keep invoking the callable transparently via ``result(args)``.
-    # Multi-field records raise — silently unwrapping one of many
+    # When a WorkflowFunction wraps a callable return as
+    # ``Record({fn_name: callable})``, the caller can keep invoking it via
+    # ``result(args)``. Multi-field records raise — unwrapping one of many
     # fields would be ambiguous.
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         if len(self._store) != 1:
@@ -551,13 +559,10 @@ class Record:
         return True
 
     def __hash__(self) -> int:
-        # Structural hash: class, field names, and per-field shape+dtype.
-        # Numeric leaves are coerced via ``jnp.asarray`` first so a bare
-        # Python scalar and its array wrapping hash identically
-        # (``Record(a=1.0)`` and ``Record(a=jnp.asarray(1.0))`` compare
-        # equal under ``__eq__`` and must therefore hash the same).
-        # Non-numeric (opaque) leaves use ``type(val)`` as the signature
-        # so identical types collide while different types don't.
+        # Structural hash over class, field names, and per-field shape+dtype.
+        # Numeric leaves are coerced via ``jnp.asarray`` so a scalar and its
+        # array wrapping hash alike (they compare equal under ``__eq__``);
+        # opaque leaves fall back to ``type(val)``.
         parts: list[Any] = [type(self).__name__]
         for name, val in self._store.items():
             if isinstance(val, Record):
@@ -573,30 +578,117 @@ class Record:
 
 
 # ---------------------------------------------------------------------------
-# RecordTemplate — structural skeleton
+# Leaf specs — the closed sum describing what one leaf of a template is.
 # ---------------------------------------------------------------------------
+#
+# Each spec is a frozen, hashable dataclass so that an ``EventTemplate`` (which
+# stores them) stays hashable for jit treedef caching and keeps the
+# order-sensitive ``__eq__`` / ``__hash__`` contract.
 
-# Leaf spec: shape tuple for numeric fields, None for opaque leaves.
-_LeafSpec: TypeAlias = "tuple[int, ...] | None"
-_FieldSpec: TypeAlias = "_LeafSpec | RecordTemplate"
+
+@dataclass(frozen=True)
+class ArraySpec:
+    """A numeric array leaf: a fixed event ``shape`` plus optional metadata.
+
+    ``dtype`` and ``support`` are optional (default ``None``); the current
+    auto-build path stores only shape, and distributions populate the extra
+    fields in a later phase. Both must be hashable when set.
+    """
+
+    shape: tuple[int, ...]
+    dtype: jnp.dtype | None = None
+    support: Constraint | None = None
+
+    def __post_init__(self) -> None:
+        shape = tuple(self.shape)
+        if not all(isinstance(d, int) and d >= 0 for d in shape):
+            raise TypeError(
+                f"ArraySpec.shape must be a tuple of non-negative ints, "
+                f"got {self.shape!r}"
+            )
+        object.__setattr__(self, "shape", shape)
 
 
-def _all_numeric(specs) -> bool:
-    """True iff every spec is either a shape tuple or an already-promoted
-    :class:`NumericRecordTemplate`. Used by the base-class auto-promotion
-    hook so ``RecordTemplate(x=(), y=(3,))`` returns a
-    ``NumericRecordTemplate`` instance without opting in explicitly."""
-    for spec in specs:
-        if spec is None:
-            return False
-        if isinstance(spec, RecordTemplate) and not isinstance(
-            spec, NumericRecordTemplate,
-        ):
-            return False
-        if not isinstance(spec, (tuple, RecordTemplate)):
-            # Leave validation of unsupported spec types to __init__.
-            return False
-    return True
+@dataclass(frozen=True)
+class OpaqueSpec:
+    """A non-array Python-object leaf (str, DataFrame, ...).
+
+    ``meta`` is optional opaque metadata and must be hashable (or ``None``).
+    """
+
+    meta: Hashable = None
+
+
+@dataclass(frozen=True)
+class DistributionSpec:
+    """A leaf whose value is a ``Distribution``.
+
+    ``inner_template`` is the :class:`EventTemplate` of one draw from that
+    distribution. Not yet produced in this phase.
+    """
+
+    inner_template: EventTemplate
+
+
+@dataclass(frozen=True)
+class FunctionSpec:
+    """A leaf whose value is a callable.
+
+    ``input_template`` / ``output_template`` are the :class:`EventTemplate`\\ s
+    of the callable's input and output. Not yet produced in this phase.
+    """
+
+    input_template: EventTemplate
+    output_template: EventTemplate
+
+
+# ``_FieldSpec`` adds nested templates to the public leaf union;
+# ``_FieldSpecInput`` also admits the construction-time sugar the constructor
+# normalises (a bare shape tuple or ``None``).
+type LeafSpec = ArraySpec | OpaqueSpec | DistributionSpec | FunctionSpec
+type _FieldSpec = LeafSpec | EventTemplate
+type _FieldSpecInput = _FieldSpec | tuple[int, ...] | None
+
+
+def _to_spec(spec: _FieldSpecInput) -> _FieldSpec:
+    """Normalise a constructor input to a stored field spec.
+
+    Construction-time sugar (preserved): a bare shape ``tuple`` becomes an
+    :class:`ArraySpec`, ``None`` becomes an :class:`OpaqueSpec`, and a nested
+    :class:`EventTemplate` is kept as-is. Already-built specs pass through, so
+    new code may supply explicit ``ArraySpec(...)`` / ``OpaqueSpec(...)`` etc.
+    """
+    # NB: an explicit class tuple rather than ``(LeafSpec, EventTemplate)`` —
+    # pyright doesn't narrow ``spec`` through a union-alias inside isinstance,
+    # which would leave the ``return spec`` typed as the wider input alias.
+    if isinstance(spec, (ArraySpec, OpaqueSpec, DistributionSpec, FunctionSpec, EventTemplate)):
+        return spec
+    if spec is None:
+        return OpaqueSpec()
+    if isinstance(spec, tuple):
+        return ArraySpec(shape=spec)
+    raise TypeError(
+        f"spec must be a shape tuple, None, a leaf spec "
+        f"(ArraySpec/OpaqueSpec/DistributionSpec/FunctionSpec), or an "
+        f"EventTemplate, got {type(spec).__name__}"
+    )
+
+
+def _is_numeric_spec(spec: Any) -> bool:
+    """A numeric leaf: an :class:`ArraySpec` or a (nested) :class:`NumericEventTemplate`."""
+    return isinstance(spec, (ArraySpec, NumericEventTemplate))
+
+
+def _all_numeric(specs: Iterable[Any]) -> bool:
+    """True iff every (raw, pre-normalisation) input spec is numeric.
+
+    Drives the base-class auto-promotion hook so ``EventTemplate(x=(), y=(3,))``
+    returns a ``NumericEventTemplate`` without opting in explicitly. Raw inputs
+    also allow the shape-tuple sugar; ``None`` / ``OpaqueSpec`` /
+    ``DistributionSpec`` / ``FunctionSpec`` / mixed nested templates and any
+    unsupported type are non-numeric (``__init__`` rejects the latter).
+    """
+    return all(isinstance(s, tuple) or _is_numeric_spec(s) for s in specs)
 
 
 def _pack_fields(
@@ -608,14 +700,14 @@ def _pack_fields(
     """Validate that *field_kwargs* names exactly *fields*, then build a Record.
 
     The general "named values → validated :class:`Record`" operation behind
-    :meth:`RecordTemplate.pack`. Raises ``TypeError`` if any field is missing
+    :meth:`EventTemplate.pack`. Raises ``TypeError`` if any field is missing
     or unexpected; otherwise returns a ``Record`` keyed in *fields* order.
     *owner* (optional) prefixes the error message — the calling distribution or
     template class name.
 
     :meth:`Distribution._pack_value` calls this directly rather than through
-    :meth:`RecordTemplate.pack` because some distributions expose ``fields``
-    without a ``RecordTemplate`` instance.
+    :meth:`EventTemplate.pack` because some distributions expose ``fields``
+    without a ``EventTemplate`` instance.
     """
     given = set(field_kwargs)
     expected = set(fields)
@@ -635,12 +727,40 @@ def _pack_fields(
     return Record(**{f: field_kwargs[f] for f in fields})
 
 
-class RecordTemplate:
+# dtype.kind codes for numeric arrays: b=bool, i=int, u=uint, f=float, c=complex.
+_NUMERIC_KINDS = frozenset("biufc")
+
+
+def _full_leaf_shape(val: Any) -> tuple[int, ...] | None:
+    """Infer the full (pre-batch-strip) array shape of a Record leaf.
+
+    Returns the leaf's shape for numeric scalars (``()``) and numeric arrays,
+    or ``None`` for opaque leaves (strings, object arrays, Python lists/tuples,
+    and anything without a numeric ``dtype``/``shape``). Used by
+    :meth:`EventTemplate.from_record`.
+    """
+    if isinstance(val, (bool, int, float, complex, np.integer, np.floating, np.bool_)):
+        return ()
+    if (
+        hasattr(val, "shape")
+        and hasattr(val, "dtype")
+        and getattr(val.dtype, "kind", None) in _NUMERIC_KINDS
+    ):
+        return tuple(val.shape)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# EventTemplate — structural skeleton
+# ---------------------------------------------------------------------------
+
+
+class EventTemplate:
     """Structural description of a Record: field names, leaf shapes, nesting.
 
     Stores the skeleton of a Record without data — field names, per-field
     shapes (for numeric leaves) or ``None`` (for opaque leaves), and
-    optional nested ``RecordTemplate`` for hierarchical structure.
+    optional nested ``EventTemplate`` for hierarchical structure.
 
     Inspired by JAX's ``PyTreeDef``: a template can reconstruct a Record
     from flat data, and describes the expected structure for type-checking
@@ -652,26 +772,35 @@ class RecordTemplate:
         Named fields.  Each value is one of:
 
         - ``tuple[int, ...]`` — shape of a numeric array leaf
-          (e.g., ``()`` for scalar, ``(3,)`` for 3-vector).
-        - ``None`` — opaque (non-array) leaf.
-        - ``RecordTemplate`` — nested sub-structure.
+          (e.g., ``()`` for scalar, ``(3,)`` for 3-vector); normalised to
+          :class:`ArraySpec`.
+        - ``None`` — opaque (non-array) leaf; normalised to :class:`OpaqueSpec`.
+        - a leaf spec — :class:`ArraySpec` / :class:`OpaqueSpec` /
+          :class:`DistributionSpec` / :class:`FunctionSpec` (passed through).
+        - ``EventTemplate`` — nested sub-structure (kept as-is).
 
     Examples
     --------
     ::
 
-        RecordTemplate(x=(), y=(3,))                    # -> NumericRecordTemplate
-        RecordTemplate(label=None, x=())                 # -> RecordTemplate (mixed)
-        RecordTemplate(physics=RecordTemplate(force=(), mass=()), obs=())
+        EventTemplate(x=(), y=(3,))                    # -> NumericEventTemplate
+        EventTemplate(label=None, x=())                 # -> EventTemplate (mixed)
+        EventTemplate(physics=EventTemplate(force=(), mass=()), obs=())
 
     Notes
     -----
-    Calling ``RecordTemplate(...)`` directly auto-promotes to a
-    :class:`NumericRecordTemplate` when every spec is numeric (and
+    Leaves are stored as frozen, hashable spec objects
+    (``ArraySpec`` / ``OpaqueSpec`` / ``DistributionSpec`` / ``FunctionSpec``);
+    ``__getitem__`` returns the stored spec (or nested template), while
+    shape-shaped access stays on ``leaf_shapes`` / ``event_shapes`` /
+    ``field_event_shape``.
+
+    Calling ``EventTemplate(...)`` directly auto-promotes to a
+    :class:`NumericEventTemplate` when every spec is numeric (and
     every nested sub-template is itself all-numeric). That keeps
     ``flat_size`` and ``numeric_leaf_shapes`` reachable in the common
     all-numeric case without requiring the caller to name the subclass.
-    Mixed templates (any ``None`` spec) stay as plain ``RecordTemplate``
+    Mixed templates (any ``None`` spec) stay as plain ``EventTemplate``
     and do not expose ``flat_size`` — it isn't a meaningful quantity
     once opaque leaves are in the mix.
     """
@@ -680,49 +809,44 @@ class RecordTemplate:
 
     def __new__(
         cls,
-        _dict: dict[str, _FieldSpec] | None = None,
+        _dict: Mapping[str, _FieldSpecInput] | None = None,
         /,
-        **field_specs: _FieldSpec,
+        **field_specs: _FieldSpecInput,
     ):
         # Only auto-promote when invoked directly on the base class —
-        # explicit ``NumericRecordTemplate(...)`` calls bypass this path
+        # explicit ``NumericEventTemplate(...)`` calls bypass this path
         # and run their own strict validation.
-        if cls is RecordTemplate:
+        if cls is EventTemplate:
             specs = _dict if _dict is not None else field_specs
             if specs and _all_numeric(specs.values()):
-                return object.__new__(NumericRecordTemplate)
+                return object.__new__(NumericEventTemplate)
         return object.__new__(cls)
 
     def __init__(
         self,
-        _dict: dict[str, _FieldSpec] | None = None,
+        _dict: Mapping[str, _FieldSpecInput] | None = None,
         /,
-        **field_specs: _FieldSpec,
+        **field_specs: _FieldSpecInput,
     ):
+        source: Mapping[str, _FieldSpecInput]
         if _dict is not None:
             if field_specs:
                 raise ValueError(
                     "Cannot pass both positional dict and keyword arguments"
                 )
-            field_specs = _dict
-        if not field_specs:
+            source = _dict
+        else:
+            source = field_specs
+        if not source:
             raise ValueError(f"{type(self).__name__} requires at least one field")
-        # Validate specs
-        for name, spec in field_specs.items():
+        specs: dict[str, _FieldSpec] = {}
+        for name, spec in source.items():
             _check_no_path_sep(name)
-            if spec is not None and not isinstance(spec, (tuple, RecordTemplate)):
-                raise TypeError(
-                    f"Field {name!r}: spec must be a shape tuple, None, "
-                    f"or RecordTemplate, got {type(spec).__name__}"
-                )
-            if isinstance(spec, tuple):
-                if not all(isinstance(d, int) and d >= 0 for d in spec):
-                    raise TypeError(
-                        f"Field {name!r}: shape must be a tuple of "
-                        f"non-negative ints, got {spec!r}"
-                    )
-        self._post_validate(field_specs)
-        specs = dict(field_specs)
+            try:
+                specs[name] = _to_spec(spec)
+            except TypeError as exc:
+                raise TypeError(f"Field {name!r}: {exc}") from None
+        self._post_validate(specs)
         object.__setattr__(self, "_specs", specs)
 
     def _post_validate(self, field_specs: dict[str, _FieldSpec]) -> None:
@@ -732,13 +856,13 @@ class RecordTemplate:
     # -- Immutability -------------------------------------------------------
 
     def __setattr__(self, name: str, value: Any) -> None:
-        raise AttributeError("RecordTemplate is immutable")
+        raise AttributeError("EventTemplate is immutable")
 
     def __delattr__(self, name: str) -> None:
-        raise AttributeError("RecordTemplate is immutable")
+        raise AttributeError("EventTemplate is immutable")
 
     def __reduce__(self):
-        return (_unpickle_record_template, (dict(self._specs),))
+        return (_unpickle_event_template, (dict(self._specs),))
 
     # -- Field access -------------------------------------------------------
 
@@ -751,18 +875,21 @@ class RecordTemplate:
     def leaf_shapes(self) -> dict[str, tuple[int, ...] | None]:
         """Per-field leaf shapes.  ``None`` for opaque (non-array) leaves.
 
-        For nested ``RecordTemplate`` fields, returns the nested
+        For nested ``EventTemplate`` fields, returns the nested
         template's ``leaf_shapes`` (not the template itself), keyed by
         ``/``-delimited paths so the keys round-trip with
         :meth:`Record.__getitem__`'s path syntax.
         """
         result: dict[str, tuple[int, ...] | None] = {}
         for name, spec in self._specs.items():
-            if isinstance(spec, RecordTemplate):
+            if isinstance(spec, EventTemplate):
                 for sub_name, sub_shape in spec.leaf_shapes.items():
                     result[f"{name}{_PATH_SEP}{sub_name}"] = sub_shape
+            elif isinstance(spec, ArraySpec):
+                result[name] = spec.shape
             else:
-                result[name] = spec
+                # Opaque / distribution / function leaves have no array shape.
+                result[name] = None
         return result
 
     @property
@@ -772,28 +899,24 @@ class RecordTemplate:
         Unlike :attr:`leaf_shapes` (which descends into nested
         sub-templates and emits one entry per leaf), ``event_shapes``
         emits one entry per top-level field. Nested sub-templates and
-        opaque leaves (``None`` specs) collapse to ``()``. This is the
-        view that downstream Distribution code wants when answering
-        "what is the per-field event shape of one draw?".
+        opaque leaves collapse to ``()``. This is the view that downstream
+        Distribution code wants when answering "what is the per-field event
+        shape of one draw?".
         """
         return {name: self.field_event_shape(name) for name in self._specs}
 
     def field_event_shape(self, name: str) -> tuple[int, ...]:
         """Event shape for one top-level field.
 
-        Numeric leaf specs (tuples) pass through verbatim; opaque leaves
-        and nested ``RecordTemplate`` sub-structures collapse to ``()``.
-        Raises ``KeyError`` if ``name`` is not a top-level field.
+        :class:`ArraySpec` leaves return their ``shape`` verbatim; opaque /
+        distribution / function leaves and nested ``EventTemplate``
+        sub-structures collapse to ``()``. Raises ``KeyError`` if ``name`` is
+        not a top-level field.
         """
         spec = self._specs[name]
-        if isinstance(spec, RecordTemplate):
-            return ()
-        if spec is None:
-            return ()
-        if isinstance(spec, tuple):
-            return spec
-        # Record-valued fallback (legacy templates).
-        return spec.shape if not isinstance(spec, Record) else ()
+        if isinstance(spec, ArraySpec):
+            return spec.shape
+        return ()
 
     def pack(self, **field_kwargs: Any) -> Record:
         """Build a :class:`Record` from named values matching this template.
@@ -810,6 +933,13 @@ class RecordTemplate:
         return name in self._specs
 
     def __getitem__(self, name: str) -> _FieldSpec:
+        """Return the stored spec for *name*.
+
+        Returns the leaf spec object (:class:`ArraySpec` / :class:`OpaqueSpec`
+        / :class:`DistributionSpec` / :class:`FunctionSpec`) or, for a nested
+        field, the nested :class:`EventTemplate`. For shape-shaped access use
+        :attr:`leaf_shapes` / :attr:`event_shapes` / :meth:`field_event_shape`.
+        """
         return self._specs[name]
 
     def __len__(self) -> int:
@@ -818,24 +948,19 @@ class RecordTemplate:
     # -- Equality and hashing -----------------------------------------------
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, RecordTemplate):
+        if not isinstance(other, EventTemplate):
             return NotImplemented
         # Order-sensitive comparison so equality matches the
         # order-sensitive ``__hash__`` (insertion order is part of the
-        # template's identity per #124). dict.__eq__ alone would
-        # ignore order, breaking the eq/hash contract.
+        # template's identity). dict.__eq__ alone would ignore order,
+        # breaking the eq/hash contract.
         return tuple(self._specs.items()) == tuple(other._specs.items())
 
     def __hash__(self) -> int:
-        def _spec_key(spec: _FieldSpec):
-            if spec is None:
-                return None
-            if isinstance(spec, tuple):
-                return spec
-            return hash(spec)  # RecordTemplate
-        return hash(tuple(
-            (name, _spec_key(spec)) for name, spec in self._specs.items()
-        ))
+        # All field specs (leaf specs and nested templates) are hashable, so
+        # the order-sensitive item tuple hashes directly. Insertion order is
+        # part of the template's identity.
+        return hash(tuple(self._specs.items()))
 
     # -- Factory methods ----------------------------------------------------
 
@@ -845,7 +970,7 @@ class RecordTemplate:
         record: Record,
         *,
         batch_shape: tuple[int, ...] = (),
-    ) -> RecordTemplate:
+    ) -> EventTemplate:
         """Infer a template from an existing Record.
 
         Numeric leaves are recorded with their shape (after stripping the
@@ -870,38 +995,27 @@ class RecordTemplate:
         Downstream operations that call ``NumericRecord.unflatten`` will
         otherwise raise on the opaque field.
         """
-        # Promote plain ``RecordTemplate.from_record`` to
-        # ``NumericRecordTemplate`` when the source signals it is all-numeric
+        # Promote plain ``EventTemplate.from_record`` to
+        # ``NumericEventTemplate`` when the source signals it is all-numeric
         # (a ``NumericRecord`` or any Record whose recursive leaves are
         # numeric). That keeps ``flat_size`` reachable for the common
         # all-numeric case without requiring callers to name the subclass.
         target_cls = cls
-        if cls is RecordTemplate:
+        if cls is EventTemplate:
             from ._numeric_record import NumericRecord
             if isinstance(record, NumericRecord):
-                target_cls = NumericRecordTemplate
+                target_cls = NumericEventTemplate
         n_batch = len(batch_shape)
-        specs: dict[str, _FieldSpec] = {}
+        # Construction-time sugar; the constructor normalises to stored specs.
+        specs: dict[str, _FieldSpecInput] = {}
         for name in record.fields:
             val = record[name]
             if isinstance(val, Record):
                 specs[name] = target_cls.from_record(val, batch_shape=batch_shape)
                 continue
-            # Numeric scalar / numeric array → strip leading batch dims.
-            if isinstance(val, (bool, int, float, complex, np.integer, np.floating, np.bool_)):
-                full_shape: tuple[int, ...] = ()
-            elif hasattr(val, "shape") and hasattr(val, "dtype"):
-                kind = getattr(val.dtype, "kind", None)
-                if kind in {"b", "i", "u", "f", "c"}:
-                    full_shape = tuple(val.shape)
-                else:
-                    specs[name] = None
-                    continue
-            else:
-                specs[name] = None
-                continue
-            event_shape = full_shape[n_batch:] if n_batch else full_shape
-            specs[name] = event_shape
+            # Numeric leaf → event shape (drop leading batch dims); opaque → None.
+            full_shape = _full_leaf_shape(val)
+            specs[name] = None if full_shape is None else full_shape[n_batch:]
         return target_cls(specs)
 
     # -- Repr ---------------------------------------------------------------
@@ -909,25 +1023,28 @@ class RecordTemplate:
     def __repr__(self) -> str:
         parts = []
         for name, spec in self._specs.items():
-            if isinstance(spec, RecordTemplate):
+            if isinstance(spec, EventTemplate):
                 parts.append(f"{name}={spec!r}")
-            elif spec is None:
+            elif isinstance(spec, ArraySpec) and spec.dtype is None and spec.support is None:
+                # Bare specs render as their sugar form (shape tuple / None).
+                parts.append(f"{name}={spec.shape}")
+            elif isinstance(spec, OpaqueSpec) and spec.meta is None:
                 parts.append(f"{name}=None")
             else:
-                parts.append(f"{name}={spec}")
+                parts.append(f"{name}={spec!r}")
         return f"{type(self).__name__}({', '.join(parts)})"
 
 
 # ---------------------------------------------------------------------------
-# NumericRecordTemplate — all-numeric specialisation
+# NumericEventTemplate — all-numeric specialisation
 # ---------------------------------------------------------------------------
 
 
-class NumericRecordTemplate(RecordTemplate):
-    """RecordTemplate where every leaf is numeric.
+class NumericEventTemplate(EventTemplate):
+    """EventTemplate where every leaf is numeric.
 
-    Extends :class:`RecordTemplate` by requiring each spec to be a shape
-    tuple (or a nested :class:`NumericRecordTemplate`) — no opaque
+    Extends :class:`EventTemplate` by requiring each spec to be a shape
+    tuple (or a nested :class:`NumericEventTemplate`) — no opaque
     ``None`` leaves are allowed. That restriction is what makes
     :attr:`flat_size` and :meth:`numeric_leaf_shapes` meaningful:
     ``flat_size`` is the total number of scalar elements across every
@@ -936,7 +1053,7 @@ class NumericRecordTemplate(RecordTemplate):
     class so that every field can be reconstructed from a slice of the
     flat buffer.
 
-    Use :meth:`RecordTemplate.from_record` on a :class:`NumericRecord`
+    Use :meth:`EventTemplate.from_record` on a :class:`NumericRecord`
     (it auto-promotes) or call this constructor directly when you have
     the shape specs in hand.
     """
@@ -945,26 +1062,33 @@ class NumericRecordTemplate(RecordTemplate):
 
     def _post_validate(self, field_specs: dict[str, _FieldSpec]) -> None:
         for name, spec in field_specs.items():
-            if spec is None:
+            if _is_numeric_spec(spec):
+                continue
+            if isinstance(spec, EventTemplate):
                 raise TypeError(
-                    f"NumericRecordTemplate: field {name!r} is opaque "
-                    f"(spec=None); opaque leaves are not allowed — use "
-                    f"RecordTemplate if you need a mixed template."
-                )
-            if isinstance(spec, RecordTemplate) and not isinstance(
-                spec, NumericRecordTemplate,
-            ):
-                raise TypeError(
-                    f"NumericRecordTemplate: nested field {name!r} is a "
+                    f"NumericEventTemplate: nested field {name!r} is a "
                     f"{type(spec).__name__}; nested sub-templates must "
-                    f"themselves be NumericRecordTemplate."
+                    f"themselves be NumericEventTemplate."
                 )
+            if isinstance(spec, OpaqueSpec):
+                raise TypeError(
+                    f"NumericEventTemplate: field {name!r} is opaque "
+                    f"(OpaqueSpec); opaque leaves are not allowed — use "
+                    f"EventTemplate if you need a mixed template."
+                )
+            # DistributionSpec / FunctionSpec — non-array leaves.
+            raise TypeError(
+                f"NumericEventTemplate: field {name!r} has a non-numeric leaf "
+                f"({type(spec).__name__}); only ArraySpec leaves (or nested "
+                f"NumericEventTemplate) are allowed — use EventTemplate if you "
+                f"need a mixed template."
+            )
 
     def __init__(
         self,
-        _dict: dict[str, _FieldSpec] | None = None,
+        _dict: Mapping[str, _FieldSpecInput] | None = None,
         /,
-        **field_specs: _FieldSpec,
+        **field_specs: _FieldSpecInput,
     ):
         super().__init__(_dict, **field_specs)
         object.__setattr__(self, "_flat_size", self._compute_flat_size())
@@ -973,7 +1097,7 @@ class NumericRecordTemplate(RecordTemplate):
     def numeric_leaf_shapes(self) -> dict[str, tuple[int, ...]]:
         """Per-field shapes for numeric leaves.
 
-        On :class:`NumericRecordTemplate` every leaf is numeric, so this
+        On :class:`NumericEventTemplate` every leaf is numeric, so this
         is equivalent to :attr:`leaf_shapes`. Kept as a distinct name for
         symmetry with historical callers that used it as a filter.
         """
@@ -983,11 +1107,11 @@ class NumericRecordTemplate(RecordTemplate):
         """Total scalar count across all numeric leaves."""
         total = 0
         for spec in self._specs.values():
-            if isinstance(spec, NumericRecordTemplate):
+            if isinstance(spec, NumericEventTemplate):
                 total += spec.flat_size
             else:
-                # spec is a shape tuple — validated by ``_post_validate``.
-                total += prod(spec) if spec else 1
+                # spec is an ArraySpec — validated by ``_post_validate``.
+                total += prod(spec.shape) if spec.shape else 1
         return total
 
     @property
@@ -1006,22 +1130,28 @@ def _spec_size(spec: _FieldSpec) -> int:
 
     Shared by ``NumericRecord.unflatten`` and ``NumericRecordArray.unflatten``
     when walking a template and slicing a flat buffer. Nested specs must be
-    :class:`NumericRecordTemplate` so that ``.flat_size`` is defined;
-    opaque leaves (``spec is None``) have no flat size and raise.
+    :class:`NumericEventTemplate` so that ``.flat_size`` is defined;
+    non-array leaves (:class:`OpaqueSpec` / :class:`DistributionSpec` /
+    :class:`FunctionSpec`) have no flat size and raise.
     """
-    if isinstance(spec, NumericRecordTemplate):
+    if isinstance(spec, NumericEventTemplate):
         return spec.flat_size
-    if isinstance(spec, RecordTemplate):
+    if isinstance(spec, EventTemplate):
         raise TypeError(
-            f"nested {type(spec).__name__} contains opaque leaves; "
-            f"unflatten requires a NumericRecordTemplate."
+            f"nested {type(spec).__name__} contains non-numeric leaves; "
+            f"unflatten requires a NumericEventTemplate."
         )
-    if spec is None:
+    if isinstance(spec, ArraySpec):
+        return prod(spec.shape) if spec.shape else 1
+    if isinstance(spec, OpaqueSpec):
         raise TypeError(
-            "opaque template fields (shape=None) have no flat size; "
-            "unflatten is only defined for numeric-leaf fields."
+            "opaque template fields have no flat size; unflatten is only "
+            "defined for numeric-leaf (ArraySpec) fields."
         )
-    return prod(spec) if spec else 1
+    raise TypeError(
+        f"non-array template field ({type(spec).__name__}) has no flat size; "
+        f"unflatten is only defined for numeric-leaf (ArraySpec) fields."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1036,8 +1166,8 @@ def _unpickle_record(store: dict, name: str, source) -> Record:
     return r
 
 
-def _unpickle_record_template(specs: dict) -> RecordTemplate:
-    return RecordTemplate(specs)
+def _unpickle_event_template(specs: dict) -> EventTemplate:
+    return EventTemplate(specs)
 
 
 # ---------------------------------------------------------------------------

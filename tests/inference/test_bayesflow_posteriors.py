@@ -22,7 +22,7 @@ from probpipe import (
     ApproximateDistribution,
     Normal,
     ProductDistribution,
-    RecordTemplate,
+    EventTemplate,
     condition_on,
     learn_amortized_posterior,
 )
@@ -230,7 +230,7 @@ def _nested_observe(r, m, c, seed):
     per-draw record via ``unflatten`` (flatten order ``[r, m, c]``) -- the same
     structured object the offline simulator passes the simulator at train time."""
     rec = NumericRecordArray.unflatten(
-        jnp.array([r, m, c]), template=_nested_prior().record_template, batch_shape=())
+        jnp.array([r, m, c]), template=_nested_prior().event_template, batch_shape=())
     return _NestedLikelihood().generate_data(rec, 1, key=jax.random.PRNGKey(seed))[0]
 
 
@@ -274,7 +274,7 @@ class TestBayesFlowNPE:
         assert isinstance(post, ApproximateDistribution)
         assert post.algorithm == "bayesflow_npe"
         draws = post.draws()
-        # Named fields (record_template lifting), 300 draws, no warmup/chains effect.
+        # Named fields (event_template lifting), 300 draws, no warmup/chains effect.
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 300
         assert np.isfinite(np.asarray(draws["b"])).all()
         # Omitting num_results falls back to the model default (500 here).
@@ -302,7 +302,7 @@ class TestBayesFlowNPE:
         for forward simulation by hand)."""
         with pytest.raises(NotImplementedError, match="condition_on"):
             npe_model._sample(jax.random.PRNGKey(0))
-        assert npe_model.prior.record_template.fields == ("a", "b")
+        assert npe_model.prior.event_template.fields == ("a", "b")
         assert isinstance(npe_model.simulator, _ToyLikelihood)
 
     def test_condition_random_seed_reproducible(self, npe_model):
@@ -748,7 +748,7 @@ class TestBayesFlowValidation:
 
     def test_rejects_non_record_prior(self):
         """A prior that is not a RecordDistribution (here a raw array, with no
-        ``record_template``) is rejected with a clear TypeError."""
+        ``event_template``) is rejected with a clear TypeError."""
         with pytest.raises(TypeError, match="RecordDistribution"):
             learn_amortized_posterior(
                 jnp.zeros(2), _ToyLikelihood(), num_simulations=8, epochs=1,
@@ -807,7 +807,7 @@ class TestBayesFlowValidation:
         heterogeneous fields could silently pick the wrong bijector."""
 
         class _NoSupports:
-            record_template = RecordTemplate(a=(), b=())
+            event_template = EventTemplate(a=(), b=())
 
             @property
             def supports(self):

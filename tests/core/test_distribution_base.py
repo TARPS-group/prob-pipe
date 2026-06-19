@@ -16,6 +16,7 @@ from probpipe import (
     TransformedDistribution,
 )
 from probpipe.core.provenance import Provenance, provenance_ancestors
+from probpipe.core.record import ArraySpec
 from probpipe.distributions.kde import KDEDistribution
 
 
@@ -136,21 +137,21 @@ class TestRenamedSampling:
         assert renamed.event_shape == mvn.event_shape
 
 
-class TestRenamedRecordTemplate:
-    """renamed() regenerates the cached record_template with the new name."""
+class TestRenamedEventTemplate:
+    """renamed() regenerates the cached event_template with the new name."""
 
     def test_template_field_name_updates(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
         # Touch the template on the original so it's cached
-        assert n.record_template.fields == ("x",)
+        assert n.event_template.fields == ("x",)
         n2 = n.renamed("growth_rate")
-        assert n2.record_template.fields == ("growth_rate",)
+        assert n2.event_template.fields == ("growth_rate",)
 
     def test_template_shape_preserved(self):
         mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="a")
-        assert mvn.record_template["a"] == (3,)
+        assert mvn.event_template["a"] == ArraySpec((3,))
         b = mvn.renamed("b")
-        assert b.record_template["b"] == (3,)
+        assert b.event_template["b"] == ArraySpec((3,))
 
 
 class TestNoBatchShape:
@@ -235,16 +236,16 @@ class TestMetaclassEnforcement:
     def test_record_distribution_without_template_raises(self):
         """The ``_RecordDistributionMeta`` adds a record-template check
         on top of the name check. A RecordDistribution subclass whose
-        ``__init__`` neither sets ``_record_template`` nor leaves
+        ``__init__`` neither sets ``_event_template`` nor leaves
         ``name + event_shape`` derivable can't be constructed."""
         from probpipe.core.distribution import RecordDistribution
 
         class _NoTemplate(RecordDistribution):
             def __init__(self):
                 self._name = "no_template"
-                # No _record_template; no event_shape declared.
+                # No _event_template; no event_shape declared.
 
-        with pytest.raises(TypeError, match="record_template"):
+        with pytest.raises(TypeError, match="event_template"):
             _NoTemplate()
 
 
@@ -256,20 +257,20 @@ class TestRenamedTemplateRoundtrip:
 
     def test_renamed_rebuilds_single_field_auto_template(self):
         """Single-field auto-built template: the clone's
-        ``record_template`` has the new field name (matches
+        ``event_template`` has the new field name (matches
         ``new_name``)."""
         from probpipe import Normal
 
         original = Normal(loc=0.0, scale=1.0, name="x")
-        # Trigger the auto-build so ``_record_template`` is cached.
-        assert original.record_template.fields == ("x",)
+        # Trigger the auto-build so ``_event_template`` is cached.
+        assert original.event_template.fields == ("x",)
 
         clone = original.renamed("y")
         assert clone.name == "y"
         # The rebuilt template uses the new name as the field key.
-        assert clone.record_template.fields == ("y",)
+        assert clone.event_template.fields == ("y",)
         # The original is untouched (renamed returns a copy).
-        assert original.record_template.fields == ("x",)
+        assert original.event_template.fields == ("x",)
 
     def test_renamed_preserves_multi_field_template(self):
         """Multi-field joints have explicit templates whose field
@@ -281,11 +282,11 @@ class TestRenamedTemplateRoundtrip:
         jg = JointGaussian(
             mean=jnp.zeros(2), cov=jnp.eye(2), x=1, y=1,
         )
-        original_fields = jg.record_template.fields
+        original_fields = jg.event_template.fields
         clone = jg.renamed("renamed_jg")
-        assert clone.record_template.fields == original_fields
+        assert clone.event_template.fields == original_fields
 
-    def test_renamed_preserves_non_numeric_record_template(self):
+    def test_renamed_preserves_non_numeric_event_template(self):
         """``JointEmpirical`` (non-NRD ``RecordDistribution``) builds its
         template from the stored samples, not from the distribution's
         name — renaming must leave the template intact (otherwise the
@@ -298,7 +299,7 @@ class TestRenamedTemplateRoundtrip:
             labels=np.array(["a", "b", "c"], dtype=object),
             ids=np.array([0, 1, 2]),
         )
-        original_fields = je.record_template.fields
+        original_fields = je.event_template.fields
         clone = je.renamed("renamed_je")
-        assert clone.record_template is not None
-        assert clone.record_template.fields == original_fields
+        assert clone.event_template is not None
+        assert clone.event_template.fields == original_fields

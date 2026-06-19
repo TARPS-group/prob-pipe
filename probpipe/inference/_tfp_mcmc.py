@@ -21,7 +21,7 @@ from ._inference_utils import (
     as_prng_key,
     build_mcmc_datatree,
     build_target_log_prob,
-    extract_record_template,
+    extract_event_template,
     get_init_state,
     get_prior,
     is_jax_traceable,
@@ -167,7 +167,7 @@ class _TFPGradientMethod(InferenceMethod):
         init = get_init_state(
             dist, kwargs.get("init"), random_seed=random_seed,
         )
-        record_template = extract_record_template(dist)
+        event_template = extract_event_template(dist)
 
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 500)
@@ -185,7 +185,7 @@ class _TFPGradientMethod(InferenceMethod):
         auxiliary = build_mcmc_datatree(chains, sample_stats)
         return make_posterior(
             chains, parents=(prior,), algorithm=self._method_name,
-            auxiliary=auxiliary, record_template=record_template,
+            auxiliary=auxiliary, event_template=event_template,
             num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         )
 

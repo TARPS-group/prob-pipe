@@ -179,7 +179,7 @@ class BayesFlowModel(Distribution, SupportsConditioning):
         self._simulator = simulator
         # Numeric leaves (slash paths for a nested prior; == fields for a flat
         # one) -- the column order the network emits, matching training.
-        self._leaf_keys = tuple(prior.record_template.numeric_leaf_shapes)
+        self._leaf_keys = tuple(prior.event_template.numeric_leaf_shapes)
         self._method = method
         self._data_dim = data_dim
         self._num_results = num_results
@@ -235,7 +235,7 @@ class BayesFlowModel(Distribution, SupportsConditioning):
         # ``out`` maps each internal theta key to ``(1, num_results, d_leaf)``.
         # Stays in jnp end-to-end: this is the latency-critical amortized path,
         # so no per-leaf host round-trips. Columns are concatenated in leaf order,
-        # which is the canonical flatten order the record_template unflattens by.
+        # which is the canonical flatten order the event_template unflattens by.
         cols = []
         for k, leaf in zip(_adapter_field_keys(self._leaf_keys), self._leaf_keys):
             draws = jnp.asarray(out[k])[0]
@@ -248,7 +248,7 @@ class BayesFlowModel(Distribution, SupportsConditioning):
             [flat],
             parents=(self._prior,),
             algorithm=f"bayesflow_{self._method}",
-            record_template=self._prior.record_template,
+            event_template=self._prior.event_template,
             num_results=num_results,
         )
 
@@ -356,7 +356,7 @@ def learn_amortized_posterior(
     TypeError
         If a count parameter is not an integer, ``simulator`` lacks
         ``generate_data``, ``prior`` is not a ``RecordDistribution`` (has no
-        ``record_template``), or a multi-field prior implements no per-field
+        ``event_template``), or a multi-field prior implements no per-field
         ``supports`` accessor.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
@@ -365,14 +365,14 @@ def learn_amortized_posterior(
         raise ValueError(
             f"Unknown amortized SBI method: {method!r}. Supported: 'npe', 'fmpe', 'cmpe'."
         )
-    record_template = _validate_learn_inputs(
+    event_template = _validate_learn_inputs(
         prior, simulator, caller="learn_amortized_posterior", sim_backend=sim_backend,
         counts=(("num_simulations", num_simulations), ("batch_size", batch_size),
                 ("epochs", epochs), ("num_results", num_results)),
     )
     # Per numeric leaf (slash paths for a nested prior; == fields for a flat
     # one). supports / bijectors are leaf-keyed, so this serves both uniformly.
-    leaf_shapes = record_template.numeric_leaf_shapes
+    leaf_shapes = event_template.numeric_leaf_shapes
     leaf_keys = tuple(leaf_shapes)
     # Built up front: also rejects discrete / unsupported-support priors before
     # any simulation runs.

@@ -66,13 +66,13 @@ class TestRecordArrayDetection:
     def test_scalar_batch_shape_passes_through(self):
         """``batch_shape=()`` means no batch axis (scalar / zero-rank,
         not zero-length), so don't iterate."""
-        from probpipe.core.record import RecordTemplate
+        from probpipe.core.record import EventTemplate
 
         @workflow_function
         def f(p: NumericRecord) -> float:
             return p["x"]
 
-        tpl = RecordTemplate(x=())
+        tpl = EventTemplate(x=())
         scalar_ra = NumericRecordArray({"x": jnp.asarray(7.0)},
                                        batch_shape=(), template=tpl)
         # No broadcasting - one call with the batch_shape=() RecordArray
@@ -379,14 +379,14 @@ class TestMultiDimensionalBatch:
     @pytest.fixture
     def sweep_2d(self):
         """3 x 2 sweep over (r, k)."""
-        from probpipe.core.record import RecordTemplate
+        from probpipe.core.record import EventTemplate
         r_values = jnp.array([[1.0, 1.0],
                               [2.0, 2.0],
                               [3.0, 3.0]])
         k_values = jnp.array([[10.0, 20.0],
                               [10.0, 20.0],
                               [10.0, 20.0]])
-        tpl = RecordTemplate(r=(), k=())
+        tpl = EventTemplate(r=(), k=())
         return NumericRecordArray(
             {"r": r_values, "k": k_values},
             batch_shape=(3, 2),
@@ -448,12 +448,12 @@ class TestMultiDimensionalBatch:
 
     def test_3d_sweep(self):
         """3-D sweep works too - the row-major flattening is general."""
-        from probpipe.core.record import RecordTemplate
+        from probpipe.core.record import EventTemplate
 
         shape = (2, 3, 4)
         # Generate a 2x3x4 grid of distinct values.
         vals = jnp.arange(24.0).reshape(shape)
-        tpl = RecordTemplate(v=())
+        tpl = EventTemplate(v=())
         sweep = NumericRecordArray(
             {"v": vals}, batch_shape=shape, template=tpl,
         )

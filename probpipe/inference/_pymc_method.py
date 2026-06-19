@@ -59,7 +59,7 @@ class PyMCNutsMethod(InferenceMethod):
         # Build the template in canonical field order before sampling
         # (fail fast on a dynamic-RV / non-concrete model).
         param_names = dist._conditioned_param_names(model)
-        record_template = dist._record_template_for(model, param_names)
+        event_template = dist._event_template_for(model, param_names)
         with model:
             trace = pm.sample(
                 draws=num_results,
@@ -78,7 +78,7 @@ class PyMCNutsMethod(InferenceMethod):
 
         return make_posterior(
             chains, parents=(dist,), algorithm="pymc_nuts",
-            auxiliary=trace, record_template=record_template, field_order=order,
+            auxiliary=trace, event_template=event_template, field_order=order,
             num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         )
 
@@ -126,7 +126,7 @@ class PyMCADVIMethod(InferenceMethod):
         # Build the template in canonical field order before fitting (fail
         # fast on a dynamic-RV / non-concrete model).
         param_names = dist._conditioned_param_names(model)
-        record_template = dist._record_template_for(model, param_names)
+        event_template = dist._event_template_for(model, param_names)
         with model:
             approx = pm.fit(n=num_iterations, method=vi_method, random_seed=random_seed)
             trace = approx.sample(num_results)
@@ -139,6 +139,6 @@ class PyMCADVIMethod(InferenceMethod):
 
         return make_posterior(
             chains, parents=(dist,), algorithm=algorithm,
-            auxiliary=trace, record_template=record_template, field_order=order,
+            auxiliary=trace, event_template=event_template, field_order=order,
             num_iterations=num_iterations,
         )

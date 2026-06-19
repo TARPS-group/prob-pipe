@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from probpipe import NumericRecord, Record
-from probpipe.core.record import RecordTemplate
+from probpipe.core.record import EventTemplate
 
 
 # ---------------------------------------------------------------------------
@@ -170,8 +170,8 @@ class TestFlattenUnflatten:
         flat = outer.flatten()
         np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])
 
-    def test_unflatten_with_record_template(self):
-        tpl = RecordTemplate(a=(), b=(3,))
+    def test_unflatten_with_event_template(self):
+        tpl = EventTemplate(a=(), b=(3,))
         flat = jnp.array([1.0, 2.0, 3.0, 4.0])
         nr = NumericRecord.unflatten(flat, template=tpl)
         assert isinstance(nr, NumericRecord)
@@ -179,7 +179,7 @@ class TestFlattenUnflatten:
         np.testing.assert_allclose(nr["b"], [2.0, 3.0, 4.0])
 
     def test_roundtrip_with_template(self):
-        tpl = RecordTemplate(r=(), K=(), phi=())
+        tpl = EventTemplate(r=(), K=(), phi=())
         nr = NumericRecord(r=1.8, K=70.0, phi=10.0)
         flat = nr.flatten()
         nr2 = NumericRecord.unflatten(flat, template=tpl)
@@ -188,9 +188,9 @@ class TestFlattenUnflatten:
         np.testing.assert_allclose(float(nr2["phi"]), 10.0)
 
     def test_roundtrip_nested_template(self):
-        from probpipe.core.record import NumericRecordTemplate
-        inner_tpl = NumericRecordTemplate(x=(), y=(2,))
-        outer_tpl = NumericRecordTemplate(params=inner_tpl, z=(3,))
+        from probpipe.core.record import NumericEventTemplate
+        inner_tpl = NumericEventTemplate(x=(), y=(2,))
+        outer_tpl = NumericEventTemplate(params=inner_tpl, z=(3,))
         flat = jnp.arange(6.0)  # x=0, y=[1,2], z=[3,4,5]
         nr = NumericRecord.unflatten(flat, template=outer_tpl)
         assert isinstance(nr["params"], NumericRecord)
@@ -199,7 +199,7 @@ class TestFlattenUnflatten:
         np.testing.assert_allclose(nr["z"], [3.0, 4.0, 5.0])
 
     def test_unflatten_opaque_raises(self):
-        tpl = RecordTemplate(label=None, x=())
+        tpl = EventTemplate(label=None, x=())
         with pytest.raises(TypeError, match="opaque"):
             NumericRecord.unflatten(jnp.array([1.0]), template=tpl)
 

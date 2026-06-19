@@ -38,7 +38,7 @@ from probpipe import (
     workflow_function,
 )
 from probpipe.core._record_array import _RecordArrayView
-from probpipe.core.record import RecordTemplate
+from probpipe.core.record import EventTemplate
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -56,7 +56,7 @@ def numeric_ra():
 @pytest.fixture
 def mixed_ra():
     """A plain RecordArray with one numeric and one string field."""
-    tpl = RecordTemplate(method=None, scale=())
+    tpl = EventTemplate(method=None, scale=())
     return RecordArray(
         {
             "method": np.asarray(["nutpie", "pymc", "stan"], dtype=object),

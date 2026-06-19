@@ -12,7 +12,7 @@ from typing import Any
 import jax.numpy as jnp
 
 from ..core.distribution import Distribution
-from ..core.record import NumericRecordTemplate
+from ..core.record import NumericEventTemplate
 from ..custom_types import Array
 from ..inference._approximate_distribution import ApproximateDistribution
 from ._base import ProbabilisticModel
@@ -176,18 +176,18 @@ class PyMCModel(ProbabilisticModel):
     def event_shape(self) -> tuple[int, ...]:
         """Total number of scalar free parameters (observed excluded).
 
-        Derived from :attr:`record_template`; raises on a non-concrete
+        Derived from :attr:`event_template`; raises on a non-concrete
         free-RV shape, as the template does.
         """
-        return (self.record_template.flat_size,)
+        return (self.event_template.flat_size,)
 
-    def _record_template_for(
+    def _event_template_for(
         self, model: Any, names: tuple[str, ...] | list[str],
-    ) -> NumericRecordTemplate:
+    ) -> NumericEventTemplate:
         """Parameter template over *names*, read from a PyMC *model* build.
 
         Inference passes the data-conditioned build and the names from
-        :meth:`_conditioned_param_names`; the :attr:`record_template`
+        :meth:`_conditioned_param_names`; the :attr:`event_template`
         property passes the no-data build and ``_param_names``. Scalar
         PyMC RVs become fields with event shape ``()``; shape-:math:`k`
         RVs become fields with event shape ``(k,)``.
@@ -201,7 +201,7 @@ class PyMCModel(ProbabilisticModel):
 
         Returns
         -------
-        NumericRecordTemplate
+        NumericEventTemplate
             One field per name, carrying its event shape.
 
         Raises
@@ -222,18 +222,18 @@ class PyMCModel(ProbabilisticModel):
                     f"`pm.Normal({name!r}, 0, 1, shape=k)`)."
                 )
             fields[name] = tuple(int(s) for s in raw_shape)
-        return NumericRecordTemplate(**fields)
+        return NumericEventTemplate(**fields)
 
     @property
-    def record_template(self) -> NumericRecordTemplate:
+    def event_template(self) -> NumericEventTemplate:
         """Declared parameter template from the no-data build (canonical
         parameters, observed variables excluded).
 
         Data-dependent shapes, and any observed variable left free under
         partial conditioning, are resolved at inference time via
-        :meth:`_record_template_for`; this property reflects neither.
+        :meth:`_event_template_for`; this property reflects neither.
         """
-        return self._record_template_for(
+        return self._event_template_for(
             self._unconditioned_model, self._param_names,
         )
 

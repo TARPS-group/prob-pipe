@@ -37,7 +37,7 @@ for interop with algorithms that expect a flat parameter vector.
 Construct via [`as_flat_distribution`][probpipe.core._numeric_record_distribution.NumericRecordDistribution.as_flat_distribution].
 
 `NumericRecordDistributionView` is the inverse: it takes a
-`FlatNumericRecordDistribution` and a `NumericRecordTemplate`, and presents
+`FlatNumericRecordDistribution` and a `NumericEventTemplate`, and presents
 the distribution under the template's named-field structure. Construct via
 [`as_record_distribution`][probpipe.core._numeric_record_distribution.FlatNumericRecordDistribution.as_record_distribution].
 

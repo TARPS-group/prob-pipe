@@ -32,7 +32,7 @@ import numpy as np
 from .._dtype import _as_float_array
 from .._utils import _is_numeric_array
 from .._weights import Weights
-from ..core._record_distribution import RecordDistribution, _build_record_template
+from ..core._record_distribution import RecordDistribution, _build_event_template
 from ..core.distribution import (
     NumericRecordDistribution,
     RecordEmpiricalDistribution,
@@ -45,7 +45,7 @@ from ..core.protocols import (
     SupportsVariance,
 )
 from ..core.provenance import Provenance
-from ..core.record import Record, RecordTemplate
+from ..core.record import Record, EventTemplate
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
@@ -147,14 +147,14 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._components = self._build_component_dists()
         if self._components is not None:
-            self._record_template = _build_record_template(self._components)
+            self._event_template = _build_event_template(self._components)
         else:
             # Generic (non-numeric) path: derive a structural
-            # ``RecordTemplate`` directly from the stored samples. Each
+            # ``EventTemplate`` directly from the stored samples. Each
             # field's per-row shape becomes its spec; object-dtype leaves
             # report ``None``. This keeps the
             # ``RecordDistribution`` metaclass invariant
-            # (``record_template`` is non-``None``) without requiring
+            # (``event_template`` is non-``None``) without requiring
             # numeric coercion.
             specs: dict[str, Any] = {}
             for cname, arr in stored.items():
@@ -162,7 +162,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
                     specs[cname] = tuple(arr.shape[1:])
                 else:
                     specs[cname] = None
-            self._record_template = RecordTemplate(specs)
+            self._event_template = EventTemplate(specs)
 
     # Hook for NumericJointEmpirical to override; base class returns None
     # because generic joint samples can't be expressed as per-component
@@ -367,7 +367,7 @@ class NumericJointEmpirical(
         if sample_shape:
             return NumericRecordArray(
                 result, batch_shape=sample_shape,
-                template=self.record_template,
+                template=self.event_template,
             )
         return Record(result)
 

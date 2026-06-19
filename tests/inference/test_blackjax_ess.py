@@ -66,7 +66,7 @@ class _ConcatGaussianLik(Likelihood):
     """``y_i ~ N(theta, obs_var * I)`` over the full flattened parameter.
 
     Observes noisy copies of the concatenation of all prior fields (in
-    ``record_template.fields`` order), so it is conjugate for any Gaussian
+    ``event_template.fields`` order), so it is conjugate for any Gaussian
     prior — used to exercise multi-field priors (``ProductDistribution``,
     ``JointGaussian``). ``obs_var > 1`` weakens the likelihood so the
     prior covariance (its cross-field structure in particular) materially
@@ -143,7 +143,7 @@ class TestGaussianPriorDetection:
         independent fields), a ``JointGaussian`` carries cross-field
         covariance. ``_gaussian_prior_params`` must return the dense
         covariance verbatim — the off-diagonal ``a``-``b`` terms must
-        survive, in ``record_template.fields`` order ``[a, b]``.
+        survive, in ``event_template.fields`` order ``[a, b]``.
         """
         cov_in = jnp.array([
             [2.0, 0.5, 0.1],

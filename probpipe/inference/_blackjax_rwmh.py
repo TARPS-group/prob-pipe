@@ -40,7 +40,7 @@ from ..custom_types import Array, ArrayLike
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (
     build_mcmc_datatree,
-    extract_record_template,
+    extract_event_template,
     get_init_state,
     get_prior,
     is_jax_traceable,
@@ -584,10 +584,10 @@ def rwmh(
     )
 
     auxiliary = build_mcmc_datatree(chains, sample_stats, warmup_chains=warmups)
-    record_template = extract_record_template(dist)
+    event_template = extract_event_template(dist)
     return make_posterior(
         chains, parents=(dist,), algorithm="blackjax_rwmh",
-        auxiliary=auxiliary, record_template=record_template,
+        auxiliary=auxiliary, event_template=event_template,
         num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         step_size=step_size, accept_rate=accept_rate, adapt=adapt,
         n_windows=n_windows,

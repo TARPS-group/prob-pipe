@@ -215,14 +215,14 @@ class TestInnerDraw:
         per-minibatch surrogate regardless of which container type the
         user passes.
         """
-        from probpipe import NumericRecordArray, NumericRecordTemplate
+        from probpipe import NumericRecordArray, NumericEventTemplate
         X, y = regression_data
         n = X.shape[0]
         record_data = Record(X=X, y=y)
         recordarray_data = NumericRecordArray(
             {"X": jnp.asarray(X), "y": jnp.asarray(y)},
             batch_shape=(n,),
-            template=NumericRecordTemplate(X=(X.shape[1],), y=()),
+            template=NumericEventTemplate(X=(X.shape[1],), y=()),
         )
 
         m_rec = MinibatchedDistribution(prior, likelihood, record_data, batch_size=20)

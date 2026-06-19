@@ -18,6 +18,7 @@ from probpipe import (
     expectation,
     sample,
 )
+from probpipe.core.record import ArraySpec
 
 
 # ---------------------------------------------------------------------------
@@ -491,12 +492,12 @@ class TestValuesEmpiricalDistribution:
         assert s["X"].shape == (5, 3)
         assert s["y"].shape == (5,)
 
-    def test_record_template(self, values_data):
+    def test_event_template(self, values_data):
         emp = EmpiricalDistribution(values_data, name="x")
-        tpl = emp.record_template
+        tpl = emp.event_template
         assert tpl is not None
-        assert tpl["X"] == (3,)
-        assert tpl["y"] == ()
+        assert tpl["X"] == ArraySpec((3,))
+        assert tpl["y"] == ArraySpec(())
 
     def test_fields(self, values_data):
         emp = EmpiricalDistribution(values_data, name="x")
@@ -582,11 +583,11 @@ class TestValuesBootstrapReplicateDistribution:
         assert s["X"].shape == (4, 20, 3)
         assert s["y"].shape == (4, 20)
 
-    def test_record_template(self, bootstrap):
-        tpl = bootstrap.record_template
+    def test_event_template(self, bootstrap):
+        tpl = bootstrap.event_template
         assert tpl is not None
-        assert tpl["X"] == (20, 3)
-        assert tpl["y"] == (20,)
+        assert tpl["X"] == ArraySpec((20, 3))
+        assert tpl["y"] == ArraySpec((20,))
 
     def test_fields(self, bootstrap):
         assert bootstrap.fields == ("X", "y")

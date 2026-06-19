@@ -208,7 +208,7 @@ class TestIncrementalConditioner:
 
         Previously batches 2+ collapsed to a single unnamed ``posterior``
         field of shape ``(d,)`` because the samples→KDE conversion at the
-        start of each subsequent step dropped the ``record_template``.
+        start of each subsequent step dropped the ``event_template``.
         """
         import tensorflow_probability.substrates.jax.glm as tfp_glm
 

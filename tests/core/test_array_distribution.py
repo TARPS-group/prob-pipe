@@ -164,7 +164,7 @@ class TestArrayDistFlattenUnflatten:
         s = sample(vector_mvn, key=key)
         flat = vector_mvn.flatten_value(s, event_shape=vector_mvn.event_shape)
         restored = vector_mvn.unflatten_value(
-            flat, template=vector_mvn.record_template,
+            flat, template=vector_mvn.event_template,
         )
         np.testing.assert_allclose(restored, s, atol=1e-6)
 
@@ -175,7 +175,7 @@ class TestArrayDistFlattenUnflatten:
         )
         assert flat.shape == (5, 3)
         restored = vector_mvn.unflatten_value(
-            flat, template=vector_mvn.record_template,
+            flat, template=vector_mvn.event_template,
         )
         np.testing.assert_allclose(restored, samples, atol=1e-6)
 
@@ -184,7 +184,7 @@ class TestArrayDistFlattenUnflatten:
         flat = matrix_mvn.flatten_value(s, event_shape=matrix_mvn.event_shape)
         assert flat.shape == (4,)
         restored = matrix_mvn.unflatten_value(
-            flat, template=matrix_mvn.record_template,
+            flat, template=matrix_mvn.event_template,
         )
         np.testing.assert_allclose(restored, s, atol=1e-6)
 
@@ -239,7 +239,7 @@ class TestFlattenedDistributionView:
         np.testing.assert_allclose(
             restored,
             vector_mvn.unflatten_value(
-                flat_sample, template=vector_mvn.record_template,
+                flat_sample, template=vector_mvn.event_template,
             ),
             atol=1e-6,
         )
@@ -311,19 +311,19 @@ class TestCanonicalConvenience:
         today triggers (every shipped class is single-leaf via the
         auto-template helper)."""
         from probpipe import NumericRecord
-        from probpipe.core.record import RecordTemplate
+        from probpipe.core.record import EventTemplate
 
         class TwoField(NumericRecordDistribution):
             # Multi-leaf subclasses bypass the single-field auto-template
-            # by overriding ``record_template`` directly. The base
+            # by overriding ``event_template`` directly. The base
             # ``event_shape`` raises ``NotImplementedError`` for
             # multi-leaf templates — there's no single-field shortcut
             # to provide — so we leave it inherited (callers should
             # reach for ``event_shapes`` instead).
 
             @property
-            def record_template(self):
-                return RecordTemplate(a=(), b=(2,))
+            def event_template(self):
+                return EventTemplate(a=(), b=(2,))
 
             @property
             def dtypes(self):
@@ -397,14 +397,14 @@ class TestCanonicalConvenience:
         from probpipe.core._numeric_record_distribution import (
             NumericRecordDistribution,
         )
-        from probpipe.core.record import RecordTemplate
+        from probpipe.core.record import EventTemplate
 
         class ThreeField(NumericRecordDistribution):
             """Multi-field target with three fields (source has two)."""
 
             @property
-            def record_template(self):
-                return RecordTemplate(a=(), b=(), c=())
+            def event_template(self):
+                return EventTemplate(a=(), b=(), c=())
 
             @property
             def dtypes(self):
@@ -438,13 +438,13 @@ class TestCanonicalConvenience:
         from probpipe.core._numeric_record_distribution import (
             NumericRecordDistribution,
         )
-        from probpipe.core.record import RecordTemplate
+        from probpipe.core.record import EventTemplate
         from probpipe import NumericRecord, positive, real
 
         class TwoFieldSource(NumericRecordDistribution):
             @property
-            def record_template(self):
-                return RecordTemplate(s1=(), s2=())
+            def event_template(self):
+                return EventTemplate(s1=(), s2=())
 
             @property
             def dtypes(self):
@@ -461,8 +461,8 @@ class TestCanonicalConvenience:
 
         class TwoFieldTarget(NumericRecordDistribution):
             @property
-            def record_template(self):
-                return RecordTemplate(t1=(), t2=())
+            def event_template(self):
+                return EventTemplate(t1=(), t2=())
 
             @property
             def dtypes(self):
@@ -513,14 +513,14 @@ class TestCanonicalConvenience:
         from probpipe.core._numeric_record_distribution import (
             NumericRecordDistribution,
         )
-        from probpipe.core.record import RecordTemplate
+        from probpipe.core.record import EventTemplate
 
         class _UnimplSupportsSource(NumericRecordDistribution):
             """Multi-field NRD that explicitly doesn't declare supports."""
 
             @property
-            def record_template(self):
-                return RecordTemplate(a=(), b=())
+            def event_template(self):
+                return EventTemplate(a=(), b=())
 
             @property
             def dtypes(self):
@@ -546,7 +546,7 @@ class TestCanonicalConvenience:
     def test_treedef_record_for_multi_leaf(self, multi_leaf_dist):
         """Multi-leaf: ``treedef`` matches a ``NumericRecord`` skeleton
         with the same field names — locks the relationship between
-        ``record_template`` and the sample pytree."""
+        ``event_template`` and the sample pytree."""
         from probpipe import NumericRecord
         expected = jax.tree.structure(
             NumericRecord(a=jnp.zeros(()), b=jnp.zeros((2,)))

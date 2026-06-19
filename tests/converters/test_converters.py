@@ -810,7 +810,7 @@ class TestProtocolConversion:
         emp = RecordEmpiricalDistribution(rec)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
-        assert result.record_template.fields == ("intercept", "slope")
+        assert result.event_template.fields == ("intercept", "slope")
 
     def test_approximate_distribution_preserves_template_through_kde(self):
         """``ApproximateDistribution`` (inherits from RecordEmpirical) →
@@ -818,7 +818,7 @@ class TestProtocolConversion:
         :class:`IncrementalConditioner` updates beyond batch 1 don't
         collapse to a flat ``posterior`` field (issue #267).
         """
-        from probpipe.core.record import NumericRecordTemplate
+        from probpipe.core.record import NumericEventTemplate
         from probpipe.distributions.kde import KDEDistribution
         from probpipe.inference._approximate_distribution import (
             ApproximateDistribution,
@@ -832,11 +832,11 @@ class TestProtocolConversion:
         approx = ApproximateDistribution(
             chains,
             name="posterior",
-            record_template=NumericRecordTemplate(intercept=(), slope=()),
+            event_template=NumericEventTemplate(intercept=(), slope=()),
         )
         result = converter_registry.convert(approx, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
-        assert result.record_template.fields == ("intercept", "slope")
+        assert result.event_template.fields == ("intercept", "slope")
 
 
 # ---------------------------------------------------------------------------

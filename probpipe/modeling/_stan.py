@@ -16,7 +16,7 @@ import numpy as np
 
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb
-from ..core.record import NumericRecordTemplate
+from ..core.record import NumericEventTemplate
 from ..custom_types import Array, ArrayLike
 from ._base import ProbabilisticModel
 
@@ -187,13 +187,13 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
         return _param_blocks(self._bs_model.param_names())
 
     @cached_property
-    def record_template(self) -> NumericRecordTemplate:
+    def event_template(self) -> NumericEventTemplate:
         """One field per Stan parameter block, shaped from BridgeStan's names."""
-        return NumericRecordTemplate({b.name: b.shape for b in self._blocks})
+        return NumericEventTemplate({b.name: b.shape for b in self._blocks})
 
     @property
     def fields(self) -> tuple[str, ...]:
-        return self.record_template.fields
+        return self.event_template.fields
 
     def __getitem__(self, key: str) -> Any:
         if key in self.fields:
@@ -285,13 +285,13 @@ class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):
         return _param_blocks(self._model._bs_model.param_unc_names())
 
     @cached_property
-    def record_template(self) -> NumericRecordTemplate:
+    def event_template(self) -> NumericEventTemplate:
         """One field per unconstrained Stan parameter block."""
-        return NumericRecordTemplate({b.name: b.shape for b in self._blocks})
+        return NumericEventTemplate({b.name: b.shape for b in self._blocks})
 
     @property
     def fields(self) -> tuple[str, ...]:
-        return self.record_template.fields
+        return self.event_template.fields
 
     def _pack_value(self, **field_kwargs: Any) -> Array:
         """Keyword form: one array per Stan parameter block in the unconstrained

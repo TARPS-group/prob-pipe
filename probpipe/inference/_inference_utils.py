@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsSampling
-from ..core.record import Record, RecordTemplate
+from ..core.record import Record, EventTemplate
 from ..custom_types import Array, ArrayLike
 
 
@@ -53,7 +53,7 @@ __all__ = [
     "posterior_var_order",
     "get_init_state",
     "get_prior",
-    "extract_record_template",
+    "extract_event_template",
     "is_jax_traceable",
     "is_simple_model",
     "parallel_chain_map",
@@ -260,16 +260,16 @@ def get_prior(dist: Distribution) -> Distribution:
     return dist._prior if is_simple_model(dist) else dist
 
 
-def extract_record_template(dist: Distribution) -> RecordTemplate | None:
-    """Return *dist*'s prior's ``record_template``, or ``None``.
+def extract_event_template(dist: Distribution) -> EventTemplate | None:
+    """Return *dist*'s prior's ``event_template``, or ``None``.
 
     Uses ``getattr`` to tolerate priors that aren't a
     ``RecordDistribution`` (e.g. bare ``SupportsLogProb`` targets);
     SimpleModel-rooted callers can rely on the prior being a
-    ``RecordDistribution`` and read ``prior.record_template`` directly.
+    ``RecordDistribution`` and read ``prior.event_template`` directly.
     """
     prior = get_prior(dist)
-    return getattr(prior, "record_template", None)
+    return getattr(prior, "event_template", None)
 
 
 # ---------------------------------------------------------------------------
@@ -323,16 +323,16 @@ def build_target_log_prob_flat(
     *,
     init: ArrayLike | None = None,
     random_seed: int | Array = 0,
-) -> tuple[Callable[[Array], Array], Array, RecordTemplate | None]:
+) -> tuple[Callable[[Array], Array], Array, EventTemplate | None]:
     """Build a flat-vector target + initial state + (optional) record template.
 
-    Returns ``(target_flat_fn, flat_init, record_template)``:
+    Returns ``(target_flat_fn, flat_init, event_template)``:
 
     - ``target_flat_fn(theta_flat) -> log_prob``: a callable that
       consumes a flat parameter vector.
     - ``flat_init``: the flat-vector initial chain state from
       :func:`get_init_state`.
-    - ``record_template``: the prior's ``record_template`` when the
+    - ``event_template``: the prior's ``event_template`` when the
       target's parameter space is Record-shaped; ``None`` for bare
       array-shaped targets. Passes through to
       :func:`~probpipe.inference._approximate_distribution.make_posterior`
@@ -350,7 +350,7 @@ def build_target_log_prob_flat(
        (e.g., a hand-rolled ``Distribution`` subclass implementing
        ``_unnormalized_log_prob`` over a flat ``Array``). The target
        already takes a flat input; no flattening is needed.
-       ``record_template`` is returned as ``None``.
+       ``event_template`` is returned as ``None``.
 
     Intended for use by BlackJAX-flavoured MCMC / VI backends.
     """
@@ -359,14 +359,14 @@ def build_target_log_prob_flat(
     flat_init = get_init_state(dist, init, random_seed=random_seed)
 
     flat_view = getattr(prior, "as_flat_distribution", None)
-    record_template = getattr(prior, "record_template", None)
-    if flat_view is not None and record_template is not None:
+    event_template = getattr(prior, "event_template", None)
+    if flat_view is not None and event_template is not None:
         flat_prior = flat_view()
 
         def target_flat(theta_flat: Array) -> Array:
             return target_record(flat_prior.unflatten_sample(theta_flat))
 
-        return target_flat, flat_init, record_template
+        return target_flat, flat_init, event_template
 
     # Bare array-shaped target: ``target_record`` already accepts a
     # flat array and no template is available to lift the chain.
@@ -397,8 +397,8 @@ def build_likelihood_flat(
       vector, so it is called directly.
     """
     flat_view = getattr(prior, "as_flat_distribution", None)
-    record_template = getattr(prior, "record_template", None)
-    if flat_view is not None and record_template is not None:
+    event_template = getattr(prior, "event_template", None)
+    if flat_view is not None and event_template is not None:
         flat_prior = flat_view()
 
         def loglikelihood_fn(theta_flat: Array) -> Array:

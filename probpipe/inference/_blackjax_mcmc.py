@@ -16,7 +16,7 @@ target whose log-density is JAX-traceable. They run on the flat-vector
 form of the target produced by
 :func:`~probpipe.inference._inference_utils.build_target_log_prob_flat`,
 then lift the resulting chain back through the prior's
-``record_template`` so the posterior preserves the structured
+``event_template`` so the posterior preserves the structured
 parameterisation.
 
 The per-draw diagnostics (``acceptance_rate``, ``is_divergent``,
@@ -316,7 +316,7 @@ class _BlackJAXMCMCMethod(InferenceMethod):
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         random_seed: int = kwargs.get("random_seed", 0)
-        target_flat, flat_init, record_template = build_target_log_prob_flat(
+        target_flat, flat_init, event_template = build_target_log_prob_flat(
             dist, observed, init=kwargs.get("init"), random_seed=random_seed,
         )
         num_results: int = kwargs.get("num_results", 1000)
@@ -339,7 +339,7 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         prior = get_prior(dist)
         return make_posterior(
             chains, parents=(prior,), algorithm=self._method_name,
-            auxiliary=auxiliary, record_template=record_template,
+            auxiliary=auxiliary, event_template=event_template,
             num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
         )
 

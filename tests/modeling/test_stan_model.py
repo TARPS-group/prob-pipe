@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 from probpipe import SupportsLogProb, log_prob
+from probpipe.core.record import ArraySpec
 from probpipe.modeling._stan import StanModel, _param_blocks, _UnconstrainedStanView
 
 # ---------------------------------------------------------------------------
@@ -323,9 +324,8 @@ class TestStanModelParameters:
             "mu", "theta.1", "theta.2", "theta.3",
             "L.1.1", "L.2.1", "L.1.2", "L.2.2", "p.1", "p.2", "p.3")
 
-    def test_record_template_shapes(self, structured_model):
-        assert {f: structured_model.record_template[f]
-                for f in structured_model.fields} == {
+    def test_event_template_shapes(self, structured_model):
+        assert structured_model.event_template.event_shapes == {
             "mu": (), "theta": (3,), "L": (2, 2), "p": (3,)}
 
     def test_param_blocks_match_real_names(self, structured_model):
@@ -404,8 +404,8 @@ class TestUnconstrainedStanView:
         view = structured_model.as_unconstrained_distribution()
         assert view.fields == ("mu", "theta", "L", "p")
         # The simplex is unconstrained in (n-1) free coordinates.
-        assert structured_model.record_template["p"] == (3,)
-        assert view.record_template["p"] == (2,)
+        assert structured_model.event_template["p"] == ArraySpec((3,))
+        assert view.event_template["p"] == ArraySpec((2,))
 
     def test_log_prob_finite_and_unnormalized_agrees(self, structured_model):
         view = structured_model.as_unconstrained_distribution()

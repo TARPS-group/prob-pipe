@@ -50,13 +50,13 @@ def condition_on_nutpie(
 
     # Build the template in canonical field order from the conditioned
     # build before sampling (fail fast on a dynamic-RV / non-concrete
-    # model). Stan models carry their own record_template, if any.
+    # model). Stan models carry their own event_template, if any.
     if pymc_build is not None:
         param_names = list(model._conditioned_param_names(pymc_build))
-        record_template = model._record_template_for(pymc_build, param_names)
+        event_template = model._event_template_for(pymc_build, param_names)
     else:
         param_names = None
-        record_template = getattr(model, "record_template", None)
+        event_template = getattr(model, "event_template", None)
 
     trace = nutpie.sample(
         compiled, draws=num_results, tune=num_warmup,
@@ -75,7 +75,7 @@ def condition_on_nutpie(
 
     return make_posterior(
         chains, parents=(model,), algorithm="nutpie_nuts",
-        auxiliary=trace, record_template=record_template, field_order=field_order,
+        auxiliary=trace, event_template=event_template, field_order=field_order,
         num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
     )
 
@@ -90,7 +90,7 @@ def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any | None]:
 
     Returns ``(compiled, pymc_build)``. ``pymc_build`` is the
     data-conditioned ``pm.Model`` for PyMCModel targets (so the caller
-    can derive a matching ``record_template``), and ``None`` for Stan
+    can derive a matching ``event_template``), and ``None`` for Stan
     targets.
     """
     if hasattr(model, "_bridgestan_model"):

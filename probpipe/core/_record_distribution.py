@@ -8,7 +8,7 @@ its consumers.
 
 ``_RecordDistributionView`` is the lightweight component reference,
 analogous to the former ``DistributionView`` but for any distribution
-whose ``record_template`` is set.
+whose ``event_template`` is set.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from .protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-from .record import Record, RecordTemplate
+from .record import ArraySpec, EventTemplate, Record
 
 if TYPE_CHECKING:
     from ._numeric_record_distribution import FlattenedDistributionView
@@ -166,9 +166,9 @@ class _RecordDistributionView(Distribution):
     Parameters
     ----------
     parent : Distribution
-        A distribution with ``record_template`` set.
+        A distribution with ``event_template`` set.
     key : str
-        Field name in the parent's ``record_template``.
+        Field name in the parent's ``event_template``.
     """
 
     _sampling_cost = "low"
@@ -179,12 +179,12 @@ class _RecordDistributionView(Distribution):
         return object.__new__(actual_cls)
 
     def __init__(self, parent: "RecordDistribution", key: str) -> None:
-        # ``parent.record_template`` is contractually non-``None``
+        # ``parent.event_template`` is contractually non-``None``
         # (metaclass-enforced on every ``RecordDistribution`` instance).
-        template = parent.record_template
+        template = parent.event_template
         if key not in template:
             raise KeyError(
-                f"No field {key!r} in record_template "
+                f"No field {key!r} in event_template "
                 f"(available: {template.fields})"
             )
         # Bypass Distribution.__init__ validation (view name comes from
@@ -218,13 +218,11 @@ class _RecordDistributionView(Distribution):
     @property
     def event_shape(self) -> tuple[int, ...]:
         f = self._template_field
-        if isinstance(f, tuple):
-            # RecordTemplate: field spec is a shape tuple
-            return f
-        if isinstance(f, RecordTemplate):
-            return ()
-        # Legacy Record template: field is an array
-        return f.shape if not isinstance(f, Record) else ()
+        if isinstance(f, ArraySpec):
+            # Numeric array leaf — its event shape is the spec shape.
+            return f.shape
+        # Nested template / opaque / distribution / function leaf.
+        return ()
 
     # -- Single-field array-like shims (mirrors ``_RecordArrayView``) ------
 
@@ -264,7 +262,7 @@ class _RecordDistributionView(Distribution):
                 f"implement unflatten_value."
             )
         result = unflatten(
-            jnp.asarray(structured), template=self._parent.record_template,
+            jnp.asarray(structured), template=self._parent.event_template,
         )
         if isinstance(result, (Record, RecordArray)):
             return result[self._key]
@@ -286,7 +284,7 @@ class _RecordDistributionView(Distribution):
         if isinstance(draws, (Record, RecordArray)):
             return jnp.asarray(draws[self._key])
         result = NumericRecordArray.unflatten(
-            jnp.asarray(draws), template=self._parent.record_template,
+            jnp.asarray(draws), template=self._parent.event_template,
         )
         return jnp.asarray(result[self._key])
 
@@ -302,18 +300,18 @@ class _RecordDistributionView(Distribution):
 # ---------------------------------------------------------------------------
 
 
-def _build_record_template(
+def _build_event_template(
     components: dict[str, Any],
-) -> RecordTemplate:
-    """Build a RecordTemplate from a component pytree.
+) -> EventTemplate:
+    """Build an EventTemplate from a component pytree.
 
     Each leaf contributes a spec for the parent template:
 
-    - Nested ``dict`` → recursively built nested ``RecordTemplate``.
+    - Nested ``dict`` → recursively built nested ``EventTemplate``.
     - :class:`NumericRecordDistribution` → the leaf's ``event_shape``
       (numeric shape tuple).
     - Any other :class:`RecordDistribution` → the leaf's
-      ``record_template`` (embedded as a nested structural template).
+      ``event_template`` (embedded as a nested structural template).
     - Any other :class:`Distribution` → ``None`` (opaque leaf — the
       template records the field name but not a shape).
     """
@@ -323,16 +321,16 @@ def _build_record_template(
     specs: dict[str, Any] = {}
     for name, comp in components.items():
         if isinstance(comp, dict):
-            specs[name] = _build_record_template(comp)
+            specs[name] = _build_event_template(comp)
         elif isinstance(comp, NumericRecordDistribution):
             specs[name] = comp.event_shape
         elif isinstance(comp, RecordDistribution):
-            specs[name] = comp.record_template
+            specs[name] = comp.event_template
         elif isinstance(comp, Distribution):
             specs[name] = None
         else:
             raise TypeError(f"Unexpected component type: {type(comp).__name__}")
-    return RecordTemplate(specs)
+    return EventTemplate(specs)
 
 
 # ---------------------------------------------------------------------------
@@ -341,30 +339,30 @@ def _build_record_template(
 
 
 class _RecordDistributionMeta(_DistributionMeta):
-    """Metaclass adding the ``record_template`` set-or-derivable check
+    """Metaclass adding the ``event_template`` set-or-derivable check
     on top of the base ``name`` check.
 
-    After ``__init__`` returns, accesses ``instance.record_template``
-    once. Either path is fine: ``_record_template`` was set directly
+    After ``__init__`` returns, accesses ``instance.event_template``
+    once. Either path is fine: ``_event_template`` was set directly
     (multi-leaf joints), or the auto-build path on
     :class:`~probpipe.core._numeric_record_distribution.NumericRecordDistribution`
     derives a single-field template from ``name`` + ``event_shape``.
-    Both paths must yield a non-``None`` ``RecordTemplate``.
+    Both paths must yield a non-``None`` ``EventTemplate``.
     """
 
     def __call__(cls, *args: Any, **kwargs: Any) -> Any:
         instance = super().__call__(*args, **kwargs)
         try:
-            tpl = instance.record_template
+            tpl = instance.event_template
         except (TypeError, NotImplementedError) as exc:
             raise TypeError(
-                f"{cls.__name__}.__init__ left record_template "
+                f"{cls.__name__}.__init__ left event_template "
                 f"unresolved: {exc}"
             ) from exc
         if tpl is None:
             raise TypeError(
-                f"{cls.__name__}.__init__ must leave record_template "
-                f"set — either assign self._record_template = ..., "
+                f"{cls.__name__}.__init__ must leave event_template "
+                f"set — either assign self._event_template = ..., "
                 f"or declare event_shape so the auto-build path can "
                 f"derive a single-field template."
             )
@@ -380,34 +378,34 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
     ``event_shape``) — those belong on ``NumericRecordDistribution``
     and its consumers.
 
-    Concrete subclasses must set ``_record_template`` (a
-    :class:`~probpipe.core.record.RecordTemplate` describing the named
+    Concrete subclasses must set ``_event_template`` (a
+    :class:`~probpipe.core.record.EventTemplate` describing the named
     structure) and implement the relevant sampling / log-prob protocols.
     """
 
     # -- Record template (owned here, NOT on Distribution base) -------------
 
     @property
-    def record_template(self) -> RecordTemplate | None:
+    def event_template(self) -> EventTemplate | None:
         """Structural template describing this distribution's samples.
 
-        Returns a :class:`~probpipe.core.record.RecordTemplate` with
+        Returns a :class:`~probpipe.core.record.EventTemplate` with
         field names and per-field shapes, or ``None`` if no template
         is set.
         """
-        return getattr(self, "_record_template", None)
+        return getattr(self, "_event_template", None)
 
     # -- Named component access ---------------------------------------------
 
     @property
     def fields(self) -> tuple[str, ...]:
-        """Field names from the record_template.
+        """Field names from the event_template.
 
-        The metaclass guarantees ``record_template`` is non-``None`` on
+        The metaclass guarantees ``event_template`` is non-``None`` on
         every :class:`RecordDistribution` instance, so this is a direct
         delegate (no ``None`` fallback).
         """
-        return self.record_template.fields
+        return self.event_template.fields
 
     def __getitem__(self, key: str) -> _RecordDistributionView:
         return _RecordDistributionView(self, key)
@@ -468,11 +466,11 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
         """Per-field event shapes (top-level fields only).
 
-        Thin delegate to :attr:`RecordTemplate.event_shapes`. Nested
+        Thin delegate to :attr:`EventTemplate.event_shapes`. Nested
         sub-templates and opaque leaves collapse to ``()``. The
-        metaclass guarantees ``record_template`` is non-``None``.
+        metaclass guarantees ``event_template`` is non-``None``.
         """
-        return self.record_template.event_shapes
+        return self.event_template.event_shapes
 
     # -- Single-field array-like shims --------------------------------------
     # On a single-field distribution, ``.shape`` / ``.ndim`` delegate to
@@ -498,7 +496,7 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
         multi-field distributions.
         """
         name = self._single_field_name()
-        return self.record_template.field_event_shape(name)
+        return self.event_template.field_event_shape(name)
 
     @property
     def ndim(self) -> int:

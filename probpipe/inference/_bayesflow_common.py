@@ -82,7 +82,7 @@ def _adapter_field_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
     """Positional internal keys (``theta_0``, ``theta_1``, ...) for the adapter.
 
     Both the training dict and the sample-side extraction derive these from the
-    prior's ``record_template`` leaf order (``numeric_leaf_shapes`` keys; ==
+    prior's ``event_template`` leaf order (``numeric_leaf_shapes`` keys; ==
     ``fields`` for a flat prior), so the mapping is deterministic across train
     and inference without storing it, and slash-delimited nested leaf paths
     never reach BayesFlow's key namespace.
@@ -114,14 +114,14 @@ def _validate_learn_inputs(
             "simulator must be a GenerativeLikelihood with a generate_data method, "
             f"got {type(simulator).__name__}"
         )
-    record_template = getattr(prior, "record_template", None)
-    if record_template is None:
+    event_template = getattr(prior, "event_template", None)
+    if event_template is None:
         raise TypeError(
             f"{caller} requires a RecordDistribution prior with named parameter "
             "fields -- typically a ProductDistribution of named distributions -- "
-            f"but got {type(prior).__name__}, which has no record_template."
+            f"but got {type(prior).__name__}, which has no event_template."
         )
-    return record_template
+    return event_template
 
 
 @contextmanager
@@ -164,7 +164,7 @@ def _simulate_offline(
     density), the raw constrained draws are returned.  The simulator itself always
     sees the constrained, structured draws.
     """
-    template = prior.record_template
+    template = prior.event_template
     # Iterate numeric leaves (slash paths like "outer/a" for nested priors; ==
     # top-level fields for flat priors). The adapter re-keys positionally, so
     # leaf paths never reach BayesFlow's namespace.

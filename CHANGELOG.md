@@ -128,6 +128,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`RecordTemplate` → `EventTemplate` rename + leaf-spec representation
+  (#235, Phase 1a).** `RecordTemplate` is now `EventTemplate`,
+  `NumericRecordTemplate` is `NumericEventTemplate`, and
+  `Distribution.record_template` is `event_template` (hard rename, **no
+  deprecation alias** — pre-stable). Template leaves are now a closed sum of
+  frozen, hashable specs (`ArraySpec` / `OpaqueSpec` / `DistributionSpec` /
+  `FunctionSpec`) instead of `tuple[int, ...] | None`; construction-time sugar
+  is preserved (`EventTemplate(x=(3,), label=None, sub=…)` still works) and
+  `__getitem__` now returns the spec object (shape access stays on
+  `leaf_shapes` / `event_shapes` / `field_event_shape`). Behavior-preserving
+  otherwise.
+
 - **`SupportsLogProb` / `SupportsUnnormalizedLogProb` are now generic in the
   sample type (#228)** — `SupportsLogProb[T]`. Annotation-level only; runtime
   behavior is unchanged.

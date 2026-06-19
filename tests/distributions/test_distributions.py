@@ -745,7 +745,7 @@ class TestDistributionCoverageGaps:
 
     def test_auto_template_from_name_and_event_shape(self):
         """``NumericRecordDistribution`` auto-builds a single-field
-        ``RecordTemplate`` from ``name`` + ``event_shape``, so every
+        ``EventTemplate`` from ``name`` + ``event_shape``, so every
         concrete subclass has a non-None template without per-subclass
         boilerplate. ``dtypes`` is canonical (subclass must override);
         ``dtype`` derives from it.
@@ -757,11 +757,11 @@ class TestDistributionCoverageGaps:
 
             @property
             def dtypes(self):
-                return {name: jnp.float32 for name in self.record_template.fields}
+                return {name: jnp.float32 for name in self.event_template.fields}
 
         s = Scalar(name="s")
-        assert s.record_template is not None
-        assert s.record_template.fields == ("s",)
+        assert s.event_template is not None
+        assert s.event_template.fields == ("s",)
         assert s.dtypes == {"s": jnp.float32}
         # ``dtype`` derives from ``dtypes`` (unique value → that dtype).
         assert s.dtype == jnp.float32
