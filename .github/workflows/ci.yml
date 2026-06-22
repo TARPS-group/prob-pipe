@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -74,7 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -110,7 +110,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0   # need full history for git diff
 
@@ -286,7 +286,7 @@ jobs:
       KERAS_BACKEND: jax
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0   # need full history for git diff
 
@@ -373,7 +373,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0   # need full history for git diff
 
@@ -429,7 +429,7 @@ jobs:
         # under its own ~/.bridgestan/<version>/ subdir, so a stale restore can't
         # mismatch.
         if: steps.stan_check.outputs.skip != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.bridgestan
           key: bridgestan-${{ runner.os }}-${{ hashFiles('uv.lock') }}
@@ -484,7 +484,7 @@ jobs:
       KERAS_BACKEND: jax   # bayesflow tutorials run keras on the JAX backend
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0   # need full history for git diff
 
