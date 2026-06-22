@@ -930,6 +930,120 @@ class EventTemplate:
         """
         return _pack_fields(self.fields, field_kwargs, owner=type(self).__name__)
 
+    # -- Numeric queries & projection ---------------------------------------
+
+    @property
+    def is_numeric(self) -> bool:
+        """Whether every reachable leaf is an :class:`ArraySpec`.
+
+        Recursive: descends into nested :class:`EventTemplate` fields and
+        returns ``True`` only if *all* leaves (at every depth) are numeric
+        array leaves. Any :class:`OpaqueSpec` / :class:`DistributionSpec` /
+        :class:`FunctionSpec` leaf — or a nested sub-template that is not
+        itself all-numeric — makes the whole template non-numeric.
+
+        This is computed as an explicit recursive leaf check rather than
+        ``isinstance(self, NumericEventTemplate)``. Under the ``__new__``
+        auto-promotion invariant the two agree, but the recursive form is
+        also correct for hand-built mixed nestings.
+
+        Returns
+        -------
+        bool
+            ``True`` iff every reachable leaf is an :class:`ArraySpec`.
+        """
+        for spec in self._specs.values():
+            if isinstance(spec, ArraySpec):
+                continue
+            if isinstance(spec, EventTemplate):
+                if not spec.is_numeric:
+                    return False
+                continue
+            # Opaque / distribution / function leaf — not numeric.
+            return False
+        return True
+
+    @property
+    def is_multi_field(self) -> bool:
+        """Whether this template has more than one top-level field.
+
+        Returns
+        -------
+        bool
+            ``True`` iff ``len(self.fields) > 1``.
+        """
+        return len(self._specs) > 1
+
+    def non_numeric_fields(self) -> tuple[str, ...]:
+        """Top-level field names whose leaf is non-numeric.
+
+        A top-level field is non-numeric if its spec is an
+        :class:`OpaqueSpec` / :class:`DistributionSpec` / :class:`FunctionSpec`
+        leaf, or a nested :class:`EventTemplate` that is not itself all-numeric
+        (see :attr:`is_numeric`). Used to build clear inference error messages
+        when a template cannot be projected to a numeric subset.
+
+        Returns
+        -------
+        tuple of str
+            Names of the non-numeric top-level fields, in insertion order.
+            Empty when the template :attr:`is_numeric`.
+        """
+        result: list[str] = []
+        for name, spec in self._specs.items():
+            if isinstance(spec, ArraySpec):
+                continue
+            if isinstance(spec, EventTemplate) and spec.is_numeric:
+                continue
+            result.append(name)
+        return tuple(result)
+
+    def numeric_subset(self) -> NumericEventTemplate:
+        """Project to the :class:`ArraySpec`-leaf sub-template.
+
+        Keeps every numeric leaf, recursing into nested
+        :class:`EventTemplate` fields (each contributes its own
+        ``numeric_subset()``); drops :class:`OpaqueSpec` /
+        :class:`DistributionSpec` / :class:`FunctionSpec` leaves; and prunes
+        any nested template that becomes empty. Surviving leaves keep their
+        ``/``-delimited paths (the projection is path-stable). Inference uses
+        this to recover the numeric core of a mixed template.
+
+        On an already-all-numeric template the result is an equal
+        :class:`NumericEventTemplate` (the projection is idempotent).
+
+        Returns
+        -------
+        NumericEventTemplate
+            The numeric-leaf sub-template, so that :attr:`flat_size` and
+            :attr:`numeric_leaf_shapes` are available.
+
+        Raises
+        ------
+        ValueError
+            If no numeric leaves survive — an :class:`EventTemplate` needs at
+            least one field, so an empty numeric subset is meaningless. The
+            message names the dropped (non-numeric) fields.
+        """
+        specs: dict[str, _FieldSpec] = {}
+        for name, spec in self._specs.items():
+            if isinstance(spec, ArraySpec):
+                specs[name] = spec
+            elif isinstance(spec, EventTemplate):
+                try:
+                    specs[name] = spec.numeric_subset()
+                except ValueError:
+                    # Nested template has no numeric leaves — prune it.
+                    continue
+            # Opaque / distribution / function leaves are dropped.
+        if not specs:
+            raise ValueError(
+                f"numeric_subset() of {type(self).__name__} is empty: no "
+                f"ArraySpec leaves survive. Dropped non-numeric fields: "
+                f"{self.non_numeric_fields()}."
+            )
+        return NumericEventTemplate(specs)
+
     def __contains__(self, name: str) -> bool:
         return name in self._specs
 
