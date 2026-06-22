@@ -48,6 +48,22 @@ if it were user-guide reference text.
    wrong, missing, or unclear, fix the documentation (or escalate) rather than silently coding
    around it.
 
+5. **Document to the plan's target, not the stale status quo.** These PRs are intentionally
+   incremental — each lands one slice and most do *not* yet implement the full set of new
+   standards. When you implement or touch an abstraction, its docstrings and naming must describe
+   the **plan's target contract and terminology** (per #235 and this file), *not* the current
+   behavior of code elsewhere in the repo that the plan will soon update. Stale neighboring code
+   is not the reference; the plan is.
+   - Where your slice must temporarily coexist with or delegate to not-yet-migrated code, you
+     *may* note that as an explicit, clearly-labeled **interim implementation detail** — but never
+     let it define the contract or blur a distinction the plan draws.
+   - In particular, keep the plan's **vocabulary distinctions** intact even before the code that
+     enforces them lands. *Example:* `to_vector`/`from_vector` are the **numeric** 1-D
+     (de)serialization (require `is_numeric`); `flatten`/`unflatten` are the **general JAX-pytree**
+     ops (`value -> (leaves, aux)`, any leaf type). Do not describe them as interchangeable, or
+     `to_vector` as "the home of `flatten`", merely because today's `NumericRecord.flatten` still
+     carries the soon-to-be-retired 1-D meaning.
+
 ## Major abstractions & where their contract lives
 | Abstraction | Canonical contract location |
 |---|---|
@@ -74,6 +90,7 @@ if it were user-guide reference text.
 - [ ] Contract of every touched abstraction was clear before coding (ambiguities resolved & noted).
 - [ ] New/changed contracts fully documented in docstrings (types, shapes, orderings, raises, invariants).
 - [ ] Code verified to obey the documented contract; tests assert it (shapes + orderings + error cases).
+- [ ] Docstrings describe the plan's **target** contract/terminology, not stale neighboring code; any temporary coexistence is labeled as an interim implementation detail.
 - [ ] Variable names consistent with the canonical table above.
 - [ ] This `CONTRACTS.md` index updated if a cross-cutting contract changed.
 - [ ] `ruff format` and `ruff check` are clean (both are **blocking** in CI).
