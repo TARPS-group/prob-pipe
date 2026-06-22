@@ -40,6 +40,12 @@ from probpipe.core._array_backend import (
 from probpipe.core._distribution_array import DistributionArray
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._record_array import NumericRecordArray, RecordArray
+from probpipe.core._registry_catalog import (
+    MethodSummary,
+    RegistryInfo,
+    SupportsRegistryCataloging,
+    registry_catalog,
+)
 from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config, provenance_config
 from probpipe.core.constraints import (
     Constraint,
@@ -246,6 +252,8 @@ __all__ = [
     "Likelihood",
     "LinearBasisFunction",
     "LogNormal",
+    # Registry catalog
+    "MethodSummary",
     "MinibatchedDistribution",
     "Module",
     "Multinomial",
@@ -280,6 +288,7 @@ __all__ = [
     "RecordBootstrapReplicateDistribution",
     "RecordDistribution",
     "RecordEmpiricalDistribution",
+    "RegistryInfo",
     "SequentialJointDistribution",
     "SimpleGenerativeModel",
     "SimpleModel",
@@ -293,6 +302,7 @@ __all__ = [
     "SupportsMean",
     "SupportsRandomLogProb",
     "SupportsRandomUnnormalizedLogProb",
+    "SupportsRegistryCataloging",
     "SupportsSampling",
     "SupportsUnnormalizedLogProb",
     "SupportsVariance",
@@ -340,6 +350,7 @@ __all__ = [
     "real",
     "register_aux",
     "register_bijector",
+    "registry_catalog",
     "rwmh",
     "simplex",
     "sphere",

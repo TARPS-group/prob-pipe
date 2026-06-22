@@ -45,9 +45,11 @@ unify them.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import ClassVar
 
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
+from ..core._registry_catalog import MethodSummary, registry_catalog
 from ..core.constraints import (
     Constraint,
     _Boolean,
@@ -64,7 +66,7 @@ from ..core.constraints import (
     _UnitInterval,
 )
 
-__all__ = ["bijector_for", "register_bijector"]
+__all__ = ["bijector_for", "bijector_registry", "register_bijector"]
 
 
 # Factory takes the (parameterized) constraint instance and returns a bijector.
@@ -214,3 +216,83 @@ register_bijector(
         "discrete support; consider a continuous relaxation (e.g., Gumbel-Softmax) or rounding"
     ),
 )
+
+
+# ---------------------------------------------------------------------------
+# Catalog facade
+# ---------------------------------------------------------------------------
+
+
+def _bijector_entry_name(key: type | Constraint) -> str:
+    """Stable catalog name for a registered constraint key.
+
+    Constraint subclasses are named by their class name with any leading
+    underscore stripped (``_Positive`` → ``"Positive"``).  Instance keys
+    are rendered via ``repr``.
+    """
+    if isinstance(key, type):
+        return key.__name__.lstrip("_")
+    return repr(key)
+
+
+class _BijectorRegistryFacade:
+    """Catalog adapter for the module-level bijector dispatch.
+
+    The bijector dispatch is a module-level ``dict`` + two functions
+    (:func:`register_bijector`, :func:`bijector_for`) — not a class.  It
+    is *non-conforming* in two ways: the lookup is instance-first then
+    MRO-fallback (no priority semantics), and there is no
+    ``check()``/``execute()`` cycle (just a factory call).  This facade
+    satisfies
+    :class:`~probpipe.core._registry_catalog.SupportsRegistryCataloging`
+    by walking the module-level
+    :data:`_CONSTRAINT_BIJECTOR_REGISTRY` dict; dispatch behaviour is
+    unchanged.
+
+    ``priority`` on each :class:`~probpipe.core._registry_catalog.MethodSummary`
+    is ``None`` because the underlying registry has no priority concept.
+    """
+
+    name: ClassVar[str] = "bijectors"
+    description: ClassVar[str] = (
+        "Constraint -> Bijector factory dispatch (instance-first, MRO fallback)."
+    )
+    kind: ClassVar[str] = "factory"
+
+    def method_summaries(self) -> list[MethodSummary]:
+        """Return one :class:`MethodSummary` per registered constraint key.
+
+        Entries are ordered by name for deterministic output.
+        """
+        summaries = [
+            MethodSummary(
+                name=_bijector_entry_name(key),
+                priority=None,
+                supported_types=(key,),
+                module_path=(key.__module__ if isinstance(key, type) else type(key).__module__),
+            )
+            for key in _CONSTRAINT_BIJECTOR_REGISTRY
+        ]
+        summaries.sort(key=lambda s: s.name)
+        return summaries
+
+    def describe_method(self, name: str) -> MethodSummary:
+        """Return the :class:`MethodSummary` for the named constraint entry.
+
+        Raises
+        ------
+        KeyError
+            If no registered entry has that name.  The error message
+            lists the available names.
+        """
+        for s in self.method_summaries():
+            if s.name == name:
+                return s
+        available = ", ".join(s.name for s in self.method_summaries()) or "(none)"
+        raise KeyError(f"No bijector entry named {name!r}. Available: {available}")
+
+
+# Module-level singleton, registered with the global catalog so it can be
+# discovered via ``probpipe.registry_catalog["bijectors"]``.
+bijector_registry = _BijectorRegistryFacade()
+registry_catalog.register(bijector_registry)

@@ -13,6 +13,7 @@ the section on this page that covers it in detail.
 | New distribution-to-distribution converter | Subclass of `Converter` with `check()` / `convert()` | `converter_registry.register(...)` — see [Custom converters](#custom-converters) |
 | New canonical bijector for a `Constraint` | A factory returning a TFP bijector | `register_bijector(constraint_or_class, factory)` — see [Custom bijectors](#custom-bijectors) |
 | New auxiliary-metadata adapter (custom array-like) | `capture` and `restore` callables | `register_aux(leaf_type, capture, restore)` — see [Custom auxiliary metadata](#custom-auxiliary-metadata) |
+| New registry (cataloging surface) | Pass `name="..."` to a `BaseDispatchRegistry` subclass, *or* expose `name`/`description`/`kind` + `method_summaries()`/`describe_method()` on a non-conforming registry | Self-registers (named dispatch registries) *or* `registry_catalog.register(...)` (adapter pattern) — see [Registry catalog](#registry-catalog) |
 
 The two remaining sections — [Broadcasting internals](#broadcasting-internals-exposed-for-extension)
 and the [Internals](internals.md) page — document classes that an
@@ -170,6 +171,49 @@ name.
 ::: probpipe.core._registry.BinaryDispatchMethod
 
 ::: probpipe.core._registry.MethodInfo
+
+## Registry catalog
+
+The global :data:`registry_catalog` is a name-indexed view of every
+registry in the process. It supplements dispatch (it does not replace
+per-registry singletons like `inference_method_registry` or
+`converter_registry`) and exists so contributors can answer two
+questions at the REPL:
+
+- *What registries exist?* — `print(probpipe.registry_catalog)` prints
+  a table; `probpipe.registry_catalog.list()` returns one
+  `RegistryInfo` per registry.
+- *What's in this one?* — `probpipe.registry_catalog.describe("kl")`
+  prints the per-method records (priority, supported types, module
+  path) for the registry by that name.
+
+Two ways to participate:
+
+- **Conforming dispatch registries** (any subclass of
+  `BaseDispatchRegistry`) self-register when given a non-empty
+  `name=`. The default `register_in_catalog` is auto-derived from the
+  name; tests can opt out with `register_in_catalog=False` to construct
+  isolated registries that don't pollute the global singleton.
+- **Non-conforming registries** (e.g. the `ConverterRegistry`, the
+  bijector facade) — those whose dispatch shape doesn't fit
+  `Unary`/`Binary` — satisfy `SupportsRegistryCataloging` directly by
+  exposing `name`, `description`, `kind`, `method_summaries()`, and
+  `describe_method()`. They register themselves at module load via
+  `registry_catalog.register(...)`.
+
+`SupportsRegistryCataloging` is intentionally *weaker* than the
+dispatch contract: it only describes identity and introspection.
+Empty-name guard and duplicate-name guard live on
+`RegistryCatalog.register()`, so a structurally-conforming registry
+without a name cannot accidentally land in the catalog.
+
+::: probpipe.core._registry_catalog.RegistryCatalog
+
+::: probpipe.core._registry_catalog.SupportsRegistryCataloging
+
+::: probpipe.core._registry_catalog.MethodSummary
+
+::: probpipe.core._registry_catalog.RegistryInfo
 
 ## Custom converters
 

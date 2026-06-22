@@ -5,7 +5,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
+
+from ..core._registry_catalog import MethodSummary, registry_catalog
 
 
 class ConversionMethod(Enum):
@@ -83,7 +85,29 @@ class ConverterRegistry:
 
     Converters are tried in descending priority order.  The first
     converter whose ``check()`` returns ``feasible=True`` wins.
+
+    Cataloging surface
+    ------------------
+    The class carries the
+    :class:`~probpipe.core._registry_catalog.SupportsRegistryCataloging`
+    identity attributes (``name``, ``description``, ``kind``) as
+    class-level fields and implements :meth:`method_summaries` and
+    :meth:`describe_method` so the registry can be discovered via the
+    global :data:`registry_catalog` ("converters" key).  Dispatch
+    mechanics are unchanged — this is a *non-conforming* registry from
+    the dispatch perspective (the ``(source_type, target_type)`` shape
+    with ``target_type`` passed as a value-type doesn't fit
+    :class:`~probpipe.core._registry.BinaryDispatchRegistry`), but the
+    catalog only needs the introspection surface.
     """
+
+    #: Catalog identity attributes (class-level so they are stable
+    #: across the module-level singleton's lifetime).
+    name: ClassVar[str] = "converters"
+    description: ClassVar[str] = (
+        "Cross-type distribution converters (TFP, scipy, ProbPipe-internal, protocol-based)."
+    )
+    kind: ClassVar[str] = "converter"
 
     def __init__(self) -> None:
         self._converters: list[Converter] = []
@@ -150,6 +174,46 @@ class ConverterRegistry:
             return True
         return any(isinstance(obj, tuple(c.source_types())) for c in self._converters)
 
+    # -- catalog surface ----------------------------------------------------
+
+    def method_summaries(self) -> list[MethodSummary]:
+        """Return one :class:`MethodSummary` per registered converter.
+
+        Walks ``self._converters`` in priority-sorted order (the same
+        order :meth:`check` uses).  ``supported_types`` is encoded as
+        ``(source_types, target_types)`` to match the converter's
+        :meth:`Converter.source_types` / :meth:`Converter.target_types`
+        contract.
+        """
+        return [
+            MethodSummary(
+                name=type(c).__name__,
+                priority=c.priority,
+                supported_types=(c.source_types(), c.target_types()),
+                description=(type(c).__doc__ or "").strip().splitlines()[0]
+                if type(c).__doc__
+                else "",
+                module_path=type(c).__module__,
+            )
+            for c in self._converters
+        ]
+
+    def describe_method(self, name: str) -> MethodSummary:
+        """Return the :class:`MethodSummary` for the named converter.
+
+        *name* matches ``type(converter).__name__``.
+
+        Raises
+        ------
+        KeyError
+            If no registered converter has that class name.
+        """
+        for s in self.method_summaries():
+            if s.name == name:
+                return s
+        available = ", ".join(sorted(s.name for s in self.method_summaries())) or "(none)"
+        raise KeyError(f"No converter named {name!r}. Available: {available}")
+
     # -- internals ----------------------------------------------------------
 
     def _find_converters(self, source_type: type) -> list[Converter]:
@@ -163,5 +227,7 @@ class ConverterRegistry:
         return self._type_cache[source_type]
 
 
-# Module-level singleton
+# Module-level singleton.  Registered with the global registry catalog
+# so it is discoverable via ``probpipe.registry_catalog["converters"]``.
 converter_registry = ConverterRegistry()
+registry_catalog.register(converter_registry)
