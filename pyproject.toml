@@ -31,7 +31,6 @@ prefect = ["prefect>=3"]
 viz = ["graphviz", "matplotlib"]
 docs = [
   "mkdocs-material",
-  "mkdocs-redirects",
   "mkdocstrings[python]",
   "mkdocs-jupyter<0.26",
 ]

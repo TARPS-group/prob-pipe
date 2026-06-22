@@ -34,21 +34,6 @@ hooks:
 
 plugins:
   - search
-  - redirects:
-      redirect_maps:
-        # mkdocs-redirects validates source paths as Markdown documents.
-        # These .md-equivalent paths generate the old directory URLs.
-        examples/01_distributions.md: https://tarps-group.github.io/prob-pipe/user_guide/01_distributions/
-        examples/02_records.md: https://tarps-group.github.io/prob-pipe/user_guide/02_records/
-        examples/03_broadcasting.md: https://tarps-group.github.io/prob-pipe/user_guide/03_broadcasting/
-        examples/04_joint_distributions.md: https://tarps-group.github.io/prob-pipe/user_guide/04_joint_distributions/
-        examples/05_external_backends.md: https://tarps-group.github.io/prob-pipe/user_guide/05_external_backends/
-        examples/06_converting_representations.md: https://tarps-group.github.io/prob-pipe/user_guide/06_converting_representations/
-        examples/07_sequential_updating.md: https://tarps-group.github.io/prob-pipe/user_guide/07_sequential_updating/
-        examples/08_jax_interop.md: https://tarps-group.github.io/prob-pipe/user_guide/08_jax_interop/
-        examples/09_bagged_posteriors.md: https://tarps-group.github.io/prob-pipe/user_guide/09_bagged_posteriors/
-        examples/10_random_functions_and_emulators.md: https://tarps-group.github.io/prob-pipe/user_guide/10_random_functions_and_emulators/
-        examples/11_prefect_scalability.md: https://tarps-group.github.io/prob-pipe/user_guide/11_prefect_scalability/
   - mkdocstrings:
       handlers:
         python:

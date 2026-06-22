@@ -36,10 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **User Guide notebook URLs moved from `examples/` to `user_guide/`.** The
-  docs nav and grouped overview now list all 11 User Guide notebooks under
-  `/user_guide/.../`, including the Prefect scalability guide, and the old
-  `/examples/.../` notebook URLs redirect to their new locations.
+- **User Guide notebooks moved from the former examples section.** The docs nav
+  and grouped overview now list all 11 User Guide notebooks under
+  `/user_guide/.../`, including the Prefect scalability guide.
 
 - **Adopt `ruff format` for code formatting.** Formatting is now owned by
   `ruff format` (Black-style) rather than the previous manual horizontal-packing
