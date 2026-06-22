@@ -1087,19 +1087,34 @@ class EventTemplate:
     # -- 1-D numeric (de)serialization --------------------------------------
 
     def to_vector(self, value: NumericRecord | NumericRecordArray) -> Array:
-        """Concatenate the numeric leaves of *value* into a flat 1-D vector.
+        """Serialize the numeric leaves of *value* into a dense 1-D vector.
 
-        The inverse of :meth:`from_vector`, and the structural home of the
-        ``flatten`` operation (a :class:`~probpipe.NumericRecord` delegates to
-        its template: ``nr.to_vector() == nr.event_template.to_vector(nr)``).
+        ``to_vector`` is ProbPipe's **numeric** (de)serialization, paired with
+        :meth:`from_vector`. It is defined only when the template is
+        :attr:`is_numeric`, and produces a single dense
+        :class:`~probpipe.custom_types.Array` whose entries are the value's
+        numeric leaves, raveled and concatenated — the flat encoding samplers
+        and optimisers consume.
+
+        It is deliberately distinct from ``flatten``. ``flatten`` is the
+        general JAX-pytree operation (``value -> (leaves, aux)``, in the sense
+        of :func:`jax.tree_util.tree_flatten`): it works for *any* leaf type
+        and decomposes a value into its pytree leaves plus a structural ``aux``,
+        preserving structure rather than producing a numeric buffer.
+        ``to_vector`` instead collapses only-numeric leaves into a flat numeric
+        vector and is undefined when any leaf is non-numeric. (#235 reserves
+        the ``flatten`` / ``unflatten`` names for that pytree meaning in a later
+        phase; until that consolidation lands, ``to_vector`` delegates to the
+        existing 1-D :meth:`NumericRecord.flatten` /
+        :meth:`NumericRecordArray.flatten`.)
+
         Leaves are visited in **canonical leaf order** — the deterministic,
-        depth-first, insertion-order traversal also used by
-        :attr:`leaf_shapes` / :attr:`~NumericEventTemplate.numeric_leaf_shapes`,
-        :attr:`~NumericEventTemplate.flat_size`, and
-        :meth:`NumericRecord.flatten` — each leaf is raveled, and the pieces
-        are concatenated along the trailing axis. ``to_vector`` and
-        ``flatten`` are therefore interchangeable for a *value* matching this
-        template: ``self.to_vector(v) == v.flatten()``.
+        depth-first, insertion-order traversal also used by :attr:`leaf_shapes`,
+        :attr:`~NumericEventTemplate.numeric_leaf_shapes`, and
+        :attr:`~NumericEventTemplate.flat_size`. The structural operation lives
+        on the template; a :class:`~probpipe.NumericRecord` delegates to it, so
+        ``nr.to_vector() == nr.event_template.to_vector(nr)`` and, for a *value*
+        matching this template, ``self.to_vector(v) == v.flatten()``.
 
         Parameters
         ----------
@@ -1157,10 +1172,15 @@ class EventTemplate:
     ) -> Any:
         """Reconstruct a value from its flat 1-D numeric serialization.
 
-        The inverse of :meth:`to_vector`. Splits *vec* along its trailing axis
-        into the template's numeric leaves — in the same canonical leaf order
-        :meth:`to_vector` uses — reshapes each chunk to its event shape
-        (preserving any leading batch axes), and rebuilds the value.
+        The inverse of :meth:`to_vector`, and the numeric counterpart of
+        ``unflatten``: it rebuilds a value from a dense numeric vector, not
+        from JAX-pytree ``(leaves, aux)`` (``unflatten``, which reconstructs an
+        arbitrary value from its pytree leaves and structure — see the
+        ``to_vector`` vs. ``flatten`` distinction). Splits *vec* along its
+        trailing axis into the template's numeric leaves — in the same
+        canonical leaf order :meth:`to_vector` uses — reshapes each chunk to
+        its event shape (preserving any leading batch axes), and rebuilds the
+        value.
 
         Single vs. batched is determined by the **rank of** *vec*:
 
