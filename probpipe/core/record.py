@@ -114,7 +114,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..custom_types import ArrayLike
+from ..custom_types import Array, ArrayLike
 from .constraints import Constraint
 from .provenance import Provenance
 
@@ -1086,7 +1086,7 @@ class EventTemplate:
 
     # -- 1-D numeric (de)serialization --------------------------------------
 
-    def to_vector(self, value: NumericRecord | NumericRecordArray) -> jnp.ndarray:
+    def to_vector(self, value: NumericRecord | NumericRecordArray) -> Array:
         """Concatenate the numeric leaves of *value* into a flat 1-D vector.
 
         The inverse of :meth:`from_vector`, and the structural home of the
