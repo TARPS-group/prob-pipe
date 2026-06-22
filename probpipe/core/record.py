@@ -1043,7 +1043,7 @@ class EventTemplate:
         :class:`DistributionSpec` / :class:`FunctionSpec` leaves; and prunes
         any nested template that becomes empty. Surviving leaves keep their
         ``/``-delimited paths (the projection is path-stable). Inference uses
-        this to recover the numeric core of a mixed template.
+        this to recover the numeric leaves of a mixed template.
 
         On an already-all-numeric template the result is an equal
         :class:`NumericEventTemplate` (the projection is idempotent).
