@@ -1163,16 +1163,12 @@ class EventTemplate:
                 f"NumericRecordArray (batched), got {type(value).__name__}."
             )
 
-        # Ravel each numeric leaf in canonical leaf order and concatenate along
-        # the trailing axis; any leading batch axes are preserved.
-        parts: list[Array] = []
-        for path in self.leaf_shapes:
-            leaf = value[path]
-            if batch_shape:
-                parts.append(jnp.reshape(leaf, (*batch_shape, -1)))
-            else:
-                parts.append(jnp.ravel(leaf))
-        return jnp.concatenate(parts, axis=-1)
+        # ``tree_leaves`` yields the numeric leaves in canonical leaf order; ravel
+        # each leaf's event dimensions and concatenate along the trailing axis.
+        # Reshaping to ``(*batch_shape, -1)`` preserves leading batch axes
+        # (``batch_shape == ()`` for a single value gives a 1-D result).
+        leaves = jax.tree_util.tree_leaves(value)
+        return jnp.concatenate([jnp.reshape(leaf, (*batch_shape, -1)) for leaf in leaves], axis=-1)
 
     def from_vector(
         self,
@@ -1180,27 +1176,32 @@ class EventTemplate:
         *,
         non_numeric: Mapping[str, Any] | None = None,
     ) -> Any:
-        """Reconstruct a value from its flat 1-D numeric serialization.
+        """Reconstruct a numeric value from its 1-D vector representation.
 
-        The inverse of :meth:`to_vector`, and the numeric counterpart of
-        ``unflatten``: it rebuilds a value from a dense numeric vector, not
-        from JAX-pytree ``(leaves, aux)`` (``unflatten``, which reconstructs an
-        arbitrary value from its pytree leaves and structure — see the
-        ``to_vector`` vs. ``flatten`` distinction). Splits *vec* along its
-        trailing axis into the template's numeric leaves — in the same
-        canonical leaf order :meth:`to_vector` uses — reshapes each chunk to
-        its event shape (preserving any leading batch axes), and rebuilds the
-        value.
+        :meth:`to_vector` / ``from_vector`` convert between the structured and
+        vector representations of a **numeric** value (see :meth:`to_vector`).
+        ``from_vector`` is the inverse: it splits *vec* along its trailing axis
+        into the template's leaves — in the same canonical leaf order
+        :meth:`to_vector` uses — reshapes each chunk to its event shape, and
+        rebuilds the structured value. The **rank of** *vec* selects single vs.
+        batched: a vector of shape ``(vector_size,)`` rebuilds a single value,
+        while a matrix of shape ``(*batch_shape, vector_size)`` rebuilds a batch
+        with that ``batch_shape``. Here ``vector_size`` is the total scalar
+        count, :attr:`~NumericEventTemplate.flat_size` (for a mixed template, the
+        ``flat_size`` of its :meth:`numeric_subset`).
 
-        Single vs. batched is determined by the **rank of** *vec*:
+        This method is distinct from ``unflatten``. The latter is the inverse of
+        the JAX-pytree ``flatten`` (the mapping ``(leaves, aux) -> value`` in the
+        sense of :func:`jax.tree_util.tree_unflatten`), rebuilding an arbitrary
+        value from its leaves and structural ``aux``. ``from_vector`` applies
+        only to numeric values, and rebuilds one from its dense 1-D
+        representation alone — splitting and reshaping the vector using this
+        template's leaf shapes.
 
-        * ``vec.shape == (vector_size,)`` → a single value
-          (``batch_shape == ()``);
-        * ``vec.shape == (*B, vector_size)`` → a batched value with
-          ``batch_shape == B``;
-
-        where ``vector_size == self.numeric_subset().flat_size`` (equal to
-        ``self.flat_size`` when this template :attr:`is_numeric`).
+        When this template is mixed (not :attr:`is_numeric`), *vec* carries only
+        the numeric leaves that :meth:`numeric_subset` keeps; pass *non_numeric*
+        to supply the dropped leaves and rebuild the full mixed value. Like
+        :meth:`to_vector`, the structural operation lives on the event template.
 
         Parameters
         ----------
