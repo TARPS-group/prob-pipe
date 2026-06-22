@@ -106,6 +106,28 @@ def _fieldwise_op(record_data: Record, op: Callable) -> NumericRecord:
     return NumericRecord({f: op(jnp.asarray(record_data[f])) for f in record_data.fields})
 
 
+def _weighted_quantile(values: Array, weights: Array, q: Array) -> Array:
+    """Weight-aware quantile(s) of ``values`` along axis 0.
+
+    ``values`` has shape ``(n, *event)``, ``weights`` shape ``(n,)``, and ``q``
+    is a scalar or ``(Q,)`` array of probabilities. Returns shape
+    ``(*q.shape, *event)`` — matching ``jnp.quantile(values, q, axis=0)`` for
+    uniform weights — via the midpoint-CDF convention with linear interpolation.
+    """
+    n = values.shape[0]
+    event = values.shape[1:]
+    flat = values.reshape(n, -1)
+    order = jnp.argsort(flat, axis=0)
+    sorted_v = jnp.take_along_axis(flat, order, axis=0)
+    sorted_w = jnp.take_along_axis(jnp.broadcast_to(weights[:, None], flat.shape), order, axis=0)
+    cdf = jnp.cumsum(sorted_w, axis=0) - 0.5 * sorted_w
+    cdf = cdf / jnp.sum(sorted_w, axis=0, keepdims=True)
+    q1d = jnp.atleast_1d(q)
+    cols = jax.vmap(lambda c, v: jnp.interp(q1d, c, v), in_axes=(1, 1), out_axes=1)(cdf, sorted_v)
+    out = cols.reshape((q1d.shape[0], *event))
+    return out if jnp.ndim(q) > 0 else out[0]
+
+
 def _wrap_numeric_array_as_record(
     arr: ArrayLike,
     *,
@@ -633,6 +655,25 @@ class RecordEmpiricalDistribution(
         the variance.
         """
         return _fieldwise_op(self._record_data, self._w.covariance)
+
+    def _quantile(self, q: Any) -> NumericRecord:
+        """Per-field quantile(s) at probability level(s) ``q`` (weight-aware).
+
+        For uniform weights this is ``jnp.quantile`` along the sample axis; for
+        non-uniform weights it is the midpoint-CDF weighted quantile.
+        """
+        qa = jnp.asarray(q)
+        if self._w.is_uniform:
+
+            def op(a: Array) -> Array:
+                return jnp.quantile(a, qa, axis=0)
+        else:
+            weights = self._w.normalized
+
+            def op(a: Array) -> Array:
+                return _weighted_quantile(a, weights, qa)
+
+        return _fieldwise_op(self._record_data, op)
 
     # -- expectation --------------------------------------------------------
 

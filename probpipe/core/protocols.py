@@ -263,6 +263,18 @@ class SupportsCovariance(Protocol):
     def _cov(self) -> Any: ...
 
 
+@runtime_checkable
+class SupportsQuantile(Protocol):
+    """Distribution with quantiles via ``_quantile(q)``.
+
+    ``_quantile(q)`` returns the per-field ``q``-quantile(s); ``q`` is a scalar
+    or array of probabilities in ``[0, 1]``. For finite-sample distributions
+    this is the weight-aware empirical quantile.
+    """
+
+    def _quantile(self, q: Any) -> Any: ...
+
+
 # ---------------------------------------------------------------------------
 # Random-measure protocols
 # ---------------------------------------------------------------------------

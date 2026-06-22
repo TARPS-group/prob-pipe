@@ -32,6 +32,7 @@ from .protocols import (
     SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
+    SupportsQuantile,
     SupportsRandomLogProb,
     SupportsRandomUnnormalizedLogProb,
     SupportsSampling,
@@ -47,6 +48,7 @@ __all__ = [
     "log_prob",
     "mean",
     "prob",
+    "quantile",
     "random_log_prob",
     "random_unnormalized_log_prob",
     "sample",
@@ -250,6 +252,23 @@ def cov(dist: SupportsCovariance) -> Array:
             f"(does not implement SupportsCovariance)"
         )
     return dist._cov()
+
+
+@workflow_function
+def quantile(dist: SupportsQuantile, q: Any) -> Any:
+    """Compute quantile(s) of ``X ~ dist`` at probability level(s) ``q``.
+
+    ``q`` is a scalar or array of probabilities in ``[0, 1]``; the return is
+    ``T``-shaped per field (finite-sample distributions return the weight-aware
+    empirical quantile via ``_quantile``).
+
+    Requires the distribution to implement :class:`SupportsQuantile`.
+    """
+    if not isinstance(dist, SupportsQuantile):
+        raise TypeError(
+            f"{type(dist).__name__} does not support quantile (does not implement SupportsQuantile)"
+        )
+    return dist._quantile(q)
 
 
 @workflow_function
