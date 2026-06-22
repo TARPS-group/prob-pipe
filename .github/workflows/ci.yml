@@ -461,19 +461,20 @@ jobs:
 
   notebooks:
     # Execute the docs notebooks to keep the reference set honest against the
-    # current codebase. Two parallel legs: `examples` (lean — dev+nutpie) and
+    # current codebase. Two parallel legs: `user_guide` (lean — dev+nutpie) and
     # `tutorials` (the SBI backends — bayesflow+pymc). Splitting roughly halves
     # the wall-clock vs one serial pass (~8 min each, on par with the test
-    # matrix) and spares the examples the ~200 MB pymc/bayesflow install (no
-    # example imports them in code). Separate from the unit-test matrix either
-    # way. Skipped per-leg when no notebook in its dir or probpipe source changes.
+    # matrix) and spares the User Guide the ~200 MB pymc/bayesflow install.
+    # User Guide notebooks do not import those backends in code. Separate from
+    # the unit-test matrix either way. Skipped per-leg when no notebook in its
+    # dir or probpipe source changes.
     name: notebooks (${{ matrix.group }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - group: examples
-            dir: docs/examples
+          - group: user_guide
+            dir: docs/user_guide
             extras: --extra dev --extra nutpie
           - group: tutorials
             dir: docs/tutorials
@@ -569,7 +570,7 @@ jobs:
         # Dependency versions are pinned in uv.lock. --frozen fails if the
         # lockfile is out of sync, so CI never silently drifts. --python pins
         # the interpreter (setup-uv's python-version input was ignored on @v3).
-        # Per-leg extras (matrix.extras): the examples leg needs only
+        # Per-leg extras (matrix.extras): the User Guide leg needs only
         # dev+nutpie; the tutorials leg adds the SBI backends bayesflow+pymc.
         run: uv sync --frozen --python 3.12 ${{ matrix.extras }}
 

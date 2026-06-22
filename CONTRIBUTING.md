@@ -336,8 +336,8 @@ GitHub Actions (`.github/workflows/ci.yml`):
 - Installs via `uv sync --frozen` from `uv.lock` (single source of truth
   for pinned dependency versions, shared between local dev and CI)
 - Test job uses extras `dev,nutpie,pymc`. The notebooks job is a two-leg
-  matrix that runs in parallel — an `examples` leg (`dev,nutpie`) for
-  `docs/examples` and a `tutorials` leg (`dev,nutpie,bayesflow,pymc`) for
+  matrix that runs in parallel — a `user_guide` leg (`dev,nutpie`) for
+  `docs/user_guide` and a `tutorials` leg (`dev,nutpie,bayesflow,pymc`) for
   `docs/tutorials` — each scoped to its own directory with independent
   change detection, so an unrelated leg is skipped (`bridgestan` is installed
   only in the `stan` leg, below)
