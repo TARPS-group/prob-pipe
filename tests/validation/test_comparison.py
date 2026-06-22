@@ -107,6 +107,31 @@ class TestDistances:
         # Same distribution → sliced W₂ ≈ 0 (0.05 at this seed, n=2000).
         assert float(sliced_wasserstein(x, y, key=jax.random.PRNGKey(8))) < 0.15
 
+    def test_sliced_wasserstein_exact_1d_vs_pot(self):
+        # The exact 1-D W₂ — including unequal sample sizes — matches POT's
+        # wasserstein_1d (which returns W₂², hence the sqrt).
+        ot = pytest.importorskip("ot")
+        for i, (n, m) in enumerate([(2000, 2000), (1000, 3000)]):
+            kx, ky = jax.random.split(jax.random.PRNGKey(30 + i))
+            x = jax.random.normal(kx, (n, 1))
+            y = jax.random.normal(ky, (m, 1)) + 1.5
+            ours = float(sliced_wasserstein(x, y, key=jax.random.PRNGKey(0)))
+            pot = float(np.sqrt(ot.wasserstein_1d(np.asarray(x[:, 0]), np.asarray(y[:, 0]), p=2)))
+            assert ours == pytest.approx(pot, abs=1e-3)
+
+    def test_sliced_wasserstein_multivariate_vs_pot(self):
+        # The full projection pipeline tracks POT's sliced_wasserstein_distance.
+        ot = pytest.importorskip("ot")
+        k1, k2 = jax.random.split(jax.random.PRNGKey(20))
+        x = _mvn(k1, 1500, jnp.zeros(2), jnp.eye(2))
+        y = _mvn(k2, 1500, jnp.array([1.5, -0.5]), jnp.diag(jnp.array([2.0, 0.5])))
+        ours = float(sliced_wasserstein(x, y, key=jax.random.PRNGKey(21), n_projections=400))
+        pot = float(
+            ot.sliced_wasserstein_distance(np.asarray(x), np.asarray(y), n_projections=400, seed=0)
+        )
+        # Independent projection sets; both converge to the true sliced-W₂.
+        assert ours == pytest.approx(pot, rel=0.05)
+
 
 class TestKSD:
     def test_ksd_matched_small(self):

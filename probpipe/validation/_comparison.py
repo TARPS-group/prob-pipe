@@ -71,9 +71,8 @@ def _as_draws(x: Any) -> Array:
 
 
 def _sample_cov(d: Array) -> Array:
-    """Unbiased sample covariance of ``(n, d)`` draws → ``(d, d)``."""
-    centered = d - d.mean(axis=0, keepdims=True)
-    return (centered.T @ centered) / (d.shape[0] - 1)
+    """Unbiased sample covariance of ``(n, d)`` draws → ``(d, d)`` (``atleast_2d`` for ``d=1``)."""
+    return jnp.atleast_2d(jnp.cov(d, rowvar=False))
 
 
 class _MissingReference(ValueError):
@@ -194,31 +193,32 @@ def std_ratios(approx: Any, ref: Reference) -> Array:
 # -- sample-based distances -------------------------------------------------
 
 
-def sliced_wasserstein(
-    x: Any,
-    y: Any,
-    *,
-    key: PRNGKey,
-    n_projections: int = 128,
-    n_quantiles: int = 256,
-) -> Array:
+def sliced_wasserstein(x: Any, y: Any, *, key: PRNGKey, n_projections: int = 128) -> Array:
     r"""Sliced 2-Wasserstein distance between two sets of draws.
 
-    Projects ``x`` and ``y`` onto ``n_projections`` random unit directions,
-    computes the 1-D ``W₂`` per projection via a shared quantile grid (so
-    unequal sample sizes are handled), and returns
-    ``(mean_θ W₂²(P_θ x, P_θ y))^{1/2}``.
+    Projects ``x`` and ``y`` onto ``n_projections`` random unit directions and
+    returns ``(mean_θ W₂²(P_θ x, P_θ y))^{1/2}``. Each 1-D ``W₂²`` is computed
+    *exactly* from the order statistics — including unequal sample sizes, by
+    integrating ``(Q_x − Q_y)²`` over the union of the two empirical-CDF level
+    sets (no quantile-grid approximation).
     """
     x, y = _as_draws(x), _as_draws(y)
     if x.shape[1] != y.shape[1]:
         raise ValueError(f"x and y must share a dimension, got {x.shape[1]} and {y.shape[1]}")
-    proj = jax.random.normal(key, (n_projections, x.shape[-1]))
+    n, m = x.shape[0], y.shape[0]
+    proj = jax.random.normal(key, (n_projections, x.shape[1]))
     proj = proj / jnp.linalg.norm(proj, axis=-1, keepdims=True)
-    xp, yp = x @ proj.T, y @ proj.T  # (n, P)
-    qs = (jnp.arange(n_quantiles) + 0.5) / n_quantiles
-    xq = jnp.quantile(xp, qs, axis=0)  # (Q, P)
-    yq = jnp.quantile(yp, qs, axis=0)
-    w2_sq = jnp.mean((xq - yq) ** 2, axis=0)  # (P,) 1-D W₂² per projection
+    xp = jnp.sort(x @ proj.T, axis=0)  # (n, P) sorted projections
+    yp = jnp.sort(y @ proj.T, axis=0)  # (m, P)
+    # 1-D W₂² = ∫₀¹ (Q_x − Q_y)² du, exact since both quantile functions are
+    # piecewise-constant on the union of their CDF level sets {i/n} ∪ {j/m}.
+    cx = jnp.arange(1, n + 1) / n  # right ends of x's CDF steps
+    cy = jnp.arange(1, m + 1) / m
+    levels = jnp.sort(jnp.concatenate([cx, cy]))  # (n + m,)
+    widths = jnp.diff(levels, prepend=0.0)  # sub-interval lengths; duplicates get width 0
+    ix = jnp.clip(jnp.searchsorted(cx, levels), 0, n - 1)  # quantile index per sub-interval
+    iy = jnp.clip(jnp.searchsorted(cy, levels), 0, m - 1)
+    w2_sq = jnp.sum(widths[:, None] * (xp[ix] - yp[iy]) ** 2, axis=0)  # (P,)
     return jnp.sqrt(jnp.mean(w2_sq))
 
 

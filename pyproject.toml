@@ -54,6 +54,9 @@ dev = [
   "ipykernel",
   "jupyter",
   "nbformat",
+  # POT (Python Optimal Transport): independent sliced-Wasserstein baseline for
+  # the validation-metric tests. CPU/numpy, test-only — not a runtime dependency.
+  "pot>=0.9",
 ]
 
 [project.urls]
