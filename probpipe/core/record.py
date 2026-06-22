@@ -974,14 +974,42 @@ class EventTemplate:
         """
         return len(self._specs) > 1
 
+    def numeric_fields(self) -> tuple[str, ...]:
+        """Top-level field names whose leaf is numeric.
+
+        A top-level field is numeric if its spec is an :class:`ArraySpec` or a
+        nested :class:`EventTemplate` that is itself all-numeric (see
+        :attr:`is_numeric`). The exact complement of :meth:`non_numeric_fields`:
+        together the two partition :attr:`fields` (each in insertion order).
+
+        Note that this reports *top-level* fields only, so a field is numeric
+        here iff its nested sub-template is *entirely* numeric — it does not
+        descend to count partially-numeric nestings. Use :meth:`numeric_subset`
+        for the recursive, path-stable projection to numeric leaves.
+
+        Returns
+        -------
+        tuple of str
+            Names of the numeric top-level fields, in insertion order. Empty
+            when every top-level field is non-numeric.
+        """
+        result: list[str] = []
+        for name, spec in self._specs.items():
+            if isinstance(spec, ArraySpec) or (
+                isinstance(spec, EventTemplate) and spec.is_numeric
+            ):
+                result.append(name)
+        return tuple(result)
+
     def non_numeric_fields(self) -> tuple[str, ...]:
         """Top-level field names whose leaf is non-numeric.
 
         A top-level field is non-numeric if its spec is an
         :class:`OpaqueSpec` / :class:`DistributionSpec` / :class:`FunctionSpec`
         leaf, or a nested :class:`EventTemplate` that is not itself all-numeric
-        (see :attr:`is_numeric`). Used to build clear inference error messages
-        when a template cannot be projected to a numeric subset.
+        (see :attr:`is_numeric`). The exact complement of :meth:`numeric_fields`:
+        together the two partition :attr:`fields`. Used to build clear inference
+        error messages when a template cannot be projected to a numeric subset.
 
         Returns
         -------

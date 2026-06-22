@@ -654,6 +654,26 @@ class TestIsMultiField:
         assert EventTemplate(x=(), y=()).is_multi_field is True
 
 
+class TestNumericFields:
+    def test_all_numeric(self):
+        assert EventTemplate(x=(), y=(3,)).numeric_fields() == ("x", "y")
+
+    def test_exact_numeric_names(self):
+        tpl = EventTemplate(x=(), label=None, d=_dist_spec(), y=(2,), f=_func_spec())
+        assert tpl.numeric_fields() == ("x", "y")
+
+    def test_nested_all_numeric_is_numeric(self):
+        tpl = EventTemplate(x=(), nested=EventTemplate(a=(), b=(3,)))
+        assert tpl.numeric_fields() == ("x", "nested")
+
+    def test_nested_mixed_not_listed(self):
+        tpl = EventTemplate(x=(), nested=EventTemplate(a=(), label=None))
+        assert tpl.numeric_fields() == ("x",)
+
+    def test_all_non_numeric_empty(self):
+        assert EventTemplate(label=None, d=_dist_spec()).numeric_fields() == ()
+
+
 class TestNonNumericFields:
     def test_all_numeric_empty(self):
         assert EventTemplate(x=(), y=(3,)).non_numeric_fields() == ()
@@ -669,6 +689,19 @@ class TestNonNumericFields:
     def test_nested_numeric_not_listed(self):
         tpl = EventTemplate(x=(), nested=EventTemplate(a=(), b=(3,)))
         assert tpl.non_numeric_fields() == ()
+
+    def test_complement_partitions_fields(self):
+        tpl = EventTemplate(
+            x=(),
+            label=None,
+            nested_num=EventTemplate(a=(), b=(3,)),
+            d=_dist_spec(),
+            nested_mixed=EventTemplate(a=(), label=None),
+        )
+        numeric = tpl.numeric_fields()
+        non_numeric = tpl.non_numeric_fields()
+        assert set(numeric).isdisjoint(non_numeric)
+        assert set(numeric) | set(non_numeric) == set(tpl.fields)
 
 
 class TestNumericSubset:
