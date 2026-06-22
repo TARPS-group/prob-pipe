@@ -1059,7 +1059,11 @@ class EventTemplate:
                 try:
                     specs[name] = spec.numeric_subset()
                 except ValueError:
-                    # Nested template has no numeric leaves — prune it.
+                    # The empty-projection guard below is the *only* ValueError
+                    # numeric_subset() raises, so catching it here means the
+                    # nested template had no numeric leaves — prune it. If a
+                    # future change adds another ValueError path, narrow this
+                    # catch so it can't mask an unrelated failure.
                     continue
             # Opaque / distribution / function leaves are dropped.
         if not specs:
