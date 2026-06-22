@@ -29,6 +29,7 @@ Protocol hierarchy
     SupportsMean              standalone; exact _mean()
     SupportsVariance          standalone; exact _variance()
     SupportsCovariance        standalone; exact _cov()
+    SupportsQuantile          standalone; exact _quantile(q)
 
     SupportsUnnormalizedLogProb
         ↑ inherits
@@ -261,6 +262,18 @@ class SupportsCovariance(Protocol):
     """
 
     def _cov(self) -> Any: ...
+
+
+@runtime_checkable
+class SupportsQuantile(Protocol):
+    """Distribution with quantiles via ``_quantile(q)``.
+
+    ``_quantile(q)`` returns the per-field ``q``-quantile(s); ``q`` is a scalar
+    or array of probabilities in ``[0, 1]``. For finite-sample distributions
+    this is the weight-aware empirical quantile.
+    """
+
+    def _quantile(self, q: Any) -> Any: ...
 
 
 # ---------------------------------------------------------------------------
@@ -604,6 +617,7 @@ __all__ = [
     "SupportsExpectation",
     "SupportsLogProb",
     "SupportsMean",
+    "SupportsQuantile",
     "SupportsRandomLogProb",
     "SupportsRandomUnnormalizedLogProb",
     "SupportsSampling",

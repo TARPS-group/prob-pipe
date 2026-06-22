@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`probpipe.validation` posterior-vs-reference comparison metrics.** A
+  dependency-light scoring layer for validating inference methods against a
+  trusted reference: `Reference` (a container for analytic / long-NUTS /
+  sandwich references — high-precision `(mean, cov)`, `draws`, and/or a target
+  `score_fn`), `standardized_mean_error` (Mahalanobis mean error
+  `‖Σ_ref^{-1/2}(μ̂ − μ_ref)‖₂`), `relative_cov_error` (operator-norm whitened
+  covariance error `‖I − Σ_ref^{-1/2} Σ̂ Σ_ref^{-1/2}‖₂`), `std_ratios`,
+  `sliced_wasserstein`, `mmd` (unbiased
+  RBF), `ksd` (IMQ kernel Stein discrepancy), and the `score_posterior`
+  aggregator.
+
+- **`quantile` op and `SupportsQuantile` protocol.** `quantile(dist, q)` returns
+  per-field quantile(s) at probability level(s) `q`, parallel to
+  `mean`/`variance`/`cov`. `RecordEmpiricalDistribution` implements it
+  weight-aware via the midpoint-CDF (Hazen, type-5) quantile, used for both
+  uniform and non-uniform weights so the estimator is continuous in the
+  weights.
+
 - **`ProvenanceMode` enum and `provenance_config` singleton for lineage-tracking
   control.** Three modes are available: `FULL` retains live references to every
   parent distribution (good for interactive debugging); `LIGHTWEIGHT` (the new
