@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **User Guide notebook URLs moved from `examples/` to `user_guide/`.** The
-  docs nav and overview now list all 11 User Guide notebooks under
+  docs nav and grouped overview now list all 11 User Guide notebooks under
   `/user_guide/.../`, including the Prefect scalability guide, and the old
   `/examples/.../` notebook URLs redirect to their new locations.
 
