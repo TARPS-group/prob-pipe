@@ -183,13 +183,14 @@ class TestLogLikelihoodToDataset:
     def test_scalar_gets_chain_draw_dims(self):
         ds = _log_likelihood_to_dataset(np.float64(1.0))
         da = list(ds.data_vars.values())[0]
-        assert "chain" in da.dims
-        assert "draw" in da.dims
+        assert da.dims == ("chain", "draw", "obs")
+        assert da.shape == (1, 1, 1)
 
-    def test_1d_adds_chain_dim(self):
+    def test_1d_adds_chain_and_obs_dims(self):
         ds = _log_likelihood_to_dataset(np.ones(10))
         da = ds["y"]
-        assert da.shape == (1, 10)
+        assert da.shape == (1, 10, 1)
+        assert da.dims == ("chain", "draw", "obs")
 
     def test_2d_adds_chain_dim(self):
         ds = _log_likelihood_to_dataset(np.ones((10, 5)))

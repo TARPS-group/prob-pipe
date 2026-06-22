@@ -99,8 +99,8 @@ def to_arviz_dataset(
     """Convert a posterior distribution to an xarray.Dataset for ArviZ 1.0.
 
     For ``ApproximateDistribution``, delegates to
-    ``_datatree_store.to_named_posterior_dataset`` which builds a
-    ``(chain, draw)`` Dataset with one named variable per field.
+    ``_datatree_store.to_named_posterior_dataset`` which builds variables with
+    dims ``(chain, draw, *event_shape)``.
 
     Falls back to flat construction for plain ``EmpiricalDistribution``
     (no chain structure).
@@ -138,8 +138,10 @@ def to_arviz_dataset(
     data_vars = {}
     for name, arr in draws.items():
         arr = np.asarray(arr, dtype=float)
-        if arr.ndim == 1:
-            arr = arr[np.newaxis, :]   # (1, n_draws)
+        if arr.ndim == 0:
+            arr = arr.reshape(1, 1)
+        elif arr.ndim in (1, 2):
+            arr = arr.reshape((1,) + arr.shape)
         event_dims = [f"dim_{i}" for i in range(arr.ndim - 2)]
         dims = ["chain", "draw"] + event_dims
         data_vars[name] = xr.DataArray(arr, dims=dims)

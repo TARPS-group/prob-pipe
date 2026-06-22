@@ -23,6 +23,20 @@ from probpipe.diagnostics._view_base import NotComputed
 # conftest.py provides: posterior, posterior_single_chain, posterior_3params
 
 
+class _VectorPosterior:
+    fields = ["beta"]
+    num_chains = 2
+    chains = [object(), object()]
+
+    def __init__(self):
+        rng = np.random.default_rng(123)
+        self._data = rng.standard_normal((2, 120, 2))
+        self._auxiliary = None
+
+    def draws(self, *, chain):
+        return {"beta": self._data[chain]}
+
+
 # ---------------------------------------------------------------------------
 # add_rhat
 # ---------------------------------------------------------------------------
@@ -259,3 +273,14 @@ class TestAddMcmcDiagnostics:
 
     def test_does_not_return_value(self, posterior):
         assert add_mcmc_diagnostics(posterior) is None
+
+    def test_vector_parameter_diagnostics_are_written_by_component(self):
+        posterior = _VectorPosterior()
+
+        add_mcmc_diagnostics(posterior)
+
+        from probpipe.diagnostics._views import DiagnosticsView
+        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        assert set(view.rhat) == {"beta[0]", "beta[1]"}
+        assert set(view.ess_bulk) == {"beta[0]", "beta[1]"}
+        assert set(view.mcse_mean) == {"beta[0]", "beta[1]"}

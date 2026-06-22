@@ -177,8 +177,8 @@ def _log_likelihood_to_dataset(
 
     - ``(draw, obs)``
     - ``(chain, draw, obs)``
-    - ``(draw,)``
-    - ``(chain, draw)``
+    - ``(draw,)`` as one observation per draw
+    - ``(chain, draw)`` as scalar total log likelihood per draw
 
     For PSIS-LOO, pointwise log likelihood is preferred, usually with shape
     ``(chain, draw, obs)`` or ``(draw, obs)``.
@@ -194,14 +194,14 @@ def _log_likelihood_to_dataset(
 
     if arr.shape == ():
         # Scalar log likelihood is not ideal for LOO, but store defensively.
-        arr = arr.reshape(1, 1)
-        dims = ["chain", "draw"]
+        arr = arr.reshape(1, 1, 1)
+        dims = ["chain", "draw", "obs"]
 
     elif arr.ndim == 1:
-        # Draws of a scalar total log likelihood.
-        # Not ideal for pointwise LOO, but ArviZ may still reject it clearly.
-        arr = arr[np.newaxis, :]
-        dims = ["chain", "draw"]
+        # Draws of a scalar total log likelihood. Not ideal for pointwise LOO,
+        # but keep an explicit singleton observation axis for ArviZ.
+        arr = arr[np.newaxis, :, np.newaxis]
+        dims = ["chain", "draw", "obs"]
 
     elif arr.ndim == 2:
         # Assume (draw, obs), add singleton chain dimension.

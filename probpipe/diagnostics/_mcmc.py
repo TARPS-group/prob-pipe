@@ -119,6 +119,30 @@ def _scalar_from_da(da: Any) -> float:
     return float(np.asarray(da, dtype=float).squeeze().item())
 
 
+def _component_name(param: str, index: tuple[int, ...]) -> str:
+    """Return a stable display name for an event component."""
+    if not index:
+        return param
+    suffix = ", ".join(str(i) for i in index)
+    return f"{param}[{suffix}]"
+
+
+def _values_from_dataset(ds: Any) -> dict[str, float]:
+    """Flatten scalar or event-shaped diagnostic outputs into named values."""
+    values: dict[str, float] = {}
+
+    for param in ds.data_vars:
+        arr = np.asarray(ds[param], dtype=float)
+        if arr.shape == ():
+            values[param] = float(arr.item())
+            continue
+
+        for index in np.ndindex(arr.shape):
+            values[_component_name(param, index)] = float(arr[index])
+
+    return values
+
+
 def _rhat_warnings(values: dict[str, Any], threshold: float) -> list[str]:
     """Generate R-hat warning messages."""
     from ._datatree import NotComputed
@@ -269,10 +293,7 @@ def _compute_rhat_op(
     ds = to_named_posterior_dataset(posterior)
     rhat_ds = arviz_rhat(ds, method=method)
 
-    values = {
-        param: _scalar_from_da(rhat_ds[param])
-        for param in rhat_ds.data_vars
-    }
+    values = _values_from_dataset(rhat_ds)
 
     warns = _rhat_warnings(values, threshold)
 
@@ -326,15 +347,8 @@ def _compute_ess_op(
     bulk_ds = arviz_ess(ds, method="bulk")
     tail_ds = arviz_ess(ds, method="tail")
 
-    bulk = {
-        param: _scalar_from_da(bulk_ds[param])
-        for param in bulk_ds.data_vars
-    }
-
-    tail = {
-        param: _scalar_from_da(tail_ds[param])
-        for param in tail_ds.data_vars
-    }
+    bulk = _values_from_dataset(bulk_ds)
+    tail = _values_from_dataset(tail_ds)
 
     warns = _ess_warnings(bulk, tail, threshold)
 
@@ -391,15 +405,8 @@ def _compute_mcse_op(
     mean_ds = arviz_mcse(ds, method="mean")
     sd_ds = arviz_mcse(ds, method="sd")
 
-    mean = {
-        param: _scalar_from_da(mean_ds[param])
-        for param in mean_ds.data_vars
-    }
-
-    sd = {
-        param: _scalar_from_da(sd_ds[param])
-        for param in sd_ds.data_vars
-    }
+    mean = _values_from_dataset(mean_ds)
+    sd = _values_from_dataset(sd_ds)
 
     mean_attrs = {
         "mcse_method": "mean",

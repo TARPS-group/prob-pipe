@@ -179,8 +179,9 @@ class TestMcmcHasField:
 
 
 class TestToNamedPosteriorDataset:
-    def _posterior(self, params, n_chains=2, n_draws=100):
+    def _posterior(self, params, n_chains=2, n_draws=100, shapes=None):
         rng = np.random.default_rng(42)
+        shapes = shapes or {}
 
         class _FakeRecord(dict):
             @property
@@ -193,7 +194,10 @@ class TestToNamedPosteriorDataset:
 
             def draws(self, *, chain):
                 return _FakeRecord(
-                    {p: rng.standard_normal(n_draws) for p in params}
+                    {
+                        p: rng.standard_normal((n_draws,) + tuple(shapes.get(p, ())))
+                        for p in params
+                    }
                 )
 
         return _Post()
@@ -219,3 +223,9 @@ class TestToNamedPosteriorDataset:
         ds = to_named_posterior_dataset(post)
         assert "alpha" in ds.data_vars
         assert ds["alpha"].shape == (2, 50)
+
+    def test_vector_param_preserves_event_dim(self):
+        post = self._posterior(["beta"], n_chains=2, n_draws=50, shapes={"beta": (3,)})
+        ds = to_named_posterior_dataset(post)
+        assert ds["beta"].dims == ("chain", "draw", "beta_dim_0")
+        assert ds["beta"].shape == (2, 50, 3)
