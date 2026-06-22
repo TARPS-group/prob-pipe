@@ -965,14 +965,23 @@ class EventTemplate:
 
     @property
     def is_multi_field(self) -> bool:
-        """Whether this template has more than one top-level field.
+        """Whether this template describes more than one leaf.
+
+        Counts *reachable* leaves recursively (descending into nested
+        sub-templates), not top-level fields — so a single top-level field that
+        nests several leaves is multi-field. For example
+        ``EventTemplate(a=EventTemplate(b=(), c=()))`` has leaves ``a/b`` and
+        ``a/c`` and is multi-field, whereas ``EventTemplate(a=EventTemplate(b=()))``
+        describes the single leaf ``a/b`` and is not. Equivalent to
+        ``len(self.leaf_shapes) > 1``.
 
         Returns
         -------
         bool
-            ``True`` iff ``len(self.fields) > 1``.
+            ``True`` iff the template has more than one leaf; ``False`` iff it
+            describes exactly one leaf.
         """
-        return len(self._specs) > 1
+        return len(self.leaf_shapes) > 1
 
     def numeric_fields(self) -> tuple[str, ...]:
         """Top-level field names whose leaf is numeric.

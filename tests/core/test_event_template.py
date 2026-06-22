@@ -651,6 +651,26 @@ class TestIsMultiField:
     def test_multi_field(self):
         assert EventTemplate(x=(), y=()).is_multi_field is True
 
+    def test_single_opaque_leaf(self):
+        assert EventTemplate(label=None).is_multi_field is False
+
+    def test_two_leaves_mixed(self):
+        assert EventTemplate(x=(), label=None).is_multi_field is True
+
+    def test_single_leaf_under_nested_field(self):
+        # One top-level field nesting a single leaf -> one leaf -> not multi.
+        assert EventTemplate(a=EventTemplate(b=())).is_multi_field is False
+
+    def test_multiple_leaves_under_one_nested_field(self):
+        # jhuggins' case: a single top-level field 'a' with leaves a/b, a/c.
+        tpl = EventTemplate(a=EventTemplate(b=(), c=()))
+        assert tpl.fields == ("a",)  # one top-level field ...
+        assert tpl.is_multi_field is True  # ... but two leaves -> multi-field
+
+    def test_deeply_nested_single_leaf(self):
+        tpl = EventTemplate(a=EventTemplate(b=EventTemplate(c=())))
+        assert tpl.is_multi_field is False
+
 
 class TestNumericFields:
     def test_all_numeric(self):
