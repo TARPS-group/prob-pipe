@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Literal, Protocol, runtime_checkable
 
 import jax
 import jax.numpy as jnp
@@ -54,6 +54,7 @@ __all__ = [
 ]
 
 
+@runtime_checkable
 class _SupportsFlatSamples(Protocol):
     """An object exposing ``flat_samples`` (an empirical / approximate posterior)."""
 
@@ -76,7 +77,8 @@ def _as_draws(x: DrawsLike) -> Array:
     ``flat_samples``) or a raw array; a 1-D array of ``n`` scalars becomes
     ``(n, 1)``.
     """
-    arr = jnp.asarray(getattr(x, "flat_samples", x))
+    raw = x.flat_samples if isinstance(x, _SupportsFlatSamples) else x
+    arr = jnp.asarray(raw)
     if arr.ndim == 1:
         arr = arr[:, None]
     if arr.ndim != 2:
