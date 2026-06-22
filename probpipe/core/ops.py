@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 
 from .._utils import _auto_key
@@ -262,12 +263,17 @@ def quantile(dist: SupportsQuantile, q: Any) -> Any:
     ``T``-shaped per field (finite-sample distributions return the weight-aware
     empirical quantile via ``_quantile``).
 
-    Requires the distribution to implement :class:`SupportsQuantile`.
+    Requires the distribution to implement :class:`SupportsQuantile`. A concrete
+    ``q`` outside ``[0, 1]`` raises ``ValueError`` (the check is skipped when
+    ``q`` is traced, e.g. under ``jit``).
     """
     if not isinstance(dist, SupportsQuantile):
         raise TypeError(
             f"{type(dist).__name__} does not support quantile (does not implement SupportsQuantile)"
         )
+    qa = jnp.asarray(q)
+    if not isinstance(qa, jax.core.Tracer) and bool(jnp.any((qa < 0) | (qa > 1))):
+        raise ValueError(f"quantile probabilities must lie in [0, 1]; got {q!r}")
     return dist._quantile(q)
 
 

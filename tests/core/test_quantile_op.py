@@ -92,6 +92,13 @@ class TestQuantileOp:
         with pytest.raises(TypeError, match="quantile"):
             quantile(Normal(loc=0.0, scale=1.0, name="x"), 0.5)
 
+    def test_raises_on_out_of_range_q(self):
+        emp = EmpiricalDistribution(jnp.arange(10.0), name="x")
+        with pytest.raises(ValueError, match=r"\[0, 1\]"):
+            quantile(emp, 1.5)
+        with pytest.raises(ValueError, match=r"\[0, 1\]"):
+            quantile(emp, jnp.array([0.2, -0.1]))
+
     def test_single_field_result_is_numeric_record(self):
         # A single-field empirical returns a NumericRecord that the shim coerces
         # to a bare scalar — pin the type so the unwrap contract can't drift.

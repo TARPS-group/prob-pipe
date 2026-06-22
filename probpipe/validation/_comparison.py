@@ -33,12 +33,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Literal, Protocol
 
 import jax
 import jax.numpy as jnp
 
-from ..custom_types import Array, PRNGKey
+from ..custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = [
     "Reference",
@@ -52,10 +52,22 @@ __all__ = [
 ]
 
 
+class _SupportsFlatSamples(Protocol):
+    """An object exposing ``flat_samples`` (an empirical / approximate posterior)."""
+
+    @property
+    def flat_samples(self) -> Array: ...
+
+
+# What the metrics accept for an approximation or reference draws: a raw ``(n, d)``
+# (or 1-D) array, or a distribution that exposes ``flat_samples``.
+type DrawsLike = ArrayLike | _SupportsFlatSamples
+
+
 # -- coercion + moment helpers ---------------------------------------------
 
 
-def _as_draws(x: Any) -> Array:
+def _as_draws(x: DrawsLike) -> Array:
     """Coerce an approximation / reference to an ``(n, d)`` draws matrix.
 
     Accepts an ``ApproximateDistribution`` / empirical (anything exposing
@@ -107,7 +119,7 @@ class Reference:
 
     @classmethod
     def from_draws(
-        cls, draws: Any, *, score_fn: Callable[[Array], Array] | None = None
+        cls, draws: DrawsLike, *, score_fn: Callable[[Array], Array] | None = None
     ) -> Reference:
         """Build a reference from draws, deriving ``(mean, cov)`` from them."""
         d = _as_draws(draws)
@@ -116,16 +128,28 @@ class Reference:
     @classmethod
     def from_moments(
         cls,
-        mean: Array,
-        cov: Array,
+        mean: ArrayLike,
+        cov: ArrayLike,
         *,
-        draws: Any | None = None,
+        draws: DrawsLike | None = None,
         score_fn: Callable[[Array], Array] | None = None,
     ) -> Reference:
-        """Build a reference from high-precision analytic/empirical moments."""
+        """Build a reference from high-precision analytic/empirical moments.
+
+        Raises
+        ------
+        ValueError
+            If ``mean`` is not 1-D or ``cov`` is not the matching ``(d, d)``.
+        """
+        mean, cov = jnp.asarray(mean), jnp.asarray(cov)
+        if mean.ndim != 1 or cov.shape != (mean.shape[0], mean.shape[0]):
+            raise ValueError(
+                f"expected mean of shape (d,) and cov of shape (d, d); "
+                f"got {mean.shape} and {cov.shape}"
+            )
         return cls(
-            mean=jnp.asarray(mean),
-            cov=jnp.asarray(cov),
+            mean=mean,
+            cov=cov,
             draws=None if draws is None else _as_draws(draws),
             score_fn=score_fn,
         )
@@ -145,7 +169,7 @@ def _require(ref: Reference, *names: str) -> None:
 # -- moment metrics ---------------------------------------------------------
 
 
-def standardized_mean_error(approx: Any, ref: Reference) -> Array:
+def standardized_mean_error(approx: DrawsLike, ref: Reference) -> Array:
     r"""Mean error in posterior-standard-deviation units: ``‖Σ_ref^{-1/2}(μ̂ − μ_ref)‖₂``.
 
     The Mahalanobis distance between the approximate mean ``μ̂`` and the
@@ -155,29 +179,35 @@ def standardized_mean_error(approx: Any, ref: Reference) -> Array:
     """
     _require(ref, "mean", "cov")
     mu_hat = _as_draws(approx).mean(axis=0)
+    if mu_hat.shape != ref.mean.shape:
+        raise ValueError(f"approximation mean {mu_hat.shape} != reference mean {ref.mean.shape}")
     diff = mu_hat - ref.mean
     chol = jnp.linalg.cholesky(ref.cov)
     z = jax.scipy.linalg.solve_triangular(chol, diff, lower=True)
     return jnp.linalg.norm(z)
 
 
-def relative_cov_error(approx: Any, ref: Reference) -> Array:
-    r"""Operator-norm covariance error: ``‖I − Σ_ref⁻¹ Σ̂‖₂``.
+def relative_cov_error(approx: DrawsLike, ref: Reference) -> Array:
+    r"""Operator-norm relative covariance error: ``‖I − Σ_ref⁻¹ Σ̂‖₂``.
 
-    The spectral norm (largest singular value) of the whitened covariance
-    deviation from identity — ``0`` iff ``Σ̂ = Σ_ref``, and it bounds the
-    worst-direction variance-ratio error. ``Σ_ref⁻¹ Σ̂`` is formed by a Cholesky
-    solve.
+    The spectral norm (largest singular value) of the relative-covariance
+    deviation ``Σ_ref⁻¹ Σ̂ − I`` — ``0`` iff ``Σ̂ = Σ_ref``, and an upper bound on
+    the worst-direction variance-ratio error ``max_d |1 − λ_d|`` (the ``λ_d`` are
+    the eigenvalues of ``Σ_ref⁻¹ Σ̂``, i.e. the generalized variance ratios), with
+    equality when ``Σ̂`` and ``Σ_ref`` commute. ``Σ_ref⁻¹ Σ̂`` is formed by a
+    Cholesky solve.
     """
     _require(ref, "cov")
     cov_hat = _sample_cov(_as_draws(approx))
+    if cov_hat.shape != ref.cov.shape:
+        raise ValueError(f"approximation cov {cov_hat.shape} != reference cov {ref.cov.shape}")
     chol = jnp.linalg.cholesky(ref.cov)
-    whitened = jax.scipy.linalg.cho_solve((chol, True), cov_hat)  # Σ_ref⁻¹ Σ̂
-    deviation = jnp.eye(whitened.shape[0]) - whitened
+    relative = jax.scipy.linalg.cho_solve((chol, True), cov_hat)  # Σ_ref⁻¹ Σ̂
+    deviation = jnp.eye(relative.shape[0]) - relative
     return jnp.linalg.norm(deviation, ord=2)
 
 
-def std_ratios(approx: Any, ref: Reference) -> Array:
+def std_ratios(approx: DrawsLike, ref: Reference) -> Array:
     r"""Per-coordinate standard-deviation ratios ``σ̂_d / σ_{ref,d}`` (a ``(d,)`` array).
 
     A coordinate-wise readout for reporting; the full-covariance
@@ -187,13 +217,17 @@ def std_ratios(approx: Any, ref: Reference) -> Array:
     _require(ref, "cov")
     var_hat = jnp.diag(_sample_cov(_as_draws(approx)))
     var_ref = jnp.diag(ref.cov)
+    if var_hat.shape != var_ref.shape:
+        raise ValueError(f"approximation dim {var_hat.shape} != reference dim {var_ref.shape}")
     return jnp.sqrt(var_hat / var_ref)
 
 
 # -- sample-based distances -------------------------------------------------
 
 
-def sliced_wasserstein(x: Any, y: Any, *, key: PRNGKey, n_projections: int = 128) -> Array:
+def sliced_wasserstein(
+    x: DrawsLike, y: DrawsLike, *, key: PRNGKey, n_projections: int = 128
+) -> Array:
     r"""Sliced 2-Wasserstein distance between two sets of draws.
 
     Projects ``x`` and ``y`` onto ``n_projections`` random unit directions and
@@ -227,7 +261,7 @@ def _sq_dists(a: Array, b: Array) -> Array:
     return jnp.sum(a**2, axis=1)[:, None] + jnp.sum(b**2, axis=1)[None, :] - 2.0 * a @ b.T
 
 
-def mmd(x: Any, y: Any, *, bandwidth: float | str = "median") -> Array:
+def mmd(x: DrawsLike, y: DrawsLike, *, bandwidth: float | Literal["median"] = "median") -> Array:
     r"""Unbiased squared MMD with an RBF kernel.
 
     ``MMD²_u = mean_{i≠j} k(xᵢ,xⱼ) + mean_{i≠j} k(yᵢ,yⱼ) − 2·mean_{i,j} k(xᵢ,yⱼ)``,
@@ -254,10 +288,10 @@ def mmd(x: Any, y: Any, *, bandwidth: float | str = "median") -> Array:
 
 
 def ksd(
-    x: Any,
+    x: DrawsLike,
     score_fn: Callable[[Array], Array],
     *,
-    bandwidth: float | str = "median",
+    bandwidth: float | Literal["median"] = "median",
 ) -> Array:
     r"""Kernel Stein discrepancy with the inverse-multiquadric (IMQ) kernel.
 
@@ -309,7 +343,7 @@ _DEFAULT_METRICS = (
 
 
 def score_posterior(
-    approx: Any,
+    approx: DrawsLike,
     reference: Reference,
     *,
     metrics: Sequence[str] = _DEFAULT_METRICS,

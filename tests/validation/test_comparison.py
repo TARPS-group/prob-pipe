@@ -68,6 +68,36 @@ class TestMomentMetrics:
         with pytest.raises(ValueError, match="mean"):
             standardized_mean_error(draws, ref)
 
+    def test_relative_cov_error_non_diagonal(self):
+        # Non-diagonal Σ_ref with a non-commuting Σ̂: the implementation matches
+        # its definition ‖I − Σ_ref⁻¹Σ̂‖₂ exactly (not only on diagonal cases),
+        # and — per the docstring — strictly upper-bounds the worst variance-ratio
+        # deviation max_d|1 − λ_d| when Σ̂ and Σ_ref do not commute (gap ≈ 0.08 here).
+        sigma_ref = jnp.array([[2.0, 0.8], [0.8, 1.0]])
+        approx = _mvn(
+            jax.random.PRNGKey(40), 40000, jnp.zeros(2), jnp.array([[1.0, -0.5], [-0.5, 3.0]])
+        )
+        got = float(relative_cov_error(approx, Reference.from_moments(jnp.zeros(2), sigma_ref)))
+        rel = np.linalg.solve(np.asarray(sigma_ref), np.cov(np.asarray(approx), rowvar=False))
+        expected = np.linalg.norm(np.eye(2) - rel, 2)
+        worst_ratio = np.max(np.abs(1 - np.linalg.eigvals(rel).real))
+        np.testing.assert_allclose(got, expected, rtol=1e-4)  # matches the definition
+        assert got > worst_ratio + 0.05  # strict upper bound on the non-commuting case
+
+    def test_moment_metrics_reject_dimension_mismatch(self):
+        approx = _mvn(jax.random.PRNGKey(0), 100, jnp.zeros(2), jnp.eye(2))  # d = 2
+        ref = Reference.from_moments(mean=jnp.zeros(3), cov=jnp.eye(3))  # d = 3
+        with pytest.raises(ValueError, match="reference"):
+            standardized_mean_error(approx, ref)
+        with pytest.raises(ValueError, match="reference"):
+            relative_cov_error(approx, ref)
+
+    def test_from_moments_validates_shapes(self):
+        with pytest.raises(ValueError, match="shape"):
+            Reference.from_moments(mean=jnp.zeros(2), cov=jnp.eye(3))  # cov not (d, d)
+        with pytest.raises(ValueError, match="shape"):
+            Reference.from_moments(mean=jnp.zeros((2, 2)), cov=jnp.eye(2))  # mean not 1-D
+
 
 class TestDistances:
     def test_mmd_same_distribution_near_zero(self):
