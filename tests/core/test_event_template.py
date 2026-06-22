@@ -619,9 +619,7 @@ def _dist_spec() -> DistributionSpec:
 
 
 def _func_spec() -> FunctionSpec:
-    return FunctionSpec(
-        input_template=EventTemplate(a=()), output_template=EventTemplate(b=())
-    )
+    return FunctionSpec(input_template=EventTemplate(a=()), output_template=EventTemplate(b=()))
 
 
 class TestIsNumeric:

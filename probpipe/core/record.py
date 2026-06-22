@@ -995,9 +995,7 @@ class EventTemplate:
         """
         result: list[str] = []
         for name, spec in self._specs.items():
-            if isinstance(spec, ArraySpec) or (
-                isinstance(spec, EventTemplate) and spec.is_numeric
-            ):
+            if isinstance(spec, ArraySpec) or (isinstance(spec, EventTemplate) and spec.is_numeric):
                 result.append(name)
         return tuple(result)
 
